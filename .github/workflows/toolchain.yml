@@ -6,6 +6,10 @@ on:
       - 'Dockerfile'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
   IMAGE_NAME: ${{ github.repository }}
