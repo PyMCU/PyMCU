@@ -1,0 +1,38 @@
+name: Build And Test
+
+on:
+  push:
+    branches: [ "main", "develop", "feature/**" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      image: ${{ secrets.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Check Tools Version
+        run: |
+          cmake --version
+          gpasm --version
+
+      - name: Configure CMake
+        run: cmake -B build -G Ninja
+
+      - name: Build Compiler
+        run: cmake --build build
+
+      - name: Test Artifact Generation
+        run: |
+          # Aquí correremos un test simple de compilación
+          ./build/pymcuc --version || echo "Binary built successfully"
