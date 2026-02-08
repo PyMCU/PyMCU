@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: ${{ secrets.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
+      image: ${{ vars.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
       options: --user root
       credentials:
         username: ${{ github.actor }}
@@ -34,5 +34,5 @@ jobs:
 
       - name: Test Artifact Generation
         run: |
-          # Aquí correremos un test simple de compilación
+          # Run here the compilation
           ./build/pymcuc --version || echo "Binary built successfully"
