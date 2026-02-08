@@ -22,9 +22,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Docker
-        run: curl -fsSL https://get.docker.com | sh
-
       - name: Login to Docker Registry
         uses: docker/login-action@v2
         with:
