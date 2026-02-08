@@ -1,0 +1,32 @@
+# CMake build directories
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# JetBrains IDEs (CLion)
+.idea/
+
+# C++ compiled files
+*.o
+*.obj
+*.exe
+*.out
+*.app
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Executables
+pymcu
+pymcuc
+
+# OS specific
+.DS_Store
+Thumbs.db
