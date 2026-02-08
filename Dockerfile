@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     gputils \
     git \
     python3 \
+    nodejs \
+    npm \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
