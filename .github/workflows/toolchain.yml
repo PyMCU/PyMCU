@@ -22,11 +22,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Docker if not present
-        run: |
-          if ! command -v docker &> /dev/null; then
-            curl -fsSL https://get.docker.com | sh
-          fi
+      - name: Install Docker
+        run: curl -fsSL https://get.docker.com | sh
 
       - name: Login to Docker Registry
         uses: docker/login-action@v2
