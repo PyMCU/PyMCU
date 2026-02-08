@@ -11,7 +11,7 @@ permissions:
   packages: write
 
 env:
-  REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+  REGISTRY: ${{ vars.DOCKER_REGISTRY_URL }}
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
