@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    name: Build and Test
     container:
       image: ${{ vars.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
       options: --user root
