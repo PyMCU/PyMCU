@@ -9,12 +9,17 @@
 #include "Diagnostic.h"
 #include "Errors.h"
 #include "Utils.h"
+#include "backend/CodeGenFactory.h"
+#include "ir/IRGenerator.h"
+#include "ir/Tacky.h"
 
 int main(const int argc, char* argv[]) {
     argparse::ArgumentParser program("pymcuc");
     program.add_argument("file").help("Input source file");
-    program.add_argument("-o", "--output").default_value(std::string("out.asm"));
-    program.add_argument("--arch").default_value(std::string("generic"));
+    program.add_argument("-o", "--output")
+           .default_value(std::string(""))
+           .help("Output ASM file (defaults to input filename with .asm extension)");
+    program.add_argument("--arch").default_value(std::string("pic14"));
 
     try {
         program.parse_args(argc, argv);
@@ -24,6 +29,14 @@ int main(const int argc, char* argv[]) {
     }
 
     const auto filepath = program.get<std::string>("file");
+    const auto arch = program.get<std::string>("--arch");
+    auto output_path = program.get<std::string>("--output");
+
+    if (output_path.empty()) {
+        std::filesystem::path p(filepath);
+        p.replace_extension(".asm");
+        output_path = p.string();
+    }
 
     std::string source;
     try {
@@ -38,15 +51,22 @@ int main(const int argc, char* argv[]) {
         const auto tokens = lexer.tokenize();
 
         Parser parser(tokens);
-        auto ast = parser.parseProgram();
+        const auto ast = parser.parseProgram();
 
-        // C. CodeGen (Future)
-        // CodeGen generator(ast);
-        // generator.emit(program.get<std::string>("-o"));
+        IRGenerator irGen;
+        auto ir = irGen.generate(*ast);
 
-        // Temporary Debug
-        std::cout << "; Compilation Successful. AST generated in memory.\n";
+        auto backend = CodeGenFactory::create(arch);
 
+        std::ofstream asm_file(output_path);
+        if (!asm_file.is_open()) {
+            throw std::runtime_error("Cannot open output file: " + output_path);
+        }
+
+        std::cout << "[pymcuc] Compiling " << filepath << " -> " << output_path << " (" << arch << ")\n";
+        backend->compile(ir, asm_file);
+
+        std::cout << "[pymcuc] Success! Output written to " << output_path << "\n";
     }
     catch (const CompilerError& e) {
         Diagnostic::report(e, source, filepath);
