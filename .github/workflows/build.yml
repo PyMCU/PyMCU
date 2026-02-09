@@ -34,5 +34,11 @@ jobs:
 
       - name: Test Artifact Generation
         run: |
+          ls -R build/bin
+          
+          echo "def main(): return 0" > test.py
+          
+          ./build/bin/pymcu --help
+          
           # Run here the compilation
-          ./build/pymcuc --version || echo "Binary built successfully"
+          ./build/bin/pymcu test.py --target pic16f84a || echo "Binary built successfully"
