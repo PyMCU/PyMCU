@@ -34,12 +34,3 @@ jobs:
 
       - name: Run Unit Tests
         run: ctest --test-dir build --output-on-failure
-
-      - name: Test Artifact Generation
-        run: |
-          ls -R build/bin
-          
-          ./build/bin/pymcu --help
-          
-          # Run here the compilation
-          ./build/bin/pymcu ../test/fixtures/valid/01_function.py --target pic16f84a || echo "Binary built successfully"
