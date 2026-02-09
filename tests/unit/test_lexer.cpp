@@ -6,7 +6,7 @@ TEST(LexerTest, BasicTokens) {
     Lexer lexer("def main():\n    return 42");
     auto tokens = lexer.tokenize();
 
-    ASSERT_EQ(tokens.size(), 10);
+    ASSERT_EQ(tokens.size(), 11);
     EXPECT_EQ(tokens[0].type, TokenType::Def);
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
     EXPECT_EQ(tokens[1].value, "main");
