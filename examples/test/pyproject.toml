@@ -1,0 +1,10 @@
+[project]
+name = "test"
+version = "0.1.0"
+
+[tool.pymcu]
+chip = "pic16f877a"
+frequency = 4000000
+
+[tool.pymcu.config]
+# FOSC = "HS"
