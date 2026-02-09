@@ -10,7 +10,7 @@
 ; --- Code Section ---
 	CODE
 	ORG 0x00
-	GOTO main
+	GOTO	main
 
 main:
 	MOVLW	0x02
