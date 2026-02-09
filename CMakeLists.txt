@@ -32,13 +32,20 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_library(core STATIC
+        src/compiler/backend/CodeGen.h
+        src/compiler/backend/CodeGenFactory.h
+        src/compiler/backend/VirtualStack.h
+        src/compiler/backend/targets/pic14/PIC14CodeGen.cpp
+        src/compiler/backend/targets/pic14/PIC14CodeGen.h
         src/compiler/frontend/Lexer.cpp
         src/compiler/frontend/Token.h
         src/compiler/frontend/Ast.h
         src/compiler/frontend/Parser.cpp
         src/compiler/frontend/Parser.h
         src/compiler/frontend/Lexer.h
-        # src/compiler/backend/CodeGen.cpp
+        src/compiler/ir/Tacky.h
+        src/compiler/ir/IRGenerator.cpp
+        src/compiler/ir/IRGenerator.h
 )
 
 target_include_directories(core PUBLIC
