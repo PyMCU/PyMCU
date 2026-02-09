@@ -39,6 +39,10 @@ Token Parser::consume(const TokenType type, const std::string_view errorMessage)
 }
 
 void Parser::consumeStatementEnd() {
+    if (match(TokenType::Semicolon)) {
+        match(TokenType::Newline);
+        return;
+    }
     if (match(TokenType::Newline)) return;
     if (check(TokenType::Dedent)) return;
     if (check(TokenType::EndOfFile)) return;
