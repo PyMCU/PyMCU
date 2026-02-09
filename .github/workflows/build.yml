@@ -36,9 +36,7 @@ jobs:
         run: |
           ls -R build/bin
           
-          echo "def main(): return 0" > test.py
-          
           ./build/bin/pymcu --help
           
           # Run here the compilation
-          ./build/bin/pymcu test.py --target pic16f84a || echo "Binary built successfully"
+          ./build/bin/pymcu ../test/fixtures/valid/01_function.py --target pic16f84a || echo "Binary built successfully"
