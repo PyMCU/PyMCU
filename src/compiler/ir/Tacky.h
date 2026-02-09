@@ -15,8 +15,11 @@ namespace tacky {
     struct Variable { std::string name; }; // User Variables (ej: "counter")
     struct Temporary { std::string name; }; // Compiler Variables (ej: "tmp.1")
 
+    // Represents a physical memory address (MMIO or Static Global)
+    struct MemoryAddress { int address; };
+
     // A value can be any of these 3
-    using Val = std::variant<Constant, Variable, Temporary>;
+    using Val = std::variant<Constant, Variable, Temporary, MemoryAddress>;
 
     // --- Instruction Types ---
 
@@ -59,7 +62,7 @@ namespace tacky {
     };
 
     // --- The Instruction Container ---
-    // An instruction is a variant of any of the preceding structures
+    // An instruction is a variant of the preceding structures
     using Instruction = std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, Label>;
 
     // --- Function Definition ---
