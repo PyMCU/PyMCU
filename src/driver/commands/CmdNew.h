@@ -50,7 +50,16 @@ private:
         std::ofstream toml_file(project_path / "pyproject.toml");
         toml_file << "[project]\n"
                   << "name = \"" << project_name << "\"\n"
-                  << "version = \"0.1.0\"\n\n"
+                  << "version = \"0.1.0\"\n"
+                  << "dependencies = [\n"
+                  << "    \"pymcu-stdlib\",\n"
+                  << "]\n\n"
+                  << "[[tool.uv.index]]\n"
+                  << "name = \"gitea\"\n"
+                  << "url = \"https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\"\n"
+                  << "explicit = true\n\n"
+                  << "[tool.uv.sources]\n"
+                  << "pymcu-stdlib = {index = \"gitea\"}\n\n"
                   << "[tool.pymcu]\n"
                   << "chip = \"" << chip << "\"\n"
                   << "frequency = " << freq << "\n\n"
@@ -61,7 +70,7 @@ private:
         // src/main.py
         std::ofstream main_py(project_path / "src/main.py");
         main_py << "from pymcu.chips." << chip << " import *\n\n";
-        main_py << "def main():\n    pass\n";
+        main_py << "def main():\n    PORTB[RB0] = 1\n";
         main_py.close();
 
         std::cout << "[pymcu] Project '" << project_name << "' created successfully!\n";
