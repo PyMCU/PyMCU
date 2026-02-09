@@ -79,7 +79,10 @@ std::unique_ptr<Program> Parser::parseProgram() {
     while (!check(TokenType::EndOfFile)) {
         if (match(TokenType::Newline)) continue;
 
-        if (check(TokenType::Def)) {
+        if (check(TokenType::From)) {
+            prog->imports.push_back(parseImportStatement());
+        }
+        else if (check(TokenType::Def)) {
             prog->functions.push_back(parseFunction());
         }
         else if (check(TokenType::Identifier)) {
