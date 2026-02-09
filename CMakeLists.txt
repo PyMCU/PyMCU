@@ -56,6 +56,7 @@ target_include_directories(core PUBLIC
 add_library(common INTERFACE
         src/common/Errors.h
         src/common/Utils.h
+        src/common/DeviceConfig.h
 )
 target_include_directories(common INTERFACE src/common)
 
