@@ -15,6 +15,19 @@
 #include "ir/Tacky.h"
 #include "DeviceConfig.h"
 
+std::string resolve_module(const std::string& module_name, const std::vector<std::string>& include_paths) {
+    std::string path_rel = module_name;
+    std::ranges::replace(path_rel, '.', '/');
+    path_rel += ".py";
+
+    for (const auto& base_path : include_paths) {
+        if (std::filesystem::path full_path = std::filesystem::path(base_path) / path_rel; std::filesystem::exists(full_path)) {
+            return full_path.string();
+        }
+    }
+    throw std::runtime_error("Module not found: " + module_name);
+}
+
 int main(int argc, char* argv[]) {
     argparse::ArgumentParser program("pymcuc");
 
@@ -31,6 +44,10 @@ int main(int argc, char* argv[]) {
 
     program.add_argument("-C", "--config")
            .help("Configuration bits (KEY=VALUE)")
+           .append();
+
+    program.add_argument("-I", "--include")
+           .help("Add directory to search path for imports")
            .append();
 
     try {
@@ -72,6 +89,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    std::vector<std::string> include_paths;
+    if (program.is_used("-I")) {
+        include_paths = program.get<std::vector<std::string>>("-I");
+    }
+    include_paths.emplace_back(".");
+
     try {
         Lexer lexer(source);
         const auto tokens = lexer.tokenize();
@@ -79,9 +102,32 @@ int main(int argc, char* argv[]) {
         Parser parser(tokens);
         const auto ast = parser.parseProgram();
 
+        std::vector<std::unique_ptr<Program>> loaded_modules;
+        std::vector<const Program*> imported_programs;
+
+        for (const auto& importStmt : ast->imports) {
+            try {
+                std::string mod_path = resolve_module(importStmt->module_name, include_paths);
+                std::cout << "[pymcuc] Importing " << importStmt->module_name << " from " << mod_path << "\n";
+                std::string mod_src = read_source(mod_path);
+
+                Lexer mod_lexer(mod_src);
+                auto mod_tokens = mod_lexer.tokenize();
+
+                Parser mod_parser(mod_tokens);
+                auto mod_ast = mod_parser.parseProgram();
+
+                imported_programs.push_back(mod_ast.get());
+                loaded_modules.push_back(std::move(mod_ast));
+
+            } catch (const std::exception& e) {
+                std::cerr << "Import Error: " << e.what() << "\n";
+                return 1;
+            }
+        }
+
         IRGenerator irGen;
-        std::vector<const Program*> imported_modules;
-        auto ir = irGen.generate(*ast, imported_modules);
+        auto ir = irGen.generate(*ast, imported_programs);
 
         auto backend = CodeGenFactory::create(arch, device_config);
 
