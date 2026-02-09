@@ -67,6 +67,8 @@ private:
     std::unique_ptr<Expression> parsePostfix();
 
     std::unique_ptr<Expression> parsePrimary();        // Literals, (Expr), Identifiers
+
+    std::unique_ptr<ImportStmt> parseImportStatement();
 };
 
 #endif //PARSER_H

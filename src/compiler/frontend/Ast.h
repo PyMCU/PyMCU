@@ -141,10 +141,15 @@ struct FunctionDef : ASTNode {
         : name(std::move(n)), params(std::move(p)), return_type(std::move(ret)), body(std::move(b)) {}
 };
 
+struct ImportStmt : Statement {
+    std::string module_name;
+    explicit ImportStmt(std::string name) : module_name(std::move(name)) {}
+};
+
 struct Program : ASTNode {
+    std::vector<std::unique_ptr<ImportStmt>> imports;
     std::vector<std::unique_ptr<FunctionDef>> functions;
     std::vector<std::unique_ptr<Statement>> global_statements;
-    // In the future, here would be global variables as well
 };
 
 #endif // AST_H
