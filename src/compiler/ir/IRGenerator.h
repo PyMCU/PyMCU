@@ -3,7 +3,7 @@
 
 #pragma once
 #include "Tacky.h"
-#include "../frontend/AST.h"
+#include "../frontend/Ast.h"
 #include <vector>
 
 class IRGenerator {
