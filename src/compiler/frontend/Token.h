@@ -15,6 +15,7 @@ enum class TokenType {
 
     // Structure & Types
     Colon,      // :
+    Semicolon,  // ;
     Comma,      // ,
     Dot,        // .
     Arrow,      // ->
