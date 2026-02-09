@@ -1,2 +1,2 @@
 def main():
-    return 0
+    return 0b0000_0010
