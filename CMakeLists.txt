@@ -47,7 +47,9 @@ target_include_directories(core PUBLIC
 )
 
 add_library(common INTERFACE
-        src/common/Errors.h)
+        src/common/Errors.h
+        src/common/Utils.h
+)
 target_include_directories(common INTERFACE src/common)
 
 add_executable(pymcuc

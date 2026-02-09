@@ -8,14 +8,7 @@
 #include "frontend/Parser.h"
 #include "Diagnostic.h"
 #include "Errors.h"
-
-std::string read_source(const std::string& path) {
-    std::ifstream f(path);
-    if (!f.is_open()) throw std::runtime_error("can't open file '" + path + "'");
-    std::stringstream buffer;
-    buffer << f.rdbuf();
-    return buffer.str();
-}
+#include "Utils.h"
 
 int main(const int argc, char* argv[]) {
     argparse::ArgumentParser program("pymcuc");
