@@ -79,6 +79,8 @@ add_executable(tests
         tests/unit/test_lexer.cpp
         tests/unit/test_parser.cpp
         tests/unit/test_utils.cpp
+        tests/unit/test_ir_generator.cpp
+        tests/unit/test_codegen.cpp
 )
 target_link_libraries(tests PRIVATE
         core
