@@ -3,8 +3,9 @@
 
 #pragma once
 
-#include <string>
+#include <string_view>
 #include <vector>
+#include <string>
 #include "Token.h"
 
 class Lexer {
@@ -22,11 +23,13 @@ private:
     bool at_line_start = true;
 
     [[nodiscard]] char peek() const;
+    [[nodiscard]] char peek_next() const;
     char advance();
     bool match(char expected);
 
     void handle_indentation();
-    void skip_whitespace_and_comments();
+    void skip_whitespace();
+    void skip_comment();
 
     [[noreturn]] void error(std::string_view message) const;
 
