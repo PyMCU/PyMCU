@@ -15,17 +15,78 @@
 #include "ir/Tacky.h"
 #include "DeviceConfig.h"
 
-std::string resolve_module(const std::string& module_name, const std::vector<std::string>& include_paths) {
+namespace fs = std::filesystem;
+
+std::map<std::string, std::unique_ptr<Program>> module_cache;
+std::vector<const Program*> linear_imports;
+
+std::string resolve_module(const std::string& module_name,
+                           const std::vector<std::string>& include_paths,
+                           const fs::path& current_file_path,
+                           const int relative_level) {
+
     std::string path_rel = module_name;
     std::ranges::replace(path_rel, '.', '/');
-    path_rel += ".py";
 
-    for (const auto& base_path : include_paths) {
-        if (std::filesystem::path full_path = std::filesystem::path(base_path) / path_rel; std::filesystem::exists(full_path)) {
-            return full_path.string();
+    if (relative_level > 0) {
+        fs::path search_dir = current_file_path.parent_path();
+
+        for (int i = 1; i < relative_level; ++i) {
+            search_dir = search_dir.parent_path();
+        }
+
+        fs::path full_path = search_dir / (path_rel + ".py");
+
+        if (fs::exists(full_path)) return full_path.string();
+
+        full_path = search_dir / path_rel / "__init__.py";
+        if (fs::exists(full_path)) return full_path.string();
+
+        throw std::runtime_error("Relative import not found: " + full_path.string());
+    }
+
+    for (const auto& base : include_paths) {
+        fs::path full_path = fs::path(base) / (path_rel + ".py");
+        if (fs::exists(full_path)) return full_path.string();
+
+        full_path = fs::path(base) / path_rel / "__init__.py";
+        if (fs::exists(full_path)) return full_path.string();
+    }
+
+    throw std::runtime_error("Module not found: " + module_name);
+}
+
+void load_imports_recursively(Program* ast, const fs::path& current_path, const std::vector<std::string>& includes) {
+    for (const auto& imp : ast->imports) {
+        try {
+            if (imp->module_name == "pymcu.types") {
+                // Intrinsics
+                continue;
+            }
+
+            std::string path = resolve_module(imp->module_name, includes, current_path, imp->relative_level);
+
+            if (module_cache.contains(path)) continue;
+
+            std::cout << "Loading module: " << path << "\n";
+
+            std::string src = read_source(path);
+            Lexer l(src);
+            const auto tokens = l.tokenize();
+            Parser p(tokens);
+            auto mod_ast = p.parseProgram();
+
+            load_imports_recursively(mod_ast.get(), path, includes);
+
+            Program* ptr = mod_ast.get();
+            module_cache[path] = std::move(mod_ast);
+            linear_imports.push_back(ptr);
+
+        } catch (const std::exception& e) {
+            std::cerr << "Error importing '" << imp->module_name << "': " << e.what() << "\n";
+            exit(1);
         }
     }
-    throw std::runtime_error("Module not found: " + module_name);
 }
 
 int main(int argc, char* argv[]) {
@@ -102,32 +163,10 @@ int main(int argc, char* argv[]) {
         Parser parser(tokens);
         const auto ast = parser.parseProgram();
 
-        std::vector<std::unique_ptr<Program>> loaded_modules;
-        std::vector<const Program*> imported_programs;
-
-        for (const auto& importStmt : ast->imports) {
-            try {
-                std::string mod_path = resolve_module(importStmt->module_name, include_paths);
-                std::cout << "[pymcuc] Importing " << importStmt->module_name << " from " << mod_path << "\n";
-                std::string mod_src = read_source(mod_path);
-
-                Lexer mod_lexer(mod_src);
-                auto mod_tokens = mod_lexer.tokenize();
-
-                Parser mod_parser(mod_tokens);
-                auto mod_ast = mod_parser.parseProgram();
-
-                imported_programs.push_back(mod_ast.get());
-                loaded_modules.push_back(std::move(mod_ast));
-
-            } catch (const std::exception& e) {
-                std::cerr << "Import Error: " << e.what() << "\n";
-                return 1;
-            }
-        }
+        load_imports_recursively(ast.get(), fs::path(filepath), include_paths);
 
         IRGenerator irGen;
-        auto ir = irGen.generate(*ast, imported_programs);
+        auto ir = irGen.generate(*ast, linear_imports);
 
         auto backend = CodeGenFactory::create(arch, device_config);
 

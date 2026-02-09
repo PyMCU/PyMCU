@@ -178,16 +178,37 @@ std::unique_ptr<Statement> Parser::parseReturnStatement() {
 std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
     consume(TokenType::From, "Expected 'from'");
 
-    std::string mod_name = consume(TokenType::Identifier, "Expected module name").value;
+    int relative_level = 0;
     while (match(TokenType::Dot)) {
-        mod_name += "." + consume(TokenType::Identifier, "Expected part name").value;
+        relative_level++;
+    }
+
+    std::string mod_name;
+    if (check(TokenType::Identifier)) {
+        mod_name = consume(TokenType::Identifier, "Expected module name").value;
+        while (match(TokenType::Dot)) {
+            mod_name += "." + consume(TokenType::Identifier, "Expected part name").value;
+        }
+    } else if (relative_level == 0) {
+        error("Expected module name in absolute import");
     }
 
     consume(TokenType::Import, "Expected 'import'");
-    consume(TokenType::Star, "Only 'import *' supported for now");
+
+    std::vector<std::string> symbols;
+
+    if (match(TokenType::Star)) {
+        symbols.emplace_back("*");
+    } else {
+        do {
+            Token sym = consume(TokenType::Identifier, "Expected symbol name");
+            symbols.push_back(sym.value);
+        } while (match(TokenType::Comma));
+    }
+
     consumeStatementEnd();
 
-    return std::make_unique<ImportStmt>(mod_name);
+    return std::make_unique<ImportStmt>(mod_name, symbols, relative_level);
 }
 
 std::unique_ptr<Statement> Parser::parseIfStatement() {

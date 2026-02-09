@@ -143,7 +143,10 @@ struct FunctionDef : ASTNode {
 
 struct ImportStmt : Statement {
     std::string module_name;
-    explicit ImportStmt(std::string name) : module_name(std::move(name)) {}
+    std::vector<std::string> symbols;
+    int relative_level;
+    ImportStmt(std::string mod, std::vector<std::string> syms, int level = 0)
+        : module_name(std::move(mod)), symbols(std::move(syms)), relative_level(level) {}
 };
 
 struct Program : ASTNode {
