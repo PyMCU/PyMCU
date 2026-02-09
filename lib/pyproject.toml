@@ -1,6 +1,6 @@
 [project]
 name = "pymcu-stdlib"
-version = "0.1.0"
+version = "0.1.0-prealpha-1"
 description = "Standard Library for pymcu compiler"
 authors = [
     {name = "Iván Montiel Cardona",email = "developer@begeistert.dev"}
