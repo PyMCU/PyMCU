@@ -1,0 +1,51 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+    paths:
+      - 'lib/**'
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    name: Build and Publish Python StdLib
+    defaults:
+      run:
+        working-directory: ./lib
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Build Package
+        run: poetry build
+
+      - name: Publish Package
+        env:
+          TARGET_URL: ${{ secrets.PUBLISH_REGISTRY_URL }}
+          TARGET_USER: ${{ secrets.PUBLISH_USER }}
+          TARGET_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          if [ -n "$TARGET_URL" ]; then
+            poetry config repositories.private_repo "$TARGET_URL"
+            poetry publish --repository private_repo -u "$TARGET_USER" -p "$TARGET_TOKEN"
+          else
+            if [ -z "$TARGET_TOKEN" ]; then
+              exit 1
+            fi
+            poetry config pypi-token.pypi "$TARGET_TOKEN"
+            poetry publish
+          fi
