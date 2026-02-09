@@ -71,6 +71,8 @@ enable_testing()
 add_executable(tests
         tests/unit/test_lexer.cpp
         tests/unit/test_parser.cpp
+        tests/unit/test_diagnostic.cpp
+        tests/unit/test_utils.cpp
 )
 target_link_libraries(tests PRIVATE
         core
