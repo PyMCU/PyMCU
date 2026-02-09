@@ -2,15 +2,19 @@
 #define PIC14CODEGEN_H
 
 #pragma once
-#include "../../CodeGen.h"
 #include <map>
 #include <string>
+#include <utility>
+
+#include "../../CodeGen.h"
+#include "DeviceConfig.h"
 
 class PIC14CodeGen : public CodeGen {
 public:
+    explicit PIC14CodeGen(DeviceConfig  cfg) : config(std::move(cfg)), out(nullptr) {}
     void compile(const tacky::Program& program, std::ostream& os) override;
-
 private:
+    DeviceConfig config;
     std::ostream* out;
     std::map<std::string, int> symbol_table;
     int ram_head = 0x0C;
