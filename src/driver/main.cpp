@@ -1,66 +1,43 @@
-#include <toml++/toml.hpp>
-#include <argparse/argparse.hpp>
-#include <print>
-#include <expected>
-#include <filesystem>
+#include <iostream>
 #include <cstdlib>
+#include <format>
+#include <argparse/argparse.hpp>
 
-namespace fs = std::filesystem;
-
-std::expected<toml::table, std::string> load_target_config(const std::string& target_name) {
-    try {
-        // En un caso real, buscarías en /usr/share/pymcu/config o local
-        auto config = toml::parse_file("config/" + target_name + ".toml");
-        return config;
-    } catch (const toml::parse_error& err) {
-        return std::unexpected(std::format("Error parseando TOML: {}", err.description()));
-    }
-}
-
-int main(int argc, char* argv[]) {
+int main(const int argc, char* argv[]) {
     argparse::ArgumentParser program("pymcu");
-    program.add_argument("file").help("Source File .py");
+    program.add_argument("file").help("Source file .py");
     program.add_argument("-t", "--target").default_value(std::string("pic16f84a"));
 
     try {
         program.parse_args(argc, argv);
     } catch (const std::exception& err) {
-        std::println(stderr, "{}", err.what());
+        std::cerr << err.what() << std::endl;
         return 1;
     }
 
+    auto file = program.get<std::string>("file");
     auto target = program.get<std::string>("--target");
-    auto config_result = load_target_config(target);
 
-    if (!config_result) {
-        std::println(stderr, "Fatal: {}", config_result.error());
+    // 1. Build command for the compiler (pymcuc)
+    // Assume that pymcuc is in the same bin directory or in the PATH
+    // In a real case, you would use std::filesystem::canonical to find the binary relative path.
+    const std::string compiler_cmd = std::format("./build/bin/pymcuc {} -o output.asm --arch {}", file, target);
+
+    std::cout << "[pymcu] Compiling " << file << " for " << target << "...\n";
+
+    // 2. Execute Compiler
+    // system() redirects automatically stdout and stderr from the child to the parent.
+    // If pymcuc prints the error nicely, the user will see it here.
+
+    // WEXITSTATUS is for Linux/Unix to get the real exit code 0-255
+    if (const int exit_code = std::system(compiler_cmd.c_str()); exit_code != 0) {
+        // Do not print "Error", because pymcuc already printed the details.
+        std::cerr << "[pymcu] Build failed.\n";
         return 1;
     }
 
-    toml::table cfg = *config_result;
-
-    // Extraer datos críticos para pasarlos al compilador
-    auto ram_start = cfg["memory"]["ram_start"].value_or(0x00);
-    auto arch = cfg["device"]["arch"].value_or("unknown");
-
-    std::println("Target detectado: {} (Arch: {})",
-        cfg["device"]["name"].value_or("Generic"), arch);
-
-    // 1. Invocar al Compilador (pymcuc)
-    // Pasamos la info del TOML como argumentos al compilador
-    std::string cmd_compile = std::format(
-        "./build/bin/pymcuc {} -o output.asm --arch {} --ram-start {}",
-        program.get<std::string>("file"),
-        arch,
-        ram_start
-    );
-
-    std::println("Ejecutando: {}", cmd_compile);
-    int ret = std::system(cmd_compile.c_str());
-    if (ret != 0) return ret;
-
-    // 2. Invocar a GPASM (usando flags del TOML)
-    // ... lógica similar para gpasm y gplink ...
-
+    // 3. If successful, call GPASM
+    // ...
+    std::cout << "[pymcu] Build successful.\n";
     return 0;
 }
