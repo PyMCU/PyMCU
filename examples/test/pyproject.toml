@@ -1,6 +1,17 @@
 [project]
 name = "test"
 version = "0.1.0"
+dependencies = [
+    "pymcu-stdlib",
+]
+
+[[tool.uv.index]]
+name = "gitea"
+url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
+explicit = true
+
+[tool.uv.sources]
+pymcu-stdlib = { index = "gitea" }
 
 [tool.pymcu]
 chip = "pic16f877a"
