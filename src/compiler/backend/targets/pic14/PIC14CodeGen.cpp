@@ -82,13 +82,13 @@ void PIC14CodeGen::load_into_w(const tacky::Val& val) {
         emit("MOVLW", std::format("0x{:02X}", const_val & 0xFF));
     }
     else if (std::holds_alternative<tacky::Variable>(val)) {
-        std::string name = std::get<tacky::Variable>(val).name;
+        const std::string name = std::get<tacky::Variable>(val).name;
+        get_or_alloc_variable(name); // Ensure it exists
         emit("MOVF", name + ", W");
     }
     else if (std::holds_alternative<tacky::Temporary>(val)) {
         std::string name = std::get<tacky::Temporary>(val).name;
-        // Ensure the temporary exists (should have been written before)
-        get_or_alloc_variable(name);
+        get_or_alloc_variable(name); // Ensure it exists
         emit("MOVF", name + ", W");
     }
 }
@@ -103,106 +103,102 @@ void PIC14CodeGen::store_w_into(const tacky::Val& val) {
         name = std::get<tacky::Temporary>(val).name;
     }
     else {
-        // Attempting to write to a constant is a compiler bug (IRGen error)
         throw std::runtime_error("Internal Error: Cannot store into a Constant");
     }
 
-    // Ensure space in RAM
     get_or_alloc_variable(name);
     emit("MOVWF", name);
 }
 
-// --- Function and Instruction Compilation ---
+// --- Compiler Dispatcher ---
 
 void PIC14CodeGen::compile_function(const tacky::Function& func) {
     emit_label(func.name);
-
-    // Analyze instructions
     for (const auto& instr : func.body) {
         compile_instruction(instr);
     }
 }
 
 void PIC14CodeGen::compile_instruction(const tacky::Instruction& instr) {
-    // Use std::visit to "unpack" the instruction variant
+    // Visit the variant and dispatch to specific functions
     std::visit([this](auto&& arg) {
         using T = std::decay_t<decltype(arg)>;
-
-        // 1. Instruction RETURN
-        if constexpr (std::is_same_v<T, tacky::Return>) {
-            // Load return value into W
-            load_into_w(arg.value);
-            // Execute return
-            emit("RETURN");
-        }
-
-        // 2. Instruction UNARY (Not, Neg, etc.)
-        else if constexpr (std::is_same_v<T, tacky::Unary>) {
-            load_into_w(arg.src);
-
-            if (arg.op == tacky::UnaryOp::Complement) {
-                emit("XORLW", "0xFF"); // Bitwise NOT in PIC
-            }
-            else if (arg.op == tacky::UnaryOp::Neg) {
-                // Arithmetic Negation (Two's complement): NOT + 1
-                emit("XORLW", "0xFF");
-                emit("ADDLW", "1");
-            }
-
-            store_w_into(arg.dst);
-        }
-
-        // 3. Instruction BINARY (Add, Sub, etc.)
-        else if constexpr (std::is_same_v<T, tacky::Binary>) {
-            // Strategy: Load src1 into W, operate with src2
-            load_into_w(arg.src1);
-
-            // Operations
-            // Note: For simplicity, assume src2 is Constant or Variable
-            // PIC has different instructions for ADDLW (Literal) vs ADDWF (File)
-
-            bool src2_is_const = std::holds_alternative<tacky::Constant>(arg.src2);
-            std::string op_suffix = src2_is_const ? "LW" : "WF";
-            std::string operand;
-
-            if (src2_is_const) {
-                int val = std::get<tacky::Constant>(arg.src2).value;
-                operand = std::format("0x{:02X}", val & 0xFF);
-            } else {
-                // Is variable or temporary
-                if (std::holds_alternative<tacky::Variable>(arg.src2))
-                    operand = std::get<tacky::Variable>(arg.src2).name;
-                else
-                    operand = std::get<tacky::Temporary>(arg.src2).name;
-
-                // If we use WF instruction, the destination is W (W = W + F)
-                operand += ", W";
-            }
-
-            if (arg.op == tacky::BinaryOp::Add) {
-                emit("ADD" + op_suffix, operand);
-            }
-            else if (arg.op == tacky::BinaryOp::Sub) {
-                emit("SUB" + op_suffix, operand);
-            }
-            // ... implement other ops ...
-
-            store_w_into(arg.dst);
-        }
-
-        // 4. Instruction COPY (Assignment)
-        else if constexpr (std::is_same_v<T, tacky::Copy>) {
-            load_into_w(arg.src);
-            store_w_into(arg.dst);
-        }
-
-        // 5. Labels and Jumps (For future if/while)
-        else if constexpr (std::is_same_v<T, tacky::Label>) {
-            emit_label(arg.name);
-        }
-        else if constexpr (std::is_same_v<T, tacky::Jump>) {
-            emit("GOTO", arg.target);
-        }
-
+        // We call compile_variant. The compiler selects the correct overload.
+        compile_variant(arg);
     }, instr);
+}
+
+// --- Specific Instruction Compilers ---
+
+void PIC14CodeGen::compile_variant(const tacky::Return& arg) {
+    load_into_w(arg.value);
+    emit("RETURN");
+}
+
+void PIC14CodeGen::compile_variant(const tacky::Unary& arg) {
+    load_into_w(arg.src);
+    if (arg.op == tacky::UnaryOp::Complement) {
+        emit("XORLW", "0xFF");
+    }
+    else if (arg.op == tacky::UnaryOp::Neg) {
+        emit("XORLW", "0xFF");
+        emit("ADDLW", "1");
+    }
+    else if (arg.op == tacky::UnaryOp::Not) {
+        // Logic NOT ( !x ) is tricky on PIC without Zero flag tricks.
+        // For now, let's assume bitwise for simplicity or implement later.
+        emit("XORLW", "0xFF"); // Placeholder
+    }
+    store_w_into(arg.dst);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
+    load_into_w(arg.src1);
+
+    bool src2_is_const = std::holds_alternative<tacky::Constant>(arg.src2);
+    std::string op_suffix = src2_is_const ? "LW" : "WF";
+    std::string operand;
+
+    if (src2_is_const) {
+        int val = std::get<tacky::Constant>(arg.src2).value;
+        operand = std::format("0x{:02X}", val & 0xFF);
+    } else {
+        if (std::holds_alternative<tacky::Variable>(arg.src2))
+            operand = std::get<tacky::Variable>(arg.src2).name;
+        else
+            operand = std::get<tacky::Temporary>(arg.src2).name;
+
+        get_or_alloc_variable(operand); // Ensure variable exists
+        operand += ", W"; // Destination is W
+    }
+
+    if (arg.op == tacky::BinaryOp::Add) emit("ADD" + op_suffix, operand);
+    else if (arg.op == tacky::BinaryOp::Sub) emit("SUB" + op_suffix, operand);
+    // Add AND, IOR, XOR here...
+
+    store_w_into(arg.dst);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::Copy& arg) {
+    load_into_w(arg.src);
+    store_w_into(arg.dst);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::Label& arg) const {
+    emit_label(arg.name);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::Jump& arg) const {
+    emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfZero& arg) {
+    // Check if condition is zero
+    load_into_w(arg.condition);
+    // In PIC, MOVF affects the Zero flag (Z).
+    // MOVF f, W -> Z=1 if result is 0.
+
+    // BTFSC STATUS, Z (Skip if Clear) -> If Z=0 (Not Zero), skip goto.
+    emit("BTFSC", "STATUS, 2"); // 2 is Z bit
+    emit("GOTO", arg.target);
 }
