@@ -16,6 +16,7 @@ enum class TokenType {
     // Structure & Types
     Colon,      // :
     Comma,      // ,
+    Dot,        // .
     Arrow,      // ->
     LParen,     // (
     RParen,     // )
