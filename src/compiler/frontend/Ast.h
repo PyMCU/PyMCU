@@ -143,6 +143,7 @@ struct FunctionDef : ASTNode {
 
 struct Program : ASTNode {
     std::vector<std::unique_ptr<FunctionDef>> functions;
+    std::vector<std::unique_ptr<Statement>> global_statements;
     // In the future, here would be global variables as well
 };
 

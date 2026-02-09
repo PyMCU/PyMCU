@@ -82,6 +82,9 @@ std::unique_ptr<Program> Parser::parseProgram() {
         if (check(TokenType::Def)) {
             prog->functions.push_back(parseFunction());
         }
+        else if (check(TokenType::Identifier)) {
+            prog->global_statements.push_back(parseAssignmentOrDeclaration());
+        }
         else {
             error("Expected function definition ('def')");
         }

@@ -7,6 +7,7 @@
 #include <map>
 
 struct DeviceConfig {
+    std::string chip;
     unsigned long frequency;
     std::map<std::string, std::string> fuses;
 };

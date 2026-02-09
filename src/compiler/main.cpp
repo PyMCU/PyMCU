@@ -46,6 +46,7 @@ int main(int argc, char* argv[]) {
 
     DeviceConfig device_config;
     device_config.frequency = program.get<unsigned long>("--freq");
+    device_config.chip = arch;
 
     if (program.is_used("-C")) {
         for (auto config_list = program.get<std::vector<std::string>>("-C"); const auto& item : config_list) {
@@ -79,7 +80,8 @@ int main(int argc, char* argv[]) {
         const auto ast = parser.parseProgram();
 
         IRGenerator irGen;
-        auto ir = irGen.generate(*ast);
+        std::vector<const Program*> imported_modules;
+        auto ir = irGen.generate(*ast, imported_modules);
 
         auto backend = CodeGenFactory::create(arch, device_config);
 

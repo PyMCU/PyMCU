@@ -10,21 +10,31 @@
 namespace tacky {
 
     // --- Operand Types ---
-
     struct Constant { int value; };
-    struct Variable { std::string name; }; // User Variables (ej: "counter")
-    struct Temporary { std::string name; }; // Compiler Variables (ej: "tmp.1")
+    struct Variable { std::string name; };
+    struct Temporary { std::string name; };
 
     // Represents a physical memory address (MMIO or Static Global)
     struct MemoryAddress { int address; };
 
-    // A value can be any of these 3
     using Val = std::variant<Constant, Variable, Temporary, MemoryAddress>;
 
-    // --- Instruction Types ---
+    enum class UnaryOp {
+        Not,
+        Neg,
+        BitNot
+    };
 
-    enum class UnaryOp { Not, Neg, Complement };
-    enum class BinaryOp { Add, Sub, Mul, Div, LessThan, GreaterThan, Equal };
+    enum class BinaryOp {
+        Add, Sub, Mul, Div, Mod,
+        Equal, NotEqual,
+        LessThan, LessEqual,
+        GreaterThan, GreaterEqual,
+        BitAnd, BitOr, BitXor,
+        LShift, RShift
+    };
+
+    // --- Instructions ---
 
     struct Return {
         Val value;
@@ -57,18 +67,58 @@ namespace tacky {
         std::string target;
     };
 
+    struct JumpIfNotZero {
+        Val condition;
+        std::string target;
+    };
+
     struct Label {
         std::string name;
     };
 
+    struct Call {
+        std::string function_name;
+        std::vector<Val> args;
+        Val dst;
+    };
+
+    struct BitSet {
+        Val target;
+        int bit;
+    };
+
+    struct BitClear {
+        Val target;
+        int bit;
+    };
+
+    struct BitCheck {
+        Val source;
+        int bit;
+        Val dst;
+    };
+
     // --- The Instruction Container ---
-    // An instruction is a variant of the preceding structures
-    using Instruction = std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, Label>;
+    using Instruction = std::variant<
+        Return,
+        Unary,
+        Binary,
+        Copy,
+        Jump,
+        JumpIfZero,
+        JumpIfNotZero,
+        Label,
+        Call,
+        BitSet,
+        BitClear,
+        BitCheck
+    >;
 
     // --- Function Definition ---
     struct Function {
         std::string name;
-        std::vector<Instruction> body; // Flat list, no longer a tree
+        std::vector<std::string> params;
+        std::vector<Instruction> body;
     };
 
     struct Program {
