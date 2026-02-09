@@ -28,7 +28,7 @@ public:
             if (auto tbl = config["tool"]["pymcu"]["config"].as_table()) {
                 for (auto& [key, val] : *tbl) {
                     if (val.is_string()) {
-                        config_map[std::string(key.str())] = *val.as_string();
+                        config_map[std::string(key.str())] = val.as_string()->get();
                     } else if (val.is_integer()) {
                         config_map[std::string(key.str())] = std::to_string(val.as_integer()->get());
                     }
