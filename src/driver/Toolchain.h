@@ -35,6 +35,25 @@ public:
         return "pymcuc";
     }
 
+    static std::string get_stdlib_path() {
+        const std::string cmd = "python3 -c \"import os, pymcu; print(os.path.dirname(pymcu.__file__), end='')\"";
+
+        std::array<char, 128> buffer{};
+        std::string result;
+        const std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+
+        if (!pipe) {
+            std::cerr << "[Warning] Could not invoke python3 to find stdlib.\n";
+            return "";
+        }
+
+        while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+            result += buffer.data();
+        }
+
+        return result;
+    }
+
     static void run_compiler(const std::string& input, const std::string& output,
                              const std::string& arch, unsigned long freq,
                              const std::map<std::string, std::string>& configs) {
@@ -44,6 +63,11 @@ public:
         cmd += "-o " + output + " ";
         cmd += "--arch " + arch + " ";
         cmd += "--freq " + std::to_string(freq) + " ";
+
+        if (std::string stdlib = get_stdlib_path(); !stdlib.empty()) {
+            fs::path p(stdlib);
+            cmd += "-I " + p.parent_path().string() + " ";
+        }
 
         for (const auto& [key, val] : configs) {
             cmd += "-C " + key + "=" + val + " ";
