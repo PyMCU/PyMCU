@@ -1,7 +1,3 @@
-//
-// Created by Ivan Montiel Cardona on 08/02/26.
-//
-
 #ifndef PARSER_H
 #define PARSER_H
 
@@ -16,36 +12,61 @@ class Parser {
 public:
     explicit Parser(const std::vector<Token>& tokens);
 
-    // Punto de entrada principal
     std::unique_ptr<Program> parseProgram();
 
 private:
     const std::vector<Token>& tokens;
     size_t pos = 0;
 
-    // --- Navigation Helpers ---
     [[nodiscard]] const Token& peek() const;
+    [[nodiscard]] const Token& previous() const;
     Token advance();
+
     [[nodiscard]] bool check(TokenType type) const;
+
     bool match(TokenType type);
 
-    // Returns the token if consumed, throws if not
     Token consume(TokenType type, std::string_view errorMessage);
+
     void consumeStatementEnd();
 
     [[noreturn]] void error(std::string_view message) const;
     void indentError(std::string_view message) const;
 
-    // --- Grammar Rules ---
+    std::string parseTypeAnnotation();
 
     std::unique_ptr<FunctionDef> parseFunction();
-    std::vector<std::unique_ptr<Statement>> parseBlock();
+
+    std::vector<Param> parseParameters();
+
+    std::unique_ptr<Block> parseBlock();
+
     std::unique_ptr<Statement> parseStatement();
+
+    std::unique_ptr<Statement> parseIfStatement();
+    std::unique_ptr<Statement> parseWhileStatement();
+
+    std::unique_ptr<Statement> parseSimpleStatement();
     std::unique_ptr<Statement> parseReturnStatement();
-    // Future: std::unique_ptr<Statement> parseIfStatement();
-    // Future: std::unique_ptr<Statement> parseAssignment();
-    std::unique_ptr<Expression> parseExpression();
-    std::unique_ptr<Expression> parsePrimary();
+
+    std::unique_ptr<Statement> parseAssignmentOrDeclaration();
+
+    std::unique_ptr<Expression> parseExpression();     // Entry point
+    std::unique_ptr<Expression> parseLogicalOr();      // or
+    std::unique_ptr<Expression> parseLogicalAnd();     // and
+    std::unique_ptr<Expression> parseBitwiseOr();      // |
+    std::unique_ptr<Expression> parseBitwiseXor();     // ^
+    std::unique_ptr<Expression> parseBitwiseAnd();     // &
+    std::unique_ptr<Expression> parseEquality();       // ==, !=
+    std::unique_ptr<Expression> parseRelational();     // <, >, <=, >=
+    std::unique_ptr<Expression> parseShift();          // <<, >>
+    std::unique_ptr<Expression> parseAdditive();       // +, -
+    std::unique_ptr<Expression> parseMultiplicative(); // *, /, %
+    std::unique_ptr<Expression> parseUnary();          // -, not, ~, !
+
+    std::unique_ptr<Expression> parsePostfix();
+
+    std::unique_ptr<Expression> parsePrimary();        // Literals, (Expr), Identifiers
 };
 
 #endif //PARSER_H
