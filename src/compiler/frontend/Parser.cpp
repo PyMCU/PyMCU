@@ -168,6 +168,21 @@ std::unique_ptr<Statement> Parser::parseReturnStatement() {
     return std::make_unique<ReturnStmt>(std::move(value));
 }
 
+std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
+    consume(TokenType::From, "Expected 'from'");
+
+    std::string mod_name = consume(TokenType::Identifier, "Expected module name").value;
+    while (match(TokenType::Dot)) {
+        mod_name += "." + consume(TokenType::Identifier, "Expected part name").value;
+    }
+
+    consume(TokenType::Import, "Expected 'import'");
+    consume(TokenType::Star, "Only 'import *' supported for now");
+    consumeStatementEnd();
+
+    return std::make_unique<ImportStmt>(mod_name);
+}
+
 std::unique_ptr<Statement> Parser::parseIfStatement() {
     consume(TokenType::If, "Expected 'if'");
     auto condition = parseExpression();
