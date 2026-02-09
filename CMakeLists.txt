@@ -33,28 +33,34 @@ FetchContent_MakeAvailable(googletest)
 
 add_library(core STATIC
         src/compiler/frontend/Lexer.cpp
-        tests/unit/test_lexer.cpp
-        # src/compiler/frontend/Lexer.cpp
-        # src/compiler/frontend/Parser.cpp
+        src/compiler/frontend/Token.h
+        src/compiler/frontend/Ast.h
+        src/compiler/frontend/Parser.cpp
+        src/compiler/frontend/Parser.h
+        src/compiler/frontend/Lexer.h
         # src/compiler/backend/CodeGen.cpp
 )
 
 target_include_directories(core PUBLIC
         src/compiler
-        src/shared
+        src/common
 )
 
-add_library(pymcu_shared INTERFACE)
-target_include_directories(pymcu_shared INTERFACE src/shared)
+add_library(common INTERFACE
+        src/common/Errors.h)
+target_include_directories(common INTERFACE src/common)
 
-add_executable(pymcuc src/compiler/main.cpp)
-target_link_libraries(pymcuc PRIVATE core pymcu_shared argparse::argparse)
+add_executable(pymcuc
+        src/compiler/main.cpp
+        src/compiler/Diagnostic.h
+)
+target_link_libraries(pymcuc PRIVATE core common argparse::argparse)
 
 add_executable(pymcu
         src/driver/main.cpp
         #src/driver/Toolchain.cpp
 )
-target_link_libraries(pymcu PRIVATE pymcu_shared tomlplusplus::tomlplusplus argparse::argparse)
+target_link_libraries(pymcu PRIVATE common tomlplusplus::tomlplusplus argparse::argparse)
 
 set_target_properties(pymcu pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
