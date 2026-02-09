@@ -208,7 +208,9 @@ Token Lexer::scan_token() {
         case '[': return {TokenType::LBracket, "[", line, column};
         case ']': return {TokenType::RBracket, "]", line, column};
         case ':': return {TokenType::Colon, ":", line, column};
+        case ';': return {TokenType::Semicolon, ";", line, column};
         case ',': return {TokenType::Comma, ",", line, column};
+        case '.': return {TokenType::Dot, ".", line, column};
 
         case '-':
             if (match('>')) return {TokenType::Arrow, "->", line, column};
