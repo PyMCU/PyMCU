@@ -103,6 +103,7 @@ void IRGenerator::visitBlock(const Block* block) {
 }
 
 void IRGenerator::visitStatement(const Statement* stmt) {
+    if (auto* block = dynamic_cast<const Block*>(stmt)) return visitBlock(block);
     if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt)) return visitReturn(ret);
     if (auto* ifStmt = dynamic_cast<const IfStmt*>(stmt)) return visitIf(ifStmt);
     if (auto* whileStmt = dynamic_cast<const WhileStmt*>(stmt)) return visitWhile(whileStmt);

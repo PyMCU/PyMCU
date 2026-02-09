@@ -10,7 +10,7 @@ TEST(IRGeneratorTest, SimpleReturn) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast);
+    auto ir = ir_gen.generate(*ast, {});
 
     ASSERT_EQ(ir.functions.size(), 1);
     EXPECT_EQ(ir.functions[0].name, "main");
@@ -30,7 +30,7 @@ TEST(IRGeneratorTest, ImplicitReturn) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast);
+    auto ir = ir_gen.generate(*ast, {});
 
     ASSERT_EQ(ir.functions.size(), 1);
     ASSERT_GE(ir.functions[0].body.size(), 1);
@@ -49,9 +49,93 @@ TEST(IRGeneratorTest, MultipleFunctions) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast);
+    auto ir = ir_gen.generate(*ast, {});
 
     ASSERT_EQ(ir.functions.size(), 2);
     EXPECT_EQ(ir.functions[0].name, "a");
     EXPECT_EQ(ir.functions[1].name, "b");
+}
+
+TEST(IRGeneratorTest, IfStatement) {
+    Lexer lexer("def f(x: int):\n    if x:\n        return 1\n    else:\n        return 2");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    auto& body = ir.functions[0].body;
+    // Expect: JumpIfZero, Return(1), Jump, Label, Return(2), Label
+    // (Note: visitIf emits Label(else), then else_branch, then Label(end))
+    
+    bool found_jump_if_zero = false;
+    bool found_labels = false;
+    for (const auto& inst : body) {
+        if (std::holds_alternative<tacky::JumpIfZero>(inst)) found_jump_if_zero = true;
+        if (std::holds_alternative<tacky::Label>(inst)) found_labels = true;
+    }
+    EXPECT_TRUE(found_jump_if_zero);
+    EXPECT_TRUE(found_labels);
+}
+
+TEST(IRGeneratorTest, WhileStatement) {
+    Lexer lexer("def f():\n    while 1:\n        pass");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    auto& body = ir.functions[0].body;
+    // Expect: Label, Constant(1), JumpIfZero, Jump, Label
+    bool found_jump = false;
+    int labels = 0;
+    for (const auto& inst : body) {
+        if (std::holds_alternative<tacky::Jump>(inst)) found_jump = true;
+        if (std::holds_alternative<tacky::Label>(inst)) labels++;
+    }
+    EXPECT_TRUE(found_jump);
+    EXPECT_GE(labels, 2);
+}
+
+TEST(IRGeneratorTest, BinaryOps) {
+    Lexer lexer("def f(a: int, b: int):\n    return a + b");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    auto& body = ir.functions[0].body;
+    bool found_binary = false;
+    for (const auto& inst : body) {
+        if (auto b = std::get_if<tacky::Binary>(&inst)) {
+            EXPECT_EQ(b->op, tacky::BinaryOp::Add);
+            found_binary = true;
+        }
+    }
+    EXPECT_TRUE(found_binary);
+}
+
+TEST(IRGeneratorTest, BitManipulation) {
+    Lexer lexer("def f(port: ptr):\n    port[0] = 1\n    return port[1]");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    auto& body = ir.functions[0].body;
+    bool found_set = false;
+    bool found_check = false;
+    for (const auto& inst : body) {
+        if (std::holds_alternative<tacky::BitSet>(inst)) found_set = true;
+        if (std::holds_alternative<tacky::BitCheck>(inst)) found_check = true;
+    }
+    EXPECT_TRUE(found_set);
+    EXPECT_TRUE(found_check);
 }

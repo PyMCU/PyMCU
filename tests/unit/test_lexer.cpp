@@ -6,7 +6,7 @@ TEST(LexerTest, BasicTokens) {
     Lexer lexer("def main():\n    return 42");
     auto tokens = lexer.tokenize();
 
-    ASSERT_EQ(tokens.size(), 11);
+    ASSERT_EQ(tokens.size(), 12);
     EXPECT_EQ(tokens[0].type, TokenType::Def);
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
     EXPECT_EQ(tokens[1].value, "main");
@@ -18,8 +18,9 @@ TEST(LexerTest, BasicTokens) {
     EXPECT_EQ(tokens[7].type, TokenType::Return);
     EXPECT_EQ(tokens[8].type, TokenType::Number);
     EXPECT_EQ(tokens[8].value, "42");
-    EXPECT_EQ(tokens[9].type, TokenType::Dedent);
-    EXPECT_EQ(tokens[10].type, TokenType::EndOfFile);
+    EXPECT_EQ(tokens[9].type, TokenType::Newline);
+    EXPECT_EQ(tokens[10].type, TokenType::Dedent);
+    EXPECT_EQ(tokens[11].type, TokenType::EndOfFile);
 }
 
 TEST(LexerTest, Indentation) {

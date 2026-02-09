@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "backend/targets/pic14/PIC14CodeGen.h"
+#include "DeviceConfig.h"
 #include <sstream>
 
 TEST(PIC14CodeGenTest, SimpleReturn) {
@@ -9,7 +10,8 @@ TEST(PIC14CodeGenTest, SimpleReturn) {
     func.body.emplace_back(tacky::Return{tacky::Constant{42}});
     program.functions.push_back(func);
 
-    PIC14CodeGen codegen;
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
     std::stringstream ss;
     codegen.compile(program, ss);
 
@@ -32,11 +34,84 @@ TEST(PIC14CodeGenTest, MultipleFunctions) {
     func2.body.emplace_back(tacky::Return{tacky::Constant{2}});
     program.functions.push_back(func2);
 
-    PIC14CodeGen codegen;
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
     std::stringstream ss;
     codegen.compile(program, ss);
 
     std::string asm_code = ss.str();
     EXPECT_NE(asm_code.find("f1"), std::string::npos);
     EXPECT_NE(asm_code.find("f2"), std::string::npos);
+}
+
+TEST(PIC14CodeGenTest, ControlFlow) {
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "f";
+    func.body.emplace_back(tacky::JumpIfZero{tacky::Constant{0}, "L1"});
+    func.body.emplace_back(tacky::Jump{ "L2" });
+    func.body.emplace_back(tacky::Label{ "L1" });
+    func.body.emplace_back(tacky::Label{ "L2" });
+    program.functions.push_back(func);
+
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string asm_code = ss.str();
+    EXPECT_NE(asm_code.find("GOTO\tL1"), std::string::npos);
+    EXPECT_NE(asm_code.find("GOTO\tL2"), std::string::npos);
+    EXPECT_NE(asm_code.find("L1:"), std::string::npos);
+    EXPECT_NE(asm_code.find("L2:"), std::string::npos);
+}
+
+TEST(PIC14CodeGenTest, UnaryOps) {
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "f";
+    func.body.emplace_back(tacky::Unary{tacky::UnaryOp::Neg, tacky::Constant{5}, tacky::Variable{"x"}});
+    program.functions.push_back(func);
+
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string asm_code = ss.str();
+    EXPECT_NE(asm_code.find("SUBLW\t0"), std::string::npos);
+}
+
+TEST(PIC14CodeGenTest, BinaryOps) {
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "f";
+    func.body.emplace_back(tacky::Binary{tacky::BinaryOp::Add, tacky::Constant{1}, tacky::Constant{2}, tacky::Variable{"x"}});
+    program.functions.push_back(func);
+
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string asm_code = ss.str();
+    EXPECT_NE(asm_code.find("ADDLW\t0x02"), std::string::npos);
+}
+
+TEST(PIC14CodeGenTest, BitManipulation) {
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "f";
+    func.body.emplace_back(tacky::BitSet{tacky::MemoryAddress{0x05}, 0}); // PORTA bit 0
+    func.body.emplace_back(tacky::BitClear{tacky::MemoryAddress{0x05}, 1});
+    program.functions.push_back(func);
+
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string asm_code = ss.str();
+    EXPECT_NE(asm_code.find("BSF\t0x05, 0"), std::string::npos);
+    EXPECT_NE(asm_code.find("BCF\t0x05, 1"), std::string::npos);
 }
