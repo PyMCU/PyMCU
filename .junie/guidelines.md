@@ -1,5 +1,5 @@
 ### Project Overview
-`pymcu` is a Python-to-MCU compiler targeting Microchip PIC microcontrollers (initially PIC16F84A). It consists of a frontend (Lexer, Parser) and a driver that coordinates the compilation process.
+`pymcu` is a Python-to-MCU compiler targeting low memory microcontrollers (initially PIC16F84A). It consists of the compiler (Lexer, Parser, Backends, IR) and a driver that coordinates the compilation process.
 
 ### Build/Configuration Instructions
 The project uses CMake (minimum version 4.1) and requires a C++23 compatible compiler.

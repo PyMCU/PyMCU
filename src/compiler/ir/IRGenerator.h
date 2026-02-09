@@ -3,9 +3,9 @@
 
 #pragma once
 #include "Tacky.h"
-#include "frontend/AST.h"
-
+#include "../frontend/AST.h"
 #include <vector>
+
 class IRGenerator {
 public:
     tacky::Program generate(const Program& ast);
