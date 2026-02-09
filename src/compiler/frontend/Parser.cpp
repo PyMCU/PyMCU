@@ -354,7 +354,7 @@ std::unique_ptr<Expression> Parser::parseShift() {
 std::unique_ptr<Expression> Parser::parseAdditive() {
     auto left = parseMultiplicative();
     while (check(TokenType::Plus) || check(TokenType::Minus)) {
-        Token opToken = advance();
+        const Token opToken = advance();
         BinaryOp op = (opToken.type == TokenType::Plus) ? BinaryOp::Add : BinaryOp::Sub;
         auto right = parseMultiplicative();
         left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
@@ -365,7 +365,7 @@ std::unique_ptr<Expression> Parser::parseAdditive() {
 std::unique_ptr<Expression> Parser::parseMultiplicative() {
     auto left = parseUnary();
     while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent)) {
-        Token opToken = advance();
+        const Token opToken = advance();
         BinaryOp op;
         if (opToken.type == TokenType::Star) op = BinaryOp::Mul;
         else if (opToken.type == TokenType::Slash) op = BinaryOp::Div;
