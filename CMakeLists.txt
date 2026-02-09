@@ -68,7 +68,10 @@ target_link_libraries(pymcuc PRIVATE core common argparse::argparse)
 
 add_executable(pymcu
         src/driver/main.cpp
-        #src/driver/Toolchain.cpp
+        src/driver/Toolchain.h
+        src/driver/commands/ICommand.h
+        src/driver/commands/CmdNew.h
+        src/driver/commands/CmdBuild.h
 )
 target_link_libraries(pymcu PRIVATE common tomlplusplus::tomlplusplus argparse::argparse)
 
