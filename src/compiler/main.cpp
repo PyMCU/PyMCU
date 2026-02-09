@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+#include <map>
 #include <argparse/argparse.hpp>
 
 #include "frontend/Lexer.h"
@@ -12,14 +13,25 @@
 #include "backend/CodeGenFactory.h"
 #include "ir/IRGenerator.h"
 #include "ir/Tacky.h"
+#include "DeviceConfig.h"
 
-int main(const int argc, char* argv[]) {
+int main(int argc, char* argv[]) {
     argparse::ArgumentParser program("pymcuc");
+
     program.add_argument("file").help("Input source file");
     program.add_argument("-o", "--output")
            .default_value(std::string(""))
-           .help("Output ASM file (defaults to input filename with .asm extension)");
+           .help("Output ASM file");
     program.add_argument("--arch").default_value(std::string("pic14"));
+
+    program.add_argument("--freq")
+           .help("Clock frequency in Hz")
+           .default_value(4000000UL)
+           .scan<'u', unsigned long>();
+
+    program.add_argument("-C", "--config")
+           .help("Configuration bits (KEY=VALUE)")
+           .append();
 
     try {
         program.parse_args(argc, argv);
@@ -31,6 +43,19 @@ int main(const int argc, char* argv[]) {
     const auto filepath = program.get<std::string>("file");
     const auto arch = program.get<std::string>("--arch");
     auto output_path = program.get<std::string>("--output");
+
+    DeviceConfig device_config;
+    device_config.frequency = program.get<unsigned long>("--freq");
+
+    if (program.is_used("-C")) {
+        for (auto config_list = program.get<std::vector<std::string>>("-C"); const auto& item : config_list) {
+            if (size_t eq_pos = item.find('='); eq_pos != std::string::npos) {
+                std::string key = item.substr(0, eq_pos);
+                std::string val = item.substr(eq_pos + 1);
+                device_config.fuses[key] = val;
+            }
+        }
+    }
 
     if (output_path.empty()) {
         std::filesystem::path p(filepath);
@@ -56,14 +81,16 @@ int main(const int argc, char* argv[]) {
         IRGenerator irGen;
         auto ir = irGen.generate(*ast);
 
-        auto backend = CodeGenFactory::create(arch);
+        auto backend = CodeGenFactory::create(arch, device_config);
 
         std::ofstream asm_file(output_path);
         if (!asm_file.is_open()) {
             throw std::runtime_error("Cannot open output file: " + output_path);
         }
 
-        std::cout << "[pymcuc] Compiling " << filepath << " -> " << output_path << " (" << arch << ")\n";
+        std::cout << "[pymcuc] Compiling " << filepath << " -> " << output_path
+                  << " (" << arch << " @ " << device_config.frequency << "Hz)\n";
+
         backend->compile(ir, asm_file);
 
         std::cout << "[pymcuc] Success! Output written to " << output_path << "\n";
