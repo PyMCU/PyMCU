@@ -1,4 +1,4 @@
-from ..types import ptr, uint8
+from pymcu.types import ptr, uint8
 
 # ==========================================
 #  Register Definitions (SRAM & SFRs)
