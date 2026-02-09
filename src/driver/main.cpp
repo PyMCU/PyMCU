@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
     // 1. Invocar al Compilador (pymcuc)
     // Pasamos la info del TOML como argumentos al compilador
     std::string cmd_compile = std::format(
-        "./bin/pymcuc {} -o output.asm --arch {} --ram-start {}",
+        "./build/bin/pymcuc {} -o output.asm --arch {} --ram-start {}",
         program.get<std::string>("file"),
         arch,
         ram_start
