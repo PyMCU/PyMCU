@@ -52,6 +52,10 @@ add_library(core STATIC
         src/compiler/backend/analysis/StackAllocator.h
         src/compiler/backend/targets/pic14/PIC14Peephole.cpp
         src/compiler/backend/targets/pic14/PIC14Peephole.h
+        src/compiler/backend/targets/pic18/PIC18CodeGen.cpp
+        src/compiler/backend/targets/pic18/PIC18CodeGen.h
+        src/compiler/backend/targets/pic18/PIC18Peephole.cpp
+        src/compiler/backend/targets/pic18/PIC18Peephole.h
         src/compiler/backend/targets/avr/AVRCodeGen.cpp
         src/compiler/backend/targets/avr/AVRCodeGen.h
         src/compiler/backend/targets/avr/AVRPeephole.cpp
@@ -88,6 +92,7 @@ add_executable(tests
         tests/unit/test_peephole.cpp
         tests/unit/test_optimizer_advanced.cpp
         tests/unit/test_avr_codegen.cpp
+        tests/unit/test_pic18_codegen.cpp
 )
 target_link_libraries(tests PRIVATE
         core
