@@ -82,7 +82,7 @@ std::vector<PIC18AsmLine> PIC18Peephole::optimize(const std::vector<PIC18AsmLine
                 }
                 w_lit = current.op1;
                 w_var.reset();
-            } else if (current.mnemonic == "MOVF" && current.op2 == "W" && (current.op3 == "0" || current.op3 == "ACCESS")) {
+            } else if (current.mnemonic == "MOVF" && current.op2 == "W") {
                 if (w_var && *w_var == current.op1) {
                     changed = true;
                     continue;

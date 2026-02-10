@@ -232,17 +232,26 @@ void PIC18CodeGen::compile_variant(const tacky::Unary& arg) {
 }
 
 void PIC18CodeGen::compile_variant(const tacky::Binary& arg) {
-    // Optimization for Mul if one operand is literal
+    // Rewriting Binary to be more robust
     if (arg.op == tacky::BinaryOp::Mul) {
-        if (const auto c1 = std::get_if<tacky::Constant>(&arg.src1)) {
-            load_into_w(arg.src2);
-            emit("MULWF", "WREG"); // This assumes src1 value is in W
-            // Wait, load_into_w(arg.src2) loads src2 into W.
-            // Then we need src1 constant in W for MULWF? No, MULWF multiplies f * W.
-            // If we want W * constant, we need to load constant into W and then MULWF f.
+        if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+            load_into_w(arg.src1);
+            emit("MOVLW", std::format("0x{:02X}", c2->value & 0xFF));
+            emit("MULWF", "WREG"); 
+            emit("MOVF", "PRODL", "W", "ACCESS");
+            store_w_into(arg.dst);
+            return;
+        } else {
+            load_into_w(arg.src1);
+            std::string right = resolve_address(arg.src2);
+            select_bank(right);
+            emit("MULWF", right, get_access_mode(right));
+            emit("MOVF", "PRODL", "W", "ACCESS");
+            store_w_into(arg.dst);
+            return;
         }
     }
-    // Rewriting Binary to be more robust
+
     load_into_w(arg.src1);
     std::string right = resolve_address(arg.src2);
     
@@ -262,36 +271,165 @@ void PIC18CodeGen::compile_variant(const tacky::Binary& arg) {
             } else {
                 // W = src1 - src2
                 // PIC SUBWF f, d: f - W -> d
-                // We have src1 in W. We need src1 - src2.
-                // If we do SUBWF src2, W: src2 - src1 -> W. This is -(src1 - src2).
-                // Correct way:
-                // load src1 into W
-                // SUBWF src2, W -> src2 - src1 in W
-                // then Negate W. Or swap:
-                // load src2 into W
-                // SUBWF src1, W -> src1 - src2 in W
+                // We want W = src1 - src2
                 load_into_w(arg.src2);
                 std::string left = resolve_address(arg.src1);
                 select_bank(left);
                 emit("SUBWF", left, "W", get_access_mode(left));
             }
             break;
-        case tacky::BinaryOp::Mul:
+        case tacky::BinaryOp::BitAnd:
             if (std::holds_alternative<tacky::Constant>(arg.src2)) {
-                // W already has src1
-                emit("MULWF", "WREG"); // Invalid, MULWF needs a file register
-                // Actually we should just use the f * W form
-                std::string left_addr = resolve_address(arg.src1);
-                emit("MOVLW", right);
-                select_bank(left_addr);
-                emit("MULWF", left_addr, get_access_mode(left_addr));
+                emit("ANDLW", right);
             } else {
-                // W has src1
                 select_bank(right);
-                emit("MULWF", right, get_access_mode(right));
+                emit("ANDWF", right, "W", get_access_mode(right));
             }
-            emit("MOVF", "PRODL", "W", "ACCESS");
             break;
+        case tacky::BinaryOp::BitOr:
+            if (std::holds_alternative<tacky::Constant>(arg.src2)) {
+                emit("IORLW", right);
+            } else {
+                select_bank(right);
+                emit("IORWF", right, "W", get_access_mode(right));
+            }
+            break;
+        case tacky::BinaryOp::BitXor:
+            if (std::holds_alternative<tacky::Constant>(arg.src2)) {
+                emit("XORLW", right);
+            } else {
+                select_bank(right);
+                emit("XORWF", right, "W", get_access_mode(right));
+            }
+            break;
+        case tacky::BinaryOp::LShift:
+            if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+                int amount = c2->value & 0x07;
+                for (int i = 0; i < amount; ++i) {
+                    emit("BCF", "STATUS", "C", "ACCESS");
+                    emit("RLCF", "WREG", "F", "ACCESS");
+                }
+            } else {
+                // Dynamic shift (loop)
+                std::string lbl_loop = make_label("shift_loop");
+                std::string lbl_end = make_label("shift_end");
+                load_into_w(arg.src2);
+                emit("BZ", lbl_end);
+                std::string count = get_or_alloc_variable(make_label("shift_count"));
+                emit("MOVWF", count, "ACCESS");
+                load_into_w(arg.src1);
+                emit_label(lbl_loop);
+                emit("BCF", "STATUS", "C", "ACCESS");
+                emit("RLCF", "WREG", "F", "ACCESS");
+                emit("DECFSZ", count, "F", "ACCESS");
+                emit("BRA", lbl_loop);
+                emit_label(lbl_end);
+            }
+            break;
+        case tacky::BinaryOp::RShift:
+            if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+                int amount = c2->value & 0x07;
+                for (int i = 0; i < amount; ++i) {
+                    emit("BCF", "STATUS", "C", "ACCESS");
+                    emit("RRCF", "WREG", "F", "ACCESS");
+                }
+            } else {
+                std::string lbl_loop = make_label("shift_loop");
+                std::string lbl_end = make_label("shift_end");
+                load_into_w(arg.src2);
+                emit("BZ", lbl_end);
+                std::string count = get_or_alloc_variable(make_label("shift_count"));
+                emit("MOVWF", count, "ACCESS");
+                load_into_w(arg.src1);
+                emit_label(lbl_loop);
+                emit("BCF", "STATUS", "C", "ACCESS");
+                emit("RRCF", "WREG", "F", "ACCESS");
+                emit("DECFSZ", count, "F", "ACCESS");
+                emit("BRA", lbl_loop);
+                emit_label(lbl_end);
+            }
+            break;
+        case tacky::BinaryOp::Div:
+        case tacky::BinaryOp::Mod: {
+            // Simple iterative division/modulo
+            // result = src1 / src2, remainder = src1 % src2
+            std::string quot = get_or_alloc_variable(make_label("div_quot"));
+            std::string rem = get_or_alloc_variable(make_label("div_rem"));
+            std::string divisor = get_or_alloc_variable(make_label("div_divisor"));
+            
+            std::string lbl_loop = make_label("div_loop");
+            std::string lbl_end = make_label("div_end");
+            
+            load_into_w(arg.src2);
+            emit("MOVWF", divisor, "ACCESS");
+            load_into_w(arg.src1);
+            emit("MOVWF", rem, "ACCESS");
+            emit("CLRF", quot, "ACCESS");
+            
+            emit_label(lbl_loop);
+            emit("MOVF", divisor, "W", "ACCESS");
+            emit("SUBWF", rem, "W", "ACCESS");
+            emit("BN", lbl_end); // if rem < divisor, break
+            
+            emit("MOVWF", rem, "ACCESS"); // rem = rem - divisor
+            emit("INCF", quot, "F", "ACCESS");
+            emit("BRA", lbl_loop);
+            
+            emit_label(lbl_end);
+            if (arg.op == tacky::BinaryOp::Div) {
+                emit("MOVF", quot, "W", "ACCESS");
+            } else {
+                emit("MOVF", rem, "W", "ACCESS");
+            }
+            break;
+        }
+        case tacky::BinaryOp::Equal:
+        case tacky::BinaryOp::NotEqual:
+        case tacky::BinaryOp::LessThan:
+        case tacky::BinaryOp::LessEqual:
+        case tacky::BinaryOp::GreaterThan:
+        case tacky::BinaryOp::GreaterEqual: {
+            load_into_w(arg.src2);
+            std::string left = resolve_address(arg.src1);
+            select_bank(left);
+            
+            // W = src1 - src2
+            emit("SUBWF", left, "W", get_access_mode(left)); 
+            emit("CLRF", "WREG");
+            
+            std::string lbl_comp_false = make_label("comp_false");
+            std::string lbl_comp_true = make_label("comp_true");
+
+            switch (arg.op) {
+                case tacky::BinaryOp::Equal:      emit("BTFSC", "STATUS", "Z", "ACCESS"); break;
+                case tacky::BinaryOp::NotEqual:   emit("BTFSS", "STATUS", "Z", "ACCESS"); break;
+                case tacky::BinaryOp::LessThan:   emit("BTFSS", "STATUS", "C", "ACCESS"); break;
+                case tacky::BinaryOp::GreaterEqual: emit("BTFSC", "STATUS", "C", "ACCESS"); break;
+                case tacky::BinaryOp::GreaterThan: {
+                    // C=1 and Z=0
+                    emit("BTFSS", "STATUS", "C", "ACCESS");
+                    emit("BRA", lbl_comp_false);
+                    emit("BTFSS", "STATUS", "Z", "ACCESS");
+                    emit("MOVLW", "1");
+                    goto comp_done;
+                }
+                case tacky::BinaryOp::LessEqual: {
+                    // C=0 or Z=1
+                    emit("BTFSC", "STATUS", "Z", "ACCESS");
+                    emit("BRA", lbl_comp_true);
+                    emit("BTFSC", "STATUS", "C", "ACCESS");
+                    emit("BRA", lbl_comp_false);
+                    emit_label(lbl_comp_true);
+                    emit("MOVLW", "1");
+                    goto comp_done;
+                }
+                default: break;
+            }
+            emit("MOVLW", "1");
+            emit_label(lbl_comp_false);
+            comp_done:;
+            break;
+        }
         default:
             break;
     }
