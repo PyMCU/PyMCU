@@ -22,6 +22,8 @@ private:
     int label_counter = 0;
     std::map<std::string, SymbolInfo> globals;
     std::map<std::string, std::string> function_return_types;
+    std::map<std::string, std::vector<std::string>> function_params;
+    std::string current_function;
 
     struct LoopLabels {
         std::string continue_label;

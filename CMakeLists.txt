@@ -90,6 +90,7 @@ add_executable(tests
         tests/unit/test_ir_generator.cpp
         tests/unit/test_codegen.cpp
         tests/unit/test_optimizer.cpp
+        tests/unit/test_arguments.cpp
 )
 target_link_libraries(tests PRIVATE
         core

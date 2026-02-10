@@ -4,21 +4,21 @@
 	__CONFIG _FOSC_HS & _WDTE_OFF & _PWRTE_ON & _CP_OFF
 ; --- Compiled Stack (Overlays) ---
 	UDATA_SHR
-_stack_base RES 12
+_stack_base RES 13
 
 ; --- Variable Offsets ---
-count EQU _stack_base + 6
-duty EQU _stack_base + 0
-going_up EQU _stack_base + 1
-inner EQU _stack_base + 7
-tmp.0 EQU _stack_base + 8
-tmp.1 EQU _stack_base + 9
-tmp.2 EQU _stack_base + 10
-tmp.3 EQU _stack_base + 11
-tmp.4 EQU _stack_base + 2
-tmp.5 EQU _stack_base + 3
-tmp.6 EQU _stack_base + 4
-tmp.7 EQU _stack_base + 5
+delay_soft.count EQU _stack_base + 7
+delay_soft.inner EQU _stack_base + 8
+main.duty EQU _stack_base + 1
+main.going_up EQU _stack_base + 2
+tmp.0 EQU _stack_base + 9
+tmp.1 EQU _stack_base + 10
+tmp.2 EQU _stack_base + 11
+tmp.3 EQU _stack_base + 12
+tmp.4 EQU _stack_base + 3
+tmp.5 EQU _stack_base + 4
+tmp.6 EQU _stack_base + 5
+tmp.7 EQU _stack_base + 6
 
 ; --- Code ---
 	ORG 0x00
@@ -28,7 +28,7 @@ tmp.7 EQU _stack_base + 5
 delay_soft:
 L.0:
 	MOVLW	0x00
-	SUBWF	count, W
+	SUBWF	delay_soft.count, W
 	CLRF	tmp.0
 	BTFSC	STATUS, 0
 	INCF	tmp.0, F
@@ -37,10 +37,10 @@ L.0:
 	BTFSC	STATUS, 2
 	GOTO	L.1
 	MOVLW	0x00
-	MOVWF	inner
+	MOVWF	delay_soft.inner
 L.2:
 	MOVLW	0x32
-	SUBWF	inner, W
+	SUBWF	delay_soft.inner, W
 	CLRF	tmp.1
 	BTFSS	STATUS, 0
 	INCF	tmp.1, F
@@ -48,18 +48,18 @@ L.2:
 	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.3
-	MOVF	inner, W
+	MOVF	delay_soft.inner, W
 	ADDLW	0x01
 	MOVWF	tmp.2
 	MOVF	tmp.2, W
-	MOVWF	inner
+	MOVWF	delay_soft.inner
 	GOTO	L.2
 L.3:
-	MOVF	count, W
+	MOVF	delay_soft.count, W
 	ADDLW	0xFF
 	MOVWF	tmp.3
 	MOVF	tmp.3, W
-	MOVWF	count
+	MOVWF	delay_soft.count
 	GOTO	L.0
 L.1:
 	MOVLW	0x00
@@ -77,23 +77,23 @@ main:
 	BSF	0x12, 1
 	BSF	0x12, 2
 	MOVLW	0x00
-	MOVWF	duty
+	MOVWF	main.duty
 	MOVLW	0x01
-	MOVWF	going_up
+	MOVWF	main.going_up
 L.4:
-	MOVF	duty, W
+	MOVF	main.duty, W
 	MOVWF	0x15
-	MOVF	going_up, W
+	MOVF	main.going_up, W
 	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.6
-	MOVF	duty, W
+	MOVF	main.duty, W
 	ADDLW	0x01
 	MOVWF	tmp.4
 	MOVF	tmp.4, W
-	MOVWF	duty
+	MOVWF	main.duty
 	MOVLW	0xFA
-	SUBWF	duty, W
+	SUBWF	main.duty, W
 	CLRF	tmp.5
 	BTFSC	STATUS, 0
 	INCF	tmp.5, F
@@ -102,19 +102,19 @@ L.4:
 	BTFSC	STATUS, 2
 	GOTO	L.8
 	MOVLW	0x00
-	MOVWF	going_up
+	MOVWF	main.going_up
 	GOTO	L.9
 L.8:
 L.9:
 	GOTO	L.7
 L.6:
-	MOVF	duty, W
+	MOVF	main.duty, W
 	ADDLW	0xFF
 	MOVWF	tmp.6
 	MOVF	tmp.6, W
-	MOVWF	duty
+	MOVWF	main.duty
 	MOVLW	0x00
-	SUBWF	duty, W
+	SUBWF	main.duty, W
 	CLRF	tmp.7
 	BTFSS	STATUS, 0
 	INCF	tmp.7, F
@@ -123,11 +123,13 @@ L.6:
 	BTFSC	STATUS, 2
 	GOTO	L.10
 	MOVLW	0x01
-	MOVWF	going_up
+	MOVWF	main.going_up
 	GOTO	L.11
 L.10:
 L.11:
 L.7:
+	MOVLW	0x02
+	MOVWF	delay_soft.count
 	CALL	delay_soft
 	GOTO	L.4
 L.5:

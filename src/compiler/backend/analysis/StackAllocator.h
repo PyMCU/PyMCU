@@ -28,6 +28,7 @@ private:
 
     std::map<std::string, FunctionNode> call_graph;
     std::map<std::string, int> offsets;
+    std::map<std::string, int> offsets_base;
     int max_stack_usage = 0;
 
     void build_graph(const tacky::Program& program);

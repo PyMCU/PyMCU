@@ -19,6 +19,7 @@ tacky::Program IRGenerator::generate(const Program& main_ast, const std::vector<
     tacky::Program ir_program;
     globals.clear();
     function_return_types.clear();
+    function_params.clear();
 
     for (const auto* mod : imported_modules) {
         scan_globals(*mod);
@@ -45,7 +46,7 @@ tacky::Val IRGenerator::resolve_binding(const std::string& name) {
         }
     }
 
-    return tacky::Variable{name};
+    return tacky::Variable{current_function + "." + name};
 }
 
 void IRGenerator::scan_globals(const Program& ast) {
@@ -68,6 +69,11 @@ void IRGenerator::scan_globals(const Program& ast) {
 void IRGenerator::scan_functions(const Program& ast) {
     for (const auto& func : ast.functions) {
         function_return_types[func->name] = func->return_type;
+        std::vector<std::string> params;
+        for (const auto& p : func->params) {
+            params.push_back(p.name);
+        }
+        function_params[func->name] = params;
     }
 }
 
@@ -88,12 +94,13 @@ int IRGenerator::evaluate_constant_expr(const Expression* expr) {
 tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
     tacky::Function ir_func;
     ir_func.name = funcNode->name;
+    current_function = funcNode->name;
 
     current_instructions.clear();
     loop_stack.clear();
 
     for(const auto&[name, type] : funcNode->params) {
-        ir_func.params.push_back(name);
+        ir_func.params.push_back(current_function + "." + name);
     }
 
     visitBlock(funcNode->body.get());
@@ -329,6 +336,18 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr* expr) {
 tacky::Val IRGenerator::visitCall(const CallExpr* expr) {
     tacky::Call callInstr;
     callInstr.function_name = expr->callee;
+
+    if (function_params.contains(expr->callee)) {
+        const auto& param_names = function_params[expr->callee];
+        if (expr->args.size() != param_names.size()) {
+            throw std::runtime_error(std::format("Function '{}' expects {} arguments, but {} were provided",
+                                               expr->callee, param_names.size(), expr->args.size()));
+        }
+        for (size_t i = 0; i < expr->args.size(); ++i) {
+            tacky::Val arg_val = visitExpression(expr->args[i].get());
+            emit(tacky::Copy{arg_val, tacky::Variable{expr->callee + "." + param_names[i]}});
+        }
+    }
 
     for (const auto& arg : expr->args) {
         callInstr.args.push_back(visitExpression(arg.get()));

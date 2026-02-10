@@ -4,6 +4,7 @@
 
 std::pair<std::map<std::string, int>, int> StackAllocator::allocate(const tacky::Program& program) {
     offsets.clear();
+    offsets_base.clear();
     call_graph.clear();
     max_stack_usage = 0;
 
@@ -21,6 +22,11 @@ void StackAllocator::build_graph(const tacky::Program& program) {
     for (const auto& func : program.functions) {
         FunctionNode& node = call_graph[func.name];
         node.name = func.name;
+
+        // Register parameters as locals
+        for (const auto& param : func.params) {
+            node.locals.insert(param);
+        }
 
         // Lambda auxiliar para registrar variables usadas en instrucciones
         auto register_var = [&](const tacky::Val& val) {
@@ -87,6 +93,32 @@ void StackAllocator::calculate_offsets(const std::string& func_name, int current
     // Evitar ciclos infinitos en recursión (prohibida en este modelo estático)
     if (node.visited) return;
     node.visited = true;
+
+    // We want the function to be at the deepest possible base among all callers
+    // However, for simplicity in this first implementation, we can just ensure 
+    // that if it's already been assigned an offset, we only update if the new base is deeper.
+    // Wait, the current offsets are per-variable.
+    
+    bool already_assigned = false;
+    if (!node.locals.empty()) {
+        const std::string& first_var = *node.locals.begin();
+        if (offsets.contains(first_var)) {
+            already_assigned = true;
+            if (current_base <= offsets_base[func_name]) {
+                // Already at a deeper or same level, no need to re-calculate for this path
+                node.visited = false;
+                return;
+            }
+        }
+    } else if (offsets_base.contains(func_name)) {
+        already_assigned = true;
+        if (current_base <= offsets_base[func_name]) {
+            node.visited = false;
+            return;
+        }
+    }
+
+    offsets_base[func_name] = current_base;
 
     // 1. Asignar offsets a las variables locales de ESTA función
     int local_offset = 0;
