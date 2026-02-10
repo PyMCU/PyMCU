@@ -14,7 +14,9 @@ tacky::Program Optimizer::optimize(const tacky::Program& program) {
 
 void Optimizer::optimize_function(tacky::Function& func) {
     for (int i = 0; i < 10; ++i) { // Fixed number of passes for simplicity
+        propagate_copies(func);
         fold_constants(func);
+        coalesce_instructions(func);
         eliminate_dead_code(func);
     }
 }
@@ -27,56 +29,7 @@ static std::optional<int> get_constant(const tacky::Val& val) {
 }
 
 void Optimizer::fold_constants(tacky::Function& func) {
-    std::map<std::string, int> temp_constants;
-
     for (auto& instr : func.body) {
-        // Constant Propagation for Temporaries
-        std::visit([&](auto&& arg) {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (requires { arg.src; }) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.src)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.src = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-            if constexpr (requires { arg.src1; }) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.src1)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.src1 = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-            if constexpr (requires { arg.src2; }) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.src2)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.src2 = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-            if constexpr (std::is_same_v<T, tacky::Return>) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.value)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.value = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-            if constexpr (std::is_same_v<T, tacky::JumpIfZero>) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.condition)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.condition = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-            if constexpr (std::is_same_v<T, tacky::JumpIfNotZero>) {
-                if (auto t = std::get_if<tacky::Temporary>(&arg.condition)) {
-                    if (temp_constants.contains(t->name)) {
-                        arg.condition = tacky::Constant{temp_constants[t->name]};
-                    }
-                }
-            }
-        }, instr);
-
         if (auto* binary = std::get_if<tacky::Binary>(&instr)) {
             auto c1 = get_constant(binary->src1);
             auto c2 = get_constant(binary->src2);
@@ -104,9 +57,6 @@ void Optimizer::fold_constants(tacky::Function& func) {
                 }
                 if (foldable) {
                     instr = tacky::Copy{tacky::Constant{result}, binary->dst};
-                    if (auto t = std::get_if<tacky::Temporary>(&binary->dst)) {
-                        temp_constants[t->name] = result;
-                    }
                 }
             }
         } else if (auto* unary = std::get_if<tacky::Unary>(&instr)) {
@@ -122,15 +72,6 @@ void Optimizer::fold_constants(tacky::Function& func) {
                 }
                 if (foldable) {
                     instr = tacky::Copy{tacky::Constant{result}, unary->dst};
-                    if (auto t = std::get_if<tacky::Temporary>(&unary->dst)) {
-                        temp_constants[t->name] = result;
-                    }
-                }
-            }
-        } else if (auto* copy = std::get_if<tacky::Copy>(&instr)) {
-            if (auto src_c = get_constant(copy->src)) {
-                if (auto t = std::get_if<tacky::Temporary>(&copy->dst)) {
-                    temp_constants[t->name] = *src_c;
                 }
             }
         }
@@ -194,4 +135,117 @@ void Optimizer::eliminate_dead_code(tacky::Function& func) {
     };
 
     func.body.erase(std::remove_if(func.body.begin(), func.body.end(), is_dead), func.body.end());
+}
+
+void Optimizer::propagate_copies(tacky::Function& func) {
+    std::map<std::string, tacky::Val> temp_copies;
+
+    for (auto& instr : func.body) {
+        // 1. Substitute uses of temporaries
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            auto replace_val = [&](tacky::Val& v) {
+                if (auto t = std::get_if<tacky::Temporary>(&v)) {
+                    if (temp_copies.contains(t->name)) {
+                        v = temp_copies[t->name];
+                    }
+                }
+            };
+
+            if constexpr (std::is_same_v<T, tacky::Return>) replace_val(arg.value);
+            else if constexpr (std::is_same_v<T, tacky::Unary>) replace_val(arg.src);
+            else if constexpr (std::is_same_v<T, tacky::Binary>) {
+                replace_val(arg.src1);
+                replace_val(arg.src2);
+            }
+            else if constexpr (std::is_same_v<T, tacky::Copy>) replace_val(arg.src);
+            else if constexpr (std::is_same_v<T, tacky::JumpIfZero>) replace_val(arg.condition);
+            else if constexpr (std::is_same_v<T, tacky::JumpIfNotZero>) replace_val(arg.condition);
+            else if constexpr (std::is_same_v<T, tacky::Call>) {
+                for (auto& v : arg.args) replace_val(v);
+            }
+            else if constexpr (std::is_same_v<T, tacky::BitCheck>) replace_val(arg.source);
+            else if constexpr (std::is_same_v<T, tacky::BitWrite>) {
+                replace_val(arg.src);
+                replace_val(arg.target);
+            }
+            else if constexpr (std::is_same_v<T, tacky::BitSet>) replace_val(arg.target);
+            else if constexpr (std::is_same_v<T, tacky::BitClear>) replace_val(arg.target);
+        }, instr);
+
+        // 2. Track new copies to temporaries
+        if (auto* copy = std::get_if<tacky::Copy>(&instr)) {
+            if (auto t_dst = std::get_if<tacky::Temporary>(&copy->dst)) {
+                temp_copies[t_dst->name] = copy->src;
+            }
+        }
+    }
+}
+
+void Optimizer::coalesce_instructions(tacky::Function& func) {
+    std::map<std::string, int> use_count;
+    auto register_use = [&](const tacky::Val& v) {
+        if (auto t = std::get_if<tacky::Temporary>(&v)) {
+            use_count[t->name]++;
+        }
+    };
+
+    for (const auto& instr : func.body) {
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, tacky::Return>) register_use(arg.value);
+            else if constexpr (std::is_same_v<T, tacky::Unary>) register_use(arg.src);
+            else if constexpr (std::is_same_v<T, tacky::Binary>) {
+                register_use(arg.src1);
+                register_use(arg.src2);
+            }
+            else if constexpr (std::is_same_v<T, tacky::Copy>) register_use(arg.src);
+            else if constexpr (std::is_same_v<T, tacky::JumpIfZero>) register_use(arg.condition);
+            else if constexpr (std::is_same_v<T, tacky::JumpIfNotZero>) register_use(arg.condition);
+            else if constexpr (std::is_same_v<T, tacky::Call>) {
+                for (const auto& v : arg.args) register_use(v);
+            }
+            else if constexpr (std::is_same_v<T, tacky::BitCheck>) register_use(arg.source);
+            else if constexpr (std::is_same_v<T, tacky::BitWrite>) {
+                register_use(arg.src);
+                register_use(arg.target);
+            }
+            else if constexpr (std::is_same_v<T, tacky::BitSet>) register_use(arg.target);
+            else if constexpr (std::is_same_v<T, tacky::BitClear>) register_use(arg.target);
+        }, instr);
+    }
+
+    std::vector<tacky::Instruction> new_body;
+    for (size_t i = 0; i < func.body.size(); ++i) {
+        if (i + 1 < func.body.size()) {
+            auto* next_copy = std::get_if<tacky::Copy>(&func.body[i+1]);
+            if (next_copy) {
+                if (auto t_src = std::get_if<tacky::Temporary>(&next_copy->src)) {
+                    if (use_count[t_src->name] == 1) {
+                        tacky::Instruction current = func.body[i];
+                        bool coalesced = std::visit([&](auto&& arg) -> bool {
+                            using T = std::decay_t<decltype(arg)>;
+                            if constexpr (requires { arg.dst; }) {
+                                if (auto t_dst = std::get_if<tacky::Temporary>(&arg.dst)) {
+                                    if (t_dst->name == t_src->name) {
+                                        arg.dst = next_copy->dst;
+                                        return true;
+                                    }
+                                }
+                            }
+                            return false;
+                        }, current);
+                        
+                        if (coalesced) {
+                            new_body.push_back(current);
+                            i++; // skip the copy
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        new_body.push_back(func.body[i]);
+    }
+    func.body = new_body;
 }

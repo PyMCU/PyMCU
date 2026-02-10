@@ -108,6 +108,58 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
         for (size_t i = 0; i < result.size(); ++i) {
             auto& current = result[i];
 
+            // --- Comparison to Jump Optimization ---
+            if (current.type == PIC14AsmLine::INSTRUCTION && current.mnemonic == "CLRF" && current.op1.starts_with("tmp.")) {
+                std::string tmp_reg = current.op1;
+                size_t j = i + 1;
+                auto skip = [&]() {
+                    while (j < result.size() && (result[j].type == PIC14AsmLine::COMMENT || result[j].type == PIC14AsmLine::EMPTY)) j++;
+                };
+                
+                skip();
+                if (j < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+                    (result[j].mnemonic == "BTFSS" || result[j].mnemonic == "BTFSC") &&
+                    result[j].op1 == "STATUS") {
+                    
+                    PIC14AsmLine i1 = result[j++];
+                    skip();
+                    if (j < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+                        result[j].mnemonic == "INCF" && result[j].op1 == tmp_reg && result[j].op2 == "F") {
+                        
+                        j++;
+                        skip();
+                        if (j < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+                            result[j].mnemonic == "MOVF" && result[j].op1 == tmp_reg && result[j].op2 == "W") {
+                            
+                            j++;
+                            skip();
+                            if (j < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+                                result[j].mnemonic == "IORLW" && result[j].op1 == "0") {
+                                j++;
+                                skip();
+                            }
+                            
+                            if (j + 1 < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+                                (result[j].mnemonic == "BTFSS" || result[j].mnemonic == "BTFSC") &&
+                                result[j].op1 == "STATUS" && result[j].op2 == "2" &&
+                                result[j+1].type == PIC14AsmLine::INSTRUCTION &&
+                                result[j+1].mnemonic == "GOTO") {
+                                
+                                bool bit_is_sc = (i1.mnemonic == "BTFSC");
+                                bool z_is_sc = (result[j].mnemonic == "BTFSC");
+                                std::string new_mnemonic = (bit_is_sc == z_is_sc) ? "BTFSS" : "BTFSC";
+                                
+                                next.push_back(PIC14AsmLine::Instruction(new_mnemonic, "STATUS", i1.op2));
+                                next.push_back(result[j+1]);
+                                i = j + 1;
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
             if (current.type == PIC14AsmLine::LABEL) {
                 if (!used_labels.contains(current.label) && 
                     (current.label.starts_with("L.") || current.label.starts_with("L_"))) {

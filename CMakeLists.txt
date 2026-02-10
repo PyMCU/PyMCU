@@ -94,6 +94,7 @@ add_executable(tests
         tests/unit/test_optimizer.cpp
         tests/unit/test_arguments.cpp
         tests/unit/test_peephole.cpp
+        tests/unit/test_optimizer_advanced.cpp
 )
 target_link_libraries(tests PRIVATE
         core

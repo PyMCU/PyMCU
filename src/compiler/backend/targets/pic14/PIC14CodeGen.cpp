@@ -46,8 +46,8 @@ void PIC14CodeGen::select_bank(const std::string& operand) {
             const int new_bank = (addr >> 7) & 0x03;
             if (current_bank == new_bank) return;
 
-            if (new_bank & 1) emit("BSF", "STATUS, 5"); else emit("BCF", "STATUS, 5"); // RP0
-            if (new_bank & 2) emit("BSF", "STATUS, 6"); else emit("BCF", "STATUS, 6"); // RP1
+            if (new_bank & 1) emit("BSF", "STATUS", "5"); else emit("BCF", "STATUS", "5"); // RP0
+            if (new_bank & 2) emit("BSF", "STATUS", "6"); else emit("BCF", "STATUS", "6"); // RP1
             current_bank = new_bank;
         }
     } catch (...) {
@@ -236,15 +236,15 @@ void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
     emit("CLRF", dst_addr);
 
     switch(arg.op) {
-        case tacky::BinaryOp::Equal:      emit("BTFSC", "STATUS, 2"); break;
-        case tacky::BinaryOp::NotEqual:   emit("BTFSS", "STATUS, 2"); break;
-        case tacky::BinaryOp::LessThan:   emit("BTFSS", "STATUS, 0"); break;
-        case tacky::BinaryOp::GreaterEqual: emit("BTFSC", "STATUS, 0"); break;
+        case tacky::BinaryOp::Equal:      emit("BTFSC", "STATUS", "2"); break;
+        case tacky::BinaryOp::NotEqual:   emit("BTFSS", "STATUS", "2"); break;
+        case tacky::BinaryOp::LessThan:   emit("BTFSS", "STATUS", "0"); break;
+        case tacky::BinaryOp::GreaterEqual: emit("BTFSC", "STATUS", "0"); break;
         case tacky::BinaryOp::GreaterThan: {
             std::string lbl_skip = make_label("L_GT");
-            emit("BTFSS", "STATUS, 0");
+            emit("BTFSS", "STATUS", "0");
             emit("GOTO", lbl_skip);
-            emit("BTFSC", "STATUS, 2");
+            emit("BTFSC", "STATUS", "2");
             emit("GOTO", lbl_skip);
             emit("INCF", dst_addr, "F");
             emit_label(lbl_skip);
@@ -253,9 +253,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
         case tacky::BinaryOp::LessEqual: {
             std::string lbl_set = make_label("L_LE");
             std::string lbl_skip = make_label("L_LES");
-            emit("BTFSS", "STATUS, 0");
+            emit("BTFSS", "STATUS", "0");
             emit("GOTO", lbl_set);
-            emit("BTFSS", "STATUS, 2");
+            emit("BTFSS", "STATUS", "2");
             emit("GOTO", lbl_skip);
             emit_label(lbl_set);
             emit("INCF", dst_addr, "F");
@@ -315,7 +315,7 @@ void PIC14CodeGen::compile_variant(const tacky::BitWrite& arg) {
     std::string lbl_zero = make_label("L_BZ");
     std::string lbl_end = make_label("L_BE");
 
-    emit("BTFSC", "STATUS, 2"); // Skip if not zero
+    emit("BTFSC", "STATUS", "2"); // Skip if not zero
     emit("GOTO", lbl_zero);
 
     select_bank(addr);
@@ -341,7 +341,7 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfZero& arg) {
     }
     load_into_w(arg.condition);
     emit("IORLW", "0");
-    emit("BTFSC", "STATUS, 2");
+    emit("BTFSC", "STATUS", "2");
     emit("GOTO", arg.target);
 }
 
@@ -354,7 +354,7 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfNotZero& arg) {
     }
     load_into_w(arg.condition);
     emit("IORLW", "0");
-    emit("BTFSS", "STATUS, 2");
+    emit("BTFSS", "STATUS", "2");
     emit("GOTO", arg.target);
 }
 

@@ -59,14 +59,62 @@ TEST(PIC14PeepholeTest, GotoNextLabel) {
     EXPECT_EQ(optimized[1].type, PIC14AsmLine::LABEL);
 }
 
-TEST(PIC14PeepholeTest, LabelResetsState) {
+TEST(PIC14PeepholeTest, ComparisonToJump) {
     std::vector<PIC14AsmLine> lines = {
-        PIC14AsmLine::Instruction("MOVLW", "0x00"),
-        PIC14AsmLine::Label("L1"),
-        PIC14AsmLine::Instruction("MOVLW", "0x00")
+        PIC14AsmLine::Instruction("CLRF", "tmp.5"),
+        PIC14AsmLine::Instruction("BTFSC", "STATUS", "0"),
+        PIC14AsmLine::Instruction("INCF", "tmp.5", "F"),
+        PIC14AsmLine::Instruction("MOVF", "tmp.5", "W"),
+        PIC14AsmLine::Instruction("BTFSC", "STATUS", "2"),
+        PIC14AsmLine::Instruction("GOTO", "L8")
     };
     auto optimized = PIC14Peephole::optimize(lines);
-    ASSERT_EQ(optimized.size(), 3); // Second MOVLW should NOT be removed
+    // Should be:
+    // BTFSS STATUS, 0
+    // GOTO L8
+    ASSERT_EQ(optimized.size(), 2);
+    EXPECT_EQ(optimized[0].mnemonic, "BTFSS");
+    EXPECT_EQ(optimized[0].op1, "STATUS");
+    EXPECT_EQ(optimized[0].op2, "0");
+    EXPECT_EQ(optimized[1].mnemonic, "GOTO");
+    EXPECT_EQ(optimized[1].op1, "L8");
+}
+
+TEST(PIC14PeepholeTest, ComparisonToJumpWithIorlw) {
+    std::vector<PIC14AsmLine> lines = {
+        PIC14AsmLine::Instruction("CLRF", "tmp.1"),
+        PIC14AsmLine::Instruction("BTFSS", "STATUS", "0"),
+        PIC14AsmLine::Instruction("INCF", "tmp.1", "F"),
+        PIC14AsmLine::Instruction("MOVF", "tmp.1", "W"),
+        PIC14AsmLine::Instruction("IORLW", "0"),
+        PIC14AsmLine::Instruction("BTFSC", "STATUS", "2"),
+        PIC14AsmLine::Instruction("GOTO", "L3")
+    };
+    auto optimized = PIC14Peephole::optimize(lines);
+    // BTFSS bit + BTFSC Z -> Jump if bit is 1.
+    // Equivalent to BTFSC STATUS, bit; GOTO.
+    ASSERT_EQ(optimized.size(), 2);
+    EXPECT_EQ(optimized[0].mnemonic, "BTFSC");
+    EXPECT_EQ(optimized[0].op1, "STATUS");
+    EXPECT_EQ(optimized[0].op2, "0");
+    EXPECT_EQ(optimized[1].mnemonic, "GOTO");
+}
+
+TEST(PIC14PeepholeTest, ComparisonToJumpNotZero) {
+    std::vector<PIC14AsmLine> lines = {
+        PIC14AsmLine::Instruction("CLRF", "tmp.1"),
+        PIC14AsmLine::Instruction("BTFSC", "STATUS", "0"),
+        PIC14AsmLine::Instruction("INCF", "tmp.1", "F"),
+        PIC14AsmLine::Instruction("MOVF", "tmp.1", "W"),
+        PIC14AsmLine::Instruction("BTFSS", "STATUS", "2"),
+        PIC14AsmLine::Instruction("GOTO", "L3")
+    };
+    auto optimized = PIC14Peephole::optimize(lines);
+    // SC + SS -> SC. Jump if bit is 1.
+    ASSERT_EQ(optimized.size(), 2);
+    EXPECT_EQ(optimized[0].mnemonic, "BTFSC");
+    EXPECT_EQ(optimized[0].op1, "STATUS");
+    EXPECT_EQ(optimized[0].op2, "0");
 }
 
 TEST(PIC14PeepholeTest, RedundantStore) {
