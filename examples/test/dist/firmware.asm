@@ -4,82 +4,133 @@
 	__CONFIG _FOSC_HS & _WDTE_OFF & _PWRTE_ON & _CP_OFF
 ; --- Compiled Stack (Overlays) ---
 	UDATA_SHR
-_stack_base RES 3
+_stack_base RES 12
 
 ; --- Variable Offsets ---
-tmp.0 EQU _stack_base + 1
-tmp.1 EQU _stack_base + 2
-tmp.2 EQU _stack_base + 1
-tmp.3 EQU _stack_base + 2
-tmp.4 EQU _stack_base + 0
+count EQU _stack_base + 6
+duty EQU _stack_base + 0
+going_up EQU _stack_base + 1
+inner EQU _stack_base + 7
+tmp.0 EQU _stack_base + 8
+tmp.1 EQU _stack_base + 9
+tmp.2 EQU _stack_base + 10
+tmp.3 EQU _stack_base + 11
+tmp.4 EQU _stack_base + 2
+tmp.5 EQU _stack_base + 3
+tmp.6 EQU _stack_base + 4
+tmp.7 EQU _stack_base + 5
 
 ; --- Code ---
 	ORG 0x00
 	GOTO	main
 	ORG 0x04
 	RETFIE
-led_blink_1:
-	BCF	STATUS, 5
-	BCF	STATUS, 6
+delay_soft:
+L.0:
+	MOVLW	0x00
+	SUBWF	count, W
 	CLRF	tmp.0
-	BTFSC	0x06, 0
+	BTFSC	STATUS, 0
 	INCF	tmp.0, F
 	MOVF	tmp.0, W
-	XORLW	1
-	ANDLW	1
-	MOVWF	tmp.1
+	IORLW	0
+	BTFSC	STATUS, 2
+	GOTO	L.1
+	MOVLW	0x00
+	MOVWF	inner
+L.2:
+	MOVLW	0x32
+	SUBWF	inner, W
+	CLRF	tmp.1
+	BTFSS	STATUS, 0
+	INCF	tmp.1, F
 	MOVF	tmp.1, W
 	IORLW	0
 	BTFSC	STATUS, 2
-	GOTO	L_BZ_0
-	BSF	0x06, 0
-	GOTO	L_BE_1
-L_BZ_0:
-	BCF	0x06, 0
-L_BE_1:
-	MOVLW	0x00
-	RETURN
-led_blink_2:
-	BCF	STATUS, 5
-	BCF	STATUS, 6
-	CLRF	tmp.2
-	BTFSC	0x06, 4
-	INCF	tmp.2, F
+	GOTO	L.3
+	MOVF	inner, W
+	ADDLW	0x01
+	MOVWF	tmp.2
 	MOVF	tmp.2, W
-	XORLW	1
-	ANDLW	1
+	MOVWF	inner
+	GOTO	L.2
+L.3:
+	MOVF	count, W
+	ADDLW	0xFF
 	MOVWF	tmp.3
 	MOVF	tmp.3, W
-	IORLW	0
-	BTFSC	STATUS, 2
-	GOTO	L_BZ_2
-	BSF	0x06, 4
-	GOTO	L_BE_3
-L_BZ_2:
-	BCF	0x06, 4
-L_BE_3:
+	MOVWF	count
+	GOTO	L.0
+L.1:
 	MOVLW	0x00
 	RETURN
 main:
-L.0:
+	BSF	STATUS, 5
+	BCF	STATUS, 6
+	BCF	0x87, 2
+	MOVLW	0xFF
+	MOVWF	0x92
 	BCF	STATUS, 5
 	BCF	STATUS, 6
-	CLRF	tmp.4
-	BTFSC	0x07, 0
-	INCF	tmp.4, F
-	MOVF	tmp.4, W
+	BSF	0x17, 3
+	BSF	0x17, 2
+	BSF	0x12, 1
+	BSF	0x12, 2
+	MOVLW	0x00
+	MOVWF	duty
+	MOVLW	0x01
+	MOVWF	going_up
+L.4:
+	MOVF	duty, W
+	MOVWF	0x15
+	MOVF	going_up, W
 	IORLW	0
 	BTFSC	STATUS, 2
-	GOTO	L.2
+	GOTO	L.6
+	MOVF	duty, W
+	ADDLW	0x01
+	MOVWF	tmp.4
+	MOVF	tmp.4, W
+	MOVWF	duty
+	MOVLW	0xFA
+	SUBWF	duty, W
+	CLRF	tmp.5
+	BTFSC	STATUS, 0
+	INCF	tmp.5, F
+	MOVF	tmp.5, W
+	IORLW	0
+	BTFSC	STATUS, 2
+	GOTO	L.8
 	MOVLW	0x00
-	RETURN
-	GOTO	L.3
-L.2:
-L.3:
-	CALL	led_blink_1
-	CALL	led_blink_2
-	GOTO	L.0
-L.1:
+	MOVWF	going_up
+	GOTO	L.9
+L.8:
+L.9:
+	GOTO	L.7
+L.6:
+	MOVF	duty, W
+	ADDLW	0xFF
+	MOVWF	tmp.6
+	MOVF	tmp.6, W
+	MOVWF	duty
+	MOVLW	0x00
+	SUBWF	duty, W
+	CLRF	tmp.7
+	BTFSS	STATUS, 0
+	INCF	tmp.7, F
+	MOVF	tmp.7, W
+	IORLW	0
+	BTFSC	STATUS, 2
+	GOTO	L.10
+	MOVLW	0x01
+	MOVWF	going_up
+	GOTO	L.11
+L.10:
+L.11:
+L.7:
+	CALL	delay_soft
+	GOTO	L.4
+L.5:
 	MOVLW	0x00
 	RETURN
 	END

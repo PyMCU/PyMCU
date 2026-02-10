@@ -23,6 +23,12 @@ private:
     std::map<std::string, SymbolInfo> globals;
     std::map<std::string, std::string> function_return_types;
 
+    struct LoopLabels {
+        std::string continue_label;
+        std::string break_label;
+    };
+    std::vector<LoopLabels> loop_stack;
+
     tacky::Temporary make_temp();
     std::string make_label();
     void emit(const tacky::Instruction &inst);
@@ -38,6 +44,8 @@ private:
     void visitReturn(const ReturnStmt* stmt);
     void visitIf(const IfStmt* stmt);
     void visitWhile(const WhileStmt* stmt);
+    void visitBreak(const BreakStmt* stmt);
+    void visitContinue(const ContinueStmt* stmt);
     void visitAssign(const AssignStmt* stmt);
     void visitVarDecl(const VarDecl* stmt);
     void visitExprStmt(const ExprStmt* stmt);

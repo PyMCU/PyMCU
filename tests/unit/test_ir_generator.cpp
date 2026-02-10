@@ -183,3 +183,24 @@ TEST(IRGeneratorTest, IntReturnCall) {
     }
     EXPECT_TRUE(found_call_with_dest);
 }
+
+TEST(IRGeneratorTest, ContinueStatement) {
+    Lexer lexer("def main():\n    while 1:\n        continue");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    // This should not throw "Unknown Statement type"
+    EXPECT_NO_THROW(ir_gen.generate(*ast, {}));
+}
+
+TEST(IRGeneratorTest, BreakStatement) {
+    Lexer lexer("def main():\n    while 1:\n        break");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    EXPECT_NO_THROW(ir_gen.generate(*ast, {}));
+}

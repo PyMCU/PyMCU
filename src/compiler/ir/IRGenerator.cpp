@@ -32,6 +32,7 @@ tacky::Program IRGenerator::generate(const Program& main_ast, const std::vector<
         ir_program.functions.push_back(visitFunction(func_def.get()));
     }
 
+    loop_stack.clear();
     return ir_program;
 }
 
@@ -89,6 +90,7 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
     ir_func.name = funcNode->name;
 
     current_instructions.clear();
+    loop_stack.clear();
 
     for(const auto&[name, type] : funcNode->params) {
         ir_func.params.push_back(name);
@@ -116,6 +118,8 @@ void IRGenerator::visitStatement(const Statement* stmt) {
     if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt)) return visitReturn(ret);
     if (auto* ifStmt = dynamic_cast<const IfStmt*>(stmt)) return visitIf(ifStmt);
     if (auto* whileStmt = dynamic_cast<const WhileStmt*>(stmt)) return visitWhile(whileStmt);
+    if (auto* breakStmt = dynamic_cast<const BreakStmt*>(stmt)) return visitBreak(breakStmt);
+    if (auto* continueStmt = dynamic_cast<const ContinueStmt*>(stmt)) return visitContinue(continueStmt);
     if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) return visitAssign(assign);
     if (auto* decl = dynamic_cast<const VarDecl*>(stmt)) return visitVarDecl(decl);
     if (auto* exprStmt = dynamic_cast<const ExprStmt*>(stmt)) return visitExprStmt(exprStmt);
@@ -159,6 +163,8 @@ void IRGenerator::visitWhile(const WhileStmt* stmt) {
     const std::string start_label = make_label();
     const std::string end_label = make_label();
 
+    loop_stack.push_back({start_label, end_label});
+
     emit(tacky::Label{start_label});
     const tacky::Val cond = visitExpression(stmt->condition.get());
     emit(tacky::JumpIfZero{cond, end_label});
@@ -167,6 +173,22 @@ void IRGenerator::visitWhile(const WhileStmt* stmt) {
 
     emit(tacky::Jump{start_label});
     emit(tacky::Label{end_label});
+
+    loop_stack.pop_back();
+}
+
+void IRGenerator::visitBreak(const BreakStmt* stmt) {
+    if (loop_stack.empty()) {
+        throw std::runtime_error("Break statement outside of loop");
+    }
+    emit(tacky::Jump{loop_stack.back().break_label});
+}
+
+void IRGenerator::visitContinue(const ContinueStmt* stmt) {
+    if (loop_stack.empty()) {
+        throw std::runtime_error("Continue statement outside of loop");
+    }
+    emit(tacky::Jump{loop_stack.back().continue_label});
 }
 
 void IRGenerator::visitAssign(const AssignStmt* stmt) {
