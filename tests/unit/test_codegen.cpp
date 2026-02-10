@@ -96,6 +96,27 @@ TEST(PIC14CodeGenTest, BinaryOps) {
     EXPECT_NE(asm_code.find("ADDLW\t0x02"), std::string::npos);
 }
 
+TEST(PIC14CodeGenTest, ComparisonOps) {
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "f";
+    // x = (1 == 1)
+    func.body.emplace_back(tacky::Binary{tacky::BinaryOp::Equal, tacky::Constant{1}, tacky::Constant{1}, tacky::Variable{"x"}});
+    program.functions.push_back(func);
+
+    DeviceConfig config{.chip = "pic16f84a"};
+    PIC14CodeGen codegen(config);
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string asm_code = ss.str();
+    // For Equal, we want dst=1 if Z=1.
+    // CLRF x
+    // BTFSC STATUS, 2 (Skip if Z=0)
+    // INCF x, F
+    EXPECT_NE(asm_code.find("BTFSC\tSTATUS, 2"), std::string::npos);
+}
+
 TEST(PIC14CodeGenTest, BitManipulation) {
     tacky::Program program;
     tacky::Function func;

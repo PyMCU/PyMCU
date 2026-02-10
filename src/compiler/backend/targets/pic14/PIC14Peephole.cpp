@@ -85,6 +85,20 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
 
     while (changed) {
         changed = false;
+        
+        // --- Dead Label Elimination ---
+        std::set<std::string> used_labels;
+        for (const auto& line : result) {
+            if (line.type == PIC14AsmLine::INSTRUCTION) {
+                if (line.mnemonic == "GOTO" || line.mnemonic == "CALL") {
+                    used_labels.insert(line.op1);
+                }
+            }
+        }
+        // Entry points and special labels
+        used_labels.insert("main");
+        used_labels.insert("__interrupt");
+
         std::vector<PIC14AsmLine> next;
         std::optional<std::string> w_lit;
         std::optional<std::string> w_var;
@@ -95,6 +109,11 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
             auto& current = result[i];
 
             if (current.type == PIC14AsmLine::LABEL) {
+                if (!used_labels.contains(current.label) && 
+                    (current.label.starts_with("L.") || current.label.starts_with("L_"))) {
+                    changed = true;
+                    continue;
+                }
                 w_lit.reset(); w_var.reset();
                 rp0.reset(); rp1.reset();
                 next.push_back(current);
@@ -155,7 +174,14 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
                 for (int j = (int)next.size() - 1; j >= 0; --j) {
                     if (next[j].type == PIC14AsmLine::LABEL) break;
                     if (next[j].type == PIC14AsmLine::INSTRUCTION) {
-                        if (next[j].mnemonic == "MOVF") redundant = true;
+                        const std::string& m = next[j].mnemonic;
+                        if (m == "MOVF" || m == "ADDWF" || m == "SUBWF" || 
+                            m == "ANDWF" || m == "IORWF" || m == "XORWF" ||
+                            m == "INCF" || m == "DECF" || m == "ADDLW" ||
+                            m == "SUBLW" || m == "ANDLW" || m == "XORLW" ||
+                            m == "CLRF" || m == "CLRW") {
+                            redundant = true;
+                        }
                         break;
                     }
                 }
@@ -207,8 +233,8 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
                     if (result[j].type == PIC14AsmLine::LABEL) {
                         if (result[j].label == current.op1) {
                             redundant = true;
+                            break;
                         }
-                        break;
                     } else if (result[j].type == PIC14AsmLine::COMMENT || result[j].type == PIC14AsmLine::EMPTY) {
                         continue;
                     } else {

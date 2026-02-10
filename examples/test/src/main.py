@@ -16,6 +16,10 @@ def main():
     # El módulo CCP1 (PWM) sale por el pin RC2 en el PIC16F877A
     # Necesitamos poner RC2 como salida (TRIS bit = 0)
     TRISC[RC2] = 0
+    TRISA[RA0] = 1
+    TRISA[RA1] = 1
+    TRISA[RA2] = 1
+    TRISA[RA3] = 1
 
     # 2. Configuración del PWM (Hardware)
     # Periodo del PWM (PR2). 0xFF es el máximo (~1.22 kHz a 20MHz/prescaler)

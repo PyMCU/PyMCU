@@ -24,14 +24,19 @@ tmp.7 EQU _stack_base + 6
 	ORG 0x00
 	GOTO	main
 	ORG 0x04
+__interrupt:
 	RETFIE
 delay_soft:
 L.0:
 	MOVLW	0x00
 	SUBWF	delay_soft.count, W
 	CLRF	tmp.0
-	BTFSC	STATUS, 0
+	BTFSS	STATUS, 0
+	GOTO	L_GT_0
+	BTFSC	STATUS, 2
+	GOTO	L_GT_0
 	INCF	tmp.0, F
+L_GT_0:
 	MOVF	tmp.0, W
 	BTFSC	STATUS, 2
 	GOTO	L.1
@@ -64,6 +69,8 @@ main:
 	BSF	STATUS, 5
 	BCF	STATUS, 6
 	BCF	0x87, 2
+	MOVLW	0x0F
+	IORWF	0x85, F
 	MOVLW	0xFF
 	MOVWF	0x92
 	BCF	STATUS, 5
@@ -97,7 +104,6 @@ L.4:
 	MOVLW	0x00
 	MOVWF	main.going_up
 L.8:
-L.9:
 	GOTO	L.7
 L.6:
 	MOVF	main.duty, W
@@ -108,20 +114,21 @@ L.6:
 	SUBWF	main.duty, W
 	CLRF	tmp.7
 	BTFSS	STATUS, 0
+	GOTO	L_LE_1
+	BTFSS	STATUS, 2
+	GOTO	L_LES_2
+L_LE_1:
 	INCF	tmp.7, F
+L_LES_2:
 	MOVF	tmp.7, W
 	BTFSC	STATUS, 2
 	GOTO	L.10
 	MOVLW	0x01
 	MOVWF	main.going_up
 L.10:
-L.11:
 L.7:
 	MOVLW	0x02
 	MOVWF	delay_soft.count
 	CALL	delay_soft
 	GOTO	L.4
-L.5:
-	MOVLW	0x00
-	RETURN
 	END

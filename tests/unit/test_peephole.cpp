@@ -129,6 +129,39 @@ TEST(PIC14PeepholeTest, JumpToNextWithSkip) {
     EXPECT_EQ(optimized[0].type, PIC14AsmLine::LABEL);
 }
 
+TEST(PIC14PeepholeTest, GotoNextLabelMultiple) {
+    std::vector<PIC14AsmLine> lines = {
+        PIC14AsmLine::Instruction("GOTO", "L11"),
+        PIC14AsmLine::Label("L10"),
+        PIC14AsmLine::Label("L11")
+    };
+    auto optimized = PIC14Peephole::optimize(lines);
+    // GOTO L11 should be removed because L11 is effectively the next instruction
+    ASSERT_EQ(optimized.size(), 2);
+    EXPECT_EQ(optimized[0].label, "L10");
+    EXPECT_EQ(optimized[1].label, "L11");
+}
+
+TEST(PIC14PeepholeTest, DeadLabelElimination) {
+    std::vector<PIC14AsmLine> lines = {
+        PIC14AsmLine::Instruction("GOTO", "L.1"),
+        PIC14AsmLine::Label("L.2"), // Dead label
+        PIC14AsmLine::Label("L.1"),
+        PIC14AsmLine::Instruction("RETURN"),
+        PIC14AsmLine::Label("ExternalEntryPoint"), // Not internal
+        PIC14AsmLine::Instruction("GOTO", "L.1") // Keep L.1 alive
+    };
+    auto optimized = PIC14Peephole::optimize(lines);
+    // L.2 should be removed
+    // First GOTO L.1 should also be removed.
+    // So we should have: L.1, RETURN, ExternalEntryPoint, GOTO L.1
+    ASSERT_EQ(optimized.size(), 4);
+    EXPECT_EQ(optimized[0].label, "L.1");
+    EXPECT_EQ(optimized[1].mnemonic, "RETURN");
+    EXPECT_EQ(optimized[2].label, "ExternalEntryPoint");
+    EXPECT_EQ(optimized[3].mnemonic, "GOTO");
+}
+
 TEST(PIC14PeepholeTest, SkipDoesNotAllowDeadCodeRemoval) {
     std::vector<PIC14AsmLine> lines = {
         PIC14AsmLine::Instruction("BTFSC", "STATUS", "2"),

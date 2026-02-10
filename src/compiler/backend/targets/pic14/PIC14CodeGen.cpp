@@ -240,8 +240,28 @@ void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
         case tacky::BinaryOp::NotEqual:   emit("BTFSS", "STATUS, 2"); break;
         case tacky::BinaryOp::LessThan:   emit("BTFSS", "STATUS, 0"); break;
         case tacky::BinaryOp::GreaterEqual: emit("BTFSC", "STATUS, 0"); break;
-        case tacky::BinaryOp::GreaterThan: emit("BTFSC", "STATUS, 0"); break;
-        case tacky::BinaryOp::LessEqual:  emit("BTFSS", "STATUS, 0"); break;
+        case tacky::BinaryOp::GreaterThan: {
+            std::string lbl_skip = make_label("L_GT");
+            emit("BTFSS", "STATUS, 0");
+            emit("GOTO", lbl_skip);
+            emit("BTFSC", "STATUS, 2");
+            emit("GOTO", lbl_skip);
+            emit("INCF", dst_addr, "F");
+            emit_label(lbl_skip);
+            return;
+        }
+        case tacky::BinaryOp::LessEqual: {
+            std::string lbl_set = make_label("L_LE");
+            std::string lbl_skip = make_label("L_LES");
+            emit("BTFSS", "STATUS, 0");
+            emit("GOTO", lbl_set);
+            emit("BTFSS", "STATUS, 2");
+            emit("GOTO", lbl_skip);
+            emit_label(lbl_set);
+            emit("INCF", dst_addr, "F");
+            emit_label(lbl_skip);
+            return;
+        }
         default: break;
     }
     emit("INCF", dst_addr, "F");
