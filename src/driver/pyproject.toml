@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pymcu-compiler"
-version = "0.1.0"
+version = "0.1.0a2"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
@@ -15,7 +15,7 @@ dependencies = [
     "typer>=0.12.0",
     "tomlkit>=0.12.0",
     "rich>=13.0.0",
-    "pymcu-stdlib>=0.1.0-alpha-1",
+    "pymcu-stdlib>=0.1.0a2",
 ]
 
 [project.scripts]

@@ -1,18 +1,17 @@
 [project]
 name = "pymcu-stdlib"
-version = "0.1.0-alpha-1"
+version = "0.1.0a2"
 description = "Standard Library for pymcu compiler"
-authors = [
-    {name = "Iván Montiel Cardona",email = "developer@begeistert.dev"}
-]
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = [
+authors = [
+    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
 ]
+requires-python = ">=3.11"
+dependencies = []
 
-[tool.poetry]
-packages = [{include = "pymcu", from = "src"}]
+[tool.hatch.build.targets.wheel]
+packages = ["src/pymcu"]
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
