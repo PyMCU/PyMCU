@@ -50,16 +50,30 @@ add_library(core STATIC
         src/compiler/ir/Optimizer.h
         src/compiler/backend/analysis/StackAllocator.cpp
         src/compiler/backend/analysis/StackAllocator.h
+        src/compiler/backend/analysis/DynamicStackAllocator.cpp
+        src/compiler/backend/analysis/DynamicStackAllocator.h
         src/compiler/backend/targets/pic14/PIC14Peephole.cpp
         src/compiler/backend/targets/pic14/PIC14Peephole.h
         src/compiler/backend/targets/pic18/PIC18CodeGen.cpp
         src/compiler/backend/targets/pic18/PIC18CodeGen.h
         src/compiler/backend/targets/pic18/PIC18Peephole.cpp
         src/compiler/backend/targets/pic18/PIC18Peephole.h
+        src/compiler/backend/targets/pic12/PIC12CodeGen.cpp
+        src/compiler/backend/targets/pic12/PIC12CodeGen.h
+        src/compiler/backend/targets/pic12/PIC12Peephole.cpp
+        src/compiler/backend/targets/pic12/PIC12Peephole.h
         src/compiler/backend/targets/avr/AVRCodeGen.cpp
         src/compiler/backend/targets/avr/AVRCodeGen.h
         src/compiler/backend/targets/avr/AVRPeephole.cpp
         src/compiler/backend/targets/avr/AVRPeephole.h
+        src/compiler/backend/targets/riscv/RISCVCodeGen.cpp
+        src/compiler/backend/targets/riscv/RISCVCodeGen.h
+        src/compiler/backend/targets/riscv/RISCVPeephole.cpp
+        src/compiler/backend/targets/riscv/RISCVPeephole.h
+        src/compiler/backend/targets/pio/PIOCodeGen.cpp
+        src/compiler/backend/targets/pio/PIOCodeGen.h
+        src/compiler/backend/targets/pio/PIOPeephole.cpp
+        src/compiler/backend/targets/pio/PIOPeephole.h
 )
 
 target_link_libraries(core PUBLIC common)
@@ -93,6 +107,9 @@ add_executable(tests
         tests/unit/test_optimizer_advanced.cpp
         tests/unit/test_avr_codegen.cpp
         tests/unit/test_pic18_codegen.cpp
+        tests/unit/test_pic12_codegen.cpp
+        tests/unit/test_riscv_codegen.cpp
+        tests/unit/test_pio_codegen.cpp
 )
 target_link_libraries(tests PRIVATE
         core

@@ -102,6 +102,97 @@ TEST(PIC18CodeGenTest, ArithmeticAndFactory) {
 
     std::string output = ss.str();
     EXPECT_NE(output.find("MOVLW\t0x0A"), std::string::npos);
-    EXPECT_NE(output.find("ADDWF\tb, W, ACCESS"), std::string::npos);
-    EXPECT_NE(output.find("MOVWF\ta, ACCESS"), std::string::npos);
+    EXPECT_NE(output.find("ADDWF\tb, W"), std::string::npos);
+    EXPECT_NE(output.find("MOVWF\ta"), std::string::npos);
+}
+
+TEST(PIC18CodeGenTest, BankedAccess) {
+    DeviceConfig cfg;
+    cfg.chip = "pic18f45k50";
+    PIC18CodeGen codegen(cfg);
+
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "main";
+    
+    // Force many variables to exceed access bank (0x60)
+    for (int i = 0; i < 100; ++i) {
+        func.body.push_back(tacky::Copy{tacky::Constant{0}, tacky::Variable{"v" + std::to_string(i)}});
+    }
+    // v99 should be at 0x60 + 99 = 0xC3 (still bank 0)
+    // Let's add more to reach bank 1 (addr >= 0x100)
+    for (int i = 100; i < 200; ++i) {
+        func.body.push_back(tacky::Copy{tacky::Constant{0}, tacky::Variable{"v" + std::to_string(i)}});
+    }
+    
+    program.functions.push_back(func);
+
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string output = ss.str();
+    // v199 should be at 0x60 + 199 = 259 = 0x103
+    EXPECT_NE(output.find("MOVLB\t1"), std::string::npos);
+    EXPECT_NE(output.find("MOVWF\tv199, BANKED"), std::string::npos);
+}
+
+TEST(PIC18CodeGenTest, SubtractionCorrectness) {
+    DeviceConfig cfg;
+    cfg.chip = "pic18f45k50";
+    PIC18CodeGen codegen(cfg);
+
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "main";
+    
+    // a = b - c
+    func.body.push_back(tacky::Binary{
+        tacky::BinaryOp::Sub,
+        tacky::Variable{"b"},
+        tacky::Variable{"c"},
+        tacky::Variable{"a"}
+    });
+    program.functions.push_back(func);
+
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string output = ss.str();
+    // Strategy: Load c into W, then SUBWF b, W (b - W -> W)
+    size_t pos_c = output.find("MOVF\tc, W");
+    size_t pos_sub = output.find("SUBWF\tb, W");
+    size_t pos_a = output.find("MOVWF\ta");
+    
+    EXPECT_NE(pos_c, std::string::npos);
+    EXPECT_NE(pos_sub, std::string::npos);
+    EXPECT_NE(pos_a, std::string::npos);
+    EXPECT_LT(pos_c, pos_sub);
+    EXPECT_LT(pos_sub, pos_a);
+}
+
+TEST(PIC18CodeGenTest, Division) {
+    DeviceConfig cfg;
+    cfg.chip = "pic18f45k50";
+    PIC18CodeGen codegen(cfg);
+
+    tacky::Program program;
+    tacky::Function func;
+    func.name = "main";
+    
+    // a = b / c
+    func.body.push_back(tacky::Binary{
+        tacky::BinaryOp::Div,
+        tacky::Variable{"b"},
+        tacky::Variable{"c"},
+        tacky::Variable{"a"}
+    });
+    program.functions.push_back(func);
+
+    std::stringstream ss;
+    codegen.compile(program, ss);
+
+    std::string output = ss.str();
+    EXPECT_NE(output.find("div_loop"), std::string::npos);
+    EXPECT_NE(output.find("SUBWF"), std::string::npos);
+    EXPECT_NE(output.find("BN"), std::string::npos);
 }

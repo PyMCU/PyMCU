@@ -50,17 +50,41 @@ tacky::Val IRGenerator::resolve_binding(const std::string& name) {
 }
 
 void IRGenerator::scan_globals(const Program& ast) {
-
     for (const auto& stmt : ast.global_statements) {
-        if (const auto varDecl = dynamic_cast<const VarDecl*>(stmt.get())) {
-            if (varDecl->initializer) {
-                try {
-                    const int val = evaluate_constant_expr(varDecl->initializer.get());
-                    const bool is_ptr = varDecl->type.find("ptr") != std::string::npos;
+        std::string name;
+        std::string type;
+        const Expression* initializer = nullptr;
 
-                    globals[varDecl->name] = SymbolInfo{is_ptr, val};
-                } catch (...) {
+        if (const auto varDecl = dynamic_cast<const VarDecl*>(stmt.get())) {
+            name = varDecl->name;
+            type = varDecl->type;
+            initializer = varDecl->initializer.get();
+        } else if (const auto assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
+            if (const auto varExpr = dynamic_cast<const VariableExpr*>(assign->target.get())) {
+                name = varExpr->name;
+                initializer = assign->value.get();
+            }
+        }
+
+        if (!name.empty() && initializer) {
+            try {
+                const int val = evaluate_constant_expr(initializer);
+                bool is_memory_address = false;
+
+                // If we have an initializer that is a call to ptr or PIORegister, it's a memory address
+                if (const auto call = dynamic_cast<const CallExpr*>(initializer)) {
+                    if (call->callee == "ptr" || call->callee == "PIORegister") {
+                        is_memory_address = true;
+                    }
                 }
+
+                // Also check type hint
+                if (!type.empty() && (type.find("ptr") != std::string::npos || type.find("PIORegister") != std::string::npos)) {
+                    is_memory_address = true;
+                }
+
+                globals[name] = SymbolInfo{is_memory_address, val};
+            } catch (...) {
             }
         }
     }
@@ -83,7 +107,7 @@ int IRGenerator::evaluate_constant_expr(const Expression* expr) {
     }
 
     if (const auto call = dynamic_cast<const CallExpr*>(expr)) {
-        if (call->callee == "ptr" && call->args.size() == 1) {
+        if ((call->callee == "ptr" || call->callee == "PIORegister") && call->args.size() == 1) {
             return evaluate_constant_expr(call->args[0].get());
         }
     }
@@ -335,7 +359,18 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr* expr) {
 
 tacky::Val IRGenerator::visitCall(const CallExpr* expr) {
     tacky::Call callInstr;
-    callInstr.function_name = expr->callee;
+    std::string callee = expr->callee;
+
+    // Map PIO intrinsics
+    if (callee == "pull") callee = "__pio_pull";
+    else if (callee == "push") callee = "__pio_push";
+    else if (callee == "out") callee = "__pio_out";
+    else if (callee == "in_") callee = "__pio_in";
+    else if (callee == "wait") callee = "__pio_wait";
+
+    callInstr.function_name = callee;
+
+    bool is_pio_intrinsic = callee.starts_with("__pio_") || callee == "delay";
 
     if (function_params.contains(expr->callee)) {
         const auto& param_names = function_params[expr->callee];
@@ -353,7 +388,8 @@ tacky::Val IRGenerator::visitCall(const CallExpr* expr) {
         callInstr.args.push_back(visitExpression(arg.get()));
     }
 
-    if (function_return_types.contains(expr->callee) && function_return_types[expr->callee] == "void") {
+    if (is_pio_intrinsic || (function_return_types.contains(expr->callee) && 
+        (function_return_types[expr->callee] == "void" || function_return_types[expr->callee] == "None"))) {
         callInstr.dst = std::monostate{};
         emit(callInstr);
         return std::monostate{};
