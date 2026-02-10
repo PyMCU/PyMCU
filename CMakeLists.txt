@@ -7,14 +7,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
-# Install TOML++
-FetchContent_Declare(
-        tomlplusplus
-        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-        GIT_TAG        master
-)
-FetchContent_MakeAvailable(tomlplusplus)
-
 # Install ArgParse
 FetchContent_Declare(
         argparse
@@ -29,7 +21,15 @@ FetchContent_Declare(
         URL https://github.com/google/googletest/archive/refs/heads/main.zip
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+
+add_library(common INTERFACE
+        src/common/Errors.h
+        src/common/Utils.h
+        src/common/DeviceConfig.h
+)
+target_include_directories(common INTERFACE src/common)
 
 add_library(core STATIC
         src/compiler/backend/CodeGen.h
@@ -58,34 +58,22 @@ add_library(core STATIC
         src/compiler/backend/targets/avr/AVRPeephole.h
 )
 
-target_include_directories(core PUBLIC
-        src/compiler
-        src/common
-)
-
-add_library(common INTERFACE
-        src/common/Errors.h
-        src/common/Utils.h
-        src/common/DeviceConfig.h
-)
-target_include_directories(common INTERFACE src/common)
+target_link_libraries(core PUBLIC common)
+target_include_directories(core PUBLIC src/compiler)
 
 add_executable(pymcuc
         src/compiler/main.cpp
         src/compiler/Diagnostic.h
 )
-target_link_libraries(pymcuc PRIVATE core common argparse::argparse)
+target_link_libraries(pymcuc PRIVATE core argparse::argparse)
 
-add_executable(pymcu
-        src/driver/main.cpp
-        src/driver/Toolchain.h
-        src/driver/commands/ICommand.h
-        src/driver/commands/CmdNew.h
-        src/driver/commands/CmdBuild.h
-)
-target_link_libraries(pymcu PRIVATE common tomlplusplus::tomlplusplus argparse::argparse)
+set_target_properties(pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-set_target_properties(pymcu pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set_target_properties(pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+if(SKBUILD)
+    install(TARGETS pymcuc RUNTIME DESTINATION .)
+endif()
 
 # Testing Configuration
 enable_testing()

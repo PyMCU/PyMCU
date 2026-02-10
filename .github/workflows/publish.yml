@@ -1,38 +1,72 @@
-name: Publish
+name: Publish Wheels
 
 on:
   push:
     tags:
-      - 'v*.*.*'
-    paths:
-      - 'lib/**'
+      - 'v*'
 
 jobs:
-  build-and-publish:
+  build_stdlib:
+    name: Build pymcu-stdlib
     runs-on: ubuntu-latest
-    name: Build and Publish Python StdLib
-    defaults:
-      run:
-        working-directory: ./lib
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build stdlib
+        run: |
+          cd lib
+          uv build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-stdlib
+          path: lib/dist/*
+
+  build_wheels:
+    name: Build wheels for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.14'
+          submodules: true
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_WRAPPED_WHEEL_DIR: src/driver
         with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
+          package-dir: src/driver
 
-      - name: Build Package
-        run: poetry build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
 
+  publish:
+    name: Publish Package
+    needs: [build_stdlib, build_wheels]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
       - name: Publish Package
         env:
           TARGET_URL: ${{ secrets.PUBLISH_REGISTRY_URL }}
@@ -40,12 +74,12 @@ jobs:
           TARGET_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
         run: |
           if [ -n "$TARGET_URL" ]; then
-            poetry config repositories.private_repo "$TARGET_URL"
-            poetry publish --repository private_repo -u "$TARGET_USER" -p "$TARGET_TOKEN"
+            uv publish --publish-url "$TARGET_URL" --username "$TARGET_USER" --password "$TARGET_TOKEN" dist/*
           else
             if [ -z "$TARGET_TOKEN" ]; then
-              exit 1
+              # Attempt OIDC publish if no token is provided
+              uv publish dist/*
+            else
+              uv publish --token "$TARGET_TOKEN" dist/*
             fi
-            poetry config pypi-token.pypi "$TARGET_TOKEN"
-            poetry publish
           fi

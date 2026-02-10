@@ -1,0 +1,42 @@
+[build-system]
+requires = ["scikit-build-core>=0.10.0", "cmake>=4.1", "ninja"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pymcu-compiler"
+version = "0.1.0"
+description = "Python-to-MCU compiler driver"
+readme = "README.md"
+authors = [
+    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12.0",
+    "tomlkit>=0.12.0",
+    "rich>=13.0.0",
+    "pymcu-stdlib>=0.1.0-alpha-1",
+]
+
+[project.scripts]
+pymcu = "pymcu_compiler.main:app"
+
+[tool.scikit-build]
+cmake.source-dir = "../.."
+wheel.install-dir = "pymcu_compiler"
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+SKBUILD = "ON"
+
+[tool.cibuildwheel]
+build-frontend = "build"
+# Optimization: skip some versions if needed
+skip = "cp36-* cp37-* cp38-* cp39-* cp310-* pp*"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64", "x86"]
+
