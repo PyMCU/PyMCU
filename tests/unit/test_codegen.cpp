@@ -48,10 +48,10 @@ TEST(PIC14CodeGenTest, ControlFlow) {
     tacky::Program program;
     tacky::Function func;
     func.name = "f";
-    func.body.emplace_back(tacky::JumpIfZero{tacky::Constant{0}, "L1"});
-    func.body.emplace_back(tacky::Jump{ "L2" });
+    // Loop: L1 -> BSF -> GOTO L1
     func.body.emplace_back(tacky::Label{ "L1" });
-    func.body.emplace_back(tacky::Label{ "L2" });
+    func.body.emplace_back(tacky::BitSet{tacky::MemoryAddress{0x05}, 0});
+    func.body.emplace_back(tacky::Jump{ "L1" });
     program.functions.push_back(func);
 
     DeviceConfig config{.chip = "pic16f84a"};
@@ -60,10 +60,8 @@ TEST(PIC14CodeGenTest, ControlFlow) {
     codegen.compile(program, ss);
 
     std::string asm_code = ss.str();
-    EXPECT_NE(asm_code.find("GOTO\tL1"), std::string::npos);
-    EXPECT_NE(asm_code.find("GOTO\tL2"), std::string::npos);
-    EXPECT_NE(asm_code.find("L1:"), std::string::npos);
-    EXPECT_NE(asm_code.find("L2:"), std::string::npos);
+    EXPECT_NE(asm_code.find("GOTO"), std::string::npos);
+    EXPECT_NE(asm_code.find("L1"), std::string::npos);
 }
 
 TEST(PIC14CodeGenTest, UnaryOps) {

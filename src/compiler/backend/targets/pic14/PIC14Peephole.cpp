@@ -2,6 +2,62 @@
 #include <format>
 #include <algorithm>
 #include <optional>
+#include <set>
+
+static std::vector<PIC14AsmLine> coalesce_bit_ops(const std::vector<PIC14AsmLine>& lines) {
+    std::vector<PIC14AsmLine> result;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].type == PIC14AsmLine::INSTRUCTION &&
+            (lines[i].mnemonic == "BSF" || lines[i].mnemonic == "BCF")) {
+
+            std::string reg = lines[i].op1;
+            std::string mnemonic = lines[i].mnemonic;
+
+            if (reg == "STATUS") {
+                result.push_back(lines[i]);
+                continue;
+            }
+
+            std::vector<int> bits;
+            size_t j = i;
+            while (j < lines.size()) {
+                if (lines[j].type == PIC14AsmLine::INSTRUCTION) {
+                    if (lines[j].mnemonic == mnemonic && lines[j].op1 == reg) {
+                        try {
+                            bits.push_back(std::stoi(lines[j].op2));
+                            j++;
+                        } catch (...) { break; }
+                    } else {
+                        break;
+                    }
+                } else if (lines[j].type == PIC14AsmLine::COMMENT || lines[j].type == PIC14AsmLine::EMPTY) {
+                    j++;
+                } else {
+                    break;
+                }
+            }
+
+            if (bits.size() >= 3) {
+                int mask = 0;
+                for (int b : bits) mask |= (1 << b);
+
+                if (mnemonic == "BSF") {
+                    result.push_back(PIC14AsmLine::Instruction("MOVLW", std::format("0x{:02X}", mask)));
+                    result.push_back(PIC14AsmLine::Instruction("IORWF", reg, "F"));
+                } else {
+                    result.push_back(PIC14AsmLine::Instruction("MOVLW", std::format("0x{:02X}", (unsigned char)~mask)));
+                    result.push_back(PIC14AsmLine::Instruction("ANDWF", reg, "F"));
+                }
+                i = j - 1;
+            } else {
+                result.push_back(lines[i]);
+            }
+        } else {
+            result.push_back(lines[i]);
+        }
+    }
+    return result;
+}
 
 std::string PIC14AsmLine::to_string() const {
     switch (type) {
@@ -24,7 +80,7 @@ std::string PIC14AsmLine::to_string() const {
 }
 
 std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine>& lines) {
-    std::vector<PIC14AsmLine> result = lines;
+    std::vector<PIC14AsmLine> result = coalesce_bit_ops(lines);
     bool changed = true;
 
     while (changed) {
@@ -81,6 +137,10 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
                 w_var = current.op1;
                 w_lit.reset();
             } else if (current.mnemonic == "MOVWF") {
+                if (w_var && *w_var == current.op1) {
+                    changed = true;
+                    continue; // Redundant store
+                }
                 w_var = current.op1; 
                 // w_lit remains valid!
             } else if (current.mnemonic == "CLRF") {
@@ -99,22 +159,32 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
                         break;
                     }
                 }
-                if (redundant) {
+                if (redundant || (w_lit && (*w_lit == "0" || *w_lit == "0x00"))) {
                     changed = true;
                     continue;
                 }
-            } else if (current.mnemonic == "GOTO") {
+            } else if (current.mnemonic == "ADDLW" && (current.op1 == "0" || current.op1 == "0x00")) {
+                changed = true;
+                continue;
+            } else if (current.mnemonic == "XORLW" && (current.op1 == "0" || current.op1 == "0x00")) {
+                changed = true;
+                continue;
+            } else if (current.mnemonic == "ANDLW" && (current.op1 == "255" || current.op1 == "0xFF")) {
+                changed = true;
+                continue;
+            } else if (current.mnemonic == "BSF" || current.mnemonic == "BCF") {
+                // Bit coalescing/redundancy
                 bool redundant = false;
-                for (size_t j = i + 1; j < result.size(); ++j) {
-                    if (result[j].type == PIC14AsmLine::LABEL) {
-                        if (result[j].label == current.op1) {
-                            redundant = true;
-                            break;
+                for (int j = (int)next.size() - 1; j >= 0; --j) {
+                    if (next[j].type == PIC14AsmLine::LABEL) break;
+                    if (next[j].type == PIC14AsmLine::INSTRUCTION) {
+                        if (next[j].op1 == current.op1 && next[j].op2 == current.op2) {
+                            if (next[j].mnemonic == "BSF" || next[j].mnemonic == "BCF") {
+                                if (next[j].mnemonic == current.mnemonic) {
+                                    redundant = true;
+                                }
+                            }
                         }
-                        // Continue looking through other labels
-                    } else if (result[j].type == PIC14AsmLine::COMMENT || result[j].type == PIC14AsmLine::EMPTY) {
-                        continue;
-                    } else {
                         break;
                     }
                 }
@@ -122,9 +192,83 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(const std::vector<PIC14AsmLine
                     changed = true;
                     continue;
                 }
+
+                if (!next.empty() && next.back().type == PIC14AsmLine::INSTRUCTION &&
+                    next.back().op1 == current.op1 && next.back().op2 == current.op2 &&
+                    (next.back().mnemonic == "BSF" || next.back().mnemonic == "BCF")) {
+                    if (next.back().mnemonic != current.mnemonic) {
+                        next.pop_back();
+                        changed = true;
+                    }
+                }
+            } else if (current.mnemonic == "GOTO") {
+                bool redundant = false;
+                for (size_t j = i + 1; j < result.size(); ++j) {
+                    if (result[j].type == PIC14AsmLine::LABEL) {
+                        if (result[j].label == current.op1) {
+                            redundant = true;
+                        }
+                        break;
+                    } else if (result[j].type == PIC14AsmLine::COMMENT || result[j].type == PIC14AsmLine::EMPTY) {
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+
+                bool preceded_by_skip = false;
+                if (!next.empty() && next.back().type == PIC14AsmLine::INSTRUCTION) {
+                    const std::string& prev = next.back().mnemonic;
+                    if (prev == "BTFSC" || prev == "BTFSS" || prev == "DECFSZ" || prev == "INCFSZ") {
+                        preceded_by_skip = true;
+                    }
+                }
+
+                if (redundant) {
+                    changed = true;
+                    if (preceded_by_skip) {
+                        next.pop_back();
+                    }
+                    continue;
+                }
+                next.push_back(current);
+
+                if (!preceded_by_skip) {
+                    while (i + 1 < result.size() && result[i+1].type != PIC14AsmLine::LABEL) {
+                        if (result[i+1].type == PIC14AsmLine::INSTRUCTION) {
+                            changed = true;
+                        } else {
+                            next.push_back(result[i+1]);
+                        }
+                        i++;
+                    }
+                }
                 w_lit.reset(); w_var.reset();
                 rp0.reset(); rp1.reset();
-            } else if (current.mnemonic == "CALL" || current.mnemonic == "RETURN" || current.mnemonic == "RETFIE") {
+                continue;
+            } else if (current.mnemonic == "RETURN" || current.mnemonic == "RETFIE") {
+                bool preceded_by_skip = false;
+                if (!next.empty() && next.back().type == PIC14AsmLine::INSTRUCTION) {
+                    const std::string& prev = next.back().mnemonic;
+                    if (prev == "BTFSC" || prev == "BTFSS" || prev == "DECFSZ" || prev == "INCFSZ") {
+                        preceded_by_skip = true;
+                    }
+                }
+                next.push_back(current);
+                if (!preceded_by_skip) {
+                    while (i + 1 < result.size() && result[i+1].type != PIC14AsmLine::LABEL) {
+                        if (result[i+1].type == PIC14AsmLine::INSTRUCTION) {
+                            changed = true;
+                        } else {
+                            next.push_back(result[i+1]);
+                        }
+                        i++;
+                    }
+                }
+                w_lit.reset(); w_var.reset();
+                rp0.reset(); rp1.reset();
+                continue;
+            } else if (current.mnemonic == "CALL") {
                 w_lit.reset(); w_var.reset();
                 rp0.reset(); rp1.reset();
             } else {

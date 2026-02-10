@@ -102,6 +102,7 @@ void PIC14CodeGen::compile(const tacky::Program& program, std::ostream& os) {
     emit_raw("\tORG 0x00");
     emit("GOTO", "main");
     emit_raw("\tORG 0x04");
+    emit_label("__interrupt");
     emit("RETFIE");
 
     for (const auto& func : program.functions) {
