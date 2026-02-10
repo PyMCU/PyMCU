@@ -12,6 +12,7 @@
 #include "Utils.h"
 #include "backend/CodeGenFactory.h"
 #include "ir/IRGenerator.h"
+#include "ir/Optimizer.h"
 #include "ir/Tacky.h"
 #include "DeviceConfig.h"
 
@@ -167,6 +168,8 @@ int main(int argc, char* argv[]) {
 
         IRGenerator irGen;
         auto ir = irGen.generate(*ast, linear_imports);
+
+        ir = Optimizer::optimize(ir);
 
         auto backend = CodeGenFactory::create(arch, device_config);
 

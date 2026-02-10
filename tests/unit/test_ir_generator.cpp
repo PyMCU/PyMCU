@@ -37,9 +37,7 @@ TEST(IRGeneratorTest, ImplicitReturn) {
 
     auto ret_instr = std::get_if<tacky::Return>(&ir.functions[0].body[0]);
     ASSERT_NE(ret_instr, nullptr);
-    auto val = std::get_if<tacky::Constant>(&ret_instr->value);
-    ASSERT_NE(val, nullptr);
-    EXPECT_EQ(val->value, 0);
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(ret_instr->value));
 }
 
 TEST(IRGeneratorTest, MultipleFunctions) {
@@ -138,4 +136,50 @@ TEST(IRGeneratorTest, BitManipulation) {
     }
     EXPECT_TRUE(found_set);
     EXPECT_TRUE(found_check);
+}
+
+TEST(IRGeneratorTest, NoneReturnCall) {
+    Lexer lexer("def void_func():\n    pass\ndef main():\n    void_func()");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    ASSERT_EQ(ir.functions.size(), 2);
+    auto& main_body = ir.functions[1].body;
+    
+    bool found_call = false;
+    for (const auto& inst : main_body) {
+        if (auto call = std::get_if<tacky::Call>(&inst)) {
+            EXPECT_EQ(call->function_name, "void_func");
+            EXPECT_TRUE(std::holds_alternative<std::monostate>(call->dst));
+            found_call = true;
+        }
+    }
+    EXPECT_TRUE(found_call);
+}
+
+TEST(IRGeneratorTest, IntReturnCall) {
+    Lexer lexer("def int_func() -> int:\n    return 42\ndef main():\n    x = int_func()");
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, {});
+
+    ASSERT_EQ(ir.functions.size(), 2);
+    auto& main_body = ir.functions[1].body;
+
+    bool found_call_with_dest = false;
+    for (const auto& inst : main_body) {
+        if (auto call = std::get_if<tacky::Call>(&inst)) {
+            EXPECT_EQ(call->function_name, "int_func");
+            EXPECT_FALSE(std::holds_alternative<std::monostate>(call->dst));
+            found_call_with_dest = true;
+        }
+    }
+    EXPECT_TRUE(found_call_with_dest);
 }

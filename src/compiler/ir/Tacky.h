@@ -17,7 +17,7 @@ namespace tacky {
     // Represents a physical memory address (MMIO or Static Global)
     struct MemoryAddress { int address; };
 
-    using Val = std::variant<Constant, Variable, Temporary, MemoryAddress>;
+    using Val = std::variant<Constant, Variable, Temporary, MemoryAddress, std::monostate>;
 
     enum class UnaryOp {
         Not,

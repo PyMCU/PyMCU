@@ -46,6 +46,8 @@ add_library(core STATIC
         src/compiler/ir/Tacky.h
         src/compiler/ir/IRGenerator.cpp
         src/compiler/ir/IRGenerator.h
+        src/compiler/ir/Optimizer.cpp
+        src/compiler/ir/Optimizer.h
         src/compiler/backend/analysis/StackAllocator.cpp
         src/compiler/backend/analysis/StackAllocator.h
 )
@@ -87,6 +89,7 @@ add_executable(tests
         tests/unit/test_utils.cpp
         tests/unit/test_ir_generator.cpp
         tests/unit/test_codegen.cpp
+        tests/unit/test_optimizer.cpp
 )
 target_link_libraries(tests PRIVATE
         core

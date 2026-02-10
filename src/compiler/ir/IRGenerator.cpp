@@ -18,12 +18,15 @@ void IRGenerator::emit(const tacky::Instruction &inst) {
 tacky::Program IRGenerator::generate(const Program& main_ast, const std::vector<const Program*>& imported_modules) {
     tacky::Program ir_program;
     globals.clear();
+    function_return_types.clear();
 
     for (const auto* mod : imported_modules) {
         scan_globals(*mod);
+        scan_functions(*mod);
     }
 
     scan_globals(main_ast);
+    scan_functions(main_ast);
 
     for (const auto& func_def : main_ast.functions) {
         ir_program.functions.push_back(visitFunction(func_def.get()));
@@ -61,6 +64,12 @@ void IRGenerator::scan_globals(const Program& ast) {
     }
 }
 
+void IRGenerator::scan_functions(const Program& ast) {
+    for (const auto& func : ast.functions) {
+        function_return_types[func->name] = func->return_type;
+    }
+}
+
 int IRGenerator::evaluate_constant_expr(const Expression* expr) {
     if (const auto num = dynamic_cast<const IntegerLiteral*>(expr)) {
         return num->value;
@@ -89,7 +98,7 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
 
     if (current_instructions.empty() ||
         !std::holds_alternative<tacky::Return>(current_instructions.back())) {
-        emit(tacky::Return{tacky::Constant{0}});
+        emit(tacky::Return{std::monostate{}});
     }
 
     ir_func.body = current_instructions;
@@ -121,7 +130,7 @@ void IRGenerator::visitReturn(const ReturnStmt* stmt) {
     if (stmt->value) {
         val = visitExpression(stmt->value.get());
     } else {
-        val = tacky::Constant{0};
+        val = std::monostate{};
     }
     emit(tacky::Return{val});
 }
@@ -301,6 +310,12 @@ tacky::Val IRGenerator::visitCall(const CallExpr* expr) {
 
     for (const auto& arg : expr->args) {
         callInstr.args.push_back(visitExpression(arg.get()));
+    }
+
+    if (function_return_types.contains(expr->callee) && function_return_types[expr->callee] == "void") {
+        callInstr.dst = std::monostate{};
+        emit(callInstr);
+        return std::monostate{};
     }
 
     tacky::Temporary dst = make_temp();

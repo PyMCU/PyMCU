@@ -21,6 +21,7 @@ private:
     int temp_counter = 0;
     int label_counter = 0;
     std::map<std::string, SymbolInfo> globals;
+    std::map<std::string, std::string> function_return_types;
 
     tacky::Temporary make_temp();
     std::string make_label();
@@ -28,6 +29,7 @@ private:
 
     tacky::Val resolve_binding(const std::string& name);
     void scan_globals(const Program& ast);
+    void scan_functions(const Program& ast);
 
     tacky::Function visitFunction(const FunctionDef* funcNode);
     void visitBlock(const Block* block);

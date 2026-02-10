@@ -110,6 +110,10 @@ void PIC14CodeGen::compile_instruction(const tacky::Instruction& instr) {
 }
 
 void PIC14CodeGen::load_into_w(const tacky::Val& val) {
+    if (std::holds_alternative<std::monostate>(val)) {
+        emit("MOVLW", "0x00");
+        return;
+    }
     if (const auto c = std::get_if<tacky::Constant>(&val)) {
         emit("MOVLW", std::format("0x{:02X}", c->value & 0xFF));
     } else {
@@ -120,6 +124,9 @@ void PIC14CodeGen::load_into_w(const tacky::Val& val) {
 }
 
 void PIC14CodeGen::store_w_into(const tacky::Val& val) {
+    if (std::holds_alternative<std::monostate>(val)) {
+        return;
+    }
     std::string op = resolve_address(val);
     select_bank(op);
     emit("MOVWF", op);
@@ -156,6 +163,29 @@ void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
     }
 
     if (!is_comparison) {
+        // Optimization: if src2 is a constant, we can use literal instructions
+        if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+            load_into_w(arg.src1);
+            int val = c2->value & 0xFF;
+            std::string val_str = std::format("0x{:02X}", val);
+            switch(arg.op) {
+                case tacky::BinaryOp::Add: emit("ADDLW", val_str); break;
+                case tacky::BinaryOp::BitAnd: emit("ANDLW", val_str); break;
+                case tacky::BinaryOp::BitOr:  emit("IORLW", val_str); break;
+                case tacky::BinaryOp::BitXor: emit("XORLW", val_str); break;
+                case tacky::BinaryOp::Sub: {
+                    // To do W - k, we can do W + (-k)
+                    int neg_val = (-c2->value) & 0xFF;
+                    emit("ADDLW", std::format("0x{:02X}", neg_val));
+                    break;
+                }
+                default: break;
+            }
+
+            store_w_into(arg.dst);
+            return;
+        }
+
         load_into_w(arg.src2);
         std::string addr1 = resolve_address(arg.src1);
         select_bank(addr1);
@@ -163,7 +193,7 @@ void PIC14CodeGen::compile_variant(const tacky::Binary& arg) {
         switch(arg.op) {
             case tacky::BinaryOp::Add: emit("ADDWF", addr1, "W"); break;
             case tacky::BinaryOp::Sub:
-                emit("SUBWF", addr1, "W"); break;
+                emit("SUBWF", addr1, "W"); break; // SUBWF is f - W. IR is src1 - src2. W = src2. So src1 - src2. Correct.
             case tacky::BinaryOp::BitAnd: emit("ANDWF", addr1, "W"); break;
             case tacky::BinaryOp::BitOr:  emit("IORWF", addr1, "W"); break;
             case tacky::BinaryOp::BitXor: emit("XORWF", addr1, "W"); break;
@@ -224,6 +254,17 @@ void PIC14CodeGen::compile_variant(const tacky::BitCheck& arg) {
 }
 
 void PIC14CodeGen::compile_variant(const tacky::BitWrite& arg) {
+    if (const auto c = std::get_if<tacky::Constant>(&arg.src)) {
+        std::string addr = resolve_address(arg.target);
+        select_bank(addr);
+        if (c->value != 0) {
+            emit("BSF", addr, std::to_string(arg.bit));
+        } else {
+            emit("BCF", addr, std::to_string(arg.bit));
+        }
+        return;
+    }
+
     load_into_w(arg.src);
     emit("IORLW", "0");
 
@@ -250,6 +291,12 @@ void PIC14CodeGen::compile_variant(const tacky::Label& arg) const { emit_label(a
 void PIC14CodeGen::compile_variant(const tacky::Jump& arg) const { emit("GOTO", arg.target); }
 
 void PIC14CodeGen::compile_variant(const tacky::JumpIfZero& arg) {
+    if (const auto c = std::get_if<tacky::Constant>(&arg.condition)) {
+        if (c->value == 0) {
+            emit("GOTO", arg.target);
+        }
+        return;
+    }
     load_into_w(arg.condition);
     emit("IORLW", "0");
     emit("BTFSC", "STATUS, 2");
@@ -257,6 +304,12 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfZero& arg) {
 }
 
 void PIC14CodeGen::compile_variant(const tacky::JumpIfNotZero& arg) {
+    if (const auto c = std::get_if<tacky::Constant>(&arg.condition)) {
+        if (c->value != 0) {
+            emit("GOTO", arg.target);
+        }
+        return;
+    }
     load_into_w(arg.condition);
     emit("IORLW", "0");
     emit("BTFSS", "STATUS, 2");

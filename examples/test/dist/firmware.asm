@@ -4,16 +4,14 @@
 	__CONFIG _FOSC_HS & _WDTE_OFF & _PWRTE_ON & _CP_OFF
 ; --- Compiled Stack (Overlays) ---
 	UDATA_SHR
-_stack_base RES 5
+_stack_base RES 3
 
 ; --- Variable Offsets ---
-tmp.0 EQU _stack_base + 3
-tmp.1 EQU _stack_base + 4
-tmp.2 EQU _stack_base + 3
-tmp.3 EQU _stack_base + 4
+tmp.0 EQU _stack_base + 1
+tmp.1 EQU _stack_base + 2
+tmp.2 EQU _stack_base + 1
+tmp.3 EQU _stack_base + 2
 tmp.4 EQU _stack_base + 0
-tmp.5 EQU _stack_base + 1
-tmp.6 EQU _stack_base + 2
 
 ; --- Code ---
 	ORG 0x00
@@ -64,10 +62,6 @@ L_BE_3:
 	RETURN
 main:
 L.0:
-	MOVLW	0x01
-	IORLW	0
-	BTFSC	STATUS, 2
-	GOTO	L.1
 	BCF	STATUS, 5
 	BCF	STATUS, 6
 	CLRF	tmp.4
@@ -83,9 +77,7 @@ L.0:
 L.2:
 L.3:
 	CALL	led_blink_1
-	MOVWF	tmp.5
 	CALL	led_blink_2
-	MOVWF	tmp.6
 	GOTO	L.0
 L.1:
 	MOVLW	0x00

@@ -11,6 +11,6 @@ def led_blink_2():
 def main():
     while True:
         if PORTC[RC0]:
-            return
+            continue
         led_blink_1()
         led_blink_2()
