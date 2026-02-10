@@ -33,7 +33,6 @@ L.0:
 	BTFSC	STATUS, 0
 	INCF	tmp.0, F
 	MOVF	tmp.0, W
-	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.1
 	MOVLW	0x00
@@ -45,20 +44,17 @@ L.2:
 	BTFSS	STATUS, 0
 	INCF	tmp.1, F
 	MOVF	tmp.1, W
-	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.3
 	MOVF	delay_soft.inner, W
 	ADDLW	0x01
 	MOVWF	tmp.2
-	MOVF	tmp.2, W
 	MOVWF	delay_soft.inner
 	GOTO	L.2
 L.3:
 	MOVF	delay_soft.count, W
 	ADDLW	0xFF
 	MOVWF	tmp.3
-	MOVF	tmp.3, W
 	MOVWF	delay_soft.count
 	GOTO	L.0
 L.1:
@@ -84,13 +80,11 @@ L.4:
 	MOVF	main.duty, W
 	MOVWF	0x15
 	MOVF	main.going_up, W
-	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.6
 	MOVF	main.duty, W
 	ADDLW	0x01
 	MOVWF	tmp.4
-	MOVF	tmp.4, W
 	MOVWF	main.duty
 	MOVLW	0xFA
 	SUBWF	main.duty, W
@@ -98,12 +92,10 @@ L.4:
 	BTFSC	STATUS, 0
 	INCF	tmp.5, F
 	MOVF	tmp.5, W
-	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.8
 	MOVLW	0x00
 	MOVWF	main.going_up
-	GOTO	L.9
 L.8:
 L.9:
 	GOTO	L.7
@@ -111,7 +103,6 @@ L.6:
 	MOVF	main.duty, W
 	ADDLW	0xFF
 	MOVWF	tmp.6
-	MOVF	tmp.6, W
 	MOVWF	main.duty
 	MOVLW	0x00
 	SUBWF	main.duty, W
@@ -119,12 +110,10 @@ L.6:
 	BTFSS	STATUS, 0
 	INCF	tmp.7, F
 	MOVF	tmp.7, W
-	IORLW	0
 	BTFSC	STATUS, 2
 	GOTO	L.10
 	MOVLW	0x01
 	MOVWF	main.going_up
-	GOTO	L.11
 L.10:
 L.11:
 L.7:

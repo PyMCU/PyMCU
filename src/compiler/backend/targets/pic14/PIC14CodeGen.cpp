@@ -54,15 +54,28 @@ void PIC14CodeGen::select_bank(const std::string& operand) {
     }
 }
 
-void PIC14CodeGen::emit(const std::string& mnemonic) const { *out << "\t" << mnemonic << "\n"; }
-void PIC14CodeGen::emit(const std::string& mnemonic, const std::string& op1) const { *out << "\t" << mnemonic << "\t" << op1 << "\n"; }
-void PIC14CodeGen::emit(const std::string& mnemonic, const std::string& op1, const std::string& op2) const { *out << "\t" << mnemonic << "\t" << op1 << ", " << op2 << "\n"; }
-void PIC14CodeGen::emit_label(const std::string& label) const { *out << label << ":\n"; }
-void PIC14CodeGen::emit_comment(const std::string& comment) const { *out << "; " << comment << "\n"; }
-void PIC14CodeGen::emit_raw(const std::string& text) const { *out << text << "\n"; }
+void PIC14CodeGen::emit(const std::string& mnemonic) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Instruction(mnemonic)); 
+}
+void PIC14CodeGen::emit(const std::string& mnemonic, const std::string& op1) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Instruction(mnemonic, op1)); 
+}
+void PIC14CodeGen::emit(const std::string& mnemonic, const std::string& op1, const std::string& op2) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Instruction(mnemonic, op1, op2)); 
+}
+void PIC14CodeGen::emit_label(const std::string& label) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Label(label)); 
+}
+void PIC14CodeGen::emit_comment(const std::string& comment) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Comment(comment)); 
+}
+void PIC14CodeGen::emit_raw(const std::string& text) const { 
+    const_cast<PIC14CodeGen*>(this)->assembly.push_back(PIC14AsmLine::Raw(text)); 
+}
 
 void PIC14CodeGen::compile(const tacky::Program& program, std::ostream& os) {
     out = &os;
+    assembly.clear();
 
     StackAllocator allocator;
     auto [offsets, total_size] = allocator.allocate(program);
@@ -94,7 +107,15 @@ void PIC14CodeGen::compile(const tacky::Program& program, std::ostream& os) {
     for (const auto& func : program.functions) {
         compile_function(func);
     }
+
     emit_raw("\tEND");
+
+    // Optimization step
+    auto optimized = PIC14Peephole::optimize(assembly);
+
+    for (const auto& line : optimized) {
+        os << line.to_string() << "\n";
+    }
 }
 
 void PIC14CodeGen::compile_function(const tacky::Function& func) {

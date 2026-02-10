@@ -50,6 +50,8 @@ add_library(core STATIC
         src/compiler/ir/Optimizer.h
         src/compiler/backend/analysis/StackAllocator.cpp
         src/compiler/backend/analysis/StackAllocator.h
+        src/compiler/backend/targets/pic14/PIC14Peephole.cpp
+        src/compiler/backend/targets/pic14/PIC14Peephole.h
 )
 
 target_include_directories(core PUBLIC
@@ -91,6 +93,7 @@ add_executable(tests
         tests/unit/test_codegen.cpp
         tests/unit/test_optimizer.cpp
         tests/unit/test_arguments.cpp
+        tests/unit/test_peephole.cpp
 )
 target_link_libraries(tests PRIVATE
         core

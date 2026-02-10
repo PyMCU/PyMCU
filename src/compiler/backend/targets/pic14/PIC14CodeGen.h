@@ -9,6 +9,7 @@
 
 #include "DeviceConfig.h"
 #include "../../CodeGen.h"
+#include "PIC14Peephole.h"
 
 class PIC14CodeGen : public CodeGen {
 public:
@@ -20,6 +21,7 @@ public:
 private:
     DeviceConfig config;
     std::ostream* out;
+    std::vector<PIC14AsmLine> assembly;
     std::map<std::string, int> symbol_table;
     std::map<std::string, int> stack_layout;
     int ram_head;
