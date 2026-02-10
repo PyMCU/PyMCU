@@ -54,8 +54,8 @@ wheels = [
 ]
 
 [[package]]
-name = "pymcu"
-version = "0.1.0"
+name = "pymcu-compiler"
+version = "0.1.0a5"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },
