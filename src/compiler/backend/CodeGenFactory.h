@@ -6,7 +6,7 @@
 
 #include "CodeGen.h"
 #include "targets/pic14/PIC14CodeGen.h"
-// #include "targets/avr8/AVRCodeGen.h"
+#include "targets/avr/AVRCodeGen.h"
 #include "DeviceConfig.h"
 
 class CodeGenFactory {
@@ -15,7 +15,9 @@ public:
         if (arch == "pic14" || arch == "midrange") {
             return std::make_unique<PIC14CodeGen>(config);
         }
-        // else if (arch == "avr8") ...
+        if (arch == "avr" || arch == "avr8" || arch == "atmega328p") {
+            return std::make_unique<AVRCodeGen>(config);
+        }
 
         throw std::runtime_error("Unknown architecture: " + arch);
     }

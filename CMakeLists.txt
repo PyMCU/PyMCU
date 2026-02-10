@@ -52,6 +52,10 @@ add_library(core STATIC
         src/compiler/backend/analysis/StackAllocator.h
         src/compiler/backend/targets/pic14/PIC14Peephole.cpp
         src/compiler/backend/targets/pic14/PIC14Peephole.h
+        src/compiler/backend/targets/avr/AVRCodeGen.cpp
+        src/compiler/backend/targets/avr/AVRCodeGen.h
+        src/compiler/backend/targets/avr/AVRPeephole.cpp
+        src/compiler/backend/targets/avr/AVRPeephole.h
 )
 
 target_include_directories(core PUBLIC
@@ -95,6 +99,7 @@ add_executable(tests
         tests/unit/test_arguments.cpp
         tests/unit/test_peephole.cpp
         tests/unit/test_optimizer_advanced.cpp
+        tests/unit/test_avr_codegen.cpp
 )
 target_link_libraries(tests PRIVATE
         core
