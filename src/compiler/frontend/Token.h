@@ -9,6 +9,7 @@ enum class TokenType {
     Def, Return, If, Elif, Else, While, For, In, Break, Continue, Pass,
     Import, From, As,
     True, False, None,
+    Or, And, Not,
 
     // Literals
     Identifier, Number, String,

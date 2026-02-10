@@ -23,6 +23,9 @@ static const std::map<std::string, TokenType> keywords = {
     {"True", TokenType::True},
     {"False", TokenType::False},
     {"None", TokenType::None},
+    {"or", TokenType::Or},
+    {"and", TokenType::And},
+    {"not", TokenType::Not},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {
@@ -227,7 +230,7 @@ Token Lexer::scan_token() {
             return {TokenType::Equal, "=", line, column};
         case '!':
             if (match('=')) return {TokenType::BangEqual, "!=", line, column};
-            error("Expected '=' after '!'");
+            error("Invalid syntax. Did you mean 'not' or '!='?");
             break;
         case '<':
             if (match('=')) return {TokenType::LessEqual, "<=", line, column};

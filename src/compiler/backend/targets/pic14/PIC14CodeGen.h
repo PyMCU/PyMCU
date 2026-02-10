@@ -14,17 +14,25 @@ class PIC14CodeGen : public CodeGen {
 public:
     explicit PIC14CodeGen(DeviceConfig  cfg);
     void compile(const tacky::Program& program, std::ostream& os) override;
-
+    void set_stack_layout(std::map<std::string, int> layout) {
+        stack_layout = std::move(layout);
+    }
 private:
     DeviceConfig config;
     std::ostream* out;
     std::map<std::string, int> symbol_table;
+    std::map<std::string, int> stack_layout;
     int ram_head;
+    int label_counter = 0;
+
+    std::string make_label(const std::string& prefix) {
+        return std::format("{}_{}", prefix, label_counter++);
+    }
 
     // --- Memory & Bank Management ---
-    int get_or_alloc_variable(const std::string& name);
-    int resolve_address(const tacky::Val& val);
-    void select_bank(int address);
+    std::string get_or_alloc_variable(const std::string& name);
+    std::string resolve_address(const tacky::Val& val);
+    void select_bank(const std::string& operand);
     int current_bank = -1;
 
     // --- Emission Helpers ---
@@ -65,6 +73,7 @@ private:
     void compile_variant(const tacky::BitSet& arg);
     void compile_variant(const tacky::BitClear& arg);
     void compile_variant(const tacky::BitCheck& arg);
+    void compile_variant(const tacky::BitWrite& arg);
 };
 
 #endif // PIC14CODEGEN_H

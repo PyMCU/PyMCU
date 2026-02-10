@@ -46,6 +46,8 @@ add_library(core STATIC
         src/compiler/ir/Tacky.h
         src/compiler/ir/IRGenerator.cpp
         src/compiler/ir/IRGenerator.h
+        src/compiler/backend/analysis/StackAllocator.cpp
+        src/compiler/backend/analysis/StackAllocator.h
 )
 
 target_include_directories(core PUBLIC

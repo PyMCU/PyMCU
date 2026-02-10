@@ -54,11 +54,11 @@ private:
     std::unique_ptr<Expression> parseExpression();     // Entry point
     std::unique_ptr<Expression> parseLogicalOr();      // or
     std::unique_ptr<Expression> parseLogicalAnd();     // and
+    std::unique_ptr<Expression> parseLogicalNot();     // not
+    std::unique_ptr<Expression> parseComparison();
     std::unique_ptr<Expression> parseBitwiseOr();      // |
     std::unique_ptr<Expression> parseBitwiseXor();     // ^
     std::unique_ptr<Expression> parseBitwiseAnd();     // &
-    std::unique_ptr<Expression> parseEquality();       // ==, !=
-    std::unique_ptr<Expression> parseRelational();     // <, >, <=, >=
     std::unique_ptr<Expression> parseShift();          // <<, >>
     std::unique_ptr<Expression> parseAdditive();       // +, -
     std::unique_ptr<Expression> parseMultiplicative(); // *, /, %

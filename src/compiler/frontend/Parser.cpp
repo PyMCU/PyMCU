@@ -303,11 +303,54 @@ std::unique_ptr<Expression> Parser::parseExpression() {
 
 std::unique_ptr<Expression> Parser::parseLogicalOr() {
     auto left = parseLogicalAnd();
+    while (match(TokenType::Or)) {
+        auto right = parseLogicalAnd();
+        left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::Or, std::move(right));
+    }
     return left;
 }
 
 std::unique_ptr<Expression> Parser::parseLogicalAnd() {
-    return parseBitwiseOr();
+    auto left = parseLogicalNot();
+    while (match(TokenType::And)) {
+        auto right = parseBitwiseOr();
+        left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::And, std::move(right));
+    }
+    return left;
+}
+
+std::unique_ptr<Expression> Parser::parseLogicalNot() {
+    if (match(TokenType::Not)) {
+        auto operand = parseLogicalNot();
+        return std::make_unique<UnaryExpr>(UnaryOp::Not, std::move(operand));
+    }
+    return parseComparison();
+}
+
+std::unique_ptr<Expression> Parser::parseComparison() {
+    auto left = parseBitwiseOr();
+
+    while (check(TokenType::EqualEqual) || check(TokenType::BangEqual) ||
+           check(TokenType::Less) || check(TokenType::LessEqual) ||
+           check(TokenType::Greater) || check(TokenType::GreaterEqual)) {
+
+        const Token opToken = advance();
+        BinaryOp op;
+
+        switch (opToken.type) {
+            case TokenType::EqualEqual:   op = BinaryOp::Equal; break;
+            case TokenType::BangEqual:    op = BinaryOp::NotEqual; break;
+            case TokenType::Less:         op = BinaryOp::Less; break;
+            case TokenType::LessEqual:    op = BinaryOp::LessEq; break;
+            case TokenType::Greater:      op = BinaryOp::Greater; break;
+            case TokenType::GreaterEqual: op = BinaryOp::GreaterEq; break;
+            default: break; // Unreachable
+        }
+
+        auto right = parseBitwiseOr();
+        left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+    }
+    return left;
 }
 
 std::unique_ptr<Expression> Parser::parseBitwiseOr() {
@@ -329,38 +372,10 @@ std::unique_ptr<Expression> Parser::parseBitwiseXor() {
 }
 
 std::unique_ptr<Expression> Parser::parseBitwiseAnd() {
-    auto left = parseEquality();
-    while (match(TokenType::Ampersand)) {
-        auto right = parseEquality();
-        left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::BitAnd, std::move(right));
-    }
-    return left;
-}
-
-std::unique_ptr<Expression> Parser::parseEquality() {
-    auto left = parseRelational();
-    while (check(TokenType::EqualEqual) || check(TokenType::BangEqual)) {
-        Token opToken = advance();
-        BinaryOp op = (opToken.type == TokenType::EqualEqual) ? BinaryOp::Equal : BinaryOp::NotEqual;
-        auto right = parseRelational();
-        left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
-    }
-    return left;
-}
-
-std::unique_ptr<Expression> Parser::parseRelational() {
     auto left = parseShift();
-    while (check(TokenType::Less) || check(TokenType::LessEqual) ||
-           check(TokenType::Greater) || check(TokenType::GreaterEqual)) {
-        Token opToken = advance();
-        BinaryOp op;
-        if (opToken.type == TokenType::Less) op = BinaryOp::Less;
-        else if (opToken.type == TokenType::LessEqual) op = BinaryOp::LessEq;
-        else if (opToken.type == TokenType::Greater) op = BinaryOp::Greater;
-        else op = BinaryOp::GreaterEq;
-
+    while (match(TokenType::Ampersand)) {
         auto right = parseShift();
-        left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+        left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::BitAnd, std::move(right));
     }
     return left;
 }
@@ -368,7 +383,7 @@ std::unique_ptr<Expression> Parser::parseRelational() {
 std::unique_ptr<Expression> Parser::parseShift() {
     auto left = parseAdditive();
     while (check(TokenType::LShift) || check(TokenType::RShift)) {
-        Token opToken = advance();
+        const Token opToken = advance();
         BinaryOp op = (opToken.type == TokenType::LShift) ? BinaryOp::LShift : BinaryOp::RShift;
         auto right = parseAdditive();
         left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));

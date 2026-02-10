@@ -163,25 +163,25 @@ void IRGenerator::visitWhile(const WhileStmt* stmt) {
 void IRGenerator::visitAssign(const AssignStmt* stmt) {
     if (auto indexExpr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
         tacky::Val target = visitExpression(indexExpr->target.get());
-        tacky::Val bitVal = visitExpression(indexExpr->index.get());
-
+        tacky::Val indexVal = visitExpression(indexExpr->index.get());
         int bit = 0;
-        if (auto c = std::get_if<tacky::Constant>(&bitVal)) {
+
+        if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
             bit = c->value;
         } else {
-            throw std::runtime_error("Bit index must be a constant integer");
+             throw std::runtime_error("Bit index must be constant");
         }
 
-        tacky::Val valueToAssign = visitExpression(stmt->value.get());
+        tacky::Val val = visitExpression(stmt->value.get());
 
-        if (auto c = std::get_if<tacky::Constant>(&valueToAssign)) {
+        if (auto c = std::get_if<tacky::Constant>(&val)) {
             if (c->value != 0) {
                 emit(tacky::BitSet{target, bit});
             } else {
                 emit(tacky::BitClear{target, bit});
             }
         } else {
-             throw std::runtime_error("Assigning variables to bits not fully supported yet (use 0/1 literals)");
+            emit(tacky::BitWrite{target, bit, val});
         }
         return;
     }

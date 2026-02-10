@@ -98,6 +98,12 @@ namespace tacky {
         Val dst;
     };
 
+    struct BitWrite {
+        Val target;
+        int bit;
+        Val src;
+    };
+
     // --- The Instruction Container ---
     using Instruction = std::variant<
         Return,
@@ -111,7 +117,8 @@ namespace tacky {
         Call,
         BitSet,
         BitClear,
-        BitCheck
+        BitCheck,
+        BitWrite
     >;
 
     // --- Function Definition ---
