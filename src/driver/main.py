@@ -55,8 +55,6 @@ def _ensure_venv():
                 console.print(f"[debug] Venv switch failed: {e}", style="dim")
             pass # Fallback if resolution fails or execv fails
 
-# Execute immediately upon import to hijack execution flow
-_ensure_venv()
 
 # Application definition
 from .commands.new import new
@@ -72,5 +70,9 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ver
 app.command()(new)
 app.command()(build)
 
-if __name__ == "__main__":
+def run_cli():
+    _ensure_venv()
     app()
+
+if __name__ == "__main__":
+    run_cli()

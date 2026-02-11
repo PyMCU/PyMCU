@@ -1,10 +1,14 @@
 from pathlib import Path
 import tomlkit
-from ..toolchain import Toolchain
 import typer
 import os
+import shutil
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+
+# New Architecture Imports
+from ..toolchains import get_toolchain_for_chip
+from ..core.compiler import PyMcuCompiler
 
 console = Console()
 
@@ -38,19 +42,21 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
-        # Step 0: Ensure toolchain is ready (Interactive Check)
-        # We do this before the progress bar to avoid visual glitches with prompts/downloads
-        toolchain_config = pymcu_config.get("toolchain", {})
-        assembler_override = toolchain_config.get("assembler")
+        # 1. Factory: Get the appropriate toolchain strategy
+        # Note: We rely on the chip name to decide. Assembler override in TOML could be handled
+        # by passing it to the factory if needed, but for now we follow the simple Architecture.
+        toolchain = get_toolchain_for_chip(chip, console)
         
-        target_tool = Toolchain.resolve_tool_name(chip, assembler_override)
-        if target_tool:
-            # This triggers interactive prompt/install if missing
+        # 2. Interactive Install Check (BEFORE Progress Bar)
+        if not toolchain.is_cached():
             try:
-                Toolchain.prepare_tool(target_tool)
+                toolchain.install()
             except RuntimeError as e:
-                console.print(f"[red]Toolchain preparation failed: {e}[/red]")
+                console.print(f"[bold red]Toolchain installation failed:[/bold red] {e}")
                 raise typer.Exit(code=1)
+
+        # 3. Core Compiler Wrapper
+        compiler = PyMcuCompiler(console)
 
         with Progress(
             SpinnerColumn(),
@@ -58,32 +64,44 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             BarColumn(),
             TimeElapsedColumn(),
             transient=False,
+            console=console
         ) as progress:
             
             build_task = progress.add_task(description=f"Building {chip}...", total=100)
             
-            # Step 1: Compilation
+            # Step 1: Compilation (Python -> ASM)
             progress.update(build_task, description="Compiling Python to ASM...", completed=10)
-            Toolchain.run_compiler(entry_point, str(output_file), chip, freq, config_map, verbose=verbose)
+            try:
+                compiler.compile(entry_point, str(output_file), chip, freq, config_map, verbose=verbose)
+            except RuntimeError as e:
+                progress.stop()
+                console.print(f"[bold red]Compilation Error:[/bold red] {e}")
+                raise typer.Exit(code=1)
+                
             progress.update(build_task, completed=50)
             
-            # Step 2: Assembly
+            # Step 2: Assembly (ASM -> HEX)
             progress.update(build_task, description="Assembling...", completed=60)
-            Toolchain.run_assembler(chip, str(output_file), assembler_override)
+            try:
+                # The toolchain strategy handles the specific assembler invocation (gpasm, etc.)
+                hex_file = toolchain.assemble(output_file)
+            except RuntimeError as e:
+                progress.stop()
+                console.print(f"[bold red]Assembly Error:[/bold red] {e}")
+                raise typer.Exit(code=1)
+                
             progress.update(build_task, completed=90)
             
             # Step 3: Cleanup
             progress.update(build_task, description="Cleaning up...")
             
-            # Move extra files to dist/debug to not "bother" the user
+            # Move extra files to dist/debug
             debug_dir = output_dir / "debug"
-            for ext in [".lst", ".cod", ".asm"]:
+            for ext in [".lst", ".cod", ".map", ".asm"]: # Added .map common for linkers
                 f = output_file.with_suffix(ext)
                 if f.exists():
                     if not debug_dir.exists():
                         debug_dir.mkdir(parents=True)
-                    # Move to debug dir
-                    import shutil
                     shutil.move(str(f), str(debug_dir / f.name))
             
             progress.update(build_task, description="Done!", completed=100)
