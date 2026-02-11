@@ -45,4 +45,4 @@ lib/**/.venv/
 lib/**/dist/
 lib/**/build/
 lib/**/*.egg-info/
-src/driver/pymcu/__pycache__/
+__pycache__

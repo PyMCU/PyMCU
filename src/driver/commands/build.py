@@ -2,11 +2,16 @@ from pathlib import Path
 import tomlkit
 from ..toolchain import Toolchain
 import typer
+import os
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+
+console = Console()
 
 def build():
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
-        typer.echo("No pyproject.toml found. Are you in a pymcu project?", err=True)
+        console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
         raise typer.Exit(code=1)
 
     try:
@@ -27,18 +32,52 @@ def build():
         output_file = output_dir / "firmware.asm"
 
         if not Path(entry_point).exists():
-            typer.echo(f"Entry point '{entry_point}' not found.", err=True)
+            console.print(f"[red]Entry point '{entry_point}' not found.[/red]")
             raise typer.Exit(code=1)
 
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
-        typer.echo(f"[pymcu] Building project for {chip} ({freq/1000000:.1f}MHz)...")
-        
-        Toolchain.run_compiler(entry_point, str(output_file), chip, freq, config_map)
-        
-        typer.echo(f"[pymcu] Build successful! Artifact: {output_file}")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TimeElapsedColumn(),
+            transient=False,
+        ) as progress:
+            
+            build_task = progress.add_task(description=f"Building {chip}...", total=100)
+            
+            # Step 1: Compilation
+            progress.update(build_task, description="Compiling Python to ASM...", completed=10)
+            Toolchain.run_compiler(entry_point, str(output_file), chip, freq, config_map)
+            progress.update(build_task, completed=50)
+            
+            # Step 2: Assembly
+            progress.update(build_task, description="Assembling (gpasm)...")
+            toolchain_config = pymcu_config.get("toolchain", {})
+            assembler_override = toolchain_config.get("assembler")
+            Toolchain.run_assembler(chip, str(output_file), assembler_override)
+            progress.update(build_task, completed=90)
+            
+            # Step 3: Cleanup
+            progress.update(build_task, description="Cleaning up...")
+            
+            # Move extra files to dist/debug to not "bother" the user
+            debug_dir = output_dir / "debug"
+            for ext in [".lst", ".cod", ".asm"]:
+                f = output_file.with_suffix(ext)
+                if f.exists():
+                    if not debug_dir.exists():
+                        debug_dir.mkdir(parents=True)
+                    # Move to debug dir
+                    import shutil
+                    shutil.move(str(f), str(debug_dir / f.name))
+            
+            progress.update(build_task, description="Done!", completed=100)
+
+        console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
 
     except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
+        console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1)

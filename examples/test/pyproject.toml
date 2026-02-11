@@ -11,7 +11,7 @@ explicit = true
 pymcu-stdlib = { index = "gitea" }
 
 [tool.pymcu]
-chip = "pic14"
+chip = "pic16f877a"
 frequency = 4000000
 
 [tool.pymcu.config]

@@ -23,6 +23,8 @@ class ptr(Generic[T]):
         raise RuntimeError("Bit manipulation only works in compiled code")
 
 
+
+
 # Phantom types (type-level aliases used only for static typing)
 uint8 = NewType("uint8", int)
 int8 = NewType("int8", int)

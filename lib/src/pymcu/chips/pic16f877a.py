@@ -1,6 +1,14 @@
 from pymcu.types import ptr, uint8
 
 # ==========================================
+#  Device Memory Configuration
+# ==========================================
+# PIC16F877A has 368 bytes of RAM
+# RAM starts at 0x20 and spans across multiple banks
+RAM_START = 0x20
+RAM_SIZE = 368
+
+# ==========================================
 #  Register Definitions (SRAM & SFRs)
 # ==========================================
 
