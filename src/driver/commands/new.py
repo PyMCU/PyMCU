@@ -45,6 +45,16 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             
             deps = tomlkit.array()
             deps.append("pymcu-stdlib")
+            # Pin the compiler version to the one currently running to ensure reproducibility
+            try:
+                from importlib.metadata import version
+                current_version = version("pymcu-compiler")
+                deps.append(f"pymcu-compiler=={current_version}")
+            except Exception:
+                # Fallback if running from source or version not found
+                console.print("[yellow]Warning: Could not detect pymcu-compiler version. Adding unpinned dependency.[/yellow]")
+                deps.append("pymcu-compiler")
+
             project.add("dependencies", deps)
             
             doc.add("project", project)
@@ -126,6 +136,14 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
                 f.write(tomlkit.dumps(doc))
                 
             requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\npymcu-stdlib\n"
+            
+            try:
+                from importlib.metadata import version
+                curr_ver = version("pymcu-compiler")
+                requirements_content += f"pymcu-compiler=={curr_ver}\n"
+            except Exception:
+                requirements_content += "pymcu-compiler\n"
+
             with open(project_path / "requirements.txt", "w") as f:
                 f.write(requirements_content)
 

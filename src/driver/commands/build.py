@@ -8,7 +8,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 console = Console()
 
-def build():
+def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
         console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
@@ -38,6 +38,20 @@ def build():
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
+        # Step 0: Ensure toolchain is ready (Interactive Check)
+        # We do this before the progress bar to avoid visual glitches with prompts/downloads
+        toolchain_config = pymcu_config.get("toolchain", {})
+        assembler_override = toolchain_config.get("assembler")
+        
+        target_tool = Toolchain.resolve_tool_name(chip, assembler_override)
+        if target_tool:
+            # This triggers interactive prompt/install if missing
+            try:
+                Toolchain.prepare_tool(target_tool)
+            except RuntimeError as e:
+                console.print(f"[red]Toolchain preparation failed: {e}[/red]")
+                raise typer.Exit(code=1)
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -50,13 +64,11 @@ def build():
             
             # Step 1: Compilation
             progress.update(build_task, description="Compiling Python to ASM...", completed=10)
-            Toolchain.run_compiler(entry_point, str(output_file), chip, freq, config_map)
+            Toolchain.run_compiler(entry_point, str(output_file), chip, freq, config_map, verbose=verbose)
             progress.update(build_task, completed=50)
             
             # Step 2: Assembly
-            progress.update(build_task, description="Assembling (gpasm)...")
-            toolchain_config = pymcu_config.get("toolchain", {})
-            assembler_override = toolchain_config.get("assembler")
+            progress.update(build_task, description="Assembling...", completed=60)
             Toolchain.run_assembler(chip, str(output_file), assembler_override)
             progress.update(build_task, completed=90)
             
