@@ -3,6 +3,7 @@
 #include <iostream>
 #include <variant>
 #include <set>
+#include <algorithm>
 
 PIOCodeGen::PIOCodeGen(DeviceConfig cfg) : config(std::move(cfg)) {}
 

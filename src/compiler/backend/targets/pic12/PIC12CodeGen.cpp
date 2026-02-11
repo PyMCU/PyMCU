@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 #include <variant>
+#include <algorithm>
 
 #include "backend/analysis/StackAllocator.h"
 
