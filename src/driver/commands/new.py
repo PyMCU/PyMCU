@@ -1,12 +1,39 @@
 from pathlib import Path
 import typer
-from typing import Optional
+from typing import Optional, List
 import tomlkit
+import json
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 
+# Import factory for toolchain auto-detection
+from ..toolchains import get_toolchain_for_chip
+
 console = Console()
+
+def get_available_chips() -> List[str]:
+    """
+    Dynamically scans the installed 'pymcu-stdlib' package for chip definitions.
+    Returns a list of chip names (e.g., ['pic16f84a', 'pic16f877a']).
+    """
+    try:
+        import pymcu
+        if hasattr(pymcu, '__file__') and pymcu.__file__:
+            chips_dir = Path(pymcu.__file__).parent / "chips"
+            if chips_dir.is_dir():
+                # List .py files, ignore __init__.py
+                chips = [
+                    f.stem for f in chips_dir.glob("*.py")
+                    if f.name != "__init__.py"
+                ]
+                return sorted(chips)
+    except ImportError:
+        pass
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not scan for chips: {e}[/yellow]")
+    
+    return []
 
 def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="Target MCU (e.g., pic16f84a)")):
     console.print(Panel(f"[bold blue]Scaffolding new pymcu project: [green]{name}[/green][/bold blue]"))
@@ -16,12 +43,27 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
         console.print(f"[red]Error: Directory '{name}' already exists.[/red]")
         raise typer.Exit(code=1)
 
-    # MCU Selection
+    # 1. Dynamic MCU Selection
     chip = mcu
     if not chip:
-        chip = Prompt.ask("Target MCU", default="pic16f84a")
+        available_chips = get_available_chips()
+        if available_chips:
+            chip = Prompt.ask("Target MCU", choices=available_chips, default="pic16f84a")
+        else:
+            # Fallback if pymcu-stdlib not installed or readable
+            chip = Prompt.ask("Target MCU", default="pic16f84a")
 
-    # Package Manager Selection
+    # 2. Toolchain Auto-detection
+    try:
+        # We instantiate the toolchain to get its canonical name
+        toolchain_instance = get_toolchain_for_chip(chip, console)
+        toolchain_name = toolchain_instance.get_name()
+    except ValueError:
+        # Fallback if unknown chip, default to gputils or warn
+        console.print(f"[yellow]Warning: No specific toolchain known for '{chip}'. Defaulting to 'gputils'.[/yellow]")
+        toolchain_name = "gputils"
+
+    # 3. Package Manager Selection
     pkg_manager = Prompt.ask(
         "Which package manager would you like to use?",
         choices=["uv", "pip", "poetry"],
@@ -107,8 +149,9 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             pymcu_config.add(tomlkit.comment("FOSC = \"HS\""))
             pymcu_tool.add("config", pymcu_config)
             
+            # Auto-detected toolchain
             pymcu_toolchain = tomlkit.table()
-            pymcu_toolchain.add(tomlkit.comment("assembler = \"gpasm\""))
+            pymcu_toolchain.add("name", toolchain_name)
             pymcu_tool.add("toolchain", pymcu_toolchain)
 
             if "tool" not in doc:
@@ -128,7 +171,11 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             pymcu_tool.add("chip", chip)
             pymcu_tool.add("frequency", freq)
             pymcu_tool.add("config", tomlkit.table())
-            pymcu_tool.add("toolchain", tomlkit.table())
+            
+            pymcu_toolchain = tomlkit.table()
+            pymcu_toolchain.add("name", toolchain_name)
+            pymcu_tool.add("toolchain", pymcu_toolchain)
+            
             tool.add("pymcu", pymcu_tool)
             doc.add("tool", tool)
             
@@ -147,6 +194,39 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             with open(project_path / "requirements.txt", "w") as f:
                 f.write(requirements_content)
 
+        # 4. Generate VS Code Tasks
+        vscode_dir = project_path / ".vscode"
+        vscode_dir.mkdir()
+        tasks_json = {
+            "version": "2.0.0",
+            "tasks": [
+                {
+                    "label": "pymcu: build",
+                    "type": "shell",
+                    "command": "pymcu build",
+                    "group": {
+                        "kind": "build",
+                        "isDefault": True
+                    },
+                    "problemMatcher": []
+                },
+                {
+                    "label": "pymcu: clean",
+                    "type": "shell",
+                    "command": "pymcu clean",
+                    "problemMatcher": []
+                },
+                {
+                    "label": "pymcu: flash",
+                    "type": "shell",
+                    "command": "pymcu flash",
+                    "problemMatcher": []
+                }
+            ]
+        }
+        with open(vscode_dir / "tasks.json", "w") as f:
+            json.dump(tasks_json, f, indent=4)
+
         # src/main.py
         main_py_content = f"from pymcu.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
         with open(project_path / "src" / "main.py", "w") as f:
@@ -154,7 +234,9 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
 
         console.print(f"[bold green]✓[/bold green] Project '[bold]{name}[/bold]' created successfully!")
         console.print(f"[blue]Target MCU:[/blue] {chip}")
+        console.print(f"[blue]Toolchain:[/blue] {toolchain_name}")
         console.print(f"[blue]Package Manager:[/blue] {pkg_manager}")
+        console.print(f"[dim]VS Code tasks created in .vscode/tasks.json[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

@@ -26,7 +26,7 @@ class GputilsToolchain(ExternalToolchain):
                 "bin_path": "bin/gpasm.exe"
             },
             "linux": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.gz",
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.0.2/gputils-1.5.2.tar.gz",
                 "hash": "placeholder", # Updates needed for production use
                 "archive_type": "tar.gz",
                 "bin_path": "gputils-1.5.2/gpasm/gpasm" 
@@ -178,3 +178,5 @@ class GputilsToolchain(ExternalToolchain):
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
             self.console.print(f"[red]Assembler failed:[/red]\n{err}")
             raise RuntimeError("Assembly failed.")
+
+

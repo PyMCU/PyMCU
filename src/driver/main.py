@@ -59,6 +59,8 @@ def _ensure_venv():
 # Application definition
 from .commands.new import new
 from .commands.build import build
+from .commands.clean import clean
+from .commands.flash import flash
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -69,6 +71,8 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ver
 
 app.command()(new)
 app.command()(build)
+app.command()(clean)
+app.command()(flash)
 
 def run_cli():
     _ensure_venv()
