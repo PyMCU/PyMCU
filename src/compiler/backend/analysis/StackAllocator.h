@@ -5,18 +5,19 @@
 #ifndef STACK_ALLOCATOR_H
 #define STACK_ALLOCATOR_H
 
-
 #pragma once
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
-#include <set>
 
 #include "ir/Tacky.h"
 
 class StackAllocator {
 public:
-    std::pair<std::map<std::string, int>, int> allocate(const tacky::Program& program);
+    std::pair<std::map<std::string, int>, int>
+    allocate(const tacky::Program &program);
+
 private:
     struct FunctionNode {
         std::string name;
@@ -29,11 +30,12 @@ private:
     std::map<std::string, FunctionNode> call_graph;
     std::map<std::string, int> offsets;
     std::map<std::string, int> offsets_base;
+    std::set<std::string> global_names;
     int max_stack_usage = 0;
 
-    void build_graph(const tacky::Program& program);
-    void calculate_offsets(const std::string& func_name, int current_base);
+    void build_graph(const tacky::Program &program);
+
+    void calculate_offsets(const std::string &func_name, int current_base);
 };
 
-
-#endif //STACK_ALLOCATOR_H
+#endif // STACK_ALLOCATOR_H

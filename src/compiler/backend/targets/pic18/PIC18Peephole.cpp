@@ -27,44 +27,49 @@ std::string PIC18AsmLine::to_string() const {
     return "";
 }
 
-std::vector<PIC18AsmLine> PIC18Peephole::optimize(const std::vector<PIC18AsmLine>& lines) {
-    std::vector<PIC18AsmLine> result = lines;
+std::vector<PIC18AsmLine> PIC18Peephole::optimize(const std::vector<PIC18AsmLine> &lines) {
+    std::vector<PIC18AsmLine> source = lines;
+    std::vector<PIC18AsmLine> result;
     bool changed = true;
 
     while (changed) {
         changed = false;
-        std::vector<PIC18AsmLine> next;
-        
-        // Track state
-        std::optional<std::string> w_lit;
-        std::optional<std::string> w_var;
-        std::optional<int> current_bsr;
+        result.clear();
 
-        for (size_t i = 0; i < result.size(); ++i) {
-            auto& current = result[i];
+        std::optional<int> current_bsr;
+        bool dead_code_mode = false;
+
+        for (size_t i = 0; i < source.size(); ++i) {
+            const auto &current = source[i];
 
             if (current.type == PIC18AsmLine::LABEL) {
-                w_lit.reset(); w_var.reset();
+                dead_code_mode = false;
                 current_bsr.reset();
-                next.push_back(current);
-                continue;
-            }
-            if (current.type != PIC18AsmLine::INSTRUCTION) {
-                next.push_back(current);
+                result.push_back(current);
                 continue;
             }
 
-            // Redundant MOVFF optimization
+            if (dead_code_mode) {
+                if (current.type == PIC18AsmLine::INSTRUCTION) {
+                    changed = true;
+                    continue;
+                }
+            }
+
+            if (current.type != PIC18AsmLine::INSTRUCTION) {
+                result.push_back(current);
+                continue;
+            }
+
             if (current.mnemonic == "MOVFF" && current.op1 == current.op2) {
                 changed = true;
                 continue;
             }
 
-            // Redundant MOVLB (Bank Select)
             if (current.mnemonic == "MOVLB") {
                 try {
                     int bank = std::stoi(current.op1);
-                    if (current_bsr && *current_bsr == bank) {
+                    if (current_bsr.has_value() && current_bsr.value() == bank) {
                         changed = true;
                         continue;
                     }
@@ -74,44 +79,17 @@ std::vector<PIC18AsmLine> PIC18Peephole::optimize(const std::vector<PIC18AsmLine
                 }
             }
 
-            // State tracking for WREG
-            if (current.mnemonic == "MOVLW") {
-                if (w_lit && *w_lit == current.op1) {
-                    changed = true;
-                    continue;
-                }
-                w_lit = current.op1;
-                w_var.reset();
-            } else if (current.mnemonic == "MOVF" && current.op2 == "W") {
-                if (w_var && *w_var == current.op1) {
-                    changed = true;
-                    continue;
-                }
-                w_var = current.op1;
-                w_lit.reset();
-            } else if (current.mnemonic == "MOVWF") {
-                if (w_var && *w_var == current.op1) {
-                    changed = true;
-                    continue;
-                }
-                w_var = current.op1;
-            } else if (current.mnemonic == "BRA" || current.mnemonic == "GOTO" || current.mnemonic == "CALL" || current.mnemonic == "RETURN") {
-                w_lit.reset(); w_var.reset();
-                current_bsr.reset();
-            } else {
-                // Most other instructions affect flags and potentially WREG
-                // For simplicity, we reset on unknown instructions
-                if (current.mnemonic != "BSF" && current.mnemonic != "BCF" && current.mnemonic != "BTG") {
-                    w_lit.reset();
-                    w_var.reset();
-                }
+            if (current.mnemonic == "RETURN" || current.mnemonic == "RETFIE" ||
+                current.mnemonic == "GOTO" || current.mnemonic == "BRA") {
+                dead_code_mode = true;
             }
 
-            next.push_back(current);
+            result.push_back(current);
         }
-        
-        if (result.size() == next.size() && !changed) break;
-        result = next;
+
+        if (changed) {
+            source = result;
+        }
     }
 
     return result;

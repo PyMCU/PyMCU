@@ -6,51 +6,71 @@
 
 enum class TokenType {
     // Keywords
-    Def, Return, If, Elif, Else, While, For, In, Break, Continue, Pass,
-    Import, From, As,
-    True, False, None,
-    Or, And, Not,
+    Def,
+    Return,
+    If,
+    Elif,
+    Else,
+    While,
+    For,
+    In,
+    Break,
+    Continue,
+    Pass,
+    Match,
+    Case,
+    Import,
+    From,
+    As,
+    True,
+    False,
+    None,
+    Or,
+    And,
+    Not,
 
     // Literals
-    Identifier, Number, String,
+    Identifier,
+    Number,
+    String,
 
     // Structure & Types
-    Colon,      // :
-    Semicolon,  // ;
-    Comma,      // ,
-    Dot,        // .
-    Arrow,      // ->
-    LParen,     // (
-    RParen,     // )
-    LBracket,   // [
-    RBracket,   // ]
+    Colon, // :
+    Semicolon, // ;
+    Comma, // ,
+    Dot, // .
+    Arrow, // ->
+    LParen, // (
+    RParen, // )
+    LBracket, // [
+    RBracket, // ]
 
     // Operators
-    Plus,       // +
-    Minus,      // -
-    Star,       // *
-    Slash,      // /
-    Percent,    // %
+    Plus, // +
+    Minus, // -
+    Star, // *
+    Slash, // /
+    Percent, // %
 
     // Bitwise
-    Ampersand,  // &
-    Pipe,       // |
-    Caret,      // ^
-    Tilde,      // ~
-    LShift,     // <<
-    RShift,     // >>
+    Ampersand, // &
+    Pipe, // |
+    Caret, // ^
+    Tilde, // ~
+    LShift, // <<
+    RShift, // >>
 
     // Comparison & Assignment
-    Equal,      // =
+    Equal, // =
     EqualEqual, // ==
-    BangEqual,  // !=
-    Less,       // <
-    LessEqual,  // <=
-    Greater,    // >
-    GreaterEqual,// >=
+    BangEqual, // !=
+    Less, // <
+    LessEqual, // <=
+    Greater, // >
+    GreaterEqual, // >=
 
     // Control
-    Newline,    // \n
+    Newline, // \n
     Indent,
     Dedent,
     EndOfFile,

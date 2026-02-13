@@ -2,36 +2,52 @@
 #define TACKY_H
 
 #pragma once
+#include <memory>
 #include <string>
 #include <variant>
 #include <vector>
-#include <memory>
 
 namespace tacky {
-
     // --- Operand Types ---
-    struct Constant { int value; };
-    struct Variable { std::string name; };
-    struct Temporary { std::string name; };
-
-    // Represents a physical memory address (MMIO or Static Global)
-    struct MemoryAddress { int address; };
-
-    using Val = std::variant<Constant, Variable, Temporary, MemoryAddress, std::monostate>;
-
-    enum class UnaryOp {
-        Not,
-        Neg,
-        BitNot
+    struct Constant {
+        int value;
     };
 
+    struct Variable {
+        std::string name;
+    };
+
+    struct Temporary {
+        std::string name;
+    };
+
+    // Represents a physical memory address (MMIO or Static Global)
+    struct MemoryAddress {
+        int address;
+    };
+
+    using Val =
+    std::variant<Constant, Variable, Temporary, MemoryAddress, std::monostate>;
+
+    enum class UnaryOp { Not, Neg, BitNot };
+
     enum class BinaryOp {
-        Add, Sub, Mul, Div, Mod,
-        Equal, NotEqual,
-        LessThan, LessEqual,
-        GreaterThan, GreaterEqual,
-        BitAnd, BitOr, BitXor,
-        LShift, RShift
+        Add,
+        Sub,
+        Mul,
+        Div,
+        Mod,
+        Equal,
+        NotEqual,
+        LessThan,
+        LessEqual,
+        GreaterThan,
+        GreaterEqual,
+        BitAnd,
+        BitOr,
+        BitXor,
+        LShift,
+        RShift
     };
 
     // --- Instructions ---
@@ -104,22 +120,24 @@ namespace tacky {
         Val src;
     };
 
+    // Optimized conditional jumps on bit state (for tight polling loops)
+    struct JumpIfBitSet {
+        Val source; // Register to test
+        int bit; // Bit index
+        std::string target; // Jump destination
+    };
+
+    struct JumpIfBitClear {
+        Val source;
+        int bit;
+        std::string target;
+    };
+
     // --- The Instruction Container ---
-    using Instruction = std::variant<
-        Return,
-        Unary,
-        Binary,
-        Copy,
-        Jump,
-        JumpIfZero,
-        JumpIfNotZero,
-        Label,
-        Call,
-        BitSet,
-        BitClear,
-        BitCheck,
-        BitWrite
-    >;
+    using Instruction =
+    std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, JumpIfNotZero,
+        Label, Call, BitSet, BitClear, BitCheck, BitWrite,
+        JumpIfBitSet, JumpIfBitClear>;
 
     // --- Function Definition ---
     struct Function {
@@ -129,9 +147,9 @@ namespace tacky {
     };
 
     struct Program {
+        std::vector<std::string> globals; // Mutable global variable names needing RAM
         std::vector<Function> functions;
     };
+} // namespace tacky
 
-}
-
-#endif //TACKY_H
+#endif // TACKY_H

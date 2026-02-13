@@ -1,10 +1,11 @@
 #include "IRGenerator.h"
-#include <stdexcept>
 #include <format>
 #include <iostream>
+#include <stdexcept>
+#include <typeinfo>
 
 tacky::Temporary IRGenerator::make_temp() {
-    return tacky::Temporary{ std::format("tmp.{}", temp_counter++) };
+    return tacky::Temporary{std::format("tmp.{}", temp_counter++)};
 }
 
 std::string IRGenerator::make_label() {
@@ -15,13 +16,16 @@ void IRGenerator::emit(const tacky::Instruction &inst) {
     current_instructions.push_back(inst);
 }
 
-tacky::Program IRGenerator::generate(const Program& main_ast, const std::vector<const Program*>& imported_modules) {
+tacky::Program
+IRGenerator::generate(const Program &main_ast,
+                      const std::vector<const Program *> &imported_modules) {
     tacky::Program ir_program;
     globals.clear();
+    mutable_globals.clear();
     function_return_types.clear();
     function_params.clear();
 
-    for (const auto* mod : imported_modules) {
+    for (const auto *mod: imported_modules) {
         scan_globals(*mod);
         scan_functions(*mod);
     }
@@ -29,15 +33,21 @@ tacky::Program IRGenerator::generate(const Program& main_ast, const std::vector<
     scan_globals(main_ast);
     scan_functions(main_ast);
 
-    for (const auto& func_def : main_ast.functions) {
+    for (const auto &func_def: main_ast.functions) {
         ir_program.functions.push_back(visitFunction(func_def.get()));
+    }
+
+    // Pass mutable global variable names to the backend for RAM allocation
+    for (const auto &name: mutable_globals) {
+        ir_program.globals.push_back(name);
     }
 
     loop_stack.clear();
     return ir_program;
 }
 
-tacky::Val IRGenerator::resolve_binding(const std::string& name) {
+tacky::Val IRGenerator::resolve_binding(const std::string &name) {
+    // Check if it's a known compile-time constant or memory-mapped register
     if (const auto it = globals.find(name); it != globals.end()) {
         if (it->second.is_memory_address) {
             return tacky::MemoryAddress{it->second.value};
@@ -46,21 +56,28 @@ tacky::Val IRGenerator::resolve_binding(const std::string& name) {
         }
     }
 
+    // Mutable globals use un-prefixed names so they're shared across functions
+    if (mutable_globals.contains(name)) {
+        return tacky::Variable{name};
+    }
+
     return tacky::Variable{current_function + "." + name};
 }
 
-void IRGenerator::scan_globals(const Program& ast) {
-    for (const auto& stmt : ast.global_statements) {
+void IRGenerator::scan_globals(const Program &ast) {
+    for (const auto &stmt: ast.global_statements) {
         std::string name;
         std::string type;
-        const Expression* initializer = nullptr;
+        const Expression *initializer = nullptr;
 
-        if (const auto varDecl = dynamic_cast<const VarDecl*>(stmt.get())) {
+        if (const auto varDecl = dynamic_cast<const VarDecl *>(stmt.get())) {
             name = varDecl->name;
             type = varDecl->type;
             initializer = varDecl->initializer.get();
-        } else if (const auto assign = dynamic_cast<const AssignStmt*>(stmt.get())) {
-            if (const auto varExpr = dynamic_cast<const VariableExpr*>(assign->target.get())) {
+        } else if (const auto assign =
+                dynamic_cast<const AssignStmt *>(stmt.get())) {
+            if (const auto varExpr =
+                    dynamic_cast<const VariableExpr *>(assign->target.get())) {
                 name = varExpr->name;
                 initializer = assign->value.get();
             }
@@ -71,43 +88,68 @@ void IRGenerator::scan_globals(const Program& ast) {
                 const int val = evaluate_constant_expr(initializer);
                 bool is_memory_address = false;
 
-                // If we have an initializer that is a call to ptr or PIORegister, it's a memory address
-                if (const auto call = dynamic_cast<const CallExpr*>(initializer)) {
+                // If we have an initializer that is a call to ptr or PIORegister, it's
+                // a memory address
+                if (const auto call = dynamic_cast<const CallExpr *>(initializer)) {
                     if (call->callee == "ptr" || call->callee == "PIORegister") {
                         is_memory_address = true;
                     }
                 }
 
                 // Also check type hint
-                if (!type.empty() && (type.find("ptr") != std::string::npos || type.find("PIORegister") != std::string::npos)) {
+                if (!type.empty() && (type.find("ptr") != std::string::npos ||
+                                      type.find("PIORegister") != std::string::npos)) {
                     is_memory_address = true;
                 }
 
-                globals[name] = SymbolInfo{is_memory_address, val};
+                if (is_memory_address) {
+                    globals[name] = SymbolInfo{true, val};
+                } else {
+                    // Distinguish true constants (ALL_CAPS naming convention, e.g.
+                    // BUTTON_PIN) from mutable variables (lowercase/mixed case, e.g.
+                    // error_flags). Constants like BUTTON_PIN = 0 remain compile-time
+                    // constants. Mutable variables need RAM allocation.
+                    bool is_all_upper = true;
+                    for (char c: name) {
+                        if (std::islower(static_cast<unsigned char>(c))) {
+                            is_all_upper = false;
+                            break;
+                        }
+                    }
+                    if (is_all_upper) {
+                        globals[name] = SymbolInfo{false, val};
+                    } else {
+                        // Mutable global: needs RAM, store initial value for later Copy
+                        mutable_globals.insert(name);
+                    }
+                }
             } catch (...) {
+                // Non-constant initializer: this is a runtime variable, needs RAM
+                mutable_globals.insert(name);
             }
         }
     }
 }
 
-void IRGenerator::scan_functions(const Program& ast) {
-    for (const auto& func : ast.functions) {
+void IRGenerator::scan_functions(const Program &ast) {
+    for (const auto &func: ast.functions) {
         function_return_types[func->name] = func->return_type;
         std::vector<std::string> params;
-        for (const auto& p : func->params) {
+        for (const auto &p: func->params) {
             params.push_back(p.name);
         }
         function_params[func->name] = params;
     }
 }
 
-int IRGenerator::evaluate_constant_expr(const Expression* expr) {
-    if (const auto num = dynamic_cast<const IntegerLiteral*>(expr)) {
+int IRGenerator::evaluate_constant_expr(const Expression *expr) {
+    if (const auto num = dynamic_cast<const IntegerLiteral *>(expr)) {
         return num->value;
     }
 
-    if (const auto call = dynamic_cast<const CallExpr*>(expr)) {
-        if ((call->callee == "ptr" || call->callee == "PIORegister") && call->args.size() == 1) {
+    if (const auto call = dynamic_cast<const CallExpr *>(expr)) {
+        if ((call->callee == "ptr" || call->callee == "PIORegister") &&
+            call->args.size() == 1) {
             return evaluate_constant_expr(call->args[0].get());
         }
     }
@@ -115,7 +157,7 @@ int IRGenerator::evaluate_constant_expr(const Expression* expr) {
     throw std::runtime_error("Not a constant expression");
 }
 
-tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
+tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
     tacky::Function ir_func;
     ir_func.name = funcNode->name;
     current_function = funcNode->name;
@@ -123,7 +165,7 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
     current_instructions.clear();
     loop_stack.clear();
 
-    for(const auto&[name, type] : funcNode->params) {
+    for (const auto &[name, type]: funcNode->params) {
         ir_func.params.push_back(current_function + "." + name);
     }
 
@@ -138,29 +180,46 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef* funcNode) {
     return ir_func;
 }
 
-void IRGenerator::visitBlock(const Block* block) {
-    for (const auto& stmt : block->statements) {
+void IRGenerator::visitBlock(const Block *block) {
+    for (const auto &stmt: block->statements) {
         visitStatement(stmt.get());
     }
 }
 
-void IRGenerator::visitStatement(const Statement* stmt) {
-    if (auto* block = dynamic_cast<const Block*>(stmt)) return visitBlock(block);
-    if (auto* ret = dynamic_cast<const ReturnStmt*>(stmt)) return visitReturn(ret);
-    if (auto* ifStmt = dynamic_cast<const IfStmt*>(stmt)) return visitIf(ifStmt);
-    if (auto* whileStmt = dynamic_cast<const WhileStmt*>(stmt)) return visitWhile(whileStmt);
-    if (auto* breakStmt = dynamic_cast<const BreakStmt*>(stmt)) return visitBreak(breakStmt);
-    if (auto* continueStmt = dynamic_cast<const ContinueStmt*>(stmt)) return visitContinue(continueStmt);
-    if (auto* assign = dynamic_cast<const AssignStmt*>(stmt)) return visitAssign(assign);
-    if (auto* decl = dynamic_cast<const VarDecl*>(stmt)) return visitVarDecl(decl);
-    if (auto* exprStmt = dynamic_cast<const ExprStmt*>(stmt)) return visitExprStmt(exprStmt);
+void IRGenerator::visitStatement(const Statement *stmt) {
+    if (auto *block = dynamic_cast<const Block *>(stmt))
+        return visitBlock(block);
+    if (auto *ret = dynamic_cast<const ReturnStmt *>(stmt))
+        return visitReturn(ret);
+    if (auto ifStmt = dynamic_cast<const IfStmt *>(stmt))
+        return visitIf(ifStmt);
+    if (auto matchStmt = dynamic_cast<const MatchStmt *>(stmt))
+        return visitMatch(matchStmt);
+    if (auto whileStmt = dynamic_cast<const WhileStmt *>(stmt))
+        return visitWhile(whileStmt);
+    if (auto *breakStmt = dynamic_cast<const BreakStmt *>(stmt))
+        return visitBreak(breakStmt);
+    if (auto *continueStmt = dynamic_cast<const ContinueStmt *>(stmt))
+        return visitContinue(continueStmt);
+    if (auto *assign = dynamic_cast<const AssignStmt *>(stmt))
+        return visitAssign(assign);
+    if (auto *decl = dynamic_cast<const VarDecl *>(stmt))
+        return visitVarDecl(decl);
+    if (auto *exprStmt = dynamic_cast<const ExprStmt *>(stmt))
+        return visitExprStmt(exprStmt);
 
-    if (dynamic_cast<const PassStmt*>(stmt)) return;
+    if (dynamic_cast<const PassStmt *>(stmt))
+        return;
 
-    throw std::runtime_error("IR Generation: Unknown Statement type");
+    if (!stmt) {
+        throw std::runtime_error("IR Generation: Statement pointer is null");
+    }
+    throw std::runtime_error(
+        std::string("IR Generation: Unknown Statement type: ") +
+        typeid(*stmt).name());
 }
 
-void IRGenerator::visitReturn(const ReturnStmt* stmt) {
+void IRGenerator::visitReturn(const ReturnStmt *stmt) {
     tacky::Val val;
     if (stmt->value) {
         val = visitExpression(stmt->value.get());
@@ -170,33 +229,183 @@ void IRGenerator::visitReturn(const ReturnStmt* stmt) {
     emit(tacky::Return{val});
 }
 
-void IRGenerator::visitIf(const IfStmt* stmt) {
-    const tacky::Val cond = visitExpression(stmt->condition.get());
+void IRGenerator::visitIf(const IfStmt *stmt) {
+    // Generate If Stmt Logic
+    // 1. Condition
+    // 2. JumpIfZero -> Next Branch (elif_1)
+    // 3. Then Block
+    // 4. Jump -> End
+    // 5. Label: elif_1
+    // 6. Elif Condition
+    // 7. JumpIfZero -> Next Branch (elif_2 or else)
+    // 8. Elif Block
+    // 9. Jump -> End
+    // ...
+    // N. Label: else
+    // N+1. Else Block
+    // N+2. Label: End
 
-    const std::string else_label = make_label();
-    const std::string end_label = make_label();
+    std::string end_label = make_label();
 
-    emit(tacky::JumpIfZero{cond, else_label});
+    // 1. Main If Condition
+    tacky::Val cond_val = visitExpression(stmt->condition.get());
+    std::string next_label = (stmt->elif_branches.empty() && !stmt->else_branch)
+                                 ? end_label
+                                 : make_label();
 
+    emit(tacky::JumpIfZero{cond_val, next_label});
     visitStatement(stmt->then_branch.get());
     emit(tacky::Jump{end_label});
 
-    emit(tacky::Label{else_label});
+    // 2. Elif Branches
+    for (size_t i = 0; i < stmt->elif_branches.size(); ++i) {
+        emit(tacky::Label{next_label});
 
+        // Determine label for *next* branch (or else, or end)
+        bool is_last_elif = (i == stmt->elif_branches.size() - 1);
+        next_label =
+                (is_last_elif && !stmt->else_branch) ? end_label : make_label();
+
+        const auto &[elif_cond, elif_block] = stmt->elif_branches[i];
+        tacky::Val elif_val = visitExpression(elif_cond.get());
+
+        emit(tacky::JumpIfZero{elif_val, next_label});
+        visitStatement(elif_block.get());
+        emit(tacky::Jump{end_label});
+    }
+
+    // 3. Else Branch
     if (stmt->else_branch) {
+        emit(tacky::Label{next_label});
         visitStatement(stmt->else_branch.get());
     }
 
     emit(tacky::Label{end_label});
 }
 
-void IRGenerator::visitWhile(const WhileStmt* stmt) {
+void IRGenerator::visitMatch(const MatchStmt *stmt) {
+    // Generate Match/Case Logic
+    // 1. Evaluate Target -> Temp
+    // 2. Case 1:
+    //    Temp == Pattern ?
+    //    JumpIfZero -> Next Case
+    //    Body
+    //    Jump -> End
+    // ...
+    // N. Default Case (_)
+    //    Body
+    //    Jump -> End
+
+    tacky::Val target_val = visitExpression(stmt->target.get());
+
+    // Optimization: If target is complex, store it in a temp to avoid
+    // re-evaluation? visitExpression usually returns a Variable, Constant, or
+    // Temporary. So it is safe to reuse `target_val` without re-evaluation side
+    // effects UNLESS visitExpression emitted instructions that we shouldn't
+    // repeat. Since `visitExpression` emits instructions to calculate the value,
+    // `target_val` holds the *result*. So we are good.
+    // HOWEVER, if the result is a temporary that might be clobbered, we should be
+    // careful. In TACKY, temporaries are unique variables, so it's fine.
+
+    std::string end_label = make_label();
+
+    for (const auto &branch: stmt->branches) {
+        std::string next_case_label = make_label();
+
+        if (branch.pattern) {
+            // Specific Pattern
+            tacky::Val pattern_val = visitExpression(branch.pattern.get());
+
+            // Generate equality check: target == pattern
+            tacky::Temporary cmp_res = make_temp();
+            emit(tacky::Binary{
+                tacky::BinaryOp::Equal, target_val, pattern_val,
+                cmp_res
+            });
+
+            // If false (0), jump to next case
+            emit(tacky::JumpIfZero{cmp_res, next_case_label});
+
+            // Execute body
+            visitBlock(dynamic_cast<const Block *>(branch.body.get()));
+            emit(tacky::Jump{end_label});
+        } else {
+            // Wildcard Case (_)
+            // Always execute if we reached here
+            visitBlock(dynamic_cast<const Block *>(branch.body.get()));
+            emit(tacky::Jump{end_label});
+        }
+
+        emit(tacky::Label{next_case_label});
+    }
+
+    emit(tacky::Label{end_label});
+}
+
+void IRGenerator::visitWhile(const WhileStmt *stmt) {
     const std::string start_label = make_label();
     const std::string end_label = make_label();
 
     loop_stack.push_back({start_label, end_label});
 
     emit(tacky::Label{start_label});
+
+    // Optimization: detect bit-polling pattern
+    // Pattern: while reg[bit] == 0/1  or  while reg[bit] != 0/1
+    if (auto *cmp = dynamic_cast<const BinaryExpr *>(stmt->condition.get())) {
+        if (cmp->op == BinaryOp::Equal || cmp->op == BinaryOp::NotEqual) {
+            const IndexExpr *idx = nullptr;
+            const IntegerLiteral *lit = nullptr;
+
+            // Check: IndexExpr on left, literal on right
+            idx = dynamic_cast<const IndexExpr *>(cmp->left.get());
+            lit = dynamic_cast<const IntegerLiteral *>(cmp->right.get());
+
+            // Or reversed: literal on left, IndexExpr on right
+            if (!idx || !lit) {
+                idx = dynamic_cast<const IndexExpr *>(cmp->right.get());
+                lit = dynamic_cast<const IntegerLiteral *>(cmp->left.get());
+            }
+
+            if (idx && lit && (lit->value == 0 || lit->value == 1)) {
+                // Resolve the register and bit index
+                tacky::Val target = visitExpression(idx->target.get());
+                tacky::Val indexVal = visitExpression(idx->index.get());
+
+                int bit = 0;
+                if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
+                    bit = c->value;
+                }
+
+                // Determine: when should we EXIT the loop?
+                // while (bit == 1): exit when bit is 0  → JumpIfBitClear
+                // while (bit == 0): exit when bit is 1  → JumpIfBitSet
+                // while (bit != 0): exit when bit is 0  → JumpIfBitClear
+                // while (bit != 1): exit when bit is 1  → JumpIfBitSet
+                bool exit_when_set;
+                if (cmp->op == BinaryOp::Equal) {
+                    exit_when_set = (lit->value == 0); // == 0 → exit when set
+                } else {
+                    // NotEqual
+                    exit_when_set = (lit->value == 1); // != 1 → exit when set
+                }
+
+                if (exit_when_set) {
+                    emit(tacky::JumpIfBitSet{target, bit, end_label});
+                } else {
+                    emit(tacky::JumpIfBitClear{target, bit, end_label});
+                }
+
+                visitStatement(stmt->body.get());
+                emit(tacky::Jump{start_label});
+                emit(tacky::Label{end_label});
+                loop_stack.pop_back();
+                return;
+            }
+        }
+    }
+
+    // Generic path: evaluate condition normally
     const tacky::Val cond = visitExpression(stmt->condition.get());
     emit(tacky::JumpIfZero{cond, end_label});
 
@@ -208,22 +417,22 @@ void IRGenerator::visitWhile(const WhileStmt* stmt) {
     loop_stack.pop_back();
 }
 
-void IRGenerator::visitBreak(const BreakStmt* stmt) {
+void IRGenerator::visitBreak(const BreakStmt *stmt) {
     if (loop_stack.empty()) {
         throw std::runtime_error("Break statement outside of loop");
     }
     emit(tacky::Jump{loop_stack.back().break_label});
 }
 
-void IRGenerator::visitContinue(const ContinueStmt* stmt) {
+void IRGenerator::visitContinue(const ContinueStmt *stmt) {
     if (loop_stack.empty()) {
         throw std::runtime_error("Continue statement outside of loop");
     }
     emit(tacky::Jump{loop_stack.back().continue_label});
 }
 
-void IRGenerator::visitAssign(const AssignStmt* stmt) {
-    if (auto indexExpr = dynamic_cast<const IndexExpr*>(stmt->target.get())) {
+void IRGenerator::visitAssign(const AssignStmt *stmt) {
+    if (auto indexExpr = dynamic_cast<const IndexExpr *>(stmt->target.get())) {
         tacky::Val target = visitExpression(indexExpr->target.get());
         tacky::Val indexVal = visitExpression(indexExpr->index.get());
         int bit = 0;
@@ -231,7 +440,7 @@ void IRGenerator::visitAssign(const AssignStmt* stmt) {
         if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
             bit = c->value;
         } else {
-             throw std::runtime_error("Bit index must be constant");
+            throw std::runtime_error("Bit index must be constant");
         }
 
         tacky::Val val = visitExpression(stmt->value.get());
@@ -250,7 +459,7 @@ void IRGenerator::visitAssign(const AssignStmt* stmt) {
 
     tacky::Val value = visitExpression(stmt->value.get());
 
-    if (auto varExpr = dynamic_cast<const VariableExpr*>(stmt->target.get())) {
+    if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
         tacky::Val target = resolve_binding(varExpr->name);
         emit(tacky::Copy{value, target});
     } else {
@@ -258,7 +467,7 @@ void IRGenerator::visitAssign(const AssignStmt* stmt) {
     }
 }
 
-void IRGenerator::visitVarDecl(const VarDecl* stmt) {
+void IRGenerator::visitVarDecl(const VarDecl *stmt) {
     if (stmt->initializer) {
         tacky::Val val = visitExpression(stmt->initializer.get());
         tacky::Val target = resolve_binding(stmt->name);
@@ -266,81 +475,127 @@ void IRGenerator::visitVarDecl(const VarDecl* stmt) {
     }
 }
 
-void IRGenerator::visitExprStmt(const ExprStmt* stmt) {
+void IRGenerator::visitExprStmt(const ExprStmt *stmt) {
     visitExpression(stmt->expr.get());
 }
 
-tacky::Val IRGenerator::visitExpression(const Expression* expr) {
-    if (auto* bin = dynamic_cast<const BinaryExpr*>(expr)) return visitBinary(bin);
-    if (auto* un = dynamic_cast<const UnaryExpr*>(expr)) return visitUnary(un);
-    if (auto* num = dynamic_cast<const IntegerLiteral*>(expr)) return visitLiteral(num);
-    if (auto* var = dynamic_cast<const VariableExpr*>(expr)) return visitVariable(var);
-    if (auto* call = dynamic_cast<const CallExpr*>(expr)) return visitCall(call);
-    if (auto* idx = dynamic_cast<const IndexExpr*>(expr)) return visitIndex(idx);
+tacky::Val IRGenerator::visitExpression(const Expression *expr) {
+    if (auto *bin = dynamic_cast<const BinaryExpr *>(expr))
+        return visitBinary(bin);
+    if (auto *un = dynamic_cast<const UnaryExpr *>(expr))
+        return visitUnary(un);
+    if (auto *num = dynamic_cast<const IntegerLiteral *>(expr))
+        return visitLiteral(num);
+    if (auto *var = dynamic_cast<const VariableExpr *>(expr))
+        return visitVariable(var);
+    if (auto *call = dynamic_cast<const CallExpr *>(expr))
+        return visitCall(call);
+    if (auto *idx = dynamic_cast<const IndexExpr *>(expr))
+        return visitIndex(idx);
 
-    if (auto* boolean = dynamic_cast<const BooleanLiteral*>(expr)) {
+    if (auto *boolean = dynamic_cast<const BooleanLiteral *>(expr)) {
         return tacky::Constant{boolean->value ? 1 : 0};
     }
 
     throw std::runtime_error("IR Generation: Unknown Expression type");
 }
 
-tacky::Val IRGenerator::visitLiteral(const IntegerLiteral* expr) {
+tacky::Val IRGenerator::visitLiteral(const IntegerLiteral *expr) {
     return tacky::Constant{expr->value};
 }
 
-tacky::Val IRGenerator::visitVariable(const VariableExpr* expr) {
+tacky::Val IRGenerator::visitVariable(const VariableExpr *expr) {
     return resolve_binding(expr->name);
 }
 
-tacky::Val IRGenerator::visitBinary(const BinaryExpr* expr) {
+tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
     tacky::Val v1 = visitExpression(expr->left.get());
     tacky::Val v2 = visitExpression(expr->right.get());
     tacky::Temporary dst = make_temp();
 
     tacky::BinaryOp op;
     switch (expr->op) {
-        case BinaryOp::Add: op = tacky::BinaryOp::Add; break;
-        case BinaryOp::Sub: op = tacky::BinaryOp::Sub; break;
-        case BinaryOp::Mul: op = tacky::BinaryOp::Mul; break;
-        case BinaryOp::Div: op = tacky::BinaryOp::Div; break;
-        case BinaryOp::Mod: op = tacky::BinaryOp::Mod; break;
-        case BinaryOp::Equal: op = tacky::BinaryOp::Equal; break;
-        case BinaryOp::NotEqual: op = tacky::BinaryOp::NotEqual; break;
-        case BinaryOp::Less: op = tacky::BinaryOp::LessThan; break;
-        case BinaryOp::LessEq: op = tacky::BinaryOp::LessEqual; break;
-        case BinaryOp::Greater: op = tacky::BinaryOp::GreaterThan; break;
-        case BinaryOp::GreaterEq: op = tacky::BinaryOp::GreaterEqual; break;
+        case BinaryOp::Add:
+            op = tacky::BinaryOp::Add;
+            break;
+        case BinaryOp::Sub:
+            op = tacky::BinaryOp::Sub;
+            break;
+        case BinaryOp::Mul:
+            op = tacky::BinaryOp::Mul;
+            break;
+        case BinaryOp::Div:
+            op = tacky::BinaryOp::Div;
+            break;
+        case BinaryOp::Mod:
+            op = tacky::BinaryOp::Mod;
+            break;
+        case BinaryOp::Equal:
+            op = tacky::BinaryOp::Equal;
+            break;
+        case BinaryOp::NotEqual:
+            op = tacky::BinaryOp::NotEqual;
+            break;
+        case BinaryOp::Less:
+            op = tacky::BinaryOp::LessThan;
+            break;
+        case BinaryOp::LessEq:
+            op = tacky::BinaryOp::LessEqual;
+            break;
+        case BinaryOp::Greater:
+            op = tacky::BinaryOp::GreaterThan;
+            break;
+        case BinaryOp::GreaterEq:
+            op = tacky::BinaryOp::GreaterEqual;
+            break;
 
-        case BinaryOp::BitAnd: op = tacky::BinaryOp::BitAnd; break;
-        case BinaryOp::BitOr:  op = tacky::BinaryOp::BitOr; break;
-        case BinaryOp::BitXor: op = tacky::BinaryOp::BitXor; break;
-        case BinaryOp::LShift: op = tacky::BinaryOp::LShift; break;
-        case BinaryOp::RShift: op = tacky::BinaryOp::RShift; break;
-        default: throw std::runtime_error("Unsupported Binary Op");
+        case BinaryOp::BitAnd:
+            op = tacky::BinaryOp::BitAnd;
+            break;
+        case BinaryOp::BitOr:
+            op = tacky::BinaryOp::BitOr;
+            break;
+        case BinaryOp::BitXor:
+            op = tacky::BinaryOp::BitXor;
+            break;
+        case BinaryOp::LShift:
+            op = tacky::BinaryOp::LShift;
+            break;
+        case BinaryOp::RShift:
+            op = tacky::BinaryOp::RShift;
+            break;
+        default:
+            throw std::runtime_error("Unsupported Binary Op");
     }
 
     emit(tacky::Binary{op, v1, v2, dst});
     return dst;
 }
 
-tacky::Val IRGenerator::visitUnary(const UnaryExpr* expr) {
+tacky::Val IRGenerator::visitUnary(const UnaryExpr *expr) {
     const tacky::Val src = visitExpression(expr->operand.get());
     tacky::Temporary dst = make_temp();
 
     tacky::UnaryOp op;
     switch (expr->op) {
-        case UnaryOp::Negate: op = tacky::UnaryOp::Neg; break;
-        case UnaryOp::Not:    op = tacky::UnaryOp::Not; break;
-        case UnaryOp::BitNot: op = tacky::UnaryOp::BitNot; break;
-        default: throw std::runtime_error("Unsupported Unary Op");
+        case UnaryOp::Negate:
+            op = tacky::UnaryOp::Neg;
+            break;
+        case UnaryOp::Not:
+            op = tacky::UnaryOp::Not;
+            break;
+        case UnaryOp::BitNot:
+            op = tacky::UnaryOp::BitNot;
+            break;
+        default:
+            throw std::runtime_error("Unsupported Unary Op");
     }
 
     emit(tacky::Unary{op, src, dst});
     return dst;
 }
 
-tacky::Val IRGenerator::visitIndex(const IndexExpr* expr) {
+tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
     tacky::Val target = visitExpression(expr->target.get());
     tacky::Val indexVal = visitExpression(expr->index.get());
 
@@ -348,7 +603,7 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr* expr) {
     if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
         bit = c->value;
     } else {
-         throw std::runtime_error("Bit index must be constant for reading");
+        throw std::runtime_error("Bit index must be constant for reading");
     }
 
     tacky::Temporary dst = make_temp();
@@ -357,39 +612,49 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr* expr) {
     return dst;
 }
 
-tacky::Val IRGenerator::visitCall(const CallExpr* expr) {
+tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     tacky::Call callInstr;
     std::string callee = expr->callee;
 
     // Map PIO intrinsics
-    if (callee == "pull") callee = "__pio_pull";
-    else if (callee == "push") callee = "__pio_push";
-    else if (callee == "out") callee = "__pio_out";
-    else if (callee == "in_") callee = "__pio_in";
-    else if (callee == "wait") callee = "__pio_wait";
+    if (callee == "pull")
+        callee = "__pio_pull";
+    else if (callee == "push")
+        callee = "__pio_push";
+    else if (callee == "out")
+        callee = "__pio_out";
+    else if (callee == "in_")
+        callee = "__pio_in";
+    else if (callee == "wait")
+        callee = "__pio_wait";
 
     callInstr.function_name = callee;
 
     bool is_pio_intrinsic = callee.starts_with("__pio_") || callee == "delay";
 
     if (function_params.contains(expr->callee)) {
-        const auto& param_names = function_params[expr->callee];
+        const auto &param_names = function_params[expr->callee];
         if (expr->args.size() != param_names.size()) {
-            throw std::runtime_error(std::format("Function '{}' expects {} arguments, but {} were provided",
-                                               expr->callee, param_names.size(), expr->args.size()));
+            throw std::runtime_error(std::format(
+                "Function '{}' expects {} arguments, but {} were provided",
+                expr->callee, param_names.size(), expr->args.size()));
         }
         for (size_t i = 0; i < expr->args.size(); ++i) {
             tacky::Val arg_val = visitExpression(expr->args[i].get());
-            emit(tacky::Copy{arg_val, tacky::Variable{expr->callee + "." + param_names[i]}});
+            emit(tacky::Copy{
+                arg_val,
+                tacky::Variable{expr->callee + "." + param_names[i]}
+            });
         }
     }
 
-    for (const auto& arg : expr->args) {
+    for (const auto &arg: expr->args) {
         callInstr.args.push_back(visitExpression(arg.get()));
     }
 
-    if (is_pio_intrinsic || (function_return_types.contains(expr->callee) && 
-        (function_return_types[expr->callee] == "void" || function_return_types[expr->callee] == "None"))) {
+    if (is_pio_intrinsic || (function_return_types.contains(expr->callee) &&
+                             (function_return_types[expr->callee] == "void" ||
+                              function_return_types[expr->callee] == "None"))) {
         callInstr.dst = std::monostate{};
         emit(callInstr);
         return std::monostate{};
