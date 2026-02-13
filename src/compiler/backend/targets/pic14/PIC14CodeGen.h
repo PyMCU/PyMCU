@@ -80,6 +80,7 @@ private:
   void compile_variant(const tacky::BitWrite &arg);
   void compile_variant(const tacky::JumpIfBitSet &arg);
   void compile_variant(const tacky::JumpIfBitClear &arg);
+  void compile_variant(const tacky::AugAssign &arg);
 };
 
 #endif // PIC14CODEGEN_H

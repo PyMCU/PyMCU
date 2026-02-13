@@ -545,3 +545,65 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfBitClear &arg) {
   emit("BTFSS", addr, std::to_string(arg.bit));
   emit("GOTO", arg.target);
 }
+
+void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
+  std::string target_addr = resolve_address(arg.target);
+  select_bank(target_addr);
+
+  // Load operand into W
+  load_into_w(arg.operand);
+
+  switch (arg.op) {
+  case tacky::BinaryOp::Add:
+    emit("ADDWF", target_addr, "F");
+    break;
+  case tacky::BinaryOp::Sub:
+    emit("SUBWF", target_addr, "F");
+    break;
+  case tacky::BinaryOp::BitAnd:
+    emit("ANDWF", target_addr, "F");
+    break;
+  case tacky::BinaryOp::BitOr:
+    emit("IORWF", target_addr, "F");
+    break;
+  case tacky::BinaryOp::BitXor:
+    emit("XORWF", target_addr, "F");
+    break;
+  case tacky::BinaryOp::LShift: {
+    // W already has shift count — for constant 1, emit single RLF
+    // General: loop W times, rotating left through carry
+    std::string loop_lbl = "augls_" + std::to_string(label_counter++);
+    std::string done_lbl = "augls_done_" + std::to_string(label_counter++);
+    emit("MOVWF", "__tmp");
+    emit("MOVF", "__tmp", "F"); // set Z if count==0
+    emit("BTFSC", "STATUS", "2");
+    emit("GOTO", done_lbl);
+    emit_label(loop_lbl);
+    emit("BCF", "STATUS", "0"); // clear carry
+    emit("RLF", target_addr, "F");
+    emit("DECFSZ", "__tmp", "F");
+    emit("GOTO", loop_lbl);
+    emit_label(done_lbl);
+    break;
+  }
+  case tacky::BinaryOp::RShift: {
+    std::string loop_lbl = "augrs_" + std::to_string(label_counter++);
+    std::string done_lbl = "augrs_done_" + std::to_string(label_counter++);
+    emit("MOVWF", "__tmp");
+    emit("MOVF", "__tmp", "F");
+    emit("BTFSC", "STATUS", "2");
+    emit("GOTO", done_lbl);
+    emit_label(loop_lbl);
+    emit("BCF", "STATUS", "0"); // clear carry
+    emit("RRF", target_addr, "F");
+    emit("DECFSZ", "__tmp", "F");
+    emit("GOTO", loop_lbl);
+    emit_label(done_lbl);
+    break;
+  }
+  default:
+    // Mul, Div, Mod — desugar to load-op-store via Binary
+    throw std::runtime_error(
+        "PIC14: AugAssign for this operator is not yet implemented");
+  }
+}

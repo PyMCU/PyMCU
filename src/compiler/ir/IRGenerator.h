@@ -10,83 +10,88 @@
 #include <vector>
 
 struct SymbolInfo {
-    bool is_memory_address;
-    int value;
+  bool is_memory_address;
+  int value;
 };
 
 class IRGenerator {
 public:
-    tacky::Program generate(const Program &main_ast,
-                            const std::vector<const Program *> &imported_modules);
+  tacky::Program generate(const Program &main_ast,
+                          const std::vector<const Program *> &imported_modules);
 
 private:
-    std::vector<tacky::Instruction> current_instructions;
-    int temp_counter = 0;
-    int label_counter = 0;
-    std::map<std::string, SymbolInfo> globals;
-    std::set<std::string> mutable_globals;
-    std::map<std::string, std::string> function_return_types;
-    std::map<std::string, std::vector<std::string> > function_params;
-    std::string current_function;
+  std::vector<tacky::Instruction> current_instructions;
+  int temp_counter = 0;
+  int label_counter = 0;
+  std::map<std::string, SymbolInfo> globals;
+  std::set<std::string> mutable_globals;
+  std::map<std::string, DataType> variable_types;
+  std::map<std::string, std::string> function_return_types;
+  std::map<std::string, std::vector<std::string>> function_params;
+  std::string current_function;
 
-    struct LoopLabels {
-        std::string continue_label;
-        std::string break_label;
-    };
+  struct LoopLabels {
+    std::string continue_label;
+    std::string break_label;
+  };
 
-    std::vector<LoopLabels> loop_stack;
+  std::vector<LoopLabels> loop_stack;
 
-    tacky::Temporary make_temp();
+  tacky::Temporary make_temp();
 
-    std::string make_label();
+  std::string make_label();
 
-    void emit(const tacky::Instruction &inst);
+  void emit(const tacky::Instruction &inst);
 
-    tacky::Val resolve_binding(const std::string &name);
+  tacky::Val resolve_binding(const std::string &name);
 
-    void scan_globals(const Program &ast);
+  DataType resolve_type(const std::string &type_str);
 
-    void scan_functions(const Program &ast);
+  void scan_globals(const Program &ast);
 
-    tacky::Function visitFunction(const FunctionDef *funcNode);
+  void scan_functions(const Program &ast);
 
-    void visitBlock(const Block *block);
+  tacky::Function visitFunction(const FunctionDef *funcNode);
 
-    void visitStatement(const Statement *stmt);
+  void visitBlock(const Block *block);
 
-    void visitReturn(const ReturnStmt *stmt);
+  void visitStatement(const Statement *stmt);
 
-    void visitIf(const IfStmt *stmt);
+  void visitReturn(const ReturnStmt *stmt);
 
-    void visitMatch(const MatchStmt *stmt);
+  void visitIf(const IfStmt *stmt);
 
-    void visitWhile(const WhileStmt *stmt);
+  void visitMatch(const MatchStmt *stmt);
 
-    void visitBreak(const BreakStmt *stmt);
+  void visitWhile(const WhileStmt *stmt);
 
-    void visitContinue(const ContinueStmt *stmt);
+  void visitBreak(const BreakStmt *stmt);
 
-    void visitAssign(const AssignStmt *stmt);
+  void visitContinue(const ContinueStmt *stmt);
 
-    void visitVarDecl(const VarDecl *stmt);
+  void visitAssign(const AssignStmt *stmt);
 
-    void visitExprStmt(const ExprStmt *stmt);
+  void visitAugAssign(const AugAssignStmt *stmt);
 
-    tacky::Val visitExpression(const Expression *expr);
+  void visitVarDecl(const VarDecl *stmt);
 
-    tacky::Val visitBinary(const BinaryExpr *expr);
+  void visitExprStmt(const ExprStmt *stmt);
 
-    tacky::Val visitUnary(const UnaryExpr *expr);
+  tacky::Val visitExpression(const Expression *expr);
 
-    static tacky::Val visitLiteral(const IntegerLiteral *expr);
+  tacky::Val visitBinary(const BinaryExpr *expr);
 
-    tacky::Val visitVariable(const VariableExpr *expr);
+  tacky::Val visitUnary(const UnaryExpr *expr);
 
-    tacky::Val visitCall(const CallExpr *expr);
+  static tacky::Val visitLiteral(const IntegerLiteral *expr);
 
-    tacky::Val visitIndex(const IndexExpr *expr);
+  tacky::Val visitVariable(const VariableExpr *expr);
 
-    static int evaluate_constant_expr(const Expression *expr);
+  tacky::Val visitCall(const CallExpr *expr);
+
+  tacky::Val visitIndex(const IndexExpr *expr);
+
+  static int evaluate_constant_expr(const Expression *expr);
 };
 
 #endif // IRGENERATOR_H
