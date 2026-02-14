@@ -22,6 +22,14 @@ class ptr(Generic[T]):
     def __setitem__(self, bit: int, value: int):
         raise RuntimeError("Bit manipulation only works in compiled code")
 
+    @property
+    def value(self) -> T:
+        raise RuntimeError("Reading from a register only works in compiled code")
+
+    @value.setter
+    def value(self, value: T):
+        raise RuntimeError("Writing to a register only works in compiled code")
+
 
 def inline(f):
     return f

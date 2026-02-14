@@ -1,4 +1,4 @@
-from pymcu.types import ptr, uint8
+from pymcu.types import ptr, uint8, uint16
 
 # ==========================================
 #  Device Memory Configuration
@@ -27,8 +27,9 @@ PCLATH:   ptr[uint8] = ptr(0x0A)
 INTCON:   ptr[uint8] = ptr(0x0B)
 PIR1:     ptr[uint8] = ptr(0x0C)
 PIR2:     ptr[uint8] = ptr(0x0D)
-TMR1L:    ptr[uint8] = ptr(0x0E) # TMR1 Low
-TMR1H:    ptr[uint8] = ptr(0x0F) # TMR1 High
+TMR1L:    ptr[uint8] = ptr(0x0E)  # TMR1 Low
+TMR1H:    ptr[uint8] = ptr(0x0F)  # TMR1 High
+TMR1:     ptr[uint16] = ptr(0x0E) # TMR1 combined register
 T1CON:    ptr[uint8] = ptr(0x10)
 TMR2:     ptr[uint8] = ptr(0x11)
 T2CON:    ptr[uint8] = ptr(0x12)
@@ -36,12 +37,14 @@ SSPBUF:   ptr[uint8] = ptr(0x13)
 SSPCON:   ptr[uint8] = ptr(0x14)
 CCPR1L:   ptr[uint8] = ptr(0x15)
 CCPR1H:   ptr[uint8] = ptr(0x16)
+CCP1:     ptr[uint16] = ptr(0x15)
 CCP1CON:  ptr[uint8] = ptr(0x17)
 RCSTA:    ptr[uint8] = ptr(0x18)
 TXREG:    ptr[uint8] = ptr(0x19)
 RCREG:    ptr[uint8] = ptr(0x1A)
 CCPR2L:   ptr[uint8] = ptr(0x1B)
 CCPR2H:   ptr[uint8] = ptr(0x1C)
+CCP2:     ptr[uint16] = ptr(0x1B)
 CCP2CON:  ptr[uint8] = ptr(0x1D)
 ADRESH:   ptr[uint8] = ptr(0x1E)
 ADCON0:   ptr[uint8] = ptr(0x1F)
