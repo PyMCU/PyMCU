@@ -11,6 +11,7 @@ dependencies = []
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pymcu"]
+artifacts = ["src/pymcu/**/*.inc"]
 
 [build-system]
 requires = ["hatchling"]

@@ -30,7 +30,8 @@ enum class BinaryOp {
 enum class UnaryOp {
   Negate, // -x
   Not,    // not x
-  BitNot  // ~x
+  BitNot, // ~x
+  Deref   // *ptr
 };
 
 struct ASTNode {
@@ -45,6 +46,12 @@ struct IntegerLiteral : Expression {
   int value;
 
   explicit IntegerLiteral(int v) : value(v) {}
+};
+
+struct FloatLiteral : Expression {
+  double value;
+
+  explicit FloatLiteral(double v) : value(v) {}
 };
 
 struct BooleanLiteral : Expression {
@@ -202,6 +209,14 @@ struct ContinueStmt : Statement {};
 
 struct PassStmt : Statement {};
 
+struct DelayStmt : Statement {
+  bool is_ms; // true = ms, false = us
+  std::unique_ptr<Expression> duration;
+
+  DelayStmt(bool ms, std::unique_ptr<Expression> dur)
+      : is_ms(ms), duration(std::move(dur)) {}
+};
+
 struct Param {
   std::string name;
   std::string type;
@@ -212,11 +227,12 @@ struct FunctionDef : ASTNode {
   std::vector<Param> params;
   std::string return_type; // "void", "uint8"
   std::unique_ptr<Block> body;
+  bool is_inline;
 
   FunctionDef(std::string n, std::vector<Param> p, std::string ret,
-              std::unique_ptr<Block> b)
+              std::unique_ptr<Block> b, bool inl = false)
       : name(std::move(n)), params(std::move(p)), return_type(std::move(ret)),
-        body(std::move(b)) {}
+        body(std::move(b)), is_inline(inl) {}
 };
 
 struct ImportStmt : Statement {

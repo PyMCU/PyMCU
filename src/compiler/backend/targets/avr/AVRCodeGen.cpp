@@ -560,3 +560,8 @@ void AVRCodeGen::compile_variant(const tacky::AugAssign &arg) {
   // TODO: Implement AVR-specific augmented assignment
   throw std::runtime_error("AVR: AugAssign is not yet implemented");
 }
+
+void AVRCodeGen::compile_variant(const tacky::Delay &arg) {
+  // TODO: Implement AVR-specific delay
+  throw std::runtime_error("AVR: Delay is not yet implemented");
+}

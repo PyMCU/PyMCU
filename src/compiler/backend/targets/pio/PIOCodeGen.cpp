@@ -349,3 +349,8 @@ void PIOCodeGen::compile_variant(const tacky::AugAssign &arg) {
   // TODO: Implement PIO-specific augmented assignment
   throw std::runtime_error("PIO: AugAssign is not yet implemented");
 }
+
+void PIOCodeGen::compile_variant(const tacky::Delay &arg) {
+  // TODO: Implement PIO-specific delay
+  throw std::runtime_error("PIO: Delay is not yet implemented");
+}

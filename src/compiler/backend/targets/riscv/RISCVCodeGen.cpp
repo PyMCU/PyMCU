@@ -444,3 +444,8 @@ void RISCVCodeGen::compile_variant(const tacky::AugAssign &arg) {
   // TODO: Implement RISC-V-specific augmented assignment
   throw std::runtime_error("RISC-V: AugAssign is not yet implemented");
 }
+
+void RISCVCodeGen::compile_variant(const tacky::Delay &arg) {
+  // TODO: Implement RISC-V specific delay
+  throw std::runtime_error("RISC-V: Delay is not yet implemented");
+}

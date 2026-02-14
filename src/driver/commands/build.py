@@ -80,6 +80,36 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 
             progress.update(build_task, completed=50)
             
+            progress.update(build_task, completed=50)
+            
+            # Step 1.5: Library Injection (Float Support)
+            with open(output_file, "r") as asm_f:
+                asm_content = asm_f.read()
+            
+            if '#include "float.inc"' in asm_content:
+                progress.update(build_task, description="Injecting Float Library...")
+                import importlib.util
+                
+                # Locate pymcu.math package
+                spec = importlib.util.find_spec("pymcu.math")
+                if spec and spec.origin:
+                    math_lib_path = Path(spec.origin).parent
+                    
+                    # Determine Architecture
+                    arch = "pic16" # Default for PIC10/12/16
+                    if chip.lower().startswith("pic18"):
+                        arch = "pic18"
+                        
+                    src_inc = math_lib_path / arch / "float.inc"
+                    dst_inc = output_dir / "float.inc"
+                    
+                    if src_inc.exists():
+                        shutil.copy(str(src_inc), str(dst_inc))
+                    else:
+                        console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {arch}")
+                else:
+                    console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, float operations may fail.")
+
             # Step 2: Assembly (ASM -> HEX)
             progress.update(build_task, description="Assembling...", completed=60)
             try:

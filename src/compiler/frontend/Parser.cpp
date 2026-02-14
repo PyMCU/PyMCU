@@ -92,7 +92,7 @@ std::unique_ptr<Program> Parser::parseProgram() {
 
     if (check(TokenType::From)) {
       prog->imports.push_back(parseImportStatement());
-    } else if (check(TokenType::Def)) {
+    } else if (check(TokenType::Def) || check(TokenType::At)) {
       prog->functions.push_back(parseFunction());
     } else if (check(TokenType::Identifier)) {
       prog->global_statements.push_back(parseAssignmentOrDeclaration());
@@ -104,6 +104,21 @@ std::unique_ptr<Program> Parser::parseProgram() {
 }
 
 std::unique_ptr<FunctionDef> Parser::parseFunction() {
+  bool is_inline = false;
+  if (check(TokenType::At)) {
+    advance(); // Consume '@'
+    const Token decorator =
+        consume(TokenType::Identifier, "Expected decorator name");
+    if (decorator.value == "inline") {
+      is_inline = true;
+    } else {
+      // Warning or Error? For now, ignore other decorators or error?
+      // Let's error to be safe.
+      error("Unknown decorator: " + decorator.value);
+    }
+    consume(TokenType::Newline, "Expected newline after decorator");
+  }
+
   consume(TokenType::Def, "Expected 'def'");
   const Token nameToken =
       consume(TokenType::Identifier, "Expected function name");
@@ -123,7 +138,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   auto bodyBlock = parseBlock();
 
   return std::make_unique<FunctionDef>(nameToken.value, std::move(params),
-                                       returnType, std::move(bodyBlock));
+                                       returnType, std::move(bodyBlock),
+                                       is_inline);
 }
 
 std::vector<Param> Parser::parseParameters() {
@@ -389,6 +405,18 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
                                            std::move(value));
   }
 
+  // Check for intrinsics: delay_ms(expr)
+  if (auto call = dynamic_cast<CallExpr *>(expr.get())) {
+    if (call->callee == "delay_ms" && call->args.size() == 1) {
+      consumeStatementEnd();
+      return std::make_unique<DelayStmt>(true, std::move(call->args[0]));
+    }
+    if (call->callee == "delay_us" && call->args.size() == 1) {
+      consumeStatementEnd();
+      return std::make_unique<DelayStmt>(false, std::move(call->args[0]));
+    }
+  }
+
   consumeStatementEnd();
   return std::make_unique<ExprStmt>(std::move(expr));
 }
@@ -547,6 +575,11 @@ std::unique_ptr<Expression> Parser::parseUnary() {
     auto operand = parseUnary();
     return std::make_unique<UnaryExpr>(UnaryOp::BitNot, std::move(operand));
   }
+  if (check(TokenType::Star)) {
+    advance();
+    auto operand = parseUnary();
+    return std::make_unique<UnaryExpr>(UnaryOp::Deref, std::move(operand));
+  }
   return parsePostfix();
 }
 
@@ -613,6 +646,10 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     }
 
     try {
+      if (base == 10 && text.find('.') != std::string::npos) {
+        double val = std::stod(text);
+        return std::make_unique<FloatLiteral>(val);
+      }
       int val = std::stoi(text.substr(offset), nullptr, base);
       return std::make_unique<IntegerLiteral>(val);
     } catch (const std::out_of_range &) {

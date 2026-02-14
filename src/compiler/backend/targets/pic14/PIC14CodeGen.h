@@ -25,8 +25,12 @@ private:
   std::vector<PIC14AsmLine> assembly;
   std::map<std::string, int> symbol_table;
   std::map<std::string, int> stack_layout;
+  std::map<std::string, int> var_sizes;
   int ram_head;
   int label_counter = 0;
+  bool uses_float = false;
+  bool needs_delay_1ms = false;
+  bool needs_delay_10us = false;
 
   std::string make_label(const std::string &prefix) {
     return std::format("{}_{}", prefix, label_counter++);
@@ -43,6 +47,8 @@ private:
   void emit(const std::string &mnemonic, const std::string &op1) const;
   void emit(const std::string &mnemonic, const std::string &op1,
             const std::string &op2) const;
+
+  void emit_float_add(const std::string &target, const std::string &source);
 
   void emit_label(const std::string &label) const;
   void emit_comment(const std::string &comment) const;
@@ -81,6 +87,10 @@ private:
   void compile_variant(const tacky::JumpIfBitSet &arg);
   void compile_variant(const tacky::JumpIfBitClear &arg);
   void compile_variant(const tacky::AugAssign &arg);
+  void compile_variant(const tacky::Delay &arg);
+
+private:
+  void emit_delay_cycles(unsigned long cycles);
 };
 
 #endif // PIC14CODEGEN_H

@@ -24,10 +24,12 @@ private:
   int temp_counter = 0;
   int label_counter = 0;
   std::map<std::string, SymbolInfo> globals;
-  std::set<std::string> mutable_globals;
+  std::map<std::string, DataType> mutable_globals;
   std::map<std::string, DataType> variable_types;
   std::map<std::string, std::string> function_return_types;
   std::map<std::string, std::vector<std::string>> function_params;
+  std::map<std::string, const FunctionDef *>
+      inline_functions; // Map for inlining
   std::string current_function;
 
   struct LoopLabels {
@@ -37,7 +39,13 @@ private:
 
   std::vector<LoopLabels> loop_stack;
 
-  tacky::Temporary make_temp();
+  struct InlineContext {
+    std::string exit_label;
+    std::optional<tacky::Temporary> result_temp;
+  };
+  std::vector<InlineContext> inline_stack;
+
+  tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
   std::string make_label();
 
@@ -76,6 +84,8 @@ private:
   void visitVarDecl(const VarDecl *stmt);
 
   void visitExprStmt(const ExprStmt *stmt);
+
+  void visitDelayStmt(const DelayStmt *stmt);
 
   tacky::Val visitExpression(const Expression *expr);
 

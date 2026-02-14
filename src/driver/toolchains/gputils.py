@@ -161,6 +161,9 @@ class GputilsToolchain(ExternalToolchain):
 
         cmd = [str(tool_path), str(asm_file)]
         
+        # Include directory of the source file (so float.inc next to it is found)
+        cmd.extend(["-I", str(asm_file.parent.resolve())])
+        
         # Header Include Fix:
         # Check adjacent "header" directory relative to logic
         # Structure: .../gputils-1.5.2/gpasm/gpasm -> header is at .../gputils-1.5.2/header

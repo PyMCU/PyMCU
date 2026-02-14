@@ -171,10 +171,15 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_raw(std::format("\tLIST P={}", list_p));
 
   // Replace "pic" with "p" for gputils compatibility
-  if (chip_file.find("pic") == 0) {
-    chip_file = "p" + chip_file.substr(3);
+  // FIXED: PIC18 uses xc.h
+  if (chip_file.starts_with("pic18") || chip_file.starts_with("p18")) {
+    emit_raw("\t#include <xc.h>");
+  } else {
+    if (chip_file.find("pic") == 0) {
+      chip_file = "p" + chip_file.substr(3);
+    }
+    emit_raw(std::format("\t#include <{}.inc>", chip_file));
   }
-  emit_raw(std::format("\t#include <{}.inc>", chip_file));
   emit_config_directives();
 
   emit_raw("_stack_base EQU 0x060");
@@ -329,11 +334,18 @@ void PIC18CodeGen::compile_variant(const tacky::Binary &arg) {
     }
     break;
   case tacky::BinaryOp::Sub:
-    if (std::holds_alternative<tacky::Constant>(arg.src2)) {
+    if (auto c = std::get_if<tacky::Constant>(&arg.src2)) {
       // W = src1 - constant
+      // ADDLW (0x100 - k) is effectively Sub literal
       emit("ADDLW", std::format("(0x100 - ({})) & 0xFF", right));
+    } else if (auto c1 = std::get_if<tacky::Constant>(&arg.src1)) {
+      // Literal - Variable (10 - x)
+      // SUBLW k computes k - W.
+      // Load Variable into W first.
+      load_into_w(arg.src2);
+      emit("SUBLW", std::format("0x{:02X}", c1->value & 0xFF));
     } else {
-      // W = src1 - src2
+      // Variable - Variable
       // PIC SUBWF f, d: f - W -> d
       // We want W = src1 - src2
       load_into_w(arg.src2);
@@ -341,6 +353,8 @@ void PIC18CodeGen::compile_variant(const tacky::Binary &arg) {
       select_bank(left);
       emit("SUBWF", left, "W", get_access_mode(left));
     }
+    // Enforce Storage:
+    store_w_into(arg.dst);
     break;
   case tacky::BinaryOp::BitAnd:
     if (std::holds_alternative<tacky::Constant>(arg.src2)) {
@@ -577,6 +591,10 @@ void PIC18CodeGen::compile_variant(const tacky::JumpIfBitClear &arg) {
 }
 
 void PIC18CodeGen::compile_variant(const tacky::AugAssign &arg) {
-  // TODO: Implement PIC18-specific augmented assignment
-  throw std::runtime_error("PIC18: AugAssign is not yet implemented");
+  throw std::runtime_error("PIC18: AugAssign not implemented");
+}
+
+void PIC18CodeGen::compile_variant(const tacky::Delay &arg) {
+  // TODO: Implement PIC18-specific delay
+  throw std::runtime_error("PIC18: Delay is not yet implemented");
 }

@@ -86,6 +86,7 @@ enum class TokenType {
   Indent,
   Dedent,
   EndOfFile,
+  At, // @
   Unknown
 };
 

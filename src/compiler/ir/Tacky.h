@@ -14,6 +14,10 @@ struct Constant {
   int value;
 };
 
+struct FloatConstant {
+  double value;
+};
+
 struct Variable {
   std::string name;
   DataType type = DataType::UINT8;
@@ -29,8 +33,8 @@ struct MemoryAddress {
   int address;
 };
 
-using Val =
-    std::variant<Constant, Variable, Temporary, MemoryAddress, std::monostate>;
+using Val = std::variant<Constant, FloatConstant, Variable, Temporary,
+                         MemoryAddress, std::monostate>;
 
 enum class UnaryOp { Not, Neg, BitNot };
 
@@ -143,11 +147,17 @@ struct AugAssign {
   Val operand;
 };
 
+// Timing
+struct Delay {
+  Val target; // Duration
+  bool is_ms;
+};
+
 // --- The Instruction Container ---
 using Instruction =
     std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, JumpIfNotZero,
                  Label, Call, BitSet, BitClear, BitCheck, BitWrite,
-                 JumpIfBitSet, JumpIfBitClear, AugAssign>;
+                 JumpIfBitSet, JumpIfBitClear, AugAssign, Delay>;
 
 // --- Function Definition ---
 struct Function {
@@ -157,7 +167,7 @@ struct Function {
 };
 
 struct Program {
-  std::vector<std::string> globals; // Mutable global variable names needing RAM
+  std::vector<Variable> globals; // Mutable global variable names needing RAM
   std::vector<Function> functions;
 };
 } // namespace tacky

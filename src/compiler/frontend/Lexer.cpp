@@ -155,6 +155,16 @@ Token Lexer::number() {
     text += advance();
   }
 
+  // Floating point support
+  if (base == 10 && peek() == '.') {
+    if (isdigit(peek_next())) {
+      text += advance(); // Consume '.'
+      while (isdigit(peek())) {
+        text += advance();
+      }
+    }
+  }
+
   if (text.back() == '_') {
     error("decimal literal cannot end with an underscore");
   }
@@ -228,6 +238,8 @@ Token Lexer::scan_token() {
     return {TokenType::Comma, ",", line, column};
   case '.':
     return {TokenType::Dot, ".", line, column};
+  case '@':
+    return {TokenType::At, "@", line, column};
 
   case '-':
     if (match('>'))

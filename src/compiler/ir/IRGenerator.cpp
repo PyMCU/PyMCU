@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <typeinfo>
 
-tacky::Temporary IRGenerator::make_temp() {
-  return tacky::Temporary{std::format("tmp.{}", temp_counter++)};
+tacky::Temporary IRGenerator::make_temp(DataType type) {
+  return tacky::Temporary{std::format("tmp.{}", temp_counter++), type};
 }
 
 std::string IRGenerator::make_label() {
@@ -37,9 +37,10 @@ IRGenerator::generate(const Program &main_ast,
     ir_program.functions.push_back(visitFunction(func_def.get()));
   }
 
-  // Pass mutable global variable names to the backend for RAM allocation
-  for (const auto &name : mutable_globals) {
-    ir_program.globals.push_back(name);
+  // Pass mutable global variable names and types to the backend for RAM
+  // allocation
+  for (const auto &[name, type] : mutable_globals) {
+    ir_program.globals.push_back(tacky::Variable{name, type});
   }
 
   loop_stack.clear();
@@ -58,10 +59,15 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
 
   // Mutable globals use un-prefixed names so they're shared across functions
   if (mutable_globals.contains(name)) {
-    return tacky::Variable{name};
+    return tacky::Variable{name, mutable_globals.at(name)};
   }
 
-  return tacky::Variable{current_function + "." + name};
+  std::string local_name = current_function + "." + name;
+  DataType type = DataType::UINT8;
+  if (variable_types.contains(local_name)) {
+    type = variable_types.at(local_name);
+  }
+  return tacky::Variable{local_name, type};
 }
 
 void IRGenerator::scan_globals(const Program &ast) {
@@ -120,12 +126,12 @@ void IRGenerator::scan_globals(const Program &ast) {
             globals[name] = SymbolInfo{false, val};
           } else {
             // Mutable global: needs RAM, store initial value for later Copy
-            mutable_globals.insert(name);
+            mutable_globals[name] = resolve_type(type);
           }
         }
       } catch (...) {
         // Non-constant initializer: this is a runtime variable, needs RAM
-        mutable_globals.insert(name);
+        mutable_globals[name] = resolve_type(type);
       }
     }
   }
@@ -139,6 +145,9 @@ void IRGenerator::scan_functions(const Program &ast) {
       params.push_back(p.name);
     }
     function_params[func->name] = params;
+    if (func->is_inline) {
+      inline_functions[func->name] = func.get();
+    }
   }
 }
 
@@ -209,6 +218,8 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     return visitVarDecl(decl);
   if (auto *exprStmt = dynamic_cast<const ExprStmt *>(stmt))
     return visitExprStmt(exprStmt);
+  if (auto *delayStmt = dynamic_cast<const DelayStmt *>(stmt))
+    return visitDelayStmt(delayStmt);
 
   if (dynamic_cast<const PassStmt *>(stmt))
     return;
@@ -222,13 +233,20 @@ void IRGenerator::visitStatement(const Statement *stmt) {
 }
 
 void IRGenerator::visitReturn(const ReturnStmt *stmt) {
-  tacky::Val val;
+  tacky::Val val = std::monostate{};
   if (stmt->value) {
     val = visitExpression(stmt->value.get());
-  } else {
-    val = std::monostate{};
   }
-  emit(tacky::Return{val});
+
+  if (!inline_stack.empty()) {
+    const auto &ctx = inline_stack.back();
+    if (ctx.result_temp.has_value()) {
+      emit(tacky::Copy{val, ctx.result_temp.value()});
+    }
+    emit(tacky::Jump{ctx.exit_label});
+  } else {
+    emit(tacky::Return{val});
+  }
 }
 
 void IRGenerator::visitIf(const IfStmt *stmt) {
@@ -456,6 +474,18 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
     }
     return;
   }
+  if (auto unaryExpr = dynamic_cast<const UnaryExpr *>(stmt->target.get())) {
+    if (unaryExpr->op == UnaryOp::Deref) {
+      tacky::Val addrVal = visitExpression(unaryExpr->operand.get());
+      if (auto c = std::get_if<tacky::Constant>(&addrVal)) {
+        tacky::Val val = visitExpression(stmt->value.get());
+        emit(tacky::Copy{val, tacky::MemoryAddress{c->value}});
+        return;
+      }
+      throw std::runtime_error(
+          "Assignment to non-constant address not supported");
+    }
+  }
 
   tacky::Val value = visitExpression(stmt->value.get());
 
@@ -564,8 +594,25 @@ tacky::Val IRGenerator::visitVariable(const VariableExpr *expr) {
 tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
   tacky::Val v1 = visitExpression(expr->left.get());
   tacky::Val v2 = visitExpression(expr->right.get());
-  tacky::Temporary dst = make_temp();
 
+  auto get_val_type = [](const tacky::Val &v) {
+    if (auto var = std::get_if<tacky::Variable>(&v))
+      return var->type;
+    if (auto tmp = std::get_if<tacky::Temporary>(&v))
+      return tmp->type;
+    if (auto c = std::get_if<tacky::Constant>(&v)) {
+      if (c->value > 255 || c->value < -128)
+        return DataType::UINT16;
+      return DataType::UINT8;
+    }
+    return DataType::UINT8;
+  };
+
+  DataType t1 = get_val_type(v1);
+  DataType t2 = get_val_type(v2);
+  DataType resType = (size_of(t1) >= size_of(t2)) ? t1 : t2;
+
+  tacky::Temporary dst = make_temp(resType);
   tacky::BinaryOp op;
   switch (expr->op) {
   case BinaryOp::Add:
@@ -666,10 +713,58 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
 }
 
 tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
-  tacky::Call callInstr;
-  std::string callee = expr->callee;
+  // Inlining Support
+  if (inline_functions.contains(expr->callee)) {
+    const FunctionDef *func = inline_functions.at(expr->callee);
+    std::string exit_label = make_label();
+    std::optional<tacky::Temporary> result;
 
-  // Map PIO intrinsics
+    if (func->return_type != "void" && func->return_type != "None") {
+      result = make_temp(resolve_type(func->return_type));
+    }
+
+    inline_stack.push_back({exit_label, result});
+
+    // Argument binding
+    for (size_t i = 0; i < expr->args.size(); ++i) {
+      tacky::Val argVal = visitExpression(expr->args[i].get());
+      tacky::Val param = resolve_binding(func->params[i].name);
+      emit(tacky::Copy{argVal, param});
+    }
+
+    visitBlock(func->body.get());
+
+    emit(tacky::Label{exit_label});
+    inline_stack.pop_back();
+
+    if (result)
+      return *result;
+    return std::monostate{};
+  }
+
+  // Eval args once
+  std::vector<tacky::Val> arg_values;
+  for (const auto &arg : expr->args) {
+    arg_values.push_back(visitExpression(arg.get()));
+  }
+
+  // PIO Intrinsics Mapping
+  std::string callee = expr->callee;
+  if (function_params.contains(expr->callee)) {
+    // Validate args count
+    const auto &param_names = function_params[expr->callee];
+    if (expr->args.size() != param_names.size()) {
+      throw std::runtime_error(std::format(
+          "Function '{}' expects {} arguments, but {} were provided",
+          expr->callee, param_names.size(), expr->args.size()));
+    }
+    // Explicit Copy for Stack/Global ABI satisfaction (Fixes ArgumentsTest)
+    for (size_t i = 0; i < arg_values.size(); ++i) {
+      emit(tacky::Copy{arg_values[i],
+                       tacky::Variable{expr->callee + "." + param_names[i]}});
+    }
+  }
+
   if (callee == "pull")
     callee = "__pio_pull";
   else if (callee == "push")
@@ -681,27 +776,11 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
   else if (callee == "wait")
     callee = "__pio_wait";
 
+  tacky::Call callInstr;
   callInstr.function_name = callee;
+  callInstr.args = arg_values;
 
   bool is_pio_intrinsic = callee.starts_with("__pio_") || callee == "delay";
-
-  if (function_params.contains(expr->callee)) {
-    const auto &param_names = function_params[expr->callee];
-    if (expr->args.size() != param_names.size()) {
-      throw std::runtime_error(std::format(
-          "Function '{}' expects {} arguments, but {} were provided",
-          expr->callee, param_names.size(), expr->args.size()));
-    }
-    for (size_t i = 0; i < expr->args.size(); ++i) {
-      tacky::Val arg_val = visitExpression(expr->args[i].get());
-      emit(tacky::Copy{arg_val,
-                       tacky::Variable{expr->callee + "." + param_names[i]}});
-    }
-  }
-
-  for (const auto &arg : expr->args) {
-    callInstr.args.push_back(visitExpression(arg.get()));
-  }
 
   if (is_pio_intrinsic || (function_return_types.contains(expr->callee) &&
                            (function_return_types[expr->callee] == "void" ||
@@ -716,4 +795,9 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
   emit(callInstr);
   return dst;
+}
+
+void IRGenerator::visitDelayStmt(const DelayStmt *stmt) {
+  tacky::Val duration = visitExpression(stmt->duration.get());
+  emit(tacky::Delay{duration, stmt->is_ms});
 }

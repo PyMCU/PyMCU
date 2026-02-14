@@ -502,3 +502,8 @@ void PIC12CodeGen::compile_variant(const tacky::AugAssign &arg) {
   // TODO: Implement PIC12-specific augmented assignment
   throw std::runtime_error("PIC12: AugAssign is not yet implemented");
 }
+
+void PIC12CodeGen::compile_variant(const tacky::Delay &arg) {
+  // TODO: Implement PIC12-specific delay
+  throw std::runtime_error("PIC12: Delay is not yet implemented");
+}
