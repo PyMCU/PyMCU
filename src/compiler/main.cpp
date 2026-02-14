@@ -18,8 +18,11 @@
 
 namespace fs = std::filesystem;
 
-std::map<std::string, std::unique_ptr<Program> > module_cache;
-std::vector<const Program *> linear_imports;
+struct CompilerContext {
+    std::map<std::string, std::unique_ptr<Program>> module_cache;
+    std::vector<const Program *> linear_imports;
+    DeviceConfig config;
+};
 
 std::string resolve_module(const std::string &module_name,
                            const std::vector<std::string> &include_paths,
@@ -61,8 +64,9 @@ std::string resolve_module(const std::string &module_name,
     throw std::runtime_error("Module not found: " + module_name);
 }
 
-void load_imports_recursively(const Program *ast, const fs::path &current_path,
+void load_imports_recursively(const Program *ast, CompilerContext *ctx, const fs::path &current_path,
                               const std::vector<std::string> &includes) {
+    // TODO: Prevent circular imports
     for (const auto &imp: ast->imports) {
         try {
             if (imp->module_name == "pymcu.types") {
@@ -73,7 +77,7 @@ void load_imports_recursively(const Program *ast, const fs::path &current_path,
             std::string path = resolve_module(imp->module_name, includes,
                                               current_path, imp->relative_level);
 
-            if (module_cache.contains(path))
+            if (ctx->module_cache.contains(path))
                 continue;
 
             std::cout << "Loading module: " << path << "\n";
@@ -84,14 +88,14 @@ void load_imports_recursively(const Program *ast, const fs::path &current_path,
             Parser p(tokens);
             auto mod_ast = p.parseProgram();
 
-            load_imports_recursively(mod_ast.get(), path, includes);
+            load_imports_recursively(mod_ast.get(), ctx, path, includes);
 
-            auto &inserted_ptr = module_cache[path] = std::move(mod_ast);
-            linear_imports.push_back(inserted_ptr.get());
+            auto &inserted_ptr = ctx->module_cache[path] = std::move(mod_ast);
+            ctx->linear_imports.push_back(inserted_ptr.get());
         } catch (const std::exception &e) {
             std::cerr << "Error importing '" << imp->module_name << "': " << e.what()
                     << "\n";
-            exit(1);
+            throw CompilerError("ImportError", "Failed to import module", imp->line, 0);
         }
     }
 }
@@ -132,6 +136,9 @@ int main(int argc, char *argv[]) {
     DeviceConfig device_config;
     device_config.frequency = program.get<unsigned long>("--freq");
     device_config.chip = arch;
+
+    CompilerContext context;
+    context.config = device_config;
 
     if (program.is_used("-C")) {
         for (auto config_list = program.get<std::vector<std::string> >("-C");
@@ -177,11 +184,11 @@ int main(int argc, char *argv[]) {
         Parser parser(tokens);
         const auto ast = parser.parseProgram();
 
-        load_imports_recursively(ast.get(), fs::path(filepath), include_paths);
+        load_imports_recursively(ast.get(), &context, fs::path(filepath), include_paths);
 
         // IR Generation
         IRGenerator ir_gen;
-        auto ir = ir_gen.generate(*ast, linear_imports, source_lines);
+        auto ir = ir_gen.generate(*ast, context.linear_imports, source_lines);
 
         // ir = Optimizer::optimize(ir);
 
@@ -202,7 +209,7 @@ int main(int argc, char *argv[]) {
         std::cerr << "Error in " << filepath << ":" << e.line << ": " << e.what()
                 << "\n";
         // Print the line
-        if (e.line > 0 && e.line <= (int) source_lines.size()) {
+        if (e.line > 0 && e.line <= static_cast<int>(source_lines.size())) {
             std::cerr << "    " << source_lines[e.line - 1] << "\n";
             // Simple pointer to column if valid
             if (e.column > 0) {
