@@ -521,70 +521,18 @@ void IRGenerator::visitWhile(const WhileStmt *stmt) {
 
   emit(tacky::Label{start_label});
 
-  // Optimization: detect bit-polling pattern
-  // Pattern: while reg[bit] == 0/1  or  while reg[bit] != 0/1
-  if (auto *cmp = dynamic_cast<const BinaryExpr *>(stmt->condition.get())) {
-    if (cmp->op == BinaryOp::Equal || cmp->op == BinaryOp::NotEqual) {
-      const IndexExpr *idx = nullptr;
-      const IntegerLiteral *lit = nullptr;
-
-      // Check: IndexExpr on left, literal on right
-      idx = dynamic_cast<const IndexExpr *>(cmp->left.get());
-      lit = dynamic_cast<const IntegerLiteral *>(cmp->right.get());
-
-      // Or reversed: literal on left, IndexExpr on right
-      if (!idx || !lit) {
-        idx = dynamic_cast<const IndexExpr *>(cmp->right.get());
-        lit = dynamic_cast<const IntegerLiteral *>(cmp->left.get());
-      }
-
-      if (idx && lit && (lit->value == 0 || lit->value == 1)) {
-        // Resolve the register and bit index
-        tacky::Val target = visitExpression(idx->target.get());
-        tacky::Val indexVal = visitExpression(idx->index.get());
-
-        int bit = 0;
-        if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
-          bit = c->value;
-        }
-
-        // Determine: when should we EXIT the loop?
-        // while (bit == 1): exit when bit is 0  → JumpIfBitClear
-        // while (bit == 0): exit when bit is 1  → JumpIfBitSet
-        // while (bit != 0): exit when bit is 0  → JumpIfBitClear
-        // while (bit != 1): exit when bit is 1  → JumpIfBitSet
-        bool exit_when_set;
-        if (cmp->op == BinaryOp::Equal) {
-          exit_when_set = (lit->value == 0); // == 0 → exit when set
-        } else {
-          // NotEqual
-          exit_when_set = (lit->value == 1); // != 1 → exit when set
-        }
-
-        if (exit_when_set) {
-          emit(tacky::JumpIfBitSet{target, bit, end_label});
-        } else {
-          emit(tacky::JumpIfBitClear{target, bit, end_label});
-        }
-
-        visitStatement(stmt->body.get());
-        emit(tacky::Jump{start_label});
-        emit(tacky::Label{end_label});
-        loop_stack.pop_back();
-        return;
-      }
-    }
+  // "While boolean optimization": Jump to end_label if condition is FALSE
+  if (!emit_optimized_conditional_jump(stmt->condition.get(), end_label,
+                                       false)) {
+    // Fall back to standard evaluation
+    const tacky::Val cond_val = visitExpression(stmt->condition.get());
+    emit(tacky::JumpIfZero{cond_val, end_label});
   }
-
-  // Generic path: evaluate condition normally
-  const tacky::Val cond = visitExpression(stmt->condition.get());
-  emit(tacky::JumpIfZero{cond, end_label});
 
   visitStatement(stmt->body.get());
 
   emit(tacky::Jump{start_label});
   emit(tacky::Label{end_label});
-
   loop_stack.pop_back();
 }
 
