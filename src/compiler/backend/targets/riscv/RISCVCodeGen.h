@@ -17,6 +17,10 @@ public:
 
   void compile(const tacky::Program &program, std::ostream &os) override;
 
+  void emit_context_save() override {}
+  void emit_context_restore() override {}
+  void emit_interrupt_return() override {}
+
 private:
   DeviceConfig config;
   std::ostream *out;

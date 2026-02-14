@@ -107,15 +107,41 @@ std::unique_ptr<Program> Parser::parseProgram() {
 
 std::unique_ptr<FunctionDef> Parser::parseFunction() {
   bool is_inline = false;
-  if (check(TokenType::At)) {
+  bool is_interrupt = false;
+  int vector = 0;
+
+  while (check(TokenType::At)) {
     advance(); // Consume '@'
     const Token decorator =
         consume(TokenType::Identifier, "Expected decorator name");
     if (decorator.value == "inline") {
       is_inline = true;
+    } else if (decorator.value == "interrupt") {
+      is_interrupt = true;
+      vector = 0x04; // Default generic vector for PIC14
+
+      if (check(TokenType::LParen)) {
+        advance(); // Consume '('
+        const Token vectorToken =
+            consume(TokenType::Number, "Expected vector address");
+
+        // Parse number (hex or dec)
+        std::string text = vectorToken.value;
+        int base = 10;
+        if (text.size() >= 2 && text[0] == '0' &&
+            (text[1] == 'x' || text[1] == 'X')) {
+          base = 16;
+        }
+
+        try {
+          vector = std::stoi(text, nullptr, base);
+        } catch (...) {
+          error("Invalid vector address");
+        }
+
+        consume(TokenType::RParen, "Expected ')'");
+      }
     } else {
-      // Warning or Error? For now, ignore other decorators or error?
-      // Let's error to be safe.
       error("Unknown decorator: " + decorator.value);
     }
     consume(TokenType::Newline, "Expected newline after decorator");
@@ -141,7 +167,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
 
   return std::make_unique<FunctionDef>(nameToken.value, std::move(params),
                                        returnType, std::move(bodyBlock),
-                                       is_inline);
+                                       is_inline, is_interrupt, vector);
 }
 
 std::vector<Param> Parser::parseParameters() {
@@ -190,6 +216,31 @@ std::unique_ptr<Statement> Parser::parseStatement() {
     return parseMatchStatement();
   if (check(TokenType::While))
     return parseWhileStatement();
+  if (check(TokenType::Return))
+    return parseReturnStatement();
+
+  if (check(TokenType::Import) || check(TokenType::From)) {
+    return parseImportStatement();
+  }
+
+  if (check(TokenType::Global)) {
+    return parseGlobalStatement();
+  }
+
+  if (match(TokenType::Break)) {
+    consumeStatementEnd();
+    return std::make_unique<BreakStmt>();
+  }
+
+  if (match(TokenType::Continue)) {
+    consumeStatementEnd();
+    return std::make_unique<ContinueStmt>();
+  }
+
+  if (match(TokenType::Pass)) {
+    consumeStatementEnd();
+    return std::make_unique<PassStmt>();
+  }
 
   return parseSimpleStatement();
 }
@@ -242,6 +293,23 @@ std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
   consumeStatementEnd();
 
   return std::make_unique<ImportStmt>(mod_name, symbols, relative_level);
+}
+
+std::unique_ptr<GlobalStmt> Parser::parseGlobalStatement() {
+  int line = peek().line;
+  consume(TokenType::Global, "Expected 'global'");
+  std::vector<std::string> names;
+
+  do {
+    Token name = consume(TokenType::Identifier, "Expected variable name");
+    names.push_back(name.value);
+  } while (match(TokenType::Comma));
+
+  consumeStatementEnd();
+
+  auto stmt = std::make_unique<GlobalStmt>(names);
+  stmt->line = line;
+  return stmt;
 }
 
 std::unique_ptr<Statement> Parser::parseIfStatement() {

@@ -172,6 +172,8 @@ struct Function {
   std::vector<std::string> params;
   std::vector<Instruction> body;
   bool is_inline = false;
+  bool is_interrupt = false;
+  int interrupt_vector = 0;
 };
 
 struct Program {

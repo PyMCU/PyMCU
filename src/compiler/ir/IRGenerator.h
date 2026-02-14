@@ -35,6 +35,7 @@ private:
   std::map<std::string, const FunctionDef *>
       inline_functions; // Map for inlining
   std::string current_function;
+  std::set<std::string> current_function_globals;
   int inline_depth = 0;
   std::string current_inline_prefix;
 
@@ -95,6 +96,8 @@ private:
   void visitAnnAssign(const AnnAssign *stmt);
 
   void visitExprStmt(const ExprStmt *stmt);
+
+  void visitGlobal(const GlobalStmt *stmt);
 
   void visitDelayStmt(const DelayStmt *stmt);
 

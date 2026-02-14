@@ -153,9 +153,16 @@ int main(int argc, char *argv[]) {
     output_path = p.string();
   }
 
+  std::vector<std::string> source_lines; // Move to outer scope
   std::string source;
   try {
     source = read_source(filepath);
+    // Split source into lines for debug info
+    std::istringstream stream(std::string{source});
+    std::string line;
+    while (std::getline(stream, line)) {
+      source_lines.push_back(line);
+    }
   } catch (const std::exception &e) {
     std::cerr << "Fatal Error: " << e.what() << "\n";
     return 1;
@@ -175,14 +182,6 @@ int main(int argc, char *argv[]) {
     const auto ast = parser.parseProgram();
 
     load_imports_recursively(ast.get(), fs::path(filepath), include_paths);
-
-    // Split source into lines for debug info
-    std::vector<std::string> source_lines;
-    std::istringstream stream(std::string{source});
-    std::string line;
-    while (std::getline(stream, line)) {
-      source_lines.push_back(line);
-    }
 
     // IR Generation
     IRGenerator ir_gen;
@@ -204,7 +203,18 @@ int main(int argc, char *argv[]) {
 
     std::cout << "[pymcuc] Success! Output written to " << output_path << "\n";
   } catch (const CompilerError &e) {
-    Diagnostic::report(e, source, filepath);
+    std::cerr << "Error in " << filepath << ":" << e.line << ": " << e.what()
+              << "\n";
+    // Print the line
+    if (e.line > 0 && e.line <= (int)source_lines.size()) {
+      std::cerr << "    " << source_lines[e.line - 1] << "\n";
+      // Simple pointer to column if valid
+      if (e.column > 0) {
+        std::string pointer(e.column - 1, ' ');
+        pointer += "^";
+        std::cerr << "    " << pointer << "\n";
+      }
+    }
     return 1;
   } catch (const std::exception &e) {
     std::cerr << "Internal Compiler Error: " << e.what() << "\n";

@@ -175,48 +175,133 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   this->stack_layout = offsets;
   this->var_sizes = allocator.get_variable_sizes();
 
-  std::string chip_upper = config.chip;
-  if (chip_upper.starts_with("pic"))
-    chip_upper = chip_upper.substr(3);
-  std::ranges::transform(chip_upper, chip_upper.begin(), ::toupper);
-
-  emit_raw(std::format("\tLIST P={}", chip_upper));
-  emit_raw(std::format("\t#include <P{}.INC>", chip_upper));
-
-  emit_config_directives();
-
-  emit_comment("--- Compiled Stack (Overlays) ---");
-  emit_raw("\tCBLOCK 0x20");
-  emit_raw(std::format("_stack_base: {}", total_size));
-  if (uses_float) {
-    emit_raw("__FP_A: 4");
-    emit_raw("__FP_B: 4");
-    emit_raw("__FP_C: 4"); // Scratch/Result if needed? __add_float usually uses
-                           // A as accum.
+  // Emit CBLOCK for stack variables
+  if (!stack_layout.empty() || uses_float) {
+    emit_comment("--- Compiled Stack (Overlays) ---");
+    emit_raw("\tCBLOCK 0x20");
+    // Find max offset
+    int max_offset = 0;
+    for (const auto &[name, offset] : stack_layout) {
+      if (offset > max_offset)
+        max_offset = offset;
+    }
+    emit_raw(std::format("_stack_base: {}",
+                         total_size)); // Use total_size from allocator
+    if (uses_float) {
+      emit_raw("__FP_A: 4");
+      emit_raw("__FP_B: 4");
+      emit_raw("__FP_C: 4"); // Scratch/Result if needed? __add_float usually
+                             // uses A as accum.
+    }
+    emit_raw("\tENDC");
+    emit_raw("");
   }
-  emit_raw("\tENDC");
 
-  emit_raw("");
+  // Define Symbols (Global Variables)
   emit_comment("--- Variable Offsets ---");
   for (const auto &[name, offset] : stack_layout) {
     emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
   }
-
   emit_raw("");
-  emit_comment("--- Code ---");
-  emit_raw("\tORG 0x00");
-  emit("GOTO", "main");
-  emit_raw("\tORG 0x04");
-  emit_label("__interrupt");
-  emit("RETFIE");
+
+  emit_config_directives();
+
+  // Emit Interrupt Handlers (IVT)
+  // PIC14 only supports vector 0x04.
+  // We must validate that all interrupt functions target 0x04 (or use default).
+
+  const tacky::Function *isr_0x04 = nullptr;
 
   for (const auto &func : program.functions) {
+    if (func.is_interrupt) {
+      if (func.interrupt_vector != 0x04 && func.interrupt_vector != 0) {
+        // 0 is default from AST if not specified? Parser sets 0x04 default?
+        // If parser sets 0x04, we are good.
+        // If user specified @interrupt(0x08), we must error for PIC14.
+        throw std::runtime_error(
+            std::format("PIC14 architecture does not support interrupt vector "
+                        "0x{:02X}. Only 0x04 is supported.",
+                        func.interrupt_vector));
+      }
+
+      if (isr_0x04 != nullptr) {
+        throw std::runtime_error(
+            "Multiple interrupt handlers defined for vector 0x04.");
+      }
+      isr_0x04 = &func;
+    }
+  }
+
+  if (isr_0x04) {
+    emit_raw(std::format("\tORG 0x{:02X}", 0x04));
+    emit_label("__interrupt");
+
+    emit_context_save();
+
+    current_function_name = isr_0x04->name;
+    current_bank = -1;                // Unknown bank on entry
+    current_block_terminated = false; // Reset dead code flag
+
+    for (const auto &instr : isr_0x04->body) {
+      if (current_block_terminated) {
+        if (std::holds_alternative<tacky::Label>(instr)) {
+          current_block_terminated = false;
+          compile_instruction(instr);
+        }
+        continue;
+      }
+
+      if (std::holds_alternative<tacky::Return>(instr)) {
+        emit_context_restore();
+        emit_interrupt_return();
+        current_block_terminated = true;
+        continue;
+      }
+      compile_instruction(instr);
+    }
+
+    if (!current_block_terminated) {
+      emit_context_restore();
+      emit_interrupt_return();
+    }
+  } else {
+    // Dummy interrupt handler
+    emit_raw("\tORG 0x04");
+    emit_label("__interrupt");
+    emit("RETFIE");
+  }
+
+  // Emit Main and other functions
+  // emit_label("main"); // REMOVED: main is emitted by compile_function("main")
+
+  for (const auto &func : program.functions) {
+    if (func.is_interrupt)
+      continue; // Already emitted
+
     // Skip inline functions (they're already expanded at call sites)
-    // Always emit main even if marked inline
+    // Always emit main even if marked inline (it shouldn't be, but safety
+    // first)
     if (func.is_inline && func.name != "main") {
       continue;
     }
+
+    // Defer main to end (optional, but good for organization)
+    // Actually, we just need to ensure we don't emit "main" label manually
+    // above AND let this loop emit it. BUT the user request says: "Skip main
+    // during the loop. Only emit main at the very end"
+
+    if (func.name == "main")
+      continue;
+
     compile_function(func);
+  }
+
+  // Emit Main at the end
+  for (const auto &func : program.functions) {
+    if (func.name == "main") {
+      compile_function(func);
+      break;
+    }
   }
 
   if (uses_float) {
@@ -1508,3 +1593,19 @@ void PIC14CodeGen::compile_variant(const tacky::DebugLine &arg) {
 // Edit 2: Update `compile` (lines 173-177).
 
 // Let's do Edit 2 first (smaller).
+void PIC14CodeGen::emit_context_save() {
+  emit_comment("Context Save");
+  emit("MOVWF", "W_TEMP");
+  emit("SWAPF", "STATUS", "W");
+  emit("MOVWF", "STATUS_TEMP");
+}
+
+void PIC14CodeGen::emit_context_restore() {
+  emit_comment("Context Restore");
+  emit("SWAPF", "STATUS_TEMP", "W");
+  emit("MOVWF", "STATUS");
+  emit("SWAPF", "W_TEMP", "F");
+  emit("SWAPF", "W_TEMP", "W");
+}
+
+void PIC14CodeGen::emit_interrupt_return() { emit("RETFIE"); }

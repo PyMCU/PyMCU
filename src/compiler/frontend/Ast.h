@@ -219,6 +219,11 @@ struct ExprStmt : Statement {
   explicit ExprStmt(std::unique_ptr<Expression> e) : expr(std::move(e)) {}
 };
 
+struct GlobalStmt : Statement {
+  std::vector<std::string> names;
+  explicit GlobalStmt(std::vector<std::string> n) : names(std::move(n)) {}
+};
+
 struct BreakStmt : Statement {};
 
 struct ContinueStmt : Statement {};
@@ -244,11 +249,15 @@ struct FunctionDef : ASTNode {
   std::string return_type; // "void", "uint8"
   std::unique_ptr<Block> body;
   bool is_inline;
+  bool is_interrupt;
+  int interrupt_vector;
 
   FunctionDef(std::string n, std::vector<Param> p, std::string ret,
-              std::unique_ptr<Block> b, bool inl = false)
+              std::unique_ptr<Block> b, bool inl = false, bool is_int = false,
+              int vector = 0)
       : name(std::move(n)), params(std::move(p)), return_type(std::move(ret)),
-        body(std::move(b)), is_inline(inl) {}
+        body(std::move(b)), is_inline(inl), is_interrupt(is_int),
+        interrupt_vector(vector) {}
 };
 
 struct ImportStmt : Statement {

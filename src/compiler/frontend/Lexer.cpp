@@ -6,17 +6,18 @@
 #include <stdexcept>
 
 static const std::map<std::string, TokenType> keywords = {
-    {"def", TokenType::Def},     {"return", TokenType::Return},
-    {"if", TokenType::If},       {"elif", TokenType::Elif},
-    {"else", TokenType::Else},   {"while", TokenType::While},
-    {"for", TokenType::For},     {"in", TokenType::In},
-    {"break", TokenType::Break}, {"continue", TokenType::Continue},
-    {"pass", TokenType::Pass},   {"match", TokenType::Match},
-    {"case", TokenType::Case},   {"import", TokenType::Import},
-    {"from", TokenType::From},   {"as", TokenType::As},
-    {"True", TokenType::True},   {"False", TokenType::False},
-    {"None", TokenType::None},   {"or", TokenType::Or},
-    {"and", TokenType::And},     {"not", TokenType::Not},
+    {"def", TokenType::Def},       {"return", TokenType::Return},
+    {"if", TokenType::If},         {"elif", TokenType::Elif},
+    {"else", TokenType::Else},     {"while", TokenType::While},
+    {"for", TokenType::For},       {"in", TokenType::In},
+    {"break", TokenType::Break},   {"continue", TokenType::Continue},
+    {"pass", TokenType::Pass},     {"match", TokenType::Match},
+    {"case", TokenType::Case},     {"import", TokenType::Import},
+    {"from", TokenType::From},     {"as", TokenType::As},
+    {"True", TokenType::True},     {"False", TokenType::False},
+    {"None", TokenType::None},     {"or", TokenType::Or},
+    {"and", TokenType::And},       {"not", TokenType::Not},
+    {"global", TokenType::Global},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {

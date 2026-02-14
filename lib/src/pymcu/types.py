@@ -26,6 +26,9 @@ class ptr(Generic[T]):
 def inline(f):
     return f
 
+def interrupt(f):
+    return f
+
 
 # Phantom types (type-level aliases used only for static typing)
 uint8 = NewType("uint8", int)

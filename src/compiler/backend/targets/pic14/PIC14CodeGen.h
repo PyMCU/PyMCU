@@ -15,6 +15,12 @@ class PIC14CodeGen : public CodeGen {
 public:
   explicit PIC14CodeGen(DeviceConfig cfg);
   void compile(const tacky::Program &program, std::ostream &os) override;
+
+  // Interrupt Support
+  void emit_context_save() override;
+  void emit_context_restore() override;
+  void emit_interrupt_return() override;
+
   void set_stack_layout(std::map<std::string, int> layout) {
     stack_layout = std::move(layout);
   }
@@ -42,6 +48,7 @@ private:
   void select_bank(const std::string &operand);
   int current_bank = -1;
   bool current_block_terminated = false;
+  std::string current_function_name;
 
   // --- Emission Helpers ---
   void emit(const std::string &mnemonic) const;

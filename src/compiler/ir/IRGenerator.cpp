@@ -61,6 +61,28 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
   }
 
   if (mutable_globals.contains(name)) {
+    // If we are in a function, check if this variable is marked global
+    if (!current_function.empty()) {
+      bool is_explicit_global = current_function_globals.count(name);
+      // Standard Python behavior: Read variable
+      // If explicit global -> return global
+      // If not explicit global -> check if we have a local?
+      // For now, implement Shadowing behavior (C-like):
+      // If explicit global -> Global
+      // If not -> Check Local -> If Local exists, Local. Else Global.
+
+      if (is_explicit_global) {
+        return tacky::Variable{name, mutable_globals.at(name)};
+      }
+
+      // Check if shadowed by local
+      std::string local_name = current_function + "." + name;
+      // If we treat all assignments as defining locals, we assume local
+      // preference UNLESS it doesn't exist? Ideally we need to know if a local
+      // has been defined. Currently we don't track defined locals, just types.
+      // Let's rely on: if it's Global, return Global.
+      // UNLESS we are writing (handled in visitAssign).
+    }
     return tacky::Variable{name, mutable_globals.at(name)};
   }
 
@@ -186,6 +208,11 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
 
   // Copy inline flag from AST
   ir_func.is_inline = funcNode->is_inline;
+  ir_func.is_interrupt = funcNode->is_interrupt;
+  ir_func.interrupt_vector = funcNode->interrupt_vector;
+
+  ir_func.interrupt_vector = funcNode->interrupt_vector;
+  current_function_globals.clear();
 
   current_instructions.clear();
   loop_stack.clear();
@@ -243,6 +270,8 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     return visitAnnAssign(annAssign);
   if (auto *exprStmt = dynamic_cast<const ExprStmt *>(stmt))
     return visitExprStmt(exprStmt);
+  if (auto *globalStmt = dynamic_cast<const GlobalStmt *>(stmt))
+    return visitGlobal(globalStmt);
   if (auto *delayStmt = dynamic_cast<const DelayStmt *>(stmt))
     return visitDelayStmt(delayStmt);
 
@@ -579,7 +608,24 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
   tacky::Val value = visitExpression(stmt->value.get());
 
   if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
-    tacky::Val target = resolve_binding(varExpr->name);
+    tacky::Val target;
+    if (!current_function.empty()) {
+      if (current_function_globals.count(varExpr->name)) {
+        // Explicit global assignment
+        target = resolve_binding(varExpr->name);
+      } else {
+        // Local assignment (shadows global if exists)
+        std::string local_name = current_function + "." + varExpr->name;
+        DataType type = DataType::UINT8;
+        if (variable_types.contains(local_name)) {
+          type = variable_types.at(local_name);
+        }
+        target = tacky::Variable{local_name, type};
+      }
+    } else {
+      // Top-level assignment
+      target = resolve_binding(varExpr->name);
+    }
     emit(tacky::Copy{value, target});
   } else if (auto memExpr =
                  dynamic_cast<const MemberAccessExpr *>(stmt->target.get())) {
@@ -754,6 +800,12 @@ void IRGenerator::visitAugAssign(const AugAssignStmt *stmt) {
 
 void IRGenerator::visitExprStmt(const ExprStmt *stmt) {
   visitExpression(stmt->expr.get());
+}
+
+void IRGenerator::visitGlobal(const GlobalStmt *stmt) {
+  for (const auto &name : stmt->names) {
+    current_function_globals.insert(name);
+  }
 }
 
 tacky::Val IRGenerator::visitExpression(const Expression *expr) {

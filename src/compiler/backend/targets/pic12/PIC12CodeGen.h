@@ -44,6 +44,14 @@ public:
 
   void compile(const tacky::Program &program, std::ostream &os) override;
 
+  void emit_context_save() override {}
+  void emit_context_restore() override {}
+  void emit_interrupt_return() override {}
+
+  void set_stack_layout(std::map<std::string, int> layout) {
+    this->stack_layout = std::move(layout);
+  }
+
 private:
   DeviceConfig config;
   std::vector<PIC12AsmLine> assembly;

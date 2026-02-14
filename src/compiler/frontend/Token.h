@@ -28,6 +28,7 @@ enum class TokenType {
   Or,
   And,
   Not,
+  Global,
 
   // Literals
   Identifier,
