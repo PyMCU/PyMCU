@@ -4,6 +4,7 @@
 #include <map>
 #include <sstream>
 #include <vector>
+#include <set>
 
 #include "DeviceConfig.h"
 #include "Diagnostic.h"
@@ -19,8 +20,9 @@
 namespace fs = std::filesystem;
 
 struct CompilerContext {
-    std::map<std::string, std::unique_ptr<Program>> module_cache;
+    std::map<std::string, std::unique_ptr<Program> > module_cache;
     std::vector<const Program *> linear_imports;
+    std::set<std::string> loading_modules;
     DeviceConfig config;
 };
 
@@ -66,21 +68,26 @@ std::string resolve_module(const std::string &module_name,
 
 void load_imports_recursively(const Program *ast, CompilerContext *ctx, const fs::path &current_path,
                               const std::vector<std::string> &includes) {
-    // TODO: Prevent circular imports
     for (const auto &imp: ast->imports) {
+        std::string path;
         try {
             if (imp->module_name == "pymcu.types") {
                 // Intrinsics
                 continue;
             }
 
-            std::string path = resolve_module(imp->module_name, includes,
-                                              current_path, imp->relative_level);
+            path = resolve_module(imp->module_name, includes,
+                                  current_path, imp->relative_level);
 
             if (ctx->module_cache.contains(path))
                 continue;
 
+            if (ctx->loading_modules.contains(path))
+                continue;
+
             std::cout << "Loading module: " << path << "\n";
+
+            ctx->loading_modules.insert(path);
 
             std::string src = read_source(path);
             Lexer l(src);
@@ -92,7 +99,11 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx, const fs
 
             auto &inserted_ptr = ctx->module_cache[path] = std::move(mod_ast);
             ctx->linear_imports.push_back(inserted_ptr.get());
+
+            ctx->loading_modules.erase(path);
         } catch (const std::exception &e) {
+            if (!path.empty()) ctx->loading_modules.erase(path);
+
             std::cerr << "Error importing '" << imp->module_name << "': " << e.what()
                     << "\n";
             throw CompilerError("ImportError", "Failed to import module", imp->line, 0);
