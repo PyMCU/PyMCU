@@ -117,6 +117,61 @@ PIC14Peephole::optimize(const std::vector<PIC14AsmLine> &lines) {
     for (size_t i = 0; i < result.size(); ++i) {
       auto &current = result[i];
 
+      // --- Copy Propagation (Task 1) ---
+      // Pattern: MOVWF T -> MOVF T, W -> MOVWF D
+      // Optimization: ... -> MOVWF D (Skip T if T is tmp)
+      if (current.type == PIC14AsmLine::INSTRUCTION &&
+          current.mnemonic == "MOVWF" && current.op1.starts_with("tmp.")) {
+
+        std::string tmp_reg = current.op1;
+        size_t j = i + 1;
+        auto skip = [&]() {
+          while (j < result.size() &&
+                 (result[j].type == PIC14AsmLine::COMMENT ||
+                  result[j].type == PIC14AsmLine::EMPTY))
+            j++;
+        };
+        skip();
+
+        if (j < result.size() && result[j].type == PIC14AsmLine::INSTRUCTION &&
+            result[j].mnemonic == "MOVF" && result[j].op1 == tmp_reg &&
+            result[j].op2 == "W") {
+
+          size_t k = j + 1;
+          while (k < result.size() &&
+                 (result[k].type == PIC14AsmLine::COMMENT ||
+                  result[k].type == PIC14AsmLine::EMPTY))
+            k++;
+
+          if (k < result.size() &&
+              result[k].type == PIC14AsmLine::INSTRUCTION &&
+              result[k].mnemonic == "MOVWF") {
+
+            // Found sequence: MOVWF T, MOVF T,W, MOVWF D
+            // We can skip the first two instructions.
+            // The value is already in W (implied by MOVWF T).
+            // So we just proceed to MOVWF D.
+            // We advance i to point to MOVF T,W so the loop logic
+            // will increment it to MOVWF D next.
+            // Actually, let's just push nothing and advance i.
+
+            i = j; // Skip MOVWF T and MOVF T,W.
+                   // Next iteration will process result[k] (MOVWF D)
+                   // because loop increments i. Wait, loop increments i.
+                   // If I set i = j, next iter i becomes j+1 which is k (if
+                   // contiguous). Yes. j points to MOVF. i=j. Next loop i=j+1 =
+                   // k? My skip() logic advanced j past comments. result[j] is
+                   // MOVF. So if I set i = j, loop checks i < size, then ++i ->
+                   // i = j+1. If there are comments between j and k, i will
+                   // process them. That's fine.
+
+            changed = true;
+            w_var.reset(); // We disrupted the tracking, safe reset
+            continue;
+          }
+        }
+      }
+
       // --- Comparison to Jump Optimization ---
       if (current.type == PIC14AsmLine::INSTRUCTION &&
           current.mnemonic == "CLRF" && current.op1.starts_with("tmp.")) {

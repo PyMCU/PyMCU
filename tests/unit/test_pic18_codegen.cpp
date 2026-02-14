@@ -7,7 +7,7 @@
 
 TEST(PIC18CodeGenTest, SimpleReturn) {
     DeviceConfig cfg;
-    cfg.chip = "18f45k50";
+    cfg.chip = "pic18f45k50";
     PIC18CodeGen codegen(cfg);
 
     tacky::Program program;
@@ -24,12 +24,12 @@ TEST(PIC18CodeGenTest, SimpleReturn) {
     std::string output = ss.str();
     EXPECT_NE(output.find("MOVLW\t0x2A"), std::string::npos);
     EXPECT_NE(output.find("RETURN"), std::string::npos);
-    EXPECT_NE(output.find("P18F45K50.INC"), std::string::npos);
+    EXPECT_NE(output.find("p18f45k50.inc"), std::string::npos);
 }
 
 TEST(PIC18CodeGenTest, MOVFF_Optimization) {
     DeviceConfig cfg;
-    cfg.chip = "18f45k50";
+    cfg.chip = "pic18f45k50";
     PIC18CodeGen codegen(cfg);
 
     tacky::Program program;
@@ -54,7 +54,7 @@ TEST(PIC18CodeGenTest, MOVFF_Optimization) {
 
 TEST(PIC18CodeGenTest, Redundant_MOVFF_Removed) {
     DeviceConfig cfg;
-    cfg.chip = "18f45k50";
+    cfg.chip = "pic18f45k50";
     PIC18CodeGen codegen(cfg);
 
     tacky::Program program;

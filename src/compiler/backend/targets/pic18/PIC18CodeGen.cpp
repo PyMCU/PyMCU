@@ -170,16 +170,11 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   std::transform(list_p.begin(), list_p.end(), list_p.begin(), ::toupper);
   emit_raw(std::format("\tLIST P={}", list_p));
 
-  // Replace "pic" with "p" for gputils compatibility
-  // FIXED: PIC18 uses xc.h
-  if (chip_file.starts_with("pic18") || chip_file.starts_with("p18")) {
-    emit_raw("\t#include <xc.h>");
-  } else {
-    if (chip_file.find("pic") == 0) {
-      chip_file = "p" + chip_file.substr(3);
-    }
-    emit_raw(std::format("\t#include <{}.inc>", chip_file));
+  // TODO: Add compatibility with other toolchains
+  if (chip_file.find("pic") == 0) {
+    chip_file = "p" + chip_file.substr(3);
   }
+  emit_raw(std::format("\t#include <{}.inc>", chip_file));
   emit_config_directives();
 
   emit_raw("_stack_base EQU 0x060");
