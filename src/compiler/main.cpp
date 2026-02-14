@@ -26,7 +26,7 @@ std::string resolve_module(const std::string &module_name,
                            const fs::path &current_file_path,
                            const int relative_level) {
     std::string path_rel = module_name;
-    std::ranges::replace(path_rel, '.', '/');
+    std::ranges::replace(path_rel, '.', fs::path::preferred_separator);
 
     if (relative_level > 0) {
         fs::path search_dir = current_file_path.parent_path();
@@ -61,7 +61,7 @@ std::string resolve_module(const std::string &module_name,
     throw std::runtime_error("Module not found: " + module_name);
 }
 
-void load_imports_recursively(Program *ast, const fs::path &current_path,
+void load_imports_recursively(const Program *ast, const fs::path &current_path,
                               const std::vector<std::string> &includes) {
     for (const auto &imp: ast->imports) {
         try {
@@ -86,9 +86,8 @@ void load_imports_recursively(Program *ast, const fs::path &current_path,
 
             load_imports_recursively(mod_ast.get(), path, includes);
 
-            Program *ptr = mod_ast.get();
-            module_cache[path] = std::move(mod_ast);
-            linear_imports.push_back(ptr);
+            auto &inserted_ptr = module_cache[path] = std::move(mod_ast);
+            linear_imports.push_back(inserted_ptr.get());
         } catch (const std::exception &e) {
             std::cerr << "Error importing '" << imp->module_name << "': " << e.what()
                     << "\n";
@@ -155,8 +154,7 @@ int main(int argc, char *argv[]) {
     std::string source;
     try {
         source = read_source(filepath);
-        // Split source into lines for debug info
-        std::istringstream stream(std::string{source});
+        std::istringstream stream(source);
         std::string line;
         while (std::getline(stream, line)) {
             source_lines.push_back(line);

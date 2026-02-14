@@ -9,7 +9,7 @@
 
 namespace fs = std::filesystem;
 
-inline std::string read_source(const std::string& path_str) {
+inline std::string read_source(const std::string &path_str) {
     fs::path path(path_str);
 
     if (!fs::exists(path)) {
