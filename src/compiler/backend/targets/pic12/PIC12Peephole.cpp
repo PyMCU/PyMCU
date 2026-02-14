@@ -2,14 +2,14 @@
 #include <optional>
 #include <string>
 
-std::vector<PIC12AsmLine> PIC12Peephole::optimize(const std::vector<PIC12AsmLine>& lines) {
+std::vector<PIC12AsmLine> PIC12Peephole::optimize(const std::vector<PIC12AsmLine> &lines) {
     std::vector<PIC12AsmLine> result = lines;
     bool changed = true;
 
     while (changed) {
         changed = false;
         std::vector<PIC12AsmLine> next;
-        
+
         std::optional<std::string> w_lit;
         std::optional<std::string> w_var;
 
@@ -17,7 +17,8 @@ std::vector<PIC12AsmLine> PIC12Peephole::optimize(const std::vector<PIC12AsmLine
             auto current = result[i];
 
             if (current.type == PIC12AsmLine::LABEL) {
-                w_lit.reset(); w_var.reset();
+                w_lit.reset();
+                w_var.reset();
                 next.push_back(current);
                 continue;
             }
@@ -49,15 +50,17 @@ std::vector<PIC12AsmLine> PIC12Peephole::optimize(const std::vector<PIC12AsmLine
                 }
                 w_var = current.op1;
             } else if (current.mnemonic == "GOTO" || current.mnemonic == "CALL" || current.mnemonic == "RETLW") {
-                w_lit.reset(); w_var.reset();
+                w_lit.reset();
+                w_var.reset();
             } else {
                 // Unknown state change
-                w_lit.reset(); w_var.reset();
+                w_lit.reset();
+                w_var.reset();
             }
 
             next.push_back(current);
         }
-        
+
         if (changed) result = next;
     }
 

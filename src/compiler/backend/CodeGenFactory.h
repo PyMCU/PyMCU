@@ -15,7 +15,7 @@
 
 class CodeGenFactory {
 public:
-    static std::unique_ptr<CodeGen> create(const std::string& arch, const DeviceConfig& config) {
+    static std::unique_ptr<CodeGen> create(const std::string &arch, const DeviceConfig &config) {
         if (arch == "pic12" || arch == "baseline" || arch.starts_with("pic10f") || arch.starts_with("pic12f")) {
             return std::make_unique<PIC12CodeGen>(config);
         }

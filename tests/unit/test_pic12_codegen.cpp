@@ -13,7 +13,7 @@ TEST(PIC12CodeGenTest, SimpleReturn) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // return 42
     func.body.push_back(tacky::Return{tacky::Constant{42}});
     program.functions.push_back(func);
@@ -34,7 +34,7 @@ TEST(PIC12CodeGenTest, NoAddLW_Optimization) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = b + 10
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Add,
@@ -60,7 +60,7 @@ TEST(PIC12CodeGenTest, FactorySupport) {
     DeviceConfig cfg;
     cfg.chip = "pic10f200";
     auto codegen = CodeGenFactory::create("pic10f200", cfg);
-    EXPECT_NE(dynamic_cast<PIC12CodeGen*>(codegen.get()), nullptr);
+    EXPECT_NE(dynamic_cast<PIC12CodeGen *>(codegen.get()), nullptr);
 }
 
 TEST(PIC12CodeGenTest, TRISInstruction) {
@@ -71,7 +71,7 @@ TEST(PIC12CodeGenTest, TRISInstruction) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // TRISGPIO (0x86) = 0
     func.body.push_back(tacky::Copy{
         tacky::Constant{0},
@@ -96,7 +96,7 @@ TEST(PIC12CodeGenTest, NegationNoHardcoded) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = -y
     func.body.push_back(tacky::Unary{
         tacky::UnaryOp::Neg,

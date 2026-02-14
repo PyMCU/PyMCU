@@ -10,7 +10,7 @@
 
 class Diagnostic {
 public:
-    static void report(const CompilerError& err, const std::string_view source, std::string_view filename) {
+    static void report(const CompilerError &err, const std::string_view source, std::string_view filename) {
         std::cerr << std::format("  File \"{}\", line {}\n", filename, err.line);
 
         if (const std::string line_content = get_line(source, err.line); !line_content.empty()) {

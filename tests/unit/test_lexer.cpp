@@ -33,10 +33,10 @@ TEST(LexerTest, Indentation) {
     // INDENT return 1 \n
     // DEDENT return 2 \n
     // DEDENT EOF
-    
+
     bool found_indent = false;
     bool found_dedent = false;
-    for (const auto& t : tokens) {
+    for (const auto &t: tokens) {
         if (t.type == TokenType::Indent) found_indent = true;
         if (t.type == TokenType::Dedent) found_dedent = true;
     }
@@ -70,7 +70,7 @@ TEST(LexerTest, InvalidNumber) {
 TEST(LexerTest, Comments) {
     Lexer lexer("def # comment\n    return 1");
     const auto tokens = lexer.tokenize();
-    
+
     EXPECT_EQ(tokens[0].type, TokenType::Def);
     EXPECT_EQ(tokens[1].type, TokenType::Newline);
 }

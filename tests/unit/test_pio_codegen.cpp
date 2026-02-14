@@ -16,7 +16,7 @@ TEST(PIOCodeGenTest, SimpleMove) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = 5
     func.body.push_back(tacky::Copy{
         tacky::Constant{5},
@@ -39,7 +39,7 @@ TEST(PIOCodeGenTest, JumpIfZero) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // if x == 0 goto label
     func.body.push_back(tacky::JumpIfZero{
         tacky::Variable{"x"},
@@ -62,7 +62,7 @@ TEST(PIOCodeGenTest, BitNot) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // y = ~x
     func.body.push_back(tacky::Unary{
         tacky::UnaryOp::BitNot,
@@ -86,7 +86,7 @@ TEST(PIOCodeGenTest, DecrementOnly) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = x - 1
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Sub,
@@ -111,11 +111,13 @@ TEST(PIOCodeGenTest, Intrinsics) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // __pio_pull()
     func.body.push_back(tacky::Call{"__pio_pull", {}, std::monostate{}});
     // __pio_wait(1, PIN, 0)
-    func.body.push_back(tacky::Call{"__pio_wait", {tacky::Constant{1}, tacky::MemoryAddress{1}, tacky::Constant{0}}, std::monostate{}});
+    func.body.push_back(tacky::Call{
+        "__pio_wait", {tacky::Constant{1}, tacky::MemoryAddress{1}, tacky::Constant{0}}, std::monostate{}
+    });
     // delay(5) on previous instruction
     func.body.push_back(tacky::Call{"delay", {tacky::Constant{5}}, std::monostate{}});
 
@@ -137,7 +139,7 @@ TEST(PIOCodeGenTest, UnsupportedOpsThrow) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = x + 1 (Add is not supported)
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Add,

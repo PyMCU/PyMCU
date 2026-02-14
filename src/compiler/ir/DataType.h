@@ -5,105 +5,105 @@
 #include <string>
 
 enum class DataType {
-  UINT8,
-  INT8,
-  UINT16,
-  INT16,
-  UINT32,
-  INT32,
-  FLOAT, // Placeholder for future support
-  VOID,
-  UNKNOWN
+    UINT8,
+    INT8,
+    UINT16,
+    INT16,
+    UINT32,
+    INT32,
+    FLOAT, // Placeholder for future support
+    VOID,
+    UNKNOWN
 };
 
 /// Returns the byte count for a given DataType.
 inline int size_of(DataType type) {
-  switch (type) {
-  case DataType::UINT8:
-  case DataType::INT8:
-    return 1;
-  case DataType::UINT16:
-  case DataType::INT16:
-    return 2;
-  case DataType::UINT32:
-  case DataType::INT32:
-  case DataType::FLOAT:
-    return 4;
-  default:
-    return 1; // Default to 1 byte for VOID/UNKNOWN
-  }
+    switch (type) {
+        case DataType::UINT8:
+        case DataType::INT8:
+            return 1;
+        case DataType::UINT16:
+        case DataType::INT16:
+            return 2;
+        case DataType::UINT32:
+        case DataType::INT32:
+        case DataType::FLOAT:
+            return 4;
+        default:
+            return 1; // Default to 1 byte for VOID/UNKNOWN
+    }
 }
 
 /// Returns true if the DataType is a signed integer type.
 inline bool is_signed(DataType type) {
-  switch (type) {
-  case DataType::INT8:
-  case DataType::INT16:
-  case DataType::INT32:
-    return true;
-  default:
-    return false;
-  }
+    switch (type) {
+        case DataType::INT8:
+        case DataType::INT16:
+        case DataType::INT32:
+            return true;
+        default:
+            return false;
+    }
 }
 
 /// Maps a Python type annotation string to an internal DataType enum.
 inline DataType string_to_datatype(const std::string &type_str) {
-  if (type_str == "uint8" || type_str == "int" || type_str.empty())
-    return DataType::UINT8;
-  if (type_str == "int8")
-    return DataType::INT8;
-  if (type_str == "uint16")
-    return DataType::UINT16;
-  if (type_str == "int16")
-    return DataType::INT16;
-  if (type_str == "uint32")
-    return DataType::UINT32;
-  if (type_str == "int32")
-    return DataType::INT32;
-  if (type_str == "float")
-    return DataType::FLOAT;
-  if (type_str == "void" || type_str == "None")
-    return DataType::VOID;
-  // For pointer/register types, treat as UINT8 (address-level)
-  if (type_str.find("ptr") != std::string::npos ||
-      type_str.find("PIORegister") != std::string::npos)
-    return DataType::UINT8;
-  return DataType::UNKNOWN;
+    if (type_str == "uint8" || type_str == "int" || type_str.empty())
+        return DataType::UINT8;
+    if (type_str == "int8")
+        return DataType::INT8;
+    if (type_str == "uint16")
+        return DataType::UINT16;
+    if (type_str == "int16")
+        return DataType::INT16;
+    if (type_str == "uint32")
+        return DataType::UINT32;
+    if (type_str == "int32")
+        return DataType::INT32;
+    if (type_str == "float")
+        return DataType::FLOAT;
+    if (type_str == "void" || type_str == "None")
+        return DataType::VOID;
+    // For pointer/register types, treat as UINT8 (address-level)
+    if (type_str.find("ptr") != std::string::npos ||
+        type_str.find("PIORegister") != std::string::npos)
+        return DataType::UINT8;
+    return DataType::UNKNOWN;
 }
 
 /// Returns the promoted type when combining two operand types.
 /// Rule: promote to the larger type. If same size but differing
 /// signedness, promote to the signed variant of next larger size.
 inline DataType get_promoted_type(DataType a, DataType b) {
-  if (a == b)
-    return a;
+    if (a == b)
+        return a;
 
-  int size_a = size_of(a);
-  int size_b = size_of(b);
+    int size_a = size_of(a);
+    int size_b = size_of(b);
 
-  // Promote to the larger type
-  if (size_a > size_b)
-    return a;
-  if (size_b > size_a)
-    return b;
+    // Promote to the larger type
+    if (size_a > size_b)
+        return a;
+    if (size_b > size_a)
+        return b;
 
-  // Same size, differing signedness — promote to signed variant of next size
-  bool a_signed = is_signed(a);
-  bool b_signed = is_signed(b);
+    // Same size, differing signedness — promote to signed variant of next size
+    bool a_signed = is_signed(a);
+    bool b_signed = is_signed(b);
 
-  if (a_signed != b_signed) {
-    switch (size_a) {
-    case 1:
-      return DataType::INT16;
-    case 2:
-      return DataType::INT32;
-    default:
-      return DataType::INT32; // Cap at 32-bit
+    if (a_signed != b_signed) {
+        switch (size_a) {
+            case 1:
+                return DataType::INT16;
+            case 2:
+                return DataType::INT32;
+            default:
+                return DataType::INT32; // Cap at 32-bit
+        }
     }
-  }
 
-  // Same size, same signedness — prefer 'a'
-  return a;
+    // Same size, same signedness — prefer 'a'
+    return a;
 }
 
 #endif // DATATYPE_H

@@ -23,7 +23,7 @@ TEST(PIC14CodeGenTest, SimpleReturn) {
 
 TEST(PIC14CodeGenTest, MultipleFunctions) {
     tacky::Program program;
-    
+
     tacky::Function func1;
     func1.name = "f1";
     func1.body.emplace_back(tacky::Return{tacky::Constant{1}});
@@ -49,9 +49,9 @@ TEST(PIC14CodeGenTest, ControlFlow) {
     tacky::Function func;
     func.name = "f";
     // Loop: L1 -> BSF -> GOTO L1
-    func.body.emplace_back(tacky::Label{ "L1" });
+    func.body.emplace_back(tacky::Label{"L1"});
     func.body.emplace_back(tacky::BitSet{tacky::MemoryAddress{0x05}, 0});
-    func.body.emplace_back(tacky::Jump{ "L1" });
+    func.body.emplace_back(tacky::Jump{"L1"});
     program.functions.push_back(func);
 
     DeviceConfig config{.chip = "pic16f84a"};
@@ -84,7 +84,9 @@ TEST(PIC14CodeGenTest, BinaryOps) {
     tacky::Program program;
     tacky::Function func;
     func.name = "f";
-    func.body.emplace_back(tacky::Binary{tacky::BinaryOp::Add, tacky::Constant{1}, tacky::Constant{2}, tacky::Variable{"x"}});
+    func.body.emplace_back(tacky::Binary{
+        tacky::BinaryOp::Add, tacky::Constant{1}, tacky::Constant{2}, tacky::Variable{"x"}
+    });
     program.functions.push_back(func);
 
     DeviceConfig config{.chip = "pic16f84a"};
@@ -101,7 +103,9 @@ TEST(PIC14CodeGenTest, ComparisonOps) {
     tacky::Function func;
     func.name = "f";
     // x = (1 == 1)
-    func.body.emplace_back(tacky::Binary{tacky::BinaryOp::Equal, tacky::Constant{1}, tacky::Constant{1}, tacky::Variable{"x"}});
+    func.body.emplace_back(tacky::Binary{
+        tacky::BinaryOp::Equal, tacky::Constant{1}, tacky::Constant{1}, tacky::Variable{"x"}
+    });
     program.functions.push_back(func);
 
     DeviceConfig config{.chip = "pic16f84a"};

@@ -31,9 +31,9 @@ private:
   std::map<std::string, DataType> mutable_globals;
   std::map<std::string, DataType> variable_types;
   std::map<std::string, std::string> function_return_types;
-  std::map<std::string, std::vector<std::string>> function_params;
+  std::map<std::string, std::vector<std::string> > function_params;
   std::map<std::string, const FunctionDef *>
-      inline_functions; // Map for inlining
+  inline_functions; // Map for inlining
   std::string current_function;
   std::set<std::string> current_function_globals;
   int inline_depth = 0;
@@ -50,6 +50,7 @@ private:
     std::string exit_label;
     std::optional<tacky::Temporary> result_temp;
   };
+
   std::vector<InlineContext> inline_stack;
 
   // Debugging
@@ -93,6 +94,7 @@ private:
   void visitAugAssign(const AugAssignStmt *stmt);
 
   void visitVarDecl(const VarDecl *stmt);
+
   void visitAnnAssign(const AnnAssign *stmt);
 
   void visitExprStmt(const ExprStmt *stmt);

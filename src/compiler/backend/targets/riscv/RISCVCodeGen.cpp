@@ -8,65 +8,65 @@
 #include "backend/analysis/DynamicStackAllocator.h"
 
 RISCVCodeGen::RISCVCodeGen(DeviceConfig cfg)
-    : config(std::move(cfg)), out(nullptr) {
+  : config(std::move(cfg)), out(nullptr) {
   label_counter = 0;
 }
 
 std::string RISCVAsmLine::to_string() const {
   switch (type) {
-  case INSTRUCTION:
-    if (op3.empty()) {
-      if (op2.empty()) {
-        if (op1.empty())
-          return std::format("\t{}", mnemonic);
-        return std::format("\t{}\t{}", mnemonic, op1);
+    case INSTRUCTION:
+      if (op3.empty()) {
+        if (op2.empty()) {
+          if (op1.empty())
+            return std::format("\t{}", mnemonic);
+          return std::format("\t{}\t{}", mnemonic, op1);
+        }
+        return std::format("\t{}\t{}, {}", mnemonic, op1, op2);
       }
-      return std::format("\t{}\t{}, {}", mnemonic, op1, op2);
-    }
-    return std::format("\t{}\t{}, {}, {}", mnemonic, op1, op2, op3);
-  case LABEL:
-    return std::format("{}:", label);
-  case COMMENT:
-    return std::format("# {}", content);
-  case RAW:
-    return content;
-  case EMPTY:
-    return "";
+      return std::format("\t{}\t{}, {}, {}", mnemonic, op1, op2, op3);
+    case LABEL:
+      return std::format("{}:", label);
+    case COMMENT:
+      return std::format("# {}", content);
+    case RAW:
+      return content;
+    case EMPTY:
+      return "";
   }
   return "";
 }
 
 void RISCVCodeGen::emit(const std::string &mnemonic) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Instruction(mnemonic));
+    RISCVAsmLine::Instruction(mnemonic));
 }
 
 void RISCVCodeGen::emit(const std::string &mnemonic,
                         const std::string &op1) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Instruction(mnemonic, op1));
+    RISCVAsmLine::Instruction(mnemonic, op1));
 }
 
 void RISCVCodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Instruction(mnemonic, op1, op2));
+    RISCVAsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void RISCVCodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2, const std::string &op3) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Instruction(mnemonic, op1, op2, op3));
+    RISCVAsmLine::Instruction(mnemonic, op1, op2, op3));
 }
 
 void RISCVCodeGen::emit_label(const std::string &label) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Label(label));
+    RISCVAsmLine::Label(label));
 }
 
 void RISCVCodeGen::emit_comment(const std::string &comment) const {
   const_cast<RISCVCodeGen *>(this)->assembly.push_back(
-      RISCVAsmLine::Comment(comment));
+    RISCVAsmLine::Comment(comment));
 }
 
 void RISCVCodeGen::emit_raw(const std::string &text) const {
@@ -153,12 +153,12 @@ void RISCVCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_raw(".section .text");
   emit_raw(".align 2");
 
-  for (const auto &func : program.functions) {
+  for (const auto &func: program.functions) {
     compile_function(func);
   }
 
   auto optimized = RISCVPeephole::optimize(assembly);
-  for (const auto &line : optimized) {
+  for (const auto &line: optimized) {
     os << line.to_string() << "\n";
   }
 }
@@ -168,7 +168,7 @@ void RISCVCodeGen::compile_function(const tacky::Function &func) {
   current_is_leaf = true;
 
   // Determine if it's a leaf function
-  for (const auto &instr : func.body) {
+  for (const auto &instr: func.body) {
     if (std::holds_alternative<tacky::Call>(instr)) {
       current_is_leaf = false;
       break;
@@ -205,7 +205,7 @@ void RISCVCodeGen::compile_function(const tacky::Function &func) {
   emit("sw", "s0", std::format("{}(sp)", current_stack_adjustment - 8));
   emit("addi", "s0", "sp", std::to_string(current_stack_adjustment));
 
-  for (const auto &instr : func.body) {
+  for (const auto &instr: func.body) {
     compile_instruction(instr);
   }
 }
@@ -265,15 +265,15 @@ void RISCVCodeGen::compile_variant(const tacky::Copy &arg) {
 void RISCVCodeGen::compile_variant(const tacky::Unary &arg) {
   load_into_reg(arg.src, "t0");
   switch (arg.op) {
-  case tacky::UnaryOp::Neg:
-    emit("neg", "t0", "t0");
-    break;
-  case tacky::UnaryOp::BitNot:
-    emit("not", "t0", "t0");
-    break;
-  case tacky::UnaryOp::Not:
-    emit("seqz", "t0", "t0");
-    break;
+    case tacky::UnaryOp::Neg:
+      emit("neg", "t0", "t0");
+      break;
+    case tacky::UnaryOp::BitNot:
+      emit("not", "t0", "t0");
+      break;
+    case tacky::UnaryOp::Not:
+      emit("seqz", "t0", "t0");
+      break;
   }
   store_reg_into("t0", arg.dst);
 }
@@ -288,32 +288,32 @@ void RISCVCodeGen::compile_variant(const tacky::Binary &arg) {
     int val = c->value;
     if (val >= -2048 && val <= 2047) {
       switch (arg.op) {
-      case tacky::BinaryOp::Add:
-        emit("addi", "t0", "t0", std::to_string(val));
-        used_immediate = true;
-        break;
-      case tacky::BinaryOp::Sub:
-        emit("addi", "t0", "t0", std::to_string(-val));
-        used_immediate = true;
-        break;
-      case tacky::BinaryOp::BitAnd:
-        emit("andi", "t0", "t0", std::to_string(val));
-        used_immediate = true;
-        break;
-      case tacky::BinaryOp::BitOr:
-        emit("ori", "t0", "t0", std::to_string(val));
-        used_immediate = true;
-        break;
-      case tacky::BinaryOp::BitXor:
-        emit("xori", "t0", "t0", std::to_string(val));
-        used_immediate = true;
-        break;
-      case tacky::BinaryOp::LessThan:
-        emit("slti", "t0", "t0", std::to_string(val));
-        used_immediate = true;
-        break;
-      default:
-        break;
+        case tacky::BinaryOp::Add:
+          emit("addi", "t0", "t0", std::to_string(val));
+          used_immediate = true;
+          break;
+        case tacky::BinaryOp::Sub:
+          emit("addi", "t0", "t0", std::to_string(-val));
+          used_immediate = true;
+          break;
+        case tacky::BinaryOp::BitAnd:
+          emit("andi", "t0", "t0", std::to_string(val));
+          used_immediate = true;
+          break;
+        case tacky::BinaryOp::BitOr:
+          emit("ori", "t0", "t0", std::to_string(val));
+          used_immediate = true;
+          break;
+        case tacky::BinaryOp::BitXor:
+          emit("xori", "t0", "t0", std::to_string(val));
+          used_immediate = true;
+          break;
+        case tacky::BinaryOp::LessThan:
+          emit("slti", "t0", "t0", std::to_string(val));
+          used_immediate = true;
+          break;
+        default:
+          break;
       }
     }
   }
@@ -321,67 +321,67 @@ void RISCVCodeGen::compile_variant(const tacky::Binary &arg) {
   if (!used_immediate) {
     load_into_reg(arg.src2, "t1");
     switch (arg.op) {
-    case tacky::BinaryOp::Add:
-      emit("add", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::Sub:
-      emit("sub", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::BitAnd:
-      emit("and", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::BitOr:
-      emit("or", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::BitXor:
-      emit("xor", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::Mul:
-      emit("mv", "a0", "t0");
-      emit("mv", "a1", "t1");
-      emit("call", "__mulsi3");
-      emit("mv", "t0", "a0");
-      break;
-    case tacky::BinaryOp::Div:
-      emit("mv", "a0", "t0");
-      emit("mv", "a1", "t1");
-      emit("call", "__divsi3");
-      emit("mv", "t0", "a0");
-      break;
-    case tacky::BinaryOp::Mod:
-      emit("mv", "a0", "t0");
-      emit("mv", "a1", "t1");
-      emit("call", "__modsi3");
-      emit("mv", "t0", "a0");
-      break;
-    case tacky::BinaryOp::Equal:
-      emit("xor", "t0", "t0", "t1");
-      emit("seqz", "t0", "t0");
-      break;
-    case tacky::BinaryOp::NotEqual:
-      emit("xor", "t0", "t0", "t1");
-      emit("snez", "t0", "t0");
-      break;
-    case tacky::BinaryOp::LessThan:
-      emit("slt", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::GreaterEqual:
-      emit("slt", "t0", "t0", "t1");
-      emit("seqz", "t0", "t0");
-      break;
-    case tacky::BinaryOp::GreaterThan:
-      emit("slt", "t0", "t1", "t0");
-      break;
-    case tacky::BinaryOp::LessEqual:
-      emit("slt", "t0", "t1", "t0");
-      emit("seqz", "t0", "t0");
-      break;
-    case tacky::BinaryOp::LShift:
-      emit("sll", "t0", "t0", "t1");
-      break;
-    case tacky::BinaryOp::RShift:
-      emit("srl", "t0", "t0", "t1");
-      break;
+      case tacky::BinaryOp::Add:
+        emit("add", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::Sub:
+        emit("sub", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::BitAnd:
+        emit("and", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::BitOr:
+        emit("or", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::BitXor:
+        emit("xor", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::Mul:
+        emit("mv", "a0", "t0");
+        emit("mv", "a1", "t1");
+        emit("call", "__mulsi3");
+        emit("mv", "t0", "a0");
+        break;
+      case tacky::BinaryOp::Div:
+        emit("mv", "a0", "t0");
+        emit("mv", "a1", "t1");
+        emit("call", "__divsi3");
+        emit("mv", "t0", "a0");
+        break;
+      case tacky::BinaryOp::Mod:
+        emit("mv", "a0", "t0");
+        emit("mv", "a1", "t1");
+        emit("call", "__modsi3");
+        emit("mv", "t0", "a0");
+        break;
+      case tacky::BinaryOp::Equal:
+        emit("xor", "t0", "t0", "t1");
+        emit("seqz", "t0", "t0");
+        break;
+      case tacky::BinaryOp::NotEqual:
+        emit("xor", "t0", "t0", "t1");
+        emit("snez", "t0", "t0");
+        break;
+      case tacky::BinaryOp::LessThan:
+        emit("slt", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::GreaterEqual:
+        emit("slt", "t0", "t0", "t1");
+        emit("seqz", "t0", "t0");
+        break;
+      case tacky::BinaryOp::GreaterThan:
+        emit("slt", "t0", "t1", "t0");
+        break;
+      case tacky::BinaryOp::LessEqual:
+        emit("slt", "t0", "t1", "t0");
+        emit("seqz", "t0", "t0");
+        break;
+      case tacky::BinaryOp::LShift:
+        emit("sll", "t0", "t0", "t1");
+        break;
+      case tacky::BinaryOp::RShift:
+        emit("srl", "t0", "t0", "t1");
+        break;
     }
   }
 

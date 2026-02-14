@@ -32,12 +32,12 @@ std::string PIOAsmLine::to_string() const {
     return "";
 }
 
-std::vector<PIOAsmLine> PIOPeephole::optimize(const std::vector<PIOAsmLine>& lines) {
+std::vector<PIOAsmLine> PIOPeephole::optimize(const std::vector<PIOAsmLine> &lines) {
     std::vector<PIOAsmLine> result;
     std::optional<std::string> x_val;
     std::optional<std::string> y_val;
 
-    for (const auto& line : lines) {
+    for (const auto &line: lines) {
         if (line.type == PIOAsmLine::INSTRUCTION) {
             // Remove redundant MOV
             if (line.mnemonic == "MOV" && line.op1 == line.op2) {

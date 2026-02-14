@@ -1,44 +1,44 @@
 #include "DynamicStackAllocator.h"
 #include <variant>
 
-std::pair<std::map<std::string, int>, int> DynamicStackAllocator::allocate(const tacky::Function& func) {
+std::pair<std::map<std::string, int>, int> DynamicStackAllocator::allocate(const tacky::Function &func) {
     std::map<std::string, int> offsets;
     int current_offset = -reserved_top;
 
-    auto alloc_var = [&](const std::string& name) {
+    auto alloc_var = [&](const std::string &name) {
         if (!offsets.contains(name)) {
-            current_offset -= word_size; 
+            current_offset -= word_size;
             offsets[name] = current_offset;
         }
     };
 
     // 1. Register Parameters
-    for (const auto& param : func.params) {
+    for (const auto &param: func.params) {
         alloc_var(param);
     }
 
     // 2. Scan body
-    for (const auto& instr : func.body) {
-        std::visit([&](auto&& arg) {
+    for (const auto &instr: func.body) {
+        std::visit([&](auto &&arg) {
             using T = std::decay_t<decltype(arg)>;
-            
-            auto check_val = [&](const tacky::Val& v) {
+
+            auto check_val = [&](const tacky::Val &v) {
                 if (auto var = std::get_if<tacky::Variable>(&v)) alloc_var(var->name);
                 if (auto tmp = std::get_if<tacky::Temporary>(&v)) alloc_var(tmp->name);
             };
 
-            if constexpr (std::is_same_v<T, tacky::Copy>) { 
-                check_val(arg.src); 
-                check_val(arg.dst); 
-            } else if constexpr (std::is_same_v<T, tacky::Binary>) { 
-                check_val(arg.src1); 
-                check_val(arg.src2); 
-                check_val(arg.dst); 
-            } else if constexpr (std::is_same_v<T, tacky::Unary>) { 
-                check_val(arg.src); 
-                check_val(arg.dst); 
-            } else if constexpr (std::is_same_v<T, tacky::Call>) { 
-                for (const auto& a : arg.args) check_val(a);
+            if constexpr (std::is_same_v<T, tacky::Copy>) {
+                check_val(arg.src);
+                check_val(arg.dst);
+            } else if constexpr (std::is_same_v<T, tacky::Binary>) {
+                check_val(arg.src1);
+                check_val(arg.src2);
+                check_val(arg.dst);
+            } else if constexpr (std::is_same_v<T, tacky::Unary>) {
+                check_val(arg.src);
+                check_val(arg.dst);
+            } else if constexpr (std::is_same_v<T, tacky::Call>) {
+                for (const auto &a: arg.args) check_val(a);
                 check_val(arg.dst);
             } else if constexpr (std::is_same_v<T, tacky::Return>) {
                 check_val(arg.value);

@@ -6,18 +6,18 @@
 #include <stdexcept>
 
 static const std::map<std::string, TokenType> keywords = {
-    {"def", TokenType::Def},       {"return", TokenType::Return},
-    {"if", TokenType::If},         {"elif", TokenType::Elif},
-    {"else", TokenType::Else},     {"while", TokenType::While},
-    {"for", TokenType::For},       {"in", TokenType::In},
-    {"break", TokenType::Break},   {"continue", TokenType::Continue},
-    {"pass", TokenType::Pass},     {"match", TokenType::Match},
-    {"case", TokenType::Case},     {"import", TokenType::Import},
-    {"from", TokenType::From},     {"as", TokenType::As},
-    {"True", TokenType::True},     {"False", TokenType::False},
-    {"None", TokenType::None},     {"or", TokenType::Or},
-    {"and", TokenType::And},       {"not", TokenType::Not},
-    {"global", TokenType::Global},
+  {"def", TokenType::Def}, {"return", TokenType::Return},
+  {"if", TokenType::If}, {"elif", TokenType::Elif},
+  {"else", TokenType::Else}, {"while", TokenType::While},
+  {"for", TokenType::For}, {"in", TokenType::In},
+  {"break", TokenType::Break}, {"continue", TokenType::Continue},
+  {"pass", TokenType::Pass}, {"match", TokenType::Match},
+  {"case", TokenType::Case}, {"import", TokenType::Import},
+  {"from", TokenType::From}, {"as", TokenType::As},
+  {"True", TokenType::True}, {"False", TokenType::False},
+  {"None", TokenType::None}, {"or", TokenType::Or},
+  {"and", TokenType::And}, {"not", TokenType::Not},
+  {"global", TokenType::Global},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {
@@ -111,16 +111,16 @@ static bool is_digit_for_base(const char c, const int base) {
   if (c == '_')
     return true;
   switch (base) {
-  case 2:
-    return c == '0' || c == '1';
-  case 8:
-    return c >= '0' && c <= '7';
-  case 10:
-    return isdigit(c);
-  case 16:
-    return isxdigit(c);
-  default:
-    return false;
+    case 2:
+      return c == '0' || c == '1';
+    case 8:
+      return c >= '0' && c <= '7';
+    case 10:
+      return isdigit(c);
+    case 16:
+      return isxdigit(c);
+    default:
+      return false;
   }
 }
 
@@ -147,7 +147,7 @@ Token Lexer::number() {
         text += advance(); // o
       } else if (isdigit(next)) {
         error("leading zeros in decimal integer literals are not permitted; "
-              "use an 0o prefix for octal integers");
+          "use an 0o prefix for octal integers");
       }
     }
   }
@@ -223,93 +223,93 @@ Token Lexer::scan_token() {
   advance();
 
   switch (c) {
-  case '(':
-    return {TokenType::LParen, "(", line, column};
-  case ')':
-    return {TokenType::RParen, ")", line, column};
-  case '[':
-    return {TokenType::LBracket, "[", line, column};
-  case ']':
-    return {TokenType::RBracket, "]", line, column};
-  case ':':
-    return {TokenType::Colon, ":", line, column};
-  case ';':
-    return {TokenType::Semicolon, ";", line, column};
-  case ',':
-    return {TokenType::Comma, ",", line, column};
-  case '.':
-    return {TokenType::Dot, ".", line, column};
-  case '@':
-    return {TokenType::At, "@", line, column};
+    case '(':
+      return {TokenType::LParen, "(", line, column};
+    case ')':
+      return {TokenType::RParen, ")", line, column};
+    case '[':
+      return {TokenType::LBracket, "[", line, column};
+    case ']':
+      return {TokenType::RBracket, "]", line, column};
+    case ':':
+      return {TokenType::Colon, ":", line, column};
+    case ';':
+      return {TokenType::Semicolon, ";", line, column};
+    case ',':
+      return {TokenType::Comma, ",", line, column};
+    case '.':
+      return {TokenType::Dot, ".", line, column};
+    case '@':
+      return {TokenType::At, "@", line, column};
 
-  case '-':
-    if (match('>'))
-      return {TokenType::Arrow, "->", line, column};
-    if (match('='))
-      return {TokenType::MinusEqual, "-=", line, column};
-    return {TokenType::Minus, "-", line, column};
-  case '+':
-    if (match('='))
-      return {TokenType::PlusEqual, "+=", line, column};
-    return {TokenType::Plus, "+", line, column};
-  case '*':
-    if (match('='))
-      return {TokenType::StarEqual, "*=", line, column};
-    return {TokenType::Star, "*", line, column};
-  case '/':
-    if (match('='))
-      return {TokenType::SlashEqual, "/=", line, column};
-    return {TokenType::Slash, "/", line, column};
-  case '%':
-    if (match('='))
-      return {TokenType::PercentEqual, "%=", line, column};
-    return {TokenType::Percent, "%", line, column};
-
-  case '=':
-    if (match('='))
-      return {TokenType::EqualEqual, "==", line, column};
-    return {TokenType::Equal, "=", line, column};
-  case '!':
-    if (match('='))
-      return {TokenType::BangEqual, "!=", line, column};
-    error("Invalid syntax. Did you mean 'not' or '!='?");
-    break;
-  case '<':
-    if (match('<')) {
+    case '-':
+      if (match('>'))
+        return {TokenType::Arrow, "->", line, column};
       if (match('='))
-        return {TokenType::LShiftEqual, "<<=", line, column};
-      return {TokenType::LShift, "<<", line, column};
-    }
-    if (match('='))
-      return {TokenType::LessEqual, "<=", line, column};
-    return {TokenType::Less, "<", line, column};
-  case '>':
-    if (match('>')) {
+        return {TokenType::MinusEqual, "-=", line, column};
+      return {TokenType::Minus, "-", line, column};
+    case '+':
       if (match('='))
-        return {TokenType::RShiftEqual, ">>=", line, column};
-      return {TokenType::RShift, ">>", line, column};
-    }
-    if (match('='))
-      return {TokenType::GreaterEqual, ">=", line, column};
-    return {TokenType::Greater, ">", line, column};
+        return {TokenType::PlusEqual, "+=", line, column};
+      return {TokenType::Plus, "+", line, column};
+    case '*':
+      if (match('='))
+        return {TokenType::StarEqual, "*=", line, column};
+      return {TokenType::Star, "*", line, column};
+    case '/':
+      if (match('='))
+        return {TokenType::SlashEqual, "/=", line, column};
+      return {TokenType::Slash, "/", line, column};
+    case '%':
+      if (match('='))
+        return {TokenType::PercentEqual, "%=", line, column};
+      return {TokenType::Percent, "%", line, column};
 
-  case '&':
-    if (match('='))
-      return {TokenType::AmpEqual, "&=", line, column};
-    return {TokenType::Ampersand, "&", line, column};
-  case '|':
-    if (match('='))
-      return {TokenType::PipeEqual, "|=", line, column};
-    return {TokenType::Pipe, "|", line, column};
-  case '^':
-    if (match('='))
-      return {TokenType::CaretEqual, "^=", line, column};
-    return {TokenType::Caret, "^", line, column};
-  case '~':
-    return {TokenType::Tilde, "~", line, column};
+    case '=':
+      if (match('='))
+        return {TokenType::EqualEqual, "==", line, column};
+      return {TokenType::Equal, "=", line, column};
+    case '!':
+      if (match('='))
+        return {TokenType::BangEqual, "!=", line, column};
+      error("Invalid syntax. Did you mean 'not' or '!='?");
+      break;
+    case '<':
+      if (match('<')) {
+        if (match('='))
+          return {TokenType::LShiftEqual, "<<=", line, column};
+        return {TokenType::LShift, "<<", line, column};
+      }
+      if (match('='))
+        return {TokenType::LessEqual, "<=", line, column};
+      return {TokenType::Less, "<", line, column};
+    case '>':
+      if (match('>')) {
+        if (match('='))
+          return {TokenType::RShiftEqual, ">>=", line, column};
+        return {TokenType::RShift, ">>", line, column};
+      }
+      if (match('='))
+        return {TokenType::GreaterEqual, ">=", line, column};
+      return {TokenType::Greater, ">", line, column};
 
-  default:
-    error(std::format("invalid character '{}'", c));
+    case '&':
+      if (match('='))
+        return {TokenType::AmpEqual, "&=", line, column};
+      return {TokenType::Ampersand, "&", line, column};
+    case '|':
+      if (match('='))
+        return {TokenType::PipeEqual, "|=", line, column};
+      return {TokenType::Pipe, "|", line, column};
+    case '^':
+      if (match('='))
+        return {TokenType::CaretEqual, "^=", line, column};
+      return {TokenType::Caret, "^", line, column};
+    case '~':
+      return {TokenType::Tilde, "~", line, column};
+
+    default:
+      error(std::format("invalid character '{}'", c));
   }
   return {TokenType::Unknown, "", line, column};
 }

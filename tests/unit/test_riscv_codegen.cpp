@@ -13,7 +13,7 @@ TEST(RISCVCodeGenTest, SimpleReturn) {
     tacky::Program program;
     tacky::Function func;
     func.name = "my_func";
-    
+
     // return 42
     func.body.push_back(tacky::Return{tacky::Constant{42}});
     program.functions.push_back(func);
@@ -34,7 +34,7 @@ TEST(RISCVCodeGenTest, MainInfiniteLoop) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     func.body.push_back(tacky::Return{tacky::Constant{0}});
     program.functions.push_back(func);
 
@@ -56,7 +56,7 @@ TEST(RISCVCodeGenTest, NestedCallPrologue) {
     tacky::Program program;
     tacky::Function func;
     func.name = "caller";
-    
+
     // call other_func
     func.body.push_back(tacky::Call{"other_func", {}, std::monostate{}});
     func.body.push_back(tacky::Return{std::monostate{}});
@@ -79,7 +79,7 @@ TEST(RISCVCodeGenTest, SoftwareMul) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = b * c
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Mul,
@@ -107,7 +107,7 @@ TEST(RISCVCodeGenTest, BinaryOps) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = 10 + 20
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Add,
@@ -138,7 +138,7 @@ TEST(RISCVCodeGenTest, SubtractionOptimization) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = b - 10
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Sub,
@@ -165,7 +165,7 @@ TEST(RISCVCodeGenTest, BitManipulation) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // Set bit 5 of variable 'x'
     func.body.push_back(tacky::BitSet{
         tacky::Variable{"x"},
@@ -187,5 +187,5 @@ TEST(RISCVCodeGenTest, FactorySupport) {
     DeviceConfig cfg;
     cfg.chip = "ch32v003";
     auto codegen = CodeGenFactory::create("ch32v003", cfg);
-    EXPECT_NE(dynamic_cast<RISCVCodeGen*>(codegen.get()), nullptr);
+    EXPECT_NE(dynamic_cast<RISCVCodeGen *>(codegen.get()), nullptr);
 }

@@ -16,8 +16,8 @@ TEST(ArgumentsTest, CallWithArguments) {
 
     // Check IR for 'main'
     ASSERT_EQ(ir.functions.size(), 2);
-    auto* main_func = (ir.functions[0].name == "main") ? &ir.functions[0] : &ir.functions[1];
-    auto* add_func = (ir.functions[0].name == "add") ? &ir.functions[0] : &ir.functions[1];
+    auto *main_func = (ir.functions[0].name == "main") ? &ir.functions[0] : &ir.functions[1];
+    auto *add_func = (ir.functions[0].name == "add") ? &ir.functions[0] : &ir.functions[1];
 
     EXPECT_EQ(add_func->params.size(), 2);
     EXPECT_EQ(add_func->params[0], "add.a");
@@ -28,14 +28,14 @@ TEST(ArgumentsTest, CallWithArguments) {
     bool found_copy_b = false;
     bool found_call = false;
 
-    for (const auto& inst : main_func->body) {
-        if (auto* copy = std::get_if<tacky::Copy>(&inst)) {
-            if (auto* dst = std::get_if<tacky::Variable>(&copy->dst)) {
+    for (const auto &inst: main_func->body) {
+        if (auto *copy = std::get_if<tacky::Copy>(&inst)) {
+            if (auto *dst = std::get_if<tacky::Variable>(&copy->dst)) {
                 if (dst->name.find("add.a") != std::string::npos) found_copy_a = true;
                 if (dst->name.find("add.b") != std::string::npos) found_copy_b = true;
             }
         }
-        if (auto* call = std::get_if<tacky::Call>(&inst)) {
+        if (auto *call = std::get_if<tacky::Call>(&inst)) {
             if (call->function_name == "add") found_call = true;
         }
     }
@@ -71,7 +71,7 @@ TEST(ArgumentsTest, StackLayoutWithArguments) {
     // MOVLW 0x02
     // MOVWF add.b
     // CALL add
-    
+
     EXPECT_TRUE(asm_code.find("MOVLW\t0x01") != std::string::npos);
     EXPECT_TRUE(asm_code.find("MOVWF\tadd.a") != std::string::npos);
     EXPECT_TRUE(asm_code.find("MOVLW\t0x02") != std::string::npos);

@@ -7,507 +7,508 @@
 #include "backend/analysis/StackAllocator.h"
 
 PIC12CodeGen::PIC12CodeGen(DeviceConfig cfg)
-    : config(std::move(cfg)), ram_head(0x08) {}
+    : config(std::move(cfg)), ram_head(0x08) {
+}
 
 std::string PIC12AsmLine::to_string() const {
-  switch (type) {
-  case INSTRUCTION:
-    if (op2.empty()) {
-      if (op1.empty())
-        return std::format("\t{}", mnemonic);
-      return std::format("\t{}\t{}", mnemonic, op1);
+    switch (type) {
+        case INSTRUCTION:
+            if (op2.empty()) {
+                if (op1.empty())
+                    return std::format("\t{}", mnemonic);
+                return std::format("\t{}\t{}", mnemonic, op1);
+            }
+            return std::format("\t{}\t{}, {}", mnemonic, op1, op2);
+        case LABEL:
+            return std::format("{}:", label);
+        case COMMENT:
+            return std::format("; {}", content);
+        case RAW:
+            return content;
+        default:
+            return "";
     }
-    return std::format("\t{}\t{}, {}", mnemonic, op1, op2);
-  case LABEL:
-    return std::format("{}:", label);
-  case COMMENT:
-    return std::format("; {}", content);
-  case RAW:
-    return content;
-  default:
-    return "";
-  }
 }
 
 void PIC12CodeGen::emit(const std::string &mnemonic) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(
-      PIC12AsmLine::Instruction(mnemonic));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(
+        PIC12AsmLine::Instruction(mnemonic));
 }
 
 void PIC12CodeGen::emit(const std::string &mnemonic,
                         const std::string &op1) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(
-      PIC12AsmLine::Instruction(mnemonic, op1));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(
+        PIC12AsmLine::Instruction(mnemonic, op1));
 }
 
 void PIC12CodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(
-      PIC12AsmLine::Instruction(mnemonic, op1, op2));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(
+        PIC12AsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void PIC12CodeGen::emit_label(const std::string &label) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(
-      PIC12AsmLine::Label(label));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(
+        PIC12AsmLine::Label(label));
 }
 
 void PIC12CodeGen::emit_comment(const std::string &comment) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(
-      PIC12AsmLine::Comment(comment));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(
+        PIC12AsmLine::Comment(comment));
 }
 
 void PIC12CodeGen::emit_raw(const std::string &text) const {
-  const_cast<PIC12CodeGen *>(this)->assembly.push_back(PIC12AsmLine::Raw(text));
+    const_cast<PIC12CodeGen *>(this)->assembly.push_back(PIC12AsmLine::Raw(text));
 }
 
 std::string PIC12CodeGen::resolve_address(const tacky::Val &val) {
-  if (const auto c = std::get_if<tacky::Constant>(&val)) {
-    return std::format("0x{:02X}", c->value & 0xFF);
-  }
-  if (const auto mem = std::get_if<tacky::MemoryAddress>(&val)) {
-    return std::format("0x{:02X}", mem->address);
-  }
+    if (const auto c = std::get_if<tacky::Constant>(&val)) {
+        return std::format("0x{:02X}", c->value & 0xFF);
+    }
+    if (const auto mem = std::get_if<tacky::MemoryAddress>(&val)) {
+        return std::format("0x{:02X}", mem->address);
+    }
 
-  std::string name;
-  if (const auto v = std::get_if<tacky::Variable>(&val))
-    name = v->name;
-  else if (const auto t = std::get_if<tacky::Temporary>(&val))
-    name = t->name;
+    std::string name;
+    if (const auto v = std::get_if<tacky::Variable>(&val))
+        name = v->name;
+    else if (const auto t = std::get_if<tacky::Temporary>(&val))
+        name = t->name;
 
-  if (stack_layout.contains(name))
-    return name;
-  return get_or_alloc_variable(name);
+    if (stack_layout.contains(name))
+        return name;
+    return get_or_alloc_variable(name);
 }
 
 std::string PIC12CodeGen::get_or_alloc_variable(const std::string &name) {
-  if (!symbol_table.contains(name)) {
-    symbol_table[name] = ram_head++;
-    emit_raw(std::format("{} EQU 0x{:02X}", name, symbol_table[name]));
-  }
-  return name;
+    if (!symbol_table.contains(name)) {
+        symbol_table[name] = ram_head++;
+        emit_raw(std::format("{} EQU 0x{:02X}", name, symbol_table[name]));
+    }
+    return name;
 }
 
 void PIC12CodeGen::load_into_w(const tacky::Val &val) {
-  if (const auto c = std::get_if<tacky::Constant>(&val)) {
-    emit("MOVLW", std::format("0x{:02X}", c->value & 0xFF));
-  } else {
-    std::string addr = resolve_address(val);
-    // TRIS registers are write-only on base-line, use shadow
-    if (addr == "0x85")
-      addr = get_or_alloc_variable("__tris_shadow_5");
-    else if (addr == "0x86")
-      addr = get_or_alloc_variable("__tris_shadow_6");
-    else if (addr == "0x87")
-      addr = get_or_alloc_variable("__tris_shadow_7");
+    if (const auto c = std::get_if<tacky::Constant>(&val)) {
+        emit("MOVLW", std::format("0x{:02X}", c->value & 0xFF));
+    } else {
+        std::string addr = resolve_address(val);
+        // TRIS registers are write-only on base-line, use shadow
+        if (addr == "0x85")
+            addr = get_or_alloc_variable("__tris_shadow_5");
+        else if (addr == "0x86")
+            addr = get_or_alloc_variable("__tris_shadow_6");
+        else if (addr == "0x87")
+            addr = get_or_alloc_variable("__tris_shadow_7");
 
-    emit("MOVF", addr, "W");
-  }
+        emit("MOVF", addr, "W");
+    }
 }
 
 void PIC12CodeGen::store_w_into(const tacky::Val &val) {
-  std::string addr = resolve_address(val);
+    std::string addr = resolve_address(val);
 
-  if (addr == "0x81") {
-    emit("OPTION");
-    return;
-  }
+    if (addr == "0x81") {
+        emit("OPTION");
+        return;
+    }
 
-  int tris_reg = -1;
-  if (addr == "0x85")
-    tris_reg = 5;
-  else if (addr == "0x86")
-    tris_reg = 6;
-  else if (addr == "0x87")
-    tris_reg = 7;
+    int tris_reg = -1;
+    if (addr == "0x85")
+        tris_reg = 5;
+    else if (addr == "0x86")
+        tris_reg = 6;
+    else if (addr == "0x87")
+        tris_reg = 7;
 
-  if (tris_reg != -1) {
-    emit("TRIS", std::to_string(tris_reg));
-    // Shadow it for future reads/bit-ops
-    std::string shadow =
-        get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
-    emit("MOVWF", shadow);
-    return;
-  }
+    if (tris_reg != -1) {
+        emit("TRIS", std::to_string(tris_reg));
+        // Shadow it for future reads/bit-ops
+        std::string shadow =
+                get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
+        emit("MOVWF", shadow);
+        return;
+    }
 
-  emit("MOVWF", addr);
+    emit("MOVWF", addr);
 }
 
 void PIC12CodeGen::compile(const tacky::Program &program, std::ostream &os) {
-  assembly.clear();
+    assembly.clear();
 
-  StackAllocator allocator;
-  auto [offsets, total_size] = allocator.allocate(program);
-  this->stack_layout = offsets;
+    StackAllocator allocator;
+    auto [offsets, total_size] = allocator.allocate(program);
+    this->stack_layout = offsets;
 
-  emit_comment("Generated by pymcuc for PIC12 (Base-line)");
-  std::string chip_upper = config.chip;
-  std::ranges::transform(chip_upper, chip_upper.begin(), ::toupper);
-  emit_raw(std::format("\tPROCESSOR {}", chip_upper));
-  emit_raw("\t#include <xc.inc>");
+    emit_comment("Generated by pymcuc for PIC12 (Base-line)");
+    std::string chip_upper = config.chip;
+    std::ranges::transform(chip_upper, chip_upper.begin(), ::toupper);
+    emit_raw(std::format("\tPROCESSOR {}", chip_upper));
+    emit_raw("\t#include <xc.inc>");
 
-  emit_comment("--- Compiled Stack (Overlays) ---");
-  emit_raw("_stack_base EQU 0x08"); // Overlap with RAM start if needed
-  for (const auto &[name, offset] : stack_layout) {
-    emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
-  }
+    emit_comment("--- Compiled Stack (Overlays) ---");
+    emit_raw("_stack_base EQU 0x08"); // Overlap with RAM start if needed
+    for (const auto &[name, offset]: stack_layout) {
+        emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
+    }
 
-  emit_raw("\tORG 0x00");
-  emit("GOTO", "main");
+    emit_raw("\tORG 0x00");
+    emit("GOTO", "main");
 
-  for (const auto &func : program.functions) {
-    compile_function(func);
-  }
+    for (const auto &func: program.functions) {
+        compile_function(func);
+    }
 
-  emit_raw("\tEND");
+    emit_raw("\tEND");
 
-  for (const auto &line : assembly) {
-    os << line.to_string() << "\n";
-  }
+    for (const auto &line: assembly) {
+        os << line.to_string() << "\n";
+    }
 }
 
 void PIC12CodeGen::compile_function(const tacky::Function &func) {
-  emit_label(func.name);
-  for (const auto &instr : func.body) {
-    compile_instruction(instr);
-  }
+    emit_label(func.name);
+    for (const auto &instr: func.body) {
+        compile_instruction(instr);
+    }
 }
 
 void PIC12CodeGen::compile_instruction(const tacky::Instruction &instr) {
-  std::visit([this](auto &&arg) { compile_variant(arg); }, instr);
+    std::visit([this](auto &&arg) { compile_variant(arg); }, instr);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Return &arg) {
-  load_into_w(arg.value);
-  emit("RETLW", "0"); // PIC12 baseline has no RETURN, use RETLW
+    load_into_w(arg.value);
+    emit("RETLW", "0"); // PIC12 baseline has no RETURN, use RETLW
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Copy &arg) {
-  load_into_w(arg.src);
-  store_w_into(arg.dst);
+    load_into_w(arg.src);
+    store_w_into(arg.dst);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Unary &arg) {
-  load_into_w(arg.src);
-  switch (arg.op) {
-  case tacky::UnaryOp::BitNot:
-    emit("XORLW", "0xFF");
-    break;
-  case tacky::UnaryOp::Not:
-    emit("XORLW", "1");
-    emit("ANDLW", "1");
-    break;
-  case tacky::UnaryOp::Neg:
-    // W = -W  => W = (W ^ 0xFF) + 1
-    emit("XORLW", "0xFF");
-    // NO ADDLW! Use MOVLW + ADDWF
-    {
-      std::string temp = get_or_alloc_variable("__neg_temp");
-      emit("MOVWF", temp);
-      emit("MOVLW", "1");
-      emit("ADDWF", temp, "W");
+    load_into_w(arg.src);
+    switch (arg.op) {
+        case tacky::UnaryOp::BitNot:
+            emit("XORLW", "0xFF");
+            break;
+        case tacky::UnaryOp::Not:
+            emit("XORLW", "1");
+            emit("ANDLW", "1");
+            break;
+        case tacky::UnaryOp::Neg:
+            // W = -W  => W = (W ^ 0xFF) + 1
+            emit("XORLW", "0xFF");
+            // NO ADDLW! Use MOVLW + ADDWF
+            {
+                std::string temp = get_or_alloc_variable("__neg_temp");
+                emit("MOVWF", temp);
+                emit("MOVLW", "1");
+                emit("ADDWF", temp, "W");
+            }
+            break;
     }
-    break;
-  }
-  store_w_into(arg.dst);
+    store_w_into(arg.dst);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Binary &arg) {
-  load_into_w(arg.src1);
-  std::string right = resolve_address(arg.src2);
-
-  switch (arg.op) {
-  case tacky::BinaryOp::Add:
-    if (std::holds_alternative<tacky::Constant>(arg.src2)) {
-      std::string temp = get_or_alloc_variable("__add_temp");
-      emit("MOVWF", temp);
-      emit("MOVLW", right);
-      emit("ADDWF", temp, "W");
-    } else {
-      emit("ADDWF", right, "W");
-    }
-    break;
-  case tacky::BinaryOp::Sub:
-    if (std::holds_alternative<tacky::Constant>(arg.src2)) {
-      // W = src1 - constant
-      // W = src1 + (-constant)
-      std::string temp = get_or_alloc_variable("__sub_temp");
-      emit("MOVWF", temp);
-      emit("MOVLW", std::format("(0x100 - ({})) & 0xFF", right));
-      emit("ADDWF", temp, "W");
-    } else {
-      // IR is src1 - src2. W = src1.
-      // SUBWF f, d is f - W -> d.
-      // So SUBWF right, W is src2 - src1. Wrong!
-      // We need src1 - src2.
-      // Strategy: Load src2 into W, then SUBWF src1, W.
-      load_into_w(arg.src2);
-      std::string left = resolve_address(arg.src1);
-      emit("SUBWF", left, "W");
-    }
-    break;
-  case tacky::BinaryOp::BitAnd:
-    if (std::holds_alternative<tacky::Constant>(arg.src2))
-      emit("ANDLW", right);
-    else
-      emit("ANDWF", right, "W");
-    break;
-  case tacky::BinaryOp::BitOr:
-    if (std::holds_alternative<tacky::Constant>(arg.src2))
-      emit("IORLW", right);
-    else
-      emit("IORWF", right, "W");
-    break;
-  case tacky::BinaryOp::BitXor:
-    if (std::holds_alternative<tacky::Constant>(arg.src2))
-      emit("XORLW", right);
-    else
-      emit("XORWF", right, "W");
-    break;
-  case tacky::BinaryOp::LShift:
-  case tacky::BinaryOp::RShift: {
-    // Shifts need file register operations, not W-register arithmetic
-    store_w_into(arg.dst); // W has src1 from load_into_w above
-    std::string dst_addr = resolve_address(arg.dst);
-    std::string rotate_op = (arg.op == tacky::BinaryOp::LShift) ? "RLF" : "RRF";
-
-    if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
-      int shift_count = c2->value & 0x07;
-      for (int i = 0; i < shift_count; i++) {
-        emit("BCF", "STATUS", "0");
-        emit(rotate_op, dst_addr, "F");
-      }
-    } else {
-      // Variable shift: count-down loop
-      std::string count_addr = resolve_address(arg.src2);
-      std::string loop_label = make_label("shift");
-      std::string done_label = make_label("shift_done");
-      emit("MOVF", count_addr, "W");
-      emit("BTFSC", "STATUS", "2");
-      emit("GOTO", done_label);
-      emit_label(loop_label);
-      emit("BCF", "STATUS", "0");
-      emit(rotate_op, dst_addr, "F");
-      emit("DECFSZ", count_addr, "F");
-      emit("GOTO", loop_label);
-      emit_label(done_label);
-    }
-    return; // Already stored in dst
-  }
-  case tacky::BinaryOp::Equal:
-  case tacky::BinaryOp::NotEqual:
-  case tacky::BinaryOp::LessThan:
-  case tacky::BinaryOp::LessEqual:
-  case tacky::BinaryOp::GreaterThan:
-  case tacky::BinaryOp::GreaterEqual: {
-    // W = src1 - src2
-    load_into_w(arg.src2);
-    std::string left = resolve_address(arg.src1);
-    emit("SUBWF", left, "W");
-
-    std::string dst_addr = resolve_address(arg.dst);
-    emit("CLRF", dst_addr);
+    load_into_w(arg.src1);
+    std::string right = resolve_address(arg.src2);
 
     switch (arg.op) {
-    case tacky::BinaryOp::Equal:
-      emit("BTFSC", "STATUS", "2");
-      break;
-    case tacky::BinaryOp::NotEqual:
-      emit("BTFSS", "STATUS", "2");
-      break;
-    case tacky::BinaryOp::LessThan:
-      emit("BTFSS", "STATUS", "0");
-      break;
-    case tacky::BinaryOp::GreaterEqual:
-      emit("BTFSC", "STATUS", "0");
-      break;
-    case tacky::BinaryOp::GreaterThan: {
-      std::string lbl_skip = make_label("L_GT");
-      emit("BTFSS", "STATUS", "0");
-      emit("GOTO", lbl_skip);
-      emit("BTFSC", "STATUS", "2");
-      emit("GOTO", lbl_skip);
-      emit("INCF", dst_addr, "F");
-      emit_label(lbl_skip);
-      return;
+        case tacky::BinaryOp::Add:
+            if (std::holds_alternative<tacky::Constant>(arg.src2)) {
+                std::string temp = get_or_alloc_variable("__add_temp");
+                emit("MOVWF", temp);
+                emit("MOVLW", right);
+                emit("ADDWF", temp, "W");
+            } else {
+                emit("ADDWF", right, "W");
+            }
+            break;
+        case tacky::BinaryOp::Sub:
+            if (std::holds_alternative<tacky::Constant>(arg.src2)) {
+                // W = src1 - constant
+                // W = src1 + (-constant)
+                std::string temp = get_or_alloc_variable("__sub_temp");
+                emit("MOVWF", temp);
+                emit("MOVLW", std::format("(0x100 - ({})) & 0xFF", right));
+                emit("ADDWF", temp, "W");
+            } else {
+                // IR is src1 - src2. W = src1.
+                // SUBWF f, d is f - W -> d.
+                // So SUBWF right, W is src2 - src1. Wrong!
+                // We need src1 - src2.
+                // Strategy: Load src2 into W, then SUBWF src1, W.
+                load_into_w(arg.src2);
+                std::string left = resolve_address(arg.src1);
+                emit("SUBWF", left, "W");
+            }
+            break;
+        case tacky::BinaryOp::BitAnd:
+            if (std::holds_alternative<tacky::Constant>(arg.src2))
+                emit("ANDLW", right);
+            else
+                emit("ANDWF", right, "W");
+            break;
+        case tacky::BinaryOp::BitOr:
+            if (std::holds_alternative<tacky::Constant>(arg.src2))
+                emit("IORLW", right);
+            else
+                emit("IORWF", right, "W");
+            break;
+        case tacky::BinaryOp::BitXor:
+            if (std::holds_alternative<tacky::Constant>(arg.src2))
+                emit("XORLW", right);
+            else
+                emit("XORWF", right, "W");
+            break;
+        case tacky::BinaryOp::LShift:
+        case tacky::BinaryOp::RShift: {
+            // Shifts need file register operations, not W-register arithmetic
+            store_w_into(arg.dst); // W has src1 from load_into_w above
+            std::string dst_addr = resolve_address(arg.dst);
+            std::string rotate_op = (arg.op == tacky::BinaryOp::LShift) ? "RLF" : "RRF";
+
+            if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+                int shift_count = c2->value & 0x07;
+                for (int i = 0; i < shift_count; i++) {
+                    emit("BCF", "STATUS", "0");
+                    emit(rotate_op, dst_addr, "F");
+                }
+            } else {
+                // Variable shift: count-down loop
+                std::string count_addr = resolve_address(arg.src2);
+                std::string loop_label = make_label("shift");
+                std::string done_label = make_label("shift_done");
+                emit("MOVF", count_addr, "W");
+                emit("BTFSC", "STATUS", "2");
+                emit("GOTO", done_label);
+                emit_label(loop_label);
+                emit("BCF", "STATUS", "0");
+                emit(rotate_op, dst_addr, "F");
+                emit("DECFSZ", count_addr, "F");
+                emit("GOTO", loop_label);
+                emit_label(done_label);
+            }
+            return; // Already stored in dst
+        }
+        case tacky::BinaryOp::Equal:
+        case tacky::BinaryOp::NotEqual:
+        case tacky::BinaryOp::LessThan:
+        case tacky::BinaryOp::LessEqual:
+        case tacky::BinaryOp::GreaterThan:
+        case tacky::BinaryOp::GreaterEqual: {
+            // W = src1 - src2
+            load_into_w(arg.src2);
+            std::string left = resolve_address(arg.src1);
+            emit("SUBWF", left, "W");
+
+            std::string dst_addr = resolve_address(arg.dst);
+            emit("CLRF", dst_addr);
+
+            switch (arg.op) {
+                case tacky::BinaryOp::Equal:
+                    emit("BTFSC", "STATUS", "2");
+                    break;
+                case tacky::BinaryOp::NotEqual:
+                    emit("BTFSS", "STATUS", "2");
+                    break;
+                case tacky::BinaryOp::LessThan:
+                    emit("BTFSS", "STATUS", "0");
+                    break;
+                case tacky::BinaryOp::GreaterEqual:
+                    emit("BTFSC", "STATUS", "0");
+                    break;
+                case tacky::BinaryOp::GreaterThan: {
+                    std::string lbl_skip = make_label("L_GT");
+                    emit("BTFSS", "STATUS", "0");
+                    emit("GOTO", lbl_skip);
+                    emit("BTFSC", "STATUS", "2");
+                    emit("GOTO", lbl_skip);
+                    emit("INCF", dst_addr, "F");
+                    emit_label(lbl_skip);
+                    return;
+                }
+                case tacky::BinaryOp::LessEqual: {
+                    std::string lbl_set = make_label("L_LE");
+                    std::string lbl_skip = make_label("L_LES");
+                    emit("BTFSS", "STATUS", "0");
+                    emit("GOTO", lbl_set);
+                    emit("BTFSS", "STATUS", "2");
+                    emit("GOTO", lbl_skip);
+                    emit_label(lbl_set);
+                    emit("INCF", dst_addr, "F");
+                    emit_label(lbl_skip);
+                    return;
+                }
+                default:
+                    break;
+            }
+            emit("INCF", dst_addr, "F");
+            return; // Already stored in dst
+        }
+        default:
+            break;
     }
-    case tacky::BinaryOp::LessEqual: {
-      std::string lbl_set = make_label("L_LE");
-      std::string lbl_skip = make_label("L_LES");
-      emit("BTFSS", "STATUS", "0");
-      emit("GOTO", lbl_set);
-      emit("BTFSS", "STATUS", "2");
-      emit("GOTO", lbl_skip);
-      emit_label(lbl_set);
-      emit("INCF", dst_addr, "F");
-      emit_label(lbl_skip);
-      return;
-    }
-    default:
-      break;
-    }
-    emit("INCF", dst_addr, "F");
-    return; // Already stored in dst
-  }
-  default:
-    break;
-  }
-  store_w_into(arg.dst);
+    store_w_into(arg.dst);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Jump &arg) const {
-  emit("GOTO", arg.target);
+    emit("GOTO", arg.target);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::JumpIfZero &arg) {
-  load_into_w(arg.condition);
-  // Set Z flag
-  emit("IORLW", "0");
-  emit("BTFSC", "STATUS", "2");
-  emit("GOTO", arg.target);
+    load_into_w(arg.condition);
+    // Set Z flag
+    emit("IORLW", "0");
+    emit("BTFSC", "STATUS", "2");
+    emit("GOTO", arg.target);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::JumpIfNotZero &arg) {
-  load_into_w(arg.condition);
-  emit("IORLW", "0");
-  emit("BTFSS", "STATUS", "2");
-  emit("GOTO", arg.target);
+    load_into_w(arg.condition);
+    emit("IORLW", "0");
+    emit("BTFSS", "STATUS", "2");
+    emit("GOTO", arg.target);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Label &arg) const {
-  emit_label(arg.name);
+    emit_label(arg.name);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Call &arg) {
-  emit("CALL", arg.function_name);
-  if (!std::holds_alternative<std::monostate>(arg.dst)) {
-    store_w_into(arg.dst);
-  }
+    emit("CALL", arg.function_name);
+    if (!std::holds_alternative<std::monostate>(arg.dst)) {
+        store_w_into(arg.dst);
+    }
 }
 
 void PIC12CodeGen::compile_variant(const tacky::BitSet &arg) {
-  std::string addr = resolve_address(arg.target);
-  int tris_reg = -1;
-  if (addr == "0x85")
-    tris_reg = 5;
-  else if (addr == "0x86")
-    tris_reg = 6;
-  else if (addr == "0x87")
-    tris_reg = 7;
+    std::string addr = resolve_address(arg.target);
+    int tris_reg = -1;
+    if (addr == "0x85")
+        tris_reg = 5;
+    else if (addr == "0x86")
+        tris_reg = 6;
+    else if (addr == "0x87")
+        tris_reg = 7;
 
-  if (tris_reg != -1) {
-    std::string shadow =
-        get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
-    emit("BSF", shadow, std::to_string(arg.bit));
-    emit("MOVF", shadow, "W");
-    emit("TRIS", std::to_string(tris_reg));
-  } else {
-    emit("BSF", addr, std::to_string(arg.bit));
-  }
+    if (tris_reg != -1) {
+        std::string shadow =
+                get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
+        emit("BSF", shadow, std::to_string(arg.bit));
+        emit("MOVF", shadow, "W");
+        emit("TRIS", std::to_string(tris_reg));
+    } else {
+        emit("BSF", addr, std::to_string(arg.bit));
+    }
 }
 
 void PIC12CodeGen::compile_variant(const tacky::BitClear &arg) {
-  std::string addr = resolve_address(arg.target);
-  int tris_reg = -1;
-  if (addr == "0x85")
-    tris_reg = 5;
-  else if (addr == "0x86")
-    tris_reg = 6;
-  else if (addr == "0x87")
-    tris_reg = 7;
+    std::string addr = resolve_address(arg.target);
+    int tris_reg = -1;
+    if (addr == "0x85")
+        tris_reg = 5;
+    else if (addr == "0x86")
+        tris_reg = 6;
+    else if (addr == "0x87")
+        tris_reg = 7;
 
-  if (tris_reg != -1) {
-    std::string shadow =
-        get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
-    emit("BCF", shadow, std::to_string(arg.bit));
-    emit("MOVF", shadow, "W");
-    emit("TRIS", std::to_string(tris_reg));
-  } else {
-    emit("BCF", addr, std::to_string(arg.bit));
-  }
+    if (tris_reg != -1) {
+        std::string shadow =
+                get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
+        emit("BCF", shadow, std::to_string(arg.bit));
+        emit("MOVF", shadow, "W");
+        emit("TRIS", std::to_string(tris_reg));
+    } else {
+        emit("BCF", addr, std::to_string(arg.bit));
+    }
 }
 
 void PIC12CodeGen::compile_variant(const tacky::BitCheck &arg) {
-  std::string addr = resolve_address(arg.source);
-  if (addr == "0x85")
-    addr = get_or_alloc_variable("__tris_shadow_5");
-  else if (addr == "0x86")
-    addr = get_or_alloc_variable("__tris_shadow_6");
-  else if (addr == "0x87")
-    addr = get_or_alloc_variable("__tris_shadow_7");
+    std::string addr = resolve_address(arg.source);
+    if (addr == "0x85")
+        addr = get_or_alloc_variable("__tris_shadow_5");
+    else if (addr == "0x86")
+        addr = get_or_alloc_variable("__tris_shadow_6");
+    else if (addr == "0x87")
+        addr = get_or_alloc_variable("__tris_shadow_7");
 
-  std::string dst = resolve_address(arg.dst);
-  emit("CLRF", dst);
-  emit("BTFSC", addr, std::to_string(arg.bit));
-  emit("INCF", dst, "F");
+    std::string dst = resolve_address(arg.dst);
+    emit("CLRF", dst);
+    emit("BTFSC", addr, std::to_string(arg.bit));
+    emit("INCF", dst, "F");
 }
 
 void PIC12CodeGen::compile_variant(const tacky::BitWrite &arg) {
-  std::string addr = resolve_address(arg.target);
-  int tris_reg = -1;
-  if (addr == "0x85")
-    tris_reg = 5;
-  else if (addr == "0x86")
-    tris_reg = 6;
-  else if (addr == "0x87")
-    tris_reg = 7;
+    std::string addr = resolve_address(arg.target);
+    int tris_reg = -1;
+    if (addr == "0x85")
+        tris_reg = 5;
+    else if (addr == "0x86")
+        tris_reg = 6;
+    else if (addr == "0x87")
+        tris_reg = 7;
 
-  load_into_w(arg.src);
-  emit("IORLW", "0");
-  std::string lbl_set = make_label("bit_set");
-  std::string lbl_end = make_label("bit_end");
-  emit("BTFSS", "STATUS", "2");
-  emit("GOTO", lbl_set);
+    load_into_w(arg.src);
+    emit("IORLW", "0");
+    std::string lbl_set = make_label("bit_set");
+    std::string lbl_end = make_label("bit_end");
+    emit("BTFSS", "STATUS", "2");
+    emit("GOTO", lbl_set);
 
-  if (tris_reg != -1) {
-    std::string shadow =
-        get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
-    emit("BCF", shadow, std::to_string(arg.bit));
-    emit("MOVF", shadow, "W");
-    emit("TRIS", std::to_string(tris_reg));
-  } else {
-    emit("BCF", addr, std::to_string(arg.bit));
-  }
+    if (tris_reg != -1) {
+        std::string shadow =
+                get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
+        emit("BCF", shadow, std::to_string(arg.bit));
+        emit("MOVF", shadow, "W");
+        emit("TRIS", std::to_string(tris_reg));
+    } else {
+        emit("BCF", addr, std::to_string(arg.bit));
+    }
 
-  emit("GOTO", lbl_end);
-  emit_label(lbl_set);
+    emit("GOTO", lbl_end);
+    emit_label(lbl_set);
 
-  if (tris_reg != -1) {
-    std::string shadow =
-        get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
-    emit("BSF", shadow, std::to_string(arg.bit));
-    emit("MOVF", shadow, "W");
-    emit("TRIS", std::to_string(tris_reg));
-  } else {
-    emit("BSF", addr, std::to_string(arg.bit));
-  }
+    if (tris_reg != -1) {
+        std::string shadow =
+                get_or_alloc_variable(std::format("__tris_shadow_{}", tris_reg));
+        emit("BSF", shadow, std::to_string(arg.bit));
+        emit("MOVF", shadow, "W");
+        emit("TRIS", std::to_string(tris_reg));
+    } else {
+        emit("BSF", addr, std::to_string(arg.bit));
+    }
 
-  emit_label(lbl_end);
+    emit_label(lbl_end);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::JumpIfBitSet &arg) {
-  std::string addr = resolve_address(arg.source);
-  // BTFSC: skip next if bit is CLEAR → execute GOTO only when SET
-  emit("BTFSC", addr, std::to_string(arg.bit));
-  emit("GOTO", arg.target);
+    std::string addr = resolve_address(arg.source);
+    // BTFSC: skip next if bit is CLEAR → execute GOTO only when SET
+    emit("BTFSC", addr, std::to_string(arg.bit));
+    emit("GOTO", arg.target);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::JumpIfBitClear &arg) {
-  std::string addr = resolve_address(arg.source);
-  // BTFSS: skip next if bit is SET → execute GOTO only when CLEAR
-  emit("BTFSS", addr, std::to_string(arg.bit));
-  emit("GOTO", arg.target);
+    std::string addr = resolve_address(arg.source);
+    // BTFSS: skip next if bit is SET → execute GOTO only when CLEAR
+    emit("BTFSS", addr, std::to_string(arg.bit));
+    emit("GOTO", arg.target);
 }
 
 void PIC12CodeGen::compile_variant(const tacky::AugAssign &arg) {
-  // TODO: Implement PIC12-specific augmented assignment
-  throw std::runtime_error("PIC12: AugAssign is not yet implemented");
+    // TODO: Implement PIC12-specific augmented assignment
+    throw std::runtime_error("PIC12: AugAssign is not yet implemented");
 }
 
 void PIC12CodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement PIC12-specific delay
-  throw std::runtime_error("PIC12: Delay is not yet implemented");
+    // TODO: Implement PIC12-specific delay
+    throw std::runtime_error("PIC12: Delay is not yet implemented");
 }
 
 void PIC12CodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
 }

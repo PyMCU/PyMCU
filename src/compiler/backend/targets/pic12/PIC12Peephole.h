@@ -6,7 +6,7 @@
 
 class PIC12Peephole {
 public:
-    static std::vector<PIC12AsmLine> optimize(const std::vector<PIC12AsmLine>& lines);
+    static std::vector<PIC12AsmLine> optimize(const std::vector<PIC12AsmLine> &lines);
 };
 
 #endif // PIC12PEEPHOLE_H

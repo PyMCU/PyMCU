@@ -28,7 +28,7 @@ IRGenerator::generate(const Program &main_ast,
   function_return_types.clear();
   function_params.clear();
 
-  for (const auto *mod : imported_modules) {
+  for (const auto *mod: imported_modules) {
     scan_globals(*mod);
     scan_functions(*mod);
   }
@@ -36,13 +36,13 @@ IRGenerator::generate(const Program &main_ast,
   scan_globals(main_ast);
   scan_functions(main_ast);
 
-  for (const auto &func_def : main_ast.functions) {
+  for (const auto &func_def: main_ast.functions) {
     ir_program.functions.push_back(visitFunction(func_def.get()));
   }
 
   // Pass mutable global variable names and types to the backend for RAM
   // allocation
-  for (const auto &[name, type] : mutable_globals) {
+  for (const auto &[name, type]: mutable_globals) {
     ir_program.globals.push_back(tacky::Variable{name, type});
   }
 
@@ -101,7 +101,7 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
 }
 
 void IRGenerator::scan_globals(const Program &ast) {
-  for (const auto &stmt : ast.global_statements) {
+  for (const auto &stmt: ast.global_statements) {
     std::string name;
     std::string type;
     const Expression *initializer = nullptr;
@@ -111,14 +111,14 @@ void IRGenerator::scan_globals(const Program &ast) {
       type = varDecl->var_type;
       initializer = varDecl->init.get();
     } else if (const auto assign =
-                   dynamic_cast<const AssignStmt *>(stmt.get())) {
+        dynamic_cast<const AssignStmt *>(stmt.get())) {
       if (const auto varExpr =
-              dynamic_cast<const VariableExpr *>(assign->target.get())) {
+          dynamic_cast<const VariableExpr *>(assign->target.get())) {
         name = varExpr->name;
         initializer = assign->value.get();
       }
     } else if (const auto annAssign =
-                   dynamic_cast<const AnnAssign *>(stmt.get())) {
+        dynamic_cast<const AnnAssign *>(stmt.get())) {
       name = annAssign->target;
       type = annAssign->annotation; // Use annotation as type
       initializer = annAssign->value.get();
@@ -151,7 +151,7 @@ void IRGenerator::scan_globals(const Program &ast) {
           // error_flags). Constants like BUTTON_PIN = 0 remain compile-time
           // constants. Mutable variables need RAM allocation.
           bool is_all_upper = true;
-          for (char c : name) {
+          for (char c: name) {
             if (std::islower(static_cast<unsigned char>(c))) {
               is_all_upper = false;
               break;
@@ -173,10 +173,10 @@ void IRGenerator::scan_globals(const Program &ast) {
 }
 
 void IRGenerator::scan_functions(const Program &ast) {
-  for (const auto &func : ast.functions) {
+  for (const auto &func: ast.functions) {
     function_return_types[func->name] = func->return_type;
     std::vector<std::string> params;
-    for (const auto &p : func->params) {
+    for (const auto &p: func->params) {
       params.push_back(p.name);
     }
     function_params[func->name] = params;
@@ -217,7 +217,7 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
   current_instructions.clear();
   loop_stack.clear();
 
-  for (const auto &[name, type] : funcNode->params) {
+  for (const auto &[name, type]: funcNode->params) {
     ir_func.params.push_back(current_function + "." + name);
   }
 
@@ -233,7 +233,7 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
 }
 
 void IRGenerator::visitBlock(const Block *block) {
-  for (const auto &stmt : block->statements) {
+  for (const auto &stmt: block->statements) {
     visitStatement(stmt.get());
   }
 }
@@ -282,8 +282,8 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     throw std::runtime_error("IR Generation: Statement pointer is null");
   }
   throw std::runtime_error(
-      std::string("IR Generation: Unknown Statement type: ") +
-      typeid(*stmt).name());
+    std::string("IR Generation: Unknown Statement type: ") +
+    typeid(*stmt).name());
 }
 
 void IRGenerator::visitReturn(const ReturnStmt *stmt) {
@@ -305,9 +305,8 @@ void IRGenerator::visitReturn(const ReturnStmt *stmt) {
 
 // Helper: Try to detect and emit optimized bit test jumps
 bool IRGenerator::emit_optimized_conditional_jump(
-    const Expression *cond, const std::string &target_label,
-    bool jump_if_true) {
-
+  const Expression *cond, const std::string &target_label,
+  bool jump_if_true) {
   // Helper to resolve constant integers (literals or global constants)
   auto resolve_int = [&](const Expression *expr) -> std::optional<int> {
     if (const auto num = dynamic_cast<const IntegerLiteral *>(expr)) {
@@ -385,7 +384,7 @@ bool IRGenerator::emit_optimized_conditional_jump(
   if (auto *unaryExpr = dynamic_cast<const UnaryExpr *>(cond)) {
     if (unaryExpr->op == UnaryOp::Not) {
       if (auto *indexExpr =
-              dynamic_cast<const IndexExpr *>(unaryExpr->operand.get())) {
+          dynamic_cast<const IndexExpr *>(unaryExpr->operand.get())) {
         auto bitVal = resolve_int(indexExpr->index.get());
         if (bitVal.has_value()) {
           tacky::Val addr = visitExpression(indexExpr->target.get());
@@ -435,8 +434,8 @@ void IRGenerator::visitIf(const IfStmt *stmt) {
 
   // 1. Main If Condition
   std::string next_label = (stmt->elif_branches.empty() && !stmt->else_branch)
-                               ? end_label
-                               : make_label();
+                             ? end_label
+                             : make_label();
 
   // "If boolean optimization": Jump to next_label if condition is FALSE
   if (!emit_optimized_conditional_jump(stmt->condition.get(), next_label,
@@ -511,7 +510,7 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
 
   std::string end_label = make_label();
 
-  for (const auto &branch : stmt->branches) {
+  for (const auto &branch: stmt->branches) {
     std::string next_case_label = make_label();
 
     if (branch.pattern) {
@@ -520,8 +519,10 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
 
       // Generate equality check: target == pattern
       tacky::Temporary cmp_res = make_temp();
-      emit(tacky::Binary{tacky::BinaryOp::Equal, target_val, pattern_val,
-                         cmp_res});
+      emit(tacky::Binary{
+        tacky::BinaryOp::Equal, target_val, pattern_val,
+        cmp_res
+      });
 
       // If false (0), jump to next case
       emit(tacky::JumpIfZero{cmp_res, next_case_label});
@@ -628,7 +629,7 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
     }
     emit(tacky::Copy{value, target});
   } else if (auto memExpr =
-                 dynamic_cast<const MemberAccessExpr *>(stmt->target.get())) {
+      dynamic_cast<const MemberAccessExpr *>(stmt->target.get())) {
     if (memExpr->member == "value") {
       tacky::Val target = visitExpression(memExpr->object.get());
 
@@ -650,7 +651,7 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
           emit(tacky::Copy{value, target});
         } else {
           throw std::runtime_error(
-              "Cannot assign to .value of this expression type");
+            "Cannot assign to .value of this expression type");
         }
       } else if (byte_count == 2) {
         // 16-bit: Two byte writes (low, high)
@@ -661,26 +662,36 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
             int low_byte = full_value & 0xFF;
             int high_byte = (full_value >> 8) & 0xFF;
 
-            emit(tacky::Copy{tacky::Constant{low_byte},
-                             tacky::MemoryAddress{addr->address}});
-            emit(tacky::Copy{tacky::Constant{high_byte},
-                             tacky::MemoryAddress{addr->address + 1}});
+            emit(tacky::Copy{
+              tacky::Constant{low_byte},
+              tacky::MemoryAddress{addr->address}
+            });
+            emit(tacky::Copy{
+              tacky::Constant{high_byte},
+              tacky::MemoryAddress{addr->address + 1}
+            });
           } else {
             // For variable values, need runtime extraction
             tacky::Temporary low_byte = make_temp();
-            emit(tacky::Binary{tacky::BinaryOp::BitAnd, value,
-                               tacky::Constant{0xFF}, low_byte});
+            emit(tacky::Binary{
+              tacky::BinaryOp::BitAnd, value,
+              tacky::Constant{0xFF}, low_byte
+            });
             emit(tacky::Copy{low_byte, tacky::MemoryAddress{addr->address}});
 
             tacky::Temporary high_byte = make_temp();
-            emit(tacky::Binary{tacky::BinaryOp::RShift, value,
-                               tacky::Constant{8}, high_byte});
-            emit(tacky::Copy{high_byte,
-                             tacky::MemoryAddress{addr->address + 1}});
+            emit(tacky::Binary{
+              tacky::BinaryOp::RShift, value,
+              tacky::Constant{8}, high_byte
+            });
+            emit(tacky::Copy{
+              high_byte,
+              tacky::MemoryAddress{addr->address + 1}
+            });
           }
         } else {
           throw std::runtime_error(
-              "16-bit .value assignment requires constant address");
+            "16-bit .value assignment requires constant address");
         }
       } else {
         throw std::runtime_error("Unsupported type size for .value assignment");
@@ -699,8 +710,8 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
   DataType dt = resolve_type(stmt->var_type);
   // Stores 'FuncName.VarName' in IR
   std::string qualified = current_function.empty()
-                              ? stmt->name
-                              : current_function + "." + stmt->name;
+                            ? stmt->name
+                            : current_function + "." + stmt->name;
   variable_types[qualified] = dt;
 
   // Create the Variable
@@ -764,26 +775,26 @@ void IRGenerator::visitAugAssign(const AugAssignStmt *stmt) {
   // Map AugOp to tacky::BinaryOp
   auto map_augop = [](AugOp op) -> tacky::BinaryOp {
     switch (op) {
-    case AugOp::Add:
-      return tacky::BinaryOp::Add;
-    case AugOp::Sub:
-      return tacky::BinaryOp::Sub;
-    case AugOp::Mul:
-      return tacky::BinaryOp::Mul;
-    case AugOp::Div:
-      return tacky::BinaryOp::Div;
-    case AugOp::Mod:
-      return tacky::BinaryOp::Mod;
-    case AugOp::BitAnd:
-      return tacky::BinaryOp::BitAnd;
-    case AugOp::BitOr:
-      return tacky::BinaryOp::BitOr;
-    case AugOp::BitXor:
-      return tacky::BinaryOp::BitXor;
-    case AugOp::LShift:
-      return tacky::BinaryOp::LShift;
-    case AugOp::RShift:
-      return tacky::BinaryOp::RShift;
+      case AugOp::Add:
+        return tacky::BinaryOp::Add;
+      case AugOp::Sub:
+        return tacky::BinaryOp::Sub;
+      case AugOp::Mul:
+        return tacky::BinaryOp::Mul;
+      case AugOp::Div:
+        return tacky::BinaryOp::Div;
+      case AugOp::Mod:
+        return tacky::BinaryOp::Mod;
+      case AugOp::BitAnd:
+        return tacky::BinaryOp::BitAnd;
+      case AugOp::BitOr:
+        return tacky::BinaryOp::BitOr;
+      case AugOp::BitXor:
+        return tacky::BinaryOp::BitXor;
+      case AugOp::LShift:
+        return tacky::BinaryOp::LShift;
+      case AugOp::RShift:
+        return tacky::BinaryOp::RShift;
     }
     return tacky::BinaryOp::Add; // Unreachable
   };
@@ -803,7 +814,7 @@ void IRGenerator::visitExprStmt(const ExprStmt *stmt) {
 }
 
 void IRGenerator::visitGlobal(const GlobalStmt *stmt) {
-  for (const auto &name : stmt->names) {
+  for (const auto &name: stmt->names) {
     current_function_globals.insert(name);
   }
 }
@@ -863,57 +874,57 @@ tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
   tacky::Temporary dst = make_temp(resType);
   tacky::BinaryOp op;
   switch (expr->op) {
-  case BinaryOp::Add:
-    op = tacky::BinaryOp::Add;
-    break;
-  case BinaryOp::Sub:
-    op = tacky::BinaryOp::Sub;
-    break;
-  case BinaryOp::Mul:
-    op = tacky::BinaryOp::Mul;
-    break;
-  case BinaryOp::Div:
-    op = tacky::BinaryOp::Div;
-    break;
-  case BinaryOp::Mod:
-    op = tacky::BinaryOp::Mod;
-    break;
-  case BinaryOp::Equal:
-    op = tacky::BinaryOp::Equal;
-    break;
-  case BinaryOp::NotEqual:
-    op = tacky::BinaryOp::NotEqual;
-    break;
-  case BinaryOp::Less:
-    op = tacky::BinaryOp::LessThan;
-    break;
-  case BinaryOp::LessEq:
-    op = tacky::BinaryOp::LessEqual;
-    break;
-  case BinaryOp::Greater:
-    op = tacky::BinaryOp::GreaterThan;
-    break;
-  case BinaryOp::GreaterEq:
-    op = tacky::BinaryOp::GreaterEqual;
-    break;
+    case BinaryOp::Add:
+      op = tacky::BinaryOp::Add;
+      break;
+    case BinaryOp::Sub:
+      op = tacky::BinaryOp::Sub;
+      break;
+    case BinaryOp::Mul:
+      op = tacky::BinaryOp::Mul;
+      break;
+    case BinaryOp::Div:
+      op = tacky::BinaryOp::Div;
+      break;
+    case BinaryOp::Mod:
+      op = tacky::BinaryOp::Mod;
+      break;
+    case BinaryOp::Equal:
+      op = tacky::BinaryOp::Equal;
+      break;
+    case BinaryOp::NotEqual:
+      op = tacky::BinaryOp::NotEqual;
+      break;
+    case BinaryOp::Less:
+      op = tacky::BinaryOp::LessThan;
+      break;
+    case BinaryOp::LessEq:
+      op = tacky::BinaryOp::LessEqual;
+      break;
+    case BinaryOp::Greater:
+      op = tacky::BinaryOp::GreaterThan;
+      break;
+    case BinaryOp::GreaterEq:
+      op = tacky::BinaryOp::GreaterEqual;
+      break;
 
-  case BinaryOp::BitAnd:
-    op = tacky::BinaryOp::BitAnd;
-    break;
-  case BinaryOp::BitOr:
-    op = tacky::BinaryOp::BitOr;
-    break;
-  case BinaryOp::BitXor:
-    op = tacky::BinaryOp::BitXor;
-    break;
-  case BinaryOp::LShift:
-    op = tacky::BinaryOp::LShift;
-    break;
-  case BinaryOp::RShift:
-    op = tacky::BinaryOp::RShift;
-    break;
-  default:
-    throw std::runtime_error("Unsupported Binary Op");
+    case BinaryOp::BitAnd:
+      op = tacky::BinaryOp::BitAnd;
+      break;
+    case BinaryOp::BitOr:
+      op = tacky::BinaryOp::BitOr;
+      break;
+    case BinaryOp::BitXor:
+      op = tacky::BinaryOp::BitXor;
+      break;
+    case BinaryOp::LShift:
+      op = tacky::BinaryOp::LShift;
+      break;
+    case BinaryOp::RShift:
+      op = tacky::BinaryOp::RShift;
+      break;
+    default:
+      throw std::runtime_error("Unsupported Binary Op");
   }
 
   emit(tacky::Binary{op, v1, v2, dst});
@@ -926,17 +937,17 @@ tacky::Val IRGenerator::visitUnary(const UnaryExpr *expr) {
 
   tacky::UnaryOp op;
   switch (expr->op) {
-  case UnaryOp::Negate:
-    op = tacky::UnaryOp::Neg;
-    break;
-  case UnaryOp::Not:
-    op = tacky::UnaryOp::Not;
-    break;
-  case UnaryOp::BitNot:
-    op = tacky::UnaryOp::BitNot;
-    break;
-  default:
-    throw std::runtime_error("Unsupported Unary Op");
+    case UnaryOp::Negate:
+      op = tacky::UnaryOp::Neg;
+      break;
+    case UnaryOp::Not:
+      op = tacky::UnaryOp::Not;
+      break;
+    case UnaryOp::BitNot:
+      op = tacky::UnaryOp::BitNot;
+      break;
+    default:
+      throw std::runtime_error("Unsupported Unary Op");
   }
 
   emit(tacky::Unary{op, src, dst});
@@ -1001,7 +1012,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
     // Evaluate args in CURRENT context
     std::vector<tacky::Val> argValues;
-    for (const auto &arg : expr->args) {
+    for (const auto &arg: expr->args) {
       argValues.push_back(visitExpression(arg.get()));
     }
 
@@ -1024,10 +1035,13 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
       // Optimization: If argVal is Variable/Constant/Temp, Copy.
       emit(tacky::Copy{
-          argValues[i],
-          tacky::Variable{paramName,
-                          DataType::UINT8}}); // Assuming UINT8 for now or
-                                              // check param type
+        argValues[i],
+        tacky::Variable{
+          paramName,
+          DataType::UINT8
+        }
+      }); // Assuming UINT8 for now or
+      // check param type
     }
 
     // Body
@@ -1046,7 +1060,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
   // Eval args once
   std::vector<tacky::Val> arg_values;
-  for (const auto &arg : expr->args) {
+  for (const auto &arg: expr->args) {
     arg_values.push_back(visitExpression(arg.get()));
   }
 
@@ -1057,13 +1071,15 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     const auto &param_names = function_params[expr->callee];
     if (expr->args.size() != param_names.size()) {
       throw std::runtime_error(std::format(
-          "Function '{}' expects {} arguments, but {} were provided",
-          expr->callee, param_names.size(), expr->args.size()));
+        "Function '{}' expects {} arguments, but {} were provided",
+        expr->callee, param_names.size(), expr->args.size()));
     }
     // Explicit Copy for Stack/Global ABI satisfaction (Fixes ArgumentsTest)
     for (size_t i = 0; i < arg_values.size(); ++i) {
-      emit(tacky::Copy{arg_values[i],
-                       tacky::Variable{expr->callee + "." + param_names[i]}});
+      emit(tacky::Copy{
+        arg_values[i],
+        tacky::Variable{expr->callee + "." + param_names[i]}
+      });
     }
   }
 

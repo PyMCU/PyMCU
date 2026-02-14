@@ -6,7 +6,8 @@
 #include <optional>
 #include <stdexcept>
 
-Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
+Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {
+}
 
 const Token &Parser::peek() const {
   if (pos >= tokens.size())
@@ -323,7 +324,7 @@ std::unique_ptr<Statement> Parser::parseIfStatement() {
 
   // Elif branches
   std::vector<
-      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement>>>
+        std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement> > >
       elifBranches;
   while (match(TokenType::Elif)) {
     auto elifCond = parseExpression();
@@ -369,7 +370,7 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
     // Since we don't have a dedicated Underscore token, check for Identifier
     // with value "_"
     if (check(TokenType::Identifier) && peek().value == "_") {
-      advance();         // consume '_'
+      advance(); // consume '_'
       pattern = nullptr; // Wildcard
     } else {
       // Limited pattern matching: literals or variable
@@ -561,26 +562,26 @@ std::unique_ptr<Expression> Parser::parseComparison() {
     BinaryOp op;
 
     switch (opToken.type) {
-    case TokenType::EqualEqual:
-      op = BinaryOp::Equal;
-      break;
-    case TokenType::BangEqual:
-      op = BinaryOp::NotEqual;
-      break;
-    case TokenType::Less:
-      op = BinaryOp::Less;
-      break;
-    case TokenType::LessEqual:
-      op = BinaryOp::LessEq;
-      break;
-    case TokenType::Greater:
-      op = BinaryOp::Greater;
-      break;
-    case TokenType::GreaterEqual:
-      op = BinaryOp::GreaterEq;
-      break;
-    default:
-      break; // Unreachable
+      case TokenType::EqualEqual:
+        op = BinaryOp::Equal;
+        break;
+      case TokenType::BangEqual:
+        op = BinaryOp::NotEqual;
+        break;
+      case TokenType::Less:
+        op = BinaryOp::Less;
+        break;
+      case TokenType::LessEqual:
+        op = BinaryOp::LessEq;
+        break;
+      case TokenType::Greater:
+        op = BinaryOp::Greater;
+        break;
+      case TokenType::GreaterEqual:
+        op = BinaryOp::GreaterEq;
+        break;
+      default:
+        break; // Unreachable
     }
 
     auto right = parseBitwiseOr();
@@ -623,8 +624,9 @@ std::unique_ptr<Expression> Parser::parseShift() {
   auto left = parseAdditive();
   while (check(TokenType::LShift) || check(TokenType::RShift)) {
     const Token opToken = advance();
-    BinaryOp op = (opToken.type == TokenType::LShift) ? BinaryOp::LShift
-                                                      : BinaryOp::RShift;
+    BinaryOp op = (opToken.type == TokenType::LShift)
+                    ? BinaryOp::LShift
+                    : BinaryOp::RShift;
     auto right = parseAdditive();
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
   }
@@ -693,7 +695,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
         error("Expression is not callable");
       }
 
-      std::vector<std::unique_ptr<Expression>> args;
+      std::vector<std::unique_ptr<Expression> > args;
       if (!check(TokenType::RParen)) {
         do {
           args.push_back(parseExpression());

@@ -13,7 +13,7 @@ TEST(PIC18CodeGenTest, SimpleReturn) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // return 42
     func.body.push_back(tacky::Return{tacky::Constant{42}});
     program.functions.push_back(func);
@@ -35,7 +35,7 @@ TEST(PIC18CodeGenTest, MOVFF_Optimization) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = y (Copy)
     func.body.push_back(tacky::Copy{
         tacky::Variable{"y"},
@@ -60,7 +60,7 @@ TEST(PIC18CodeGenTest, Redundant_MOVFF_Removed) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // x = x (Redundant Copy)
     func.body.push_back(tacky::Copy{
         tacky::Variable{"x"},
@@ -86,7 +86,7 @@ TEST(PIC18CodeGenTest, ArithmeticAndFactory) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = 10 + b
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Add,
@@ -114,7 +114,7 @@ TEST(PIC18CodeGenTest, BankedAccess) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // Force many variables to exceed access bank (0x60)
     for (int i = 0; i < 100; ++i) {
         func.body.push_back(tacky::Copy{tacky::Constant{0}, tacky::Variable{"v" + std::to_string(i)}});
@@ -124,7 +124,7 @@ TEST(PIC18CodeGenTest, BankedAccess) {
     for (int i = 100; i < 200; ++i) {
         func.body.push_back(tacky::Copy{tacky::Constant{0}, tacky::Variable{"v" + std::to_string(i)}});
     }
-    
+
     program.functions.push_back(func);
 
     std::stringstream ss;
@@ -144,7 +144,7 @@ TEST(PIC18CodeGenTest, SubtractionCorrectness) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = b - c
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Sub,
@@ -162,7 +162,7 @@ TEST(PIC18CodeGenTest, SubtractionCorrectness) {
     size_t pos_c = output.find("MOVF\tc, W");
     size_t pos_sub = output.find("SUBWF\tb, W");
     size_t pos_a = output.find("MOVWF\ta");
-    
+
     EXPECT_NE(pos_c, std::string::npos);
     EXPECT_NE(pos_sub, std::string::npos);
     EXPECT_NE(pos_a, std::string::npos);
@@ -178,7 +178,7 @@ TEST(PIC18CodeGenTest, Division) {
     tacky::Program program;
     tacky::Function func;
     func.name = "main";
-    
+
     // a = b / c
     func.body.push_back(tacky::Binary{
         tacky::BinaryOp::Div,

@@ -5,29 +5,30 @@
 #include <set>
 #include <variant>
 
-PIOCodeGen::PIOCodeGen(DeviceConfig cfg) : config(std::move(cfg)) {}
+PIOCodeGen::PIOCodeGen(DeviceConfig cfg) : config(std::move(cfg)) {
+}
 
 void PIOCodeGen::emit(const std::string &mnemonic) const {
   const_cast<PIOCodeGen *>(this)->assembly.push_back(
-      PIOAsmLine::Instruction(mnemonic));
+    PIOAsmLine::Instruction(mnemonic));
 }
 
 void PIOCodeGen::emit(const std::string &mnemonic,
                       const std::string &op1) const {
   const_cast<PIOCodeGen *>(this)->assembly.push_back(
-      PIOAsmLine::Instruction(mnemonic, op1));
+    PIOAsmLine::Instruction(mnemonic, op1));
 }
 
 void PIOCodeGen::emit(const std::string &mnemonic, const std::string &op1,
                       const std::string &op2) const {
   const_cast<PIOCodeGen *>(this)->assembly.push_back(
-      PIOAsmLine::Instruction(mnemonic, op1, op2));
+    PIOAsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void PIOCodeGen::emit(const std::string &mnemonic, const std::string &op1,
                       const std::string &op2, const std::string &op3) const {
   const_cast<PIOCodeGen *>(this)->assembly.push_back(
-      PIOAsmLine::Instruction(mnemonic, op1, op2, op3));
+    PIOAsmLine::Instruction(mnemonic, op1, op2, op3));
 }
 
 void PIOCodeGen::emit_label(const std::string &label) const {
@@ -36,7 +37,7 @@ void PIOCodeGen::emit_label(const std::string &label) const {
 
 void PIOCodeGen::emit_comment(const std::string &comment) const {
   const_cast<PIOCodeGen *>(this)->assembly.push_back(
-      PIOAsmLine::Comment(comment));
+    PIOAsmLine::Comment(comment));
 }
 
 void PIOCodeGen::emit_raw(const std::string &text) const {
@@ -47,7 +48,7 @@ void PIOCodeGen::allocate_registers(const tacky::Function &func) {
   register_map.clear();
   std::set<std::string> vars;
 
-  for (const auto &instr : func.body) {
+  for (const auto &instr: func.body) {
     auto gather = [&](const tacky::Val &v) {
       if (auto var = std::get_if<tacky::Variable>(&v))
         vars.insert(var->name);
@@ -55,56 +56,56 @@ void PIOCodeGen::allocate_registers(const tacky::Function &func) {
         vars.insert(tmp->name);
     };
     std::visit(
-        [&](auto &&arg) {
-          using T = std::decay_t<decltype(arg)>;
-          if constexpr (std::is_same_v<T, tacky::Copy>) {
-            gather(arg.src);
-            gather(arg.dst);
-          } else if constexpr (std::is_same_v<T, tacky::Unary>) {
-            gather(arg.src);
-            gather(arg.dst);
-          } else if constexpr (std::is_same_v<T, tacky::Binary>) {
-            gather(arg.src1);
-            gather(arg.src2);
-            gather(arg.dst);
-          } else if constexpr (std::is_same_v<T, tacky::BitSet>) {
-            gather(arg.target);
-          } else if constexpr (std::is_same_v<T, tacky::BitClear>) {
-            gather(arg.target);
-          } else if constexpr (std::is_same_v<T, tacky::BitCheck>) {
-            gather(arg.source);
-            gather(arg.dst);
-          } else if constexpr (std::is_same_v<T, tacky::BitWrite>) {
-            gather(arg.src);
-            gather(arg.target);
-          } else if constexpr (std::is_same_v<T, tacky::Return>) {
-            gather(arg.value);
-          } else if constexpr (std::is_same_v<T, tacky::JumpIfZero>) {
-            gather(arg.condition);
-          } else if constexpr (std::is_same_v<T, tacky::JumpIfNotZero>) {
-            gather(arg.condition);
-          } else if constexpr (std::is_same_v<T, tacky::JumpIfBitSet>) {
-            gather(arg.source);
-          } else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>) {
-            gather(arg.source);
-          } else if constexpr (std::is_same_v<T, tacky::Call>) {
-            for (const auto &a : arg.args)
-              gather(a);
-            gather(arg.dst);
-          }
-        },
-        instr);
+      [&](auto &&arg) {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, tacky::Copy>) {
+          gather(arg.src);
+          gather(arg.dst);
+        } else if constexpr (std::is_same_v<T, tacky::Unary>) {
+          gather(arg.src);
+          gather(arg.dst);
+        } else if constexpr (std::is_same_v<T, tacky::Binary>) {
+          gather(arg.src1);
+          gather(arg.src2);
+          gather(arg.dst);
+        } else if constexpr (std::is_same_v<T, tacky::BitSet>) {
+          gather(arg.target);
+        } else if constexpr (std::is_same_v<T, tacky::BitClear>) {
+          gather(arg.target);
+        } else if constexpr (std::is_same_v<T, tacky::BitCheck>) {
+          gather(arg.source);
+          gather(arg.dst);
+        } else if constexpr (std::is_same_v<T, tacky::BitWrite>) {
+          gather(arg.src);
+          gather(arg.target);
+        } else if constexpr (std::is_same_v<T, tacky::Return>) {
+          gather(arg.value);
+        } else if constexpr (std::is_same_v<T, tacky::JumpIfZero>) {
+          gather(arg.condition);
+        } else if constexpr (std::is_same_v<T, tacky::JumpIfNotZero>) {
+          gather(arg.condition);
+        } else if constexpr (std::is_same_v<T, tacky::JumpIfBitSet>) {
+          gather(arg.source);
+        } else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>) {
+          gather(arg.source);
+        } else if constexpr (std::is_same_v<T, tacky::Call>) {
+          for (const auto &a: arg.args)
+            gather(a);
+          gather(arg.dst);
+        }
+      },
+      instr);
   }
 
   int i = 0;
-  for (const auto &name : vars) {
+  for (const auto &name: vars) {
     if (i == 0)
       register_map[name] = "X";
     else if (i == 1)
       register_map[name] = "Y";
     else
       throw std::runtime_error(
-          "Error: PIO only supports 2 active variables (mapped to X and Y).");
+        "Error: PIO only supports 2 active variables (mapped to X and Y).");
     i++;
   }
 }
@@ -119,20 +120,20 @@ std::string PIOCodeGen::resolve_operand(const tacky::Val &val) {
     return register_map[tmp->name];
   if (const auto mem = std::get_if<tacky::MemoryAddress>(&val)) {
     switch (mem->address) {
-    case 0:
-      return "PINS";
-    case 1:
-      return "PIN";
-    case 2:
-      return "GPIO";
-    case 3:
-      return "NULL";
-    case 4:
-      return "ISR";
-    case 5:
-      return "OSR";
-    default:
-      return std::format("0x{:X}", mem->address);
+      case 0:
+        return "PINS";
+      case 1:
+        return "PIN";
+      case 2:
+        return "GPIO";
+      case 3:
+        return "NULL";
+      case 4:
+        return "ISR";
+      case 5:
+        return "OSR";
+      default:
+        return std::format("0x{:X}", mem->address);
     }
   }
   return "";
@@ -143,12 +144,12 @@ void PIOCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_comment("Generated by pymcuc for RP2040 PIO");
   emit_raw(".program " + config.chip);
 
-  for (const auto &func : program.functions) {
+  for (const auto &func: program.functions) {
     compile_function(func);
   }
 
   auto optimized = PIOPeephole::optimize(assembly);
-  for (const auto &line : optimized) {
+  for (const auto &line: optimized) {
     os << line.to_string() << "\n";
   }
 }
@@ -156,7 +157,7 @@ void PIOCodeGen::compile(const tacky::Program &program, std::ostream &os) {
 void PIOCodeGen::compile_function(const tacky::Function &func) {
   allocate_registers(func);
   emit_label(func.name);
-  for (const auto &instr : func.body) {
+  for (const auto &instr: func.body) {
     compile_instruction(instr);
   }
 }
@@ -255,16 +256,16 @@ void PIOCodeGen::compile_variant(const tacky::Binary &arg) {
         emit("JMP", "Y--", next);
       else
         throw std::runtime_error(
-            "PIO decrement only works on X or Y registers");
+          "PIO decrement only works on X or Y registers");
       emit_label(next);
     } else {
       throw std::runtime_error(
-          "PIO: subtraction only supported as decrement (x = x - 1)");
+        "PIO: subtraction only supported as decrement (x = x - 1)");
     }
   } else {
     throw std::runtime_error(
-        "PIO: Arithmetic operations (Add, Mul, Div, BitAnd, etc.) are not "
-        "supported by PIO hardware.");
+      "PIO: Arithmetic operations (Add, Mul, Div, BitAnd, etc.) are not "
+      "supported by PIO hardware.");
   }
 }
 
@@ -287,14 +288,14 @@ void PIOCodeGen::compile_variant(const tacky::BitClear &arg) {
 
 void PIOCodeGen::compile_variant(const tacky::BitCheck &arg) {
   throw std::runtime_error(
-      "PIO: BitCheck is not supported (hardware registers are 32-bit and lack "
-      "single-bit test instructions).");
+    "PIO: BitCheck is not supported (hardware registers are 32-bit and lack "
+    "single-bit test instructions).");
 }
 
 void PIOCodeGen::compile_variant(const tacky::BitWrite &arg) {
   throw std::runtime_error(
-      "PIO: BitWrite is not supported (hardware registers are 32-bit and lack "
-      "single-bit modification instructions).");
+    "PIO: BitWrite is not supported (hardware registers are 32-bit and lack "
+    "single-bit modification instructions).");
 }
 
 void PIOCodeGen::compile_variant(const tacky::Call &arg) {
@@ -341,12 +342,12 @@ void PIOCodeGen::compile_variant(const tacky::Call &arg) {
 void PIOCodeGen::compile_variant(const tacky::JumpIfBitSet &arg) {
   // PIO: Use WAIT or JMP PIN for single-pin polling; general case unsupported
   throw std::runtime_error("PIO: JumpIfBitSet is not supported (use WAIT "
-                           "instruction via intrinsics).");
+    "instruction via intrinsics).");
 }
 
 void PIOCodeGen::compile_variant(const tacky::JumpIfBitClear &arg) {
   throw std::runtime_error("PIO: JumpIfBitClear is not supported (use WAIT "
-                           "instruction via intrinsics).");
+    "instruction via intrinsics).");
 }
 
 void PIOCodeGen::compile_variant(const tacky::AugAssign &arg) {

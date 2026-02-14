@@ -8,7 +8,7 @@
 #include "backend/analysis/StackAllocator.h"
 
 PIC14CodeGen::PIC14CodeGen(DeviceConfig cfg)
-    : config(std::move(cfg)), out(nullptr) {
+  : config(std::move(cfg)), out(nullptr) {
   label_counter = 0;
   ram_head = 0x20;
 }
@@ -117,26 +117,31 @@ void PIC14CodeGen::select_bank(const std::string &operand) {
 
 void PIC14CodeGen::emit(const std::string &mnemonic) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-      PIC14AsmLine::Instruction(mnemonic));
+    PIC14AsmLine::Instruction(mnemonic));
 }
+
 void PIC14CodeGen::emit(const std::string &mnemonic,
                         const std::string &op1) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-      PIC14AsmLine::Instruction(mnemonic, op1));
+    PIC14AsmLine::Instruction(mnemonic, op1));
 }
+
 void PIC14CodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-      PIC14AsmLine::Instruction(mnemonic, op1, op2));
+    PIC14AsmLine::Instruction(mnemonic, op1, op2));
 }
+
 void PIC14CodeGen::emit_label(const std::string &label) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-      PIC14AsmLine::Label(label));
+    PIC14AsmLine::Label(label));
 }
+
 void PIC14CodeGen::emit_comment(const std::string &comment) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-      PIC14AsmLine::Comment(comment));
+    PIC14AsmLine::Comment(comment));
 }
+
 void PIC14CodeGen::emit_raw(const std::string &text) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(PIC14AsmLine::Raw(text));
 }
@@ -150,8 +155,8 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   // Pre-scan for floats
   uses_float = false;
-  for (const auto &func : program.functions) {
-    for (const auto &instr : func.body) {
+  for (const auto &func: program.functions) {
+    for (const auto &instr: func.body) {
       if (std::holds_alternative<tacky::Binary>(instr)) {
         const auto &bin = std::get<tacky::Binary>(instr);
         auto is_float_val = [](const tacky::Val &v) {
@@ -181,7 +186,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     emit_raw("\tCBLOCK 0x20");
     // Find max offset
     int max_offset = 0;
-    for (const auto &[name, offset] : stack_layout) {
+    for (const auto &[name, offset]: stack_layout) {
       if (offset > max_offset)
         max_offset = offset;
     }
@@ -191,7 +196,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
       emit_raw("__FP_A: 4");
       emit_raw("__FP_B: 4");
       emit_raw("__FP_C: 4"); // Scratch/Result if needed? __add_float usually
-                             // uses A as accum.
+      // uses A as accum.
     }
     emit_raw("\tENDC");
     emit_raw("");
@@ -199,7 +204,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   // Define Symbols (Global Variables)
   emit_comment("--- Variable Offsets ---");
-  for (const auto &[name, offset] : stack_layout) {
+  for (const auto &[name, offset]: stack_layout) {
     emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
   }
   emit_raw("");
@@ -212,21 +217,21 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   const tacky::Function *isr_0x04 = nullptr;
 
-  for (const auto &func : program.functions) {
+  for (const auto &func: program.functions) {
     if (func.is_interrupt) {
       if (func.interrupt_vector != 0x04 && func.interrupt_vector != 0) {
         // 0 is default from AST if not specified? Parser sets 0x04 default?
         // If parser sets 0x04, we are good.
         // If user specified @interrupt(0x08), we must error for PIC14.
         throw std::runtime_error(
-            std::format("PIC14 architecture does not support interrupt vector "
-                        "0x{:02X}. Only 0x04 is supported.",
-                        func.interrupt_vector));
+          std::format("PIC14 architecture does not support interrupt vector "
+                      "0x{:02X}. Only 0x04 is supported.",
+                      func.interrupt_vector));
       }
 
       if (isr_0x04 != nullptr) {
         throw std::runtime_error(
-            "Multiple interrupt handlers defined for vector 0x04.");
+          "Multiple interrupt handlers defined for vector 0x04.");
       }
       isr_0x04 = &func;
     }
@@ -239,10 +244,10 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     emit_context_save();
 
     current_function_name = isr_0x04->name;
-    current_bank = -1;                // Unknown bank on entry
+    current_bank = -1; // Unknown bank on entry
     current_block_terminated = false; // Reset dead code flag
 
-    for (const auto &instr : isr_0x04->body) {
+    for (const auto &instr: isr_0x04->body) {
       if (current_block_terminated) {
         if (std::holds_alternative<tacky::Label>(instr)) {
           current_block_terminated = false;
@@ -274,7 +279,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // Emit Main and other functions
   // emit_label("main"); // REMOVED: main is emitted by compile_function("main")
 
-  for (const auto &func : program.functions) {
+  for (const auto &func: program.functions) {
     if (func.is_interrupt)
       continue; // Already emitted
 
@@ -297,7 +302,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   }
 
   // Emit Main at the end
-  for (const auto &func : program.functions) {
+  for (const auto &func: program.functions) {
     if (func.name == "main") {
       compile_function(func);
       break;
@@ -325,7 +330,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // Optimization step
   // auto optimized = PIC14Peephole::optimize(assembly);
 
-  for (const auto &line : assembly) {
+  for (const auto &line: assembly) {
     os << line.to_string() << "\n";
   }
 }
@@ -336,7 +341,7 @@ void PIC14CodeGen::emit_config_directives() {
 
   std::string config_line = "\t__CONFIG";
   bool first = true;
-  for (const auto &[key, val] : config.fuses) {
+  for (const auto &[key, val]: config.fuses) {
     if (!first)
       config_line += " &";
     // gpasm expects _KEY_VAL or just _VAL depending on the header
@@ -356,10 +361,10 @@ void PIC14CodeGen::emit_config_directives() {
 
 void PIC14CodeGen::compile_function(const tacky::Function &func) {
   emit_label(func.name);
-  current_bank = -1;                // Reset bank state at function entry
+  current_bank = -1; // Reset bank state at function entry
   current_block_terminated = false; // Reset dead code flag
 
-  for (const auto &instr : func.body) {
+  for (const auto &instr: func.body) {
     // Skip emitting if we've hit a terminator
     if (current_block_terminated) {
       // Reset flag on labels (new basic blocks)
@@ -431,8 +436,8 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
     std::string dst_lo = resolve_address(arg.dst);
     std::string dst_hi =
         dst_lo.starts_with("0x")
-            ? std::format("0x{:02X}", std::stoi(dst_lo, nullptr, 16) + 1)
-            : dst_lo + "+1";
+          ? std::format("0x{:02X}", std::stoi(dst_lo, nullptr, 16) + 1)
+          : dst_lo + "+1";
 
     if (const auto c = std::get_if<tacky::Constant>(&arg.src)) {
       // Copy Constant
@@ -449,8 +454,8 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
       std::string src_lo = resolve_address(arg.src);
       std::string src_hi =
           src_lo.starts_with("0x")
-              ? std::format("0x{:02X}", std::stoi(src_lo, nullptr, 16) + 1)
-              : src_lo + "+1";
+            ? std::format("0x{:02X}", std::stoi(src_lo, nullptr, 16) + 1)
+            : src_lo + "+1";
 
       select_bank(src_lo);
       emit("MOVF", src_lo, "W");
@@ -519,16 +524,16 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
 void PIC14CodeGen::compile_variant(const tacky::Unary &arg) {
   load_into_w(arg.src);
   switch (arg.op) {
-  case tacky::UnaryOp::BitNot:
-    emit("XORLW", "0xFF");
-    break;
-  case tacky::UnaryOp::Not:
-    emit("XORLW", "1");
-    emit("ANDLW", "1");
-    break;
-  case tacky::UnaryOp::Neg:
-    emit("SUBLW", "0");
-    break;
+    case tacky::UnaryOp::BitNot:
+      emit("XORLW", "0xFF");
+      break;
+    case tacky::UnaryOp::Not:
+      emit("XORLW", "1");
+      emit("ANDLW", "1");
+      break;
+    case tacky::UnaryOp::Neg:
+      emit("SUBLW", "0");
+      break;
   }
   store_w_into(arg.dst);
 }
@@ -557,18 +562,18 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
   // For comparison, size is determined by operands (max of src1, src2)
   bool is_comparison = false;
   switch (arg.op) {
-  case tacky::BinaryOp::Equal:
-  case tacky::BinaryOp::NotEqual:
-  case tacky::BinaryOp::LessThan:
-  case tacky::BinaryOp::LessEqual:
-  case tacky::BinaryOp::GreaterThan:
-  case tacky::BinaryOp::GreaterEqual:
-    is_comparison = true;
-    size = std::max(get_val_size(arg.src1), get_val_size(arg.src2));
-    break;
-  default:
-    size = get_val_size(arg.dst);
-    break;
+    case tacky::BinaryOp::Equal:
+    case tacky::BinaryOp::NotEqual:
+    case tacky::BinaryOp::LessThan:
+    case tacky::BinaryOp::LessEqual:
+    case tacky::BinaryOp::GreaterThan:
+    case tacky::BinaryOp::GreaterEqual:
+      is_comparison = true;
+      size = std::max(get_val_size(arg.src1), get_val_size(arg.src2));
+      break;
+    default:
+      size = get_val_size(arg.dst);
+      break;
   }
 
   // Check for Float
@@ -601,17 +606,17 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       // AugAssign handles In-Place op
       // Only if op is supported by AugAssign (Add, Sub, Bitwise, Shift)
       switch (arg.op) {
-      case tacky::BinaryOp::Add:
-      case tacky::BinaryOp::Sub:
-      case tacky::BinaryOp::BitAnd:
-      case tacky::BinaryOp::BitOr:
-      case tacky::BinaryOp::BitXor:
-      case tacky::BinaryOp::LShift:
-      case tacky::BinaryOp::RShift:
-        compile_variant(tacky::AugAssign{arg.op, arg.dst, arg.src2});
-        break;
-      default:
-        throw std::runtime_error("PIC14: 16-bit Binary Op not supported");
+        case tacky::BinaryOp::Add:
+        case tacky::BinaryOp::Sub:
+        case tacky::BinaryOp::BitAnd:
+        case tacky::BinaryOp::BitOr:
+        case tacky::BinaryOp::BitXor:
+        case tacky::BinaryOp::LShift:
+        case tacky::BinaryOp::RShift:
+          compile_variant(tacky::AugAssign{arg.op, arg.dst, arg.src2});
+          break;
+        default:
+          throw std::runtime_error("PIC14: 16-bit Binary Op not supported");
       }
       return;
     } else {
@@ -660,7 +665,7 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
           emit("XORLW",
                std::format("0x{:02X}",
                            std::get<tacky::Constant>(arg.src1).value >> 8 &
-                               0xFF));
+                           0xFF));
         } else {
           select_bank(src1_hi);
           emit("XORWF", src1_hi, "W");
@@ -694,7 +699,7 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
           emit("XORLW",
                std::format("0x{:02X}",
                            std::get<tacky::Constant>(arg.src1).value >> 8 &
-                               0xFF));
+                           0xFF));
         else {
           select_bank(src1_hi);
           emit("XORWF", src1_hi, "W");
@@ -727,9 +732,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       std::string src1_hi = get_addr(arg.src1, true);
       if (std::holds_alternative<tacky::Constant>(arg.src1)) {
         emit(
-            "SUBLW",
-            std::format("0x{:02X}",
-                        std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
+          "SUBLW",
+          std::format("0x{:02X}",
+                      std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
       } else {
         select_bank(src1_hi);
         emit("SUBWF", src1_hi, "W");
@@ -830,26 +835,26 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       int val = c2->value & 0xFF;
       std::string val_str = std::format("0x{:02X}", val);
       switch (arg.op) {
-      case tacky::BinaryOp::Add:
-        emit("ADDLW", val_str);
-        break;
-      case tacky::BinaryOp::BitAnd:
-        emit("ANDLW", val_str);
-        break;
-      case tacky::BinaryOp::BitOr:
-        emit("IORLW", val_str);
-        break;
-      case tacky::BinaryOp::BitXor:
-        emit("XORLW", val_str);
-        break;
-      case tacky::BinaryOp::Sub: {
-        // To do W - k, we can do W + (-k)
-        int neg_val = (-c2->value) & 0xFF;
-        emit("ADDLW", std::format("0x{:02X}", neg_val));
-        break;
-      }
-      default:
-        break;
+        case tacky::BinaryOp::Add:
+          emit("ADDLW", val_str);
+          break;
+        case tacky::BinaryOp::BitAnd:
+          emit("ANDLW", val_str);
+          break;
+        case tacky::BinaryOp::BitOr:
+          emit("IORLW", val_str);
+          break;
+        case tacky::BinaryOp::BitXor:
+          emit("XORLW", val_str);
+          break;
+        case tacky::BinaryOp::Sub: {
+          // To do W - k, we can do W + (-k)
+          int neg_val = (-c2->value) & 0xFF;
+          emit("ADDLW", std::format("0x{:02X}", neg_val));
+          break;
+        }
+        default:
+          break;
       }
 
       store_w_into(arg.dst);
@@ -860,50 +865,50 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
     std::string addr1 = resolve_address(arg.src1);
 
     switch (arg.op) {
-    case tacky::BinaryOp::Add:
-      if (std::holds_alternative<tacky::Constant>(arg.src1)) {
-        emit("ADDLW", addr1);
-      } else {
-        select_bank(addr1);
-        emit("ADDWF", addr1, "W");
-      }
-      break;
-    case tacky::BinaryOp::Sub:
-      if (const auto c1 = std::get_if<tacky::Constant>(&arg.src1)) {
-        // SUBLW k computes k - W -> W.
-        emit("SUBLW", std::format("0x{:02X}", c1->value & 0xFF));
-      } else {
-        // Variable - Variable: SUBWF f, W -> f - W
-        select_bank(addr1);
-        emit("SUBWF", addr1, "W");
-      }
-      break;
-    case tacky::BinaryOp::BitAnd:
-      if (std::holds_alternative<tacky::Constant>(arg.src1)) {
-        emit("ANDLW", addr1);
-      } else {
-        select_bank(addr1);
-        emit("ANDWF", addr1, "W");
-      }
-      break;
-    case tacky::BinaryOp::BitOr:
-      if (std::holds_alternative<tacky::Constant>(arg.src1)) {
-        emit("IORLW", addr1);
-      } else {
-        select_bank(addr1);
-        emit("IORWF", addr1, "W");
-      }
-      break;
-    case tacky::BinaryOp::BitXor:
-      if (std::holds_alternative<tacky::Constant>(arg.src1)) {
-        emit("XORLW", addr1);
-      } else {
-        select_bank(addr1);
-        emit("XORWF", addr1, "W");
-      }
-      break;
-    default:
-      break;
+      case tacky::BinaryOp::Add:
+        if (std::holds_alternative<tacky::Constant>(arg.src1)) {
+          emit("ADDLW", addr1);
+        } else {
+          select_bank(addr1);
+          emit("ADDWF", addr1, "W");
+        }
+        break;
+      case tacky::BinaryOp::Sub:
+        if (const auto c1 = std::get_if<tacky::Constant>(&arg.src1)) {
+          // SUBLW k computes k - W -> W.
+          emit("SUBLW", std::format("0x{:02X}", c1->value & 0xFF));
+        } else {
+          // Variable - Variable: SUBWF f, W -> f - W
+          select_bank(addr1);
+          emit("SUBWF", addr1, "W");
+        }
+        break;
+      case tacky::BinaryOp::BitAnd:
+        if (std::holds_alternative<tacky::Constant>(arg.src1)) {
+          emit("ANDLW", addr1);
+        } else {
+          select_bank(addr1);
+          emit("ANDWF", addr1, "W");
+        }
+        break;
+      case tacky::BinaryOp::BitOr:
+        if (std::holds_alternative<tacky::Constant>(arg.src1)) {
+          emit("IORLW", addr1);
+        } else {
+          select_bank(addr1);
+          emit("IORWF", addr1, "W");
+        }
+        break;
+      case tacky::BinaryOp::BitXor:
+        if (std::holds_alternative<tacky::Constant>(arg.src1)) {
+          emit("XORLW", addr1);
+        } else {
+          select_bank(addr1);
+          emit("XORWF", addr1, "W");
+        }
+        break;
+      default:
+        break;
     }
     // Critical Fix: Enforce storage of result
     store_w_into(arg.dst);
@@ -921,42 +926,42 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
   emit("CLRF", dst_addr);
 
   switch (arg.op) {
-  case tacky::BinaryOp::Equal:
-    emit("BTFSC", "STATUS", "2");
-    break;
-  case tacky::BinaryOp::NotEqual:
-    emit("BTFSS", "STATUS", "2");
-    break;
-  case tacky::BinaryOp::LessThan:
-    emit("BTFSS", "STATUS", "0");
-    break;
-  case tacky::BinaryOp::GreaterEqual:
-    emit("BTFSC", "STATUS", "0");
-    break;
-  case tacky::BinaryOp::GreaterThan: {
-    std::string lbl_skip = make_label("L_GT");
-    emit("BTFSS", "STATUS", "0");
-    emit("GOTO", lbl_skip);
-    emit("BTFSC", "STATUS", "2");
-    emit("GOTO", lbl_skip);
-    emit("INCF", dst_addr, "F");
-    emit_label(lbl_skip);
-    return;
-  }
-  case tacky::BinaryOp::LessEqual: {
-    std::string lbl_set = make_label("L_LE");
-    std::string lbl_skip = make_label("L_LES");
-    emit("BTFSS", "STATUS", "0");
-    emit("GOTO", lbl_set);
-    emit("BTFSS", "STATUS", "2");
-    emit("GOTO", lbl_skip);
-    emit_label(lbl_set);
-    emit("INCF", dst_addr, "F");
-    emit_label(lbl_skip);
-    return;
-  }
-  default:
-    break;
+    case tacky::BinaryOp::Equal:
+      emit("BTFSC", "STATUS", "2");
+      break;
+    case tacky::BinaryOp::NotEqual:
+      emit("BTFSS", "STATUS", "2");
+      break;
+    case tacky::BinaryOp::LessThan:
+      emit("BTFSS", "STATUS", "0");
+      break;
+    case tacky::BinaryOp::GreaterEqual:
+      emit("BTFSC", "STATUS", "0");
+      break;
+    case tacky::BinaryOp::GreaterThan: {
+      std::string lbl_skip = make_label("L_GT");
+      emit("BTFSS", "STATUS", "0");
+      emit("GOTO", lbl_skip);
+      emit("BTFSC", "STATUS", "2");
+      emit("GOTO", lbl_skip);
+      emit("INCF", dst_addr, "F");
+      emit_label(lbl_skip);
+      return;
+    }
+    case tacky::BinaryOp::LessEqual: {
+      std::string lbl_set = make_label("L_LE");
+      std::string lbl_skip = make_label("L_LES");
+      emit("BTFSS", "STATUS", "0");
+      emit("GOTO", lbl_set);
+      emit("BTFSS", "STATUS", "2");
+      emit("GOTO", lbl_skip);
+      emit_label(lbl_set);
+      emit("INCF", dst_addr, "F");
+      emit_label(lbl_skip);
+      return;
+    }
+    default:
+      break;
   }
   emit("INCF", dst_addr, "F");
 }
@@ -1028,6 +1033,7 @@ void PIC14CodeGen::compile_variant(const tacky::Label &arg) const {
   // Label could be a jump target from anywhere, so bank state is unknown.
   const_cast<PIC14CodeGen *>(this)->current_bank = -1;
 }
+
 void PIC14CodeGen::compile_variant(const tacky::Jump &arg) const {
   emit("GOTO", arg.target);
 }
@@ -1116,53 +1122,53 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
     load_into_w(arg.operand);
 
     switch (arg.op) {
-    case tacky::BinaryOp::Add:
-      emit("ADDWF", target_addr, "F");
-      break;
-    case tacky::BinaryOp::Sub:
-      emit("SUBWF", target_addr, "F");
-      break;
-    case tacky::BinaryOp::BitAnd:
-      emit("ANDWF", target_addr, "F");
-      break;
-    case tacky::BinaryOp::BitOr:
-      emit("IORWF", target_addr, "F");
-      break;
-    case tacky::BinaryOp::BitXor:
-      emit("XORWF", target_addr, "F");
-      break;
-    case tacky::BinaryOp::LShift: {
-      std::string loop_lbl = make_label("augls");
-      std::string done_lbl = make_label("augls_done");
-      emit("MOVWF", "__tmp");
-      emit("MOVF", "__tmp", "F");
-      emit("BTFSC", "STATUS", "2");
-      emit("GOTO", done_lbl);
-      emit_label(loop_lbl);
-      emit("BCF", "STATUS", "0");
-      emit("RLF", target_addr, "F");
-      emit("DECFSZ", "__tmp", "F");
-      emit("GOTO", loop_lbl);
-      emit_label(done_lbl);
-      break;
-    }
-    case tacky::BinaryOp::RShift: {
-      std::string loop_lbl = make_label("augrs");
-      std::string done_lbl = make_label("augrs_done");
-      emit("MOVWF", "__tmp");
-      emit("MOVF", "__tmp", "F");
-      emit("BTFSC", "STATUS", "2");
-      emit("GOTO", done_lbl);
-      emit_label(loop_lbl);
-      emit("BCF", "STATUS", "0");
-      emit("RRF", target_addr, "F");
-      emit("DECFSZ", "__tmp", "F");
-      emit("GOTO", loop_lbl);
-      emit_label(done_lbl);
-      break;
-    }
-    default:
-      throw std::runtime_error("PIC14: AugAssign 8-bit op not implemented");
+      case tacky::BinaryOp::Add:
+        emit("ADDWF", target_addr, "F");
+        break;
+      case tacky::BinaryOp::Sub:
+        emit("SUBWF", target_addr, "F");
+        break;
+      case tacky::BinaryOp::BitAnd:
+        emit("ANDWF", target_addr, "F");
+        break;
+      case tacky::BinaryOp::BitOr:
+        emit("IORWF", target_addr, "F");
+        break;
+      case tacky::BinaryOp::BitXor:
+        emit("XORWF", target_addr, "F");
+        break;
+      case tacky::BinaryOp::LShift: {
+        std::string loop_lbl = make_label("augls");
+        std::string done_lbl = make_label("augls_done");
+        emit("MOVWF", "__tmp");
+        emit("MOVF", "__tmp", "F");
+        emit("BTFSC", "STATUS", "2");
+        emit("GOTO", done_lbl);
+        emit_label(loop_lbl);
+        emit("BCF", "STATUS", "0");
+        emit("RLF", target_addr, "F");
+        emit("DECFSZ", "__tmp", "F");
+        emit("GOTO", loop_lbl);
+        emit_label(done_lbl);
+        break;
+      }
+      case tacky::BinaryOp::RShift: {
+        std::string loop_lbl = make_label("augrs");
+        std::string done_lbl = make_label("augrs_done");
+        emit("MOVWF", "__tmp");
+        emit("MOVF", "__tmp", "F");
+        emit("BTFSC", "STATUS", "2");
+        emit("GOTO", done_lbl);
+        emit_label(loop_lbl);
+        emit("BCF", "STATUS", "0");
+        emit("RRF", target_addr, "F");
+        emit("DECFSZ", "__tmp", "F");
+        emit("GOTO", loop_lbl);
+        emit_label(done_lbl);
+        break;
+      }
+      default:
+        throw std::runtime_error("PIC14: AugAssign 8-bit op not implemented");
     }
     return;
   }
@@ -1181,12 +1187,16 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       }
 
       // Low byte
-      std::string op_str = (arg.op == tacky::BinaryOp::BitAnd)  ? "ANDWF"
-                           : (arg.op == tacky::BinaryOp::BitOr) ? "IORWF"
-                                                                : "XORWF";
-      std::string lit_op_str = (arg.op == tacky::BinaryOp::BitAnd)  ? "ANDLW"
-                               : (arg.op == tacky::BinaryOp::BitOr) ? "IORLW"
-                                                                    : "XORLW";
+      std::string op_str = (arg.op == tacky::BinaryOp::BitAnd)
+                             ? "ANDWF"
+                             : (arg.op == tacky::BinaryOp::BitOr)
+                                 ? "IORWF"
+                                 : "XORWF";
+      std::string lit_op_str = (arg.op == tacky::BinaryOp::BitAnd)
+                                 ? "ANDLW"
+                                 : (arg.op == tacky::BinaryOp::BitOr)
+                                     ? "IORLW"
+                                     : "XORLW";
 
       select_bank(target_addr);
       if (is_const)
@@ -1219,7 +1229,7 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
         // Load operand high...
         // We need generic load_byte(val, offset) support
         throw std::runtime_error(
-            "PIC14: 16-bit AugAssign non-const bitwise not fully implemented");
+          "PIC14: 16-bit AugAssign non-const bitwise not fully implemented");
       }
       return;
     }
@@ -1242,7 +1252,7 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       } else {
         // Variable
         throw std::runtime_error(
-            "PIC14: 16-bit AugAssign var addition not fully implemented");
+          "PIC14: 16-bit AugAssign var addition not fully implemented");
       }
       return;
     }
@@ -1463,8 +1473,8 @@ void PIC14CodeGen::compile_variant(const tacky::Delay &arg) {
       emit_label(end_label);
     } else {
       throw std::runtime_error(
-          "Variable delay_us() is not supported on PIC14/16 (timing "
-          "constraints). Use delay_ms() or constant delay_us().");
+        "Variable delay_us() is not supported on PIC14/16 (timing "
+        "constraints). Use delay_ms() or constant delay_us().");
     }
   }
 }

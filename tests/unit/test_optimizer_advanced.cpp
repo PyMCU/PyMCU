@@ -64,7 +64,7 @@ TEST(OptimizerAdvancedTest, FullOptimizationChain) {
 
     // Constant Folding will see x and y are NOT temporaries, so it won't fold them yet if they are variables.
     // Wait, currently Optimizer only folds temporaries.
-    
+
     // Let's use temporaries for constant folding test
     func.body.clear();
     func.body.push_back(Copy{Constant{10}, Temporary{"t1"}});
@@ -76,23 +76,23 @@ TEST(OptimizerAdvancedTest, FullOptimizationChain) {
     tacky::Program prog;
     prog.functions.push_back(func);
     auto optimized_prog = Optimizer::optimize(prog);
-    auto& optimized = optimized_prog.functions[0];
+    auto &optimized = optimized_prog.functions[0];
 
     // t1 = 10
     // t2 = 20
     // t3 = 10 + 20 => t3 = 30
     // res = t3 => res = 30
     // return res
-    
+
     // With DCE and Coalescing:
     // res = 30
     // return res
-    
+
     // Wait, DCE removes t1, t2, t3 if they are temporaries and not used.
     // After coalescing: res = 30.
-    
+
     bool found_res_30 = false;
-    for (const auto& inst : optimized.body) {
+    for (const auto &inst: optimized.body) {
         if (auto copy = std::get_if<Copy>(&inst)) {
             if (auto c = std::get_if<Constant>(&copy->src)) {
                 if (c->value == 30) {

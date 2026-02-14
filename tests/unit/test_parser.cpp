@@ -20,11 +20,11 @@ TEST(ParserTest, SingleFunction) {
     ASSERT_EQ(prog->functions.size(), 1);
     EXPECT_EQ(prog->functions[0]->name, "main");
     ASSERT_EQ(prog->functions[0]->body->statements.size(), 1);
-    
-    auto* returnStmt = dynamic_cast<ReturnStmt*>(prog->functions[0]->body->statements[0].get());
+
+    auto *returnStmt = dynamic_cast<ReturnStmt *>(prog->functions[0]->body->statements[0].get());
     ASSERT_NE(returnStmt, nullptr);
-    
-    auto* numExpr = dynamic_cast<IntegerLiteral*>(returnStmt->value.get());
+
+    auto *numExpr = dynamic_cast<IntegerLiteral *>(returnStmt->value.get());
     ASSERT_NE(numExpr, nullptr);
     EXPECT_EQ(numExpr->value, 42);
 }
@@ -39,13 +39,14 @@ TEST(ParserTest, MultipleFunctions) {
 TEST(ParserTest, NumberBases) {
     auto prog = parse("def f():\n    return 0x10\n    return 0b10\n    return 0o10\n    return 1_000");
     ASSERT_EQ(prog->functions.size(), 1);
-    auto& statements = prog->functions[0]->body->statements;
+    auto &statements = prog->functions[0]->body->statements;
     ASSERT_EQ(statements.size(), 4);
-    
-    EXPECT_EQ(dynamic_cast<IntegerLiteral*>(dynamic_cast<ReturnStmt*>(statements[0].get())->value.get())->value, 16);
-    EXPECT_EQ(dynamic_cast<IntegerLiteral*>(dynamic_cast<ReturnStmt*>(statements[1].get())->value.get())->value, 2);
-    EXPECT_EQ(dynamic_cast<IntegerLiteral*>(dynamic_cast<ReturnStmt*>(statements[2].get())->value.get())->value, 8);
-    EXPECT_EQ(dynamic_cast<IntegerLiteral*>(dynamic_cast<ReturnStmt*>(statements[3].get())->value.get())->value, 1000);
+
+    EXPECT_EQ(dynamic_cast<IntegerLiteral *>(dynamic_cast<ReturnStmt *>(statements[0].get())->value.get())->value, 16);
+    EXPECT_EQ(dynamic_cast<IntegerLiteral *>(dynamic_cast<ReturnStmt *>(statements[1].get())->value.get())->value, 2);
+    EXPECT_EQ(dynamic_cast<IntegerLiteral *>(dynamic_cast<ReturnStmt *>(statements[2].get())->value.get())->value, 8);
+    EXPECT_EQ(dynamic_cast<IntegerLiteral *>(dynamic_cast<ReturnStmt *>(statements[3].get())->value.get())->value,
+              1000);
 }
 
 TEST(ParserTest, SyntaxError) {
@@ -63,6 +64,6 @@ TEST(ParserTest, NestedBlocksAreNotSupportedYet) {
     // Let's see how Parser handles it.
     // Currently Parser::parseBlock() calls parseStatement() in a loop until Dedent.
     // If it encounters another 'def' inside, parseStatement() will fail because it doesn't expect 'def'.
-    
+
     EXPECT_THROW(parse("def a():\n    def b():\n        return 1"), SyntaxError);
 }

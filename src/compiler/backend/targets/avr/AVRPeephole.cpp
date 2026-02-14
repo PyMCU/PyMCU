@@ -24,19 +24,19 @@ std::string AVRAsmLine::to_string() const {
     return "";
 }
 
-std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine>& lines) {
+std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine> &lines) {
     std::vector<AVRAsmLine> result = lines;
     bool changed = true;
 
     while (changed) {
         changed = false;
         std::vector<AVRAsmLine> next;
-        
+
         // --- Dead Label Elimination ---
         std::set<std::string> used_labels;
-        for (const auto& line : result) {
+        for (const auto &line: result) {
             if (line.type == AVRAsmLine::INSTRUCTION) {
-                if (line.mnemonic == "RJMP" || line.mnemonic == "RCALL" || 
+                if (line.mnemonic == "RJMP" || line.mnemonic == "RCALL" ||
                     line.mnemonic == "BREQ" || line.mnemonic == "BRNE" ||
                     line.mnemonic == "BRLO" || line.mnemonic == "BRSH" ||
                     line.mnemonic == "BRMI" || line.mnemonic == "BRPL") {
@@ -50,15 +50,15 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine>& lin
         std::optional<std::string> registers[32]; // Track R0-R31
 
         for (size_t i = 0; i < result.size(); ++i) {
-            auto& current = result[i];
+            auto &current = result[i];
 
             if (current.type == AVRAsmLine::LABEL) {
-                if (!used_labels.contains(current.label) && 
+                if (!used_labels.contains(current.label) &&
                     (current.label.starts_with("L.") || current.label.starts_with("L_"))) {
                     changed = true;
                     continue;
                 }
-                for (auto & r : registers) r.reset();
+                for (auto &r: registers) r.reset();
                 next.push_back(current);
                 continue;
             }
@@ -99,9 +99,9 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine>& lin
                         if (dst_idx >= 0 && dst_idx < 32) registers[dst_idx].reset();
                     }
                 } catch (...) {
-                    for (auto & r : registers) r.reset();
+                    for (auto &r: registers) r.reset();
                 }
-            } else if (current.mnemonic == "STS" || current.mnemonic == "OUT" || 
+            } else if (current.mnemonic == "STS" || current.mnemonic == "OUT" ||
                        current.mnemonic == "CP" || current.mnemonic == "TST" ||
                        current.mnemonic == "STD" || current.mnemonic == "SBI" ||
                        current.mnemonic == "CBI" || current.mnemonic == "SBIS" ||
@@ -113,23 +113,23 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine>& lin
                     int reg_idx = std::stoi(current.op1.substr(1));
                     if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx].reset();
                 } catch (...) {
-                    for (auto & r : registers) r.reset();
+                    for (auto &r: registers) r.reset();
                 }
             } else if (current.mnemonic == "CLR") {
                 try {
                     int reg_idx = std::stoi(current.op1.substr(1));
                     if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx] = "0";
                 } catch (...) {
-                    for (auto & r : registers) r.reset();
+                    for (auto &r: registers) r.reset();
                 }
-            } else if (current.mnemonic == "ADD" || current.mnemonic == "SUB" || 
+            } else if (current.mnemonic == "ADD" || current.mnemonic == "SUB" ||
                        current.mnemonic == "NEG" || current.mnemonic == "COM" ||
                        current.mnemonic == "ORI" || current.mnemonic == "ANDI") {
                 try {
                     int reg_idx = std::stoi(current.op1.substr(1));
                     if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx].reset();
                 } catch (...) {
-                    for (auto & r : registers) r.reset();
+                    for (auto &r: registers) r.reset();
                 }
             } else if (current.mnemonic == "RJMP") {
                 // --- RJMP to next instruction ---
@@ -152,20 +152,20 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(const std::vector<AVRAsmLine>& lin
                 }
                 next.push_back(current);
                 // After RJMP, code is unreachable until next label
-                while (i + 1 < result.size() && result[i+1].type != AVRAsmLine::LABEL) {
-                    if (result[i+1].type == AVRAsmLine::INSTRUCTION) {
+                while (i + 1 < result.size() && result[i + 1].type != AVRAsmLine::LABEL) {
+                    if (result[i + 1].type == AVRAsmLine::INSTRUCTION) {
                         changed = true;
                     } else {
-                        next.push_back(result[i+1]);
+                        next.push_back(result[i + 1]);
                     }
                     i++;
                 }
-                for (auto & r : registers) r.reset();
+                for (auto &r: registers) r.reset();
                 continue;
             } else {
                 // For most instructions, we reset tracking for safety
                 // In a more advanced implementation, we'd know which registers are modified
-                for (auto & r : registers) r.reset();
+                for (auto &r: registers) r.reset();
             }
 
             next.push_back(current);
