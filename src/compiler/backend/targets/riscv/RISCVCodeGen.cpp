@@ -449,3 +449,7 @@ void RISCVCodeGen::compile_variant(const tacky::Delay &arg) {
   // TODO: Implement RISC-V specific delay
   throw std::runtime_error("RISC-V: Delay is not yet implemented");
 }
+
+void RISCVCodeGen::compile_variant(const tacky::DebugLine &arg) {
+  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}

@@ -598,3 +598,7 @@ void PIC18CodeGen::compile_variant(const tacky::Delay &arg) {
   // TODO: Implement PIC18-specific delay
   throw std::runtime_error("PIC18: Delay is not yet implemented");
 }
+
+void PIC18CodeGen::compile_variant(const tacky::DebugLine &arg) {
+  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}

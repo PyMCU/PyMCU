@@ -23,6 +23,8 @@ class ptr(Generic[T]):
         raise RuntimeError("Bit manipulation only works in compiled code")
 
 
+def inline(f):
+    return f
 
 
 # Phantom types (type-level aliases used only for static typing)

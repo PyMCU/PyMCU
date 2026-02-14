@@ -211,6 +211,11 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit("RETFIE");
 
   for (const auto &func : program.functions) {
+    // Skip inline functions (they're already expanded at call sites)
+    // Always emit main even if marked inline
+    if (func.is_inline && func.name != "main") {
+      continue;
+    }
     compile_function(func);
   }
 
@@ -266,8 +271,21 @@ void PIC14CodeGen::emit_config_directives() {
 
 void PIC14CodeGen::compile_function(const tacky::Function &func) {
   emit_label(func.name);
-  current_bank = -1; // Reset bank state at function entry
+  current_bank = -1;                // Reset bank state at function entry
+  current_block_terminated = false; // Reset dead code flag
+
   for (const auto &instr : func.body) {
+    // Skip emitting if we've hit a terminator
+    if (current_block_terminated) {
+      // Reset flag on labels (new basic blocks)
+      if (std::holds_alternative<tacky::Label>(instr)) {
+        current_block_terminated = false;
+        compile_instruction(instr);
+      }
+      // Otherwise skip this dead instruction
+      continue;
+    }
+
     compile_instruction(instr);
   }
 }
@@ -302,6 +320,7 @@ void PIC14CodeGen::store_w_into(const tacky::Val &val) {
 void PIC14CodeGen::compile_variant(const tacky::Return &arg) {
   load_into_w(arg.value);
   emit("RETURN");
+  current_block_terminated = true; // Mark block as terminated
 }
 
 void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
@@ -311,6 +330,8 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
     name = v->name;
   else if (const auto t = std::get_if<tacky::Temporary>(&arg.dst))
     name = t->name;
+  else if (const auto addr = std::get_if<tacky::MemoryAddress>(&arg.dst))
+    size = (addr->type == DataType::UINT16) ? 2 : 1; // Basic size check
 
   if (!name.empty() && var_sizes.contains(name))
     size = var_sizes[name];
@@ -431,13 +452,19 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
   // Determine operation size
   int size = 1;
   auto get_val_size = [&](const tacky::Val &val) {
-    std::string name;
-    if (const auto v = std::get_if<tacky::Variable>(&val))
-      name = v->name;
-    else if (const auto t = std::get_if<tacky::Temporary>(&val))
-      name = t->name;
-    if (!name.empty() && var_sizes.contains(name))
-      return var_sizes[name];
+    if (const auto v = std::get_if<tacky::Variable>(&val)) {
+      if (!v->name.empty() && var_sizes.contains(v->name))
+        return var_sizes[v->name];
+    } else if (const auto t = std::get_if<tacky::Temporary>(&val)) {
+      if (!t->name.empty() && var_sizes.contains(t->name))
+        return var_sizes[t->name];
+    } else if (const auto m = std::get_if<tacky::MemoryAddress>(&val)) {
+      if (m->type == DataType::UINT16)
+        return 2;
+    } else if (const auto c = std::get_if<tacky::Constant>(&val)) {
+      if (c->value > 255 || c->value < 0)
+        return 2;
+    }
     return 1;
   };
 
@@ -1453,6 +1480,10 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
     unsigned long used = k3 * 197120;
     emit_delay_cycles(cycles - used);
   }
+}
+
+void PIC14CodeGen::compile_variant(const tacky::DebugLine &arg) {
+  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
 }
 
 // ... (end of file helper needed? No, we are replacing the bottom chunk)

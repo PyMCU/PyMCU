@@ -176,8 +176,17 @@ int main(int argc, char *argv[]) {
 
     load_imports_recursively(ast.get(), fs::path(filepath), include_paths);
 
-    IRGenerator irGen;
-    auto ir = irGen.generate(*ast, linear_imports);
+    // Split source into lines for debug info
+    std::vector<std::string> source_lines;
+    std::istringstream stream(std::string{source});
+    std::string line;
+    while (std::getline(stream, line)) {
+      source_lines.push_back(line);
+    }
+
+    // IR Generation
+    IRGenerator ir_gen;
+    auto ir = ir_gen.generate(*ast, linear_imports, source_lines);
 
     // ir = Optimizer::optimize(ir);
 

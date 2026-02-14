@@ -87,6 +87,7 @@ private:
   void compile_variant(const tacky::JumpIfBitClear &arg);
   void compile_variant(const tacky::AugAssign &arg);
   void compile_variant(const tacky::Delay &arg);
+  void compile_variant(const tacky::DebugLine &arg);
 };
 
 #endif // AVRCODEGEN_H

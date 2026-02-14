@@ -31,6 +31,7 @@ struct Temporary {
 // Represents a physical memory address (MMIO or Static Global)
 struct MemoryAddress {
   int address;
+  DataType type = DataType::UINT8;
 };
 
 using Val = std::variant<Constant, FloatConstant, Variable, Temporary,
@@ -153,17 +154,24 @@ struct Delay {
   bool is_ms;
 };
 
+// Debugging
+struct DebugLine {
+  int line;
+  std::string text;
+};
+
 // --- The Instruction Container ---
 using Instruction =
     std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, JumpIfNotZero,
                  Label, Call, BitSet, BitClear, BitCheck, BitWrite,
-                 JumpIfBitSet, JumpIfBitClear, AugAssign, Delay>;
+                 JumpIfBitSet, JumpIfBitClear, AugAssign, Delay, DebugLine>;
 
 // --- Function Definition ---
 struct Function {
   std::string name;
   std::vector<std::string> params;
   std::vector<Instruction> body;
+  bool is_inline = false;
 };
 
 struct Program {

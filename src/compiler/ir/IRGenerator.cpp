@@ -5,7 +5,7 @@
 #include <typeinfo>
 
 tacky::Temporary IRGenerator::make_temp(DataType type) {
-  return tacky::Temporary{std::format("tmp.{}", temp_counter++), type};
+  return tacky::Temporary{"tmp." + std::to_string(temp_counter++), type};
 }
 
 std::string IRGenerator::make_label() {
@@ -18,7 +18,10 @@ void IRGenerator::emit(const tacky::Instruction &inst) {
 
 tacky::Program
 IRGenerator::generate(const Program &main_ast,
-                      const std::vector<const Program *> &imported_modules) {
+                      const std::vector<const Program *> &imported_modules,
+                      const std::vector<std::string> &source_lines) {
+  this->source_lines = source_lines;
+  this->last_line = -1;
   tacky::Program ir_program;
   globals.clear();
   mutable_globals.clear();
@@ -51,18 +54,23 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
   // Check if it's a known compile-time constant or memory-mapped register
   if (const auto it = globals.find(name); it != globals.end()) {
     if (it->second.is_memory_address) {
-      return tacky::MemoryAddress{it->second.value};
+      return tacky::MemoryAddress{it->second.value, it->second.type};
     } else {
       return tacky::Constant{it->second.value};
     }
   }
 
-  // Mutable globals use un-prefixed names so they're shared across functions
   if (mutable_globals.contains(name)) {
     return tacky::Variable{name, mutable_globals.at(name)};
   }
 
-  std::string local_name = current_function + "." + name;
+  std::string local_name;
+  if (!current_inline_prefix.empty()) {
+    local_name = current_inline_prefix + name;
+  } else {
+    local_name = current_function + "." + name;
+  }
+
   DataType type = DataType::UINT8;
   if (variable_types.contains(local_name)) {
     type = variable_types.at(local_name);
@@ -78,8 +86,8 @@ void IRGenerator::scan_globals(const Program &ast) {
 
     if (const auto varDecl = dynamic_cast<const VarDecl *>(stmt.get())) {
       name = varDecl->name;
-      type = varDecl->type;
-      initializer = varDecl->initializer.get();
+      type = varDecl->var_type;
+      initializer = varDecl->init.get();
     } else if (const auto assign =
                    dynamic_cast<const AssignStmt *>(stmt.get())) {
       if (const auto varExpr =
@@ -87,6 +95,11 @@ void IRGenerator::scan_globals(const Program &ast) {
         name = varExpr->name;
         initializer = assign->value.get();
       }
+    } else if (const auto annAssign =
+                   dynamic_cast<const AnnAssign *>(stmt.get())) {
+      name = annAssign->target;
+      type = annAssign->annotation; // Use annotation as type
+      initializer = annAssign->value.get();
     }
 
     if (!name.empty() && initializer) {
@@ -109,7 +122,7 @@ void IRGenerator::scan_globals(const Program &ast) {
         }
 
         if (is_memory_address) {
-          globals[name] = SymbolInfo{true, val};
+          globals[name] = SymbolInfo{true, val, resolve_type(type)};
         } else {
           // Distinguish true constants (ALL_CAPS naming convention, e.g.
           // BUTTON_PIN) from mutable variables (lowercase/mixed case, e.g.
@@ -171,6 +184,9 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
   ir_func.name = funcNode->name;
   current_function = funcNode->name;
 
+  // Copy inline flag from AST
+  ir_func.is_inline = funcNode->is_inline;
+
   current_instructions.clear();
   loop_stack.clear();
 
@@ -196,6 +212,13 @@ void IRGenerator::visitBlock(const Block *block) {
 }
 
 void IRGenerator::visitStatement(const Statement *stmt) {
+  if (stmt->line > 0 && stmt->line != last_line) {
+    if (stmt->line <= source_lines.size()) {
+      emit(tacky::DebugLine{stmt->line, source_lines[stmt->line - 1]});
+      last_line = stmt->line;
+    }
+  }
+
   if (auto *block = dynamic_cast<const Block *>(stmt))
     return visitBlock(block);
   if (auto *ret = dynamic_cast<const ReturnStmt *>(stmt))
@@ -216,6 +239,8 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     return visitAugAssign(augAssign);
   if (auto *decl = dynamic_cast<const VarDecl *>(stmt))
     return visitVarDecl(decl);
+  if (auto *annAssign = dynamic_cast<const AnnAssign *>(stmt))
+    return visitAnnAssign(annAssign);
   if (auto *exprStmt = dynamic_cast<const ExprStmt *>(stmt))
     return visitExprStmt(exprStmt);
   if (auto *delayStmt = dynamic_cast<const DelayStmt *>(stmt))
@@ -249,49 +274,177 @@ void IRGenerator::visitReturn(const ReturnStmt *stmt) {
   }
 }
 
-void IRGenerator::visitIf(const IfStmt *stmt) {
-  // Generate If Stmt Logic
-  // 1. Condition
-  // 2. JumpIfZero -> Next Branch (elif_1)
-  // 3. Then Block
-  // 4. Jump -> End
-  // 5. Label: elif_1
-  // 6. Elif Condition
-  // 7. JumpIfZero -> Next Branch (elif_2 or else)
-  // 8. Elif Block
-  // 9. Jump -> End
-  // ...
-  // N. Label: else
-  // N+1. Else Block
-  // N+2. Label: End
+// Helper: Try to detect and emit optimized bit test jumps
+bool IRGenerator::emit_optimized_conditional_jump(
+    const Expression *cond, const std::string &target_label,
+    bool jump_if_true) {
 
+  // Helper to resolve constant integers (literals or global constants)
+  auto resolve_int = [&](const Expression *expr) -> std::optional<int> {
+    if (const auto num = dynamic_cast<const IntegerLiteral *>(expr)) {
+      return num->value;
+    }
+    if (const auto var = dynamic_cast<const VariableExpr *>(expr)) {
+      if (globals.contains(var->name) &&
+          !globals.at(var->name).is_memory_address) {
+        return globals.at(var->name).value;
+      }
+    }
+    return std::nullopt;
+  };
+
+  // Pattern A: BitAccess(addr, bit) == 0/1
+  // Case 1: Explicit Comparison
+  if (auto binExpr = dynamic_cast<const BinaryExpr *>(cond)) {
+    if (binExpr->op == BinaryOp::Equal || binExpr->op == BinaryOp::NotEqual) {
+      const IndexExpr *indexExpr =
+          dynamic_cast<const IndexExpr *>(binExpr->left.get());
+      const Expression *rhsExpr = binExpr->right.get();
+
+      // Swap if needed
+      if (!indexExpr) {
+        indexExpr = dynamic_cast<const IndexExpr *>(binExpr->right.get());
+        rhsExpr = binExpr->left.get();
+      }
+
+      if (indexExpr) {
+        auto bitVal = resolve_int(indexExpr->index.get());
+        auto targetVal = resolve_int(rhsExpr);
+
+        if (bitVal.has_value() && targetVal.has_value()) {
+          tacky::Val addr = visitExpression(indexExpr->target.get());
+          int bit = bitVal.value();
+          int target = targetVal.value();
+
+          bool invert = (binExpr->op == BinaryOp::NotEqual);
+          if (invert)
+            target = !target;
+
+          if (target == 0) {
+            // == 0: Jump if Bit is 1 (SET)
+            // != 0: Jump if Bit is 0 (CLEAR) (Not handled by user explicit
+            // request but logical) User Request: == 0 -> BTFSC (Jump if Set).
+            // My backend: JumpIfBitSet -> BTFSC.
+            if (jump_if_true) {
+              // Jump to TARGET if condition True (Bit is 0). Jump if Clear.
+              emit(tacky::JumpIfBitClear{addr, bit, target_label});
+            } else {
+              // Jump to ELSE (Target) if condition False (Bit is 1). Jump if
+              // Set.
+              emit(tacky::JumpIfBitSet{addr, bit, target_label});
+            }
+            return true;
+          } else if (target == 1) {
+            // == 1: Jump if Bit is 0 (CLEAR)
+            if (jump_if_true) {
+              // Jump to TARGET if condition True (Bit is 1). Jump if Set.
+              emit(tacky::JumpIfBitSet{addr, bit, target_label});
+            } else {
+              // Jump to ELSE (Target) if condition False (Bit is 0). Jump if
+              // Clear.
+              emit(tacky::JumpIfBitClear{addr, bit, target_label});
+            }
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  // Pattern C: Unary Not (if not bit)
+  // Case 2: Pythonic NOT
+  if (auto *unaryExpr = dynamic_cast<const UnaryExpr *>(cond)) {
+    if (unaryExpr->op == UnaryOp::Not) {
+      if (auto *indexExpr =
+              dynamic_cast<const IndexExpr *>(unaryExpr->operand.get())) {
+        auto bitVal = resolve_int(indexExpr->index.get());
+        if (bitVal.has_value()) {
+          tacky::Val addr = visitExpression(indexExpr->target.get());
+          int bit = bitVal.value();
+
+          // Condition: Bit is 0.
+          if (jump_if_true) {
+            // Jump to Target if True (Bit is 0). Jump if Clear.
+            emit(tacky::JumpIfBitClear{addr, bit, target_label});
+          } else {
+            // Jump to Else (Target) if False (Bit is 1). Jump if Set.
+            // ASM: BTFSC (Jump if Set) -> GOTO Else.
+            emit(tacky::JumpIfBitSet{addr, bit, target_label});
+          }
+          return true;
+        }
+      }
+    }
+  }
+
+  // Pattern B: Single BitAccess (implicit true test)
+  // Case 3: Implicit Truthiness
+  if (auto *indexExpr = dynamic_cast<const IndexExpr *>(cond)) {
+    auto bitVal = resolve_int(indexExpr->index.get());
+    if (bitVal.has_value()) {
+      tacky::Val addr = visitExpression(indexExpr->target.get());
+      int bit = bitVal.value();
+
+      // Condition: Bit is 1.
+      if (jump_if_true) {
+        // Jump to Target if True (Bit is 1). Jump if Set.
+        emit(tacky::JumpIfBitSet{addr, bit, target_label});
+      } else {
+        // Jump to Else (Target) if False (Bit is 0). Jump if Clear.
+        // ASM: BTFSS (Jump if Clear) -> GOTO Else.
+        emit(tacky::JumpIfBitClear{addr, bit, target_label});
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void IRGenerator::visitIf(const IfStmt *stmt) {
   std::string end_label = make_label();
 
   // 1. Main If Condition
-  tacky::Val cond_val = visitExpression(stmt->condition.get());
   std::string next_label = (stmt->elif_branches.empty() && !stmt->else_branch)
                                ? end_label
                                : make_label();
 
-  emit(tacky::JumpIfZero{cond_val, next_label});
+  // "If boolean optimization": Jump to next_label if condition is FALSE
+  if (!emit_optimized_conditional_jump(stmt->condition.get(), next_label,
+                                       false)) {
+    // Fall back to standard evaluation
+    tacky::Val cond_val = visitExpression(stmt->condition.get());
+    emit(tacky::JumpIfZero{cond_val, next_label});
+  }
+
   visitStatement(stmt->then_branch.get());
-  emit(tacky::Jump{end_label});
+
+  // Only emit jump to end if we have other branches
+  if (!stmt->elif_branches.empty() || stmt->else_branch) {
+    emit(tacky::Jump{end_label});
+  }
 
   // 2. Elif Branches
   for (size_t i = 0; i < stmt->elif_branches.size(); ++i) {
     emit(tacky::Label{next_label});
 
-    // Determine label for *next* branch (or else, or end)
     bool is_last_elif = (i == stmt->elif_branches.size() - 1);
     next_label =
         (is_last_elif && !stmt->else_branch) ? end_label : make_label();
 
     const auto &[elif_cond, elif_block] = stmt->elif_branches[i];
-    tacky::Val elif_val = visitExpression(elif_cond.get());
 
-    emit(tacky::JumpIfZero{elif_val, next_label});
+    // "Elif boolean optimization": Jump to next_label if condition is FALSE
+    if (!emit_optimized_conditional_jump(elif_cond.get(), next_label, false)) {
+      tacky::Val elif_val = visitExpression(elif_cond.get());
+      emit(tacky::JumpIfZero{elif_val, next_label});
+    }
+
     visitStatement(elif_block.get());
-    emit(tacky::Jump{end_label});
+
+    if (!is_last_elif || stmt->else_branch) {
+      emit(tacky::Jump{end_label});
+    }
   }
 
   // 3. Else Branch
@@ -474,24 +627,74 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
     }
     return;
   }
-  if (auto unaryExpr = dynamic_cast<const UnaryExpr *>(stmt->target.get())) {
-    if (unaryExpr->op == UnaryOp::Deref) {
-      tacky::Val addrVal = visitExpression(unaryExpr->operand.get());
-      if (auto c = std::get_if<tacky::Constant>(&addrVal)) {
-        tacky::Val val = visitExpression(stmt->value.get());
-        emit(tacky::Copy{val, tacky::MemoryAddress{c->value}});
-        return;
-      }
-      throw std::runtime_error(
-          "Assignment to non-constant address not supported");
-    }
-  }
 
   tacky::Val value = visitExpression(stmt->value.get());
 
   if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
     tacky::Val target = resolve_binding(varExpr->name);
     emit(tacky::Copy{value, target});
+  } else if (auto memExpr =
+                 dynamic_cast<const MemberAccessExpr *>(stmt->target.get())) {
+    if (memExpr->member == "value") {
+      tacky::Val target = visitExpression(memExpr->object.get());
+
+      // Look up the variable type to determine if multi-byte operation
+      DataType var_type = DataType::UINT8; // Default
+      if (auto var = std::get_if<tacky::Variable>(&target)) {
+        if (variable_types.contains(var->name)) {
+          var_type = variable_types.at(var->name);
+        }
+      }
+
+      // Check if this is a multi-byte type
+      int byte_count = size_of(var_type);
+
+      if (byte_count == 1) {
+        // 8-bit: Single byte write
+        if (std::holds_alternative<tacky::MemoryAddress>(target) ||
+            std::holds_alternative<tacky::Variable>(target)) {
+          emit(tacky::Copy{value, target});
+        } else {
+          throw std::runtime_error(
+              "Cannot assign to .value of this expression type");
+        }
+      } else if (byte_count == 2) {
+        // 16-bit: Two byte writes (low, high)
+        if (auto addr = std::get_if<tacky::MemoryAddress>(&target)) {
+          // If value is a constant, extract bytes directly
+          if (auto const_val = std::get_if<tacky::Constant>(&value)) {
+            int full_value = const_val->value;
+            int low_byte = full_value & 0xFF;
+            int high_byte = (full_value >> 8) & 0xFF;
+
+            emit(tacky::Copy{tacky::Constant{low_byte},
+                             tacky::MemoryAddress{addr->address}});
+            emit(tacky::Copy{tacky::Constant{high_byte},
+                             tacky::MemoryAddress{addr->address + 1}});
+          } else {
+            // For variable values, need runtime extraction
+            tacky::Temporary low_byte = make_temp();
+            emit(tacky::Binary{tacky::BinaryOp::BitAnd, value,
+                               tacky::Constant{0xFF}, low_byte});
+            emit(tacky::Copy{low_byte, tacky::MemoryAddress{addr->address}});
+
+            tacky::Temporary high_byte = make_temp();
+            emit(tacky::Binary{tacky::BinaryOp::RShift, value,
+                               tacky::Constant{8}, high_byte});
+            emit(tacky::Copy{high_byte,
+                             tacky::MemoryAddress{addr->address + 1}});
+          }
+        } else {
+          throw std::runtime_error(
+              "16-bit .value assignment requires constant address");
+        }
+      } else {
+        throw std::runtime_error("Unsupported type size for .value assignment");
+      }
+    } else {
+      throw std::runtime_error("Unknown member access in assignment: " +
+                               memExpr->member);
+    }
   } else {
     throw std::runtime_error("Invalid assignment target");
   }
@@ -499,14 +702,16 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
 
 void IRGenerator::visitVarDecl(const VarDecl *stmt) {
   // Track variable type
-  DataType dt = resolve_type(stmt->type);
-  std::string var_key = mutable_globals.count(stmt->name)
-                            ? stmt->name
-                            : current_function + "." + stmt->name;
-  variable_types[var_key] = dt;
+  DataType dt = resolve_type(stmt->var_type);
+  // Stores 'FuncName.VarName' in IR
+  std::string qualified = current_function.empty()
+                              ? stmt->name
+                              : current_function + "." + stmt->name;
+  variable_types[qualified] = dt;
 
-  if (stmt->initializer) {
-    tacky::Val val = visitExpression(stmt->initializer.get());
+  // Create the Variable
+  if (stmt->init) {
+    tacky::Val val = visitExpression(stmt->init.get());
     tacky::Val target = resolve_binding(stmt->name);
     // Set type on the target variable
     if (auto v = std::get_if<tacky::Variable>(&target)) {
@@ -516,7 +721,48 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
   }
 }
 
+void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
+  // Extract type from annotation string like "ptr[uint16]"
+  DataType type = DataType::UINT8; // default
+
+  if (stmt->annotation.find("ptr[uint16]") != std::string::npos) {
+    type = DataType::UINT16;
+  } else if (stmt->annotation.find("ptr[uint32]") != std::string::npos) {
+    type = DataType::UINT32;
+  } else if (stmt->annotation.find("uint16") != std::string::npos) {
+    type = DataType::UINT16;
+  } else if (stmt->annotation.find("uint32") != std::string::npos) {
+    type = DataType::UINT32;
+  }
+  // ptr[uint8] or plain "ptr" → UINT8 (default)
+
+  // Store in variable_types map (use global name, not qualified)
+  variable_types[stmt->target] = type;
+
+  // Generate assignment IR if initializer present
+  if (stmt->value) {
+    tacky::Val rhs = visitExpression(stmt->value.get());
+
+    // If RHS is a MemoryAddress, propagate the type
+    if (auto *addr = std::get_if<tacky::MemoryAddress>(&rhs)) {
+      addr->type = type;
+    }
+
+    // Create variable with type
+    tacky::Variable var{stmt->target, type};
+    emit(tacky::Copy{rhs, var});
+  }
+}
+
 DataType IRGenerator::resolve_type(const std::string &type_str) {
+  // Check if this is a ptr[TYPE] annotation
+  if (type_str.find("ptr[") == 0 && type_str.back() == ']') {
+    // Extract the element type from ptr[uint16] -> uint16
+    size_t start = type_str.find('[') + 1;
+    size_t end = type_str.find(']');
+    std::string element_type = type_str.substr(start, end - start);
+    return string_to_datatype(element_type);
+  }
   return string_to_datatype(type_str);
 }
 
@@ -575,6 +821,8 @@ tacky::Val IRGenerator::visitExpression(const Expression *expr) {
     return visitCall(call);
   if (auto *idx = dynamic_cast<const IndexExpr *>(expr))
     return visitIndex(idx);
+  if (auto *mem = dynamic_cast<const MemberAccessExpr *>(expr))
+    return visitMemberAccess(mem);
 
   if (auto *boolean = dynamic_cast<const BooleanLiteral *>(expr)) {
     return tacky::Constant{boolean->value ? 1 : 0};
@@ -712,30 +960,84 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
   return dst;
 }
 
+tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
+  if (expr->member == "value") {
+    // Get the underlying pointer variable
+    tacky::Val obj = visitExpression(expr->object.get());
+
+    // Look up the variable's type to propagate to MemoryAddress
+    DataType var_type = DataType::UINT8; // default
+
+    if (auto *var = std::get_if<tacky::Variable>(&obj)) {
+      // Check if we have type information for this variable
+      if (variable_types.contains(var->name)) {
+        var_type = variable_types[var->name];
+      }
+
+      // Update the variable's type field
+      var->type = var_type;
+    }
+
+    return obj;
+  }
+  throw std::runtime_error("Unknown member access: " + expr->member);
+}
+
 tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
   // Inlining Support
   if (inline_functions.contains(expr->callee)) {
     const FunctionDef *func = inline_functions.at(expr->callee);
     std::string exit_label = make_label();
+
+    // Calculate new prefix but don't set it yet
+    int new_depth = inline_depth + 1;
+    std::string new_prefix = std::format("inline{}.{}.", new_depth, func->name);
+
     std::optional<tacky::Temporary> result;
 
     if (func->return_type != "void" && func->return_type != "None") {
       result = make_temp(resolve_type(func->return_type));
     }
 
-    inline_stack.push_back({exit_label, result});
-
-    // Argument binding
-    for (size_t i = 0; i < expr->args.size(); ++i) {
-      tacky::Val argVal = visitExpression(expr->args[i].get());
-      tacky::Val param = resolve_binding(func->params[i].name);
-      emit(tacky::Copy{argVal, param});
+    // Evaluate args in CURRENT context
+    std::vector<tacky::Val> argValues;
+    for (const auto &arg : expr->args) {
+      argValues.push_back(visitExpression(arg.get()));
     }
 
+    // Switch context
+    inline_depth++;
+    std::string saved_prefix = current_inline_prefix;
+    current_inline_prefix = new_prefix;
+    inline_stack.push_back({exit_label, result});
+
+    // Assign args to params in NEW context
+    for (size_t i = 0; i < argValues.size(); ++i) {
+      std::string paramName = current_inline_prefix + func->params[i].name;
+      // We need to declare the param variable type if not exists?
+      // Actually visitVarDecl isn't called for params.
+      // We should verify variable_types has it?
+      // scan_functions adds params to variable_types with prefix?
+      // No, scan_functions adds them with function_name prefix.
+      // We might need to handle this?
+      // For now just assign.
+
+      // Optimization: If argVal is Variable/Constant/Temp, Copy.
+      emit(tacky::Copy{
+          argValues[i],
+          tacky::Variable{paramName,
+                          DataType::UINT8}}); // Assuming UINT8 for now or
+                                              // check param type
+    }
+
+    // Body
     visitBlock(func->body.get());
 
     emit(tacky::Label{exit_label});
     inline_stack.pop_back();
+
+    current_inline_prefix = saved_prefix;
+    inline_depth--;
 
     if (result)
       return *result;

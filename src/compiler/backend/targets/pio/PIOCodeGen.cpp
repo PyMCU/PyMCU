@@ -181,6 +181,10 @@ void PIOCodeGen::compile_variant(const tacky::Return &arg) {
   // For now, let's just emit nothing or a jump to self if it's the end of main.
 }
 
+void PIOCodeGen::compile_variant(const tacky::DebugLine &arg) {
+  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}
+
 void PIOCodeGen::compile_variant(const tacky::Jump &arg) const {
   emit("JMP", arg.target);
 }

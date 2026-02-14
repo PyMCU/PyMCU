@@ -41,6 +41,7 @@ private:
   std::string resolve_address(const tacky::Val &val);
   void select_bank(const std::string &operand);
   int current_bank = -1;
+  bool current_block_terminated = false;
 
   // --- Emission Helpers ---
   void emit(const std::string &mnemonic) const;
@@ -70,6 +71,8 @@ private:
   void compile_variant(const tacky::Return &arg);
   void compile_variant(const tacky::Jump &arg) const;
   void compile_variant(const tacky::JumpIfZero &arg);
+  void compile_variant(const tacky::JumpIfBitSet &arg);
+  void compile_variant(const tacky::JumpIfBitClear &arg);
   void compile_variant(const tacky::JumpIfNotZero &arg);
   void compile_variant(const tacky::Label &arg) const;
   void compile_variant(const tacky::Call &arg);
@@ -84,10 +87,9 @@ private:
   void compile_variant(const tacky::BitClear &arg);
   void compile_variant(const tacky::BitCheck &arg);
   void compile_variant(const tacky::BitWrite &arg);
-  void compile_variant(const tacky::JumpIfBitSet &arg);
-  void compile_variant(const tacky::JumpIfBitClear &arg);
   void compile_variant(const tacky::AugAssign &arg);
   void compile_variant(const tacky::Delay &arg);
+  void compile_variant(const tacky::DebugLine &arg);
 
 private:
   void emit_delay_cycles(unsigned long cycles);

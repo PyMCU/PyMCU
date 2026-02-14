@@ -30,12 +30,12 @@ enum class BinaryOp {
 enum class UnaryOp {
   Negate, // -x
   Not,    // not x
-  BitNot, // ~x
-  Deref   // *ptr
+  BitNot  // ~x
 };
 
 struct ASTNode {
   virtual ~ASTNode() = default;
+  int line = 0;
 };
 
 struct Statement : ASTNode {};
@@ -80,6 +80,14 @@ struct IndexExpr : Expression {
       : target(std::move(t)), index(std::move(i)) {}
 };
 
+struct MemberAccessExpr : Expression {
+  std::unique_ptr<Expression> object;
+  std::string member;
+
+  MemberAccessExpr(std::unique_ptr<Expression> obj, std::string mem)
+      : object(std::move(obj)), member(std::move(mem)) {}
+};
+
 struct CallExpr : Expression {
   std::string callee;
   std::vector<std::unique_ptr<Expression>> args;
@@ -112,12 +120,20 @@ struct Block : Statement {
 
 struct VarDecl : Statement {
   std::string name;
-  std::string type;
-  std::unique_ptr<Expression> initializer;
+  std::string var_type; // "uint8", "ptr", etc.
+  std::unique_ptr<Expression> init;
+  VarDecl(std::string n, std::string t, std::unique_ptr<Expression> i)
+      : name(std::move(n)), var_type(std::move(t)), init(std::move(i)) {}
+};
 
-  VarDecl(std::string n, std::string t,
-          std::unique_ptr<Expression> init = nullptr)
-      : name(std::move(n)), type(std::move(t)), initializer(std::move(init)) {}
+// Annotated assignment: name: type = value
+struct AnnAssign : Statement {
+  std::string target;                // Variable name
+  std::string annotation;            // Type string (e.g., "ptr[uint16]")
+  std::unique_ptr<Expression> value; // Initializer
+
+  AnnAssign(std::string t, std::string ann, std::unique_ptr<Expression> v)
+      : target(std::move(t)), annotation(std::move(ann)), value(std::move(v)) {}
 };
 
 struct AssignStmt : Statement {

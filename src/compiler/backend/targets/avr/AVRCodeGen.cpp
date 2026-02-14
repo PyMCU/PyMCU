@@ -208,6 +208,10 @@ void AVRCodeGen::compile_variant(const tacky::Label &arg) const {
   emit_label(arg.name);
 }
 
+void AVRCodeGen::compile_variant(const tacky::DebugLine &arg) {
+  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}
+
 void AVRCodeGen::compile_variant(const tacky::Call &arg) {
   // For now, simple call without parameters/return value handling here
   emit("RCALL", arg.function_name);

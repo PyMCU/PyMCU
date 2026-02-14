@@ -5,19 +5,23 @@
 #include "../frontend/Ast.h"
 #include "Tacky.h"
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 struct SymbolInfo {
   bool is_memory_address;
   int value;
+  DataType type = DataType::UINT8;
 };
 
 class IRGenerator {
 public:
   tacky::Program generate(const Program &main_ast,
-                          const std::vector<const Program *> &imported_modules);
+                          const std::vector<const Program *> &imported_modules,
+                          const std::vector<std::string> &source_lines = {});
 
 private:
   std::vector<tacky::Instruction> current_instructions;
@@ -31,6 +35,8 @@ private:
   std::map<std::string, const FunctionDef *>
       inline_functions; // Map for inlining
   std::string current_function;
+  int inline_depth = 0;
+  std::string current_inline_prefix;
 
   struct LoopLabels {
     std::string continue_label;
@@ -44,6 +50,10 @@ private:
     std::optional<tacky::Temporary> result_temp;
   };
   std::vector<InlineContext> inline_stack;
+
+  // Debugging
+  std::vector<std::string> source_lines;
+  int last_line = -1;
 
   tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
@@ -82,10 +92,16 @@ private:
   void visitAugAssign(const AugAssignStmt *stmt);
 
   void visitVarDecl(const VarDecl *stmt);
+  void visitAnnAssign(const AnnAssign *stmt);
 
   void visitExprStmt(const ExprStmt *stmt);
 
   void visitDelayStmt(const DelayStmt *stmt);
+
+  // Helper for boolean optimization
+  bool emit_optimized_conditional_jump(const Expression *cond,
+                                       const std::string &target_label,
+                                       bool jump_if_true = false);
 
   tacky::Val visitExpression(const Expression *expr);
 
@@ -100,6 +116,8 @@ private:
   tacky::Val visitCall(const CallExpr *expr);
 
   tacky::Val visitIndex(const IndexExpr *expr);
+
+  tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
 
   static int evaluate_constant_expr(const Expression *expr);
 };

@@ -1,7 +1,9 @@
 #include "Parser.h"
+#include "Ast.h"
 #include "Errors.h"
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <stdexcept>
 
 Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
@@ -193,14 +195,16 @@ std::unique_ptr<Statement> Parser::parseStatement() {
 }
 
 std::unique_ptr<Statement> Parser::parseReturnStatement() {
+  int line = peek().line;
   consume(TokenType::Return, "Expected 'return'");
   std::unique_ptr<Expression> value = nullptr;
-
-  if (!check(TokenType::Newline)) {
+  if (!check(TokenType::Newline) && !check(TokenType::Semicolon)) {
     value = parseExpression();
   }
   consumeStatementEnd();
-  return std::make_unique<ReturnStmt>(std::move(value));
+  auto stmt = std::make_unique<ReturnStmt>(std::move(value));
+  stmt->line = line;
+  return stmt;
 }
 
 std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
@@ -241,6 +245,7 @@ std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
 }
 
 std::unique_ptr<Statement> Parser::parseIfStatement() {
+  int line = peek().line;
   consume(TokenType::If, "Expected 'if'");
   auto condition = parseExpression();
   consume(TokenType::Colon, "Expected ':'");
@@ -267,9 +272,11 @@ std::unique_ptr<Statement> Parser::parseIfStatement() {
     elseBranch = parseBlock();
   }
 
-  return std::make_unique<IfStmt>(std::move(condition), std::move(thenBranch),
-                                  std::move(elifBranches),
-                                  std::move(elseBranch));
+  auto stmt =
+      std::make_unique<IfStmt>(std::move(condition), std::move(thenBranch),
+                               std::move(elifBranches), std::move(elseBranch));
+  stmt->line = line;
+  return stmt;
 }
 
 std::unique_ptr<Statement> Parser::parseMatchStatement() {
@@ -316,38 +323,50 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
 }
 
 std::unique_ptr<Statement> Parser::parseWhileStatement() {
+  int line = peek().line;
   consume(TokenType::While, "Expected 'while'");
   auto condition = parseExpression();
   consume(TokenType::Colon, "Expected ':'");
   consume(TokenType::Newline, "Expected newline");
   auto body = parseBlock();
-  return std::make_unique<WhileStmt>(std::move(condition), std::move(body));
+  auto stmt =
+      std::make_unique<WhileStmt>(std::move(condition), std::move(body));
+  stmt->line = line;
+  return stmt;
 }
 
 std::unique_ptr<Statement> Parser::parseSimpleStatement() {
+  int line = peek().line;
   if (check(TokenType::Return)) {
     return parseReturnStatement();
   }
 
   if (match(TokenType::Pass)) {
     consumeStatementEnd();
-    return std::make_unique<PassStmt>();
+    auto stmt = std::make_unique<PassStmt>();
+    stmt->line = line;
+    return stmt;
   }
 
   if (match(TokenType::Break)) {
     consumeStatementEnd();
-    return std::make_unique<BreakStmt>();
+    auto stmt = std::make_unique<BreakStmt>();
+    stmt->line = line;
+    return stmt;
   }
 
   if (match(TokenType::Continue)) {
     consumeStatementEnd();
-    return std::make_unique<ContinueStmt>();
+    auto stmt = std::make_unique<ContinueStmt>();
+    stmt->line = line;
+    return stmt;
   }
 
   return parseAssignmentOrDeclaration();
 }
 
 std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
+  int line = peek().line;
   auto expr = parseExpression();
 
   if (match(TokenType::Colon)) {
@@ -364,13 +383,24 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
     }
     consumeStatementEnd();
 
+    // If type contains '[', use AnnAssign for subscripted types like
+    // ptr[uint16]
+    if (type.find('[') != std::string::npos) {
+      auto stmt = std::make_unique<AnnAssign>(name, type, std::move(init));
+      stmt->line = line;
+      return stmt;
+    }
+
+    // Otherwise use VarDecl for simple types
     return std::make_unique<VarDecl>(name, type, std::move(init));
   }
 
   if (match(TokenType::Equal)) {
     auto value = parseExpression();
     consumeStatementEnd();
-    return std::make_unique<AssignStmt>(std::move(expr), std::move(value));
+    auto stmt = std::make_unique<AssignStmt>(std::move(expr), std::move(value));
+    stmt->line = line;
+    return stmt;
   }
 
   // --- Augmented Assignments (+=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=) ---
@@ -575,10 +605,10 @@ std::unique_ptr<Expression> Parser::parseUnary() {
     auto operand = parseUnary();
     return std::make_unique<UnaryExpr>(UnaryOp::BitNot, std::move(operand));
   }
-  if (check(TokenType::Star)) {
+  if (check(TokenType::Not)) {
     advance();
     auto operand = parseUnary();
-    return std::make_unique<UnaryExpr>(UnaryOp::Deref, std::move(operand));
+    return std::make_unique<UnaryExpr>(UnaryOp::Not, std::move(operand));
   }
   return parsePostfix();
 }
@@ -607,6 +637,10 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       auto index = parseExpression();
       consume(TokenType::RBracket, "Expected ']'");
       expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
+    } else if (match(TokenType::Dot)) {
+      const Token member =
+          consume(TokenType::Identifier, "Expected member name");
+      expr = std::make_unique<MemberAccessExpr>(std::move(expr), member.value);
     } else {
       break;
     }
