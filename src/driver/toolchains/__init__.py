@@ -1,23 +1,26 @@
-from typing import List, Type
-from rich.console import Console
-from .base import ExternalToolchain
-from .gputils import GputilsToolchain
-
-# Registry of all available toolchain strategies
-REGISTERED_TOOLCHAINS: List[Type[ExternalToolchain]] = [
-    GputilsToolchain,
-    # Future: AvrToolchain,
-    # Future: RiscvToolchain,
-]
-
-def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
-    """
-    Factory function to return the appropriate toolchain strategy.
-    Iterates through REGISTERED_TOOLCHAINS and asks each if it supports the chip.
-    """
-    for toolchain_class in REGISTERED_TOOLCHAINS:
-        if toolchain_class.supports(chip):
-            return toolchain_class(console)
-            
-    # If no strategy claims support, raise error
-    raise ValueError(f"No toolchain found that supports chip: '{chip}'. Please check your configuration.")
+# -----------------------------------------------------------------------------
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+#
+# This file is part of the PyMCU Development Ecosystem.
+#
+# PyMCU is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# PyMCU is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
+#
+# -----------------------------------------------------------------------------
+# SAFETY WARNING / HIGH RISK ACTIVITIES:
+# THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+# ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+# NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+# TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
+# -----------------------------------------------------------------------------
