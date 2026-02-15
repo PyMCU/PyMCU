@@ -1,4 +1,5 @@
 #include "PIC18CodeGen.h"
+
 #include <algorithm>
 #include <format>
 #include <iostream>
@@ -8,9 +9,9 @@
 #include "backend/analysis/StackAllocator.h"
 
 PIC18CodeGen::PIC18CodeGen(DeviceConfig cfg)
-  : config(std::move(cfg)), out(nullptr) {
+    : config(std::move(cfg)), out(nullptr) {
   label_counter = 0;
-  ram_head = 0x60; // Start after Access Bank
+  ram_head = 0x60;  // Start after Access Bank
 }
 
 std::string PIC18CodeGen::resolve_address(const tacky::Val &val) {
@@ -30,8 +31,7 @@ std::string PIC18CodeGen::resolve_address(const tacky::Val &val) {
   else if (const auto t = std::get_if<tacky::Temporary>(&val))
     name = t->name;
 
-  if (name.empty())
-    return "";
+  if (name.empty()) return "";
 
   if (stack_layout.contains(name)) {
     return name;
@@ -48,8 +48,7 @@ std::string PIC18CodeGen::get_or_alloc_variable(const std::string &name) {
 }
 
 int PIC18CodeGen::get_address(const std::string &operand) {
-  if (operand.empty())
-    return -1;
+  if (operand.empty()) return -1;
   if (operand.size() > 2 && operand.substr(0, 2) == "0x") {
     try {
       return std::stoi(operand, nullptr, 16);
@@ -74,16 +73,13 @@ int PIC18CodeGen::get_address(const std::string &operand) {
 
 void PIC18CodeGen::select_bank(const std::string &operand) {
   int addr = get_address(operand);
-  if (addr == -1)
-    return;
+  if (addr == -1) return;
 
   // Access Bank check (0x00 - 0x5F and 0xF60 - 0xFFF)
-  if (addr <= 0x5F || addr >= 0xF60)
-    return;
+  if (addr <= 0x5F || addr >= 0xF60) return;
 
   const int new_bank = (addr >> 8) & 0x0F;
-  if (current_bank == new_bank)
-    return;
+  if (current_bank == new_bank) return;
 
   emit("MOVLB", std::format("{}", new_bank));
   current_bank = new_bank;
@@ -91,49 +87,47 @@ void PIC18CodeGen::select_bank(const std::string &operand) {
 
 std::string PIC18CodeGen::get_access_mode(const std::string &operand) {
   int addr = get_address(operand);
-  if (addr == -1)
-    return "ACCESS"; // Default for registers like WREG, STATUS
+  if (addr == -1) return "ACCESS";  // Default for registers like WREG, STATUS
 
   // Access Bank check (0x00 - 0x5F and 0xF60 - 0xFFF)
-  if (addr <= 0x5F || addr >= 0xF60)
-    return "ACCESS";
+  if (addr <= 0x5F || addr >= 0xF60) return "ACCESS";
 
   return "BANKED";
 }
 
 void PIC18CodeGen::emit(const std::string &mnemonic) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Instruction(mnemonic));
+      PIC18AsmLine::Instruction(mnemonic));
 }
 
 void PIC18CodeGen::emit(const std::string &mnemonic,
                         const std::string &op1) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Instruction(mnemonic, op1));
+      PIC18AsmLine::Instruction(mnemonic, op1));
 }
 
 void PIC18CodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Instruction(mnemonic, op1, op2));
+      PIC18AsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void PIC18CodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2, const std::string &op3) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Instruction(mnemonic, op1, op2, op3));
+      PIC18AsmLine::Instruction(mnemonic, op1, op2, op3));
 }
 
 void PIC18CodeGen::emit_label(const std::string &label) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Label(label));
+      PIC18AsmLine::Label(label));
   // Invalidate bank assumption at label because we may jump here from anywhere
   const_cast<PIC18CodeGen *>(this)->current_bank = -1;
 }
 
 void PIC18CodeGen::emit_comment(const std::string &comment) const {
   const_cast<PIC18CodeGen *>(this)->assembly.push_back(
-    PIC18AsmLine::Comment(comment));
+      PIC18AsmLine::Comment(comment));
 }
 
 void PIC18CodeGen::emit_raw(const std::string &text) const {
@@ -152,7 +146,7 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // 1. Compile functions first to populate symbol_table
   // We use a temporary vector to hold the function code so we can emit headers
   // first later
-  for (const auto &func: program.functions) {
+  for (const auto &func : program.functions) {
     compile_function(func);
   }
   std::vector<PIC18AsmLine> function_code = std::move(assembly);
@@ -178,12 +172,12 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_config_directives();
 
   emit_raw("_stack_base EQU 0x060");
-  for (const auto &[name, offset]: stack_layout) {
+  for (const auto &[name, offset] : stack_layout) {
     emit_raw(std::format("{} EQU _stack_base + 0x{:03X}", name, offset));
   }
 
   // 3. Emit Global Variables (from symbol_table)
-  for (const auto &[name, addr]: symbol_table) {
+  for (const auto &[name, addr] : symbol_table) {
     emit_raw(std::format("{} EQU 0x{:03X}", name, addr));
   }
 
@@ -196,7 +190,7 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // Run Peephole Optimization
   auto optimized = PIC18Peephole::optimize(assembly);
 
-  for (const auto &line: optimized) {
+  for (const auto &line : optimized) {
     os << line.to_string() << "\n";
   }
 
@@ -204,7 +198,7 @@ void PIC18CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 }
 
 void PIC18CodeGen::emit_config_directives() {
-  for (const auto &[key, val]: config.fuses) {
+  for (const auto &[key, val] : config.fuses) {
     emit_raw(std::format("\tCONFIG {} = {}", key, val));
   }
 }
@@ -212,7 +206,7 @@ void PIC18CodeGen::emit_config_directives() {
 void PIC18CodeGen::compile_function(const tacky::Function &func) {
   emit_label(func.name);
 
-  for (const auto &instr: func.body) {
+  for (const auto &instr : func.body) {
     compile_instruction(instr);
   }
 }
@@ -250,13 +244,13 @@ void PIC18CodeGen::compile_variant(const tacky::Jump &arg) const {
 
 void PIC18CodeGen::compile_variant(const tacky::JumpIfZero &arg) {
   load_into_w(arg.condition);
-  emit("ANDLW", "0xFF"); // Set Z flag
+  emit("ANDLW", "0xFF");  // Set Z flag
   emit("BZ", arg.target);
 }
 
 void PIC18CodeGen::compile_variant(const tacky::JumpIfNotZero &arg) {
   load_into_w(arg.condition);
-  emit("ANDLW", "0xFF"); // Set Z flag
+  emit("ANDLW", "0xFF");  // Set Z flag
   emit("BNZ", arg.target);
 }
 
@@ -442,9 +436,9 @@ void PIC18CodeGen::compile_variant(const tacky::Binary &arg) {
       emit_label(lbl_loop);
       emit("MOVF", divisor, "W", "ACCESS");
       emit("SUBWF", rem, "W", "ACCESS");
-      emit("BN", lbl_end); // if rem < divisor, break
+      emit("BN", lbl_end);  // if rem < divisor, break
 
-      emit("MOVWF", rem, "ACCESS"); // rem = rem - divisor
+      emit("MOVWF", rem, "ACCESS");  // rem = rem - divisor
       emit("INCF", quot, "F", "ACCESS");
       emit("BRA", lbl_loop);
 
@@ -596,4 +590,133 @@ void PIC18CodeGen::compile_variant(const tacky::Delay &arg) {
 
 void PIC18CodeGen::compile_variant(const tacky::DebugLine &arg) {
   emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfEqual &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    if (c2->value >= 0 && c2->value <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("XORLW", std::format("0x{:02X}", c2->value));
+      emit("BTFSC", "STATUS", "Z", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W", get_access_mode(src1));
+  emit("BTFSC", "STATUS", "Z", "ACCESS");
+  emit("BRA", arg.target);
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfNotEqual &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    if (c2->value >= 0 && c2->value <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("XORLW", std::format("0x{:02X}", c2->value));
+      emit("BTFSS", "STATUS", "Z", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W", get_access_mode(src1));
+  emit("BTFSS", "STATUS", "Z", "ACCESS");
+  emit("BRA", arg.target);
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfLessThan &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      if (k == 0) return;
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("SUBLW", std::format("0x{:02X}", k - 1));
+      emit("BTFSC", "STATUS", "C", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W", get_access_mode(src1));  // src1 - A(W)
+  emit("BTFSS", "STATUS", "C", "ACCESS");
+  emit("BRA", arg.target);
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfLessOrEqual &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("SUBLW", std::format("0x{:02X}", k));
+      emit("BTFSC", "STATUS", "C", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src1);
+  std::string src2 = resolve_address(arg.src2);
+  select_bank(src2);
+  emit("SUBWF", src2, "W", get_access_mode(src2));  // src2 - src1
+  emit("BTFSC", "STATUS", "C", "ACCESS");
+  emit("BRA", arg.target);
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfGreaterThan &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("SUBLW", std::format("0x{:02X}", k));
+      emit("BTFSS", "STATUS", "C", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src1);
+  std::string src2 = resolve_address(arg.src2);
+  select_bank(src2);
+  emit("SUBWF", src2, "W", get_access_mode(src2));  // src2 - src1
+  emit("BTFSS", "STATUS", "C", "ACCESS");
+  emit("BRA", arg.target);
+}
+
+void PIC18CodeGen::compile_variant(const tacky::JumpIfGreaterOrEqual &arg) {
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      if (k == 0) {
+        emit("BRA", arg.target);
+        return;
+      }
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W", get_access_mode(src1));
+      emit("SUBLW", std::format("0x{:02X}", k - 1));
+      emit("BTFSS", "STATUS", "C", "ACCESS");
+      emit("BRA", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W", get_access_mode(src1));
+  emit("BTFSC", "STATUS", "C", "ACCESS");
+  emit("BRA", arg.target);
 }

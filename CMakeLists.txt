@@ -37,12 +37,17 @@ add_library(core STATIC
         src/compiler/backend/VirtualStack.h
         src/compiler/backend/targets/pic14/PIC14CodeGen.cpp
         src/compiler/backend/targets/pic14/PIC14CodeGen.h
+        src/compiler/backend/targets/pic14/PIC14EStrategy.cpp
         src/compiler/frontend/Lexer.cpp
         src/compiler/frontend/Token.h
         src/compiler/frontend/Ast.h
         src/compiler/frontend/Parser.cpp
         src/compiler/frontend/Parser.h
         src/compiler/frontend/Lexer.h
+        src/compiler/frontend/PreScanVisitor.cpp
+        src/compiler/frontend/PreScanVisitor.h
+        src/compiler/frontend/ConditionalCompilator.cpp
+        src/compiler/frontend/ConditionalCompilator.h
         src/compiler/ir/Tacky.h
         src/compiler/ir/IRGenerator.cpp
         src/compiler/ir/IRGenerator.h
@@ -110,6 +115,7 @@ add_executable(tests
         tests/unit/test_pic12_codegen.cpp
         tests/unit/test_riscv_codegen.cpp
         tests/unit/test_pio_codegen.cpp
+        tests/IntegrationTest_PIC14E.cpp
 )
 target_link_libraries(tests PRIVATE
         core

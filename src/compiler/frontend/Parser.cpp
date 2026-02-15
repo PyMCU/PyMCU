@@ -1,29 +1,27 @@
 #include "Parser.h"
-#include "Ast.h"
-#include "Errors.h"
+
 #include <algorithm>
 #include <format>
 #include <optional>
 #include <stdexcept>
 
-Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {
-}
+#include "Ast.h"
+#include "Errors.h"
+
+Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
 
 const Token &Parser::peek() const {
-  if (pos >= tokens.size())
-    return tokens.back();
+  if (pos >= tokens.size()) return tokens.back();
   return tokens[pos];
 }
 
 const Token &Parser::previous() const {
-  if (pos == 0)
-    return tokens[0];
+  if (pos == 0) return tokens[0];
   return tokens[pos - 1];
 }
 
 Token Parser::advance() {
-  if (pos < tokens.size())
-    pos++;
+  if (pos < tokens.size()) pos++;
   return tokens[pos - 1];
 }
 
@@ -39,8 +37,7 @@ bool Parser::match(const TokenType type) {
 
 Token Parser::consume(const TokenType type,
                       const std::string_view errorMessage) {
-  if (check(type))
-    return advance();
+  if (check(type)) return advance();
   error(errorMessage);
 }
 
@@ -49,12 +46,9 @@ void Parser::consumeStatementEnd() {
     match(TokenType::Newline);
     return;
   }
-  if (match(TokenType::Newline))
-    return;
-  if (check(TokenType::Dedent))
-    return;
-  if (check(TokenType::EndOfFile))
-    return;
+  if (match(TokenType::Newline)) return;
+  if (check(TokenType::Dedent)) return;
+  if (check(TokenType::EndOfFile)) return;
 
   error("Expected newline or end of block");
 }
@@ -90,17 +84,23 @@ std::unique_ptr<Program> Parser::parseProgram() {
   auto prog = std::make_unique<Program>();
 
   while (!check(TokenType::EndOfFile)) {
-    if (match(TokenType::Newline))
-      continue;
+    if (match(TokenType::Newline)) continue;
 
-    if (check(TokenType::From)) {
+    // Top-level Constructs
+    if (check(TokenType::From) || check(TokenType::Import)) {
       prog->imports.push_back(parseImportStatement());
     } else if (check(TokenType::Def) || check(TokenType::At)) {
       prog->functions.push_back(parseFunction());
-    } else if (check(TokenType::Identifier)) {
-      prog->global_statements.push_back(parseAssignmentOrDeclaration());
     } else {
-      error("Expected function definition ('def')");
+      // Allow statements (If, Assignment, etc.)
+      // Note: global_statements is vector<unique_ptr<Statement>>
+      // parseStatement returns unique_ptr<Statement>, covering If, Assign, etc.
+      try {
+        prog->global_statements.push_back(parseStatement());
+      } catch (const SyntaxError &e) {
+        // Fallback for better error message if it's garbage
+        error("Expected function definition, import, or valid statement");
+      }
     }
   }
   return prog;
@@ -112,17 +112,17 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   int vector = 0;
 
   while (check(TokenType::At)) {
-    advance(); // Consume '@'
+    advance();  // Consume '@'
     const Token decorator =
         consume(TokenType::Identifier, "Expected decorator name");
     if (decorator.value == "inline") {
       is_inline = true;
     } else if (decorator.value == "interrupt") {
       is_interrupt = true;
-      vector = 0x04; // Default generic vector for PIC14
+      vector = 0x04;  // Default generic vector for PIC14
 
       if (check(TokenType::LParen)) {
-        advance(); // Consume '('
+        advance();  // Consume '('
         const Token vectorToken =
             consume(TokenType::Number, "Expected vector address");
 
@@ -198,8 +198,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
   auto block = std::make_unique<Block>();
 
   while (!check(TokenType::Dedent) && !check(TokenType::EndOfFile)) {
-    if (match(TokenType::Newline))
-      continue; // Skip empty lines
+    if (match(TokenType::Newline)) continue;  // Skip empty lines
     block->statements.push_back(parseStatement());
   }
 
@@ -211,14 +210,10 @@ std::unique_ptr<Block> Parser::parseBlock() {
 }
 
 std::unique_ptr<Statement> Parser::parseStatement() {
-  if (check(TokenType::If))
-    return parseIfStatement();
-  if (check(TokenType::Match))
-    return parseMatchStatement();
-  if (check(TokenType::While))
-    return parseWhileStatement();
-  if (check(TokenType::Return))
-    return parseReturnStatement();
+  if (check(TokenType::If)) return parseIfStatement();
+  if (check(TokenType::Match)) return parseMatchStatement();
+  if (check(TokenType::While)) return parseWhileStatement();
+  if (check(TokenType::Return)) return parseReturnStatement();
 
   if (check(TokenType::Import) || check(TokenType::From)) {
     return parseImportStatement();
@@ -260,6 +255,17 @@ std::unique_ptr<Statement> Parser::parseReturnStatement() {
 }
 
 std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
+  if (match(TokenType::Import)) {
+    std::string mod_name =
+        consume(TokenType::Identifier, "Expected module name").value;
+    while (match(TokenType::Dot)) {
+      mod_name +=
+          "." + consume(TokenType::Identifier, "Expected part name").value;
+    }
+    return std::make_unique<ImportStmt>(mod_name, std::vector<std::string>{},
+                                        0);
+  }
+
   consume(TokenType::From, "Expected 'from'");
 
   int relative_level = 0;
@@ -324,7 +330,7 @@ std::unique_ptr<Statement> Parser::parseIfStatement() {
 
   // Elif branches
   std::vector<
-        std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement> > >
+      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement> > >
       elifBranches;
   while (match(TokenType::Elif)) {
     auto elifCond = parseExpression();
@@ -360,8 +366,7 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
 
   std::vector<CaseBranch> branches;
   while (!check(TokenType::Dedent) && !check(TokenType::EndOfFile)) {
-    if (match(TokenType::Newline))
-      continue;
+    if (match(TokenType::Newline)) continue;
 
     consume(TokenType::Case, "Expected 'case'");
 
@@ -370,8 +375,8 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
     // Since we don't have a dedicated Underscore token, check for Identifier
     // with value "_"
     if (check(TokenType::Identifier) && peek().value == "_") {
-      advance(); // consume '_'
-      pattern = nullptr; // Wildcard
+      advance();          // consume '_'
+      pattern = nullptr;  // Wildcard
     } else {
       // Limited pattern matching: literals or variable
       pattern = parseExpression();
@@ -440,8 +445,7 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
 
   if (match(TokenType::Colon)) {
     const auto varExpr = dynamic_cast<VariableExpr *>(expr.get());
-    if (!varExpr)
-      error("Only simple variables can be annotated with types");
+    if (!varExpr) error("Only simple variables can be annotated with types");
 
     std::string name = varExpr->name;
     std::string type = parseTypeAnnotation();
@@ -474,26 +478,16 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
 
   // --- Augmented Assignments (+=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=) ---
   auto try_aug_assign = [&]() -> std::optional<AugOp> {
-    if (match(TokenType::PlusEqual))
-      return AugOp::Add;
-    if (match(TokenType::MinusEqual))
-      return AugOp::Sub;
-    if (match(TokenType::StarEqual))
-      return AugOp::Mul;
-    if (match(TokenType::SlashEqual))
-      return AugOp::Div;
-    if (match(TokenType::PercentEqual))
-      return AugOp::Mod;
-    if (match(TokenType::AmpEqual))
-      return AugOp::BitAnd;
-    if (match(TokenType::PipeEqual))
-      return AugOp::BitOr;
-    if (match(TokenType::CaretEqual))
-      return AugOp::BitXor;
-    if (match(TokenType::LShiftEqual))
-      return AugOp::LShift;
-    if (match(TokenType::RShiftEqual))
-      return AugOp::RShift;
+    if (match(TokenType::PlusEqual)) return AugOp::Add;
+    if (match(TokenType::MinusEqual)) return AugOp::Sub;
+    if (match(TokenType::StarEqual)) return AugOp::Mul;
+    if (match(TokenType::SlashEqual)) return AugOp::Div;
+    if (match(TokenType::PercentEqual)) return AugOp::Mod;
+    if (match(TokenType::AmpEqual)) return AugOp::BitAnd;
+    if (match(TokenType::PipeEqual)) return AugOp::BitOr;
+    if (match(TokenType::CaretEqual)) return AugOp::BitXor;
+    if (match(TokenType::LShiftEqual)) return AugOp::LShift;
+    if (match(TokenType::RShiftEqual)) return AugOp::RShift;
     return std::nullopt;
   };
 
@@ -581,7 +575,7 @@ std::unique_ptr<Expression> Parser::parseComparison() {
         op = BinaryOp::GreaterEq;
         break;
       default:
-        break; // Unreachable
+        break;  // Unreachable
     }
 
     auto right = parseBitwiseOr();
@@ -624,9 +618,8 @@ std::unique_ptr<Expression> Parser::parseShift() {
   auto left = parseAdditive();
   while (check(TokenType::LShift) || check(TokenType::RShift)) {
     const Token opToken = advance();
-    BinaryOp op = (opToken.type == TokenType::LShift)
-                    ? BinaryOp::LShift
-                    : BinaryOp::RShift;
+    BinaryOp op = (opToken.type == TokenType::LShift) ? BinaryOp::LShift
+                                                      : BinaryOp::RShift;
     auto right = parseAdditive();
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
   }
@@ -691,6 +684,13 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       std::string calleeName;
       if (const auto var = dynamic_cast<VariableExpr *>(expr.get())) {
         calleeName = var->name;
+      } else if (const auto mem =
+                     dynamic_cast<MemberAccessExpr *>(expr.get())) {
+        if (const auto obj = dynamic_cast<VariableExpr *>(mem->object.get())) {
+          calleeName = obj->name + "." + mem->member;
+        } else {
+          error("Complex member access call not supported");
+        }
       } else {
         error("Expression is not callable");
       }
@@ -698,7 +698,20 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       std::vector<std::unique_ptr<Expression> > args;
       if (!check(TokenType::RParen)) {
         do {
-          args.push_back(parseExpression());
+          if (check(TokenType::Identifier) &&
+              (pos + 1 < tokens.size() &&
+               tokens[pos + 1].type == TokenType::Equal)) {
+            // Named argument: name = value
+            std::string name =
+                consume(TokenType::Identifier, "Expected argument name").value;
+            consume(TokenType::Equal, "Expected '='");
+            auto value = parseExpression();
+            args.push_back(std::make_unique<KeywordArgExpr>(std::move(name),
+                                                            std::move(value)));
+          } else {
+            // Positional argument
+            args.push_back(parseExpression());
+          }
         } while (match(TokenType::Comma));
       }
       consume(TokenType::RParen, "Expected ')'");
@@ -719,13 +732,15 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 }
 
 std::unique_ptr<Expression> Parser::parsePrimary() {
-  if (match(TokenType::True))
-    return std::make_unique<BooleanLiteral>(true);
-  if (match(TokenType::False))
-    return std::make_unique<BooleanLiteral>(false);
+  if (match(TokenType::True)) return std::make_unique<BooleanLiteral>(true);
+  if (match(TokenType::False)) return std::make_unique<BooleanLiteral>(false);
 
   if (match(TokenType::Identifier)) {
     return std::make_unique<VariableExpr>(previous().value);
+  }
+
+  if (match(TokenType::String)) {
+    return std::make_unique<StringLiteral>(previous().value);
   }
 
   if (match(TokenType::Number)) {

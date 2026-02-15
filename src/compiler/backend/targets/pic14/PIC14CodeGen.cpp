@@ -1,16 +1,33 @@
 #include "PIC14CodeGen.h"
+
 #include <algorithm>
 #include <format>
 #include <iostream>
 #include <utility>
 #include <variant>
 
+#include "PIC14EStrategy.h"
+#include "PIC14Strategy.h"
 #include "backend/analysis/StackAllocator.h"
 
 PIC14CodeGen::PIC14CodeGen(DeviceConfig cfg)
-  : config(std::move(cfg)), out(nullptr) {
+    : config(std::move(cfg)), out(nullptr) {
   label_counter = 0;
   ram_head = 0x20;
+
+  // Strategy Selection Logic
+  // Strict check against config.arch OR check if target_chip implies PIC14E
+  // (e.g. pic16f1xxxx series)
+  bool is_enhanced = (config.arch == "pic14e") ||
+                     (config.arch.starts_with("pic16f1") &&
+                      config.arch.length() > 9);  // e.g. pic16f18877
+
+  if (is_enhanced) {
+    strategy = std::make_unique<PIC14EStrategy>(this);
+  } else {
+    // Default to Legacy PIC14 (e.g. pic16f84a, pic16f877a)
+    strategy = std::make_unique<PIC14Strategy>(this);
+  }
 }
 
 std::string PIC14CodeGen::resolve_address(const tacky::Val &val) {
@@ -49,97 +66,54 @@ void PIC14CodeGen::select_bank(const std::string &operand) {
     if (operand.size() > 2 && operand.substr(0, 2) == "0x") {
       addr = std::stoi(operand, nullptr, 16);
     } else if (stack_layout.contains(operand)) {
-      // Stack variables are offset from _stack_base (0x20 usually)
-      // We need to know the absolute address.
-      // But wait, the symbol table stores the offset?
-      // emit("... EQU _stack_base + offset")
-      // We can't easily resolve _stack_base + offset at compile time here
-      // UNLESS we know _stack_base.
-      // In constructor/compile, we set _stack_base to offsets?
-      // Let's look at compile(): _stack_base is logic.
-      // Actually, stack variables in CBLOCK 0x20 are in Bank 0 (0x20-0x7F).
-      // If we assume stack is always in Bank 0 for now (PIC16F84A has only Bank
-      // 0 RAM essentially, mapped to 0x00-0x4F?).
-      // Wait, PIC16F84A has 68 bytes of RAM. Bank 0: 0x0C-0x4F. Bank 1:
-      // 0x8C-0xCF (mapped?).
-      // Status bit RP0 selects Bank 0 or 1.
-      // For generic PIC14, we should try to resolve.
-      // If we can't resolve, we MUST emit bank select conservatively?
-      // Or assume Bank 0 if it's a stack variable?
-      // Let's look at stack_layout.
-      // It maps name -> offset.
-      // _stack_base is defined in ASM as a constant (usually 0x20 or after
-      // special registers).
-      // So name = 0x20 + offset.
-      // This is generally Bank 0 (0x00 - 0x7F).
-      // Let's assume Bank 0 for stack variables for now, but mark as TODO if
-      // meaningful.
-      addr = 0x20 + stack_layout.at(operand);
+      addr = 0x20 + stack_layout.at(operand);  // Assume Bank 0 area
     } else if (symbol_table.contains(operand)) {
-      // Global/Static variables allocated by us
       addr = symbol_table.at(operand);
     }
   } catch (...) {
-    // If stoi fails or something else, we can't optimize.
-    // Fallback: emit bank select (reset state to unknown?)
-    // distinct from "addr found".
   }
 
   if (addr != -1) {
-    const int new_bank = (addr >> 7) & 0x03;
-    if (current_bank == new_bank)
-      return;
+    const int new_bank =
+        (addr >> 7) &
+        0x7F;  // Support up to 128 banks (PIC14E needs 6 bits / 64 banks)
+    // PIC14: 2 bits (4 banks). PIC14E: 6 bits (64 banks).
+    // (addr >> 7) gives 128-byte chunk index.
 
-    if (new_bank & 1)
-      emit("BSF", "STATUS", "5");
-    else
-      emit("BCF", "STATUS", "5"); // RP0
-    if (new_bank & 2)
-      emit("BSF", "STATUS", "6");
-    else
-      emit("BCF", "STATUS", "6"); // RP1
+    if (current_bank == new_bank) return;
+
+    strategy->emit_bank_select(new_bank);
     current_bank = new_bank;
   } else {
-    // Unknown address format (e.g. indirect addressing FSR? or just
-    // unimplemented resolution) We should probably invalidate the bank state
-    // just in case? Or do nothing? Standard `select_bank` only handled "0x..."
-    // before. If we pass a label name that we don't know, we might be in
-    // trouble. But `resolve_address` returns either hex, or a name in
-    // stack_layout/symbol_table, or allocs a new one. So we SHOULD cover all
-    // cases. If we miss one, we might fail to switch bank. Safe fallback: If we
-    // can't determine bank, we should probably output nothing (assume user
-    // handles it?) OR emit a conservative bank switch if we could guess? The
-    // original code ONLY handled "0x". So expanding to symbols is strictly
-    // better.
-    current_bank = -1; // Invalidate
+    current_bank = -1;  // Invalidate
   }
 }
 
 void PIC14CodeGen::emit(const std::string &mnemonic) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-    PIC14AsmLine::Instruction(mnemonic));
+      PIC14AsmLine::Instruction(mnemonic));
 }
 
 void PIC14CodeGen::emit(const std::string &mnemonic,
                         const std::string &op1) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-    PIC14AsmLine::Instruction(mnemonic, op1));
+      PIC14AsmLine::Instruction(mnemonic, op1));
 }
 
 void PIC14CodeGen::emit(const std::string &mnemonic, const std::string &op1,
                         const std::string &op2) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-    PIC14AsmLine::Instruction(mnemonic, op1, op2));
+      PIC14AsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void PIC14CodeGen::emit_label(const std::string &label) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-    PIC14AsmLine::Label(label));
+      PIC14AsmLine::Label(label));
 }
 
 void PIC14CodeGen::emit_comment(const std::string &comment) const {
   const_cast<PIC14CodeGen *>(this)->assembly.push_back(
-    PIC14AsmLine::Comment(comment));
+      PIC14AsmLine::Comment(comment));
 }
 
 void PIC14CodeGen::emit_raw(const std::string &text) const {
@@ -155,8 +129,8 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   // Pre-scan for floats
   uses_float = false;
-  for (const auto &func: program.functions) {
-    for (const auto &instr: func.body) {
+  for (const auto &func : program.functions) {
+    for (const auto &instr : func.body) {
       if (std::holds_alternative<tacky::Binary>(instr)) {
         const auto &bin = std::get<tacky::Binary>(instr);
         auto is_float_val = [](const tacky::Val &v) {
@@ -173,8 +147,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
         }
       }
     }
-    if (uses_float)
-      break;
+    if (uses_float) break;
   }
 
   this->stack_layout = offsets;
@@ -186,17 +159,16 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     emit_raw("\tCBLOCK 0x20");
     // Find max offset
     int max_offset = 0;
-    for (const auto &[name, offset]: stack_layout) {
-      if (offset > max_offset)
-        max_offset = offset;
+    for (const auto &[name, offset] : stack_layout) {
+      if (offset > max_offset) max_offset = offset;
     }
     emit_raw(std::format("_stack_base: {}",
-                         total_size)); // Use total_size from allocator
+                         total_size));  // Use total_size from allocator
     if (uses_float) {
       emit_raw("__FP_A: 4");
       emit_raw("__FP_B: 4");
-      emit_raw("__FP_C: 4"); // Scratch/Result if needed? __add_float usually
-      // uses A as accum.
+      emit_raw("__FP_C: 4");  // Scratch/Result if needed? __add_float usually
+                              // uses A as accum.
     }
     emit_raw("\tENDC");
     emit_raw("");
@@ -204,12 +176,14 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   // Define Symbols (Global Variables)
   emit_comment("--- Variable Offsets ---");
-  for (const auto &[name, offset]: stack_layout) {
+  for (const auto &[name, offset] : stack_layout) {
     emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
   }
   emit_raw("");
 
-  emit_config_directives();
+  emit_raw("");
+
+  strategy->emit_preamble();
 
   // Emit Interrupt Handlers (IVT)
   // PIC14 only supports vector 0x04.
@@ -217,21 +191,21 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   const tacky::Function *isr_0x04 = nullptr;
 
-  for (const auto &func: program.functions) {
+  for (const auto &func : program.functions) {
     if (func.is_interrupt) {
       if (func.interrupt_vector != 0x04 && func.interrupt_vector != 0) {
         // 0 is default from AST if not specified? Parser sets 0x04 default?
         // If parser sets 0x04, we are good.
         // If user specified @interrupt(0x08), we must error for PIC14.
         throw std::runtime_error(
-          std::format("PIC14 architecture does not support interrupt vector "
-                      "0x{:02X}. Only 0x04 is supported.",
-                      func.interrupt_vector));
+            std::format("PIC14 architecture does not support interrupt vector "
+                        "0x{:02X}. Only 0x04 is supported.",
+                        func.interrupt_vector));
       }
 
       if (isr_0x04 != nullptr) {
         throw std::runtime_error(
-          "Multiple interrupt handlers defined for vector 0x04.");
+            "Multiple interrupt handlers defined for vector 0x04.");
       }
       isr_0x04 = &func;
     }
@@ -244,10 +218,10 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     emit_context_save();
 
     current_function_name = isr_0x04->name;
-    current_bank = -1; // Unknown bank on entry
-    current_block_terminated = false; // Reset dead code flag
+    current_bank = -1;                 // Unknown bank on entry
+    current_block_terminated = false;  // Reset dead code flag
 
-    for (const auto &instr: isr_0x04->body) {
+    for (const auto &instr : isr_0x04->body) {
       if (current_block_terminated) {
         if (std::holds_alternative<tacky::Label>(instr)) {
           current_block_terminated = false;
@@ -279,9 +253,8 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // Emit Main and other functions
   // emit_label("main"); // REMOVED: main is emitted by compile_function("main")
 
-  for (const auto &func: program.functions) {
-    if (func.is_interrupt)
-      continue; // Already emitted
+  for (const auto &func : program.functions) {
+    if (func.is_interrupt) continue;  // Already emitted
 
     // Skip inline functions (they're already expanded at call sites)
     // Always emit main even if marked inline (it shouldn't be, but safety
@@ -295,14 +268,13 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     // above AND let this loop emit it. BUT the user request says: "Skip main
     // during the loop. Only emit main at the very end"
 
-    if (func.name == "main")
-      continue;
+    if (func.name == "main") continue;
 
     compile_function(func);
   }
 
   // Emit Main at the end
-  for (const auto &func: program.functions) {
+  for (const auto &func : program.functions) {
     if (func.name == "main") {
       compile_function(func);
       break;
@@ -315,12 +287,12 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
   if (needs_delay_1ms) {
     emit_label("__delay_1ms_base");
-    unsigned long cycles = config.frequency / 4000; // 1ms
+    unsigned long cycles = config.frequency / 4000;  // 1ms
     // Subtract CALL(2) + RETURN(2) + Loop Overhead(3) = 7 cycles
     if (cycles > 7)
       cycles -= 7;
     else
-      cycles = 0; // Handle very low clock speeds gracefully
+      cycles = 0;  // Handle very low clock speeds gracefully
     emit_delay_cycles(cycles);
     emit("RETURN");
   }
@@ -330,20 +302,18 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // Optimization step
   // auto optimized = PIC14Peephole::optimize(assembly);
 
-  for (const auto &line: assembly) {
+  for (const auto &line : assembly) {
     os << line.to_string() << "\n";
   }
 }
 
 void PIC14CodeGen::emit_config_directives() {
-  if (config.fuses.empty())
-    return;
+  if (config.fuses.empty()) return;
 
   std::string config_line = "\t__CONFIG";
   bool first = true;
-  for (const auto &[key, val]: config.fuses) {
-    if (!first)
-      config_line += " &";
+  for (const auto &[key, val] : config.fuses) {
+    if (!first) config_line += " &";
     // gpasm expects _KEY_VAL or just _VAL depending on the header
     // For now, we'll assume the user provides the full flag like _FOSC_HS
     if (val == "ON" || val == "1" || val == "TRUE") {
@@ -361,10 +331,10 @@ void PIC14CodeGen::emit_config_directives() {
 
 void PIC14CodeGen::compile_function(const tacky::Function &func) {
   emit_label(func.name);
-  current_bank = -1; // Reset bank state at function entry
-  current_block_terminated = false; // Reset dead code flag
+  current_bank = -1;                 // Reset bank state at function entry
+  current_block_terminated = false;  // Reset dead code flag
 
-  for (const auto &instr: func.body) {
+  for (const auto &instr : func.body) {
     // Skip emitting if we've hit a terminator
     if (current_block_terminated) {
       // Reset flag on labels (new basic blocks)
@@ -410,7 +380,7 @@ void PIC14CodeGen::store_w_into(const tacky::Val &val) {
 void PIC14CodeGen::compile_variant(const tacky::Return &arg) {
   load_into_w(arg.value);
   emit("RETURN");
-  current_block_terminated = true; // Mark block as terminated
+  current_block_terminated = true;  // Mark block as terminated
 }
 
 void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
@@ -421,10 +391,9 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
   else if (const auto t = std::get_if<tacky::Temporary>(&arg.dst))
     name = t->name;
   else if (const auto addr = std::get_if<tacky::MemoryAddress>(&arg.dst))
-    size = (addr->type == DataType::UINT16) ? 2 : 1; // Basic size check
+    size = (addr->type == DataType::UINT16) ? 2 : 1;  // Basic size check
 
-  if (!name.empty() && var_sizes.contains(name))
-    size = var_sizes[name];
+  if (!name.empty() && var_sizes.contains(name)) size = var_sizes[name];
 
   if (size == 1) {
     load_into_w(arg.src);
@@ -436,8 +405,8 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
     std::string dst_lo = resolve_address(arg.dst);
     std::string dst_hi =
         dst_lo.starts_with("0x")
-          ? std::format("0x{:02X}", std::stoi(dst_lo, nullptr, 16) + 1)
-          : dst_lo + "+1";
+            ? std::format("0x{:02X}", std::stoi(dst_lo, nullptr, 16) + 1)
+            : dst_lo + "+1";
 
     if (const auto c = std::get_if<tacky::Constant>(&arg.src)) {
       // Copy Constant
@@ -454,8 +423,8 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
       std::string src_lo = resolve_address(arg.src);
       std::string src_hi =
           src_lo.starts_with("0x")
-            ? std::format("0x{:02X}", std::stoi(src_lo, nullptr, 16) + 1)
-            : src_lo + "+1";
+              ? std::format("0x{:02X}", std::stoi(src_lo, nullptr, 16) + 1)
+              : src_lo + "+1";
 
       select_bank(src_lo);
       emit("MOVF", src_lo, "W");
@@ -549,11 +518,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       if (!t->name.empty() && var_sizes.contains(t->name))
         return var_sizes[t->name];
     } else if (const auto m = std::get_if<tacky::MemoryAddress>(&val)) {
-      if (m->type == DataType::UINT16)
-        return 2;
+      if (m->type == DataType::UINT16) return 2;
     } else if (const auto c = std::get_if<tacky::Constant>(&val)) {
-      if (c->value > 255 || c->value < 0)
-        return 2;
+      if (c->value > 255 || c->value < 0) return 2;
     }
     return 1;
   };
@@ -623,7 +590,7 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       // Comparison (16-bit) -> Result is 8-bit boolean (0 or 1)
       std::string dst_addr = resolve_address(arg.dst);
       select_bank(dst_addr);
-      emit("CLRF", dst_addr); // Default to 0 (false)
+      emit("CLRF", dst_addr);  // Default to 0 (false)
 
       // Helper to load byte (high/low)
       auto load_byte = [&](const tacky::Val &v, bool high) {
@@ -663,9 +630,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
         std::string src1_hi = get_addr(arg.src1, true);
         if (std::holds_alternative<tacky::Constant>(arg.src1)) {
           emit("XORLW",
-               std::format("0x{:02X}",
-                           std::get<tacky::Constant>(arg.src1).value >> 8 &
-                           0xFF));
+               std::format(
+                   "0x{:02X}",
+                   std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
         } else {
           select_bank(src1_hi);
           emit("XORWF", src1_hi, "W");
@@ -697,9 +664,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
         std::string src1_hi = get_addr(arg.src1, true);
         if (std::holds_alternative<tacky::Constant>(arg.src1))
           emit("XORLW",
-               std::format("0x{:02X}",
-                           std::get<tacky::Constant>(arg.src1).value >> 8 &
-                           0xFF));
+               std::format(
+                   "0x{:02X}",
+                   std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
         else {
           select_bank(src1_hi);
           emit("XORWF", src1_hi, "W");
@@ -732,9 +699,9 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
       std::string src1_hi = get_addr(arg.src1, true);
       if (std::holds_alternative<tacky::Constant>(arg.src1)) {
         emit(
-          "SUBLW",
-          std::format("0x{:02X}",
-                      std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
+            "SUBLW",
+            std::format("0x{:02X}",
+                        std::get<tacky::Constant>(arg.src1).value >> 8 & 0xFF));
       } else {
         select_bank(src1_hi);
         emit("SUBWF", src1_hi, "W");
@@ -784,6 +751,146 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
     }
   }
 
+  // --- 8-Bit Comparisons with Optimization ---
+  if (is_comparison && size == 1) {
+    std::string dst_addr = resolve_address(arg.dst);
+    select_bank(dst_addr);
+    emit("CLRF", dst_addr);  // Default False
+
+    std::string label_true = make_label("cmp_true");
+    std::string label_end = make_label("cmp_end");
+
+    // Optimization: Check for Literal on RHS
+    if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+      int k = c2->value & 0xFF;
+      if (std::holds_alternative<tacky::Variable>(arg.src1) ||
+          std::holds_alternative<tacky::Temporary>(arg.src1) ||
+          std::holds_alternative<tacky::MemoryAddress>(arg.src1)) {
+        std::string src_addr = resolve_address(arg.src1);
+        select_bank(src_addr);
+        emit("MOVF", src_addr, "W");
+
+        if (arg.op == tacky::BinaryOp::Equal) {
+          emit("XORLW", std::format("0x{:02X}", k));
+          emit("BTFSC", "STATUS", "2");  // Skip if Z=0 (Not Equal)
+          emit("GOTO", label_true);
+          emit("GOTO", label_end);
+        } else if (arg.op == tacky::BinaryOp::NotEqual) {
+          emit("XORLW", std::format("0x{:02X}", k));
+          emit("BTFSS", "STATUS", "2");  // Skip if Z=1 (Equal)
+          emit("GOTO", label_true);
+          emit("GOTO", label_end);
+        } else if (arg.op == tacky::BinaryOp::GreaterThan) {
+          // var > k
+          // SUBLW k -> k - W.
+          // If k < W (Borrow), C=0.
+          // If k >= W (No Borrow), C=1.
+          // We want C=0 for True.
+          emit("SUBLW", std::format("0x{:02X}", k));
+          emit("BTFSS", "STATUS", "0");  // Skip if C=1
+          emit("GOTO", label_true);
+          emit("GOTO", label_end);
+        } else if (arg.op == tacky::BinaryOp::LessEqual) {
+          // var <= k
+          // k - W.
+          // If k >= W, C=1.
+          // We want C=1 for True.
+          emit("SUBLW", std::format("0x{:02X}", k));
+          emit("BTFSC", "STATUS", "0");  // Skip if C=0
+          emit("GOTO", label_true);
+          emit("GOTO", label_end);
+        } else if (arg.op == tacky::BinaryOp::LessThan) {
+          // var < k  <=> var <= k-1
+          if (k == 0) {
+            // Unsigned < 0 is always false.
+            emit("GOTO", label_end);
+          } else {
+            emit("SUBLW", std::format("0x{:02X}", k - 1));
+            emit("BTFSC", "STATUS", "0");  // True if k-1 >= W (C=1)
+            emit("GOTO", label_true);
+            emit("GOTO", label_end);
+          }
+        } else if (arg.op == tacky::BinaryOp::GreaterEqual) {
+          // var >= k <=> var > k-1
+          if (k == 0) {
+            // Unsigned >= 0 is always true.
+            emit("GOTO", label_true);
+          } else {
+            emit("SUBLW", std::format("0x{:02X}", k - 1));
+            // k-1 - W. If k-1 < W (Borrow), C=0. True.
+            emit("BTFSS", "STATUS", "0");  // True if C=0
+            emit("GOTO", label_true);
+            emit("GOTO", label_end);
+          }
+        } else {
+          // Fallback? Should be covered.
+        }
+
+        emit_label(label_true);
+        select_bank(dst_addr);
+        emit("INCF", dst_addr, "F");
+        emit_label(label_end);
+        return;
+      }
+    }
+    // End Optimization
+
+    // Generic 8-bit comparison (no literal optimization or both are literals)
+    load_into_w(arg.src2);
+
+    std::string addr1 = resolve_address(arg.src1);
+    select_bank(addr1);
+    emit("SUBWF", addr1, "W");  // W = src1 - src2
+
+    // dst_addr is already selected and CLRF'd
+
+    switch (arg.op) {
+      case tacky::BinaryOp::Equal:
+        emit("BTFSC", "STATUS", "2");  // Z=1 if equal
+        break;
+      case tacky::BinaryOp::NotEqual:
+        emit("BTFSS", "STATUS", "2");  // Z=0 if not equal
+        break;
+      case tacky::BinaryOp::LessThan:  // src1 < src2 <=> src1 - src2 has borrow
+                                       // (C=0)
+        emit("BTFSS", "STATUS", "0");  // C=0 if less than
+        break;
+      case tacky::BinaryOp::GreaterEqual:  // src1 >= src2 <=> src1 - src2 no
+                                           // borrow (C=1)
+        emit("BTFSC", "STATUS", "0");      // C=1 if greater or equal
+        break;
+      case tacky::BinaryOp::GreaterThan: {  // src1 > src2 <=> src1 - src2 no
+                                            // borrow (C=1) AND not equal (Z=0)
+        std::string lbl_skip = make_label("L_GT");
+        emit("BTFSS", "STATUS", "0");  // Skip if C=0 (src1 < src2)
+        emit("GOTO", lbl_skip);
+        emit("BTFSC", "STATUS", "2");  // Skip if Z=1 (src1 == src2)
+        emit("GOTO", lbl_skip);
+        emit("INCF", dst_addr, "F");
+        emit_label(lbl_skip);
+        return;
+      }
+      case tacky::BinaryOp::LessEqual: {  // src1 <= src2 <=> src1 - src2 has
+                                          // borrow (C=0) OR equal (Z=1)
+        std::string lbl_set = make_label("L_LE");
+        std::string lbl_skip = make_label("L_LES");
+        emit("BTFSS", "STATUS", "0");  // Skip if C=0 (src1 < src2)
+        emit("GOTO", lbl_set);
+        emit("BTFSC", "STATUS", "2");  // Skip if Z=1 (src1 == src2)
+        emit("GOTO", lbl_skip);
+        emit_label(lbl_set);
+        emit("INCF", dst_addr, "F");
+        emit_label(lbl_skip);
+        return;
+      }
+      default:
+        break;
+    }
+    emit("INCF", dst_addr, "F");
+    emit_label(label_end);  // Ensure label_end is emitted for all paths
+    return;
+  }
+
   if (!is_comparison) {
     // --- Shift operations need special handling (file register ops) ---
     if (arg.op == tacky::BinaryOp::LShift ||
@@ -798,11 +905,11 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
 
       if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
         // Constant shift: unroll N iterations
-        int shift_count = c2->value & 0x07; // Max 7 for 8-bit
+        int shift_count = c2->value & 0x07;  // Max 7 for 8-bit
         for (int i = 0; i < shift_count; i++) {
-          emit("BCF", "STATUS", "0"); // Clear Carry
+          emit("BCF", "STATUS", "0");  // Clear Carry
           select_bank(dst_addr);
-          emit(rotate_op, dst_addr, "F"); // Rotate in-place
+          emit(rotate_op, dst_addr, "F");  // Rotate in-place
         }
       } else {
         // Variable shift: use a counter loop
@@ -815,7 +922,7 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
         // it. For simplicity, count down using W and the file register
         select_bank(count_addr);
         emit("MOVF", count_addr, "W");
-        emit("BTFSC", "STATUS", "2"); // Skip if count != 0
+        emit("BTFSC", "STATUS", "2");  // Skip if count != 0
         emit("GOTO", done_label);
         emit_label(loop_label);
         emit("BCF", "STATUS", "0");
@@ -1014,7 +1121,7 @@ void PIC14CodeGen::compile_variant(const tacky::BitWrite &arg) {
   std::string lbl_zero = make_label("L_BZ");
   std::string lbl_end = make_label("L_BE");
 
-  emit("BTFSC", "STATUS", "2"); // Skip if not zero
+  emit("BTFSC", "STATUS", "2");  // Skip if not zero
   emit("GOTO", lbl_zero);
 
   select_bank(addr);
@@ -1098,12 +1205,10 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
   std::string var_name;
   if (const auto v = std::get_if<tacky::Variable>(&arg.target)) {
     var_name = v->name;
-    if (var_sizes.contains(var_name))
-      size = var_sizes[var_name];
+    if (var_sizes.contains(var_name)) size = var_sizes[var_name];
   } else if (const auto t = std::get_if<tacky::Temporary>(&arg.target)) {
     var_name = t->name;
-    if (var_sizes.contains(var_name))
-      size = var_sizes[var_name];
+    if (var_sizes.contains(var_name)) size = var_sizes[var_name];
   }
 
   // Handle address strings for high byte
@@ -1187,16 +1292,12 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       }
 
       // Low byte
-      std::string op_str = (arg.op == tacky::BinaryOp::BitAnd)
-                             ? "ANDWF"
-                             : (arg.op == tacky::BinaryOp::BitOr)
-                                 ? "IORWF"
-                                 : "XORWF";
-      std::string lit_op_str = (arg.op == tacky::BinaryOp::BitAnd)
-                                 ? "ANDLW"
-                                 : (arg.op == tacky::BinaryOp::BitOr)
-                                     ? "IORLW"
-                                     : "XORLW";
+      std::string op_str = (arg.op == tacky::BinaryOp::BitAnd)  ? "ANDWF"
+                           : (arg.op == tacky::BinaryOp::BitOr) ? "IORWF"
+                                                                : "XORWF";
+      std::string lit_op_str = (arg.op == tacky::BinaryOp::BitAnd)  ? "ANDLW"
+                               : (arg.op == tacky::BinaryOp::BitOr) ? "IORLW"
+                                                                    : "XORLW";
 
       select_bank(target_addr);
       if (is_const)
@@ -1204,7 +1305,7 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       else {
         // Load operand low
         // TODO: Need helper to load operand low/high for variables
-        load_into_w(arg.operand); // This loads low byte currently
+        load_into_w(arg.operand);  // This loads low byte currently
       }
       if (!is_const)
         emit(op_str, target_addr, "F");
@@ -1229,7 +1330,7 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
         // Load operand high...
         // We need generic load_byte(val, offset) support
         throw std::runtime_error(
-          "PIC14: 16-bit AugAssign non-const bitwise not fully implemented");
+            "PIC14: 16-bit AugAssign non-const bitwise not fully implemented");
       }
       return;
     }
@@ -1252,7 +1353,7 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       } else {
         // Variable
         throw std::runtime_error(
-          "PIC14: 16-bit AugAssign var addition not fully implemented");
+            "PIC14: 16-bit AugAssign var addition not fully implemented");
       }
       return;
     }
@@ -1305,14 +1406,14 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
 
       emit_label(loop_lbl);
       emit("MOVF", "__tmp", "F");
-      emit("BTFSC", "STATUS", "2"); // Check if 0
+      emit("BTFSC", "STATUS", "2");  // Check if 0
       emit("GOTO", done_lbl);
 
-      emit("BCF", "STATUS", "0"); // Clear carry
+      emit("BCF", "STATUS", "0");  // Clear carry
       select_bank(target_addr);
       emit("RLF", target_addr, "F");
       select_bank(target_addr_hi);
-      emit("RLF", target_addr_hi, "F"); // Rotate through carry
+      emit("RLF", target_addr_hi, "F");  // Rotate through carry
 
       emit("DECF", "__tmp", "F");
       emit("GOTO", loop_lbl);
@@ -1334,10 +1435,10 @@ void PIC14CodeGen::compile_variant(const tacky::AugAssign &arg) {
       emit("GOTO", done_lbl);
 
       emit("BCF", "STATUS", "0");
-      select_bank(target_addr_hi); // MSB first for RShift
+      select_bank(target_addr_hi);  // MSB first for RShift
       emit("RRF", target_addr_hi, "F");
       select_bank(target_addr);
-      emit("RRF", target_addr, "F"); // Rotate through carry
+      emit("RRF", target_addr, "F");  // Rotate through carry
 
       emit("DECF", "__tmp", "F");
       emit("GOTO", loop_lbl);
@@ -1425,7 +1526,7 @@ void PIC14CodeGen::compile_variant(const tacky::Delay &arg) {
       cycles = (static_cast<unsigned long long>(duration) * config.frequency) /
                4000000;
       if (cycles == 0 && duration > 0)
-        cycles = 1; // At least 1 cycle for minimal delay
+        cycles = 1;  // At least 1 cycle for minimal delay
     }
     emit_comment(std::format("Delay {} {}", duration, arg.is_ms ? "ms" : "us"));
     emit_delay_cycles(static_cast<unsigned long>(cycles));
@@ -1463,7 +1564,7 @@ void PIC14CodeGen::compile_variant(const tacky::Delay &arg) {
 
       // Check for 0 handling
       emit("MOVF", loop_ctr, "F");
-      emit("BTFSC", "STATUS", "2"); // Check Z bit
+      emit("BTFSC", "STATUS", "2");  // Check Z bit
       emit("GOTO", end_label);
 
       emit_label(loop_label);
@@ -1473,31 +1574,30 @@ void PIC14CodeGen::compile_variant(const tacky::Delay &arg) {
       emit_label(end_label);
     } else {
       throw std::runtime_error(
-        "Variable delay_us() is not supported on PIC14/16 (timing "
-        "constraints). Use delay_ms() or constant delay_us().");
+          "Variable delay_us() is not supported on PIC14/16 (timing "
+          "constraints). Use delay_ms() or constant delay_us().");
     }
   }
 }
 
 void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
-  if (cycles == 0)
-    return;
+  if (cycles == 0) return;
 
   // Simple heuristic:
   // Use NOPs for small counts
   while (cycles > 0 && cycles < 10) {
-    if (cycles >= 2) {
-      emit("GOTO", "$+1");
-      cycles -= 2;
-    } else {
-      emit("NOP");
-      cycles--;
+    if (cycles > 0) {
+      if (cycles == 1) {
+        emit("NOP");
+      } else {
+        // Loop or unrolled NOPs
+        while (cycles > 0) {
+          emit("NOP");
+          cycles--;
+        }
+      }
     }
   }
-
-  if (cycles == 0)
-    return;
-
   if (cycles < 770) {
     // 1 Level
     unsigned long k = (cycles - 1) / 3;
@@ -1512,14 +1612,12 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
     emit("DECFSZ", c1, "F");
     emit("GOTO", l);
 
-    emit_delay_cycles(rem); // Recurse for remainder
+    emit_delay_cycles(rem);  // Recurse for remainder
   } else if (cycles < 197000) {
     // 2 Levels
     unsigned long k2 = cycles / 770;
-    if (k2 > 255)
-      k2 = 255;
-    if (k2 == 0)
-      k2 = 1;
+    if (k2 > 255) k2 = 255;
+    if (k2 == 0) k2 = 1;
 
     unsigned long used = k2 * 770;
 
@@ -1528,7 +1626,7 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
 
     emit("MOVLW", std::format("0x{:02X}", k2 & 0xFF));
     emit("MOVWF", c2);
-    emit("MOVLW", "0xFF"); // 256 loops
+    emit("MOVLW", "0xFF");  // 256 loops
     emit("MOVWF", c1);
 
     // Logic check:
@@ -1548,11 +1646,9 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
     emit_delay_cycles(cycles - used);
   } else {
     // 3 Levels
-    unsigned long k3 = cycles / 197120; // 256 * 770
-    if (k3 > 255)
-      k3 = 255;
-    if (k3 == 0)
-      k3 = 1;
+    unsigned long k3 = cycles / 197120;  // 256 * 770
+    if (k3 > 255) k3 = 255;
+    if (k3 == 0) k3 = 1;
 
     std::string c1 = get_or_alloc_variable("__dly_c1");
     std::string c2 = get_or_alloc_variable("__dly_c2");
@@ -1560,7 +1656,7 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
 
     emit("MOVLW", std::format("0x{:02X}", k3 & 0xFF));
     emit("MOVWF", c3);
-    emit("CLRF", c2); // 0 -> 256 loops
+    emit("CLRF", c2);  // 0 -> 256 loops
     emit("CLRF", c1);
 
     std::string l = make_label("dly3");
@@ -1579,6 +1675,191 @@ void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
 
 void PIC14CodeGen::compile_variant(const tacky::DebugLine &arg) {
   emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfEqual &arg) {
+  // if (src1 == src2) goto target
+  // Optimized 8-bit Literal Case
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    if (c2->value >= 0 && c2->value <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("XORLW", std::format("0x{:02X}", c2->value));
+      emit("BTFSC", "STATUS", "2");  // Skip if Z=0 (Not Equal)
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  // Generic fallback: Subtract and check Z
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W");
+  emit("BTFSC", "STATUS", "2");
+  emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfNotEqual &arg) {
+  // if (src1 != src2) goto target
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    if (c2->value >= 0 && c2->value <= 255) {
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("XORLW", std::format("0x{:02X}", c2->value));
+      emit("BTFSS", "STATUS", "2");  // Skip if Z=1 (Equal)
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W");
+  emit("BTFSS", "STATUS", "2");
+  emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfLessThan &arg) {
+  // if (src1 < src2) <-> src1 - src2 < 0 (Borrow, C=0)
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      // src1 < k
+      if (k == 0) return;  // Unsigned < 0 is never true
+      // SUBLW k -> k - W (W is src1)
+      // w < k -> k - w > 0 -> No Borrow -> C=1.
+      // Example: 10 < 20. 20 - 10 = 10. C=1.
+      // So W <= k is C=1.
+      // We want W < k. Equivalent to W <= k-1.
+      // Check (k-1) - W.
+      // If W <= k-1, then (k-1) - W >= 0. C=1.
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("SUBLW", std::format("0x{:02X}", k - 1));
+      emit("BTFSC", "STATUS", "0");  // Jump if C=1 (W <= k-1)
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  // Generic: SUBWF src1, W (W = src1 - src2 is wrong. SUBWF f, d means f - W)
+  // result = src1 - src2.
+  // if src1 < src2, result < 0. Borrow. C=0.
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W");
+  emit("BTFSS", "STATUS", "0");  // Jump if C=0
+  emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfLessOrEqual &arg) {
+  // if (src1 <= src2)
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      // src1 <= k
+      // Check k - src1 >= 0. C=1.
+      // SUBLW k. k - W.
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("SUBLW", std::format("0x{:02X}", k));
+      emit("BTFSC", "STATUS", "0");  // Jump if C=1
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  // Generic: src1 - src2 <= 0.
+  // Not easy with SUBWF.
+  // Use negation? src2 >= src1?
+  // or src1 <= src2 <-> !(src1 > src2)
+  // strict > : src1 - src2 > 0.
+
+  // Actually, standard:
+  // C=0 means Borrow (src1 < src2).
+  // C=1 means No Borrow (src1 >= src2).
+  // We want src1 <= src2.
+  // Check C=0 (Less) OR Z=1 (Equal).
+  // OR: compute src2 - src1.
+  // If src2 - src1 >= 0 (C=1), then src2 >= src1 -> src1 <= src2.
+  // YES. Reverse operands!
+  // But we can't easily reverse if src1 is mem and src2 is partial.
+  // Load src1 into W?
+  load_into_w(arg.src1);
+  std::string src2_addr = resolve_address(arg.src2);  // Might need to be memory
+  // SUBWF src2, W -> src2 - W (src2 - src1).
+  // Result in W.
+  select_bank(src2_addr);
+  emit("SUBWF", src2_addr, "W");
+  emit("BTFSC", "STATUS", "0");  // Jump if C=1 (src2 >= src1)
+  emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfGreaterThan &arg) {
+  // if (src1 > src2)
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      // src1 > k
+      // Equivalent to src1 >= k+1
+      // SUBLW (k+1) - 1 ?? No.
+      // Use k - src1. If negative (Borrow, C=0), then k < src1 -> src1 > k.
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("SUBLW", std::format("0x{:02X}", k));
+      emit("BTFSS", "STATUS", "0");  // Jump if C=0 (Borrow -> k < src1)
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  // Generic: src1 - src2 > 0.
+  // Standard SUBWF (src1 - src2).
+  // We want src1 > src2.
+  // This is C=1 (>=) AND Z=0 (!=).
+  // OR: flip operands: src2 < src1.
+  // src2 - src1 < 0. (Borrow, C=0).
+  load_into_w(arg.src1);
+  std::string src2_addr = resolve_address(arg.src2);
+  select_bank(src2_addr);
+  emit("SUBWF", src2_addr, "W");  // src2 - src1
+  emit("BTFSS", "STATUS", "0");   // Jump if C=0 (src2 < src1 -> src1 > src2)
+  emit("GOTO", arg.target);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::JumpIfGreaterOrEqual &arg) {
+  // if (src1 >= src2)
+  if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
+    int k = c2->value;
+    if (k >= 0 && k <= 255) {
+      // src1 >= k
+      // Equivalent to src1 > k-1
+      if (k == 0) {  // Always true for unsigned
+        emit("GOTO", arg.target);
+        return;
+      }
+      // SUBLW k-1. (k-1) - W.
+      // If W > k-1, then (k-1) - W < 0. Borrow. C=0.
+      std::string src1 = resolve_address(arg.src1);
+      select_bank(src1);
+      emit("MOVF", src1, "W");
+      emit("SUBLW", std::format("0x{:02X}", k - 1));
+      emit("BTFSS", "STATUS", "0");  // Jump if C=0
+      emit("GOTO", arg.target);
+      return;
+    }
+  }
+  // Generic: src1 - src2
+  // >= : C=1 (No Borrow).
+  load_into_w(arg.src2);
+  std::string src1 = resolve_address(arg.src1);
+  select_bank(src1);
+  emit("SUBWF", src1, "W");
+  emit("BTFSC", "STATUS", "0");  // Jump if C=1
+  emit("GOTO", arg.target);
 }
 
 // ... (end of file helper needed? No, we are replacing the bottom chunk)
@@ -1603,19 +1884,13 @@ void PIC14CodeGen::compile_variant(const tacky::DebugLine &arg) {
 // Edit 2: Update `compile` (lines 173-177).
 
 // Let's do Edit 2 first (smaller).
-void PIC14CodeGen::emit_context_save() {
-  emit_comment("Context Save");
-  emit("MOVWF", "W_TEMP");
-  emit("SWAPF", "STATUS", "W");
-  emit("MOVWF", "STATUS_TEMP");
-}
+// Edit 2: Update `compile` (lines 173-177).
 
-void PIC14CodeGen::emit_context_restore() {
-  emit_comment("Context Restore");
-  emit("SWAPF", "STATUS_TEMP", "W");
-  emit("MOVWF", "STATUS");
-  emit("SWAPF", "W_TEMP", "F");
-  emit("SWAPF", "W_TEMP", "W");
-}
+// Context Save/Restore delegated to Strategy
+void PIC14CodeGen::emit_context_save() { strategy->emit_context_save(); }
 
-void PIC14CodeGen::emit_interrupt_return() { emit("RETFIE"); }
+void PIC14CodeGen::emit_context_restore() { strategy->emit_context_restore(); }
+
+void PIC14CodeGen::emit_interrupt_return() {
+  strategy->emit_interrupt_return();
+}

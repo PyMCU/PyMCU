@@ -2,19 +2,20 @@
 #define PARSER_H
 
 #pragma once
-#include "Ast.h"
-#include "Token.h"
 #include <memory>
 #include <string_view>
 #include <vector>
 
+#include "Ast.h"
+#include "Token.h"
+
 class Parser {
-public:
+ public:
   explicit Parser(const std::vector<Token> &tokens);
 
   std::unique_ptr<Program> parseProgram();
 
-private:
+ private:
   const std::vector<Token> &tokens;
   size_t pos = 0;
 
@@ -58,27 +59,27 @@ private:
 
   std::unique_ptr<Statement> parseAssignmentOrDeclaration();
 
-  std::unique_ptr<Expression> parseExpression(); // Entry point
-  std::unique_ptr<Expression> parseLogicalOr(); // or
-  std::unique_ptr<Expression> parseLogicalAnd(); // and
-  std::unique_ptr<Expression> parseLogicalNot(); // not
+  std::unique_ptr<Expression> parseExpression();  // Entry point
+  std::unique_ptr<Expression> parseLogicalOr();   // or
+  std::unique_ptr<Expression> parseLogicalAnd();  // and
+  std::unique_ptr<Expression> parseLogicalNot();  // not
   std::unique_ptr<Expression> parseComparison();
 
-  std::unique_ptr<Expression> parseBitwiseOr(); // |
-  std::unique_ptr<Expression> parseBitwiseXor(); // ^
-  std::unique_ptr<Expression> parseBitwiseAnd(); // &
-  std::unique_ptr<Expression> parseShift(); // <<, >>
-  std::unique_ptr<Expression> parseAdditive(); // +, -
-  std::unique_ptr<Expression> parseMultiplicative(); // *, /, %
-  std::unique_ptr<Expression> parseUnary(); // -, not, ~, !
+  std::unique_ptr<Expression> parseBitwiseOr();       // |
+  std::unique_ptr<Expression> parseBitwiseXor();      // ^
+  std::unique_ptr<Expression> parseBitwiseAnd();      // &
+  std::unique_ptr<Expression> parseShift();           // <<, >>
+  std::unique_ptr<Expression> parseAdditive();        // +, -
+  std::unique_ptr<Expression> parseMultiplicative();  // *, /, %
+  std::unique_ptr<Expression> parseUnary();           // -, not, ~, !
 
   std::unique_ptr<Expression> parsePostfix();
 
-  std::unique_ptr<Expression> parsePrimary(); // Literals, (Expr), Identifiers
+  std::unique_ptr<Expression> parsePrimary();  // Literals, (Expr), Identifiers
 
   std::unique_ptr<ImportStmt> parseImportStatement();
 
   std::unique_ptr<GlobalStmt> parseGlobalStatement();
 };
 
-#endif // PARSER_H
+#endif  // PARSER_H

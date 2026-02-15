@@ -3,16 +3,25 @@
 
 #pragma once
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "../../../../common/DeviceConfig.h"
 #include "../../CodeGen.h"
-#include "DeviceConfig.h"
+#include "ArchStrategy.h"
 #include "PIC14Peephole.h"
 
+// Forward declare for friends
+class PIC14Strategy;
+class PIC14EStrategy;
+
 class PIC14CodeGen : public CodeGen {
-public:
+  friend class PIC14Strategy;
+  friend class PIC14EStrategy;
+
+ public:
   explicit PIC14CodeGen(DeviceConfig cfg);
 
   void compile(const tacky::Program &program, std::ostream &os) override;
@@ -28,8 +37,17 @@ public:
     stack_layout = std::move(layout);
   }
 
-private:
+  // Exposed for ArchStrategy
+  void emit_comment(const std::string &comment) const;
+  void emit(const std::string &mnemonic) const;
+  void emit(const std::string &mnemonic, const std::string &op1) const;
+  void emit(const std::string &mnemonic, const std::string &op1,
+            const std::string &op2) const;
+
+ private:
   DeviceConfig config;
+  std::unique_ptr<ArchStrategy> strategy;  // Architecture Strategy
+
   std::ostream *out;
   std::vector<PIC14AsmLine> assembly;
   std::map<std::string, int> symbol_table;
@@ -57,18 +75,11 @@ private:
   std::string current_function_name;
 
   // --- Emission Helpers ---
-  void emit(const std::string &mnemonic) const;
-
-  void emit(const std::string &mnemonic, const std::string &op1) const;
-
-  void emit(const std::string &mnemonic, const std::string &op1,
-            const std::string &op2) const;
+  // (Moved public)
 
   void emit_float_add(const std::string &target, const std::string &source);
 
   void emit_label(const std::string &label) const;
-
-  void emit_comment(const std::string &comment) const;
 
   void emit_raw(const std::string &text) const;
 
@@ -98,6 +109,13 @@ private:
 
   void compile_variant(const tacky::JumpIfBitClear &arg);
 
+  void compile_variant(const tacky::JumpIfEqual &arg);
+  void compile_variant(const tacky::JumpIfNotEqual &arg);
+  void compile_variant(const tacky::JumpIfLessThan &arg);
+  void compile_variant(const tacky::JumpIfLessOrEqual &arg);
+  void compile_variant(const tacky::JumpIfGreaterThan &arg);
+  void compile_variant(const tacky::JumpIfGreaterOrEqual &arg);
+
   void compile_variant(const tacky::JumpIfNotZero &arg);
 
   void compile_variant(const tacky::Label &arg) const;
@@ -126,8 +144,8 @@ private:
 
   void compile_variant(const tacky::DebugLine &arg);
 
-private:
+ private:
   void emit_delay_cycles(unsigned long cycles);
 };
 
-#endif // PIC14CODEGEN_H
+#endif  // PIC14CODEGEN_H

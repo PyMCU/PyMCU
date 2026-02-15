@@ -1,4 +1,5 @@
 #include "AVRCodeGen.h"
+
 #include <algorithm>
 #include <format>
 #include <iostream>
@@ -8,7 +9,7 @@
 #include "backend/analysis/StackAllocator.h"
 
 AVRCodeGen::AVRCodeGen(DeviceConfig cfg)
-  : config(std::move(cfg)), out(nullptr) {
+    : config(std::move(cfg)), out(nullptr) {
   label_counter = 0;
 }
 
@@ -31,19 +32,19 @@ std::string AVRCodeGen::resolve_address(const tacky::Val &val) {
 
 void AVRCodeGen::emit(const std::string &mnemonic) const {
   const_cast<AVRCodeGen *>(this)->assembly.push_back(
-    AVRAsmLine::Instruction(mnemonic));
+      AVRAsmLine::Instruction(mnemonic));
 }
 
 void AVRCodeGen::emit(const std::string &mnemonic,
                       const std::string &op1) const {
   const_cast<AVRCodeGen *>(this)->assembly.push_back(
-    AVRAsmLine::Instruction(mnemonic, op1));
+      AVRAsmLine::Instruction(mnemonic, op1));
 }
 
 void AVRCodeGen::emit(const std::string &mnemonic, const std::string &op1,
                       const std::string &op2) const {
   const_cast<AVRCodeGen *>(this)->assembly.push_back(
-    AVRAsmLine::Instruction(mnemonic, op1, op2));
+      AVRAsmLine::Instruction(mnemonic, op1, op2));
 }
 
 void AVRCodeGen::emit_label(const std::string &label) const {
@@ -52,7 +53,7 @@ void AVRCodeGen::emit_label(const std::string &label) const {
 
 void AVRCodeGen::emit_comment(const std::string &comment) const {
   const_cast<AVRCodeGen *>(this)->assembly.push_back(
-    AVRAsmLine::Comment(comment));
+      AVRAsmLine::Comment(comment));
 }
 
 void AVRCodeGen::emit_raw(const std::string &text) const {
@@ -138,7 +139,7 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_raw(".equ RAMSTART = 0x0100");
   emit_raw(std::format(".equ _stack_base = RAMSTART"));
 
-  for (const auto &[name, offset]: stack_layout) {
+  for (const auto &[name, offset] : stack_layout) {
     emit_raw(std::format(".equ {} = _stack_base + {}", name, offset));
   }
 
@@ -146,13 +147,13 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_raw(".org 0x0000");
   emit("RJMP", "main");
 
-  for (const auto &func: program.functions) {
+  for (const auto &func : program.functions) {
     compile_function(func);
   }
 
   // Apply peephole optimizations
   auto optimized = AVRPeephole::optimize(assembly);
-  for (const auto &line: optimized) {
+  for (const auto &line : optimized) {
     os << line.to_string() << "\n";
   }
 }
@@ -162,17 +163,17 @@ void AVRCodeGen::compile_function(const tacky::Function &func) {
 
   if (func.name == "main") {
     // Initialize Stack Pointer for ATmega328P
-    emit("LDI", "R16", "high(0x08FF)"); // RAMEND for ATmega328P is 0x08FF
-    emit("OUT", "0x3E", "R16"); // SPH
+    emit("LDI", "R16", "high(0x08FF)");  // RAMEND for ATmega328P is 0x08FF
+    emit("OUT", "0x3E", "R16");          // SPH
     emit("LDI", "R16", "low(0x08FF)");
-    emit("OUT", "0x3D", "R16"); // SPL
+    emit("OUT", "0x3D", "R16");  // SPL
 
     // Initialize Y (R28:R29) to point to _stack_base
     emit("LDI", "R28", "low(_stack_base)");
     emit("LDI", "R29", "high(_stack_base)");
   }
 
-  for (const auto &instr: func.body) {
+  for (const auto &instr : func.body) {
     compile_instruction(instr);
   }
 }
@@ -183,7 +184,7 @@ void AVRCodeGen::compile_instruction(const tacky::Instruction &instr) {
 
 void AVRCodeGen::compile_variant(const tacky::Return &arg) {
   if (!std::holds_alternative<std::monostate>(arg.value)) {
-    load_into_reg(arg.value, "R24"); // R24 is standard return register
+    load_into_reg(arg.value, "R24");  // R24 is standard return register
   }
   emit("RET");
 }
@@ -210,6 +211,80 @@ void AVRCodeGen::compile_variant(const tacky::Label &arg) const {
 
 void AVRCodeGen::compile_variant(const tacky::DebugLine &arg) {
   emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfEqual &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    int val = c->value & 0xFF;
+    if (val == 0)
+      emit("TST", "R16");
+    else
+      emit("CPI", "R16", std::format("{}", val));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BREQ", arg.target);
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfNotEqual &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    int val = c->value & 0xFF;
+    if (val == 0)
+      emit("TST", "R16");
+    else
+      emit("CPI", "R16", std::format("{}", val));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BRNE", arg.target);
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfLessThan &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    emit("CPI", "R16", std::format("{}", c->value & 0xFF));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BRLO", arg.target);
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfLessOrEqual &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    emit("CPI", "R16", std::format("{}", c->value & 0xFF));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BRLS", arg.target);
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfGreaterThan &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    emit("CPI", "R16", std::format("{}", c->value & 0xFF));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BRHI", arg.target);
+}
+
+void AVRCodeGen::compile_variant(const tacky::JumpIfGreaterOrEqual &arg) {
+  load_into_reg(arg.src1, "R16");
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
+    emit("CPI", "R16", std::format("{}", c->value & 0xFF));
+  } else {
+    load_into_reg(arg.src2, "R17");
+    emit("CP", "R16", "R17");
+  }
+  emit("BRSH", arg.target);
 }
 
 void AVRCodeGen::compile_variant(const tacky::Call &arg) {
@@ -242,8 +317,7 @@ void AVRCodeGen::compile_variant(const tacky::Unary &arg) {
       emit_label(l_true);
       emit("LDI", "R16", "1");
       emit_label(l_done);
-    }
-    break;
+    } break;
   }
   store_reg_into("R16", arg.dst);
 }
@@ -261,7 +335,7 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
         else if (val == 255)
           emit("DEC", "R16");
         else
-          emit("SUBI", "R16", std::format("{}", (unsigned char) -val));
+          emit("SUBI", "R16", std::format("{}", (unsigned char)-val));
         used_immediate = true;
         break;
       case tacky::BinaryOp::Sub:
@@ -294,13 +368,11 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
         used_immediate = true;
         break;
       case tacky::BinaryOp::LShift:
-        for (int i = 0; i < (val & 7); ++i)
-          emit("LSL", "R16");
+        for (int i = 0; i < (val & 7); ++i) emit("LSL", "R16");
         used_immediate = true;
         break;
       case tacky::BinaryOp::RShift:
-        for (int i = 0; i < (val & 7); ++i)
-          emit("LSR", "R16");
+        for (int i = 0; i < (val & 7); ++i) emit("LSR", "R16");
         used_immediate = true;
         break;
       default:
@@ -314,20 +386,16 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
 
   switch (arg.op) {
     case tacky::BinaryOp::Add:
-      if (!used_immediate)
-        emit("ADD", "R16", "R17");
+      if (!used_immediate) emit("ADD", "R16", "R17");
       break;
     case tacky::BinaryOp::Sub:
-      if (!used_immediate)
-        emit("SUB", "R16", "R17");
+      if (!used_immediate) emit("SUB", "R16", "R17");
       break;
     case tacky::BinaryOp::BitAnd:
-      if (!used_immediate)
-        emit("AND", "R16", "R17");
+      if (!used_immediate) emit("AND", "R16", "R17");
       break;
     case tacky::BinaryOp::BitOr:
-      if (!used_immediate)
-        emit("OR", "R16", "R17");
+      if (!used_immediate) emit("OR", "R16", "R17");
       break;
     case tacky::BinaryOp::BitXor:
       emit("EOR", "R16", "R17");
@@ -370,58 +438,49 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
       emit("RCALL", "__mod8");
       break;
     case tacky::BinaryOp::Equal: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_skip = make_label("L_SKIP");
       emit("LDI", "R18", "1");
       emit("BREQ", l_skip);
       emit("LDI", "R18", "0");
       emit_label(l_skip);
       emit("MOV", "R16", "R18");
-    }
-    break;
+    } break;
     case tacky::BinaryOp::NotEqual: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_skip = make_label("L_SKIP");
       emit("LDI", "R18", "1");
       emit("BRNE", l_skip);
       emit("LDI", "R18", "0");
       emit_label(l_skip);
       emit("MOV", "R16", "R18");
-    }
-    break;
+    } break;
     case tacky::BinaryOp::LessThan: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_skip = make_label("L_SKIP");
       emit("LDI", "R18", "1");
       emit("BRLO", l_skip);
       emit("LDI", "R18", "0");
       emit_label(l_skip);
       emit("MOV", "R16", "R18");
-    }
-    break;
+    } break;
     case tacky::BinaryOp::GreaterEqual: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_skip = make_label("L_SKIP");
       emit("LDI", "R18", "1");
       emit("BRSH", l_skip);
       emit("LDI", "R18", "0");
       emit_label(l_skip);
       emit("MOV", "R16", "R18");
-    }
-    break;
+    } break;
     case tacky::BinaryOp::GreaterThan: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_true = make_label("L_TRUE");
       std::string l_done = make_label("L_DONE");
       // A > B <=> flags for A-B have C=0 and Z=0.
       // BRSH is C=0.
-      emit("BREQ", l_done); // If Z=1, it's false
-      emit("BRSH", l_true); // If C=0 (and we know Z=0), it's true
+      emit("BREQ", l_done);  // If Z=1, it's false
+      emit("BRSH", l_true);  // If C=0 (and we know Z=0), it's true
       emit_label(l_done);
       emit("LDI", "R16", "0");
       std::string l_final = make_label("L_FINAL");
@@ -429,23 +488,20 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
       emit_label(l_true);
       emit("LDI", "R16", "1");
       emit_label(l_final);
-    }
-    break;
+    } break;
     case tacky::BinaryOp::LessEqual: {
-      if (!used_immediate)
-        emit("CP", "R16", "R17");
+      if (!used_immediate) emit("CP", "R16", "R17");
       std::string l_true = make_label("L_TRUE");
       std::string l_done = make_label("L_DONE");
-      emit("BRLO", l_true); // A < B
-      emit("BREQ", l_true); // A == B
+      emit("BRLO", l_true);  // A < B
+      emit("BREQ", l_true);  // A == B
       emit("LDI", "R16", "0");
       std::string l_final = make_label("L_FINAL");
       emit("RJMP", l_final);
       emit_label(l_true);
       emit("LDI", "R16", "1");
       emit_label(l_final);
-    }
-    break;
+    } break;
     default:
       break;
   }
@@ -474,7 +530,7 @@ void AVRCodeGen::compile_variant(const tacky::BitClear &arg) {
     }
   }
   load_into_reg(arg.target, "R16");
-  emit("ANDI", "R16", std::format("{}", (unsigned char) ~(1 << arg.bit)));
+  emit("ANDI", "R16", std::format("{}", (unsigned char)~(1 << arg.bit)));
   store_reg_into("R16", arg.target);
 }
 
@@ -532,7 +588,7 @@ void AVRCodeGen::compile_variant(const tacky::BitWrite &arg) {
   emit("ORI", "R17", std::format("{}", 1 << arg.bit));
   emit("RJMP", l_done);
   emit_label(l_skip);
-  emit("ANDI", "R17", std::format("{}", (unsigned char) ~(1 << arg.bit)));
+  emit("ANDI", "R17", std::format("{}", (unsigned char)~(1 << arg.bit)));
   emit_label(l_done);
   store_reg_into("R17", arg.target);
 }

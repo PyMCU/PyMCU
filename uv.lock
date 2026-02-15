@@ -55,9 +55,10 @@ wheels = [
 
 [[package]]
 name = "pymcu-compiler"
-version = "0.1.0a5"
+version = "0.1.0a22"
 source = { editable = "." }
 dependencies = [
+    { name = "pymcu-stdlib" },
     { name = "rich" },
     { name = "tomlkit" },
     { name = "typer" },
@@ -65,9 +66,19 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "pymcu-stdlib", specifier = ">=0.1.2a3", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "tomlkit", specifier = ">=0.12.0" },
     { name = "typer", specifier = ">=0.12.0" },
+]
+
+[[package]]
+name = "pymcu-stdlib"
+version = "0.1.2a3"
+source = { registry = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" }
+sdist = { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-stdlib/0.1.2a3/pymcu_stdlib-0.1.2a3.tar.gz", hash = "sha256:d7aceb723584ed1f3a35bf756af6d53ed19caa78609bd8e0e73d1550ba3a23fb" }
+wheels = [
+    { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-stdlib/0.1.2a3/pymcu_stdlib-0.1.2a3-py3-none-any.whl", hash = "sha256:b6a6743b2c3dc7022be7ce48178786ee9fc2f6ca9fff99819b1b18a47b67ac32" },
 ]
 
 [[package]]

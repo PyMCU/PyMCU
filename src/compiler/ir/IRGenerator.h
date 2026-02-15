@@ -2,8 +2,6 @@
 #define IRGENERATOR_H
 
 #pragma once
-#include "../frontend/Ast.h"
-#include "Tacky.h"
 #include <map>
 #include <optional>
 #include <set>
@@ -11,120 +9,135 @@
 #include <variant>
 #include <vector>
 
+#include "../frontend/Ast.h"
+#include "Tacky.h"
+
 struct SymbolInfo {
-    bool is_memory_address;
-    int value;
-    DataType type = DataType::UINT8;
+  bool is_memory_address;
+  int value;
+  DataType type = DataType::UINT8;
 };
 
 class IRGenerator {
-public:
-    tacky::Program generate(const Program &main_ast,
-                            const std::vector<const Program *> &imported_modules,
-                            const std::vector<std::string> &source_lines = {});
+ public:
+  tacky::Program generate(
+      const Program &main_ast,
+      const std::map<std::string, const Program *> &imported_modules,
+      const std::vector<std::string> &source_lines = {});
 
-private:
-    std::vector<tacky::Instruction> current_instructions;
-    int temp_counter = 0;
-    int label_counter = 0;
+ private:
+  std::vector<tacky::Instruction> current_instructions;
+  int temp_counter = 0;
+  int label_counter = 0;
+  std::map<std::string, SymbolInfo> globals;
+  std::map<std::string, DataType> mutable_globals;
+  std::map<std::string, DataType> variable_types;
+  std::map<std::string, std::string> function_return_types;
+  std::map<std::string, std::vector<std::string> > function_params;
+  std::map<std::string, const FunctionDef *>
+      inline_functions;  // Map for inlining
+  std::string current_function;
+  std::set<std::string> current_function_globals;
+  int inline_depth = 0;
+  std::string current_inline_prefix;
+  std::string current_module_prefix;
+
+  struct ModuleScope {
     std::map<std::string, SymbolInfo> globals;
     std::map<std::string, DataType> mutable_globals;
-    std::map<std::string, DataType> variable_types;
     std::map<std::string, std::string> function_return_types;
     std::map<std::string, std::vector<std::string> > function_params;
-    std::map<std::string, const FunctionDef *>
-    inline_functions; // Map for inlining
-    std::string current_function;
-    std::set<std::string> current_function_globals;
-    int inline_depth = 0;
-    std::string current_inline_prefix;
+    std::map<std::string, const FunctionDef *> inline_functions;
+  };
 
-    struct LoopLabels {
-        std::string continue_label;
-        std::string break_label;
-    };
+  std::map<std::string, ModuleScope> modules;
 
-    std::vector<LoopLabels> loop_stack;
+  struct LoopLabels {
+    std::string continue_label;
+    std::string break_label;
+  };
 
-    struct InlineContext {
-        std::string exit_label;
-        std::optional<tacky::Temporary> result_temp;
-    };
+  std::vector<LoopLabels> loop_stack;
 
-    std::vector<InlineContext> inline_stack;
+  struct InlineContext {
+    std::string exit_label;
+    std::optional<tacky::Temporary> result_temp;
+  };
 
-    // Debugging
-    std::vector<std::string> source_lines;
-    int last_line = -1;
+  std::vector<InlineContext> inline_stack;
 
-    tacky::Temporary make_temp(DataType type = DataType::UINT8);
+  // Debugging
+  std::vector<std::string> source_lines;
+  int last_line = -1;
 
-    std::string make_label();
+  tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
-    void emit(const tacky::Instruction &inst);
+  std::string make_label();
 
-    tacky::Val resolve_binding(const std::string &name);
+  void emit(const tacky::Instruction &inst);
 
-    DataType resolve_type(const std::string &type_str);
+  tacky::Val resolve_binding(const std::string &name);
 
-    void scan_globals(const Program &ast);
+  DataType resolve_type(const std::string &type_str);
 
-    void scan_functions(const Program &ast);
+  void scan_globals(const Program &ast);
 
-    tacky::Function visitFunction(const FunctionDef *funcNode);
+  void scan_functions(const Program &ast);
 
-    void visitBlock(const Block *block);
+  tacky::Function visitFunction(const FunctionDef *funcNode);
 
-    void visitStatement(const Statement *stmt);
+  void visitBlock(const Block *block);
 
-    void visitReturn(const ReturnStmt *stmt);
+  void visitStatement(const Statement *stmt);
 
-    void visitIf(const IfStmt *stmt);
+  void visitReturn(const ReturnStmt *stmt);
 
-    void visitMatch(const MatchStmt *stmt);
+  void visitIf(const IfStmt *stmt);
 
-    void visitWhile(const WhileStmt *stmt);
+  void visitMatch(const MatchStmt *stmt);
 
-    void visitBreak(const BreakStmt *stmt);
+  void visitWhile(const WhileStmt *stmt);
 
-    void visitContinue(const ContinueStmt *stmt);
+  void visitBreak(const BreakStmt *stmt);
 
-    void visitAssign(const AssignStmt *stmt);
+  void visitContinue(const ContinueStmt *stmt);
 
-    void visitAugAssign(const AugAssignStmt *stmt);
+  void visitAssign(const AssignStmt *stmt);
 
-    void visitVarDecl(const VarDecl *stmt);
+  void visitAugAssign(const AugAssignStmt *stmt);
 
-    void visitAnnAssign(const AnnAssign *stmt);
+  void visitVarDecl(const VarDecl *stmt);
 
-    void visitExprStmt(const ExprStmt *stmt);
+  void visitAnnAssign(const AnnAssign *stmt);
 
-    void visitGlobal(const GlobalStmt *stmt);
+  void visitExprStmt(const ExprStmt *stmt);
 
-    void visitDelayStmt(const DelayStmt *stmt);
+  void visitGlobal(const GlobalStmt *stmt);
 
-    // Helper for boolean optimization
-    bool emit_optimized_conditional_jump(const Expression *cond,
-                                         const std::string &target_label,
-                                         bool jump_if_true = false);
+  void visitDelayStmt(const DelayStmt *stmt);
 
-    tacky::Val visitExpression(const Expression *expr);
+  // Helper for boolean optimization
+  bool emit_optimized_conditional_jump(const Expression *cond,
+                                       const std::string &target_label,
+                                       bool jump_if_true = false);
 
-    tacky::Val visitBinary(const BinaryExpr *expr);
+  tacky::Val visitExpression(const Expression *expr);
 
-    tacky::Val visitUnary(const UnaryExpr *expr);
+  tacky::Val visitBinary(const BinaryExpr *expr);
 
-    static tacky::Val visitLiteral(const IntegerLiteral *expr);
+  tacky::Val visitUnary(const UnaryExpr *expr);
 
-    tacky::Val visitVariable(const VariableExpr *expr);
+  static tacky::Val visitLiteral(const IntegerLiteral *expr);
 
-    tacky::Val visitCall(const CallExpr *expr);
+  tacky::Val visitVariable(const VariableExpr *expr);
 
-    tacky::Val visitIndex(const IndexExpr *expr);
+  tacky::Val visitCall(const CallExpr *expr);
 
-    tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
+  tacky::Val visitIndex(const IndexExpr *expr);
 
-    static int evaluate_constant_expr(const Expression *expr);
+  tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
+
+  int evaluate_constant_expr(const Expression *expr);
 };
 
-#endif // IRGENERATOR_H
+#endif  // IRGENERATOR_H

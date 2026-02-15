@@ -25,18 +25,30 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         pymcu_config = config.get("tool", {}).get("pymcu", {})
         chip = pymcu_config.get("chip", "pic16f84a")
         freq = pymcu_config.get("frequency", 4000000)
+        src_path = pymcu_config.get("sources", "src")
+
+        project_root = pyproject_path.parent.absolute()
+        sources_dir = (project_root / src_path).resolve()
+
+        entry_file_name = pymcu_config.get("entry", "main.py")
+        entry_point = (sources_dir / entry_file_name).resolve()
+
+        output_dir = project_root / "dist"
+        output_file = output_dir / "firmware.asm"
+
+        if not entry_point.exists():
+            console.print(f"[red]Entry point not found at: {entry_point}[/red]")
+            console.print(f"[yellow]Check 'sources' and 'entry' in pyproject.toml (current: sources={src_path}, entry={entry_file_name})[/yellow]")
+            raise typer.Exit(code=1)
         
         config_map = {}
         tool_config = pymcu_config.get("config", {})
         for key, val in tool_config.items():
             config_map[str(key)] = str(val)
 
-        entry_point = "src/main.py"
-        output_dir = Path("dist")
-        output_file = output_dir / "firmware.asm"
-
         if not Path(entry_point).exists():
-            console.print(f"[red]Entry point '{entry_point}' not found.[/red]")
+            console.print(f"[red]Entry point not found at: {entry_point}[/red]")
+            console.print(f"[yellow]Check 'sources' in pyproject.toml (current: {src_path})[/yellow]")
             raise typer.Exit(code=1)
 
         if not output_dir.exists():
@@ -72,7 +84,14 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             # Step 1: Compilation (Python -> ASM)
             progress.update(build_task, description="Compiling Python to ASM...", completed=10)
             try:
-                compiler.compile(entry_point, str(output_file), chip, freq, config_map, verbose=verbose)
+                compiler.compile(
+                    input_file=entry_point,
+                    output_file=str(output_file),
+                    arch=chip,
+                    freq=freq,
+                    configs=config_map,
+                    search_path=sources_dir,
+                    verbose=verbose)
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")

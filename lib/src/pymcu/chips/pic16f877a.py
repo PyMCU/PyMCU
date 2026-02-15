@@ -1,4 +1,5 @@
 from pymcu.types import ptr, uint8, uint16
+from pymcu.time import *
 
 # ==========================================
 #  Device Memory Configuration

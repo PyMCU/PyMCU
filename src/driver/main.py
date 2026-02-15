@@ -75,7 +75,7 @@ app.command()(clean)
 app.command()(flash)
 
 def run_cli():
-    _ensure_venv()
+    #_ensure_venv()
     app()
 
 if __name__ == "__main__":

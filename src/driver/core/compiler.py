@@ -73,9 +73,13 @@ class PyMcuCompiler:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
 
-    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, verbose: bool = False):
+    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None,verbose: bool = False):
         compiler = self.get_compiler_path()
+        input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--freq", str(freq)]
+
+        working_dir = search_path if search_path else input_path.parent
+        cmd.extend(["-I", str(working_dir.absolute())])
         
         stdlib = self.get_stdlib_path(verbose=verbose)
         if stdlib:

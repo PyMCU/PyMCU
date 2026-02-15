@@ -31,6 +31,10 @@ class ptr(Generic[T]):
         raise RuntimeError("Writing to a register only works in compiled code")
 
 
+def device_info(arch: str, chip: str = "", ram_size: int = 0):
+    pass
+
+
 def inline(f):
     return f
 

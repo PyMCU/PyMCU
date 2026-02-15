@@ -14,35 +14,35 @@
 #include "ir/Tacky.h"
 
 class StackAllocator {
-public:
-    std::pair<std::map<std::string, int>, int>
-    allocate(const tacky::Program &program);
+ public:
+  std::pair<std::map<std::string, int>, int> allocate(
+      const tacky::Program &program);
 
-private:
-    struct FunctionNode {
-        std::string name;
-        int local_size = 0;
-        std::vector<std::string> callees;
-        std::set<std::string> locals;
-        bool visited = false;
-    };
+ private:
+  struct FunctionNode {
+    std::string name;
+    int local_size = 0;
+    std::vector<std::string> callees;
+    std::set<std::string> locals;
+    bool visited = false;
+  };
 
-    std::map<std::string, FunctionNode> call_graph;
-    std::map<std::string, int> offsets;
-    std::map<std::string, int> offsets_base;
-    std::set<std::string> global_names;
-    int max_stack_usage = 0;
+  std::map<std::string, FunctionNode> call_graph;
+  std::map<std::string, int> offsets;
+  std::map<std::string, int> offsets_base;
+  std::set<std::string> global_names;
+  int max_stack_usage = 0;
 
-    void build_graph(const tacky::Program &program);
+  void build_graph(const tacky::Program &program);
 
-    void calculate_offsets(const std::string &func_name, int current_base);
+  void calculate_offsets(const std::string &func_name, int current_base);
 
-    std::map<std::string, int> var_sizes;
+  std::map<std::string, int> var_sizes;
 
-public:
-    const std::map<std::string, int> &get_variable_sizes() const {
-        return var_sizes;
-    }
+ public:
+  const std::map<std::string, int> &get_variable_sizes() const {
+    return var_sizes;
+  }
 };
 
-#endif // STACK_ALLOCATOR_H
+#endif  // STACK_ALLOCATOR_H
