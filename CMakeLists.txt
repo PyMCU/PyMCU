@@ -121,6 +121,8 @@ target_link_libraries(tests PRIVATE
         core
         GTest::gtest_main
 )
+add_dependencies(tests pymcuc)
+target_compile_definitions(tests PRIVATE PYMCUC_PATH="${CMAKE_BINARY_DIR}/bin/pymcuc")
 
 include(GoogleTest)
 gtest_discover_tests(tests)
