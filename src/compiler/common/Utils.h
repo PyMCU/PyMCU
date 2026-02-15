@@ -27,48 +27,34 @@
  * -----------------------------------------------------------------------------
  */
 
-#ifndef DIAGNOSTIC_H
-#define DIAGNOSTIC_H
+#ifndef UTILS_H
+#define UTILS_H
 
-#include <format>
+#include <filesystem>  // C++17 Standard
+#include <fstream>
 #include <iostream>
 #include <sstream>
-#include <string_view>
-#include <vector>
+#include <string>
 
-#include "Errors.h"
+namespace fs = std::filesystem;
 
-class Diagnostic {
- public:
-  static void report(const CompilerError &err, const std::string_view source,
-                     std::string_view filename) {
-    std::cerr << std::format("  File \"{}\", line {}\n", filename, err.line);
+inline std::string read_source(const std::string &path_str) {
+  fs::path path(path_str);
 
-    if (const std::string line_content = get_line(source, err.line);
-        !line_content.empty()) {
-      std::cerr << "    " << line_content << "\n";
-      const std::string pointer(err.column + 4 - 1, ' ');
-      std::cerr << pointer << "^\n";
-    }
-    std::cerr << std::format("{}: {}\n", err.type_name, err.what());
+  if (!fs::exists(path)) {
+    throw std::runtime_error("File not found: '" + path_str +
+                             "'\nLooking in: " + fs::absolute(path).string());
   }
 
- private:
-  static std::string get_line(const std::string_view src,
-                              const int target_line) {
-    int current = 1;
-    size_t start = 0;
-    for (size_t i = 0; i < src.size(); ++i) {
-      if (src[i] == '\n') {
-        if (current == target_line)
-          return std::string(src.substr(start, i - start));
-        current++;
-        start = i + 1;
-      }
-    }
-    if (current == target_line) return std::string(src.substr(start));
-    return "";
+  std::ifstream f(path);
+  if (!f.is_open()) {
+    throw std::runtime_error("Permission denied or locked file: '" + path_str +
+                             "'");
   }
-};
 
-#endif
+  std::stringstream buffer;
+  buffer << f.rdbuf();
+  return buffer.str();
+}
+
+#endif  // UTILS_H

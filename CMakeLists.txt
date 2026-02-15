@@ -25,11 +25,11 @@ set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 add_library(common INTERFACE
-        src/common/Errors.h
-        src/common/Utils.h
-        src/common/DeviceConfig.h
+        src/compiler/common/Errors.h
+        src/compiler/common/Utils.h
+        src/compiler/common/DeviceConfig.h
 )
-target_include_directories(common INTERFACE src/common)
+target_include_directories(common INTERFACE src/compiler/common)
 
 add_library(core STATIC
         src/compiler/backend/CodeGen.h

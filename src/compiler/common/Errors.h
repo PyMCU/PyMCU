@@ -27,48 +27,47 @@
  * -----------------------------------------------------------------------------
  */
 
-#ifndef DIAGNOSTIC_H
-#define DIAGNOSTIC_H
+#ifndef ERRORS_H
+#define ERRORS_H
 
-#include <format>
-#include <iostream>
-#include <sstream>
-#include <string_view>
-#include <vector>
+#pragma once
+#include <stdexcept>
+#include <string>
+#include <utility>
 
-#include "Errors.h"
-
-class Diagnostic {
+// Base class for all compilation errors
+class CompilerError : public std::runtime_error {
  public:
-  static void report(const CompilerError &err, const std::string_view source,
-                     std::string_view filename) {
-    std::cerr << std::format("  File \"{}\", line {}\n", filename, err.line);
+  int line;
+  int column;
+  std::string type_name;  // "SyntaxError", "IndentationError"
 
-    if (const std::string line_content = get_line(source, err.line);
-        !line_content.empty()) {
-      std::cerr << "    " << line_content << "\n";
-      const std::string pointer(err.column + 4 - 1, ' ');
-      std::cerr << pointer << "^\n";
-    }
-    std::cerr << std::format("{}: {}\n", err.type_name, err.what());
-  }
-
- private:
-  static std::string get_line(const std::string_view src,
-                              const int target_line) {
-    int current = 1;
-    size_t start = 0;
-    for (size_t i = 0; i < src.size(); ++i) {
-      if (src[i] == '\n') {
-        if (current == target_line)
-          return std::string(src.substr(start, i - start));
-        current++;
-        start = i + 1;
-      }
-    }
-    if (current == target_line) return std::string(src.substr(start));
-    return "";
-  }
+  CompilerError(std::string name, const std::string &msg, const int l,
+                const int c)
+      : std::runtime_error(msg),
+        line(l),
+        column(c),
+        type_name(std::move(name)) {}
 };
 
-#endif
+// Python: SyntaxError
+class SyntaxError : public CompilerError {
+ public:
+  SyntaxError(const std::string &msg, const int l, const int c)
+      : CompilerError("SyntaxError", msg, l, c) {}
+};
+
+// Python: IndentationError
+class IndentationError : public CompilerError {
+ public:
+  IndentationError(const std::string &msg, const int l, const int c)
+      : CompilerError("IndentationError", msg, l, c) {}
+};
+
+class LexicalError : public CompilerError {
+ public:
+  LexicalError(const std::string &msg, const int l, const int c)
+      : CompilerError("LexicalError", msg, l, c) {}
+};
+
+#endif  // ERRORS_H

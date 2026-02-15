@@ -27,48 +27,24 @@
  * -----------------------------------------------------------------------------
  */
 
-#ifndef DIAGNOSTIC_H
-#define DIAGNOSTIC_H
+//
+// Created by Ivan Montiel Cardona on 09/02/26.
+//
 
-#include <format>
-#include <iostream>
-#include <sstream>
-#include <string_view>
-#include <vector>
+#ifndef DEVICE_CONFIG_H
+#define DEVICE_CONFIG_H
+#include <map>
 
-#include "Errors.h"
-
-class Diagnostic {
- public:
-  static void report(const CompilerError &err, const std::string_view source,
-                     std::string_view filename) {
-    std::cerr << std::format("  File \"{}\", line {}\n", filename, err.line);
-
-    if (const std::string line_content = get_line(source, err.line);
-        !line_content.empty()) {
-      std::cerr << "    " << line_content << "\n";
-      const std::string pointer(err.column + 4 - 1, ' ');
-      std::cerr << pointer << "^\n";
-    }
-    std::cerr << std::format("{}: {}\n", err.type_name, err.what());
-  }
-
- private:
-  static std::string get_line(const std::string_view src,
-                              const int target_line) {
-    int current = 1;
-    size_t start = 0;
-    for (size_t i = 0; i < src.size(); ++i) {
-      if (src[i] == '\n') {
-        if (current == target_line)
-          return std::string(src.substr(start, i - start));
-        current++;
-        start = i + 1;
-      }
-    }
-    if (current == target_line) return std::string(src.substr(start));
-    return "";
-  }
+struct DeviceConfig {
+  std::string chip;
+  std::string target_chip;    // Source of Truth (CLI/TOML)
+  std::string detected_chip;  // From source code (device_info)
+  std::string arch;
+  unsigned long frequency;
+  int ram_size = 0;
+  int flash_size = 0;
+  int eeprom_size = 0;
+  std::map<std::string, std::string> fuses;
 };
 
-#endif
+#endif  // DEVICE_CONFIG_H
