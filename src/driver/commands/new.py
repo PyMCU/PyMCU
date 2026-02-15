@@ -37,7 +37,7 @@ def get_available_chips() -> List[str]:
 
     return []
 
-def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="Target MCU (e.g., pic16f84a)")):
+def new(name: str):
     console.print(Panel(f"[bold blue]Scaffolding new pymcu project: [green]{name}[/green][/bold blue]"))
 
     project_path = Path(name)
@@ -45,13 +45,11 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
         console.print(f"[red]Error: Directory '{name}' already exists.[/red]")
         raise typer.Exit(code=1)
 
-    chip = mcu
-    if not chip:
-        available_chips = get_available_chips()
-        if available_chips:
-            chip = Prompt.ask("Target MCU", choices=available_chips, default="pic16f84a")
-        else:
-            chip = Prompt.ask("Target MCU", default="pic16f84a")
+    available_chips = get_available_chips()
+    if available_chips:
+        chip = Prompt.ask("Target MCU", choices=available_chips, default="pic16f84a")
+    else:
+        chip = Prompt.ask("Target MCU", default="pic16f84a")
 
     try:
         toolchain_instance = get_toolchain_for_chip(chip, console)
@@ -159,6 +157,11 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             pymcu_toolchain.add("name", toolchain_name)
             pymcu_tool.add("toolchain", pymcu_toolchain)
 
+            # Programmer configuration
+            pymcu_programmer = tomlkit.table()
+            pymcu_programmer.add("name", "pickit2")
+            pymcu_tool.add("programmer", pymcu_programmer)
+
             if "tool" not in doc:
                 doc.add("tool", tomlkit.table())
 
@@ -180,6 +183,10 @@ def new(name: str, mcu: Optional[str] = typer.Option(None, "--mcu", "-m", help="
             pymcu_toolchain = tomlkit.table()
             pymcu_toolchain.add("name", toolchain_name)
             pymcu_tool.add("toolchain", pymcu_toolchain)
+
+            pymcu_programmer = tomlkit.table()
+            pymcu_programmer.add("name", "pickit2")
+            pymcu_tool.add("programmer", pymcu_programmer)
 
             tool.add("pymcu", pymcu_tool)
             doc.add("tool", tool)
