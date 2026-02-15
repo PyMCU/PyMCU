@@ -64,7 +64,7 @@ wheels = [
 
 [[package]]
 name = "pymcu-compiler"
-version = "0.1.0a14"
+version = "0.1.0a22"
 source = { registry = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" }
 dependencies = [
     { name = "pymcu-stdlib" },
@@ -72,9 +72,9 @@ dependencies = [
     { name = "tomlkit" },
     { name = "typer" },
 ]
-sdist = { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-compiler/0.1.0a14/pymcu_compiler-0.1.0a14.tar.gz", hash = "sha256:1193408e8905ebe54852755ea679a5a56fba01bf5394456bcff58e91c5c720b3" }
+sdist = { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-compiler/0.1.0a22/pymcu_compiler-0.1.0a22.tar.gz", hash = "sha256:c60bf76286a1eca25ac8d79fe6f63048c1e600852c3255776630d4faebe8af97" }
 wheels = [
-    { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-compiler/0.1.0a14/pymcu_compiler-0.1.0a14-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:60cff41345438bbb1843da615f5beea0bf03b068a141eb086c34fa90ed4a84e8" },
+    { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-compiler/0.1.0a22/pymcu_compiler-0.1.0a22-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:68807011ece13bfb68d66331c661541ee780d9160dded7fcfe20e592227c15d2" },
 ]
 
 [[package]]
@@ -109,7 +109,7 @@ wheels = [
 ]
 
 [[package]]
-name = "test2"
+name = "test3"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -119,8 +119,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pymcu-compiler", specifier = "==0.1.0a14", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
-    { name = "pymcu-stdlib", specifier = ">=0.1.2a2", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
+    { name = "pymcu-compiler", specifier = "==0.1.0a22", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
+    { name = "pymcu-stdlib", specifier = "==0.1.2a3", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
 ]
 
 [[package]]
