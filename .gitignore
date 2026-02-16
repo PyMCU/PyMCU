@@ -46,3 +46,10 @@ lib/**/dist/
 lib/**/build/
 lib/**/*.egg-info/
 __pycache__
+
+# VS Code Extension
+extensions/vscode-pymcu/out/
+extensions/vscode-pymcu/node_modules/
+extensions/vscode-pymcu/*.vsix
+extensions/vscode-pymcu/.vscode-test/
+extensions/vscode-pymcu/.vscode
