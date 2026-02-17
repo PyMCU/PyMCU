@@ -45,6 +45,10 @@ struct DeviceConfig {
   int flash_size = 0;
   int eeprom_size = 0;
   std::map<std::string, std::string> fuses;
+  int reset_vector = -1;
+  int interrupt_vector = -1;
+  int interrupt_vector_high = -1;
+  int interrupt_vector_low = -1;
 };
 
 #endif  // DEVICE_CONFIG_H

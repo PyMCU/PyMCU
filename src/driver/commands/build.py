@@ -73,6 +73,11 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         for key, val in tool_config.items():
             config_map[str(key)] = str(val)
 
+        # Read vector configuration for bootloader support
+        vectors_config = pymcu_config.get("vectors", {})
+        reset_vector = vectors_config.get("reset", None)
+        interrupt_vector = vectors_config.get("interrupt", None)
+
         if not Path(entry_point).exists():
             console.print(f"[red]Entry point not found at: {entry_point}[/red]")
             console.print(f"[yellow]Check 'sources' in pyproject.toml (current: {src_path})[/yellow]")
@@ -118,7 +123,9 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     freq=freq,
                     configs=config_map,
                     search_path=sources_dir,
-                    verbose=verbose)
+                    verbose=verbose,
+                    reset_vector=reset_vector,
+                    interrupt_vector=interrupt_vector)
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")

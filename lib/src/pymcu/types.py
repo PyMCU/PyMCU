@@ -78,6 +78,18 @@ class ptr(Generic[T]):
     def value(self, value: T):
         raise RuntimeError("Writing to a register only works in compiled code")
 
+class const(Generic[T]):
+    def __init__(self, value: object):
+        self.value = value
+
+    def __add__(self, other):
+        return const(self.value + other)
+
+    def __set__(self, instance, value):
+        raise RuntimeError(
+            "Cannot assign to a constant."
+        )
+
 
 def device_info(arch: str, chip: str = "", ram_size: int = 0):
     pass
@@ -86,7 +98,14 @@ def device_info(arch: str, chip: str = "", ram_size: int = 0):
 def inline(f):
     return f
 
-def interrupt(f):
+
+def asm(instruction: str):
+    pass
+
+
+def interrupt(f, vector: int = 0):
+    if vector < 0:
+        raise ValueError("Interrupt vector must be non-negative")
     return f
 
 

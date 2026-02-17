@@ -28,6 +28,7 @@
  */
 
 #include <argparse/argparse.hpp>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -44,6 +45,7 @@
 #include "frontend/Lexer.h"
 #include "frontend/Parser.h"
 #include "frontend/PreScanVisitor.h"
+#include "frontend/TargetLoader.h"
 #include "ir/IRGenerator.h"
 #include "ir/Optimizer.h"
 #include "ir/Tacky.h"
@@ -51,11 +53,12 @@
 namespace fs = std::filesystem;
 
 struct CompilerContext {
-  std::map<std::string, std::unique_ptr<Program> > module_cache;
+  std::map<std::string, std::unique_ptr<Program>> module_cache;
   std::vector<const Program *> linear_imports;
   std::map<std::string, const Program *> named_modules;
   std::set<std::string> loading_modules;
   DeviceConfig config;
+  std::map<std::string, std::vector<std::string>> module_source_lines;
 };
 
 std::string resolve_module(const std::string &module_name,
@@ -100,8 +103,11 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
   for (const auto &imp : ast->imports) {
     std::string path;
     try {
-      if (imp->module_name == "pymcu.types") {
-        // Intrinsics
+      if (imp->module_name == "pymcu.types" ||
+          imp->module_name == "pymcu.time" ||
+          imp->module_name == "pymcu.chips") {
+        // Intrinsic/compiler-provided modules — not real source files
+        // pymcu.chips provides __CHIP__ which is injected by ConditionalCompilator
         continue;
       }
 
@@ -109,36 +115,35 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
                             imp->relative_level);
 
       if (ctx->module_cache.contains(path)) continue;
-
       if (ctx->loading_modules.contains(path)) continue;
 
       std::cout << "Loading module: " << path << "\n";
-
       ctx->loading_modules.insert(path);
 
       std::string src = read_source(path);
-      Lexer l(src);
-      const auto tokens = l.tokenize();
-      Parser p(tokens);
-      auto mod_ast = p.parseProgram();
-
-      // Run PreScanVisitor on chip definition modules (pymcu.chips.*)
-      // to extract device_info() configuration (arch, ram_size, etc.)
-      if (imp->module_name.find("pymcu.chips.") == 0) {
-        PreScanVisitor chip_scanner(ctx->config);
-        chip_scanner.scan(*mod_ast);
+      {
+        std::istringstream stream(src);
+        std::string line;
+        std::vector<std::string> lines;
+        while (std::getline(stream, line)) {
+          lines.push_back(line);
+        }
+        ctx->module_source_lines[imp->module_name] = std::move(lines);
       }
 
-      load_imports_recursively(mod_ast.get(), ctx, path, includes);
+      Lexer l(src);
+      Parser p(l.tokenize());
+      auto mod_ast = p.parseProgram();
 
       auto &inserted_ptr = ctx->module_cache[path] = std::move(mod_ast);
-      ctx->linear_imports.push_back(inserted_ptr.get());
       ctx->named_modules[imp->module_name] = inserted_ptr.get();
+
+      // Recurse
+      load_imports_recursively(inserted_ptr.get(), ctx, path, includes);
 
       ctx->loading_modules.erase(path);
     } catch (const std::exception &e) {
       if (!path.empty()) ctx->loading_modules.erase(path);
-
       std::cerr << "Error importing '" << imp->module_name << "': " << e.what()
                 << "\n";
       throw CompilerError("ImportError", "Failed to import module", imp->line,
@@ -156,6 +161,10 @@ int main(int argc, char *argv[]) {
       .help("Output ASM file");
   program.add_argument("--arch").default_value(std::string("pic14"));
 
+  program.add_argument("--chip")
+      .help("Target chip (e.g., pic16f18877). Locates pymcu/chips/<chip>.py")
+      .default_value(std::string(""));
+
   program.add_argument("--freq")
       .help("Clock frequency in Hz")
       .default_value(4000000UL)
@@ -169,6 +178,16 @@ int main(int argc, char *argv[]) {
       .help("Add directory to search path for imports")
       .append();
 
+  program.add_argument("--reset-vector")
+      .help("Reset vector address (e.g., 0x2000 for bootloader)")
+      .default_value(-1)
+      .scan<'i', int>();
+
+  program.add_argument("--interrupt-vector")
+      .help("Interrupt vector address (e.g., 0x2008 for bootloader)")
+      .default_value(-1)
+      .scan<'i', int>();
+
   try {
     program.parse_args(argc, argv);
   } catch (const std::exception &err) {
@@ -178,25 +197,23 @@ int main(int argc, char *argv[]) {
 
   const auto filepath = program.get<std::string>("file");
   const auto arch = program.get<std::string>("--arch");
+  const auto chip_name = program.get<std::string>("--chip");
   auto output_path = program.get<std::string>("--output");
 
   DeviceConfig device_config;
   device_config.frequency = program.get<unsigned long>("--freq");
+  device_config.reset_vector = program.get<int>("--reset-vector");
+  device_config.interrupt_vector = program.get<int>("--interrupt-vector");
 
-  // Only pollute config with CLI arch if explicitly provided by user.
-  // Otherwise, let PreScan detect from source first.
+  // CLI --arch is the fallback; --chip + device_info() take precedence
   if (program.is_used("--arch")) {
-    const auto arch = program.get<std::string>("--arch");
-    device_config.target_chip = arch;  // Source of Truth
+    device_config.target_chip = arch;
   }
 
-  device_config.chip = "";  // Default empty, populated by PreScan
-
   CompilerContext context;
-  // context.config will be set after PreScan
 
   if (program.is_used("-C")) {
-    for (auto config_list = program.get<std::vector<std::string> >("-C");
+    for (auto config_list = program.get<std::vector<std::string>>("-C");
          const auto &item : config_list) {
       if (size_t eq_pos = item.find('='); eq_pos != std::string::npos) {
         std::string key = item.substr(0, eq_pos);
@@ -212,7 +229,7 @@ int main(int argc, char *argv[]) {
     output_path = p.string();
   }
 
-  std::vector<std::string> source_lines;  // Move to outer scope
+  std::vector<std::string> source_lines;
   std::string source;
   try {
     source = read_source(filepath);
@@ -228,11 +245,50 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::string> include_paths;
   if (program.is_used("-I")) {
-    include_paths = program.get<std::vector<std::string> >("-I");
+    include_paths = program.get<std::vector<std::string>>("-I");
   }
   include_paths.emplace_back(".");
   if (auto p = fs::path(filepath).parent_path(); !p.empty()) {
     include_paths.push_back(p.string());
+  }
+
+  // =====================================================================
+  // Phase 0: Target Bootstrap
+  // If --chip is provided, locate and parse the chip definition file
+  // BEFORE any user code. This front-loads __CHIP__ so DCE works in
+  // library modules (gpio.py) from the very first pass.
+  // =====================================================================
+  if (!chip_name.empty()) {
+    try {
+      auto target = TargetLoader::bootstrap(chip_name, include_paths);
+
+      // Merge extracted config (device_info() values take precedence)
+      device_config.chip = target.config.chip;
+      device_config.detected_chip = target.config.detected_chip;
+      device_config.arch = target.config.arch;
+      if (target.config.ram_size > 0)
+        device_config.ram_size = target.config.ram_size;
+      if (target.config.flash_size > 0)
+        device_config.flash_size = target.config.flash_size;
+      if (target.config.eeprom_size > 0)
+        device_config.eeprom_size = target.config.eeprom_size;
+
+      // Set target_chip for backend header emission (LIST P=, #include)
+      if (device_config.target_chip.empty()) {
+        device_config.target_chip = chip_name;
+      }
+
+      // Register the chip module in the context so it won't be re-loaded
+      // when main.py's imports are resolved in Phase 1.
+      context.module_source_lines[target.module_name] =
+          std::move(target.source_lines);
+      const auto *ast_ptr = target.ast.get();
+      context.module_cache[target.file_path] = std::move(target.ast);
+      context.named_modules[target.module_name] = ast_ptr;
+    } catch (const std::exception &e) {
+      std::cerr << "Target Error: " << e.what() << "\n";
+      return 1;
+    }
   }
 
   try {
@@ -242,26 +298,44 @@ int main(int argc, char *argv[]) {
     Parser parser(tokens);
     const auto ast = parser.parseProgram();
 
-    // Configuration Bootstrap (PreScan)
-    PreScanVisitor pre_scanner(device_config);
-    pre_scanner.scan(*ast);
-    context.config = device_config;
-
-    // Resolve Target Chip for Conditional Compilation
-    std::string active_chip = device_config.chip;
-    if (active_chip.empty()) active_chip = arch;
-
-    // Conditional Compilation (Pre-Process)
-    // Only runs on the main file to unwrap __CHIP__ blocks
-    ConditionalCompilator conditional(active_chip);
-    conditional.process(*ast);
-
+    // Pass 1: Recursive Import Loading (Initial dependencies)
     load_imports_recursively(ast.get(), &context, fs::path(filepath),
                              include_paths);
 
+    // Pass 2: Global Configuration Bootstrap (PreScan all loaded modules)
+    // Especially important for chip definition modules (pymcu.chips.*)
+    PreScanVisitor pre_scanner(device_config);
+    pre_scanner.scan(*ast);
+    for (auto &[name, mod_ast] : context.named_modules) {
+      pre_scanner.scan(*const_cast<Program *>(mod_ast));
+    }
+    context.config = device_config;
+
+    // Resolve Target Chip for Conditional Compilation
+    if (context.config.chip.empty()) context.config.chip = arch;
+    if (context.config.arch.empty()) context.config.arch = arch;
+
+    // Pass 3: Global Conditional Compilation (Pre-Process all modules)
+    // Unwraps __CHIP__ blocks and moves local imports to top-level.
+    ConditionalCompilator conditional(context.config);
+    conditional.process(*ast);
+    for (auto &[name, mod_ast] : context.named_modules) {
+      conditional.process(*const_cast<Program *>(mod_ast));
+    }
+
+    // Pass 4: Final Recursive Load (In case Conditional Compilation uncovered
+    // new imports)
+    load_imports_recursively(ast.get(), &context, fs::path(filepath),
+                             include_paths);
+    for (auto &[name, mod_ast] : context.named_modules) {
+      load_imports_recursively(mod_ast, &context, fs::path(filepath),
+                               include_paths);
+    }
+
     // IR Generation
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, context.named_modules, source_lines);
+    auto ir = ir_gen.generate(*ast, context.named_modules, device_config,
+                              source_lines, context.module_source_lines);
 
     // ir = Optimizer::optimize(ir);
 
@@ -308,33 +382,29 @@ int main(int argc, char *argv[]) {
 
     auto backend = CodeGenFactory::create(target_arch, device_config);
 
+    // Create output directories if they don't exist
+    auto output_parent = std::filesystem::path(output_path).parent_path();
+    if (!output_parent.empty()) {
+      std::filesystem::create_directories(output_parent);
+    }
+
     std::ofstream asm_file(output_path);
     if (!asm_file.is_open()) {
       throw std::runtime_error("Cannot open output file: " + output_path);
     }
 
     std::cout << "[pymcuc] Compiling " << filepath << " -> " << output_path
-              << " (" << arch << " @ " << device_config.frequency << "Hz)\n";
+              << " (" << target_arch << " @ " << device_config.frequency
+              << "Hz)\n";
 
     backend->compile(ir, asm_file);
 
     std::cout << "[pymcuc] Success! Output written to " << output_path << "\n";
   } catch (const CompilerError &e) {
-    std::cerr << "Error in " << filepath << ":" << e.line << ": " << e.what()
-              << "\n";
-    // Print the line
-    if (e.line > 0 && e.line <= static_cast<int>(source_lines.size())) {
-      std::cerr << "    " << source_lines[e.line - 1] << "\n";
-      // Simple pointer to column if valid
-      if (e.column > 0) {
-        std::string pointer(e.column - 1, ' ');
-        pointer += "^";
-        std::cerr << "    " << pointer << "\n";
-      }
-    }
+    Diagnostic::report(e, source, filepath);
     return 1;
   } catch (const std::exception &e) {
-    std::cerr << "Internal Compiler Error: " << e.what() << "\n";
+    Diagnostic::report_internal(e.what(), filepath);
     return 1;
   }
 

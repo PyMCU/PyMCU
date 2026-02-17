@@ -46,7 +46,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8, uint16
+from pymcu.types import ptr, uint8, uint16, device_info
 from pymcu.time import *
 
 # ==========================================
@@ -56,6 +56,8 @@ from pymcu.time import *
 # RAM starts at 0x20 and spans across multiple banks
 RAM_START = 0x20
 RAM_SIZE = 368
+
+device_info(chip="pic16f877a", arch="pic14", ram_size=RAM_SIZE)
 
 # ==========================================
 #  Register Definitions (SRAM & SFRs)

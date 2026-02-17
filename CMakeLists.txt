@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.1)
 project(pymcu VERSION 0.1.0)
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -48,6 +48,8 @@ add_library(core STATIC
         src/compiler/frontend/PreScanVisitor.h
         src/compiler/frontend/ConditionalCompilator.cpp
         src/compiler/frontend/ConditionalCompilator.h
+        src/compiler/frontend/TargetLoader.cpp
+        src/compiler/frontend/TargetLoader.h
         src/compiler/ir/Tacky.h
         src/compiler/ir/IRGenerator.cpp
         src/compiler/ir/IRGenerator.h
@@ -116,6 +118,7 @@ add_executable(tests
         tests/unit/test_riscv_codegen.cpp
         tests/unit/test_pio_codegen.cpp
         tests/IntegrationTest_PIC14E.cpp
+        tests/IntegrationTest_Classes.cpp
 )
 target_link_libraries(tests PRIVATE
         core

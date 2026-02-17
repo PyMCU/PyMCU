@@ -46,12 +46,14 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8
+from pymcu.types import ptr, uint8, device_info
 
 # Device Memory Configuration for PIC10F200
 # RAM: 16 bytes (0x08-0x17 in Bank 0)
 RAM_START = 0x08
 RAM_SIZE = 16
+
+device_info(chip="pic10f200", arch="pic12", ram_size=RAM_SIZE)
 
 # PIC10F200 Registers
 INDF:    ptr[uint8] = ptr(0x00)

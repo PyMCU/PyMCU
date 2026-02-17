@@ -199,7 +199,11 @@ void PIOCodeGen::compile_variant(const tacky::Return &arg) {
 }
 
 void PIOCodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void PIOCodeGen::compile_variant(const tacky::Jump &arg) const {
@@ -369,9 +373,9 @@ void PIOCodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("PIO: AugAssign is not yet implemented");
 }
 
-void PIOCodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement PIO-specific delay
-  throw std::runtime_error("PIO: Delay is not yet implemented");
+
+void PIOCodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(PIOAsmLine::Raw(arg.instruction));
 }
 
 void PIOCodeGen::compile_variant(const tacky::JumpIfEqual &arg) {

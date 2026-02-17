@@ -88,6 +88,18 @@ void PIC14CodeGen::select_bank(const std::string &operand) {
       addr = 0x20 + stack_layout.at(operand);  // Assume Bank 0 area
     } else if (symbol_table.contains(operand)) {
       addr = symbol_table.at(operand);
+    } else {
+      // Handle "name+N" suffix (e.g. "nco_init.inc_val+1")
+      auto plus_pos = operand.find('+');
+      if (plus_pos != std::string::npos) {
+        std::string base = operand.substr(0, plus_pos);
+        int offset = std::stoi(operand.substr(plus_pos + 1));
+        if (stack_layout.contains(base)) {
+          addr = 0x20 + stack_layout.at(base) + offset;
+        } else if (symbol_table.contains(base)) {
+          addr = symbol_table.at(base) + offset;
+        }
+      }
     }
   } catch (...) {
   }
@@ -172,41 +184,50 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
   this->stack_layout = offsets;
   this->var_sizes = allocator.get_variable_sizes();
 
-  // Emit CBLOCK for stack variables
+  // Advance ram_head past the stack (and float workspace) to prevent
+  // collisions with dynamically-allocated variables (delay counters, etc.)
+  ram_head = 0x20 + total_size;
+  if (uses_float) ram_head += 12;  // __FP_A(4) + __FP_B(4) + __FP_C(4)
+
+  // 1. Preamble FIRST (LIST, #include, errorlevel, CONFIG)
+  // Must come before CBLOCK/EQU since assembler needs processor definition
+  strategy->emit_preamble();
+  emit_raw("");
+
+  // 2. Stack layout (CBLOCK/ENDC)
   if (!stack_layout.empty() || uses_float) {
     emit_comment("--- Compiled Stack (Overlays) ---");
     emit_raw("\tCBLOCK 0x20");
-    // Find max offset
-    int max_offset = 0;
-    for (const auto &[name, offset] : stack_layout) {
-      if (offset > max_offset) max_offset = offset;
-    }
     emit_raw(std::format("_stack_base: {}",
                          total_size));  // Use total_size from allocator
     if (uses_float) {
       emit_raw("__FP_A: 4");
       emit_raw("__FP_B: 4");
-      emit_raw("__FP_C: 4");  // Scratch/Result if needed? __add_float usually
-                              // uses A as accum.
+      emit_raw("__FP_C: 4");
     }
     emit_raw("\tENDC");
     emit_raw("");
   }
 
-  // Define Symbols (Global Variables)
-  emit_comment("--- Variable Offsets ---");
-  for (const auto &[name, offset] : stack_layout) {
-    emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
+  // 3. Variable offsets (EQU)
+  if (!stack_layout.empty()) {
+    emit_comment("--- Variable Offsets ---");
+    for (const auto &[name, offset] : stack_layout) {
+      emit_raw(std::format("{} EQU _stack_base + {}", name, offset));
+    }
+    emit_raw("");
   }
+
+  // 4. Reset vector
+  int reset_addr = config.reset_vector >= 0 ? config.reset_vector : 0x0000;
+  emit_comment("--- Reset Vector ---");
+  emit_raw(std::format("\tORG 0x{:04X}", reset_addr));
+  emit("GOTO", "main");
   emit_raw("");
 
-  emit_raw("");
-
-  strategy->emit_preamble();
-
-  // Emit Interrupt Handlers (IVT)
+  // 5. Interrupt vector
   // PIC14 only supports vector 0x04.
-  // We must validate that all interrupt functions target 0x04 (or use default).
+  int int_addr = config.interrupt_vector >= 0 ? config.interrupt_vector : 0x0004;
 
   const tacky::Function *isr_0x04 = nullptr;
 
@@ -230,8 +251,9 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     }
   }
 
+  emit_comment("--- Interrupt Vector ---");
   if (isr_0x04) {
-    emit_raw(std::format("\tORG 0x{:02X}", 0x04));
+    emit_raw(std::format("\tORG 0x{:04X}", int_addr));
     emit_label("__interrupt");
 
     emit_context_save();
@@ -264,7 +286,7 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     }
   } else {
     // Dummy interrupt handler
-    emit_raw("\tORG 0x04");
+    emit_raw(std::format("\tORG 0x{:04X}", int_addr));
     emit_label("__interrupt");
     emit("RETFIE");
   }
@@ -304,22 +326,12 @@ void PIC14CodeGen::compile(const tacky::Program &program, std::ostream &os) {
     emit_raw("#include \"float.inc\"");
   }
 
-  if (needs_delay_1ms) {
-    emit_label("__delay_1ms_base");
-    unsigned long cycles = config.frequency / 4000;  // 1ms
-    // Subtract CALL(2) + RETURN(2) + Loop Overhead(3) = 7 cycles
-    if (cycles > 7)
-      cycles -= 7;
-    else
-      cycles = 0;  // Handle very low clock speeds gracefully
-    emit_delay_cycles(cycles);
-    emit("RETURN");
-  }
 
   emit_raw("\tEND");
 
-  // Optimization step
-  // auto optimized = PIC14Peephole::optimize(assembly);
+  // Peephole optimization pass: eliminates redundant instructions such as
+  // ANDLW 0xFF, MOVWF tmp / MOVF tmp W pairs, dead labels, etc.
+  assembly = PIC14Peephole::optimize(assembly);
 
   for (const auto &line : assembly) {
     os << line.to_string() << "\n";
@@ -397,7 +409,9 @@ void PIC14CodeGen::store_w_into(const tacky::Val &val) {
 }
 
 void PIC14CodeGen::compile_variant(const tacky::Return &arg) {
-  load_into_w(arg.value);
+  if (!std::holds_alternative<std::monostate>(arg.value)) {
+    load_into_w(arg.value);
+  }
   emit("RETURN");
   current_block_terminated = true;  // Mark block as terminated
 }
@@ -914,31 +928,44 @@ void PIC14CodeGen::compile_variant(const tacky::Binary &arg) {
     // --- Shift operations need special handling (file register ops) ---
     if (arg.op == tacky::BinaryOp::LShift ||
         arg.op == tacky::BinaryOp::RShift) {
-      // Store source into destination first
-      load_into_w(arg.src1);
-      store_w_into(arg.dst);
-
-      std::string dst_addr = resolve_address(arg.dst);
       std::string rotate_op =
           (arg.op == tacky::BinaryOp::LShift) ? "RLF" : "RRF";
 
       if (const auto c2 = std::get_if<tacky::Constant>(&arg.src2)) {
-        // Constant shift: unroll N iterations
-        int shift_count = c2->value & 0x07;  // Max 7 for 8-bit
-        for (int i = 0; i < shift_count; i++) {
+        int raw_shift = c2->value;
+        int byte_offset = raw_shift / 8;  // Full byte shifts
+        int bit_shift = raw_shift % 8;    // Remaining bit shifts
+
+        // For RShift by 8+, load from higher byte of source directly
+        if (arg.op == tacky::BinaryOp::RShift && byte_offset > 0) {
+          std::string src_addr = resolve_address(arg.src1);
+          std::string src_hi = src_addr.starts_with("0x")
+              ? std::format("0x{:02X}", std::stoi(src_addr, nullptr, 16) + byte_offset)
+              : src_addr + "+" + std::to_string(byte_offset);
+          select_bank(src_hi);
+          emit("MOVF", src_hi, "W");
+        } else {
+          load_into_w(arg.src1);
+        }
+        store_w_into(arg.dst);
+
+        std::string dst_addr = resolve_address(arg.dst);
+        for (int i = 0; i < bit_shift; i++) {
           emit("BCF", "STATUS", "0");  // Clear Carry
           select_bank(dst_addr);
           emit(rotate_op, dst_addr, "F");  // Rotate in-place
         }
       } else {
-        // Variable shift: use a counter loop
+        // Variable shift: store source into destination first
+        load_into_w(arg.src1);
+        store_w_into(arg.dst);
+
+        std::string dst_addr = resolve_address(arg.dst);
         std::string count_addr = resolve_address(arg.src2);
         load_into_w(arg.src2);
         std::string loop_label = make_label("shift");
         std::string done_label = make_label("shift_done");
 
-        // W already has src2, store to a temp? Actually use MOVWF to work with
-        // it. For simplicity, count down using W and the file register
         select_bank(count_addr);
         emit("MOVF", count_addr, "W");
         emit("BTFSC", "STATUS", "2");  // Skip if count != 0
@@ -1192,6 +1219,10 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfNotZero &arg) {
 
 void PIC14CodeGen::compile_variant(const tacky::Call &arg) {
   emit("CALL", arg.function_name);
+  // Called function may change BSR; invalidate both codegen and strategy
+  // tracking so next access emits the correct bank select instruction
+  current_bank = -1;
+  strategy->invalidate_bank();
   if (!std::holds_alternative<tacky::Variable>(arg.dst) &&
       !std::holds_alternative<tacky::Temporary>(arg.dst)) {
   } else {
@@ -1531,169 +1562,17 @@ void PIC14CodeGen::emit_float_add(const std::string &target,
   }
 }
 
-void PIC14CodeGen::compile_variant(const tacky::Delay &arg) {
-  if (std::holds_alternative<tacky::Constant>(arg.target)) {
-    // Case A: Constant Delay
-    unsigned long duration = std::get<tacky::Constant>(arg.target).value;
-    unsigned long long cycles;
-    // Tcy = 4 / Fosc
-    // Inst = Time * (Fosc / 4)
-    if (arg.is_ms) {
-      cycles =
-          (static_cast<unsigned long long>(duration) * config.frequency) / 4000;
-    } else {
-      cycles = (static_cast<unsigned long long>(duration) * config.frequency) /
-               4000000;
-      if (cycles == 0 && duration > 0)
-        cycles = 1;  // At least 1 cycle for minimal delay
-    }
-    emit_comment(std::format("Delay {} {}", duration, arg.is_ms ? "ms" : "us"));
-    emit_delay_cycles(static_cast<unsigned long>(cycles));
-  } else {
-    // Case B: Variable Delay
-    if (arg.is_ms) {
-      needs_delay_1ms = true;
-      std::string loop_ctr = get_or_alloc_variable("__delay_ms_ctr");
 
-      // delay_ms(var) implementation:
-      // Loop N times calling __delay_1ms_base
-      // Overhead Analysis:
-      //   MOVF   (1)
-      //   MOVWF  (1)
-      //   ... check 0 ...
-      // Loop:
-      //   CALL   (2) -> __delay_1ms_base
-      //   DECFSZ (1)
-      //   GOTO   (2)
-      //
-      // Total Loop Overhead = 5 cycles + 1ms_base.
-      // We tune __delay_1ms_base to be (1ms_cycles - 5).
-      // (Previous analysis said 7? CALL(2)+RET(2)+DECFSZ(1)+GOTO(2) = 7.
-      //  __delay_1ms_base includes RET(2). So Caller overhead is
-      //  CALL(2)+DECFSZ(1)+GOTO(2) = 5. Wait, __delay_1ms_base BODY + RET =
-      //  cost. Total = CALL + BODY + RET + DECFSZ + GOTO. Total = 2 + BODY + 2
-      //  + 1 + 2 = BODY + 7. So we want BODY + 7 = 1ms_cycles. BODY =
-      //  1ms_cycles - 7. Correct.
-
-      load_into_w(arg.target);
-      emit("MOVWF", loop_ctr);
-
-      std::string loop_label = make_label("dly_ms_loop");
-      std::string end_label = make_label("dly_ms_end");
-
-      // Check for 0 handling
-      emit("MOVF", loop_ctr, "F");
-      emit("BTFSC", "STATUS", "2");  // Check Z bit
-      emit("GOTO", end_label);
-
-      emit_label(loop_label);
-      emit("CALL", "__delay_1ms_base");
-      emit("DECFSZ", loop_ctr, "F");
-      emit("GOTO", loop_label);
-      emit_label(end_label);
-    } else {
-      throw std::runtime_error(
-          "Variable delay_us() is not supported on PIC14/16 (timing "
-          "constraints). Use delay_ms() or constant delay_us().");
-    }
-  }
-}
-
-void PIC14CodeGen::emit_delay_cycles(unsigned long cycles) {
-  if (cycles == 0) return;
-
-  // Simple heuristic:
-  // Use NOPs for small counts
-  while (cycles > 0 && cycles < 10) {
-    if (cycles > 0) {
-      if (cycles == 1) {
-        emit("NOP");
-      } else {
-        // Loop or unrolled NOPs
-        while (cycles > 0) {
-          emit("NOP");
-          cycles--;
-        }
-      }
-    }
-  }
-  if (cycles < 770) {
-    // 1 Level
-    unsigned long k = (cycles - 1) / 3;
-    unsigned long rem = cycles - (3 * k + 1);
-
-    std::string c1 = get_or_alloc_variable("__dly_c1");
-
-    emit("MOVLW", std::format("0x{:02X}", k & 0xFF));
-    emit("MOVWF", c1);
-    std::string l = make_label("dly1");
-    emit_label(l);
-    emit("DECFSZ", c1, "F");
-    emit("GOTO", l);
-
-    emit_delay_cycles(rem);  // Recurse for remainder
-  } else if (cycles < 197000) {
-    // 2 Levels
-    unsigned long k2 = cycles / 770;
-    if (k2 > 255) k2 = 255;
-    if (k2 == 0) k2 = 1;
-
-    unsigned long used = k2 * 770;
-
-    std::string c1 = get_or_alloc_variable("__dly_c1");
-    std::string c2 = get_or_alloc_variable("__dly_c2");
-
-    emit("MOVLW", std::format("0x{:02X}", k2 & 0xFF));
-    emit("MOVWF", c2);
-    emit("MOVLW", "0xFF");  // 256 loops
-    emit("MOVWF", c1);
-
-    // Logic check:
-    // Outer loop (c2) runs k2 times.
-    // Inner loop (c1) runs 256 times per outer.
-    // Inner: 256*3 -1 + unrolled?
-    // Previous code: emit("INCF", c1, "F"); // 255->0
-    emit("INCF", c1, "F");
-
-    std::string l = make_label("dly2");
-    emit_label(l);
-    emit("DECFSZ", c1, "F");
-    emit("GOTO", l);
-    emit("DECFSZ", c2, "F");
-    emit("GOTO", l);
-
-    emit_delay_cycles(cycles - used);
-  } else {
-    // 3 Levels
-    unsigned long k3 = cycles / 197120;  // 256 * 770
-    if (k3 > 255) k3 = 255;
-    if (k3 == 0) k3 = 1;
-
-    std::string c1 = get_or_alloc_variable("__dly_c1");
-    std::string c2 = get_or_alloc_variable("__dly_c2");
-    std::string c3 = get_or_alloc_variable("__dly_c3");
-
-    emit("MOVLW", std::format("0x{:02X}", k3 & 0xFF));
-    emit("MOVWF", c3);
-    emit("CLRF", c2);  // 0 -> 256 loops
-    emit("CLRF", c1);
-
-    std::string l = make_label("dly3");
-    emit_label(l);
-    emit("DECFSZ", c1, "F");
-    emit("GOTO", l);
-    emit("DECFSZ", c2, "F");
-    emit("GOTO", l);
-    emit("DECFSZ", c3, "F");
-    emit("GOTO", l);
-
-    unsigned long used = k3 * 197120;
-    emit_delay_cycles(cycles - used);
-  }
+void PIC14CodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(PIC14AsmLine::Raw(arg.instruction));
 }
 
 void PIC14CodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void PIC14CodeGen::compile_variant(const tacky::JumpIfEqual &arg) {
@@ -1880,30 +1759,6 @@ void PIC14CodeGen::compile_variant(const tacky::JumpIfGreaterOrEqual &arg) {
   emit("BTFSC", "STATUS", "0");  // Jump if C=1
   emit("GOTO", arg.target);
 }
-
-// ... (end of file helper needed? No, we are replacing the bottom chunk)
-// Wait, I need to match the replacement chunk exactly.
-// The replace tool works on line ranges.
-// I will target the `compile_variant(Delay)` and `emit_delay_cycles`
-// separately? Or rewrite the end of the file. Lines 1259 to 1377 is a huge
-// chunk. I'll do it in one pass if I overlap correctly. Actually,
-// `emit_delay_cycles` was ALREADY CORRECT in the file. I only need to change
-// `compile_variant(Delay)` and `compile` (at end). And `emit_delay_cycles` is
-// essentially unchanged except I might have copy-pasted it. I will use
-// replace_file_content on `compile_variant(Delay)` block and `compile` block
-// separately to be safer/cleaner? But `emit_delay_cycles` is between them? No,
-// `emit_delay_cycles` is at the end? Let's check structure. 1239:
-// compile_variant(Delay) 1285: emit_delay_cycles 1371: (inside compile) ...
-// needs_delay_1ms logic. Wait, `compile` is way up at line 94! Lines 1371-1379
-// were shown in the *first* view_file (lines 1-800?? No wait). Step 18 showed
-// 1-800. Step 24 showed 801-1377. `compile` body is lines 94-189. The block `if
-// (needs_delay_1ms)` is at 171-179. So I need TO DISTINCT EDITS.
-
-// Edit 1: Update `compile_variant(Delay)` (lines 1259-1282).
-// Edit 2: Update `compile` (lines 173-177).
-
-// Let's do Edit 2 first (smaller).
-// Edit 2: Update `compile` (lines 173-177).
 
 // Context Save/Restore delegated to Strategy
 void PIC14CodeGen::emit_context_save() { strategy->emit_context_save(); }

@@ -1,21 +1,51 @@
 {
-  "name": "pymcu",
-  "displayName": "pymcu",
-  "description": "PyMCU Compiler",
+  "name": "pymcu-vscode",
+  "displayName": "PyMCU Development Tools",
+  "description": "Development tools for PyMCU projects, including build and flash commands.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.109.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "workspaceContains:pyproject.toml"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      { "command": "pymcu.build", "title": "Build", "category": "PyMCU", "icon": "$(debug-start)" },
+      { "command": "pymcu.flash", "title": "Flash", "category": "PyMCU", "icon": "$(zap)" },
+      { "command": "pymcu.clean", "title": "Clean", "category": "PyMCU", "icon": "$(trash)" },
+      { "command": "pymcu.new", "title": "New Project", "category": "PyMCU", "icon": "$(new-folder)" }
+    ],
+    "configuration": {
+      "title": "PyMCU",
+      "properties": {
+        "pymcu.executablePath": { 
+          "type": "string", 
+          "default": "pymcu", 
+          "description": "Route to the PyMCU executable. If 'pymcu' is in your PATH, you can leave this as is." 
+        }
+      }
+    },
+    "problemMatchers": [
       {
-        "command": "pymcu.helloWorld",
-        "title": "Hello World"
+        "name": "pymcuc",
+        "owner": "pymcu",
+        "source": "pymcuc",
+        "fileLocation": ["autoDetect", "${workspaceFolder}"],
+        "severity": "error",
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
       }
     ]
   },

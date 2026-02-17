@@ -48,7 +48,9 @@ static const std::map<std::string, TokenType> keywords = {
     {"True", TokenType::True},     {"False", TokenType::False},
     {"None", TokenType::None},     {"or", TokenType::Or},
     {"and", TokenType::And},       {"not", TokenType::Not},
-    {"global", TokenType::Global},
+    {"global", TokenType::Global}, {"class", TokenType::Class},
+    {"yield", TokenType::Yield},
+    {"raise", TokenType::Raise},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {

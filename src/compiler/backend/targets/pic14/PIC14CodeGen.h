@@ -75,8 +75,6 @@ class PIC14CodeGen : public CodeGen {
   int ram_head;
   int label_counter = 0;
   bool uses_float = false;
-  bool needs_delay_1ms = false;
-  bool needs_delay_10us = false;
 
   std::string make_label(const std::string &prefix) {
     return std::format("{}_{}", prefix, label_counter++);
@@ -159,12 +157,10 @@ class PIC14CodeGen : public CodeGen {
 
   void compile_variant(const tacky::AugAssign &arg);
 
-  void compile_variant(const tacky::Delay &arg);
+  void compile_variant(const tacky::InlineAsm &arg);
 
   void compile_variant(const tacky::DebugLine &arg);
 
- private:
-  void emit_delay_cycles(unsigned long cycles);
 };
 
 #endif  // PIC14CODEGEN_H

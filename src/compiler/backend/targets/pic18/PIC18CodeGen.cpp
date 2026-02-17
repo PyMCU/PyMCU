@@ -602,13 +602,17 @@ void PIC18CodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("PIC18: AugAssign not implemented");
 }
 
-void PIC18CodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement PIC18-specific delay
-  throw std::runtime_error("PIC18: Delay is not yet implemented");
+
+void PIC18CodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(PIC18AsmLine::Raw(arg.instruction));
 }
 
 void PIC18CodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void PIC18CodeGen::compile_variant(const tacky::JumpIfEqual &arg) {

@@ -38,6 +38,8 @@
 #include <variant>
 #include <vector>
 
+#include "../common/DeviceConfig.h"
+#include "../common/Errors.h"
 #include "../frontend/Ast.h"
 #include "Tacky.h"
 
@@ -52,7 +54,10 @@ class IRGenerator {
   tacky::Program generate(
       const Program &main_ast,
       const std::map<std::string, const Program *> &imported_modules,
-      const std::vector<std::string> &source_lines = {});
+      const DeviceConfig &config,
+      const std::vector<std::string> &source_lines = {},
+      const std::map<std::string, std::vector<std::string>>
+          &module_source_lines = {});
 
  private:
   std::vector<tacky::Instruction> current_instructions;
@@ -61,8 +66,11 @@ class IRGenerator {
   std::map<std::string, SymbolInfo> globals;
   std::map<std::string, DataType> mutable_globals;
   std::map<std::string, DataType> variable_types;
+  std::map<std::string, std::string> instance_classes;  // Tracks led -> Pin
+  std::map<std::string, std::string> method_instance_types;  // method -> class
   std::map<std::string, std::string> function_return_types;
-  std::map<std::string, std::vector<std::string> > function_params;
+  std::map<std::string, std::vector<std::string>> function_params;
+  std::map<std::string, std::vector<DataType>> function_param_types;
   std::map<std::string, const FunctionDef *>
       inline_functions;  // Map for inlining
   std::string current_function;
@@ -75,11 +83,29 @@ class IRGenerator {
     std::map<std::string, SymbolInfo> globals;
     std::map<std::string, DataType> mutable_globals;
     std::map<std::string, std::string> function_return_types;
-    std::map<std::string, std::vector<std::string> > function_params;
+    std::map<std::string, std::vector<std::string>> function_params;
     std::map<std::string, const FunctionDef *> inline_functions;
   };
 
   std::map<std::string, ModuleScope> modules;
+  std::set<std::string> class_names;  // Tracks known class names for callee resolution
+  std::map<std::string, std::string>
+      imported_aliases;  // Tracks Pin -> pymcu.hal.gpio
+  std::map<std::string, int>
+      constant_variables;  // Tracks variables holding constants (for folding)
+  std::map<std::string, std::string>
+      variable_aliases;  // Tracks param -> arg mappings for properties
+  std::string
+      pending_constructor_target;  // Target variable for constructor inlining
+
+  // Zero-Cost Abstraction: Virtual Instance Registry
+  // Tracks instance variables that are compile-time constructs (no RAM needed).
+  // An instance is "virtual" when its class has ALL methods @inline and the
+  // constructor arguments are compile-time constants. Virtual instances:
+  //   - Do NOT allocate RAM for the instance variable itself
+  //   - Do NOT emit Copy instructions for member assignments with constant values
+  //   - Have all member values tracked in constant_variables for folding
+  std::set<std::string> virtual_instances;
 
   struct LoopLabels {
     std::string continue_label;
@@ -97,7 +123,22 @@ class IRGenerator {
 
   // Debugging
   std::vector<std::string> source_lines;
+  std::map<std::string, std::vector<std::string>> module_source_lines;
+  std::string current_source_file;
   int last_line = -1;
+  int current_stmt_line = 0;  // Tracks the current statement's source line
+
+  // Intrinsic tracking
+  std::set<std::string> intrinsic_names;
+
+  struct FunctionEntry {
+    std::string prefix;
+    const FunctionDef *func;
+    std::string source_file;
+  };
+  std::vector<FunctionEntry> functions_to_compile;
+  std::map<std::string, int> string_literal_ids;
+  int next_string_id = 1;
 
   tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
@@ -107,13 +148,15 @@ class IRGenerator {
 
   tacky::Val resolve_binding(const std::string &name);
 
+  std::string resolve_callee(const std::string &name);
   DataType resolve_type(const std::string &type_str);
 
-  void scan_globals(const Program &ast);
+  void scan_globals(const Program &ast, ModuleScope *scope = nullptr);
 
-  void scan_functions(const Program &ast);
+  void scan_functions(const Program &ast, ModuleScope *scope = nullptr);
 
   tacky::Function visitFunction(const FunctionDef *funcNode);
+  void visitClassDef(const ClassDef *classNode);
 
   void visitBlock(const Block *block);
 
@@ -126,6 +169,8 @@ class IRGenerator {
   void visitMatch(const MatchStmt *stmt);
 
   void visitWhile(const WhileStmt *stmt);
+
+  void visitFor(const ForStmt *stmt);
 
   void visitBreak(const BreakStmt *stmt);
 
@@ -143,26 +188,24 @@ class IRGenerator {
 
   void visitGlobal(const GlobalStmt *stmt);
 
-  void visitDelayStmt(const DelayStmt *stmt);
-
   // Helper for boolean optimization
-  bool emit_optimized_conditional_jump(const Expression *cond,
-                                       const std::string &target_label,
-                                       bool jump_if_true = false);
+  /// Returns: 0 = not optimized, 1 = statically true, -1 = statically false
+  int emit_optimized_conditional_jump(const Expression *cond,
+                                      const std::string &target_label,
+                                      bool jump_if_true = false);
 
   tacky::Val visitExpression(const Expression *expr);
 
   tacky::Val visitBinary(const BinaryExpr *expr);
 
   tacky::Val visitUnary(const UnaryExpr *expr);
+  tacky::Val visitCall(const CallExpr *expr);
+  tacky::Val visitYield(const YieldExpr *expr);
+  tacky::Val visitIndex(const IndexExpr *expr);
 
   static tacky::Val visitLiteral(const IntegerLiteral *expr);
 
   tacky::Val visitVariable(const VariableExpr *expr);
-
-  tacky::Val visitCall(const CallExpr *expr);
-
-  tacky::Val visitIndex(const IndexExpr *expr);
 
   tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
 

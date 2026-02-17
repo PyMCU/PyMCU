@@ -130,6 +130,7 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(
     std::optional<std::string> w_var;
     std::optional<bool> rp0;
     std::optional<bool> rp1;
+    std::optional<int> current_movlb;  // Track MOVLB for PIC14E
 
     for (size_t i = 0; i < result.size(); ++i) {
       auto &current = result[i];
@@ -258,6 +259,7 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(
         w_var.reset();
         rp0.reset();
         rp1.reset();
+        current_movlb.reset();
         next.push_back(current);
         continue;
       }
@@ -266,7 +268,23 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(
         continue;
       }
 
-      // --- Bank tracking ---
+      // --- Bank tracking (PIC14E MOVLB) ---
+      if (current.mnemonic == "MOVLB") {
+        try {
+          int bank = std::stoi(current.op1);
+          if (current_movlb && *current_movlb == bank) {
+            changed = true;
+            continue;  // Skip redundant MOVLB
+          }
+          current_movlb = bank;
+        } catch (...) {
+          current_movlb.reset();
+        }
+        next.push_back(current);
+        continue;
+      }
+
+      // --- Bank tracking (Legacy PIC14 RP0/RP1) ---
       if (current.mnemonic == "BSF" && current.op1 == "STATUS" &&
           current.op2 == "5") {
         if (rp0 && *rp0 == true) {
@@ -436,6 +454,7 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(
         w_var.reset();
         rp0.reset();
         rp1.reset();
+        current_movlb.reset();
         continue;
       } else if (current.mnemonic == "RETURN" || current.mnemonic == "RETFIE") {
         bool preceded_by_skip = false;
@@ -462,12 +481,14 @@ std::vector<PIC14AsmLine> PIC14Peephole::optimize(
         w_var.reset();
         rp0.reset();
         rp1.reset();
+        current_movlb.reset();
         continue;
       } else if (current.mnemonic == "CALL") {
         w_lit.reset();
         w_var.reset();
         rp0.reset();
         rp1.reset();
+        current_movlb.reset();
       } else {
         // Arithmetic instructions typically change W and flags
         w_lit.reset();

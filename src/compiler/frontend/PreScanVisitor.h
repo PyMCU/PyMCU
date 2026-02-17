@@ -28,7 +28,7 @@
  */
 
 #ifndef PRE_SCAN_VISITOR_H
-#define PRESCANVISITOR_H
+#define PRE_SCAN_VISITOR_H
 
 #include <memory>
 #include <string>

@@ -45,8 +45,9 @@ class Parser {
   std::unique_ptr<Program> parseProgram();
 
  private:
-  const std::vector<Token> &tokens;
+  const std::vector<Token> tokens;
   size_t pos = 0;
+  int function_depth = 0;
 
   [[nodiscard]] const Token &peek() const;
 
@@ -70,6 +71,8 @@ class Parser {
 
   std::unique_ptr<FunctionDef> parseFunction();
 
+  std::unique_ptr<ClassDef> parseClassDefinition();
+
   std::vector<Param> parseParameters();
 
   std::unique_ptr<Block> parseBlock();
@@ -82,9 +85,13 @@ class Parser {
 
   std::unique_ptr<Statement> parseWhileStatement();
 
+  std::unique_ptr<Statement> parseForStatement();
+
   std::unique_ptr<Statement> parseSimpleStatement();
 
   std::unique_ptr<Statement> parseReturnStatement();
+
+  std::unique_ptr<Statement> parseRaiseStatement();
 
   std::unique_ptr<Statement> parseAssignmentOrDeclaration();
 

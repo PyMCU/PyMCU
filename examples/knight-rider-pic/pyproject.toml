@@ -1,0 +1,13 @@
+[project]
+name = "knight-rider-pic"
+version = "0.1.0"
+dependencies = ["pymcu-stdlib"]
+
+[tool.pymcu]
+chip = "pic16f84a"
+frequency = 4000000
+sources = "src"
+entry = "main.py"
+
+[tool.pymcu.config]
+FOSC = "HS"

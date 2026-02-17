@@ -46,7 +46,15 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8
+from pymcu.types import ptr, uint8, device_info
+
+# ==========================================
+#  Device Memory Configuration
+# ==========================================
+RAM_START = 0x0100
+RAM_SIZE = 2048
+
+device_info(chip="atmega328p", arch="avr", ram_size=RAM_SIZE)
 
 # ==========================================
 #  Register Definitions (ATmega328P)

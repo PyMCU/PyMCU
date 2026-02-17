@@ -46,7 +46,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8
+from pymcu.types import ptr, uint8, device_info
 
 # ==========================================
 #  Device Memory Configuration
@@ -56,6 +56,8 @@ from pymcu.types import ptr, uint8
 # We use 0x20 as start to align with general purpose registers
 RAM_START = 0x20
 RAM_SIZE = 68
+
+device_info(chip="pic16f84a", arch="pic14", ram_size=RAM_SIZE)
 
 # ==========================================
 #  Register Definitions

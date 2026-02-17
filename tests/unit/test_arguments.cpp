@@ -16,7 +16,7 @@ TEST(ArgumentsTest, CallWithArguments) {
   auto ast = parser.parseProgram();
 
   IRGenerator ir_gen;
-  auto ir = ir_gen.generate(*ast, {});
+  auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
   // Check IR for 'main'
   ASSERT_EQ(ir.functions.size(), 2);
@@ -60,7 +60,7 @@ TEST(ArgumentsTest, StackLayoutWithArguments) {
   auto ast = parser.parseProgram();
 
   IRGenerator ir_gen;
-  auto ir = ir_gen.generate(*ast, {});
+  auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
   PIC14CodeGen codegen(DeviceConfig{.chip = "pic16f84a", .frequency = 4000000});
   std::stringstream ss;

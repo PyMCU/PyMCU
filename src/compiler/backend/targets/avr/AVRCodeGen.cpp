@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <format>
 #include <iostream>
+#include <map>
 #include <utility>
 #include <variant>
 
@@ -163,10 +164,49 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   }
 
   emit_raw("");
+
+  // Build ISR map: vector_address -> function*
+  std::map<int, const tacky::Function *> isr_map;
+  for (const auto &func : program.functions) {
+    if (func.is_interrupt) {
+      if (isr_map.contains(func.interrupt_vector)) {
+        throw std::runtime_error(std::format(
+            "Multiple ISRs defined for vector 0x{:04X}",
+            func.interrupt_vector));
+      }
+      isr_map[func.interrupt_vector] = &func;
+    }
+  }
+
+  // Emit interrupt vector table
   emit_raw(".org 0x0000");
   emit("RJMP", "main");
 
+  if (!isr_map.empty()) {
+    // ATmega328P: 26 vectors at 2-byte intervals (0x0000-0x0032)
+    for (int vec = 1; vec <= 25; vec++) {
+      int addr = vec * 2;
+      emit_raw(std::format(".org 0x{:04X}", addr));
+      if (isr_map.contains(addr)) {
+        emit("RJMP", isr_map[addr]->name);
+      } else {
+        emit("RETI");
+      }
+    }
+    emit_raw("");
+  }
+
+  // Emit ISR functions first
   for (const auto &func : program.functions) {
+    if (func.is_interrupt) {
+      compile_function(func);
+    }
+  }
+
+  // Emit regular functions
+  for (const auto &func : program.functions) {
+    if (func.is_interrupt) continue;
+    if (func.is_inline && func.name != "main") continue;
     compile_function(func);
   }
 
@@ -179,6 +219,16 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
 
 void AVRCodeGen::compile_function(const tacky::Function &func) {
   emit_label(func.name);
+
+  if (func.is_interrupt) {
+    // ISR prologue: save context
+    emit_comment("ISR prologue — save context");
+    emit("PUSH", "R16");
+    emit("PUSH", "R17");
+    emit("PUSH", "R18");
+    emit("IN", "R16", "0x3F");  // Save SREG
+    emit("PUSH", "R16");
+  }
 
   if (func.name == "main") {
     // Initialize Stack Pointer for ATmega328P
@@ -193,7 +243,29 @@ void AVRCodeGen::compile_function(const tacky::Function &func) {
   }
 
   for (const auto &instr : func.body) {
+    if (func.is_interrupt && std::holds_alternative<tacky::Return>(instr)) {
+      // ISR epilogue: restore context + RETI
+      emit_comment("ISR epilogue — restore context");
+      emit("POP", "R16");
+      emit("OUT", "0x3F", "R16");  // Restore SREG
+      emit("POP", "R18");
+      emit("POP", "R17");
+      emit("POP", "R16");
+      emit("RETI");
+      continue;
+    }
     compile_instruction(instr);
+  }
+
+  // Implicit return for ISR if no explicit return
+  if (func.is_interrupt) {
+    emit_comment("ISR epilogue — restore context");
+    emit("POP", "R16");
+    emit("OUT", "0x3F", "R16");
+    emit("POP", "R18");
+    emit("POP", "R17");
+    emit("POP", "R16");
+    emit("RETI");
   }
 }
 
@@ -229,7 +301,11 @@ void AVRCodeGen::compile_variant(const tacky::Label &arg) const {
 }
 
 void AVRCodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void AVRCodeGen::compile_variant(const tacky::JumpIfEqual &arg) {
@@ -647,7 +723,7 @@ void AVRCodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("AVR: AugAssign is not yet implemented");
 }
 
-void AVRCodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement AVR-specific delay
-  throw std::runtime_error("AVR: Delay is not yet implemented");
+
+void AVRCodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(AVRAsmLine::Raw(arg.instruction));
 }

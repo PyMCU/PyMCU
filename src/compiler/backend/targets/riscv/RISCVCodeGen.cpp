@@ -464,13 +464,17 @@ void RISCVCodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("RISC-V: AugAssign is not yet implemented");
 }
 
-void RISCVCodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement RISC-V specific delay
-  throw std::runtime_error("RISC-V: Delay is not yet implemented");
+
+void RISCVCodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(RISCVAsmLine::Raw(arg.instruction));
 }
 
 void RISCVCodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void RISCVCodeGen::compile_variant(const tacky::JumpIfEqual &arg) {

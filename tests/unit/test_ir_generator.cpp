@@ -10,7 +10,7 @@ TEST(IRGeneratorTest, SimpleReturn) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     ASSERT_EQ(ir.functions.size(), 1);
     EXPECT_EQ(ir.functions[0].name, "main");
@@ -30,7 +30,7 @@ TEST(IRGeneratorTest, ImplicitReturn) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     ASSERT_EQ(ir.functions.size(), 1);
     ASSERT_GE(ir.functions[0].body.size(), 1);
@@ -47,7 +47,7 @@ TEST(IRGeneratorTest, MultipleFunctions) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     ASSERT_EQ(ir.functions.size(), 2);
     EXPECT_EQ(ir.functions[0].name, "a");
@@ -62,7 +62,7 @@ TEST(IRGeneratorTest, IfStatement) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     auto &body = ir.functions[0].body;
     // Expect: JumpIfZero, Return(1), Jump, Label, Return(2), Label
@@ -87,7 +87,7 @@ TEST(IRGeneratorTest, WhileStatement) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     auto &body = ir.functions[0].body;
     // Expect: Label, Constant(1), JumpIfZero, Jump, Label
@@ -110,7 +110,7 @@ TEST(IRGeneratorTest, BinaryOps) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     auto &body = ir.functions[0].body;
     bool found_binary = false;
@@ -130,7 +130,7 @@ TEST(IRGeneratorTest, BitManipulation) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     auto &body = ir.functions[0].body;
     bool found_set = false;
@@ -152,7 +152,7 @@ TEST(IRGeneratorTest, NoneReturnCall) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     ASSERT_EQ(ir.functions.size(), 2);
     auto &main_body = ir.functions[1].body;
@@ -176,7 +176,7 @@ TEST(IRGeneratorTest, IntReturnCall) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
 
     ASSERT_EQ(ir.functions.size(), 2);
     auto &main_body = ir.functions[1].body;
@@ -200,7 +200,7 @@ TEST(IRGeneratorTest, ContinueStatement) {
 
     IRGenerator ir_gen;
     // This should not throw "Unknown Statement type"
-    EXPECT_NO_THROW(ir_gen.generate(*ast, {}));
+    EXPECT_NO_THROW(ir_gen.generate(*ast, {}, DeviceConfig{}));
 }
 
 TEST(IRGeneratorTest, BreakStatement) {
@@ -210,7 +210,7 @@ TEST(IRGeneratorTest, BreakStatement) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    EXPECT_NO_THROW(ir_gen.generate(*ast, {}));
+    EXPECT_NO_THROW(ir_gen.generate(*ast, {}, DeviceConfig{}));
 }
 
 TEST(IRGeneratorTest, MatchStatement) {
@@ -222,9 +222,9 @@ TEST(IRGeneratorTest, MatchStatement) {
 
     IRGenerator ir_gen;
     // This should not throw "Unknown Statement type"
-    EXPECT_NO_THROW(ir_gen.generate(*ast, {}));
+    EXPECT_NO_THROW(ir_gen.generate(*ast, {}, DeviceConfig{}));
 
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
     auto &body = ir.functions[0].body;
 
     // Should have equality check (BinaryOp::Equal), JumpIfZero, and Jumps

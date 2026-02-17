@@ -40,17 +40,39 @@
 
 class Diagnostic {
  public:
+  /// Maps CompilerError type_name to a VS Code severity string.
+  static std::string_view severity_for(const std::string &type_name) {
+    if (type_name == "Warning") return "warning";
+    if (type_name == "Info" || type_name == "Note") return "info";
+    return "error";
+  }
+
+  /// Emits a machine-readable diagnostic line for VS Code problem matcher,
+  /// followed by human-readable context (source line + caret).
+  /// Format: file:line:column: severity: ErrorType: message
   static void report(const CompilerError &err, const std::string_view source,
                      std::string_view filename) {
-    std::cerr << std::format("  File \"{}\", line {}\n", filename, err.line);
+    // Machine-readable line (matched by $pymcuc problem matcher)
+    std::cerr << std::format("{}:{}:{}: {}: {}: {}\n", filename, err.line,
+                             std::max(err.column, 1), severity_for(err.type_name),
+                             err.type_name, err.what());
 
+    // Human-readable context
     if (const std::string line_content = get_line(source, err.line);
         !line_content.empty()) {
       std::cerr << "    " << line_content << "\n";
-      const std::string pointer(err.column + 4 - 1, ' ');
-      std::cerr << pointer << "^\n";
+      if (err.column > 0) {
+        const std::string pointer(err.column + 4 - 1, ' ');
+        std::cerr << pointer << "^\n";
+      }
     }
-    std::cerr << std::format("{}: {}\n", err.type_name, err.what());
+  }
+
+  /// Overload for internal compiler errors (no source location).
+  static void report_internal(const std::string &message,
+                              std::string_view filename) {
+    std::cerr << std::format("{}:1:1: error: InternalCompilerError: {}\n",
+                             filename, message);
   }
 
  private:

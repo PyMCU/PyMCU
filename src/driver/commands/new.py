@@ -174,6 +174,8 @@ def new(name: str):
             pymcu_tool = tomlkit.table()
             pymcu_tool.add("chip", chip)
             pymcu_tool.add("frequency", freq)
+            pymcu_tool.add("sources", sources_dir)
+            pymcu_tool.add("entry", entry_file)
 
             pymcu_config = tomlkit.table()
             pymcu_config.add(tomlkit.comment("FOSC = \"HS\""))
@@ -205,6 +207,8 @@ def new(name: str):
             pymcu_tool = tomlkit.table()
             pymcu_tool.add("chip", chip)
             pymcu_tool.add("frequency", freq)
+            pymcu_tool.add("sources", sources_dir)
+            pymcu_tool.add("entry", entry_file)
             pymcu_tool.add("config", tomlkit.table())
 
             pymcu_toolchain = tomlkit.table()
@@ -247,7 +251,7 @@ def new(name: str):
                         "kind": "build",
                         "isDefault": True
                     },
-                    "problemMatcher": []
+                    "problemMatcher": ["$pymcuc"]
                 },
                 {
                     "label": "pymcu: clean",
@@ -279,9 +283,10 @@ dist/
         with open(project_path / ".gitignore", "w") as f:
             f.write(gitignore_content)
 
-        # src/main.py
+        # Entry point file
         main_py_content = f"from pymcu.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
-        with open(project_path / "src" / "main.py", "w") as f:
+        entry_dir = project_path / sources_dir if use_src else project_path
+        with open(entry_dir / entry_file, "w") as f:
             f.write(main_py_content)
 
         if Confirm.ask("Initialize git repository?", default=True):

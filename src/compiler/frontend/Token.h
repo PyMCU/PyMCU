@@ -58,6 +58,9 @@ enum class TokenType {
   And,
   Not,
   Global,
+  Class,
+  Yield,
+  Raise,
 
   // Literals
   Identifier,

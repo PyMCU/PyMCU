@@ -77,14 +77,21 @@ inline bool is_signed(DataType type) {
 
 /// Maps a Python type annotation string to an internal DataType enum.
 inline DataType string_to_datatype(const std::string &type_str) {
-  if (type_str == "uint8" || type_str == "int" || type_str.empty())
+  if (type_str == "uint8" || type_str.empty())
     return DataType::UINT8;
+  if (type_str == "int") return DataType::UINT16;
   if (type_str == "int8") return DataType::INT8;
   if (type_str == "uint16") return DataType::UINT16;
   if (type_str == "int16") return DataType::INT16;
   if (type_str == "uint32") return DataType::UINT32;
   if (type_str == "int32") return DataType::INT32;
   if (type_str == "float") return DataType::FLOAT;
+  if (type_str == "const") return DataType::UINT8;  // Compile-time only, never allocated
+  // Handle const[TYPE] — extract inner type (e.g., const[uint8] -> uint8)
+  if (type_str.find("const[") == 0 && type_str.back() == ']') {
+    std::string inner = type_str.substr(6, type_str.size() - 7);
+    return string_to_datatype(inner);
+  }
   if (type_str == "void" || type_str == "None") return DataType::VOID;
   // For pointer/register types, treat as UINT8 (address-level)
   if (type_str.find("ptr") != std::string::npos ||

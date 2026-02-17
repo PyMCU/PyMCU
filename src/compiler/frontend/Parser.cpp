@@ -34,8 +34,8 @@
 #include <optional>
 #include <stdexcept>
 
+#include "../common/Errors.h"
 #include "Ast.h"
-#include "Errors.h"
 
 Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
 
@@ -128,7 +128,10 @@ std::unique_ptr<Program> Parser::parseProgram() {
         prog->global_statements.push_back(parseStatement());
       } catch (const SyntaxError &e) {
         // Fallback for better error message if it's garbage
-        error("Expected function definition, import, or valid statement");
+        error(
+            "Expected function definition, import, or valid statement. "
+            "Original error: " +
+            std::string(e.what()));
       }
     }
   }
@@ -171,6 +174,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
 
         consume(TokenType::RParen, "Expected ')'");
       }
+    } else if (decorator.value == "staticmethod") {
+      // Ignored: All class methods are treated as static in this compiler
     } else {
       error("Unknown decorator: " + decorator.value);
     }
@@ -178,26 +183,56 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   }
 
   consume(TokenType::Def, "Expected 'def'");
-  const Token nameToken =
-      consume(TokenType::Identifier, "Expected function name");
+  if (!check(TokenType::Identifier)) {
+    error("Expected function name, but found " + tokens[pos].value +
+          " (Type: " + std::to_string(static_cast<int>(tokens[pos].type)) +
+          ")");
+  }
+  const Token nameToken = advance();
+  const std::string name = nameToken.value;
 
-  consume(TokenType::LParen, "Expected '('");
-  auto params = parseParameters();
-  consume(TokenType::RParen, "Expected ')'");
+  consume(TokenType::LParen, "Expected '(' after function name");
+  std::vector<Param> params = parseParameters();
+  consume(TokenType::RParen, "Expected ')' after parameters");
 
-  std::string returnType = "void";
+  std::string returnType = "void";  // Default to void/None
   if (match(TokenType::Arrow)) {
     returnType = parseTypeAnnotation();
   }
 
-  consume(TokenType::Colon, "Expected ':'");
+  consume(TokenType::Colon, "Expected ':' before function body");
   consume(TokenType::Newline, "Expected newline after function definition");
 
-  auto bodyBlock = parseBlock();
+  function_depth++;
+  std::unique_ptr<Block> body = parseBlock();
+  function_depth--;
 
-  return std::make_unique<FunctionDef>(nameToken.value, std::move(params),
-                                       returnType, std::move(bodyBlock),
-                                       is_inline, is_interrupt, vector);
+  return std::make_unique<FunctionDef>(name, std::move(params), returnType,
+                                       std::move(body), is_inline, is_interrupt,
+                                       vector);
+}
+
+std::unique_ptr<ClassDef> Parser::parseClassDefinition() {
+  consume(TokenType::Class, "Expected 'class'");
+  std::string name =
+      consume(TokenType::Identifier, "Expected class name").value;
+  std::vector<std::string> bases;
+  if (match(TokenType::LParen)) {
+    if (!check(TokenType::RParen)) {
+      do {
+        bases.push_back(
+            consume(TokenType::Identifier, "Expected base class name").value);
+      } while (match(TokenType::Comma));
+    }
+    consume(TokenType::RParen, "Expected ')'");
+  }
+  consume(TokenType::Colon, "Expected ':'");
+  consume(TokenType::Newline, "Expected newline after class definition");
+  auto body = parseBlock();
+  auto class_def = std::make_unique<ClassDef>(std::move(name), std::move(bases),
+                                              std::move(body));
+  class_def->is_static = true;
+  return class_def;
 }
 
 std::vector<Param> Parser::parseParameters() {
@@ -213,7 +248,11 @@ std::vector<Param> Parser::parseParameters() {
     consume(TokenType::Colon, "Parameter type is required (e.g. 'a: int')");
     const std::string type = parseTypeAnnotation();
 
-    params.push_back({name.value, type});
+    std::unique_ptr<Expression> default_val = nullptr;
+    if (match(TokenType::Equal)) {
+      default_val = parseExpression();
+    }
+    params.emplace_back(name.value, type, std::move(default_val));
   } while (match(TokenType::Comma));
 
   return params;
@@ -242,6 +281,13 @@ std::unique_ptr<Statement> Parser::parseStatement() {
   if (check(TokenType::If)) return parseIfStatement();
   if (check(TokenType::Match)) return parseMatchStatement();
   if (check(TokenType::While)) return parseWhileStatement();
+  if (check(TokenType::For)) return parseForStatement();
+  if (check(TokenType::Def) || check(TokenType::At)) {
+    if (function_depth > 0) {
+      error("Nested function definitions are not supported");
+    }
+    return parseFunction();
+  }
   if (check(TokenType::Return)) return parseReturnStatement();
 
   if (check(TokenType::Import) || check(TokenType::From)) {
@@ -250,6 +296,10 @@ std::unique_ptr<Statement> Parser::parseStatement() {
 
   if (check(TokenType::Global)) {
     return parseGlobalStatement();
+  }
+
+  if (check(TokenType::Class)) {
+    return parseClassDefinition();
   }
 
   if (match(TokenType::Break)) {
@@ -267,6 +317,8 @@ std::unique_ptr<Statement> Parser::parseStatement() {
     return std::make_unique<PassStmt>();
   }
 
+  if (check(TokenType::Raise)) return parseRaiseStatement();
+
   return parseSimpleStatement();
 }
 
@@ -279,6 +331,23 @@ std::unique_ptr<Statement> Parser::parseReturnStatement() {
   }
   consumeStatementEnd();
   auto stmt = std::make_unique<ReturnStmt>(std::move(value));
+  stmt->line = line;
+  return stmt;
+}
+
+std::unique_ptr<Statement> Parser::parseRaiseStatement() {
+  int line = peek().line;
+  consume(TokenType::Raise, "Expected 'raise'");
+  std::string error_type =
+      consume(TokenType::Identifier, "Expected error type after 'raise'").value;
+  consume(TokenType::LParen, "Expected '(' after error type");
+  std::string message;
+  if (check(TokenType::String)) {
+    message = advance().value;
+  }
+  consume(TokenType::RParen, "Expected ')' after error message");
+  consumeStatementEnd();
+  auto stmt = std::make_unique<RaiseStmt>(error_type, message);
   stmt->line = line;
   return stmt;
 }
@@ -359,7 +428,7 @@ std::unique_ptr<Statement> Parser::parseIfStatement() {
 
   // Elif branches
   std::vector<
-      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement> > >
+      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement>>>
       elifBranches;
   while (match(TokenType::Elif)) {
     auto elifCond = parseExpression();
@@ -434,6 +503,57 @@ std::unique_ptr<Statement> Parser::parseWhileStatement() {
   auto body = parseBlock();
   auto stmt =
       std::make_unique<WhileStmt>(std::move(condition), std::move(body));
+  stmt->line = line;
+  return stmt;
+}
+
+std::unique_ptr<Statement> Parser::parseForStatement() {
+  int line = peek().line;
+  consume(TokenType::For, "Expected 'for'");
+  Token var_tok = consume(TokenType::Identifier, "Expected loop variable");
+  consume(TokenType::In, "Expected 'in'");
+
+  Token range_tok = consume(TokenType::Identifier, "Expected 'range'");
+  if (range_tok.value != "range")
+    error("Only 'range()' is supported in for loops");
+
+  consume(TokenType::LParen, "Expected '('");
+
+  auto arg1 = parseExpression();
+  std::unique_ptr<Expression> arg2 = nullptr, arg3 = nullptr;
+  if (match(TokenType::Comma)) {
+    arg2 = parseExpression();
+    if (match(TokenType::Comma)) {
+      arg3 = parseExpression();
+    }
+  }
+  consume(TokenType::RParen, "Expected ')'");
+  consume(TokenType::Colon, "Expected ':'");
+  consume(TokenType::Newline, "Expected newline");
+  auto body = parseBlock();
+
+  // Normalize: range(stop), range(start, stop), range(start, stop, step)
+  std::unique_ptr<Expression> start, stop, step;
+  if (!arg2) {
+    // range(stop): start=0, stop=arg1, step=1
+    start = nullptr;
+    stop = std::move(arg1);
+    step = nullptr;
+  } else if (!arg3) {
+    // range(start, stop)
+    start = std::move(arg1);
+    stop = std::move(arg2);
+    step = nullptr;
+  } else {
+    // range(start, stop, step)
+    start = std::move(arg1);
+    stop = std::move(arg2);
+    step = std::move(arg3);
+  }
+
+  auto stmt = std::make_unique<ForStmt>(
+      var_tok.value, std::move(start), std::move(stop),
+      std::move(step), std::move(body));
   stmt->line = line;
   return stmt;
 }
@@ -527,23 +647,17 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
                                            std::move(value));
   }
 
-  // Check for intrinsics: delay_ms(expr)
-  if (auto call = dynamic_cast<CallExpr *>(expr.get())) {
-    if (call->callee == "delay_ms" && call->args.size() == 1) {
-      consumeStatementEnd();
-      return std::make_unique<DelayStmt>(true, std::move(call->args[0]));
-    }
-    if (call->callee == "delay_us" && call->args.size() == 1) {
-      consumeStatementEnd();
-      return std::make_unique<DelayStmt>(false, std::move(call->args[0]));
-    }
-  }
-
   consumeStatementEnd();
-  return std::make_unique<ExprStmt>(std::move(expr));
+  auto stmt = std::make_unique<ExprStmt>(std::move(expr));
+  stmt->line = line;
+  return stmt;
 }
 
 std::unique_ptr<Expression> Parser::parseExpression() {
+  if (match(TokenType::Yield)) {
+    auto value = parseExpression();
+    return std::make_unique<YieldExpr>(std::move(value));
+  }
   return parseLogicalOr();
 }
 
@@ -710,21 +824,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 
   while (true) {
     if (match(TokenType::LParen)) {
-      std::string calleeName;
-      if (const auto var = dynamic_cast<VariableExpr *>(expr.get())) {
-        calleeName = var->name;
-      } else if (const auto mem =
-                     dynamic_cast<MemberAccessExpr *>(expr.get())) {
-        if (const auto obj = dynamic_cast<VariableExpr *>(mem->object.get())) {
-          calleeName = obj->name + "." + mem->member;
-        } else {
-          error("Complex member access call not supported");
-        }
-      } else {
-        error("Expression is not callable");
-      }
-
-      std::vector<std::unique_ptr<Expression> > args;
+      std::vector<std::unique_ptr<Expression>> args;
       if (!check(TokenType::RParen)) {
         do {
           if (check(TokenType::Identifier) &&
@@ -744,7 +844,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
         } while (match(TokenType::Comma));
       }
       consume(TokenType::RParen, "Expected ')'");
-      expr = std::make_unique<CallExpr>(calleeName, std::move(args));
+      expr = std::make_unique<CallExpr>(std::move(expr), std::move(args));
     } else if (match(TokenType::LBracket)) {
       auto index = parseExpression();
       consume(TokenType::RBracket, "Expected ']'");
@@ -775,7 +875,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   if (match(TokenType::Number)) {
     const Token t = previous();
     std::string text = t.value;
-    std::erase(text, '_');
+    text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
 
     int base = 10;
     size_t offset = 0;
@@ -801,9 +901,9 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
       int val = std::stoi(text.substr(offset), nullptr, base);
       return std::make_unique<IntegerLiteral>(val);
     } catch (const std::out_of_range &) {
-      error(std::format("Integer literal is too large: '{}'", t.value));
+      error("Integer literal is too large: '" + t.value + "'");
     } catch (const std::invalid_argument &) {
-      error(std::format("Invalid integer literal: '{}'", t.value));
+      error("Invalid integer literal: '" + t.value + "'");
     }
     return nullptr;
   }

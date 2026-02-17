@@ -36,6 +36,9 @@ class ArchStrategy {
   // Emits instructions to select the bank for 'addr'
   virtual void emit_bank_select(int bank) = 0;
 
+  // Invalidates internal bank tracking (e.g. after CALL)
+  virtual void invalidate_bank() {};
+
   // Interrupt Service Routine (ISR)
   virtual void emit_context_save() = 0;
   virtual void emit_context_restore() = 0;

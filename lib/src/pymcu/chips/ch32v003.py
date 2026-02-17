@@ -46,7 +46,15 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8, int32
+from pymcu.types import ptr, uint8, int32, device_info
+
+# ==========================================
+#  Device Memory Configuration
+# ==========================================
+RAM_START = 0x20000000
+RAM_SIZE = 2048
+
+device_info(chip="ch32v003", arch="riscv", ram_size=RAM_SIZE)
 
 # ==========================================
 #  Register Definitions (MMIO)

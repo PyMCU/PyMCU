@@ -46,8 +46,11 @@ void PreScanVisitor::scan(const Program& program) const {
 void PreScanVisitor::visit_statement(const Statement* stmt) const {
   if (const auto exprStmt = dynamic_cast<const ExprStmt*>(stmt)) {
     if (const auto call = dynamic_cast<const CallExpr*>(exprStmt->expr.get())) {
-      if (call->callee == "device_info") {
-        handle_device_info(call);
+      if (const auto var =
+              dynamic_cast<const VariableExpr*>(call->callee.get())) {
+        if (var->name == "device_info") {
+          handle_device_info(call);
+        }
       }
     }
   }

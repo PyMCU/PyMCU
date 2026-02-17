@@ -11,7 +11,7 @@ TEST(OptimizerTest, ConstantFoldingBinary) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
     auto optimized = Optimizer::optimize(ir);
 
     ASSERT_EQ(optimized.functions.size(), 1);
@@ -43,7 +43,7 @@ TEST(OptimizerTest, DeadCodeElimination) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
     auto optimized = Optimizer::optimize(ir);
 
     // 'a' is not used, so 'a = 1 + 2' should be eliminated.
@@ -68,7 +68,7 @@ TEST(OptimizerTest, UnusedExpressionDCE) {
     auto ast = parser.parseProgram();
 
     IRGenerator ir_gen;
-    auto ir = ir_gen.generate(*ast, {});
+    auto ir = ir_gen.generate(*ast, {}, DeviceConfig{});
     auto optimized = Optimizer::optimize(ir);
 
     ASSERT_EQ(optimized.functions.size(), 1);

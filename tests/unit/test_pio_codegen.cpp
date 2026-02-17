@@ -169,7 +169,7 @@ NOBLOCK = 0
   IRGenerator irGen;
   std::map<std::string, const Program *> modules;
   modules["pio"] = pio_ast.get();
-  auto ir = irGen.generate(*ast, modules);
+  auto ir = irGen.generate(*ast, modules, DeviceConfig{});
 
   DeviceConfig cfg{.chip = "rp2040"};
   cfg.chip = "ws2812";

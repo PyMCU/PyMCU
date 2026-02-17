@@ -191,6 +191,45 @@ NVMCON1:  ptr[uint8] = ptr(0x081E)
 NVMCON2:  ptr[uint8] = ptr(0x081F)
 
 # ==========================================
+#  Timer0 (Bank 0)
+# ==========================================
+TMR0L:    ptr[uint8] = ptr(0x001C)
+TMR0H:    ptr[uint8] = ptr(0x001D)
+T0CON0:   ptr[uint8] = ptr(0x001E)
+T0CON1:   ptr[uint8] = ptr(0x001F)
+
+# ==========================================
+#  Timer1 (Bank 4)
+# ==========================================
+TMR1L:    ptr[uint8] = ptr(0x020C)
+TMR1H:    ptr[uint8] = ptr(0x020D)
+T1CON:    ptr[uint8] = ptr(0x020E)
+T1GCON:   ptr[uint8] = ptr(0x020F)
+
+# ==========================================
+#  Timer2 (Bank 5)
+# ==========================================
+TMR2:     ptr[uint8] = ptr(0x028C)
+T2PR:     ptr[uint8] = ptr(0x028D)
+T2CON:    ptr[uint8] = ptr(0x028E)
+
+# ==========================================
+#  CCP1 (Bank 6)
+# ==========================================
+CCPR1L:   ptr[uint8] = ptr(0x030C)
+CCPR1H:   ptr[uint8] = ptr(0x030D)
+CCP1CON:  ptr[uint8] = ptr(0x030E)
+CCP1CAP:  ptr[uint8] = ptr(0x030F)
+
+# ==========================================
+#  CCP2 (Bank 6)
+# ==========================================
+CCPR2L:   ptr[uint8] = ptr(0x0310)
+CCPR2H:   ptr[uint8] = ptr(0x0311)
+CCP2CON:  ptr[uint8] = ptr(0x0312)
+CCP2CAP:  ptr[uint8] = ptr(0x0313)
+
+# ==========================================
 #  Interrupts (PIR/PIE) - Bank 14
 # ==========================================
 PIR0:     ptr[uint8] = ptr(0x070C)
@@ -202,6 +241,29 @@ PIE0:     ptr[uint8] = ptr(0x0716)
 PIE1:     ptr[uint8] = ptr(0x0717)
 PIE2:     ptr[uint8] = ptr(0x0718)
 PIE3:     ptr[uint8] = ptr(0x0719)
+
+# ==========================================
+#  Weak Pull-Up Registers (Bank 4)
+# ==========================================
+WPUA:     ptr[uint8] = ptr(0x020C)
+WPUB:     ptr[uint8] = ptr(0x020D)
+WPUC:     ptr[uint8] = ptr(0x020E)
+WPUD:     ptr[uint8] = ptr(0x020F)
+WPUE:     ptr[uint8] = ptr(0x0210)
+
+# ==========================================
+#  Interrupt-on-Change (IOC) Registers (Bank 7)
+# ==========================================
+IOCAP:    ptr[uint8] = ptr(0x0391)
+IOCAN:    ptr[uint8] = ptr(0x0392)
+IOCBP:    ptr[uint8] = ptr(0x0395)
+IOCBN:    ptr[uint8] = ptr(0x0396)
+IOCCP:    ptr[uint8] = ptr(0x0399)
+IOCCN:    ptr[uint8] = ptr(0x039A)
+IOCDP:    ptr[uint8] = ptr(0x039D)
+IOCDN:    ptr[uint8] = ptr(0x039E)
+IOCEP:    ptr[uint8] = ptr(0x03A1)
+IOCEN:    ptr[uint8] = ptr(0x03A2)
 
 # ==========================================
 #  CONSTANTS & BITS
@@ -230,3 +292,55 @@ WRERR: int = 3
 FREE:  int = 4
 LWLO:  int = 5
 NVMREGS: int = 6
+
+# T0CON0 Bits
+T0EN:   int = 7
+T0OUT:  int = 5
+T016BIT: int = 4
+
+# T0CON1 Bits
+T0CS0:  int = 5; T0CS1: int = 6; T0CS2: int = 7
+T0ASYNC: int = 4
+T0CKPS0: int = 0; T0CKPS1: int = 1; T0CKPS2: int = 2; T0CKPS3: int = 3
+
+# T1CON Bits
+TMR1ON: int = 0
+T1SYNC: int = 2
+T1CKPS0: int = 4; T1CKPS1: int = 5
+
+# T2CON Bits
+T2ON:   int = 7
+T2CKPS0: int = 0; T2CKPS1: int = 1; T2CKPS2: int = 2
+
+# CCP1CON Bits
+CCP1EN:  int = 7
+CCP1MODE0: int = 0; CCP1MODE1: int = 1; CCP1MODE2: int = 2; CCP1MODE3: int = 3
+
+# CCP2CON Bits
+CCP2EN:  int = 7
+CCP2MODE0: int = 0; CCP2MODE1: int = 1; CCP2MODE2: int = 2; CCP2MODE3: int = 3
+
+# ADC Bits
+ADON: int = 0
+GO:   int = 0
+
+# TXSTA Bits
+TXEN: int = 5
+BRGH: int = 2
+TRMT: int = 1
+
+# RCSTA Bits
+SPEN: int = 7
+CREN: int = 4
+
+# PIR1 Bits
+TMR1IF: int = 0
+TMR2IF: int = 1
+ADIF:   int = 6
+RCIF:   int = 5
+TXIF:   int = 4
+
+# PIR4 Bits
+TMR0IF: int = 0
+CCP1IF: int = 1
+CCP2IF: int = 2

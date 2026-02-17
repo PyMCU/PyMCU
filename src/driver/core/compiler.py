@@ -100,10 +100,15 @@ class PyMcuCompiler:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
 
-    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None,verbose: bool = False):
+    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--freq", str(freq)]
+
+        if reset_vector is not None:
+            cmd.extend(["--reset-vector", str(reset_vector)])
+        if interrupt_vector is not None:
+            cmd.extend(["--interrupt-vector", str(interrupt_vector)])
 
         working_dir = search_path if search_path else input_path.parent
         cmd.extend(["-I", str(working_dir.absolute())])
@@ -125,9 +130,10 @@ class PyMcuCompiler:
             cmd.extend(["-C", f"{key}={val}"])
         
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
-        except subprocess.CalledProcessError as e:
-            error_msg = e.stderr.decode() if e.stderr else e.stdout.decode()
-            raise RuntimeError(f"Compilation failed:\n{error_msg}")
+            # Let stderr flow through to the terminal so VS Code's problem
+            # matcher can parse diagnostic lines (file:line:col: severity: msg).
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:
             raise RuntimeError(f"Compiler '{compiler}' not found.")

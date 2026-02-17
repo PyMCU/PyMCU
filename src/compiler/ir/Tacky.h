@@ -215,25 +215,25 @@ struct AugAssign {
   Val operand;
 };
 
-// Timing
-struct Delay {
-  Val target;  // Duration
-  bool is_ms;
+// Inline assembly
+struct InlineAsm {
+  std::string instruction;  // Raw assembly text, emitted verbatim
 };
 
 // Debugging
 struct DebugLine {
   int line;
   std::string text;
+  std::string source_file;
 };
 
 // --- The Instruction Container ---
 using Instruction =
     std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, JumpIfNotZero,
                  Label, Call, BitSet, BitClear, BitCheck, BitWrite,
-                 JumpIfBitSet, JumpIfBitClear, AugAssign, Delay, DebugLine,
-                 JumpIfEqual, JumpIfNotEqual, JumpIfLessThan, JumpIfLessOrEqual,
-                 JumpIfGreaterThan, JumpIfGreaterOrEqual>;
+                 JumpIfBitSet, JumpIfBitClear, AugAssign, InlineAsm,
+                 DebugLine, JumpIfEqual, JumpIfNotEqual, JumpIfLessThan,
+                 JumpIfLessOrEqual, JumpIfGreaterThan, JumpIfGreaterOrEqual>;
 
 // --- Function Definition ---
 struct Function {

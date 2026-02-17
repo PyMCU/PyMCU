@@ -1,0 +1,23 @@
+[project]
+name = "test3"
+version = "0.1.0"
+dependencies = ["pymcu-stdlib==0.1.2a3", "pymcu-compiler==0.1.0a22"]
+
+[[tool.uv.index]]
+name = "gitea"
+url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
+explicit = true
+
+[tool.uv.sources]
+pymcu-stdlib = {index = "gitea"}
+pymcu-compiler = {index = "gitea"}
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 4000000
+
+[tool.pymcu.config]
+# FOSC = "HS"
+
+[tool.pymcu.toolchain]
+# assembler = "gpasm"

@@ -522,13 +522,17 @@ void PIC12CodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("PIC12: AugAssign is not yet implemented");
 }
 
-void PIC12CodeGen::compile_variant(const tacky::Delay &arg) {
-  // TODO: Implement PIC12-specific delay
-  throw std::runtime_error("PIC12: Delay is not yet implemented");
+
+void PIC12CodeGen::compile_variant(const tacky::InlineAsm &arg) {
+  assembly.push_back(PIC12AsmLine::Raw(arg.instruction));
 }
 
 void PIC12CodeGen::compile_variant(const tacky::DebugLine &arg) {
-  emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  if (!arg.source_file.empty()) {
+    emit_comment(std::format("{}:{}: {}", arg.source_file, arg.line, arg.text));
+  } else {
+    emit_comment(std::format("Line {}: {}", arg.line, arg.text));
+  }
 }
 
 void PIC12CodeGen::compile_variant(const tacky::JumpIfEqual &arg) {

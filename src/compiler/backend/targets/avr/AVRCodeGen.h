@@ -120,7 +120,7 @@ class AVRCodeGen : public CodeGen {
 
   void compile_variant(const tacky::AugAssign &arg);
 
-  void compile_variant(const tacky::Delay &arg);
+  void compile_variant(const tacky::InlineAsm &arg);
 
   void compile_variant(const tacky::DebugLine &arg);
 };

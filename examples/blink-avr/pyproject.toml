@@ -1,0 +1,13 @@
+[project]
+name = "blink-avr"
+version = "0.1.0"
+dependencies = ["pymcu-stdlib"]
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"
+
+[tool.pymcu.config]
+# No fuse configuration needed for basic blink

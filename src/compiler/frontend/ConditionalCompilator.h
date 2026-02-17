@@ -33,15 +33,18 @@
 #include <string>
 #include <vector>
 
+#include "../common/DeviceConfig.h"
 #include "Ast.h"
 
 class ConditionalCompilator {
  public:
-  explicit ConditionalCompilator(std::string target_chip);
+  explicit ConditionalCompilator(DeviceConfig config);
   void process(Program& program);
 
  private:
-  std::string target_chip;
+  DeviceConfig config;
+
+  void process_block(Statement* block, Program& prog);
 
   // Returns true if the statement was an IfStmt handled (and thus should be
   // removed/replaced) Returns false if it's a normal statement to keep
@@ -50,6 +53,9 @@ class ConditionalCompilator {
 
   // Evaluates a condition. Only supports: __CHIP__ == "literal"
   bool evaluate_condition(const Expression* expr);
+
+  // Evaluates a match target to a string. Only supports: __CHIP__.name, etc.
+  std::string evaluate_match_target(const Expression* expr);
 };
 
 #endif

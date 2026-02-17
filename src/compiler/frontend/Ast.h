@@ -68,7 +68,19 @@ struct ASTNode {
   int line = 0;
 };
 
-struct Statement : ASTNode {};
+struct Statement : public ASTNode {};
+
+struct ClassDef : public Statement {
+  std::string name;
+  std::vector<std::string> bases;
+  std::unique_ptr<Statement> body;  // Block
+  bool is_static = false;
+  bool is_dataclass = false;
+
+  ClassDef(std::string n, std::vector<std::string> b,
+           std::unique_ptr<Statement> body_stmt)
+      : name(std::move(n)), bases(std::move(b)), body(std::move(body_stmt)) {}
+};
 
 struct Expression : ASTNode {};
 
@@ -118,13 +130,13 @@ struct MemberAccessExpr : Expression {
       : object(std::move(obj)), member(std::move(mem)) {}
 };
 
-struct CallExpr : Expression {
-  std::string callee;
-  std::vector<std::unique_ptr<Expression> > args;
+struct CallExpr : public Expression {
+  std::unique_ptr<Expression> callee;
+  std::vector<std::unique_ptr<Expression>> args;
 
-  CallExpr(std::string name,
-           std::vector<std::unique_ptr<Expression> > arguments)
-      : callee(std::move(name)), args(std::move(arguments)) {}
+  CallExpr(std::unique_ptr<Expression> target,
+           std::vector<std::unique_ptr<Expression>> arguments)
+      : callee(std::move(target)), args(std::move(arguments)) {}
 };
 
 struct KeywordArgExpr : Expression {
@@ -135,7 +147,7 @@ struct KeywordArgExpr : Expression {
       : key(std::move(k)), value(std::move(v)) {}
 };
 
-struct BinaryExpr : Expression {
+struct BinaryExpr : public Expression {
   std::unique_ptr<Expression> left;
   BinaryOp op;
   std::unique_ptr<Expression> right;
@@ -143,6 +155,12 @@ struct BinaryExpr : Expression {
   BinaryExpr(std::unique_ptr<Expression> l, BinaryOp o,
              std::unique_ptr<Expression> r)
       : left(std::move(l)), op(o), right(std::move(r)) {}
+};
+
+struct YieldExpr : public Expression {
+  std::unique_ptr<Expression> value;  // Optional in Python, but we can enforce
+                                      // strictness or wrap in optional
+  explicit YieldExpr(std::unique_ptr<Expression> v) : value(std::move(v)) {}
 };
 
 struct UnaryExpr : Expression {
@@ -154,7 +172,7 @@ struct UnaryExpr : Expression {
 };
 
 struct Block : Statement {
-  std::vector<std::unique_ptr<Statement> > statements;
+  std::vector<std::unique_ptr<Statement>> statements;
 };
 
 struct VarDecl : Statement {
@@ -219,13 +237,13 @@ struct IfStmt : Statement {
   std::unique_ptr<Statement> then_branch;
   // Expanded for elif support: list of (condition, block)
   std::vector<
-      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement> > >
+      std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement>>>
       elif_branches;
   std::unique_ptr<Statement> else_branch;
 
   IfStmt(std::unique_ptr<Expression> cond, std::unique_ptr<Statement> then_b,
-         std::vector<std::pair<std::unique_ptr<Expression>,
-                               std::unique_ptr<Statement> > >
+         std::vector<
+             std::pair<std::unique_ptr<Expression>, std::unique_ptr<Statement>>>
              elif_b = {},
          std::unique_ptr<Statement> else_b = nullptr)
       : condition(std::move(cond)),
@@ -255,6 +273,21 @@ struct WhileStmt : Statement {
       : condition(std::move(cond)), body(std::move(b)) {}
 };
 
+struct ForStmt : Statement {
+  std::string var_name;
+  std::unique_ptr<Expression> range_start;  // nullptr → 0
+  std::unique_ptr<Expression> range_stop;
+  std::unique_ptr<Expression> range_step;   // nullptr → 1
+  std::unique_ptr<Statement> body;
+
+  ForStmt(std::string var, std::unique_ptr<Expression> start,
+          std::unique_ptr<Expression> stop, std::unique_ptr<Expression> step,
+          std::unique_ptr<Statement> b)
+      : var_name(std::move(var)), range_start(std::move(start)),
+        range_stop(std::move(stop)), range_step(std::move(step)),
+        body(std::move(b)) {}
+};
+
 struct ExprStmt : Statement {
   std::unique_ptr<Expression> expr;
 
@@ -273,20 +306,24 @@ struct ContinueStmt : Statement {};
 
 struct PassStmt : Statement {};
 
-struct DelayStmt : Statement {
-  bool is_ms;  // true = ms, false = us
-  std::unique_ptr<Expression> duration;
+struct RaiseStmt : Statement {
+  std::string error_type;
+  std::string message;
 
-  DelayStmt(bool ms, std::unique_ptr<Expression> dur)
-      : is_ms(ms), duration(std::move(dur)) {}
+  RaiseStmt(std::string type, std::string msg)
+      : error_type(std::move(type)), message(std::move(msg)) {}
 };
 
 struct Param {
   std::string name;
   std::string type;
+  std::unique_ptr<Expression> default_value;
+
+  Param(std::string n, std::string t, std::unique_ptr<Expression> def = nullptr)
+      : name(std::move(n)), type(std::move(t)), default_value(std::move(def)) {}
 };
 
-struct FunctionDef : ASTNode {
+struct FunctionDef : Statement {
   std::string name;
   std::vector<Param> params;
   std::string return_type;  // "void", "uint8"
@@ -319,9 +356,9 @@ struct ImportStmt : Statement {
 };
 
 struct Program : ASTNode {
-  std::vector<std::unique_ptr<ImportStmt> > imports;
-  std::vector<std::unique_ptr<FunctionDef> > functions;
-  std::vector<std::unique_ptr<Statement> > global_statements;
+  std::vector<std::unique_ptr<ImportStmt>> imports;
+  std::vector<std::unique_ptr<FunctionDef>> functions;
+  std::vector<std::unique_ptr<Statement>> global_statements;
 };
 
 #endif  // AST_H

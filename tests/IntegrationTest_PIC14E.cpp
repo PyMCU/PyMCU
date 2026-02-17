@@ -1,3 +1,5 @@
+#include <gtest/gtest.h>
+
 #include <cassert>
 #include <filesystem>
 #include <fstream>
@@ -21,10 +23,9 @@ void write_file(const std::string& filename, const std::string& content) {
 void assert_contains(const std::string& content, const std::string& substring,
                      const std::string& context) {
   if (content.find(substring) == std::string::npos) {
-    std::cerr << "[FAIL] " << context << "\n";
-    std::cerr << "       Expected to find: '" << substring << "'\n";
-    std::cerr << "       But it was missing from the output ASM.\n";
-    exit(1);
+    FAIL() << "[FAIL] " << context << "\n"
+           << "       Expected to find: '" << substring << "'\n"
+           << "       But it was missing from the output ASM.";
   }
 }
 
@@ -32,15 +33,16 @@ void assert_not_contains(const std::string& content,
                          const std::string& substring,
                          const std::string& context) {
   if (content.find(substring) != std::string::npos) {
-    std::cerr << "[FAIL] " << context << "\n";
-    std::cerr << "       Found forbidden string: '" << substring << "'\n";
-    std::cerr << "       Legacy code generation detected where Enhanced was "
-                 "expected.\n";
-    exit(1);
+    FAIL() << "[FAIL] " << context << "\n"
+           << "       Found forbidden string: '" << substring << "'\n"
+           << "       Legacy code generation detected where Enhanced was "
+              "expected.";
   }
 }
 
-int main() {
+#include <gtest/gtest.h>
+
+TEST(IntegrationTest, PIC14E) {
   std::cout << "[TEST] Starting Strict PIC14E Integration Test...\n";
 
   // 1. Setup Environment
@@ -66,8 +68,6 @@ def main():
 )");
 
 // 2. Execute Compiler
-// Note: We intentionally pass a generic or wrong CLI arch to verify
-// auto-detection works
 #ifdef PYMCUC_PATH
   std::string cmd =
       std::string(PYMCUC_PATH) +
@@ -82,9 +82,7 @@ def main():
   int ret = system(cmd.c_str());
 
   if (ret != 0) {
-    std::cerr << "[FAIL] Compiler crashed or returned non-zero exit code: "
-              << ret << "\n";
-    return 1;
+    FAIL() << "[FAIL] Compiler crashed or returned non-zero exit code: " << ret;
   }
 
   // 3. Forensic Analysis
@@ -101,32 +99,16 @@ def main():
                   "Include Verification");
 
   // CHECK 2: Enhanced Banking (MOVLB)
-  // 0x1F26 is in Bank 62.
-  // We expect "MOVLB 62" or "MOVLB 0x3E" (hex for 62)
-  // Regex logic would be better, but simple string search works for strict
-  // output The compiler output might be decimal "MOVLB 62" or hex. Check logic.
-  // Let's assume the compiler outputs decimal for MOVLB as per typical
-  // implementation.
   assert_contains(asm_content, "MOVLB", "Instruction Verification");
 
   // Specific Bank Check
   if (asm_content.find("MOVLB\t62") == std::string::npos &&
       asm_content.find("MOVLB 62") == std::string::npos &&
       asm_content.find("MOVLB 0x3E") == std::string::npos) {
-    std::cerr << "[FAIL] Bank Selection Verification\n";
-    std::cerr << "       Expected 'MOVLB 62' for address 0x1F26.\n";
-    exit(1);
+    FAIL() << "[FAIL] Bank Selection Verification\n"
+           << "       Expected 'MOVLB 62' for address 0x1F26.";
   }
-
-  // CHECK 3: Forbidden Legacy Code
-  // If we see STATUS manipulation for banking, it's wrong.
-  // Note: BCF STATUS, 5 might happen for other reasons, but strictly paired
-  // with high addr is bad. A simpler check: 0x1F26 is > 0x1FF. Legacy banking
-  // can't reach it. If the compiler generated valid Legacy code, it would mask
-  // the address bits, causing data corruption. If it generated "MOVWF 0x1F26"
-  // without MOVLB, the assembler will error.
 
   std::cout << "[PASS] All strict checks passed. The compiler is correctly "
                "generating PIC14E code.\n";
-  return 0;
 }
