@@ -44,7 +44,7 @@ function getExecutablePath(): string {
 function checkPymcuInstallation() {
     try {
         const executable = getExecutablePath();
-        execSync(`${executable} --version`, { stdio: 'ignore' });
+        execSync(`${executable} --help`, { stdio: 'ignore' });
     } catch {
         vscode.window.showWarningMessage(
             'PyMCU CLI not detected. Install it with: pipx install pymcu-compiler',
@@ -185,7 +185,7 @@ async function configureIntellisense() {
     const extraPaths = pythonConfig.get<string[]>('analysis.extraPaths') || [];
     let updated = false;
 
-    // 1. Check for local lib/src in workspace (development mode)
+    // 1. Check for local lib/src in workspace (development mode)5
     const localLibPath = path.join(workspaceFolder.uri.fsPath, 'lib', 'src');
     if (fs.existsSync(localLibPath) && !extraPaths.includes(localLibPath)) {
         extraPaths.push(localLibPath);
@@ -193,22 +193,58 @@ async function configureIntellisense() {
     }
 
     // 2. Try to resolve installed pymcu stdlib path
-    try {
-        const stdlibPath = execSync(
-            'python3 -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"',
-            { cwd: workspaceFolder.uri.fsPath, encoding: 'utf-8', timeout: 5000 }
-        ).trim();
+    let stdlibPath: string | undefined;
 
-        if (stdlibPath && fs.existsSync(stdlibPath)) {
-            // Add parent so `from pymcu.xxx import yyy` resolves
-            const parentPath = path.dirname(stdlibPath);
-            if (!extraPaths.includes(parentPath)) {
-                extraPaths.push(parentPath);
-                updated = true;
+    const runCommand = (command: string): string | undefined => {
+        try {
+            return execSync(command, {
+                cwd: workspaceFolder.uri.fsPath,
+                encoding: 'utf-8',
+                timeout: 5000,
+                stdio: ['ignore', 'pipe', 'ignore'] // Ignore stderr to prevent traceback in console
+            }).trim();
+        } catch {
+            return undefined;
+        }
+    };
+
+    // Try with system python (python3 or python)
+    stdlibPath = runCommand('python3 -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"');
+    if (!stdlibPath) {
+        stdlibPath = runCommand('python -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"');
+    }
+
+    // If not found, try with uv (if pyproject.toml exists)
+    if (!stdlibPath && fs.existsSync(path.join(workspaceFolder.uri.fsPath, 'pyproject.toml'))) {
+        // Check if uv is available
+        if (runCommand('uv --version')) {
+             // Try running with uv (which might use .venv)
+            stdlibPath = runCommand('uv run python -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"');
+            
+            // If still not found, try syncing first
+            if (!stdlibPath) {
+                try {
+                    execSync('uv sync', { 
+                        cwd: workspaceFolder.uri.fsPath, 
+                        stdio: ['ignore', 'ignore', 'ignore'],
+                        timeout: 60000 // Give it some time to sync
+                    });
+                    // Try again after sync
+                    stdlibPath = runCommand('uv run python -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"');
+                } catch {
+                    // uv sync failed
+                }
             }
         }
-    } catch {
-        // pymcu not installed in current environment — skip
+    }
+
+    if (stdlibPath && fs.existsSync(stdlibPath)) {
+        // Add parent so `from pymcu.xxx import yyy` resolves
+        const parentPath = path.dirname(stdlibPath);
+        if (!extraPaths.includes(parentPath)) {
+            extraPaths.push(parentPath);
+            updated = true;
+        }
     }
 
     if (updated) {
