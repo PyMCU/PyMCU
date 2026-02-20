@@ -6,6 +6,7 @@ from pymcu.types import interrupt
 
 led = Pin("PB5", Pin.OUT)
 
+# Use Apache, MIT or BSD
 
 # INT0 handler — vector 0x02 on ATmega328P
 @interrupt(0x02)

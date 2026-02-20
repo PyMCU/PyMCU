@@ -55,6 +55,8 @@ class AVRCodeGen : public CodeGen {
 
   // --- Memory & Register Management ---
   std::string resolve_address(const tacky::Val &val);
+  DataType get_val_type(const tacky::Val &val) const;
+  std::string get_high_reg(const std::string &reg) const;
 
   // --- Emission Helpers ---
   void emit(const std::string &mnemonic) const;
@@ -71,9 +73,9 @@ class AVRCodeGen : public CodeGen {
   void emit_raw(const std::string &text) const;
 
   // --- Logic Helpers ---
-  void load_into_reg(const tacky::Val &val, const std::string &reg);
+  void load_into_reg(const tacky::Val &val, const std::string &reg, DataType type = DataType::UINT8);
 
-  void store_reg_into(const std::string &reg, const tacky::Val &val);
+  void store_reg_into(const std::string &reg, const tacky::Val &val, DataType type = DataType::UINT8);
 
   // --- Compilation Dispatchers ---
   void compile_function(const tacky::Function &func);
@@ -94,6 +96,10 @@ class AVRCodeGen : public CodeGen {
   void compile_variant(const tacky::Call &arg);
 
   void compile_variant(const tacky::Copy &arg);
+
+  void compile_variant(const tacky::LoadIndirect &arg);
+
+  void compile_variant(const tacky::StoreIndirect &arg);
 
   void compile_variant(const tacky::Unary &arg);
 

@@ -93,10 +93,10 @@ inline DataType string_to_datatype(const std::string &type_str) {
     return string_to_datatype(inner);
   }
   if (type_str == "void" || type_str == "None") return DataType::VOID;
-  // For pointer/register types, treat as UINT8 (address-level)
+  // For pointer/register types, treat as UINT16 (address-level for AVR)
   if (type_str.find("ptr") != std::string::npos ||
       type_str.find("PIORegister") != std::string::npos)
-    return DataType::UINT8;
+    return DataType::UINT16;
   return DataType::UNKNOWN;
 }
 

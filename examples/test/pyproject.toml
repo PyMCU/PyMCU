@@ -1,6 +1,7 @@
 [project]
 name = "test"
 version = "0.1.0"
+dependencies = ["pymcu-stdlib==0.1.2a4", "pymcu-compiler==0.1.0a26"]
 
 [[tool.uv.index]]
 name = "gitea"
@@ -9,6 +10,7 @@ explicit = true
 
 [tool.uv.sources]
 pymcu-stdlib = { index = "gitea" }
+pymcu-compiler = {index = "gitea"}
 
 [tool.pymcu]
 chip = "pic16f877a"

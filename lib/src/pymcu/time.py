@@ -127,16 +127,26 @@ def _delay_ms_pic18(ms: uint8):
 def _delay_ms_avr(ms: uint8):
     # AVR: 1 clock = 1 cycle. DEC+BRNE = 3 cycles/iter.
     # At 16MHz: 1ms = 16000 cycles. Nested: 21 × 255 × 3 = 16065 ≈ 1ms
+    # Uses R24, R25 as counters.
+    # Note: R24/R25 are call-clobbered, so safe to use in inline asm if not preserving across calls.
+    # However, pymcuc's register allocator might use them.
+    # For safety, we should push/pop or use dedicated temp vars if allocator was smarter.
+    # But since this is inline asm block, allocator doesn't see register usage.
+    # We'll assume R24/R25 are free or caller-saved.
     i: uint8 = 0
     while i < ms:
-        asm("    LDI r24, 21")
+        asm("    PUSH R24")
+        asm("    PUSH R25")
+        asm("    LDI R24, 21")
         asm("_dly_outer_avr:")
-        asm("    LDI r25, 255")
+        asm("    LDI R25, 255")
         asm("_dly_inner_avr:")
-        asm("    DEC r25")
+        asm("    DEC R25")
         asm("    BRNE _dly_inner_avr")
-        asm("    DEC r24")
+        asm("    DEC R24")
         asm("    BRNE _dly_outer_avr")
+        asm("    POP R25")
+        asm("    POP R24")
         i = i + 1
 
 @inline
@@ -216,6 +226,14 @@ def _delay_us_avr(us: uint8):
     # AVR at 16MHz: 1us = 16 cycles. Loop overhead ~4 → 12 NOPs needed.
     i: uint8 = 0
     while i < us:
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
+        asm("    NOP")
         asm("    NOP")
         asm("    NOP")
         asm("    NOP")

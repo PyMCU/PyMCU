@@ -257,9 +257,6 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
     if (!current_function.empty()) {
       bool is_explicit_global = current_function_globals.count(name);
       if (is_explicit_global) {
-        if (constant_variables.contains(name)) {
-          return tacky::Constant{constant_variables.at(name)};
-        }
         return tacky::Variable{name, mutable_globals.at(name)};
       }
 
@@ -270,21 +267,21 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
       }
     }
 
-    // Try current module prefix first
+    // Try current module prefix first — mutable_globals takes priority
     std::string module_global = current_module_prefix + name;
-    if (constant_variables.contains(module_global)) {
-      return tacky::Constant{constant_variables.at(module_global)};
-    }
     if (mutable_globals.contains(module_global)) {
       return tacky::Variable{module_global, mutable_globals.at(module_global)};
     }
-
-    // Fallback to bare name
-    if (constant_variables.contains(name)) {
-      return tacky::Constant{constant_variables.at(name)};
+    if (constant_variables.contains(module_global)) {
+      return tacky::Constant{constant_variables.at(module_global)};
     }
+
+    // Fallback to bare name — mutable_globals takes priority
     if (mutable_globals.contains(name)) {
       return tacky::Variable{name, mutable_globals.at(name)};
+    }
+    if (constant_variables.contains(name)) {
+      return tacky::Constant{constant_variables.at(name)};
     }
   }
 
@@ -1337,11 +1334,14 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       }
     }
     // Track constant if it's a constant assignment (only at module level;
-    // inside functions, variables may be reassigned in loops/branches)
+    // inside functions, variables may be reassigned in loops/branches).
+    // Skip mutable globals — they may be reassigned at runtime via `global`.
     if (current_function.empty()) {
       if (const auto c = std::get_if<tacky::Constant>(&value)) {
         if (const auto t = std::get_if<tacky::Variable>(&target)) {
-          constant_variables[t->name] = c->value;
+          if (!mutable_globals.contains(t->name)) {
+            constant_variables[t->name] = c->value;
+          }
         }
       }
     } else {
@@ -1440,6 +1440,14 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       throw std::runtime_error("Unknown member access in assignment: " +
                                memExpr->member);
     }
+  } else if (auto unaryExpr = dynamic_cast<const UnaryExpr *>(stmt->target.get())) {
+    // Indirect assignment: *ptr = value
+    if (unaryExpr->op == UnaryOp::Deref) {
+      tacky::Val ptr = visitExpression(unaryExpr->operand.get());
+      emit(tacky::StoreIndirect{value, ptr});
+      return;
+    }
+    throw std::runtime_error("Invalid assignment target");
   } else {
     throw std::runtime_error("Invalid assignment target");
   }
@@ -1465,11 +1473,14 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
     emit(tacky::Copy{val, target});
 
     // Track constant for folding (only at module level, not inside functions
-    // where variables may be reassigned in loops/branches)
+    // where variables may be reassigned in loops/branches).
+    // Skip mutable globals — they may be reassigned at runtime via `global`.
     if (current_function.empty()) {
       if (auto c = std::get_if<tacky::Constant>(&val)) {
         if (auto v = std::get_if<tacky::Variable>(&target)) {
-          constant_variables[v->name] = c->value;
+          if (!mutable_globals.contains(v->name)) {
+            constant_variables[v->name] = c->value;
+          }
         }
       }
     }
@@ -1736,6 +1747,13 @@ tacky::Val IRGenerator::visitUnary(const UnaryExpr *expr) {
       default:
         break;
     }
+  }
+
+  // Indirect access: *ptr
+  if (expr->op == UnaryOp::Deref) {
+    tacky::Temporary result = make_temp(DataType::UINT8);
+    emit(tacky::LoadIndirect{operand, result});
+    return result;
   }
 
   tacky::Temporary result = make_temp(DataType::UINT8);  // Default to UINT8
@@ -2096,6 +2114,8 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       // Track aliases for properties
       if (const auto v = std::get_if<tacky::Variable>(&argValues[i])) {
         variable_aliases[paramName] = v->name;
+        // Erase stale constant entry from previous inline expansions
+        constant_variables.erase(paramName);
       }
       // Enforce const parameters — must receive compile-time constants
       if (is_const_type(func->params[param_idx].type)) {

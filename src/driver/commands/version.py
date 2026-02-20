@@ -25,29 +25,45 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import sys
 from rich.console import Console
-from .base import ExternalToolchain
-from .gputils import GputilsToolchain
-from .avra import AvraToolchain
+from rich.table import Table
+from rich import box
 
-def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
+console = Console()
+
+def version():
     """
-    Factory method to return the appropriate toolchain for a given chip.
-    Currently supports:
-    - Gputils (PIC10/12/14/16/17/18)
-    - Avra (AVR)
-    
-    Raises:
-        ValueError: If no toolchain supports the given chip.
+    Displays the version information for PyMCU and its components.
     """
-    # List of available toolchains
-    toolchains = [
-        GputilsToolchain,
-        AvraToolchain
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+    except ImportError:
+        # Fallback for older Python versions if needed, though PyMCU targets 3.10+
+        console.print("[red]Error: importlib.metadata not available.[/red]")
+        return
+
+    # Define packages to check
+    packages = [
+        ("pymcu-compiler", "Compiler Core"),
+        ("pymcu-stdlib", "Standard Library"),
+        ("pymcu-driver", "CLI Driver"),
     ]
 
-    for toolchain_cls in toolchains:
-        if toolchain_cls.supports(chip):
-            return toolchain_cls(console)
+    table = Table(title="PyMCU Ecosystem Version Info", box=box.ROUNDED)
+    table.add_column("Package", style="cyan", no_wrap=True)
+    table.add_column("Description", style="magenta")
+    table.add_column("Version", style="green")
 
-    raise ValueError(f"No toolchain found supporting chip: {chip}")
+    for pkg_name, description in packages:
+        try:
+            ver = version(pkg_name)
+            table.add_row(pkg_name, description, ver)
+        except PackageNotFoundError:
+            table.add_row(pkg_name, description, "[red]Not Installed[/red]")
+
+    # Add Python version
+    table.add_row("python", "Python Interpreter", sys.version.split()[0])
+
+    console.print(table)
+    console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors[/dim]")

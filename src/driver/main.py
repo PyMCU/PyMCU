@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 import typer
 from rich.console import Console
+from typing import Optional
 
 console = Console()
 
@@ -88,11 +89,20 @@ from .commands.new import new
 from .commands.build import build
 from .commands.clean import clean
 from .commands.flash import flash
+from .commands.version import version
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
+def version_callback(value: bool):
+    if value:
+        version()
+        raise typer.Exit()
+
 @app.callback()
-def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging globally")):
+def main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging globally"),
+    version_flag: Optional[bool] = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show the version and exit")
+):
     if verbose:
         os.environ["PYMCU_VERBOSE"] = "1"
 

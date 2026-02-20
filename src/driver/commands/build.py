@@ -133,22 +133,19 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 
             progress.update(build_task, completed=50)
             
-            progress.update(build_task, completed=50)
-            
-            # Step 1.5: Library Injection (Float Support)
+            # Step 1.5: Library Injection (Float Support & AVR Math)
             with open(output_file, "r") as asm_f:
                 asm_content = asm_f.read()
             
-            if '#include "float.inc"' in asm_content:
-                progress.update(build_task, description="Injecting Float Library...")
-                import importlib.util
+            import importlib.util
+            spec = importlib.util.find_spec("pymcu.math")
+            
+            if spec and spec.origin:
+                math_lib_path = Path(spec.origin).parent
                 
-                # Locate pymcu.math package
-                spec = importlib.util.find_spec("pymcu.math")
-                if spec and spec.origin:
-                    math_lib_path = Path(spec.origin).parent
-                    
-                    # Determine Architecture
+                # PIC Float Support
+                if '#include "float.inc"' in asm_content:
+                    progress.update(build_task, description="Injecting Float Library...")
                     arch = "pic16" # Default for PIC10/12/16
                     if chip.lower().startswith("pic18"):
                         arch = "pic18"
@@ -160,8 +157,47 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                         shutil.copy(str(src_inc), str(dst_inc))
                     else:
                         console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {arch}")
-                else:
-                    console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, float operations may fail.")
+
+                # AVR Math Runtime Injection
+                # If we are targeting AVR, we need to assemble and link the math runtime
+                # Since AVRA doesn't support linking multiple objects easily like ld,
+                # we will append the math assembly source directly to the output file
+                # if the compiler emitted calls to __div8, __mod8, etc.
+                if toolchain.get_name() == "avra":
+                    progress.update(build_task, description="Injecting AVR Math Runtime...")
+                    avr_math_path = math_lib_path / "avr"
+                    
+                    # List of runtime functions to check
+                    runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16"]
+                    needed_funcs = [f for f in runtime_funcs if f in asm_content]
+                    
+                    if needed_funcs:
+                        with open(output_file, "a") as asm_f:
+                            asm_f.write("\n; --- PyMCU AVR Math Runtime ---\n")
+                            
+                            # Map function names to source files
+                            func_map = {
+                                "__div8": "div.S",
+                                "__mod8": "div.S",
+                                "__mul8": "mul.S",
+                                "__div16": "div16.S"
+                            }
+                            
+                            included_files = set()
+                            for func in needed_funcs:
+                                fname = func_map.get(func)
+                                if fname and fname not in included_files:
+                                    src_path = avr_math_path / fname
+                                    if src_path.exists():
+                                        with open(src_path, "r") as lib_f:
+                                            asm_f.write(lib_f.read())
+                                            asm_f.write("\n")
+                                        included_files.add(fname)
+                                    else:
+                                        console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
+
+            else:
+                console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")
 
             # Step 2: Assembly (ASM -> HEX)
             progress.update(build_task, description="Assembling...", completed=60)
@@ -180,7 +216,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             
             # Move extra files to dist/debug
             debug_dir = output_dir / "debug"
-            for ext in [".lst", ".cod", ".map", ".asm"]: # Added .map common for linkers
+            for ext in [".lst", ".cod", ".map", ".asm", ".obj", ".cof"]: # Added .obj, .cof for AVRA
                 f = output_file.with_suffix(ext)
                 if f.exists():
                     if not debug_dir.exists():

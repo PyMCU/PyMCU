@@ -142,6 +142,10 @@ class PIC14CodeGen : public CodeGen {
   // Data Movement & Arithmetic
   void compile_variant(const tacky::Copy &arg);
 
+  void compile_variant(const tacky::LoadIndirect &arg);
+
+  void compile_variant(const tacky::StoreIndirect &arg);
+
   void compile_variant(const tacky::Unary &arg);
 
   void compile_variant(const tacky::Binary &arg);

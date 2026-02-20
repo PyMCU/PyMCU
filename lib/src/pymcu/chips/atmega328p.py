@@ -46,7 +46,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import ptr, uint8, device_info
+from pymcu.types import ptr, uint8, uint16, device_info
 
 # ==========================================
 #  Device Memory Configuration
@@ -140,6 +140,12 @@ OCR1AL:  ptr[uint8] = ptr(0x88)
 OCR1AH:  ptr[uint8] = ptr(0x89)
 OCR1BL:  ptr[uint8] = ptr(0x8A)
 OCR1BH:  ptr[uint8] = ptr(0x8B)
+
+# 16-bit Register Access
+TCNT1:   ptr[uint16] = ptr(0x84)
+ICR1:    ptr[uint16] = ptr(0x86)
+OCR1A:   ptr[uint16] = ptr(0x88)
+OCR1B:   ptr[uint16] = ptr(0x8A)
 
 TCCR2A:  ptr[uint8] = ptr(0xB0)
 TCCR2B:  ptr[uint8] = ptr(0xB1)

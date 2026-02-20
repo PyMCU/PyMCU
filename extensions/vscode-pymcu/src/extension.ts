@@ -1,12 +1,16 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
 
 let chipStatusBarItem: vscode.StatusBarItem;
+let diagnosticCollection: vscode.DiagnosticCollection;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('PyMCU extension is now active!');
+
+    // Set context for 'when' clauses in package.json
+    vscode.commands.executeCommand('setContext', 'pymcu:active', true);
 
     checkPymcuInstallation();
 
@@ -26,12 +30,35 @@ export function activate(context: vscode.ExtensionContext) {
 
     updateChipStatusBar();
 
-    // Watch pyproject.toml for changes to update status bar
+    // Watch pyproject.toml for changes to update status bar and sync
     const watcher = vscode.workspace.createFileSystemWatcher('**/pyproject.toml');
-    watcher.onDidChange(() => updateChipStatusBar());
-    watcher.onDidCreate(() => updateChipStatusBar());
+    watcher.onDidChange(() => {
+        updateChipStatusBar();
+        syncProject();
+    });
+    watcher.onDidCreate(() => {
+        updateChipStatusBar();
+        syncProject();
+    });
     watcher.onDidDelete(() => updateChipStatusBar());
     context.subscriptions.push(watcher);
+
+    // Diagnostics
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('pymcu');
+    context.subscriptions.push(diagnosticCollection);
+
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(event => {
+            validatePyproject(event.document);
+        }),
+        vscode.workspace.onDidOpenTextDocument(document => {
+            validatePyproject(document);
+        })
+    );
+
+    if (vscode.window.activeTextEditor) {
+        validatePyproject(vscode.window.activeTextEditor.document);
+    }
 
     configureIntellisense();
 }
@@ -185,7 +212,7 @@ async function configureIntellisense() {
     const extraPaths = pythonConfig.get<string[]>('analysis.extraPaths') || [];
     let updated = false;
 
-    // 1. Check for local lib/src in workspace (development mode)5
+    // 1. Check for local lib/src in workspace (development mode)
     const localLibPath = path.join(workspaceFolder.uri.fsPath, 'lib', 'src');
     if (fs.existsSync(localLibPath) && !extraPaths.includes(localLibPath)) {
         extraPaths.push(localLibPath);
@@ -252,6 +279,77 @@ async function configureIntellisense() {
     }
 }
 
+function validatePyproject(document: vscode.TextDocument) {
+    if (!document.fileName.endsWith('pyproject.toml')) { return; }
+    
+    const text = document.getText();
+    const diagnostics: vscode.Diagnostic[] = [];
+    
+    const lines = text.split('\n');
+    let inPymcuSection = false;
+    let foundChip = false;
+    let pymcuSectionLine = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('#')) { continue; }
+
+        if (line === '[tool.pymcu]') {
+            inPymcuSection = true;
+            pymcuSectionLine = i;
+            continue;
+        }
+        if (line.startsWith('[') && line !== '[tool.pymcu]') {
+            inPymcuSection = false;
+        }
+        
+        if (inPymcuSection) {
+            if (line.startsWith('chip')) {
+                foundChip = true;
+                const match = line.match(/^chip\s*=\s*"([^"]*)"/);
+                if (!match) {
+                     const range = new vscode.Range(i, 0, i, lines[i].length);
+                     diagnostics.push(new vscode.Diagnostic(range, 'Invalid format. Expected: chip = "name"', vscode.DiagnosticSeverity.Error));
+                } else if (match[1].trim() === '') {
+                     const range = new vscode.Range(i, 0, i, lines[i].length);
+                     diagnostics.push(new vscode.Diagnostic(range, 'Chip name cannot be empty', vscode.DiagnosticSeverity.Error));
+                }
+            }
+        }
+    }
+    
+    if (pymcuSectionLine !== -1 && !foundChip) {
+         const range = new vscode.Range(pymcuSectionLine, 0, pymcuSectionLine, lines[pymcuSectionLine].length);
+         diagnostics.push(new vscode.Diagnostic(range, 'Missing "chip" configuration in [tool.pymcu]', vscode.DiagnosticSeverity.Error));
+    }
+    
+    diagnosticCollection.set(document.uri, diagnostics);
+}
+
+function syncProject() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) { return; }
+    
+    const pyprojectPath = path.join(workspaceFolder.uri.fsPath, 'pyproject.toml');
+    if (!fs.existsSync(pyprojectPath)) { return; }
+
+    vscode.window.withProgress({
+        location: vscode.ProgressLocation.Window,
+        title: "Syncing PyMCU project...",
+        cancellable: false
+    }, () => {
+        return new Promise<void>((resolve) => {
+            exec('uv sync', { cwd: workspaceFolder.uri.fsPath }, async (error, stdout, stderr) => {
+                if (!error) {
+                    await configureIntellisense();
+                }
+                resolve();
+            });
+        });
+    });
+}
+
 export function deactivate() {
     chipStatusBarItem?.dispose();
+    diagnosticCollection?.dispose();
 }

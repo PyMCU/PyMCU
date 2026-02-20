@@ -16,7 +16,7 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "pymcu.build", "title": "Build", "category": "PyMCU", "icon": "$(debug-start)" },
+      { "command": "pymcu.build", "title": "Build", "category": "PyMCU", "icon": "$(tools)" },
       { "command": "pymcu.flash", "title": "Flash", "category": "PyMCU", "icon": "$(zap)" },
       { "command": "pymcu.clean", "title": "Clean", "category": "PyMCU", "icon": "$(trash)" },
       { "command": "pymcu.new", "title": "New Project", "category": "PyMCU", "icon": "$(new-folder)" }
@@ -47,7 +47,23 @@
           "message": 5
         }
       }
-    ]
+    ],
+    "debuggers": [
+      {
+        "type": "pymcu",
+        "label": "PyMCU",
+        "languages": ["python"]
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "pymcu.build",
+          "when": "resourceLangId == python && pymcu:active",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

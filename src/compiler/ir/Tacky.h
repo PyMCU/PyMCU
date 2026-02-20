@@ -112,6 +112,17 @@ struct Copy {
   Val dst;
 };
 
+// Indirect Memory Access (Pointer Dereference)
+struct LoadIndirect {
+  Val src_ptr; // The pointer (Variable or Temporary)
+  Val dst;     // Where to load the value
+};
+
+struct StoreIndirect {
+  Val src;     // The value to store
+  Val dst_ptr; // The pointer (Variable or Temporary)
+};
+
 struct Jump {
   std::string target;
 };
@@ -229,7 +240,8 @@ struct DebugLine {
 
 // --- The Instruction Container ---
 using Instruction =
-    std::variant<Return, Unary, Binary, Copy, Jump, JumpIfZero, JumpIfNotZero,
+    std::variant<Return, Unary, Binary, Copy, LoadIndirect, StoreIndirect,
+                 Jump, JumpIfZero, JumpIfNotZero,
                  Label, Call, BitSet, BitClear, BitCheck, BitWrite,
                  JumpIfBitSet, JumpIfBitClear, AugAssign, InlineAsm,
                  DebugLine, JumpIfEqual, JumpIfNotEqual, JumpIfLessThan,

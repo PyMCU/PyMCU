@@ -523,6 +523,54 @@ void PIC14CodeGen::compile_variant(const tacky::Copy &arg) {
   throw std::runtime_error("PIC14: Copy only supports 1, 2, 4 bytes");
 }
 
+void PIC14CodeGen::compile_variant(const tacky::LoadIndirect &arg) {
+  // PIC14 Indirect Addressing: FSR / INDF
+  // 1. Load pointer value into FSR
+  // 2. Read from INDF into W
+  // 3. Store W into dst
+
+  // Note: PIC14 FSR is 8-bit (Bank 0/1 usually, or flat memory model depending on chip)
+  // PIC14E FSR is 16-bit (FSR0L/FSR0H).
+  // We need to handle this via Strategy or check config.
+  // For now, assume standard PIC14 8-bit FSR or handle both.
+
+  // Load pointer (address) into FSR
+  if (const auto c = std::get_if<tacky::Constant>(&arg.src_ptr)) {
+      emit("MOVLW", std::format("0x{:02X}", c->value & 0xFF));
+      emit("MOVWF", "FSR");
+  } else {
+      std::string ptr_addr = resolve_address(arg.src_ptr);
+      select_bank(ptr_addr);
+      emit("MOVF", ptr_addr, "W");
+      emit("MOVWF", "FSR");
+  }
+
+  // Read from INDF
+  emit("MOVF", "INDF", "W");
+  store_w_into(arg.dst);
+}
+
+void PIC14CodeGen::compile_variant(const tacky::StoreIndirect &arg) {
+  // 1. Load pointer value into FSR
+  // 2. Load value into W
+  // 3. Store W into INDF
+
+  // Load pointer into FSR
+  if (const auto c = std::get_if<tacky::Constant>(&arg.dst_ptr)) {
+      emit("MOVLW", std::format("0x{:02X}", c->value & 0xFF));
+      emit("MOVWF", "FSR");
+  } else {
+      std::string ptr_addr = resolve_address(arg.dst_ptr);
+      select_bank(ptr_addr);
+      emit("MOVF", ptr_addr, "W");
+      emit("MOVWF", "FSR");
+  }
+
+  // Load value and store to INDF
+  load_into_w(arg.src);
+  emit("MOVWF", "INDF");
+}
+
 void PIC14CodeGen::compile_variant(const tacky::Unary &arg) {
   load_into_w(arg.src);
   switch (arg.op) {

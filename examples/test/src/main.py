@@ -1,4 +1,5 @@
 from pymcu.chips.pic16f877a import *
+from pymcu.hal.gpio import Pin
 
 # Función de retardo simple para hacer visible el efecto
 # Como no hay temporizadores complejos ni interrupciones aún,
@@ -20,6 +21,9 @@ def main():
     TRISA[RA1] = 1
     TRISA[RA2] = 1
     TRISA[RA3] = 1
+    ra3 = Pin("RA3", Pin.IN)
+
+    ra3.high()  # Set RA3 high (pull-up) to detect button press (active low)
 
     # 2. Configuración del PWM (Hardware)
     # Periodo del PWM (PR2). 0xFF es el máximo (~1.22 kHz a 20MHz/prescaler)
