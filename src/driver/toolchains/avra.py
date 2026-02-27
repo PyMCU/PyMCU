@@ -179,30 +179,68 @@ class AvraToolchain(ExternalToolchain):
                  self.console.print(e.stderr.decode() if e.stderr else str(e))
                  raise RuntimeError(f"Failed to compile {name}.")
 
+    def link(self, hex_file: Path, chip: str, output_dir: Path):
+        """
+        Convert HEX → ELF using avr-objcopy, then report memory usage via avr-size.
+        Returns (elf_path, size_report) or None if avr-objcopy is not found.
+        """
+        import shutil as sh
+        avr_objcopy = sh.which("avr-objcopy")
+        if not avr_objcopy:
+            return None
+
+        elf_file = output_dir / "firmware.elf"
+        try:
+            subprocess.run(
+                [avr_objcopy, "-I", "ihex", "-O", "elf32-avr",
+                 str(hex_file), str(elf_file)],
+                check=True, capture_output=True
+            )
+        except subprocess.CalledProcessError as e:
+            err = e.stderr.decode() if e.stderr else str(e)
+            self.console.print(f"[yellow]avr-objcopy failed:[/yellow] {err}")
+            return None
+
+        size_output = None
+        avr_size = sh.which("avr-size")
+        if avr_size:
+            try:
+                result = subprocess.run(
+                    [avr_size, "-C", f"--mcu={chip}", str(elf_file)],
+                    capture_output=True, text=True
+                )
+                size_output = result.stdout
+            except Exception:
+                pass
+
+        return (elf_file, size_output)
+
     def assemble(self, asm_file: Path, output_file: Optional[Path] = None) -> Path:
         info = self._get_platform_info()
         tool_path = self._get_tool_dir() / info["bin_path"]
-        
+
         if not tool_path.exists():
              raise RuntimeError(f"Assembler not found at {tool_path}. Please run install() first.")
 
-        cmd = [str(tool_path), str(asm_file)]
-        
+        # Determine output path: honour explicit override, else place .hex alongside .asm
+        hex_out = output_file if output_file is not None else asm_file.with_suffix(".hex")
+
+        cmd = [str(tool_path), str(asm_file), "-o", str(hex_out)]
+
         # Include directory of the source file
         cmd.extend(["-I", str(asm_file.parent.resolve())])
-        
+
         # Include standard includes if available
         # Structure: .../avra-1.3.0/src/avra -> includes is at .../avra-1.3.0/includes
         includes_dir = tool_path.parent.parent / "includes"
         if includes_dir.exists() and includes_dir.is_dir():
             cmd.extend(["-I", str(includes_dir)])
-            
+
         self.console.print(f"[debug] Assembler: {cmd[0]}", style="dim")
-        
+
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            # Default output is .hex
-            return asm_file.with_suffix(".hex") 
+            return hex_out
         except subprocess.CalledProcessError as e:
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
             self.console.print(f"[red]Assembler failed:[/red]\n{err}")

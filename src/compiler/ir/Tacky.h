@@ -74,6 +74,7 @@ enum class BinaryOp {
   Sub,
   Mul,
   Div,
+  FloorDiv,
   Mod,
   Equal,
   NotEqual,
@@ -231,6 +232,14 @@ struct InlineAsm {
   std::string instruction;  // Raw assembly text, emitted verbatim
 };
 
+// Flash-resident string send via LPM+Z loop (AVR only).
+// The string is interned into a flash string pool by the AVR backend.
+// Other backends ignore this instruction (the AVR UART HAL is the only producer).
+struct UARTSendString {
+  std::string text;      // String content (without null terminator)
+  bool add_newline;      // Append '\n' (i.e., println semantics)
+};
+
 // Debugging
 struct DebugLine {
   int line;
@@ -245,7 +254,8 @@ using Instruction =
                  Label, Call, BitSet, BitClear, BitCheck, BitWrite,
                  JumpIfBitSet, JumpIfBitClear, AugAssign, InlineAsm,
                  DebugLine, JumpIfEqual, JumpIfNotEqual, JumpIfLessThan,
-                 JumpIfLessOrEqual, JumpIfGreaterThan, JumpIfGreaterOrEqual>;
+                 JumpIfLessOrEqual, JumpIfGreaterThan, JumpIfGreaterOrEqual,
+                 UARTSendString>;
 
 // --- Function Definition ---
 struct Function {

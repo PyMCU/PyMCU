@@ -110,6 +110,9 @@ class PIOCodeGen : public CodeGen {
 
   void compile_variant(const tacky::JumpIfBitClear &arg);
 
+  void compile_variant(const tacky::LoadIndirect &arg);
+  void compile_variant(const tacky::StoreIndirect &arg);
+
   void compile_variant(const tacky::AugAssign &arg);
   void compile_variant(const tacky::InlineAsm &arg);
   void compile_variant(const tacky::DebugLine &arg);
@@ -120,6 +123,7 @@ class PIOCodeGen : public CodeGen {
   void compile_variant(const tacky::JumpIfLessOrEqual &arg);
   void compile_variant(const tacky::JumpIfGreaterThan &arg);
   void compile_variant(const tacky::JumpIfGreaterOrEqual &arg);
+  void compile_variant(const tacky::UARTSendString &) {}  // AVR-only; no-op here
 };
 
 #endif  // PIOCODEGEN_H

@@ -44,6 +44,18 @@ class Optimizer {
 
   static void coalesce_instructions(tacky::Function &func);
 
+  // Bridges Binary(Equal/NE/LT/etc, a, b)→tmp followed by JumpIfZero/NotZero(tmp)
+  // into a direct relational jump (JumpIfEqual/NotEqual/etc). This must run
+  // before collapse_bit_checks so that BitCheck→Equal→JumpIfZero patterns become
+  // BitCheck→JumpIfNotEqual, which collapse_bit_checks then folds to JumpIfBitSet.
+  static void collapse_bool_jumps(tacky::Function &func);
+
+  // Collapses BitCheck(src,bit)→tmp followed by JumpIfEqual/NotEqual(tmp,0/1,label)
+  // into a single JumpIfBitSet/JumpIfBitClear instruction. This eliminates the
+  // boolean materialization overhead and produces 3-instruction bit-poll loops
+  // instead of 10-instruction ones (critical for UART/I2C wait loops).
+  static void collapse_bit_checks(tacky::Function &func);
+
  private:
   static void optimize_function(tacky::Function &func);
 };

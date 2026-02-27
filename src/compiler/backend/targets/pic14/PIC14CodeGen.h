@@ -165,6 +165,7 @@ class PIC14CodeGen : public CodeGen {
 
   void compile_variant(const tacky::DebugLine &arg);
 
+  void compile_variant(const tacky::UARTSendString &) {}  // AVR-only; no-op here
 };
 
 #endif  // PIC14CODEGEN_H

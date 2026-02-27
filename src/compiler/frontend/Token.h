@@ -79,11 +79,12 @@ enum class TokenType {
   RBracket,   // ]
 
   // Operators
-  Plus,     // +
-  Minus,    // -
-  Star,     // *
-  Slash,    // /
-  Percent,  // %
+  Plus,      // +
+  Minus,     // -
+  Star,      // *
+  Slash,     // /
+  FloorDiv,  // //
+  Percent,   // %
 
   // Bitwise
   Ampersand,  // &
@@ -103,11 +104,12 @@ enum class TokenType {
   GreaterEqual,  // >=
 
   // Augmented Assignment
-  PlusEqual,     // +=
-  MinusEqual,    // -=
-  StarEqual,     // *=
-  SlashEqual,    // /=
-  PercentEqual,  // %=
+  PlusEqual,         // +=
+  MinusEqual,        // -=
+  StarEqual,         // *=
+  SlashEqual,        // /=
+  FloorDivEqual,     // //=
+  PercentEqual,      // %=
   AmpEqual,      // &=
   PipeEqual,     // |=
   CaretEqual,    // ^=

@@ -74,7 +74,7 @@ class Lexer {
 
   Token identifier();
 
-  Token string();
+  Token string(char quote = '"');
 
   Token scan_token();
 };

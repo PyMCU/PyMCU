@@ -374,6 +374,14 @@ void PIOCodeGen::compile_variant(const tacky::AugAssign &arg) {
 }
 
 
+void PIOCodeGen::compile_variant(const tacky::LoadIndirect &) {
+  throw std::runtime_error("PIO: LoadIndirect (pointer dereference) is not yet implemented");
+}
+
+void PIOCodeGen::compile_variant(const tacky::StoreIndirect &) {
+  throw std::runtime_error("PIO: StoreIndirect (pointer dereference) is not yet implemented");
+}
+
 void PIOCodeGen::compile_variant(const tacky::InlineAsm &arg) {
   assembly.push_back(PIOAsmLine::Raw(arg.instruction));
 }

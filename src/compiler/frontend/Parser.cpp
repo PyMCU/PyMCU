@@ -513,47 +513,55 @@ std::unique_ptr<Statement> Parser::parseForStatement() {
   Token var_tok = consume(TokenType::Identifier, "Expected loop variable");
   consume(TokenType::In, "Expected 'in'");
 
-  Token range_tok = consume(TokenType::Identifier, "Expected 'range'");
-  if (range_tok.value != "range")
-    error("Only 'range()' is supported in for loops");
+  // Check for range()-based vs general iterable
+  if (check(TokenType::Identifier) && peek().value == "range") {
+    consume(TokenType::Identifier, "Expected 'range'");
+    consume(TokenType::LParen, "Expected '('");
 
-  consume(TokenType::LParen, "Expected '('");
-
-  auto arg1 = parseExpression();
-  std::unique_ptr<Expression> arg2 = nullptr, arg3 = nullptr;
-  if (match(TokenType::Comma)) {
-    arg2 = parseExpression();
+    auto arg1 = parseExpression();
+    std::unique_ptr<Expression> arg2 = nullptr, arg3 = nullptr;
     if (match(TokenType::Comma)) {
-      arg3 = parseExpression();
+      arg2 = parseExpression();
+      if (match(TokenType::Comma)) {
+        arg3 = parseExpression();
+      }
     }
+    consume(TokenType::RParen, "Expected ')'");
+    consume(TokenType::Colon, "Expected ':'");
+    consume(TokenType::Newline, "Expected newline");
+    auto body = parseBlock();
+
+    // Normalize: range(stop), range(start, stop), range(start, stop, step)
+    std::unique_ptr<Expression> start, stop, step;
+    if (!arg2) {
+      start = nullptr;
+      stop = std::move(arg1);
+      step = nullptr;
+    } else if (!arg3) {
+      start = std::move(arg1);
+      stop = std::move(arg2);
+      step = nullptr;
+    } else {
+      start = std::move(arg1);
+      stop = std::move(arg2);
+      step = std::move(arg3);
+    }
+
+    auto stmt = std::make_unique<ForStmt>(
+        var_tok.value, std::move(start), std::move(stop),
+        std::move(step), std::move(body));
+    stmt->line = line;
+    return stmt;
   }
-  consume(TokenType::RParen, "Expected ')'");
+
+  // General for-in loop: for var in <expr>: (compile-time iterable)
+  auto iterable = parseExpression();
   consume(TokenType::Colon, "Expected ':'");
   consume(TokenType::Newline, "Expected newline");
   auto body = parseBlock();
 
-  // Normalize: range(stop), range(start, stop), range(start, stop, step)
-  std::unique_ptr<Expression> start, stop, step;
-  if (!arg2) {
-    // range(stop): start=0, stop=arg1, step=1
-    start = nullptr;
-    stop = std::move(arg1);
-    step = nullptr;
-  } else if (!arg3) {
-    // range(start, stop)
-    start = std::move(arg1);
-    stop = std::move(arg2);
-    step = nullptr;
-  } else {
-    // range(start, stop, step)
-    start = std::move(arg1);
-    stop = std::move(arg2);
-    step = std::move(arg3);
-  }
-
   auto stmt = std::make_unique<ForStmt>(
-      var_tok.value, std::move(start), std::move(stop),
-      std::move(step), std::move(body));
+      var_tok.value, std::move(iterable), std::move(body));
   stmt->line = line;
   return stmt;
 }
@@ -631,6 +639,7 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
     if (match(TokenType::MinusEqual)) return AugOp::Sub;
     if (match(TokenType::StarEqual)) return AugOp::Mul;
     if (match(TokenType::SlashEqual)) return AugOp::Div;
+    if (match(TokenType::FloorDivEqual)) return AugOp::FloorDiv;
     if (match(TokenType::PercentEqual)) return AugOp::Mod;
     if (match(TokenType::AmpEqual)) return AugOp::BitAnd;
     if (match(TokenType::PipeEqual)) return AugOp::BitOr;
@@ -674,7 +683,7 @@ std::unique_ptr<Expression> Parser::parseLogicalOr() {
 std::unique_ptr<Expression> Parser::parseLogicalAnd() {
   auto left = parseLogicalNot();
   while (match(TokenType::And)) {
-    auto right = parseBitwiseOr();
+    auto right = parseLogicalNot();
     left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::And,
                                         std::move(right));
   }
@@ -784,13 +793,15 @@ std::unique_ptr<Expression> Parser::parseAdditive() {
 std::unique_ptr<Expression> Parser::parseMultiplicative() {
   auto left = parseUnary();
   while (check(TokenType::Star) || check(TokenType::Slash) ||
-         check(TokenType::Percent)) {
+         check(TokenType::FloorDiv) || check(TokenType::Percent)) {
     const Token opToken = advance();
     BinaryOp op;
     if (opToken.type == TokenType::Star)
       op = BinaryOp::Mul;
     else if (opToken.type == TokenType::Slash)
       op = BinaryOp::Div;
+    else if (opToken.type == TokenType::FloorDiv)
+      op = BinaryOp::FloorDiv;
     else
       op = BinaryOp::Mod;
 

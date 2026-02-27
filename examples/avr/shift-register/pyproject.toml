@@ -1,0 +1,10 @@
+[project]
+name = "shift-register"
+version = "0.1.0"
+dependencies = ["pymcu-stdlib"]
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"

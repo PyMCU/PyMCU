@@ -33,12 +33,62 @@
 #include <map>
 #include <set>
 #include <variant>
+#include <queue>
 
 tacky::Program Optimizer::optimize(const tacky::Program &program) {
   tacky::Program optimized = program;
   for (auto &func : optimized.functions) {
     optimize_function(func);
   }
+
+  // Dead Function Elimination (DFE): remove functions that are never reachable
+  // from main or any ISR. Unreachable functions cause AVR codegen to emit LDS
+  // with dotted symbol names (e.g. LDS R18, clear_bit.col) which avra rejects.
+  {
+    // Build call graph: function name -> set of called function names.
+    std::map<std::string, std::set<std::string>> call_graph;
+    for (const auto &func : optimized.functions) {
+      auto &callees = call_graph[func.name];
+      for (const auto &instr : func.body) {
+        std::visit([&](auto &&arg) {
+          using T = std::decay_t<decltype(arg)>;
+          if constexpr (std::is_same_v<T, tacky::Call>) {
+            callees.insert(arg.function_name);
+          }
+        }, instr);
+      }
+    }
+
+    // BFS from main + all ISR functions to collect reachable function names.
+    std::set<std::string> reachable;
+    std::queue<std::string> worklist;
+    auto enqueue = [&](const std::string &name) {
+      if (reachable.insert(name).second)  // inserted (not already seen)
+        worklist.push(name);
+    };
+    enqueue("main");
+    for (const auto &func : optimized.functions) {
+      if (func.is_interrupt) enqueue(func.name);
+    }
+    while (!worklist.empty()) {
+      std::string cur = worklist.front();
+      worklist.pop();
+      if (call_graph.contains(cur)) {
+        for (const auto &callee : call_graph.at(cur)) {
+          enqueue(callee);
+        }
+      }
+    }
+
+    // Remove functions not in the reachable set.
+    optimized.functions.erase(
+        std::remove_if(optimized.functions.begin(), optimized.functions.end(),
+                       [&](const tacky::Function &f) {
+                         return !reachable.contains(f.name);
+                       }),
+        optimized.functions.end());
+  }
+
   return optimized;
 }
 
@@ -50,6 +100,16 @@ void Optimizer::optimize_function(tacky::Function &func) {
     coalesce_instructions(func);
     eliminate_dead_code(func);
   }
+  // After the main loop: first bridge Binary+JumpIfZero → relational jump,
+  // then collapse BitCheck+relational jump → JumpIfBitSet/Clear.
+  // DCE must run between the two collapses: collapse_bool_jumps marks the
+  // replaced Binary as a dead Copy, and if that dead instruction is left in
+  // place it will block collapse_bit_checks from seeing BitCheck+JumpIfNotEqual
+  // as adjacent.
+  collapse_bool_jumps(func);  // Binary(op,a,b)+JumpIfZero → JumpIfEqual/etc
+  eliminate_dead_code(func);  // remove dead Binary markers
+  collapse_bit_checks(func);  // BitCheck+JumpIfEqual → JumpIfBitSet/Clear
+  eliminate_dead_code(func);  // clean up dead BitCheck instructions
 }
 
 static std::optional<int> get_constant(const tacky::Val &val) {
@@ -82,6 +142,16 @@ void Optimizer::fold_constants(tacky::Function &func) {
               result = *c1 / *c2;
             else
               foldable = false;
+            break;
+          case tacky::BinaryOp::FloorDiv:
+            if (*c2 != 0) {
+              int q = *c1 / *c2;
+              // Floor toward negative infinity (Python semantics)
+              if ((*c1 ^ *c2) < 0 && q * *c2 != *c1) q--;
+              result = q;
+            } else {
+              foldable = false;
+            }
             break;
           case tacky::BinaryOp::Mod:
             if (*c2 != 0)
@@ -196,7 +266,32 @@ void Optimizer::eliminate_dead_code(tacky::Function &func) {
           } else if constexpr (std::is_same_v<T, tacky::BitSet>)
             register_use(arg.target);
           else if constexpr (std::is_same_v<T, tacky::BitClear>)
+            register_use(arg.target);          else if constexpr (std::is_same_v<T, tacky::JumpIfEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfNotEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessThan>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessOrEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterThan>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterOrEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfBitSet>)
+            register_use(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>)
+            register_use(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::AugAssign>) {
             register_use(arg.target);
+            register_use(arg.operand);
+          }
         },
         instr);
   }
@@ -265,7 +360,32 @@ void Optimizer::propagate_copies(tacky::Function &func) {
           } else if constexpr (std::is_same_v<T, tacky::BitSet>)
             replace_val(arg.target);
           else if constexpr (std::is_same_v<T, tacky::BitClear>)
+            replace_val(arg.target);          else if constexpr (std::is_same_v<T, tacky::JumpIfEqual>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfNotEqual>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessThan>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessOrEqual>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterThan>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterOrEqual>) {
+            replace_val(arg.src1);
+            replace_val(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfBitSet>)
+            replace_val(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>)
+            replace_val(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::AugAssign>) {
             replace_val(arg.target);
+            replace_val(arg.operand);
+          }
         },
         instr);
 
@@ -313,7 +433,32 @@ void Optimizer::coalesce_instructions(tacky::Function &func) {
           } else if constexpr (std::is_same_v<T, tacky::BitSet>)
             register_use(arg.target);
           else if constexpr (std::is_same_v<T, tacky::BitClear>)
+            register_use(arg.target);          else if constexpr (std::is_same_v<T, tacky::JumpIfEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfNotEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessThan>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfLessOrEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterThan>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfGreaterOrEqual>) {
+            register_use(arg.src1);
+            register_use(arg.src2);
+          } else if constexpr (std::is_same_v<T, tacky::JumpIfBitSet>)
+            register_use(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>)
+            register_use(arg.source);
+          else if constexpr (std::is_same_v<T, tacky::AugAssign>) {
             register_use(arg.target);
+            register_use(arg.operand);
+          }
         },
         instr);
   }
@@ -353,4 +498,179 @@ void Optimizer::coalesce_instructions(tacky::Function &func) {
     new_body.push_back(func.body[i]);
   }
   func.body = new_body;
+}
+
+void Optimizer::collapse_bit_checks(tacky::Function &func) {
+  // Collapse patterns of the form:
+  //   BitCheck(src, bit) → tmp_N
+  //   JumpIfEqual(tmp_N, 1, label)    → JumpIfBitSet(src, bit, label)
+  //   JumpIfEqual(tmp_N, 0, label)    → JumpIfBitClear(src, bit, label)
+  //   JumpIfNotEqual(tmp_N, 0, label) → JumpIfBitSet(src, bit, label)
+  //   JumpIfNotEqual(tmp_N, 1, label) → JumpIfBitClear(src, bit, label)
+  //
+  // The collapsed JumpIfBitSet/Clear generates 2-3 instructions at the AVR
+  // codegen level (SBIS/SBIC for IO range; LDS+ANDI+BRNE for extended range)
+  // instead of the 10+ instruction boolean materialization sequence.
+  for (size_t i = 0; i + 1 < func.body.size(); ++i) {
+    auto *bc = std::get_if<tacky::BitCheck>(&func.body[i]);
+    if (!bc) continue;
+    auto *dst_tmp = std::get_if<tacky::Temporary>(&bc->dst);
+    if (!dst_tmp) continue;
+
+    // Find the next non-label instruction
+    size_t j = i + 1;
+    while (j < func.body.size() &&
+           std::holds_alternative<tacky::Label>(func.body[j])) {
+      j++;
+    }
+    if (j >= func.body.size()) continue;
+
+    bool replaced = false;
+
+    // JumpIfEqual(tmp_N, 1, label) → JumpIfBitSet
+    // JumpIfEqual(tmp_N, 0, label) → JumpIfBitClear
+    if (auto *je = std::get_if<tacky::JumpIfEqual>(&func.body[j])) {
+      auto *s = std::get_if<tacky::Temporary>(&je->src1);
+      if (!s) s = nullptr;
+      // Also check if tmp is in src2 position
+      auto *s2 = std::get_if<tacky::Temporary>(&je->src2);
+      const tacky::Constant *c = std::get_if<tacky::Constant>(&je->src2);
+      if (!c) c = std::get_if<tacky::Constant>(&je->src1);
+
+      if (s && s->name == dst_tmp->name && c) {
+        if (c->value == 1)
+          func.body[j] = tacky::JumpIfBitSet{bc->source, bc->bit, je->target};
+        else if (c->value == 0)
+          func.body[j] = tacky::JumpIfBitClear{bc->source, bc->bit, je->target};
+        replaced = true;
+      } else if (s2 && s2->name == dst_tmp->name && c) {
+        // tmp is in src2 — swap: JumpIfEqual(1, tmp_N, label) is unusual but handle it
+        if (c->value == 1)
+          func.body[j] = tacky::JumpIfBitSet{bc->source, bc->bit, je->target};
+        else if (c->value == 0)
+          func.body[j] = tacky::JumpIfBitClear{bc->source, bc->bit, je->target};
+        replaced = true;
+      }
+    }
+    // JumpIfNotEqual(tmp_N, 0, label) → JumpIfBitSet
+    // JumpIfNotEqual(tmp_N, 1, label) → JumpIfBitClear
+    else if (auto *jne = std::get_if<tacky::JumpIfNotEqual>(&func.body[j])) {
+      auto *s = std::get_if<tacky::Temporary>(&jne->src1);
+      const tacky::Constant *c = std::get_if<tacky::Constant>(&jne->src2);
+      if (!c) c = std::get_if<tacky::Constant>(&jne->src1);
+
+      if (s && s->name == dst_tmp->name && c) {
+        if (c->value == 0)
+          func.body[j] = tacky::JumpIfBitSet{bc->source, bc->bit, jne->target};
+        else if (c->value == 1)
+          func.body[j] = tacky::JumpIfBitClear{bc->source, bc->bit, jne->target};
+        replaced = true;
+      }
+    }
+
+    if (replaced) {
+      // Mark the BitCheck as a no-op by replacing it with a dead Copy to itself.
+      // DCE will remove it because the dst tmp_N is no longer used.
+      func.body[i] = tacky::Copy{tacky::Constant{0}, bc->dst};
+    }
+  }
+}
+
+void Optimizer::collapse_bool_jumps(tacky::Function &func) {
+  // Bridge pass: fold patterns like
+  //   Binary(Equal,    a, b) → tmp;  JumpIfZero(tmp, L)    → JumpIfNotEqual(a, b, L)
+  //   Binary(Equal,    a, b) → tmp;  JumpIfNotZero(tmp, L) → JumpIfEqual(a, b, L)
+  //   Binary(NotEqual, a, b) → tmp;  JumpIfZero(tmp, L)    → JumpIfEqual(a, b, L)
+  //   Binary(NotEqual, a, b) → tmp;  JumpIfNotZero(tmp, L) → JumpIfNotEqual(a, b, L)
+  //   (and symmetric cases for LessThan/LessEqual/GreaterThan/GreaterEqual)
+  //
+  // This must run before collapse_bit_checks so that:
+  //   BitCheck(src,bit)→tmp_0; Binary(Equal,tmp_0,0)→tmp_1; JumpIfZero(tmp_1,L)
+  // becomes:
+  //   BitCheck(src,bit)→tmp_0; JumpIfNotEqual(tmp_0, 0, L)
+  // which collapse_bit_checks then folds to JumpIfBitSet(src, bit, L).
+  for (size_t i = 0; i + 1 < func.body.size(); ++i) {
+    auto *bin = std::get_if<tacky::Binary>(&func.body[i]);
+    if (!bin) continue;
+    auto *dst_tmp = std::get_if<tacky::Temporary>(&bin->dst);
+    if (!dst_tmp) continue;
+
+    // Find next non-label instruction
+    size_t j = i + 1;
+    while (j < func.body.size() &&
+           std::holds_alternative<tacky::Label>(func.body[j])) {
+      j++;
+    }
+    if (j >= func.body.size()) continue;
+
+    std::string target;
+    bool is_zero_check = false;
+
+    if (auto *jiz = std::get_if<tacky::JumpIfZero>(&func.body[j])) {
+      auto *t = std::get_if<tacky::Temporary>(&jiz->condition);
+      if (!t || t->name != dst_tmp->name) continue;
+      target = jiz->target;
+      is_zero_check = true;
+    } else if (auto *jinz = std::get_if<tacky::JumpIfNotZero>(&func.body[j])) {
+      auto *t = std::get_if<tacky::Temporary>(&jinz->condition);
+      if (!t || t->name != dst_tmp->name) continue;
+      target = jinz->target;
+      is_zero_check = false;
+    } else {
+      continue;
+    }
+
+    bool replaced = false;
+    switch (bin->op) {
+      case tacky::BinaryOp::Equal:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfNotEqual{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfEqual{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      case tacky::BinaryOp::NotEqual:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfEqual{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfNotEqual{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      case tacky::BinaryOp::LessThan:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfGreaterOrEqual{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfLessThan{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      case tacky::BinaryOp::LessEqual:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfGreaterThan{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfLessOrEqual{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      case tacky::BinaryOp::GreaterThan:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfLessOrEqual{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfGreaterThan{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      case tacky::BinaryOp::GreaterEqual:
+        if (is_zero_check)
+          func.body[j] = tacky::JumpIfLessThan{bin->src1, bin->src2, target};
+        else
+          func.body[j] = tacky::JumpIfGreaterOrEqual{bin->src1, bin->src2, target};
+        replaced = true;
+        break;
+      default:
+        break;
+    }
+
+    if (replaced) {
+      // Mark the Binary as dead; DCE will remove it since dst tmp is unused.
+      func.body[i] = tacky::Copy{tacky::Constant{0}, bin->dst};
+    }
+  }
 }

@@ -29,6 +29,7 @@
 #include "../../../common/DeviceConfig.h"
 #include "../../CodeGen.h"
 #include "AVRPeephole.h"
+#include "AVRRegisterAllocator.h"
 
 class AVRCodeGen : public CodeGen {
  public:
@@ -47,7 +48,23 @@ class AVRCodeGen : public CodeGen {
   std::ostream *out;
   std::vector<AVRAsmLine> assembly;
   std::map<std::string, int> stack_layout;
+  // Named local variables assigned to AVR scratch registers R4-R15 (greedy, by use count).
+  // Variables in reg_layout are accessed via MOV instead of LDD/STD.
+  std::map<std::string, std::string> reg_layout;
   int label_counter = 0;
+
+  // Flash string pool: content (incl. any \n suffix) → label (e.g. "__str_0").
+  // Strings with identical content share one pool entry (deduplication).
+  std::map<std::string, std::string> string_pool_;
+  // True when at least one UARTSendString instruction was compiled, causing
+  // emit_string_pool() to write the __uart_send_z routine + .db data at EOF.
+  bool uart_send_z_needed_ = false;
+
+  // Intern text into the flash string pool; returns the flash label.
+  std::string intern_string(const std::string &text);
+
+  // Write __uart_send_z subroutine and all .db string entries directly to os.
+  void emit_string_pool(std::ostream &os) const;
 
   std::string make_label(const std::string &prefix) {
     return std::format("{}_{}", prefix, label_counter++);
@@ -71,6 +88,10 @@ class AVRCodeGen : public CodeGen {
   void emit_comment(const std::string &comment) const;
 
   void emit_raw(const std::string &text) const;
+
+  // Emit a conditional branch using an RJMP trampoline to avoid ±63-word limit.
+  // Emits:  INV_COND skip_label / RJMP target / skip_label:
+  void emit_branch(const std::string &cond, const std::string &target);
 
   // --- Logic Helpers ---
   void load_into_reg(const tacky::Val &val, const std::string &reg, DataType type = DataType::UINT8);
@@ -129,6 +150,8 @@ class AVRCodeGen : public CodeGen {
   void compile_variant(const tacky::InlineAsm &arg);
 
   void compile_variant(const tacky::DebugLine &arg);
+
+  void compile_variant(const tacky::UARTSendString &arg);
 };
 
 #endif  // AVRCODEGEN_H

@@ -436,6 +436,7 @@ void PIC18CodeGen::compile_variant(const tacky::Binary &arg) {
       }
       break;
     case tacky::BinaryOp::Div:
+    case tacky::BinaryOp::FloorDiv:
     case tacky::BinaryOp::Mod: {
       // Simple iterative division/modulo
       // result = src1 / src2, remainder = src1 % src2
@@ -462,7 +463,7 @@ void PIC18CodeGen::compile_variant(const tacky::Binary &arg) {
       emit("BRA", lbl_loop);
 
       emit_label(lbl_end);
-      if (arg.op == tacky::BinaryOp::Div) {
+      if (arg.op == tacky::BinaryOp::Div || arg.op == tacky::BinaryOp::FloorDiv) {
         emit("MOVF", quot, "W", "ACCESS");
       } else {
         emit("MOVF", rem, "W", "ACCESS");
@@ -602,6 +603,14 @@ void PIC18CodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("PIC18: AugAssign not implemented");
 }
 
+
+void PIC18CodeGen::compile_variant(const tacky::LoadIndirect &) {
+  throw std::runtime_error("PIC18: LoadIndirect (pointer dereference) is not yet implemented");
+}
+
+void PIC18CodeGen::compile_variant(const tacky::StoreIndirect &) {
+  throw std::runtime_error("PIC18: StoreIndirect (pointer dereference) is not yet implemented");
+}
 
 void PIC18CodeGen::compile_variant(const tacky::InlineAsm &arg) {
   assembly.push_back(PIC18AsmLine::Raw(arg.instruction));

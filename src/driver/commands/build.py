@@ -39,6 +39,28 @@ from ..core.compiler import PyMcuCompiler
 
 console = Console()
 
+
+def _parse_hex_flash_bytes(hex_file: Path) -> int:
+    """
+    Parse an Intel HEX file and return the total number of data bytes.
+    Only counts type-00 (data) records; ignores EOF (01) and extended (02/04) records.
+    Returns 0 if the file cannot be read.
+    """
+    total = 0
+    try:
+        with open(hex_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith(":"):
+                    continue
+                rec_len  = int(line[1:3], 16)
+                rec_type = int(line[7:9], 16)
+                if rec_type == 0x00:   # data record
+                    total += rec_len
+    except Exception:
+        pass
+    return total
+
 def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
@@ -210,7 +232,39 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 raise typer.Exit(code=1)
                 
             progress.update(build_task, completed=90)
-            
+
+            # Step 2.5: Flash size report (HEX parse) + optional ELF generation
+            if toolchain.get_name() == "avra":
+                progress.update(build_task, description="Reporting size...")
+                flash_bytes = _parse_hex_flash_bytes(hex_file)
+                if flash_bytes > 0:
+                    # Chip flash sizes (bytes) — extend as needed
+                    flash_sizes = {
+                        "atmega328p": 32768, "atmega328": 32768,
+                        "atmega2560": 262144, "atmega168": 16384,
+                        "atmega88": 8192, "atmega48": 4096,
+                        "attiny85": 8192, "attiny84": 8192,
+                        "attiny2313": 2048,
+                    }
+                    flash_total = flash_sizes.get(chip.lower(), 0)
+                    if flash_total:
+                        pct = flash_bytes * 100 // flash_total
+                        console.print(
+                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
+                            f"({pct}% of program storage)"
+                        )
+                    else:
+                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
+
+                # Optional ELF conversion for debug tooling (avr-objcopy)
+                link_result = toolchain.link(hex_file, chip, output_dir)
+                if link_result:
+                    elf_path, _ = link_result
+                    debug_dir = output_dir / "debug"
+                    if not debug_dir.exists():
+                        debug_dir.mkdir(parents=True)
+                    shutil.move(str(elf_path), str(debug_dir / elf_path.name))
+
             # Step 3: Cleanup
             progress.update(build_task, description="Cleaning up...")
             

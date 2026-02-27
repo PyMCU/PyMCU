@@ -16,12 +16,7 @@ def main():
     uart = UART(9600)
     
     # Send boot message
-    uart.write(72) # H
-    uart.write(101) # e
-    uart.write(108) # l
-    uart.write(108) # l
-    uart.write(111) # o
-    uart.write(10) # \n
+    uart.println("Hello")
 
     while True:
         if button.value() == 0:

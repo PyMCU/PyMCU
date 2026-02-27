@@ -40,6 +40,7 @@ enum class BinaryOp {
   Sub,
   Mul,
   Div,
+  FloorDiv,
   Mod,  // Arithmetic
   Equal,
   NotEqual,
@@ -59,7 +60,8 @@ enum class BinaryOp {
 enum class UnaryOp {
   Negate,  // -x
   Not,     // not x
-  BitNot   // ~x
+  BitNot,  // ~x
+  Deref    // *ptr (pointer dereference)
 };
 
 struct ASTNode {
@@ -207,6 +209,7 @@ enum class AugOp {
   Sub,
   Mul,
   Div,
+  FloorDiv,
   Mod,
   BitAnd,
   BitOr,
@@ -275,16 +278,24 @@ struct WhileStmt : Statement {
 
 struct ForStmt : Statement {
   std::string var_name;
-  std::unique_ptr<Expression> range_start;  // nullptr → 0
-  std::unique_ptr<Expression> range_stop;
+  std::unique_ptr<Expression> range_start;  // nullptr → 0 (range-based)
+  std::unique_ptr<Expression> range_stop;   // nullptr → iterable-based
   std::unique_ptr<Expression> range_step;   // nullptr → 1
+  std::unique_ptr<Expression> iterable;     // non-null → for-in over iterable
   std::unique_ptr<Statement> body;
 
+  // Range-based: for var in range(...)
   ForStmt(std::string var, std::unique_ptr<Expression> start,
           std::unique_ptr<Expression> stop, std::unique_ptr<Expression> step,
           std::unique_ptr<Statement> b)
       : var_name(std::move(var)), range_start(std::move(start)),
         range_stop(std::move(stop)), range_step(std::move(step)),
+        body(std::move(b)) {}
+
+  // Iterable-based: for var in expr (compile-time unrolled)
+  ForStmt(std::string var, std::unique_ptr<Expression> iter,
+          std::unique_ptr<Statement> b)
+      : var_name(std::move(var)), iterable(std::move(iter)),
         body(std::move(b)) {}
 };
 

@@ -194,7 +194,7 @@ void RISCVCodeGen::compile_function(const tacky::Function &func) {
     }
     if (const auto *bin = std::get_if<tacky::Binary>(&instr)) {
       if (bin->op == tacky::BinaryOp::Mul || bin->op == tacky::BinaryOp::Div ||
-          bin->op == tacky::BinaryOp::Mod) {
+          bin->op == tacky::BinaryOp::FloorDiv || bin->op == tacky::BinaryOp::Mod) {
         current_is_leaf = false;
         break;
       }
@@ -367,6 +367,12 @@ void RISCVCodeGen::compile_variant(const tacky::Binary &arg) {
         emit("call", "__divsi3");
         emit("mv", "t0", "a0");
         break;
+      case tacky::BinaryOp::FloorDiv:
+        emit("mv", "a0", "t0");
+        emit("mv", "a1", "t1");
+        emit("call", "__divsi3");
+        emit("mv", "t0", "a0");
+        break;
       case tacky::BinaryOp::Mod:
         emit("mv", "a0", "t0");
         emit("mv", "a1", "t1");
@@ -464,6 +470,14 @@ void RISCVCodeGen::compile_variant(const tacky::AugAssign &arg) {
   throw std::runtime_error("RISC-V: AugAssign is not yet implemented");
 }
 
+
+void RISCVCodeGen::compile_variant(const tacky::LoadIndirect &) {
+  throw std::runtime_error("RISC-V: LoadIndirect (pointer dereference) is not yet implemented");
+}
+
+void RISCVCodeGen::compile_variant(const tacky::StoreIndirect &) {
+  throw std::runtime_error("RISC-V: StoreIndirect (pointer dereference) is not yet implemented");
+}
 
 void RISCVCodeGen::compile_variant(const tacky::InlineAsm &arg) {
   assembly.push_back(RISCVAsmLine::Raw(arg.instruction));

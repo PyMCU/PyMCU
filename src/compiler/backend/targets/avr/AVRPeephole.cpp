@@ -44,6 +44,33 @@ std::string AVRAsmLine::to_string() const {
   return "";
 }
 
+// Returns true if the line is a flow-terminating instruction (RJMP or RETI).
+// After these, all following instructions until the next label/raw are unreachable.
+static bool is_flow_terminator(const AVRAsmLine &line) {
+  return line.type == AVRAsmLine::INSTRUCTION &&
+         (line.mnemonic == "RJMP" || line.mnemonic == "RETI");
+}
+
+// Parse "Y+N" offset string, returns N or -1 on failure.
+static int parse_y_offset(const std::string &s) {
+  if (s.size() < 3 || s[0] != 'Y' || s[1] != '+') return -1;
+  try {
+    return std::stoi(s.substr(2));
+  } catch (...) {
+    return -1;
+  }
+}
+
+// Parse register index from "RN" string, returns N or -1.
+static int parse_reg(const std::string &s) {
+  if (s.empty() || s[0] != 'R') return -1;
+  try {
+    return std::stoi(s.substr(1));
+  } catch (...) {
+    return -1;
+  }
+}
+
 std::vector<AVRAsmLine> AVRPeephole::optimize(
     const std::vector<AVRAsmLine> &lines) {
   std::vector<AVRAsmLine> result = lines;
@@ -60,15 +87,25 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
         if (line.mnemonic == "RJMP" || line.mnemonic == "RCALL" ||
             line.mnemonic == "BREQ" || line.mnemonic == "BRNE" ||
             line.mnemonic == "BRLO" || line.mnemonic == "BRSH" ||
-            line.mnemonic == "BRMI" || line.mnemonic == "BRPL") {
+            line.mnemonic == "BRMI" || line.mnemonic == "BRPL" ||
+            line.mnemonic == "BRLT" || line.mnemonic == "BRGE" ||
+            line.mnemonic == "BRCS" || line.mnemonic == "BRCC") {
           used_labels.insert(line.op1);
         }
       }
     }
     used_labels.insert("main");
-    used_labels.insert("__vector_default");  // Standard AVR interrupt entry
+    used_labels.insert("__vector_default");
 
-    std::optional<std::string> registers[32];  // Track R0-R31
+    // Track register value identities. Two registers with the same identity
+    // string hold the same value. Using a monotonic counter ensures that any
+    // modification (INC, ADD, LDS, etc.) gives a fresh unique identity, while
+    // MOV propagates the source's identity to the destination — allowing
+    // detection of redundant MOVs even when the actual value is unknown.
+    int mod_ctr = 0;
+    std::string aliases[32];
+    for (int k = 0; k < 32; ++k)
+      aliases[k] = std::format("init_{}", mod_ctr++);
 
     for (size_t i = 0; i < result.size(); ++i) {
       auto &current = result[i];
@@ -80,7 +117,9 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
           changed = true;
           continue;
         }
-        for (auto &r : registers) r.reset();
+        // Reset all aliases at each label boundary (conservative).
+        for (int k = 0; k < 32; ++k)
+          aliases[k] = std::format("lab_{}", mod_ctr++);
         next.push_back(current);
         continue;
       }
@@ -103,26 +142,36 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
         try {
           int reg_idx = std::stoi(current.op1.substr(1));
           if (reg_idx >= 0 && reg_idx < 32) {
-            if (registers[reg_idx] && *registers[reg_idx] == current.op2) {
+            // Canonical identity for a known constant is "ldi_<value>"
+            std::string val_id = "ldi_" + current.op2;
+            if (aliases[reg_idx] == val_id) {
               changed = true;
               continue;
             }
-            registers[reg_idx] = current.op2;
+            aliases[reg_idx] = val_id;
           }
         } catch (...) {
-          // Not a standard register name or some other error
         }
       } else if (current.mnemonic == "MOV") {
         try {
           int dst_idx = std::stoi(current.op1.substr(1));
           int src_idx = std::stoi(current.op2.substr(1));
           if (dst_idx >= 0 && dst_idx < 32 && src_idx >= 0 && src_idx < 32) {
-            registers[dst_idx] = registers[src_idx];
+            // MOV Rd, Rs: if Rd already has the same identity as Rs, skip.
+            // This covers both "same known constant" and "same alias chain"
+            // (e.g., R5 was copied from R24 and R24 hasn't changed since).
+            if (aliases[dst_idx] == aliases[src_idx]) {
+              changed = true;
+              continue;
+            }
+            aliases[dst_idx] = aliases[src_idx];
           } else {
-            if (dst_idx >= 0 && dst_idx < 32) registers[dst_idx].reset();
+            if (dst_idx >= 0 && dst_idx < 32)
+              aliases[dst_idx] = std::format("mov_{}", mod_ctr++);
           }
         } catch (...) {
-          for (auto &r : registers) r.reset();
+          for (int k = 0; k < 32; ++k)
+            aliases[k] = std::format("err_{}", mod_ctr++);
         }
       } else if (current.mnemonic == "STS" || current.mnemonic == "OUT" ||
                  current.mnemonic == "CP" || current.mnemonic == "TST" ||
@@ -134,64 +183,102 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
                  current.mnemonic == "LDD") {
         try {
           int reg_idx = std::stoi(current.op1.substr(1));
-          if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx].reset();
+          if (reg_idx >= 0 && reg_idx < 32)
+            aliases[reg_idx] = std::format("load_{}", mod_ctr++);
         } catch (...) {
-          for (auto &r : registers) r.reset();
+          for (int k = 0; k < 32; ++k)
+            aliases[k] = std::format("err_{}", mod_ctr++);
         }
       } else if (current.mnemonic == "CLR") {
         try {
           int reg_idx = std::stoi(current.op1.substr(1));
-          if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx] = "0";
+          if (reg_idx >= 0 && reg_idx < 32)
+            aliases[reg_idx] = "ldi_0";  // same identity as LDI Rd, 0
         } catch (...) {
-          for (auto &r : registers) r.reset();
+          for (int k = 0; k < 32; ++k)
+            aliases[k] = std::format("err_{}", mod_ctr++);
         }
       } else if (current.mnemonic == "ADD" || current.mnemonic == "SUB" ||
+                 current.mnemonic == "INC" || current.mnemonic == "DEC" ||
                  current.mnemonic == "NEG" || current.mnemonic == "COM" ||
-                 current.mnemonic == "ORI" || current.mnemonic == "ANDI") {
+                 current.mnemonic == "ORI" || current.mnemonic == "ANDI" ||
+                 current.mnemonic == "EOR" || current.mnemonic == "AND" ||
+                 current.mnemonic == "OR" || current.mnemonic == "ADC" ||
+                 current.mnemonic == "SBC" || current.mnemonic == "LSR" ||
+                 current.mnemonic == "ASR" || current.mnemonic == "ROR" ||
+                 current.mnemonic == "LSL" || current.mnemonic == "ROL" ||
+                 current.mnemonic == "MUL" || current.mnemonic == "MULS" ||
+                 current.mnemonic == "CPC" || current.mnemonic == "CPI") {
         try {
           int reg_idx = std::stoi(current.op1.substr(1));
-          if (reg_idx >= 0 && reg_idx < 32) registers[reg_idx].reset();
+          if (reg_idx >= 0 && reg_idx < 32)
+            aliases[reg_idx] = std::format("mod_{}", mod_ctr++);
         } catch (...) {
-          for (auto &r : registers) r.reset();
+          for (int k = 0; k < 32; ++k)
+            aliases[k] = std::format("err_{}", mod_ctr++);
         }
-      } else if (current.mnemonic == "RJMP") {
-        // --- RJMP to next instruction ---
-        bool redundant = false;
-        for (size_t j = i + 1; j < result.size(); ++j) {
-          if (result[j].type == AVRAsmLine::LABEL) {
-            if (result[j].label == current.op1) {
-              redundant = true;
+      } else if (is_flow_terminator(current)) {
+        // --- Unreachable code removal after RJMP / RETI ---
+        // For RJMP: also check if it's a jump to the immediately next label.
+        if (current.mnemonic == "RJMP") {
+          bool redundant = false;
+          for (size_t j = i + 1; j < result.size(); ++j) {
+            if (result[j].type == AVRAsmLine::LABEL) {
+              if (result[j].label == current.op1) redundant = true;
+              break;
+            } else if (result[j].type == AVRAsmLine::COMMENT ||
+                       result[j].type == AVRAsmLine::EMPTY) {
+              continue;
+            } else {
+              break;
             }
-            break;
-          } else if (result[j].type == AVRAsmLine::COMMENT ||
-                     result[j].type == AVRAsmLine::EMPTY) {
-            continue;
-          } else {
-            break;
           }
-        }
-        if (redundant) {
-          changed = true;
-          continue;
-        }
-        next.push_back(current);
-        // After RJMP, code is unreachable until next label
-        while (i + 1 < result.size() &&
-               result[i + 1].type != AVRAsmLine::LABEL) {
-          if (result[i + 1].type == AVRAsmLine::INSTRUCTION) {
+          if (redundant) {
             changed = true;
-          } else {
-            next.push_back(result[i + 1]);
+            continue;
           }
-          i++;
         }
-        for (auto &r : registers) r.reset();
+
+        next.push_back(current);
+
+        // SBIS/SBIC + RJMP is a *conditional* branch pattern:
+        //   SBIS reg, bit  →  if bit SET: skip RJMP → fall through (if-body)
+        //   RJMP L_skip    →  if bit CLEAR: jump to L_skip (skip if-body)
+        // The code after the RJMP IS reachable via the skip path, so we must
+        // NOT remove it as dead code. Detect this by checking whether the last
+        // INSTRUCTION emitted before this RJMP was SBIS or SBIC.
+        bool preceded_by_skip = false;
+        if (current.mnemonic == "RJMP") {
+          for (int k = (int)next.size() - 2; k >= 0; --k) {
+            if (next[k].type == AVRAsmLine::INSTRUCTION) {
+              preceded_by_skip = (next[k].mnemonic == "SBIS" ||
+                                  next[k].mnemonic == "SBIC");
+              break;
+            }
+          }
+        }
+
+        if (!preceded_by_skip) {
+          // Remove unreachable instructions after unconditional flow terminator.
+          // Stop at the next LABEL or RAW (e.g., .org directives in ISR vector tables).
+          while (i + 1 < result.size() &&
+                 result[i + 1].type != AVRAsmLine::LABEL &&
+                 result[i + 1].type != AVRAsmLine::RAW) {
+            if (result[i + 1].type == AVRAsmLine::INSTRUCTION) {
+              changed = true;
+            } else {
+              next.push_back(result[i + 1]);
+            }
+            i++;
+          }
+        }
+        for (int k = 0; k < 32; ++k)
+          aliases[k] = std::format("flow_{}", mod_ctr++);
         continue;
       } else {
-        // For most instructions, we reset tracking for safety
-        // In a more advanced implementation, we'd know which registers are
-        // modified
-        for (auto &r : registers) r.reset();
+        // Unknown instruction — conservatively reset all aliases.
+        for (int k = 0; k < 32; ++k)
+          aliases[k] = std::format("unk_{}", mod_ctr++);
       }
 
       next.push_back(current);
@@ -199,5 +286,76 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
     result = next;
   }
 
-  return result;
+  // --- STD/LDD Forwarding Pass ---
+  // Pattern A: STD Y+N, Rx  immediately followed by  LDD Ry, Y+N
+  //   → If Rx == Ry: delete both (value already in Rx)
+  //   → If Rx != Ry: replace pair with MOV Ry, Rx
+  // Pattern B: LDD Rx, Y+N  immediately followed by  STD Y+N, Rx
+  //   → Delete the STD (storing a value that was just loaded from that same slot)
+  // "Immediately" means: no INSTRUCTION or LABEL between the two, only COMMENTs/EMPTY.
+  bool fwd_changed = true;
+  while (fwd_changed) {
+    fwd_changed = false;
+    for (size_t i = 0; i + 1 < result.size(); ++i) {
+      if (result[i].type != AVRAsmLine::INSTRUCTION) continue;
+
+      // Find the next instruction (skip comments/empty)
+      size_t j = i + 1;
+      while (j < result.size() &&
+             (result[j].type == AVRAsmLine::COMMENT ||
+              result[j].type == AVRAsmLine::EMPTY)) {
+        j++;
+      }
+      if (j >= result.size() || result[j].type != AVRAsmLine::INSTRUCTION) continue;
+
+      auto &a = result[i];
+      auto &b = result[j];
+
+      // Pattern A: STD Y+N, Rx ; LDD Ry, Y+N
+      if (a.mnemonic == "STD" && b.mnemonic == "LDD") {
+        int a_off = parse_y_offset(a.op1);
+        int b_off = parse_y_offset(b.op2);
+        if (a_off >= 0 && a_off == b_off) {
+          int rx = parse_reg(a.op2);
+          int ry = parse_reg(b.op1);
+          if (rx >= 0 && ry >= 0) {
+            if (rx == ry) {
+              // Delete both: value already in Rx, no need to spill and reload
+              result[i] = AVRAsmLine::Empty();
+              result[j] = AVRAsmLine::Empty();
+            } else {
+              // Replace STD+LDD with MOV Ry, Rx
+              result[i] = AVRAsmLine::Empty();
+              result[j] = AVRAsmLine::Instruction("MOV",
+                  std::format("R{}", ry), std::format("R{}", rx));
+            }
+            fwd_changed = true;
+            changed = true;
+          }
+        }
+      }
+
+      // Pattern B: LDD Rx, Y+N ; STD Y+N, Rx — redundant store after load
+      if (a.mnemonic == "LDD" && b.mnemonic == "STD") {
+        int a_off = parse_y_offset(a.op2);
+        int b_off = parse_y_offset(b.op1);
+        if (a_off >= 0 && a_off == b_off && a.op1 == b.op2) {
+          result[j] = AVRAsmLine::Empty();
+          fwd_changed = true;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // Final pass: remove EMPTY lines introduced by forwarding
+  std::vector<AVRAsmLine> final_result;
+  final_result.reserve(result.size());
+  for (const auto &line : result) {
+    if (line.type != AVRAsmLine::EMPTY) {
+      final_result.push_back(line);
+    }
+  }
+
+  return final_result;
 }

@@ -42,11 +42,11 @@ static bool is_const_type(const std::string &type) {
 }
 
 tacky::Temporary IRGenerator::make_temp(DataType type) {
-  return tacky::Temporary{"tmp." + std::to_string(temp_counter++), type};
+  return tacky::Temporary{"tmp_" + std::to_string(temp_counter++), type};
 }
 
 std::string IRGenerator::make_label() {
-  return "L." + std::to_string(label_counter++);
+  return "L_" + std::to_string(label_counter++);
 }
 
 void IRGenerator::emit(const tacky::Instruction &inst) {
@@ -75,6 +75,12 @@ tacky::Program IRGenerator::generate(
   functions_to_compile.clear();
   intrinsic_names.clear();
 
+  // Always-available backend intrinsics (not tied to any import).
+  // uart_send_string / uart_send_string_ln are called by the AVR UART HAL to
+  // emit a UARTSendString IR instruction (flash string pool + LPM-Z loop).
+  intrinsic_names.insert("uart_send_string");
+  intrinsic_names.insert("uart_send_string_ln");
+
   // Inject compile-time constants from device configuration
   if (config.frequency > 0) {
     constant_variables["__FREQUENCY__"] = static_cast<int>(config.frequency);
@@ -88,6 +94,7 @@ tacky::Program IRGenerator::generate(
       intrinsic_names.insert("device_info");
       intrinsic_names.insert("inline");
       intrinsic_names.insert("interrupt");
+      intrinsic_names.insert("asm");
     }
     // Record imported symbols for alias resolution
     for (const auto &sym : imp->symbols) {
@@ -102,6 +109,7 @@ tacky::Program IRGenerator::generate(
         intrinsic_names.insert("device_info");
         intrinsic_names.insert("inline");
         intrinsic_names.insert("interrupt");
+        intrinsic_names.insert("asm");
       }
       // Register imported aliases for cross-module resolution
       // (e.g., gpio.py imports pin_set_mode from _gpio.atmega328p)
@@ -339,6 +347,26 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
   return tacky::Variable{local_name, type};
 }
 
+
+// Resolves a variable name (possibly through the variable_aliases chain) to a
+// compile-time string constant stored in str_constant_variables.  Returns
+// std::nullopt if the name cannot be resolved to a string constant.
+std::optional<std::string>
+IRGenerator::resolve_str_constant(const std::string &name) const {
+  std::string key = name;
+  for (int depth = 0; depth < 20; ++depth) {
+    if (str_constant_variables.count(key))
+      return str_constant_variables.at(key);
+    auto alias_it = variable_aliases.find(key);
+    if (alias_it != variable_aliases.end()) {
+      key = alias_it->second;
+    } else {
+      break;
+    }
+  }
+  return std::nullopt;
+}
+
 std::string IRGenerator::resolve_callee(const std::string &name) {
   // If we have an explicit module dot (mod.func), just replace it
   if (size_t dot_pos = name.find('.'); dot_pos != std::string::npos) {
@@ -346,6 +374,11 @@ std::string IRGenerator::resolve_callee(const std::string &name) {
     std::string func = name.substr(dot_pos + 1);
     // Use underscore for mangled name
     return mod + "_" + func;
+  }
+
+  // Intrinsics always resolve to themselves, regardless of import aliases
+  if (intrinsic_names.contains(name)) {
+    return name;
   }
 
   // Check if it's an imported alias
@@ -1200,6 +1233,43 @@ void IRGenerator::visitWhile(const WhileStmt *stmt) {
 }
 
 void IRGenerator::visitFor(const ForStmt *stmt) {
+  // General for-in: compile-time unrolling over a string constant
+  if (stmt->iterable) {
+    // Resolve the iterable to a string constant
+    auto get_str = [&](const Expression *e) -> std::optional<std::string> {
+      if (const auto *lit = dynamic_cast<const StringLiteral *>(e))
+        return lit->value;
+      if (const auto *var = dynamic_cast<const VariableExpr *>(e)) {
+        std::string key = current_inline_prefix + var->name;
+        for (int depth = 0; depth < 20; ++depth) {
+          if (str_constant_variables.contains(key))
+            return str_constant_variables.at(key);
+          if (variable_aliases.contains(key)) {
+            key = variable_aliases.at(key);
+          } else {
+            break;
+          }
+        }
+      }
+      return std::nullopt;
+    };
+
+    auto str_opt = get_str(stmt->iterable.get());
+    if (!str_opt.has_value()) {
+      throw std::runtime_error(
+          "for-in loop iterable must be a compile-time string constant. "
+          "Use 'const[str]' type annotation on the parameter.");
+    }
+
+    std::string var_key = current_inline_prefix + stmt->var_name;
+    for (unsigned char c : *str_opt) {
+      constant_variables[var_key] = static_cast<int>(c);
+      visitStatement(stmt->body.get());
+    }
+    constant_variables.erase(var_key);
+    return;
+  }
+
   // Desugar: for VAR in range(start, stop, step) → while loop
   tacky::Val start_val = stmt->range_start
       ? visitExpression(stmt->range_start.get())
@@ -1552,6 +1622,8 @@ void IRGenerator::visitAugAssign(const AugAssignStmt *stmt) {
         return tacky::BinaryOp::Mul;
       case AugOp::Div:
         return tacky::BinaryOp::Div;
+      case AugOp::FloorDiv:
+        return tacky::BinaryOp::FloorDiv;
       case AugOp::Mod:
         return tacky::BinaryOp::Mod;
       case AugOp::BitAnd:
@@ -1610,6 +1682,12 @@ tacky::Val IRGenerator::visitExpression(const Expression *expr) {
   }
 
   if (auto *str = dynamic_cast<const StringLiteral *>(expr)) {
+    // Single-char string literals are treated as their ASCII value (e.g. 'H' → 72)
+    if (str->value.size() == 1) {
+      return tacky::Constant{(int)(unsigned char)str->value[0]};
+    }
+    // Multi-char strings: assign an integer ID (used only by asm() which extracts
+    // the value directly from the AST, not through this path)
     if (string_literal_ids.find(str->value) == string_literal_ids.end()) {
       string_literal_ids[str->value] = next_string_id++;
     }
@@ -1659,6 +1737,9 @@ tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
       break;
     case BinaryOp::Div:
       op = tacky::BinaryOp::Div;
+      break;
+    case BinaryOp::FloorDiv:
+      op = tacky::BinaryOp::FloorDiv;
       break;
     case BinaryOp::Mod:
       op = tacky::BinaryOp::Mod;
@@ -1982,6 +2063,39 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     throw std::runtime_error(
         "asm() argument must be a compile-time string literal");
   }
+
+  // Handle uart_send_string(s) / uart_send_string_ln(s) intrinsics.
+  // Emits UARTSendString{text, add_newline} — handled by AVR backend as a flash
+  // string pool entry sent via LPM+Z loop.  Other backends ignore this instruction.
+  if (callee == "uart_send_string" || callee == "uart_send_string_ln") {
+    bool add_nl = (callee == "uart_send_string_ln");
+    if (expr->args.size() != 1) {
+      throw std::runtime_error(callee + "() expects exactly one string argument");
+    }
+    // Resolve the argument: accept a string literal or a const[str] variable.
+    auto resolve_str_arg = [&](const Expression *arg_expr) -> std::string {
+      if (const auto *lit = dynamic_cast<const StringLiteral *>(arg_expr)) {
+        return lit->value;
+      }
+      if (const auto *var = dynamic_cast<const VariableExpr *>(arg_expr)) {
+        std::string key = current_inline_prefix + var->name;
+        for (int depth = 0; depth < 20; ++depth) {
+          if (str_constant_variables.contains(key))
+            return str_constant_variables.at(key);
+          if (variable_aliases.contains(key))
+            key = variable_aliases.at(key);
+          else
+            break;
+        }
+      }
+      throw std::runtime_error(
+          callee + "() argument must be a compile-time string constant");
+    };
+    std::string text = resolve_str_arg(expr->args[0].get());
+    emit(tacky::UARTSendString{text, add_nl});
+    return std::monostate{};
+  }
+
   // Handle ptr(addr) intrinsic
   if (callee == "ptr" && intrinsic_names.contains("ptr")) {
     if (expr->args.size() != 1) {
@@ -2067,11 +2181,18 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     }
 
     // Separate positional and keyword arguments
+    // Also track raw string literal args (parallel to argValues) for const[str] binding
     std::map<std::string, tacky::Val> kwArgValues;
+    std::map<std::string, std::string> raw_kw_str_args;
+    std::vector<const StringLiteral *> raw_str_args;
     for (const auto &arg : expr->args) {
       if (auto *kw = dynamic_cast<const KeywordArgExpr *>(arg.get())) {
         kwArgValues[kw->key] = visitExpression(kw->value.get());
+        if (auto *s = dynamic_cast<const StringLiteral *>(kw->value.get()))
+          raw_kw_str_args[kw->key] = s->value;
       } else {
+        raw_str_args.push_back(
+            dynamic_cast<const StringLiteral *>(arg.get()));
         argValues.push_back(visitExpression(arg.get()));
       }
     }
@@ -2080,6 +2201,13 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     inline_depth++;
     std::string saved_prefix = current_inline_prefix;
     current_inline_prefix = new_prefix;
+
+    // Deduce and restore the module prefix of the callee so that
+    // sibling functions in the same module resolve correctly during inlining.
+    std::string saved_module_prefix = current_module_prefix;
+    if (func->name.size() < callee.size()) {
+      current_module_prefix = callee.substr(0, callee.size() - func->name.size());
+    }
 
     // Track instance type for self if it's a method
     if (method_instance_types.contains(callee)) {
@@ -2114,11 +2242,33 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       // Track aliases for properties
       if (const auto v = std::get_if<tacky::Variable>(&argValues[i])) {
         variable_aliases[paramName] = v->name;
-        // Erase stale constant entry from previous inline expansions
+        // Erase stale constant entries from previous inline expansions
         constant_variables.erase(paramName);
+        str_constant_variables.erase(paramName);
       }
       // Enforce const parameters — must receive compile-time constants
       if (is_const_type(func->params[param_idx].type)) {
+        // Special case: const[str] params may be passed as a variable that
+        // was itself bound from a const[str] parameter in a parent inline
+        // context.  Resolve through the alias / str_constant_variables chain.
+        if (func->params[param_idx].type == "const[str]") {
+          // 1. Direct string literal argument
+          if (i < raw_str_args.size() && raw_str_args[i] != nullptr) {
+            str_constant_variables[paramName] = raw_str_args[i]->value;
+            continue;
+          }
+          // 2. Variable that aliases a const[str] from a parent context
+          if (const auto *v = std::get_if<tacky::Variable>(&argValues[i])) {
+            if (auto str_val = resolve_str_constant(v->name)) {
+              str_constant_variables[paramName] = *str_val;
+              continue;
+            }
+          }
+          throw std::runtime_error(
+              "Parameter '" + func->params[param_idx].name +
+              "' is declared as const[str] and requires a compile-time string "
+              "constant value");
+        }
         if (!std::get_if<tacky::Constant>(&argValues[i])) {
           throw std::runtime_error(
               "Parameter '" + func->params[param_idx].name +
@@ -2158,14 +2308,31 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
             variable_aliases[paramName] = v->name;
           }
           if (is_const_type(func->params[pi].type)) {
-            if (!std::get_if<tacky::Constant>(&kwVal)) {
-              throw std::runtime_error(
-                  "Parameter '" + func->params[pi].name +
-                  "' is declared as const and requires a compile-time "
-                  "constant value");
+            // Special case: const[str] — may come from a literal or a
+            // variable aliasing a parent const[str] parameter.
+            if (func->params[pi].type == "const[str]") {
+              if (raw_kw_str_args.contains(kwName)) {
+                str_constant_variables[paramName] = raw_kw_str_args.at(kwName);
+              } else if (const auto *v = std::get_if<tacky::Variable>(&kwVal)) {
+                if (auto str_val = resolve_str_constant(v->name)) {
+                  str_constant_variables[paramName] = *str_val;
+                } else {
+                  throw std::runtime_error(
+                      "Parameter '" + func->params[pi].name +
+                      "' is declared as const[str] and requires a compile-time "
+                      "string constant value");
+                }
+              }
+            } else {
+              if (!std::get_if<tacky::Constant>(&kwVal)) {
+                throw std::runtime_error(
+                    "Parameter '" + func->params[pi].name +
+                    "' is declared as const and requires a compile-time "
+                    "constant value");
+              }
+              constant_variables[paramName] =
+                  std::get_if<tacky::Constant>(&kwVal)->value;
             }
-            constant_variables[paramName] =
-                std::get_if<tacky::Constant>(&kwVal)->value;
           } else if (const auto c = std::get_if<tacky::Constant>(&kwVal)) {
             constant_variables[paramName] = c->value;
           } else {
@@ -2194,6 +2361,19 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
         // Enforce const parameters — defaults must also be constants
         if (is_const_type(func->params[i].type)) {
+          // const[str] default: the default expression may be a string literal
+          if (func->params[i].type == "const[str]") {
+            if (const auto *v = std::get_if<tacky::Variable>(&defaultVal)) {
+              if (auto str_val = resolve_str_constant(v->name)) {
+                str_constant_variables[paramName] = *str_val;
+                continue;
+              }
+            }
+            // If it's already stored (e.g., from a StringLiteral that
+            // evaluated to a variable key), look it up by paramName.
+            // For now, fall through so default integer const checking handles
+            // non-string const defaults correctly.
+          }
           if (!std::get_if<tacky::Constant>(&defaultVal)) {
             throw std::runtime_error(
                 "Default value for const parameter '" +
@@ -2235,6 +2415,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     inline_stack.pop_back();
 
     current_inline_prefix = saved_prefix;
+    current_module_prefix = saved_module_prefix;
     inline_depth--;
 
     if (result) return *result;

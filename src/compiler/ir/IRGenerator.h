@@ -34,6 +34,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_map>
 #include <string>
 #include <variant>
 #include <vector>
@@ -139,6 +140,8 @@ class IRGenerator {
   std::vector<FunctionEntry> functions_to_compile;
   std::map<std::string, int> string_literal_ids;
   int next_string_id = 1;
+  // Tracks compile-time string constant variables (for const[str] params / string for-in)
+  std::unordered_map<std::string, std::string> str_constant_variables;
 
   tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
@@ -148,6 +151,7 @@ class IRGenerator {
 
   tacky::Val resolve_binding(const std::string &name);
 
+  std::optional<std::string> resolve_str_constant(const std::string &name) const;
   std::string resolve_callee(const std::string &name);
   DataType resolve_type(const std::string &type_str);
 

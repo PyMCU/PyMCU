@@ -523,6 +523,14 @@ void PIC12CodeGen::compile_variant(const tacky::AugAssign &arg) {
 }
 
 
+void PIC12CodeGen::compile_variant(const tacky::LoadIndirect &) {
+  throw std::runtime_error("PIC12: pointer dereference (LoadIndirect) is not supported");
+}
+
+void PIC12CodeGen::compile_variant(const tacky::StoreIndirect &) {
+  throw std::runtime_error("PIC12: pointer dereference (StoreIndirect) is not supported");
+}
+
 void PIC12CodeGen::compile_variant(const tacky::InlineAsm &arg) {
   assembly.push_back(PIC12AsmLine::Raw(arg.instruction));
 }

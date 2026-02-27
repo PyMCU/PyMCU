@@ -104,9 +104,9 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
     std::string path;
     try {
       if (imp->module_name == "pymcu.types" ||
-          imp->module_name == "pymcu.time" ||
           imp->module_name == "pymcu.chips") {
         // Intrinsic/compiler-provided modules — not real source files
+        // pymcu.types provides type aliases handled by the type system
         // pymcu.chips provides __CHIP__ which is injected by ConditionalCompilator
         continue;
       }
@@ -286,8 +286,8 @@ int main(int argc, char *argv[]) {
       context.module_cache[target.file_path] = std::move(target.ast);
       context.named_modules[target.module_name] = ast_ptr;
     } catch (const std::exception &e) {
-      std::cerr << "Target Error: " << e.what() << "\n";
-      return 1;
+      // Chip file not found — warn and continue; arch fallback applies below
+      std::cerr << "[Warning] Chip bootstrap failed: " << e.what() << "\n";
     }
   }
 
@@ -337,7 +337,7 @@ int main(int argc, char *argv[]) {
     auto ir = ir_gen.generate(*ast, context.named_modules, device_config,
                               source_lines, context.module_source_lines);
 
-    // ir = Optimizer::optimize(ir);
+    ir = Optimizer::optimize(ir);
 
     // Propagate device_info from chip modules into device_config
     // (PreScan on chip modules may have populated config in the context)

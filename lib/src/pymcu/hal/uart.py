@@ -88,3 +88,15 @@ class UART:
             case "pic18":
                 from pymcu.hal._uart.pic18 import uart_read
                 return uart_read()
+
+    @inline
+    def write_str(self: uint8, s: const[str]):
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_write_str
+                uart_write_str(s)
+
+    @inline
+    def println(self: uint8, s: const[str]):
+        self.write_str(s)
+        self.write(10)  # '\n'

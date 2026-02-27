@@ -103,7 +103,7 @@ class PyMcuCompiler:
     def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
-        cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--freq", str(freq)]
+        cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--chip", arch, "--freq", str(freq)]
 
         if reset_vector is not None:
             cmd.extend(["--reset-vector", str(reset_vector)])

@@ -227,18 +227,33 @@ Token Lexer::identifier() {
   return {type, text, line, column};
 }
 
-Token Lexer::string() {
+Token Lexer::string(char quote) {
   std::string text;
-  while (peek() != '"' && peek() != '\0') {
+  while (peek() != quote && peek() != '\0') {
     if (peek() == '\n') line++;
-    text += advance();
+    if (peek() == '\\') {
+      advance();  // consume backslash
+      char esc = advance();
+      switch (esc) {
+        case 'n':  text += '\n'; break;
+        case 't':  text += '\t'; break;
+        case 'r':  text += '\r'; break;
+        case '0':  text += '\0'; break;
+        case '\\': text += '\\'; break;
+        case '\'': text += '\''; break;
+        case '"':  text += '"';  break;
+        default:   text += '\\'; text += esc; break;
+      }
+    } else {
+      text += advance();
+    }
   }
 
   if (peek() == '\0') {
     error("Unterminated string literal");
   }
 
-  advance();  // Consume closing "
+  advance();  // Consume closing quote
   return {TokenType::String, text, line, column};
 }
 
@@ -288,7 +303,9 @@ Token Lexer::scan_token() {
       if (match('=')) return {TokenType::MinusEqual, "-=", line, column};
       return {TokenType::Minus, "-", line, column};
     case '"':
-      return string();
+      return string('"');
+    case '\'':
+      return string('\'');
     case '+':
       if (match('=')) return {TokenType::PlusEqual, "+=", line, column};
       return {TokenType::Plus, "+", line, column};
@@ -297,6 +314,10 @@ Token Lexer::scan_token() {
       return {TokenType::Star, "*", line, column};
     case '/':
       if (match('=')) return {TokenType::SlashEqual, "/=", line, column};
+      if (match('/')) {
+        if (match('=')) return {TokenType::FloorDivEqual, "//=", line, column};
+        return {TokenType::FloorDiv, "//", line, column};
+      }
       return {TokenType::Slash, "/", line, column};
     case '%':
       if (match('=')) return {TokenType::PercentEqual, "%=", line, column};

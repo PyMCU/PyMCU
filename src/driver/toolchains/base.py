@@ -52,3 +52,11 @@ class ExternalToolchain(CacheableTool):
         Returns the path to the generated artifact (HEX/ELF).
         """
         pass
+
+    def link(self, hex_file: Path, chip: str, output_dir: Path):
+        """
+        Optional post-assembly step: convert HEX → ELF and report memory usage.
+        Returns (elf_path: Path, size_report: str) or None if unavailable.
+        Subclasses may override to provide ELF output with section size info.
+        """
+        return None

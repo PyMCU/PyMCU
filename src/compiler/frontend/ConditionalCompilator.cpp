@@ -51,6 +51,13 @@ void ConditionalCompilator::process(Program& program) {
   for (auto& stmt : program.global_statements) {
     process_block(stmt.get(), program);
   }
+
+  // Also process top-level functions (stored separately in Program::functions)
+  for (auto& func : program.functions) {
+    if (func) {
+      process_block(func->body.get(), program);
+    }
+  }
 }
 
 void ConditionalCompilator::process_block(Statement* stmt, Program& prog) {
