@@ -137,8 +137,10 @@ L_BR_SKIP_5:
 L_BIT_FALSE_6:
 	CLR	R24
 L_BIT_DONE_7:
+	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
+	MOV	R17, R24
 	TST	R24
 	BRNE	L_BR_SKIP_10
 	RJMP	L_BIT_WRITE_SKIP_8
@@ -172,13 +174,11 @@ _dly_inner_avr:
     POP R24
 	LDD	R24, Y+1
 	INC	R24
-	MOV	R6, R24
+	STD	Y+1, R24
 	RJMP	L_91
 L_92:
 ; main.py:53:                     i = i + 1
-	MOV	R24, R6
-	INC	R24
-	MOV	R6, R24
+	INC	R6
 	RJMP	L_65
 L_66:
 ; main.py:54:                 led_on = 0
@@ -261,8 +261,10 @@ L_BR_SKIP_16:
 L_BIT_FALSE_17:
 	CLR	R24
 L_BIT_DONE_18:
+	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
+	MOV	R17, R24
 	TST	R24
 	BRNE	L_BR_SKIP_21
 	RJMP	L_BIT_WRITE_SKIP_19

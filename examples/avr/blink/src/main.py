@@ -19,11 +19,11 @@ def main():
     uart.println("Hello")
 
     while True:
-        if button.value() == 0:
+        if not button.value():
             led.high()
-            uart.write(49) # '1'
+            uart.write('1') # '1'
         else:
             led.low()
-            uart.write(48) # '0'
+            uart.write('0') # '0'
         
         delay_ms(100)

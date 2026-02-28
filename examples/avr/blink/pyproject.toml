@@ -1,5 +1,5 @@
 [project]
-name = "blink-avr"
+name = "blink"
 version = "0.1.0"
 dependencies = ["pymcu-stdlib"]
 

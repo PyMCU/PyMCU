@@ -101,8 +101,17 @@ std::string Parser::parseTypeAnnotation() {
 
   if (match(TokenType::LBracket)) {
     typeStr += "[";
-    const Token inner = consume(TokenType::Identifier, "Expected inner type");
-    typeStr += inner.value;
+    // Accept either an identifier (e.g. const[str]) or an integer literal
+    // (e.g. uint8[4] for fixed-size arrays).
+    if (check(TokenType::Identifier)) {
+      const Token inner = consume(TokenType::Identifier, "Expected inner type");
+      typeStr += inner.value;
+    } else if (check(TokenType::Number)) {
+      const Token inner = consume(TokenType::Number, "Expected array size");
+      typeStr += inner.value;
+    } else {
+      error("Expected type name or array size inside '['");
+    }
     consume(TokenType::RBracket, "Expected ']'");
     typeStr += "]";
   }
@@ -923,6 +932,17 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     auto expr = parseExpression();
     consume(TokenType::RParen, "Expected ')'");
     return expr;
+  }
+
+  if (match(TokenType::LBracket)) {
+    std::vector<std::unique_ptr<Expression>> elems;
+    if (!check(TokenType::RBracket)) {
+      do {
+        elems.push_back(parseExpression());
+      } while (match(TokenType::Comma));
+    }
+    consume(TokenType::RBracket, "Expected ']'");
+    return std::make_unique<ListExpr>(std::move(elems));
   }
 
   error("Expected expression");

@@ -5,9 +5,9 @@
 .equ inline2.uart_write.data = _stack_base + 1
 .equ tmp_11 = _stack_base + 9
 .equ tmp_12 = _stack_base + 10
-.equ tmp_14 = _stack_base + 11
-.equ tmp_15 = _stack_base + 12
-.equ tmp_22 = _stack_base + 13
+.equ tmp_19 = _stack_base + 11
+.equ tmp_3 = _stack_base + 12
+.equ tmp_5 = _stack_base + 13
 .equ tmp_6 = _stack_base + 14
 .equ tmp_8 = _stack_base + 15
 .equ tmp_9 = _stack_base + 16
@@ -33,7 +33,7 @@ L_SHIFT_DONE_1:
 	MOV	R18, R11
 	OR	R24, R18
 	MOV	R12, R24
-; main.py:38:     return result
+; main.py:36:     return result
 	RET
 main:
 	LDI	R16, high(0x08FF)
@@ -42,31 +42,30 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
-; main.py:51:     uart = UART(9600)
-; main.py:58:     row2: uint8 = 0
-; main.py:39: 
+; main.py:40:     uart = UART(9600)
+; main.py:58:         frame[1] = set_bit(frame[1], (col + 1) & 0x07)
+; main.py:39: def main():
 	SBI	0x0A, 1
-; main.py:40: 
+; main.py:40:     uart = UART(9600)
 	CBI	0x0A, 0
-; main.py:43:     # Tests: variable shift, XOR with 0xFF (bitwise NOT), bitwise AND.
-; main.py:44:     mask: uint8 = 1 << col
+; main.py:43:     # 4-row x 8-column frame buffer as a fixed-size uint8 array.
+; main.py:44:     # Each element represents one row; bit N = state of column N pixel.
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:45:     inv: uint8 = mask ^ 0xFF
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:60: 
+; main.py:60:         frame[3] = set_bit(frame[3], (col + 3) & 0x07)
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:62: 
+; main.py:62:         # Transmit frame over UART (raw bytes)
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:52:     uart.println("MATRIX")
+; main.py:41:     uart.println("MATRIX")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
-; main.py:68:         row3 = 0
+; main.py:68: 
 L_12:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -75,9 +74,9 @@ L_12:
 L_BR_SKIP_3:
 	RJMP	L_12
 L_13:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDI	R24, 10
 	STS	0x00C6, R24
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 	CLR	R24
 	MOV	R5, R24
 	CLR	R24
@@ -88,76 +87,78 @@ L_13:
 	MOV	R8, R24
 	CLR	R24
 	MOV	R4, R24
-; main.py:63:     while True:
+; main.py:49:     while True:
 L_14:
-; main.py:65:         row0 = 0
+; main.py:51:         frame[0] = 0
 	CLR	R24
 	MOV	R5, R24
-; main.py:66:         row1 = 0
+; main.py:52:         frame[1] = 0
 	CLR	R24
 	MOV	R6, R24
-; main.py:67:         row2 = 0
+; main.py:53:         frame[2] = 0
 	CLR	R24
 	MOV	R7, R24
-; main.py:68:         row3 = 0
+; main.py:54:         frame[3] = 0
 	CLR	R24
 	MOV	R8, R24
-; main.py:72:         row0 = set_bit(row0, col & 0x07)
+; main.py:57:         frame[0] = set_bit(frame[0], col & 0x07)
 	MOV	R24, R4
 	ANDI	R24, 7
-	STD	Y+14, R24
+	MOV	R16, R24
 	MOV	R24, R5
 	MOV	R10, R24
-	LDD	R24, Y+14
+	MOV	R24, R16
 	MOV	R9, R24
 	MOV	R24, R5
-	LDD	R22, Y+14
+	MOV	R22, R16
 	RCALL	set_bit
 	MOV	R5, R24
-; main.py:73:         row1 = set_bit(row1, (col + 1) & 0x07)
+; main.py:58:         frame[1] = set_bit(frame[1], (col + 1) & 0x07)
 	MOV	R24, R4
 	INC	R24
+	MOV	R16, R24
 	ANDI	R24, 7
-	STD	Y+16, R24
+	MOV	R17, R24
 	MOV	R24, R6
 	MOV	R10, R24
-	LDD	R24, Y+16
+	MOV	R24, R17
 	MOV	R9, R24
 	MOV	R24, R6
-	LDD	R22, Y+16
+	MOV	R22, R17
 	RCALL	set_bit
 	MOV	R6, R24
-; main.py:74:         row2 = set_bit(row2, (col + 2) & 0x07)
+; main.py:59:         frame[2] = set_bit(frame[2], (col + 2) & 0x07)
 	MOV	R24, R4
 	SUBI	R24, 254
+	MOV	R16, R24
 	ANDI	R24, 7
-	STD	Y+10, R24
+	MOV	R17, R24
 	MOV	R24, R7
 	MOV	R10, R24
-	LDD	R24, Y+10
+	MOV	R24, R17
 	MOV	R9, R24
 	MOV	R24, R7
-	LDD	R22, Y+10
+	MOV	R22, R17
 	RCALL	set_bit
 	MOV	R7, R24
-; main.py:75:         row3 = set_bit(row3, (col + 3) & 0x07)
+; main.py:60:         frame[3] = set_bit(frame[3], (col + 3) & 0x07)
 	MOV	R24, R4
 	SUBI	R24, 253
+	MOV	R16, R24
 	ANDI	R24, 7
-	STD	Y+12, R24
+	MOV	R17, R24
 	MOV	R24, R8
 	MOV	R10, R24
-	LDD	R24, Y+12
+	MOV	R24, R17
 	MOV	R9, R24
 	MOV	R24, R8
-	LDD	R22, Y+12
+	MOV	R22, R17
 	RCALL	set_bit
 	MOV	R8, R24
-; main.py:78:         uart.write(row0)
+; main.py:63:         uart.write(frame[0])
 	MOV	R24, R5
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	STD	Y+1, R24
-; main.py:68:         row3 = 0
+; main.py:68: 
 L_18:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -166,14 +167,12 @@ L_18:
 L_BR_SKIP_4:
 	RJMP	L_18
 L_19:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDD	R24, Y+1
 	STS	0x00C6, R24
-; main.py:79:         uart.write(row1)
+; main.py:64:         uart.write(frame[1])
 	MOV	R24, R6
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	STD	Y+1, R24
-; main.py:68:         row3 = 0
+; main.py:68: 
 L_22:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -182,14 +181,12 @@ L_22:
 L_BR_SKIP_5:
 	RJMP	L_22
 L_23:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDD	R24, Y+1
 	STS	0x00C6, R24
-; main.py:80:         uart.write(row2)
+; main.py:65:         uart.write(frame[2])
 	MOV	R24, R7
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	STD	Y+1, R24
-; main.py:68:         row3 = 0
+; main.py:68: 
 L_26:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -198,14 +195,12 @@ L_26:
 L_BR_SKIP_6:
 	RJMP	L_26
 L_27:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDD	R24, Y+1
 	STS	0x00C6, R24
-; main.py:81:         uart.write(row3)
+; main.py:66:         uart.write(frame[3])
 	MOV	R24, R8
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	STD	Y+1, R24
-; main.py:68:         row3 = 0
+; main.py:68: 
 L_30:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -214,12 +209,10 @@ L_30:
 L_BR_SKIP_7:
 	RJMP	L_30
 L_31:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDD	R24, Y+1
 	STS	0x00C6, R24
-; main.py:82:         uart.write(10)          # 0x0A frame separator
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
-; main.py:68:         row3 = 0
+; main.py:67:         uart.write(10)          # 0x0A frame separator
+; main.py:68: 
 L_34:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -228,12 +221,12 @@ L_34:
 L_BR_SKIP_8:
 	RJMP	L_34
 L_35:
-; main.py:71:         # Uses set_bit (non-inline RCALL) + bitwise mask wrapping.
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:85:         col = (col + 1) & 0x07
+; main.py:70:         col = (col + 1) & 0x07
 	MOV	R24, R4
 	INC	R24
+	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R4, R24
 	RJMP	L_14

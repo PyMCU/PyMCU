@@ -28,6 +28,7 @@
 #include <variant>
 
 #include "backend/analysis/StackAllocator.h"
+#include "AVRLinearScan.h"
 #include "AVRRegisterAllocator.h"
 
 AVRCodeGen::AVRCodeGen(DeviceConfig cfg)
@@ -159,6 +160,16 @@ void AVRCodeGen::load_into_reg(const tacky::Val &val, const std::string &reg, Da
       return;
     }
 
+    // Check linear-scan allocated temporaries (R16/R17).
+    if (!name.empty() && tmp_reg_layout.contains(name)) {
+      const std::string &src_reg = tmp_reg_layout.at(name);
+      if (src_reg != reg) {
+        emit("MOV", reg, src_reg);
+        if (is_16bit) emit("MOV", reg_h, get_high_reg(src_reg));
+      }
+      return;
+    }
+
     if (!name.empty() && stack_layout.contains(name)) {
       int offset = stack_layout.at(name);
       if (offset + (is_16bit ? 1 : 0) < 64) {
@@ -220,6 +231,16 @@ void AVRCodeGen::store_reg_into(const std::string &reg, const tacky::Val &val, D
       return;
     }
 
+    // Check linear-scan allocated temporaries (R16/R17).
+    if (!name.empty() && tmp_reg_layout.contains(name)) {
+      const std::string &dst_reg = tmp_reg_layout.at(name);
+      if (dst_reg != reg) {
+        emit("MOV", dst_reg, reg);
+        if (is_16bit) emit("MOV", get_high_reg(dst_reg), reg_h);
+      }
+      return;
+    }
+
     if (!name.empty() && stack_layout.contains(name)) {
       int offset = stack_layout.at(name);
       if (offset + (is_16bit ? 1 : 0) < 64) {
@@ -246,6 +267,7 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   assembly.clear();
   string_pool_.clear();
   uart_send_z_needed_ = false;
+  all_tmp_reg_names_.clear();
 
   StackAllocator allocator;
   auto [offsets, total_size] = allocator.allocate(program);
@@ -263,7 +285,8 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit_raw(std::format(".equ _stack_base = RAMSTART"));
 
   for (const auto &[name, offset] : stack_layout) {
-    if (reg_layout.contains(name)) continue;  // lives in a register, not RAM
+    if (reg_layout.contains(name)) continue;         // lives in named register R4-R15
+    if (all_tmp_reg_names_.contains(name)) continue; // lives in R16/R17 (linear scan)
     emit_raw(std::format(".equ {} = _stack_base + {}", name, offset));
   }
 
@@ -327,6 +350,11 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
 }
 
 void AVRCodeGen::compile_function(const tacky::Function &func) {
+  // Per-function linear scan: assign short-lived temporaries to R16/R17.
+  tmp_reg_layout = AVRLinearScan::allocate(func);
+  for (const auto &[name, reg] : tmp_reg_layout)
+    all_tmp_reg_names_.insert(name);
+
   emit_label(func.name);
 
   if (func.is_interrupt) {
@@ -671,17 +699,17 @@ void AVRCodeGen::compile_variant(const tacky::Unary &arg) {
       }
       break;
     case tacky::UnaryOp::Not: {
-      // Logical NOT
+      // Logical NOT: branch immediately after TST to avoid CLR clobbering SREG.
       std::string l_true = make_label("L_NOT_TRUE");
       std::string l_done = make_label("L_NOT_DONE");
       if (size_of(type) == 2) emit("OR", "R24", "R25");
       emit("TST", "R24");
-      emit("LDI", "R24", "0");
-      if (size_of(type) == 2) emit("LDI", "R25", "0");
-      emit_branch("BREQ", l_true);
+      emit_branch("BREQ", l_true);   // branch on TST flags — no intervening write
+      emit("CLR", "R24");            // non-zero input → NOT = 0
+      if (size_of(type) == 2) emit("CLR", "R25");
       emit("RJMP", l_done);
       emit_label(l_true);
-      emit("LDI", "R24", "1");
+      emit("LDI", "R24", "1");       // zero input → NOT = 1
       emit_label(l_done);
     } break;
   }

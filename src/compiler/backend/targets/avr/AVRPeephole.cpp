@@ -348,7 +348,58 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
     }
   }
 
-  // Final pass: remove EMPTY lines introduced by forwarding
+  // --- 3-Instruction Window: MOV Ra, Rb; OP Ra; MOV Rb, Ra → OP Rb ---
+  // Single-operand ops (INC, DEC, COM, NEG) work for all AVR registers.
+  // Compresses the common load-op-store pattern produced for named variables
+  // in reg_layout (e.g., col in R4): MOV R24,R4; INC R24; MOV R4,R24 → INC R4
+  {
+    bool win3 = true;
+    while (win3) {
+      win3 = false;
+      for (size_t i = 0; i < result.size(); ++i) {
+        if (result[i].type != AVRAsmLine::INSTRUCTION) continue;
+        // Find next instruction (skip comments/empty)
+        size_t j = i + 1;
+        while (j < result.size() && (result[j].type == AVRAsmLine::COMMENT ||
+                                      result[j].type == AVRAsmLine::EMPTY))
+          ++j;
+        if (j >= result.size() || result[j].type != AVRAsmLine::INSTRUCTION)
+          continue;
+        // Find instruction after that
+        size_t k = j + 1;
+        while (k < result.size() && (result[k].type == AVRAsmLine::COMMENT ||
+                                      result[k].type == AVRAsmLine::EMPTY))
+          ++k;
+        if (k >= result.size() || result[k].type != AVRAsmLine::INSTRUCTION)
+          continue;
+
+        auto &a = result[i];  // MOV Ra, Rb
+        auto &b = result[j];  // OP Ra
+        auto &c = result[k];  // MOV Rb, Ra
+
+        if (a.mnemonic == "MOV" && c.mnemonic == "MOV" &&
+            (b.mnemonic == "INC" || b.mnemonic == "DEC" ||
+             b.mnemonic == "COM" || b.mnemonic == "NEG") &&
+            b.op1 == a.op1 &&   // OP target == MOV dst (Ra)
+            c.op2 == a.op1 &&   // final MOV src == OP target (Ra)
+            c.op1 == a.op2) {   // final MOV dst == original MOV src (Rb)
+          b.op1 = a.op2;        // redirect OP to operate on Rb directly
+          a = AVRAsmLine::Empty();
+          c = AVRAsmLine::Empty();
+          win3 = changed = true;
+        }
+      }
+      // Remove EMPTY lines inserted by this sub-pass before next iteration
+      result.erase(
+          std::remove_if(result.begin(), result.end(),
+                         [](const AVRAsmLine &l) {
+                           return l.type == AVRAsmLine::EMPTY;
+                         }),
+          result.end());
+    }
+  }
+
+  // Final pass: remove any remaining EMPTY lines
   std::vector<AVRAsmLine> final_result;
   final_result.reserve(result.size());
   for (const auto &line : result) {

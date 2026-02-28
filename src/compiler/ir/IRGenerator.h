@@ -143,6 +143,13 @@ class IRGenerator {
   // Tracks compile-time string constant variables (for const[str] params / string for-in)
   std::unordered_map<std::string, std::string> str_constant_variables;
 
+  // Fixed-size array support: maps qualified variable name → element count / element type.
+  // Only variables declared with a TYPE[N] annotation (e.g. "uint8[4]") are in these maps.
+  // Subscript on an array-declared variable → element access (Copy to/from synth var NAME__k).
+  // Subscript on any other variable → bit-slice (existing BitCheck/BitSet/BitClear path).
+  std::map<std::string, int>      array_sizes;       // qualified_name → element count
+  std::map<std::string, DataType> array_elem_types;  // qualified_name → element DataType
+
   tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
   std::string make_label();

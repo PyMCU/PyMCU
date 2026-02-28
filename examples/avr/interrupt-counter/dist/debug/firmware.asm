@@ -138,9 +138,7 @@ L_43:
 ; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
 	CBI	0x1E, 0
 ; main.py:46:             count = count + 1
-	MOV	R24, R4
-	INC	R24
-	MOV	R4, R24
+	INC	R4
 ; main.py:47:             led.toggle()
 	SBIS	0x05, 5
 	RJMP	L_BIT_FALSE_1
@@ -149,8 +147,10 @@ L_43:
 L_BIT_FALSE_1:
 	CLR	R24
 L_BIT_DONE_2:
+	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
+	MOV	R17, R24
 	TST	R24
 	BRNE	L_BR_SKIP_5
 	RJMP	L_BIT_WRITE_SKIP_3

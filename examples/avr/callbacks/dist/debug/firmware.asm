@@ -41,6 +41,7 @@ L_BR_SKIP_0:
 	MOV	R24, R5
 	MOV	R8, R24
 	RCALL	double_value
+	MOV	R16, R24
 	RET
 	RJMP	L_0
 L_1:
@@ -53,6 +54,7 @@ L_BR_SKIP_1:
 	MOV	R24, R5
 	MOV	R12, R24
 	RCALL	invert_value
+	MOV	R16, R24
 	RET
 	RJMP	L_0
 L_2:
@@ -65,6 +67,7 @@ L_BR_SKIP_2:
 	MOV	R24, R5
 	MOV	R9, R24
 	RCALL	shift_left_one
+	MOV	R16, R24
 	RET
 	RJMP	L_0
 L_3:
@@ -170,9 +173,7 @@ L_30:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:81:             i = i + 1
-	MOV	R24, R6
-	INC	R24
-	MOV	R6, R24
+	INC	R6
 	RJMP	L_25
 L_26:
 ; main.py:83:         uart.write(10)          # newline (0x0A) frame separator

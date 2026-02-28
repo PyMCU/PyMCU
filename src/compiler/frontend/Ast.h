@@ -124,6 +124,13 @@ struct IndexExpr : Expression {
       : target(std::move(t)), index(std::move(i)) {}
 };
 
+struct ListExpr : Expression {
+  std::vector<std::unique_ptr<Expression>> elements;
+
+  explicit ListExpr(std::vector<std::unique_ptr<Expression>> elems)
+      : elements(std::move(elems)) {}
+};
+
 struct MemberAccessExpr : Expression {
   std::unique_ptr<Expression> object;
   std::string member;

@@ -155,6 +155,7 @@ L_BR_SKIP_7:
 	LSR	R24
 	LSR	R24
 	LSR	R24
+	MOV	R16, R24
 	ANDI	R24, 15
 	MOV	R6, R24
 ; main.py:35:             if hi < 10:
@@ -244,14 +245,10 @@ L_60:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:46:             found = found + 1
-	MOV	R24, R5
-	INC	R24
-	MOV	R5, R24
+	INC	R5
 L_25:
 ; main.py:48:         addr = addr + 1
-	MOV	R24, R4
-	INC	R24
-	MOV	R4, R24
+	INC	R4
 	RJMP	L_23
 L_24:
 ; main.py:50:     uart.write_str("Done. Found: ")

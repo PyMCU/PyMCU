@@ -945,42 +945,50 @@ int IRGenerator::emit_optimized_conditional_jump(
       }
 
       if (indexExpr) {
-        auto bitVal = resolve_int(indexExpr->index.get());
-        auto targetVal = resolve_int(rhsExpr);
+        // Skip bit-jump optimisation if the indexed variable is a declared array.
+        bool target_is_array = false;
+        if (auto *ve = dynamic_cast<const VariableExpr *>(indexExpr->target.get())) {
+          std::string q = current_function.empty() ? ve->name : current_function + "." + ve->name;
+          target_is_array = array_sizes.contains(q);
+        }
+        if (!target_is_array) {
+          auto bitVal = resolve_int(indexExpr->index.get());
+          auto targetVal = resolve_int(rhsExpr);
 
-        if (bitVal.has_value() && targetVal.has_value()) {
-          tacky::Val addr = visitExpression(indexExpr->target.get());
-          int bit = bitVal.value();
-          int target = targetVal.value();
+          if (bitVal.has_value() && targetVal.has_value()) {
+            tacky::Val addr = visitExpression(indexExpr->target.get());
+            int bit = bitVal.value();
+            int target = targetVal.value();
 
-          bool invert = (binExpr->op == BinaryOp::NotEqual);
-          if (invert) target = !target;
+            bool invert = (binExpr->op == BinaryOp::NotEqual);
+            if (invert) target = !target;
 
-          if (target == 0) {
-            // == 0: Jump if Bit is 1 (SET)
-            // != 0: Jump if Bit is 0 (CLEAR) (Not handled by user explicit
-            // request but logical) User Request: == 0 -> BTFSC (Jump if Set).
-            // My backend: JumpIfBitSet -> BTFSC.
-            if (jump_if_true) {
-              // Jump to TARGET if condition True (Bit is 0). Jump if Clear.
-              emit(tacky::JumpIfBitClear{addr, bit, target_label});
-            } else {
-              // Jump to ELSE (Target) if condition False (Bit is 1). Jump if
-              // Set.
-              emit(tacky::JumpIfBitSet{addr, bit, target_label});
+            if (target == 0) {
+              // == 0: Jump if Bit is 1 (SET)
+              // != 0: Jump if Bit is 0 (CLEAR) (Not handled by user explicit
+              // request but logical) User Request: == 0 -> BTFSC (Jump if Set).
+              // My backend: JumpIfBitSet -> BTFSC.
+              if (jump_if_true) {
+                // Jump to TARGET if condition True (Bit is 0). Jump if Clear.
+                emit(tacky::JumpIfBitClear{addr, bit, target_label});
+              } else {
+                // Jump to ELSE (Target) if condition False (Bit is 1). Jump if
+                // Set.
+                emit(tacky::JumpIfBitSet{addr, bit, target_label});
+              }
+              return 1;
+            } else if (target == 1) {
+              // == 1: Jump if Bit is 0 (CLEAR)
+              if (jump_if_true) {
+                // Jump to TARGET if condition True (Bit is 1). Jump if Set.
+                emit(tacky::JumpIfBitSet{addr, bit, target_label});
+              } else {
+                // Jump to ELSE (Target) if condition False (Bit is 0). Jump if
+                // Clear.
+                emit(tacky::JumpIfBitClear{addr, bit, target_label});
+              }
+              return 1;
             }
-            return 1;
-          } else if (target == 1) {
-            // == 1: Jump if Bit is 0 (CLEAR)
-            if (jump_if_true) {
-              // Jump to TARGET if condition True (Bit is 1). Jump if Set.
-              emit(tacky::JumpIfBitSet{addr, bit, target_label});
-            } else {
-              // Jump to ELSE (Target) if condition False (Bit is 0). Jump if
-              // Clear.
-              emit(tacky::JumpIfBitClear{addr, bit, target_label});
-            }
-            return 1;
           }
         }
       }
@@ -993,21 +1001,28 @@ int IRGenerator::emit_optimized_conditional_jump(
     if (unaryExpr->op == UnaryOp::Not) {
       if (auto *indexExpr =
               dynamic_cast<const IndexExpr *>(unaryExpr->operand.get())) {
-        auto bitVal = resolve_int(indexExpr->index.get());
-        if (bitVal.has_value()) {
-          tacky::Val addr = visitExpression(indexExpr->target.get());
-          int bit = bitVal.value();
+        bool target_is_array = false;
+        if (auto *ve = dynamic_cast<const VariableExpr *>(indexExpr->target.get())) {
+          std::string q = current_function.empty() ? ve->name : current_function + "." + ve->name;
+          target_is_array = array_sizes.contains(q);
+        }
+        if (!target_is_array) {
+          auto bitVal = resolve_int(indexExpr->index.get());
+          if (bitVal.has_value()) {
+            tacky::Val addr = visitExpression(indexExpr->target.get());
+            int bit = bitVal.value();
 
-          // Condition: Bit is 0.
-          if (jump_if_true) {
-            // Jump to Target if True (Bit is 0). Jump if Clear.
-            emit(tacky::JumpIfBitClear{addr, bit, target_label});
-          } else {
-            // Jump to Else (Target) if False (Bit is 1). Jump if Set.
-            // ASM: BTFSC (Jump if Set) -> GOTO Else.
-            emit(tacky::JumpIfBitSet{addr, bit, target_label});
+            // Condition: Bit is 0.
+            if (jump_if_true) {
+              // Jump to Target if True (Bit is 0). Jump if Clear.
+              emit(tacky::JumpIfBitClear{addr, bit, target_label});
+            } else {
+              // Jump to Else (Target) if False (Bit is 1). Jump if Set.
+              // ASM: BTFSC (Jump if Set) -> GOTO Else.
+              emit(tacky::JumpIfBitSet{addr, bit, target_label});
+            }
+            return 1;
           }
-          return 1;
         }
       }
     }
@@ -1016,21 +1031,28 @@ int IRGenerator::emit_optimized_conditional_jump(
   // Pattern B: Single BitAccess (implicit true test)
   // Case 3: Implicit Truthiness
   if (auto *indexExpr = dynamic_cast<const IndexExpr *>(cond)) {
-    auto bitVal = resolve_int(indexExpr->index.get());
-    if (bitVal.has_value()) {
-      tacky::Val addr = visitExpression(indexExpr->target.get());
-      int bit = bitVal.value();
+    bool target_is_array = false;
+    if (auto *ve = dynamic_cast<const VariableExpr *>(indexExpr->target.get())) {
+      std::string q = current_function.empty() ? ve->name : current_function + "." + ve->name;
+      target_is_array = array_sizes.contains(q);
+    }
+    if (!target_is_array) {
+      auto bitVal = resolve_int(indexExpr->index.get());
+      if (bitVal.has_value()) {
+        tacky::Val addr = visitExpression(indexExpr->target.get());
+        int bit = bitVal.value();
 
-      // Condition: Bit is 1.
-      if (jump_if_true) {
-        // Jump to Target if True (Bit is 1). Jump if Set.
-        emit(tacky::JumpIfBitSet{addr, bit, target_label});
-      } else {
-        // Jump to Else (Target) if False (Bit is 0). Jump if Clear.
-        // ASM: BTFSS (Jump if Clear) -> GOTO Else.
-        emit(tacky::JumpIfBitClear{addr, bit, target_label});
+        // Condition: Bit is 1.
+        if (jump_if_true) {
+          // Jump to Target if True (Bit is 1). Jump if Set.
+          emit(tacky::JumpIfBitSet{addr, bit, target_label});
+        } else {
+          // Jump to Else (Target) if False (Bit is 0). Jump if Clear.
+          // ASM: BTFSS (Jump if Clear) -> GOTO Else.
+          emit(tacky::JumpIfBitClear{addr, bit, target_label});
+        }
+        return 1;
       }
-      return 1;
     }
   }
 
@@ -1320,6 +1342,25 @@ void IRGenerator::visitContinue(const ContinueStmt *stmt) {
 
 void IRGenerator::visitAssign(const AssignStmt *stmt) {
   if (auto indexExpr = dynamic_cast<const IndexExpr *>(stmt->target.get())) {
+    // Disambiguation: if the target is a declared array, treat as element store.
+    if (auto *ve = dynamic_cast<const VariableExpr *>(indexExpr->target.get())) {
+      std::string qualified = current_function.empty()
+                                  ? ve->name
+                                  : current_function + "." + ve->name;
+      if (array_sizes.contains(qualified)) {
+        tacky::Val idx_val = visitExpression(indexExpr->index.get());
+        if (auto *c = std::get_if<tacky::Constant>(&idx_val)) {
+          std::string elem_name = qualified + "__" + std::to_string(c->value);
+          tacky::Variable elem_var{elem_name, array_elem_types.at(qualified)};
+          tacky::Val val = visitExpression(stmt->value.get());
+          emit(tacky::Copy{val, elem_var});
+          return;
+        }
+        throw std::runtime_error("Array subscript must be a compile-time constant");
+      }
+    }
+
+    // Bit-slice path (existing behaviour for register access like PORTB[0] = 1)
     tacky::Val target = visitExpression(indexExpr->target.get());
     tacky::Val indexVal = visitExpression(indexExpr->index.get());
     int bit = 0;
@@ -1373,13 +1414,19 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
         // Explicit global assignment
         target = resolve_binding(varExpr->name);
       } else {
-        // Local assignment (shadows global if exists)
-        std::string qualified_name = current_function + "." + varExpr->name;
-        DataType type = DataType::UINT8;
-        if (variable_types.contains(qualified_name)) {
-          type = variable_types.at(qualified_name);
+        // Local assignment: when inside an inline expansion use the inline prefix
+        // so that `i = i + 1` inside _delay_ms_avr resolves to
+        // inline2._delay_ms_avr.i, not main.i.
+        if (!current_inline_prefix.empty()) {
+          target = resolve_binding(varExpr->name);
+        } else {
+          std::string qualified_name = current_function + "." + varExpr->name;
+          DataType type = DataType::UINT8;
+          if (variable_types.contains(qualified_name)) {
+            type = variable_types.at(qualified_name);
+          }
+          target = tacky::Variable{qualified_name, type};
         }
-        target = tacky::Variable{qualified_name, type};
       }
     } else {
       // Top-level assignment
@@ -1558,6 +1605,49 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
 }
 
 void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
+  // Check for array annotation: TYPE[N] where N is a pure integer, e.g. "uint8[4]".
+  // Distinguished from ptr[TYPE] / const[TYPE] by the bracket content being all digits.
+  {
+    auto bracket = stmt->annotation.find('[');
+    auto close   = stmt->annotation.rfind(']');
+    if (bracket != std::string::npos && close != std::string::npos &&
+        close == stmt->annotation.size() - 1 && close > bracket + 1) {
+      std::string inner = stmt->annotation.substr(bracket + 1, close - bracket - 1);
+      bool is_number = !inner.empty() &&
+                       std::all_of(inner.begin(), inner.end(), ::isdigit);
+      if (is_number) {
+        int count = std::stoi(inner);
+        DataType elem_dt = resolve_type(stmt->annotation.substr(0, bracket));
+        std::string qualified = current_function.empty()
+                                    ? stmt->target
+                                    : current_function + "." + stmt->target;
+        array_sizes[qualified]      = count;
+        array_elem_types[qualified] = elem_dt;
+        variable_types[qualified]   = elem_dt;
+
+        // Determine initializer values (default: zero-init)
+        std::vector<int> init_vals(count, 0);
+        if (stmt->value) {
+          if (auto *le = dynamic_cast<const ListExpr *>(stmt->value.get())) {
+            for (int k = 0; k < std::min(count, (int)le->elements.size()); ++k) {
+              if (auto *il = dynamic_cast<const IntegerLiteral *>(le->elements[k].get()))
+                init_vals[k] = il->value;
+            }
+          }
+        }
+
+        // Emit Copy for each element to a synthetic scalar variable: qualified__k
+        for (int k = 0; k < count; ++k) {
+          std::string elem_name = qualified + "__" + std::to_string(k);
+          tacky::Variable elem_var{elem_name, elem_dt};
+          variable_types[elem_name] = elem_dt;
+          emit(tacky::Copy{tacky::Constant{init_vals[k]}, elem_var});
+        }
+        return;
+      }
+    }
+  }
+
   // Extract type from annotation string like "ptr[uint16]"
   DataType type = DataType::UINT8;  // default
 
@@ -1862,6 +1952,22 @@ tacky::Val IRGenerator::visitYield(const YieldExpr *expr) {
 }
 
 tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
+  // Disambiguation: if the target is a declared array, treat as element access.
+  if (auto *ve = dynamic_cast<const VariableExpr *>(expr->target.get())) {
+    std::string qualified = current_function.empty()
+                                ? ve->name
+                                : current_function + "." + ve->name;
+    if (array_sizes.contains(qualified)) {
+      tacky::Val idx_val = visitExpression(expr->index.get());
+      if (auto *c = std::get_if<tacky::Constant>(&idx_val)) {
+        std::string elem_name = qualified + "__" + std::to_string(c->value);
+        return tacky::Variable{elem_name, array_elem_types.at(qualified)};
+      }
+      throw std::runtime_error("Array subscript must be a compile-time constant");
+    }
+  }
+
+  // Bit-slice path (existing behaviour for register access like PORTB[0])
   tacky::Val target = visitExpression(expr->target.get());
   tacky::Val indexVal = visitExpression(expr->index.get());
 

@@ -22,12 +22,14 @@
 
 #pragma once
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "../../../common/DeviceConfig.h"
 #include "../../CodeGen.h"
+#include "AVRLinearScan.h"
 #include "AVRPeephole.h"
 #include "AVRRegisterAllocator.h"
 
@@ -51,6 +53,10 @@ class AVRCodeGen : public CodeGen {
   // Named local variables assigned to AVR scratch registers R4-R15 (greedy, by use count).
   // Variables in reg_layout are accessed via MOV instead of LDD/STD.
   std::map<std::string, std::string> reg_layout;
+  // Per-function linear scan: temporaries assigned to R16/R17 (set in compile_function).
+  std::map<std::string, std::string> tmp_reg_layout;
+  // All temporaries register-allocated across the program (for .equ skipping).
+  std::set<std::string> all_tmp_reg_names_;
   int label_counter = 0;
 
   // Flash string pool: content (incl. any \n suffix) → label (e.g. "__str_0").

@@ -75,6 +75,8 @@ add_library(core STATIC
         src/compiler/backend/targets/avr/AVRPeephole.h
         src/compiler/backend/targets/avr/AVRRegisterAllocator.cpp
         src/compiler/backend/targets/avr/AVRRegisterAllocator.h
+        src/compiler/backend/targets/avr/AVRLinearScan.cpp
+        src/compiler/backend/targets/avr/AVRLinearScan.h
         src/compiler/backend/targets/riscv/RISCVCodeGen.cpp
         src/compiler/backend/targets/riscv/RISCVCodeGen.h
         src/compiler/backend/targets/riscv/RISCVPeephole.cpp

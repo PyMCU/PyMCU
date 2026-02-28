@@ -6,10 +6,10 @@
 .equ inline2.spi_transfer.data = _stack_base + 2
 .equ inline2.spi_transfer.result = _stack_base + 3
 .equ inline2.uart_write.data = _stack_base + 4
-.equ tmp_11 = _stack_base + 9
-.equ tmp_13 = _stack_base + 10
-.equ tmp_6 = _stack_base + 11
-.equ tmp_8 = _stack_base + 12
+.equ tmp_11 = _stack_base + 8
+.equ tmp_13 = _stack_base + 9
+.equ tmp_6 = _stack_base + 10
+.equ tmp_8 = _stack_base + 11
 
 .org 0x0000
 main:
@@ -139,7 +139,7 @@ _dly_inner_avr:
     POP R24
 	LDD	R24, Y+1
 	INC	R24
-	MOV	R7, R24
+	STD	Y+1, R24
 	RJMP	L_32
 L_33:
 	MOV	R24, R5
@@ -155,11 +155,13 @@ L_BR_SKIP_4:
 	LSR	R24
 	LSR	R24
 	LSR	R24
+	MOV	R16, R24
 	ANDI	R24, 1
 	MOV	R6, R24
 ; main.py:54:                 pattern = (pattern << 1) | msb
 	MOV	R24, R4
 	LSL	R24
+	MOV	R16, R24
 	MOV	R18, R6
 	OR	R24, R18
 	MOV	R4, R24
@@ -179,11 +181,13 @@ L_BR_SKIP_5:
 	LSR	R24
 	LSR	R24
 	LSR	R24
+	MOV	R16, R24
 	ANDI	R24, 1
 	MOV	R6, R24
 ; main.py:59:                 pattern = (pattern << 1) | msb
 	MOV	R24, R4
 	LSL	R24
+	MOV	R16, R24
 	MOV	R18, R6
 	OR	R24, R18
 	MOV	R4, R24
@@ -199,9 +203,7 @@ L_37:
 	RJMP	L_34
 L_36:
 ; main.py:65:                 pattern = pattern + 1
-	MOV	R24, R4
-	INC	R24
-	MOV	R4, R24
+	INC	R4
 L_34:
 ; main.py:70:         if UCSR0A[7] == 1:         # RXC0: data available
 	LDS	R24, 0x00C0
@@ -214,9 +216,7 @@ L_BR_SKIP_7:
 	ANDI	R24, 254
 	STS	0x00C6, R24
 ; main.py:72:             mode = mode + 1
-	MOV	R24, R5
-	INC	R24
-	MOV	R5, R24
+	INC	R5
 ; main.py:73:             if mode == 3:
 	CPI	R24, 3
 	BREQ	L_BR_SKIP_8
