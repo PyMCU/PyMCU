@@ -126,7 +126,8 @@ class Pk2cmdProgrammer(HardwareProgrammer):
 
         return target_dir / info["bin_path"]
 
-    def flash(self, hex_file: Path, chip: str) -> None:
+    def flash(self, hex_file: Path, chip: str, *, port: str | None = None, baud: int | None = None) -> None:
+        # port and baud are ignored — pk2cmd auto-selects the connected PICKit device.
         if not self.is_cached():
             raise RuntimeError("pk2cmd not installed. Run install() first.")
             

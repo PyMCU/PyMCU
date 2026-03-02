@@ -3,15 +3,30 @@
 .equ _stack_base = RAMSTART
 .equ inline1.write.data = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.spi_transfer.data = _stack_base + 2
-.equ inline2.spi_transfer.result = _stack_base + 3
-.equ inline2.uart_write.data = _stack_base + 4
-.equ tmp_11 = _stack_base + 8
-.equ tmp_13 = _stack_base + 9
-.equ tmp_6 = _stack_base + 10
-.equ tmp_8 = _stack_base + 11
+.equ inline2.spi_transfer.data = _stack_base + 3
+.equ inline2.spi_transfer.result = _stack_base + 4
+.equ inline2.uart_write.data = _stack_base + 5
+.equ tmp_11 = _stack_base + 9
+.equ tmp_13 = _stack_base + 10
+.equ tmp_6 = _stack_base + 11
+.equ tmp_8 = _stack_base + 12
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -93,7 +108,7 @@ L_BR_SKIP_1:
 	RJMP	L_22
 L_23:
 	IN	R24, 0x2E
-	STD	Y+3, R24
+	STD	Y+4, R24
 ; main.py:59:                 pattern = (pattern << 1) | msb
 ; main.py:44:         spi.deselect()        # RCLK rising edge (latch shift → output)
 ; main.py:51:             case MODE_RUNNING:
@@ -102,7 +117,7 @@ L_23:
 ; main.py:46:         uart.write(pattern)
 	MOV	R24, R4
 ; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-	STD	Y+4, R24
+	STD	Y+5, R24
 ; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
 L_28:
 	LDS	R24, 0x00C0
@@ -113,33 +128,31 @@ L_BR_SKIP_2:
 	RJMP	L_28
 L_29:
 ; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-	LDD	R24, Y+4
+	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:47:         delay_ms(120)
 ; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_32:
 	LDD	R24, Y+1
-	CPI	R24, 120
+	LDD	R25, Y+2
+	LDI	R18, 120
+	CLR	R19
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_3
 	RJMP	L_33
 L_BR_SKIP_3:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_32
 L_33:
 	MOV	R24, R5
@@ -217,6 +230,7 @@ L_BR_SKIP_7:
 	STS	0x00C6, R24
 ; main.py:72:             mode = mode + 1
 	INC	R5
+	MOV	R24, R5
 ; main.py:73:             if mode == 3:
 	CPI	R24, 3
 	BREQ	L_BR_SKIP_8

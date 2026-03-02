@@ -3,14 +3,29 @@
 .equ _stack_base = RAMSTART
 .equ inline1.write.data = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.uart_read.result = _stack_base + 2
-.equ inline2.uart_write.data = _stack_base + 3
-.equ tmp_16 = _stack_base + 7
-.equ tmp_17 = _stack_base + 8
-.equ tmp_7 = _stack_base + 9
-.equ tmp_8 = _stack_base + 10
+.equ inline2.uart_read.result = _stack_base + 3
+.equ inline2.uart_write.data = _stack_base + 4
+.equ tmp_16 = _stack_base + 8
+.equ tmp_17 = _stack_base + 9
+.equ tmp_7 = _stack_base + 10
+.equ tmp_8 = _stack_base + 11
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -153,28 +168,26 @@ L_BIT_WRITE_DONE_9:
 ; main.py:52:                     delay_ms(100)
 ; main.py:68:                 led.toggle()
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_91:
 	LDD	R24, Y+1
-	CPI	R24, 100
+	LDD	R25, Y+2
+	LDI	R18, 100
+	CLR	R19
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_11
 	RJMP	L_92
 L_BR_SKIP_11:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_91
 L_92:
 ; main.py:53:                     i = i + 1
@@ -341,7 +354,7 @@ L_BR_SKIP_25:
 	MOV	R24, R5
 	SUBI	R24, 208
 ; main.py:71:                     uart.println("LED OFF")
-	STD	Y+3, R24
+	STD	Y+4, R24
 ; main.py:68:                 led.toggle()
 L_219:
 	LDS	R24, 0x00C0
@@ -352,7 +365,7 @@ L_BR_SKIP_26:
 	RJMP	L_219
 L_220:
 ; main.py:71:                     uart.println("LED OFF")
-	LDD	R24, Y+3
+	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:79:                 uart.write('\n')
 ; main.py:71:                     uart.println("LED OFF")
@@ -412,7 +425,7 @@ L_237:
 ; main.py:87:                 uart.write(cmd)
 	MOV	R24, R4
 ; main.py:71:                     uart.println("LED OFF")
-	STD	Y+3, R24
+	STD	Y+4, R24
 ; main.py:68:                 led.toggle()
 L_240:
 	LDS	R24, 0x00C0
@@ -423,7 +436,7 @@ L_BR_SKIP_31:
 	RJMP	L_240
 L_241:
 ; main.py:71:                     uart.println("LED OFF")
-	LDD	R24, Y+3
+	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:88:                 uart.write('\n')
 ; main.py:71:                     uart.println("LED OFF")

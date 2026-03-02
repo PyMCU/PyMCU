@@ -3,16 +3,31 @@
 .equ _stack_base = RAMSTART
 .equ inline1.write.data = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.uart_write.data = _stack_base + 2
-.equ tmp_10 = _stack_base + 7
-.equ tmp_11 = _stack_base + 8
-.equ tmp_2 = _stack_base + 10
-.equ tmp_5 = _stack_base + 11
-.equ tmp_6 = _stack_base + 12
-.equ tmp_7 = _stack_base + 13
-.equ tmp_9 = _stack_base + 14
+.equ inline2.uart_write.data = _stack_base + 3
+.equ tmp_10 = _stack_base + 8
+.equ tmp_11 = _stack_base + 9
+.equ tmp_2 = _stack_base + 11
+.equ tmp_5 = _stack_base + 12
+.equ tmp_6 = _stack_base + 13
+.equ tmp_7 = _stack_base + 14
+.equ tmp_9 = _stack_base + 15
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -95,7 +110,7 @@ L_BR_SKIP_6:
 	MOV	R24, R4
 	MOV	R25, R5
 	SUBI	R24, 255
-	SBCI	R25, 0
+	SBCI	R25, 255
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:34:             led.toggle()
@@ -134,11 +149,11 @@ L_BR_SKIP_14:
 	DEC	R18
 	RJMP	L_SHIFT_START_12
 L_SHIFT_DONE_13:
-	STD	Y+8, R24
-	STD	Y+9, R25
-	LDD	R24, Y+8
+	STD	Y+9, R24
+	STD	Y+10, R25
+	LDD	R24, Y+9
 	ANDI	R24, 255
-	STD	Y+2, R24
+	STD	Y+3, R24
 L_143:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -147,12 +162,12 @@ L_143:
 L_BR_SKIP_15:
 	RJMP	L_143
 L_144:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:38:             uart.write(count & 0xFF)
 	MOV	R24, R4
 	ANDI	R24, 255
-	STD	Y+2, R24
+	STD	Y+3, R24
 L_147:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -161,7 +176,7 @@ L_147:
 L_BR_SKIP_16:
 	RJMP	L_147
 L_148:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:41:             if count == 1000:
 	MOV	R24, R4
@@ -196,28 +211,26 @@ L_118:
 	MOV	R7, R24
 ; main.py:46:         delay_ms(10)    # 10 ms debounce window
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_156:
 	LDD	R24, Y+1
-	CPI	R24, 10
+	LDD	R25, Y+2
+	LDI	R18, 10
+	CLR	R19
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_19
 	RJMP	L_157
 L_BR_SKIP_19:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_156
 L_157:
 	RJMP	L_89

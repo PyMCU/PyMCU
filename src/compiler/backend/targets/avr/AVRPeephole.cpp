@@ -383,9 +383,30 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
             b.op1 == a.op1 &&   // OP target == MOV dst (Ra)
             c.op2 == a.op1 &&   // final MOV src == OP target (Ra)
             c.op1 == a.op2) {   // final MOV dst == original MOV src (Rb)
-          b.op1 = a.op2;        // redirect OP to operate on Rb directly
-          a = AVRAsmLine::Empty();
-          c = AVRAsmLine::Empty();
+          const std::string Ra = a.op1;  // scratch reg (e.g. R24)
+          const std::string Rb = a.op2;  // named-var reg (e.g. R4)
+
+          // Check whether Ra is used as a source in the very next instruction
+          // after c. This happens when alias tracking eliminated the explicit
+          // load (e.g. STD Y+N, Ra for uart.write). If so, keep Ra in sync.
+          size_t next = k + 1;
+          while (next < result.size() &&
+                 (result[next].type == AVRAsmLine::COMMENT ||
+                  result[next].type == AVRAsmLine::EMPTY))
+            ++next;
+          bool ra_needed = (next < result.size() &&
+                            result[next].type == AVRAsmLine::INSTRUCTION &&
+                            (result[next].op1 == Ra || result[next].op2 == Ra));
+
+          b.op1 = Rb;              // redirect OP to operate on Rb directly
+          a = AVRAsmLine::Empty(); // drop: MOV Ra, Rb (now redundant)
+          if (ra_needed) {
+            // Invert c: MOV Rb, Ra → MOV Ra, Rb so Ra = Rb after the op.
+            c.op1 = Ra;
+            c.op2 = Rb;
+          } else {
+            c = AVRAsmLine::Empty(); // Ra is dead after the window; safe to drop
+          }
           win3 = changed = true;
         }
       }

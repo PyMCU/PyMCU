@@ -9,5 +9,6 @@ frequency = 16000000
 sources = "src"
 entry = "main.py"
 
-[tool.pymcu.config]
-# No fuse configuration needed for basic blink
+[tool.pymcu.flash]
+programmer = "avrdude"
+port = "/dev/cu.usbmodem14101"  # uncomment and set your serial port

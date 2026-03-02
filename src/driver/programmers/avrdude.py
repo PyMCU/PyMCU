@@ -25,6 +25,8 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import glob
+import shutil
 import sys
 import subprocess
 from pathlib import Path
@@ -32,143 +34,229 @@ from typing import Dict, Any
 from .base import HardwareProgrammer
 from rich.prompt import Confirm
 
+# Mapping from PyMCU chip names to avrdude abbreviated part names.
+_CHIP_MAP: dict[str, str] = {
+    "atmega328p":  "m328p",
+    "atmega328":   "m328",
+    "atmega2560":  "m2560",
+    "atmega32u4":  "m32u4",
+    "atmega168p":  "m168p",
+    "atmega168":   "m168",
+    "attiny85":    "t85",
+    "attiny45":    "t45",
+    "attiny25":    "t25",
+    "attiny13":    "t13",
+    "attiny13a":   "t13a",
+}
+
+
 class AvrdudeProgrammer(HardwareProgrammer):
     """
     Concrete implementation for AVRDUDE (AVR Downloader/UploaDEr).
-    Supports flashing AVR microcontrollers (e.g., Arduino).
+
+    Binary resolution order:
+      1. System PATH (shutil.which) — handles Homebrew, apt, and system installs.
+      2. Locally cached binary in ~/.pymcu/tools/{platform}/avrdude/.
+      3. Download v8.1 from GitHub (user is prompted first).
     """
 
     METADATA = {
-        "version": "7.2",
+        "version": "8.1",
         "description": "AVRDUDE - AVR Downloader/UploaDEr",
         "platforms": {
             "win32": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v7.2/avrdude-v7.2-windows-x64.zip",
-                "hash": "placeholder",
+                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude-v8.1-windows-x64.zip",
+                "hash": "PLACEHOLDER",
                 "archive_type": "zip",
                 "bin_path": "avrdude.exe",
-                "conf_path": "avrdude.conf"
+                "conf_path": "avrdude.conf",
             },
             "linux": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v7.2/avrdude-v7.2-linux-x64.tar.gz",
-                "hash": "placeholder",
+                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude_v8.1_Linux_64bit.tar.gz",
+                "hash": "PLACEHOLDER",
                 "archive_type": "tar.gz",
                 "bin_path": "avrdude",
-                "conf_path": "avrdude.conf"
+                "conf_path": "avrdude.conf",
             },
             "darwin": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v7.2/avrdude-v7.2-macos-universal.tar.gz",
-                "hash": "placeholder",
+                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude_v8.1_macOS_64bit.tar.gz",
+                "hash": "PLACEHOLDER",
                 "archive_type": "tar.gz",
                 "bin_path": "avrdude",
-                "conf_path": "avrdude.conf"
-            }
-        }
+                "conf_path": "avrdude.conf",
+            },
+        },
     }
 
     def get_name(self) -> str:
         return "avrdude"
 
     def _get_platform_info(self) -> Dict[str, Any]:
-        info = self.METADATA["platforms"].get(sys.platform)
+        platform = sys.platform
+        if platform.startswith("linux"):
+            platform = "linux"
+        info = self.METADATA["platforms"].get(platform)
         if not info:
-             raise RuntimeError(f"avrdude has no configuration for platform: {sys.platform}")
+            raise RuntimeError(f"avrdude has no configuration for platform: {sys.platform}")
         return info
 
-    def is_cached(self) -> bool:
+    # ------------------------------------------------------------------
+    # Binary discovery
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def find_system_avrdude() -> Path | None:
+        """Return the path to a system-installed avrdude, or None."""
+        which = shutil.which("avrdude")
+        return Path(which) if which else None
+
+    def _find_cached_binary(self) -> Path | None:
+        """Search for the avrdude binary within the tool directory (handles nested archive layouts)."""
         try:
-            info = self._get_platform_info()
-            local_bin = self._get_tool_dir() / info["bin_path"]
-            return local_bin.exists()
+            tool_dir = self._get_tool_dir()
+            bin_name = self._get_platform_info()["bin_path"]
         except RuntimeError:
-            return False
+            return None
+        # Try the flat path first (simple layout)
+        simple = tool_dir / bin_name
+        if simple.exists():
+            return simple
+        # Fall back to recursive search (e.g. avrdude_macOS_64bit/bin/avrdude)
+        matches = sorted(tool_dir.rglob(bin_name))
+        return matches[0] if matches else None
+
+    def _find_cached_conf(self) -> Path | None:
+        """Search for avrdude.conf within the tool directory."""
+        try:
+            tool_dir = self._get_tool_dir()
+        except RuntimeError:
+            return None
+        matches = sorted(tool_dir.rglob("avrdude.conf"))
+        return matches[0] if matches else None
+
+    def _get_binary(self) -> Path:
+        """Return avrdude binary path: system PATH preferred, cached binary fallback."""
+        sys_path = self.find_system_avrdude()
+        if sys_path:
+            return sys_path
+        cached = self._find_cached_binary()
+        if cached:
+            return cached
+        raise RuntimeError("avrdude binary not found. Run 'pymcu flash' again to install it.")
+
+    def is_cached(self) -> bool:
+        if self.find_system_avrdude() is not None:
+            return True
+        return self._find_cached_binary() is not None
+
+    # ------------------------------------------------------------------
+    # Port auto-detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def auto_detect_port() -> str | None:
+        """
+        Return the first detected serial port for a USB-connected AVR device,
+        or None if nothing is found.
+        """
+        if sys.platform == "darwin":
+            candidates = glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")
+        elif sys.platform.startswith("linux"):
+            candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
+        else:
+            candidates = []
+        return candidates[0] if candidates else None
+
+    # ------------------------------------------------------------------
+    # Installation
+    # ------------------------------------------------------------------
 
     def install(self) -> Path:
         info = self._get_platform_info()
         url = info["url"]
-        # expected_hash = info["hash"] # Unused for now
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print(f"[bold cyan]PyMCU Hardware Manager[/bold cyan]")
-        self.console.print(f"Programmer '{name}' ({desc}) is required but not found locally.")
-        
-        if not Confirm.ask(f"Do you want to download and install it automatically?", default=True):
-             raise RuntimeError(f"Installation of {name} aborted by user.")
+        self.console.print("[bold cyan]PyMCU Hardware Manager[/bold cyan]")
+        self.console.print(
+            f"Programmer '{name}' ({desc}) is not found in system PATH or local cache."
+        )
+        self.console.print(
+            "[dim]Tip: install avrdude via Homebrew ([bold]brew install avrdude[/bold]) "
+            "or apt ([bold]sudo apt install avrdude[/bold]) to skip this step.[/dim]"
+        )
+
+        if not Confirm.ask("Do you want to download and install it automatically?", default=True):
+            raise RuntimeError(f"Installation of {name} aborted by user.")
 
         target_dir = self._get_tool_dir()
-        if not target_dir.exists():
-            target_dir.mkdir(parents=True, exist_ok=True)
-            
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         filename = url.split("/")[-1]
         download_path = target_dir / filename
 
-        # 1. Download
-        self._download_file(url, download_path, f"Downloading {name}...")
+        # Download
+        self._download_file(url, download_path, f"Downloading {name} {self.METADATA['version']}...")
 
-        # 2. Verify (Strict)
-        # Note: Skipping strict verification for now as hashes are placeholders
-        # self.console.print("Verifying integrity...", end="")
-        # if not self.verify_sha256(download_path, expected_hash):
-        #      self.console.print(" [bold red]FAILED[/bold red]")
-        #      if download_path.exists():
-        #         download_path.unlink()
-        #      raise RuntimeError(f"SHA-256 verification failed for {filename}.")
-        # self.console.print(" [green]OK[/green]")
+        # Verify (skipped — hashes are PLACEHOLDER)
 
-        # 3. Extract
+        # Extract
         self._extract_archive(download_path, target_dir, info.get("archive_type"))
-        
-        # 4. Permissions (Linux/Mac)
+
+        # Permissions — search recursively since tarball may nest the binary
         if sys.platform != "win32":
-            bin_path = target_dir / info["bin_path"]
-            if bin_path.exists():
-                bin_path.chmod(0o755)
-        
+            found = self._find_cached_binary()
+            if found:
+                found.chmod(0o755)
+
         if download_path.exists():
             download_path.unlink()
 
-        return target_dir / info["bin_path"]
+        found = self._find_cached_binary()
+        if found is None:
+            raise RuntimeError("avrdude binary not found after extraction.")
+        return found
 
-    def flash(self, hex_file: Path, chip: str) -> None:
+    # ------------------------------------------------------------------
+    # Flash
+    # ------------------------------------------------------------------
+
+    def flash(self, hex_file: Path, chip: str, *, port: str | None = None, baud: int | None = None) -> None:
         if not self.is_cached():
             raise RuntimeError("avrdude not installed. Run install() first.")
-            
-        info = self._get_platform_info()
-        tool_path = self._get_tool_dir() / info["bin_path"]
-        conf_path = self._get_tool_dir() / info["conf_path"]
-        
-        # Default to Arduino Uno (atmega328p) settings if not specified
-        # In a real scenario, these should be configurable via pyproject.toml
-        programmer_id = "arduino"
-        port = "/dev/ttyACM0" # Default for Linux, might need auto-detection
-        if sys.platform == "darwin":
-            port = "/dev/cu.usbmodem*" # Wildcard not supported directly, needs glob
-        elif sys.platform == "win32":
-            port = "COM3"
 
-        # Try to find a valid port if default doesn't exist
-        if "*" in port or not Path(port).exists():
-             # Simple auto-detection logic could go here
-             pass
+        avrdude = self._get_binary()
+        part = _CHIP_MAP.get(chip.lower(), chip)
 
-        cmd = [
-            str(tool_path),
-            "-C", str(conf_path),
-            "-v",
-            "-p", chip,
-            "-c", programmer_id,
-            "-P", port,
-            "-b", "115200",
-            "-D", # Disable auto erase for arduino
-            f"-Uflash:w:{hex_file}:i"
+        # Find avrdude.conf (only for cached downloads; system avrdude finds its own conf).
+        conf_path = None if self.find_system_avrdude() else self._find_cached_conf()
+
+        # Resolve port: caller > auto-detect > error
+        resolved_port = port or self.auto_detect_port()
+        if not resolved_port:
+            raise RuntimeError(
+                "No serial port specified and auto-detection found none.\n"
+                "Pass --port /dev/cu.usbmodemXXXX on the command line, or add:\n\n"
+                "  [tool.pymcu.flash]\n"
+                '  port = "/dev/cu.usbmodemXXXX"\n\n'
+                "to your pyproject.toml."
+            )
+
+        cmd = [str(avrdude)]
+        if conf_path and conf_path.exists():
+            cmd += ["-C", str(conf_path)]
+        cmd += [
+            "-p", part,
+            "-c", "arduino",
+            "-P", resolved_port,
+            "-b", str(baud or 115200),
+            "-D",
+            "-U", f"flash:w:{hex_file}:i",
         ]
-        
-        self.console.print(f"[bold cyan]Flashing {chip} via avrdude...[/bold cyan]")
-        self.console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
-        
+
+        self.console.print(f"[bold cyan]avrdude[/bold cyan] {' '.join(cmd[1:])}")
         try:
             subprocess.run(cmd, check=True)
             self.console.print("[bold green]Flash successful![/bold green]")
         except subprocess.CalledProcessError:
-            raise RuntimeError("Flashing failed. Check connections/power and try again.")
+            raise RuntimeError("Flashing failed. Check USB connection and port, then try again.")

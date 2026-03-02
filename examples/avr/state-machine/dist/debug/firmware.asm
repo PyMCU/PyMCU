@@ -112,7 +112,7 @@ L_167:
 	MOV	R24, R7
 	MOV	R25, R8
 	SUBI	R24, 255
-	SBCI	R25, 0
+	SBCI	R25, 255
 	MOV	R7, R24
 	MOV	R8, R25
 ; main.py:64:             if ticks >= dur:

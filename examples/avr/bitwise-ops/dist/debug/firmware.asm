@@ -3,12 +3,27 @@
 .equ _stack_base = RAMSTART
 .equ inline1.write.data = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.uart_write.data = _stack_base + 2
-.equ tmp_12 = _stack_base + 5
-.equ tmp_20 = _stack_base + 6
-.equ tmp_21 = _stack_base + 7
+.equ inline2.uart_write.data = _stack_base + 3
+.equ tmp_12 = _stack_base + 6
+.equ tmp_20 = _stack_base + 7
+.equ tmp_21 = _stack_base + 8
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -47,7 +62,7 @@ main:
 	ORI	R24, 240
 	MOV	R4, R24
 ; main.py:29:     uart.write(val)          # 255
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_38:
 	LDS	R24, 0x00C0
@@ -57,14 +72,14 @@ L_38:
 L_BR_SKIP_0:
 	RJMP	L_38
 L_39:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:32:     val = val & 0x0F
 	MOV	R24, R4
 	ANDI	R24, 15
 	MOV	R4, R24
 ; main.py:33:     uart.write(val)          # 15
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_42:
 	LDS	R24, 0x00C0
@@ -74,7 +89,7 @@ L_42:
 L_BR_SKIP_1:
 	RJMP	L_42
 L_43:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:36:     val = val ^ 0xFF
 	MOV	R24, R4
@@ -82,7 +97,7 @@ L_43:
 	EOR	R24, R18
 	MOV	R4, R24
 ; main.py:37:     uart.write(val)          # 240
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_46:
 	LDS	R24, 0x00C0
@@ -92,14 +107,14 @@ L_46:
 L_BR_SKIP_2:
 	RJMP	L_46
 L_47:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:40:     val = val << 1
 	MOV	R24, R4
 	LSL	R24
 	MOV	R4, R24
 ; main.py:41:     uart.write(val)          # 224
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_50:
 	LDS	R24, 0x00C0
@@ -109,7 +124,7 @@ L_50:
 L_BR_SKIP_3:
 	RJMP	L_50
 L_51:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:44:     val = val >> 2
 	MOV	R24, R4
@@ -117,7 +132,7 @@ L_51:
 	LSR	R24
 	MOV	R4, R24
 ; main.py:45:     uart.write(val)          # 56
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_54:
 	LDS	R24, 0x00C0
@@ -127,12 +142,13 @@ L_54:
 L_BR_SKIP_4:
 	RJMP	L_54
 L_55:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:48:     val = ~val
 	COM	R4
+	MOV	R24, R4
 ; main.py:49:     uart.write(val)          # 199
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_58:
 	LDS	R24, 0x00C0
@@ -142,7 +158,7 @@ L_58:
 L_BR_SKIP_5:
 	RJMP	L_58
 L_59:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:     val = (val & 0x3F) >> 3
 	MOV	R24, R4
@@ -153,7 +169,7 @@ L_59:
 	LSR	R24
 	MOV	R4, R24
 ; main.py:53:     uart.write(val)          # 7 → then >>3 gives 0
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_62:
 	LDS	R24, 0x00C0
@@ -163,7 +179,7 @@ L_62:
 L_BR_SKIP_6:
 	RJMP	L_62
 L_63:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:56:     val = 0x01
 	LDI	R24, 1
@@ -184,7 +200,7 @@ L_BR_SKIP_9:
 L_SHIFT_DONE_8:
 	MOV	R4, R24
 ; main.py:59:     uart.write(val)          # 8
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_66:
 	LDS	R24, 0x00C0
@@ -194,7 +210,7 @@ L_66:
 L_BR_SKIP_10:
 	RJMP	L_66
 L_67:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:61:     val = val >> shift       # 0x08 >> 3 = 0x01
 	MOV	R24, R4
@@ -204,14 +220,13 @@ L_SHIFT_START_11:
 	BRNE	L_BR_SKIP_13
 	RJMP	L_SHIFT_DONE_12
 L_BR_SKIP_13:
-	ROR	R24
 	LSR	R24
 	DEC	R18
 	RJMP	L_SHIFT_START_11
 L_SHIFT_DONE_12:
 	MOV	R4, R24
 ; main.py:62:     uart.write(val)          # 1
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:         delay_ms(500)
 L_70:
 	LDS	R24, 0x00C0
@@ -221,7 +236,7 @@ L_70:
 L_BR_SKIP_14:
 	RJMP	L_70
 L_71:
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:64:     uart.write(68)           # 'D' done
 ; main.py:68:         delay_ms(500)
@@ -261,28 +276,26 @@ L_BIT_WRITE_DONE_19:
 ; main.py:68:         delay_ms(500)
 ; main.py:68:         delay_ms(500)
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_102:
 	LDD	R24, Y+1
-	CPI	R24, 244
+	LDD	R25, Y+2
+	LDI	R18, 244
+	LDI	R19, 1
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_21
 	RJMP	L_103
 L_BR_SKIP_21:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_102
 L_103:
 	RJMP	L_76

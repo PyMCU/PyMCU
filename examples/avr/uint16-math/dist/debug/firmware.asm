@@ -212,7 +212,7 @@ L_37:
 	MOV	R9, R25
 ; main.py:46:     e = e + 1
 	SUBI	R24, 255
-	SBCI	R25, 0
+	SBCI	R25, 255
 	MOV	R8, R24
 	MOV	R9, R25
 ; main.py:47:     if e == 0:

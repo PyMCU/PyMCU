@@ -258,7 +258,7 @@ L_24:
 ; main.py:51:     uart.write(found + 48)
 	MOV	R24, R5
 	SUBI	R24, 208
-	STD	Y+1, R24
+	STD	Y+5, R24
 L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -267,7 +267,7 @@ L_65:
 L_BR_SKIP_15:
 	RJMP	L_65
 L_66:
-	LDI	R24, 10
+	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
 L_69:

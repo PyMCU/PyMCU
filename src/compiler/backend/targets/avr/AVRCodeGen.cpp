@@ -760,11 +760,15 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
     } else {
         // 16-bit immediate optimizations
         switch (arg.op) {
-            case tacky::BinaryOp::Add:
-                emit("SUBI", "R24", std::format("{}", (unsigned char)-(val & 0xFF)));
-                emit("SBCI", "R25", std::format("{}", (unsigned char)-((val >> 8) & 0xFF)));
+            case tacky::BinaryOp::Add: {
+                // Negate the full 16-bit value so carry propagates correctly.
+                // hi8(-K) != -(hi8(K)) when lo overflows, so compute together.
+                int neg = -(int)val;
+                emit("SUBI", "R24", std::format("{}", (unsigned char)(neg & 0xFF)));
+                emit("SBCI", "R25", std::format("{}", (unsigned char)((neg >> 8) & 0xFF)));
                 used_immediate = true;
                 break;
+            }
             case tacky::BinaryOp::Sub:
                 emit("SUBI", "R24", std::format("{}", val & 0xFF));
                 emit("SBCI", "R25", std::format("{}", (val >> 8) & 0xFF));
@@ -831,9 +835,12 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
         emit_label(l_start);
         emit("TST", "R18");
         emit_branch("BREQ", l_done);
-        if (size_of(type) == 2) emit("LSR", "R25");
-        emit("ROR", "R24"); // Rotate right through carry
-        if (size_of(type) == 1) emit("LSR", "R24"); // If 8-bit, just LSR
+        if (size_of(type) == 2) {
+          emit("LSR", "R25"); // shift high byte, carry → low bit of R25
+          emit("ROR", "R24"); // rotate carry into high bit of R24
+        } else {
+          emit("LSR", "R24"); // 8-bit: logical shift right (no carry needed)
+        }
         emit("DEC", "R18");
         emit("RJMP", l_start);
         emit_label(l_done);
@@ -1100,10 +1107,12 @@ void AVRCodeGen::compile_variant(const tacky::AugAssign &arg) {
       } else {
           // 16-bit immediate
           switch (arg.op) {
-            case tacky::BinaryOp::Add:
-              emit("SUBI", "R24", std::format("{}", (unsigned char)-(val & 0xFF)));
-              emit("SBCI", "R25", std::format("{}", (unsigned char)-((val >> 8) & 0xFF)));
+            case tacky::BinaryOp::Add: {
+              int neg = -(int)val;
+              emit("SUBI", "R24", std::format("{}", (unsigned char)(neg & 0xFF)));
+              emit("SBCI", "R25", std::format("{}", (unsigned char)((neg >> 8) & 0xFF)));
               used_immediate = true; break;
+            }
             case tacky::BinaryOp::Sub:
               emit("SUBI", "R24", std::format("{}", val & 0xFF));
               emit("SBCI", "R25", std::format("{}", (val >> 8) & 0xFF));
@@ -1161,9 +1170,12 @@ void AVRCodeGen::compile_variant(const tacky::AugAssign &arg) {
           emit_label(l_start);
           emit("TST", "R18");
           emit_branch("BREQ", l_done);
-          if (size_of(type) == 2) emit("LSR", "R25");
-          emit("ROR", "R24");
-          if (size_of(type) == 1) emit("LSR", "R24");
+          if (size_of(type) == 2) {
+            emit("LSR", "R25");
+            emit("ROR", "R24");
+          } else {
+            emit("LSR", "R24");
+          }
           emit("DEC", "R18");
           emit("RJMP", l_start);
           emit_label(l_done);

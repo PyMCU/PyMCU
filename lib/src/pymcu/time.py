@@ -53,10 +53,10 @@
 # Accuracy: ~10-20% at ms level (acceptable for most MCU use cases).
 # For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, inline, asm
+from pymcu.types import uint8, uint16, inline, asm
 
 @inline
-def delay_ms(ms: uint8):
+def delay_ms(ms: uint16):
     match __CHIP__.arch:
         case "pic14":
             _delay_ms_pic14(ms)
@@ -123,30 +123,30 @@ def _delay_ms_pic18(ms: uint8):
         asm("    BRA _dly_outer_18")
         i = i + 1
 
+def _delay_1ms_avr():
+    # Non-inline: labels appear exactly once in the assembled output.
+    # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ≈ 1ms at 16MHz.
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 21")
+    asm("_dly_outer_avr:")
+    asm("    LDI R25, 255")
+    asm("_dly_inner_avr:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_inner_avr")
+    asm("    DEC R24")
+    asm("    BRNE _dly_outer_avr")
+    asm("    POP R25")
+    asm("    POP R24")
+
 @inline
-def _delay_ms_avr(ms: uint8):
-    # AVR: 1 clock = 1 cycle. DEC+BRNE = 3 cycles/iter.
-    # At 16MHz: 1ms = 16000 cycles. Nested: 21 × 255 × 3 = 16065 ≈ 1ms
-    # Uses R24, R25 as counters.
-    # Note: R24/R25 are call-clobbered, so safe to use in inline asm if not preserving across calls.
-    # However, pymcuc's register allocator might use them.
-    # For safety, we should push/pop or use dedicated temp vars if allocator was smarter.
-    # But since this is inline asm block, allocator doesn't see register usage.
-    # We'll assume R24/R25 are free or caller-saved.
-    i: uint8 = 0
+def _delay_ms_avr(ms: uint16):
+    # Calls the non-inline 1ms helper once per ms so labels are not duplicated
+    # across multiple delay_ms() call sites.
+    # uint16 counter supports up to 65535ms (~65 seconds).
+    i: uint16 = 0
     while i < ms:
-        asm("    PUSH R24")
-        asm("    PUSH R25")
-        asm("    LDI R24, 21")
-        asm("_dly_outer_avr:")
-        asm("    LDI R25, 255")
-        asm("_dly_inner_avr:")
-        asm("    DEC R25")
-        asm("    BRNE _dly_inner_avr")
-        asm("    DEC R24")
-        asm("    BRNE _dly_outer_avr")
-        asm("    POP R25")
-        asm("    POP R24")
+        _delay_1ms_avr()
         i = i + 1
 
 @inline

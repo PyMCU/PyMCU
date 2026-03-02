@@ -36,8 +36,15 @@ class HardwareProgrammer(CacheableTool):
     """
 
     @abstractmethod
-    def flash(self, hex_file: Path, chip: str) -> None:
+    def flash(self, hex_file: Path, chip: str, *, port: str | None = None, baud: int | None = None) -> None:
         """
         Flashes the firmware to the target chip.
+
+        Args:
+            hex_file: Path to the Intel HEX firmware file.
+            chip: Chip identifier (e.g. "atmega328p", "pic16f84a").
+            port: Serial port to use (e.g. "/dev/cu.usbmodem14101"). Optional;
+                  programmers that auto-select their device may ignore it.
+            baud: Baud rate for communication. Optional; defaults to programmer default.
         """
         pass

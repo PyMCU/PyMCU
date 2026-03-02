@@ -3,9 +3,24 @@
 .equ _stack_base = RAMSTART
 .equ inline1.set_duty.duty = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.pwm_set_duty.duty = _stack_base + 2
+.equ inline2.pwm_set_duty.duty = _stack_base + 3
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -43,28 +58,26 @@ L_11:
 	OUT	0x27, R24
 ; main.py:23:         delay_ms(5)
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_21:
 	LDD	R24, Y+1
-	CPI	R24, 5
+	LDD	R25, Y+2
+	LDI	R18, 5
+	CLR	R19
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_0
 	RJMP	L_22
 L_BR_SKIP_0:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_21
 L_22:
 	MOV	R24, R5

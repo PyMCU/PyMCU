@@ -3,17 +3,32 @@
 .equ _stack_base = RAMSTART
 .equ inline1.write.data = _stack_base + 0
 .equ inline2._delay_ms_avr.i = _stack_base + 1
-.equ inline2.uart_write.data = _stack_base + 2
-.equ tmp_10 = _stack_base + 8
-.equ tmp_14 = _stack_base + 9
-.equ tmp_15 = _stack_base + 10
-.equ tmp_16 = _stack_base + 11
-.equ tmp_2 = _stack_base + 12
-.equ tmp_5 = _stack_base + 13
-.equ tmp_8 = _stack_base + 14
-.equ tmp_9 = _stack_base + 15
+.equ inline2.uart_write.data = _stack_base + 3
+.equ tmp_10 = _stack_base + 9
+.equ tmp_14 = _stack_base + 10
+.equ tmp_15 = _stack_base + 11
+.equ tmp_16 = _stack_base + 12
+.equ tmp_2 = _stack_base + 13
+.equ tmp_5 = _stack_base + 14
+.equ tmp_8 = _stack_base + 15
+.equ tmp_9 = _stack_base + 16
 
 .org 0x0000
+	RJMP	main
+pymcu_time__delay_1ms_avr:
+    PUSH R24
+    PUSH R25
+    LDI R24, 21
+_dly_outer_avr:
+    LDI R25, 255
+_dly_inner_avr:
+    DEC R25
+    BRNE _dly_inner_avr
+    DEC R24
+    BRNE _dly_outer_avr
+    POP R25
+    POP R24
+	RET
 main:
 	LDI	R16, high(0x08FF)
 	OUT	0x3E, R16
@@ -141,6 +156,7 @@ L_SKIP_6:
 L_BR_SKIP_8:
 ; main.py:40:             step = step + 1
 	INC	R4
+	MOV	R24, R4
 ; main.py:41:             if step == 6:
 	CPI	R24, 6
 	BREQ	L_BR_SKIP_9
@@ -259,7 +275,7 @@ L_478:
 ; main.py:73:         uart.write(step)
 	MOV	R24, R4
 ; main.py:71:                 led5.high()
-	STD	Y+2, R24
+	STD	Y+3, R24
 ; main.py:68:             case 4:
 L_619:
 	LDS	R24, 0x00C0
@@ -270,33 +286,31 @@ L_BR_SKIP_21:
 	RJMP	L_619
 L_620:
 ; main.py:71:                 led5.high()
-	LDD	R24, Y+2
+	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:74:         delay_ms(20)
 ; main.py:68:             case 4:
 	CLR	R24
+	CLR	R25
 	STD	Y+1, R24
+	STD	Y+2, R25
 L_623:
 	LDD	R24, Y+1
-	CPI	R24, 20
+	LDD	R25, Y+2
+	LDI	R18, 20
+	CLR	R19
+	CP	R24, R18
+	CPC	R25, R19
 	BRLO	L_BR_SKIP_22
 	RJMP	L_624
 L_BR_SKIP_22:
-    PUSH R24
-    PUSH R25
-    LDI R24, 21
-_dly_outer_avr:
-    LDI R25, 255
-_dly_inner_avr:
-    DEC R25
-    BRNE _dly_inner_avr
-    DEC R24
-    BRNE _dly_outer_avr
-    POP R25
-    POP R24
+	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
-	INC	R24
+	LDD	R25, Y+2
+	SUBI	R24, 255
+	SBCI	R25, 255
 	STD	Y+1, R24
+	STD	Y+2, R25
 	RJMP	L_623
 L_624:
 	RJMP	L_287

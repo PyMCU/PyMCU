@@ -61,7 +61,7 @@ L_44:
 	MOV	R24, R4
 	MOV	R25, R5
 	SUBI	R24, 255
-	SBCI	R25, 0
+	SBCI	R25, 255
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:39:             if ticks == 244:

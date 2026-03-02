@@ -1573,10 +1573,16 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
 void IRGenerator::visitVarDecl(const VarDecl *stmt) {
   // Track variable type
   DataType dt = resolve_type(stmt->var_type);
-  // Stores 'FuncName.VarName' in IR
-  std::string qualified = current_function.empty()
-                              ? stmt->name
-                              : current_function + "." + stmt->name;
+  // MUST mirror make_variable(): inside inline expansion use current_inline_prefix
+  // so that lookup keys match (e.g. "delay_ms__i" vs "delay_ms.i").
+  std::string qualified;
+  if (!current_inline_prefix.empty()) {
+    qualified = current_inline_prefix + stmt->name;
+  } else if (!current_function.empty()) {
+    qualified = current_function + "." + stmt->name;
+  } else {
+    qualified = stmt->name;
+  }
   variable_types[qualified] = dt;
 
   // Create the Variable
@@ -1662,10 +1668,17 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
   }
   // ptr[uint8] or plain "ptr" → UINT8 (default)
 
-  // Store in variable_types map with proper qualification
-  std::string qualified = current_function.empty()
-                              ? stmt->target
-                              : current_function + "." + stmt->target;
+  // Store in variable_types map with proper qualification.
+  // MUST mirror make_variable(): when inside an inline expansion,
+  // use current_inline_prefix so the lookup keys match.
+  std::string qualified;
+  if (!current_inline_prefix.empty()) {
+    qualified = current_inline_prefix + stmt->target;
+  } else if (!current_function.empty()) {
+    qualified = current_function + "." + stmt->target;
+  } else {
+    qualified = stmt->target;
+  }
   variable_types[qualified] = type;
 
   // Generate assignment IR if initializer present
@@ -2394,7 +2407,13 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
         continue;  // No Copy needed — constant is folded at use sites
       }
 
-      // Copy arg to param with proper type from function signature
+      // Copy arg to param with proper type from function signature.
+      // Erase any stale constant_variables entry (e.g., from a previous
+      // call where this same param slot held a compile-time constant).
+      // Without this, body expressions that read the parameter would see
+      // the old constant instead of the runtime value just stored.
+      constant_variables.erase(paramName);
+      str_constant_variables.erase(paramName);
       DataType param_type = resolve_type(func->params[param_idx].type);
       emit(tacky::Copy{argValues[i],
                         tacky::Variable{paramName, param_type}});
