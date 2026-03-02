@@ -34,6 +34,7 @@
 #include <set>
 #include <variant>
 #include <queue>
+#include <optional>
 
 tacky::Program Optimizer::optimize(const tacky::Program &program) {
   tacky::Program optimized = program;
