@@ -8,6 +8,11 @@ Makefile
 *.cmake
 !CMakeLists.txt
 
+# .NET build directories
+bin/
+obj/
+*.DotSettings.user
+
 # JetBrains IDEs (CLion)
 .idea/
 
