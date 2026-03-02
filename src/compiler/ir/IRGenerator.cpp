@@ -28,7 +28,7 @@
  */
 
 #include "IRGenerator.h"
-
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <typeinfo>
