@@ -23,6 +23,7 @@
 #pragma once
 #include <map>
 #include <string>
+#include <format>
 #include <vector>
 
 #include "../../../common/DeviceConfig.h"
