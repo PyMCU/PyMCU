@@ -1,4 +1,4 @@
-FROM gcc:14-bookworm
+FROM gcc:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 

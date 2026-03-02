@@ -25,6 +25,8 @@ jobs:
         run: |
           cmake --version
           gpasm --version
+          clang --version
+          gcc -- version
 
       - name: Configure CMake
         run: cmake -B build -G Ninja
