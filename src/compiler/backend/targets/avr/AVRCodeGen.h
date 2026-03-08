@@ -24,7 +24,6 @@
 #include <map>
 #include <set>
 #include <string>
-#include <format>
 #include <utility>
 #include <vector>
 
@@ -74,7 +73,7 @@ class AVRCodeGen : public CodeGen {
   void emit_string_pool(std::ostream &os) const;
 
   std::string make_label(const std::string &prefix) {
-    return std::format("{}_{}", prefix, label_counter++);
+    return prefix + "_" + std::to_string(label_counter++);
   }
 
   // --- Memory & Register Management ---

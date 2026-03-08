@@ -24,7 +24,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <format>
 #include <utility>
 #include <vector>
 
@@ -78,7 +77,7 @@ class PIC14CodeGen : public CodeGen {
   bool uses_float = false;
 
   std::string make_label(const std::string &prefix) {
-    return std::format("{}_{}", prefix, label_counter++);
+    return prefix + "_" + std::to_string(label_counter++);
   }
 
   // --- Memory & Bank Management ---
