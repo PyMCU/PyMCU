@@ -47,6 +47,9 @@ jobs:
       - name: Build pymcuc compiler
         run: cmake -B build -G Ninja && cmake --build build
 
+      - name: Add pymcuc to PATH
+        run: echo "$GITHUB_WORKSPACE/build/bin" >> $GITHUB_PATH
+
       - name: Add private NuGet source
         if: ${{ secrets.NUGET_PRIVATE_SOURCE_URL != '' }}
         run: |

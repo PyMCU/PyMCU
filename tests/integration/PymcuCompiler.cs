@@ -30,6 +30,11 @@ public static class PymcuCompiler
     {
         var exampleDir = Path.Combine(RepoRoot, "examples", "avr", name);
 
+        Console.WriteLine($"[PymcuCompiler] RepoRoot    : {RepoRoot}");
+        Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
+        Console.WriteLine($"[PymcuCompiler] ExampleDir  : {exampleDir} (exists={Directory.Exists(exampleDir)})");
+        Console.WriteLine($"[PymcuCompiler] PATH        : {Environment.GetEnvironmentVariable("PATH")}");
+
         if (!Directory.Exists(exampleDir))
             throw new DirectoryNotFoundException(
                 $"Example directory not found: {exampleDir}");
@@ -43,6 +48,8 @@ public static class PymcuCompiler
             RedirectStandardError  = true,
             UseShellExecute = false,
         };
+        // Verbose pymcu output so compiler path resolution is visible in CI logs
+        psi.Environment["PYMCU_VERBOSE"] = "1";
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start pymcu process.");
@@ -52,21 +59,23 @@ public static class PymcuCompiler
         var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
 
         var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
+        var stdout   = stdoutTask.GetAwaiter().GetResult();
         var stderr   = stderrTask.GetAwaiter().GetResult();
 
         if (!finished)
         {
             proc.Kill();
             throw new TimeoutException(
-                $"pymcu build timed out after 60 s for example '{name}'.");
+                $"pymcu build timed out after 60 s for example '{name}'.\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
         if (proc.ExitCode != 0)
         {
-            var stdout = proc.StandardOutput.ReadToEnd();
-            Console.WriteLine(stdout); 
+            Console.WriteLine($"[PymcuCompiler] Build FAILED (exit {proc.ExitCode}) for '{name}'");
+            Console.WriteLine($"[PymcuCompiler] stdout:\n{stdout}");
+            Console.WriteLine($"[PymcuCompiler] stderr:\n{stderr}");
             throw new InvalidOperationException(
-                $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\n{stderr}");
+                $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
         var hexFile = Path.Combine(exampleDir, "dist", "firmware.hex");
