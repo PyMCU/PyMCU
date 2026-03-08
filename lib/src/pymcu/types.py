@@ -46,7 +46,8 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from typing import NewType, Generic, TypeVar
+from typing import Generic, TypeVar
+from typing import TypeAlias
 
 T = TypeVar("T")
 
@@ -109,10 +110,12 @@ def interrupt(f, vector: int = 0):
     return f
 
 
-# Phantom types (type-level aliases used only for static typing)
-uint8 = NewType("uint8", int)
-int8 = NewType("int8", int)
-uint16 = NewType("uint16", int)
-int16 = NewType("int16", int)
-uint32 = NewType("uint32", int)
-int32 = NewType("int32", int)
+# Integer width aliases — defined as TypeAlias so int literals are always
+# assignable (e.g. `x: uint16 = 0` is valid) while still communicating the
+# intended bit width to the pymcuc compiler via the annotation text.
+uint8:  TypeAlias = int
+int8:   TypeAlias = int
+uint16: TypeAlias = int
+int16:  TypeAlias = int
+uint32: TypeAlias = int
+int32:  TypeAlias = int

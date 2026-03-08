@@ -55,7 +55,7 @@ wheels = [
 
 [[package]]
 name = "pymcu-compiler"
-version = "0.1.0a26"
+version = "0.1.0a27"
 source = { editable = "." }
 dependencies = [
     { name = "pymcu-stdlib" },

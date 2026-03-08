@@ -45,9 +45,8 @@ def version():
 
     # Define packages to check
     packages = [
-        ("pymcu-compiler", "Compiler Core"),
+        ("pymcu-compiler", "Compiler & CLI Driver"),
         ("pymcu-stdlib", "Standard Library"),
-        ("pymcu-driver", "CLI Driver"),
     ]
 
     table = Table(title="PyMCU Ecosystem Version Info", box=box.ROUNDED)

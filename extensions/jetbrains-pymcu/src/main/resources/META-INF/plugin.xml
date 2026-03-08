@@ -1,0 +1,65 @@
+<idea-plugin>
+    <id>dev.begeistert.pymcu</id>
+    <name>PyMCU</name>
+    <version>0.0.1</version>
+    <vendor email="begeistert@gmail.com" url="https://github.com/begeistert/pymcu">begeistert</vendor>
+
+    <description><![CDATA[
+        PyMCU support for PyCharm: run configurations, error highlighting, tool window,
+        status bar chip indicator, and automatic project sync for pymcu projects.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.python</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <!-- Application-level settings service -->
+        <applicationService
+            serviceImplementation="dev.begeistert.pymcu.settings.PyMcuSettings"/>
+
+        <!-- Startup activity: sync deps on project open -->
+        <postStartupActivity
+            implementation="dev.begeistert.pymcu.startup.PyMcuStartupActivity"/>
+
+        <!-- Status bar widget factory -->
+        <statusBarWidgetFactory
+            id="PyMcuStatusBarWidget"
+            implementation="dev.begeistert.pymcu.statusbar.PyMcuStatusBarWidgetFactory"
+            order="last"/>
+
+        <!-- Tool window -->
+        <toolWindow
+            id="PyMCU"
+            anchor="bottom"
+            factoryClass="dev.begeistert.pymcu.toolwindow.PyMcuToolWindowFactory"
+            icon="/icons/pymcu.svg"/>
+
+        <!-- Run configuration type -->
+        <configurationType
+            implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationType"/>
+
+        <!-- Console filter provider for compiler diagnostics -->
+        <consoleFilterProvider
+            implementation="dev.begeistert.pymcu.console.PyMcuConsoleFilterProvider"/>
+
+        <!-- Settings configurable under Tools -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
+            id="dev.begeistert.pymcu.settings.PyMcuSettingsConfigurable"
+            displayName="PyMCU"/>
+
+        <!-- New Project wizard entry -->
+        <directoryProjectGenerator
+            implementation="dev.begeistert.pymcu.newproject.PyMcuProjectGenerator"/>
+
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <runConfigurationProducer
+            implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationProducer"
+            order="last"/>
+    </extensions>
+
+</idea-plugin>

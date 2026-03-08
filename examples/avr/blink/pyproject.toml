@@ -1,7 +1,11 @@
 [project]
 name = "blink"
 version = "0.1.0"
-dependencies = ["pymcu-stdlib"]
+requires-python = ">=3.11"
+dependencies = [
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu-compiler>=0.1.0a27"
+]
 
 [tool.pymcu]
 chip = "atmega328p"
@@ -11,4 +15,4 @@ entry = "main.py"
 
 [tool.pymcu.flash]
 programmer = "avrdude"
-port = "/dev/cu.usbmodem14101"  # uncomment and set your serial port
+port = "/dev/cu.usbmodem14101"

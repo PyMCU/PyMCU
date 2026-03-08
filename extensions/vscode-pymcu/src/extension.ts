@@ -63,11 +63,29 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     configureIntellisense();
+
+    // Sync on activation if a project is already open
+    const pyproject = findPyprojectToml();
+    if (pyproject) {
+        syncProject();
+    }
 }
 
 function getExecutablePath(): string {
     const config = vscode.workspace.getConfiguration('pymcu');
     return config.get<string>('executablePath') || 'pymcu';
+}
+
+function getSyncCommand(): string {
+    const config = vscode.workspace.getConfiguration('pymcu');
+    const pm = config.get<string>('packageManager') || 'uv';
+    switch (pm) {
+        case 'uv':      return 'uv sync';
+        case 'poetry':  return 'poetry install';
+        case 'pipenv':  return 'pipenv install';
+        case 'pip':     return 'pip install -e .';
+        default:        return `${pm} sync`;
+    }
 }
 
 function checkPymcuInstallation() {
@@ -253,15 +271,15 @@ async function configureIntellisense() {
             // If still not found, try syncing first
             if (!stdlibPath) {
                 try {
-                    execSync('uv sync', { 
-                        cwd: workspaceFolder.uri.fsPath, 
+                    execSync(getSyncCommand(), {
+                        cwd: workspaceFolder.uri.fsPath,
                         stdio: ['ignore', 'ignore', 'ignore'],
-                        timeout: 60000 // Give it some time to sync
+                        timeout: 60000
                     });
                     // Try again after sync
                     stdlibPath = runCommand('uv run python -c "import pymcu; from pathlib import Path; print(Path(pymcu.__file__).parent)"');
                 } catch {
-                    // uv sync failed
+                    // sync failed
                 }
             }
         }
@@ -341,7 +359,7 @@ function syncProject() {
         cancellable: false
     }, () => {
         return new Promise<void>((resolve) => {
-            exec('uv sync', { cwd: workspaceFolder.uri.fsPath }, async (error, stdout, stderr) => {
+            exec(getSyncCommand(), { cwd: workspaceFolder.uri.fsPath }, async (error, _stdout, _stderr) => {
                 if (!error) {
                     await configureIntellisense();
                 }

@@ -53,7 +53,13 @@
         "pymcu.executablePath": {
           "type": "string",
           "default": "pymcu",
-          "description": "Route to the PyMCU executable. If 'pymcu' is in your PATH, you can leave this as is."
+          "description": "Path to the PyMCU executable. If 'pymcu' is in your PATH, leave this as is."
+        },
+        "pymcu.packageManager": {
+          "type": "string",
+          "default": "uv",
+          "enum": ["uv", "pip", "poetry", "pipenv"],
+          "description": "Package manager used to install project dependencies (e.g. uv sync, pip install -e .)."
         }
       }
     },
