@@ -49,7 +49,7 @@ public class DiagNew
     [Test]
     public void Checksum_Diag()
     {
-        var hex = File.ReadAllText("/Users/begeistert/Repos/pymcu/examples/avr/checksum/dist/firmware.hex");
+        var hex = PymcuCompiler.Build("checksum");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
         uno.RunUntilSerial(uno.Serial, "CHECKSUM\n", maxMs: 200);
@@ -72,7 +72,7 @@ public class DiagNew
     [Test]
     public void MultiIsr_Diag()
     {
-        var hex = File.ReadAllText("/Users/begeistert/Repos/pymcu/examples/avr/multi-isr/dist/firmware.hex");
+        var hex = PymcuCompiler.Build("multi-isr");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
         uno.RunUntilSerial(uno.Serial, "MULTI ISR\n", maxMs: 500);
@@ -128,7 +128,7 @@ public class DiagNew
     [Test]
     public void NestedCalls_Diag()
     {
-        var hex = File.ReadAllText("/Users/begeistert/Repos/pymcu/examples/avr/nested-calls/dist/firmware.hex");
+        var hex = PymcuCompiler.Build("nested-calls");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
         uno.RunUntilSerial(uno.Serial, "HEX ENCODE\n", maxMs: 500);
