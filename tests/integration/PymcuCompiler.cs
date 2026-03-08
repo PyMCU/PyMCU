@@ -62,8 +62,12 @@ public static class PymcuCompiler
         }
 
         if (proc.ExitCode != 0)
+        {
+            var stdout = proc.StandardOutput.ReadToEnd();
+            Console.WriteLine(stdout); 
             throw new InvalidOperationException(
                 $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\n{stderr}");
+        }
 
         var hexFile = Path.Combine(exampleDir, "dist", "firmware.hex");
         if (!File.Exists(hexFile))
