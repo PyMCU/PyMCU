@@ -10,6 +10,12 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     name: Integration Tests (AVR)
+    container:
+      image: ${{ vars.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -28,8 +34,8 @@ jobs:
       - name: Install pymcu CLI
         run: uv sync
 
-      - name: Install build tools
-        run: sudo apt-get install -y build-essential flex bison ninja-build cmake
+      # - name: Install build tools
+      #   run: sudo apt-get install -y build-essential flex bison ninja-build cmake
 
       - name: Build AVRA assembler from source
         run: |
