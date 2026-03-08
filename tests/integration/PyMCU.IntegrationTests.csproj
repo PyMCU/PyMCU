@@ -12,7 +12,7 @@
          Local dev: dotnet pack /path/to/avr8sharp/src/Avr8Sharp.TestKit -o local-packages
          CI: clones avr8sharp, packs it, restores from ./local-packages feed (see nuget.config) -->
     <ItemGroup>
-        <PackageReference Include="Avr8Sharp.TestKit" Version="1.0.0-alpha1" />
+        <PackageReference Include="Avr8Sharp.TestKit" Version="1.0.0-alpha2" />
     </ItemGroup>
 
     <ItemGroup>

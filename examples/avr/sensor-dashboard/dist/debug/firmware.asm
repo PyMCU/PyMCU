@@ -26,56 +26,81 @@
 
 .org 0x0000
 	RJMP	main
-.org 0x0001
-	RJMP	int0_isr
 .org 0x0002
-	RETI
-.org 0x0003
-	RETI
+	RJMP	int0_isr
+	NOP
 .org 0x0004
 	RETI
-.org 0x0005
-	RETI
+	NOP
 .org 0x0006
 	RETI
-.org 0x0007
-	RETI
+	NOP
 .org 0x0008
 	RETI
-.org 0x0009
-	RETI
+	NOP
 .org 0x000A
 	RETI
-.org 0x000B
-	RETI
+	NOP
 .org 0x000C
 	RETI
-.org 0x000D
-	RETI
+	NOP
 .org 0x000E
 	RETI
-.org 0x000F
-	RETI
+	NOP
 .org 0x0010
-	RJMP	timer0_ovf_isr
-.org 0x0011
 	RETI
+	NOP
 .org 0x0012
 	RETI
-.org 0x0013
-	RETI
+	NOP
 .org 0x0014
 	RETI
-.org 0x0015
-	RETI
+	NOP
 .org 0x0016
 	RETI
-.org 0x0017
-	RETI
+	NOP
 .org 0x0018
 	RETI
-.org 0x0019
+	NOP
+.org 0x001A
 	RETI
+	NOP
+.org 0x001C
+	RETI
+	NOP
+.org 0x001E
+	RETI
+	NOP
+.org 0x0020
+	RJMP	timer0_ovf_isr
+	NOP
+.org 0x0022
+	RETI
+	NOP
+.org 0x0024
+	RETI
+	NOP
+.org 0x0026
+	RETI
+	NOP
+.org 0x0028
+	RETI
+	NOP
+.org 0x002A
+	RETI
+	NOP
+.org 0x002C
+	RETI
+	NOP
+.org 0x002E
+	RETI
+	NOP
+.org 0x0030
+	RETI
+	NOP
+.org 0x0032
+	RETI
+	NOP
 
 timer0_ovf_isr:
 ; ISR prologue — save context

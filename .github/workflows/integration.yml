@@ -1,0 +1,62 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: ["main", "develop", "feature/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    name: Integration Tests (AVR)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pymcu CLI
+        run: uv sync
+
+      - name: Install build tools
+        run: sudo apt-get install -y build-essential flex bison ninja-build cmake
+
+      - name: Build AVRA assembler from source
+        run: |
+          git clone --depth 1 https://github.com/Ro5bert/avra.git /tmp/avra
+          make -C /tmp/avra
+          mkdir -p "$HOME/.pymcu/tools/linux/avra/avra-1.3.0/src"
+          cp /tmp/avra/src/avra "$HOME/.pymcu/tools/linux/avra/avra-1.3.0/src/avra"
+
+      - name: Build pymcuc compiler
+        run: cmake -B build -G Ninja && cmake --build build
+
+      - name: Add private NuGet source
+        if: ${{ secrets.NUGET_PRIVATE_SOURCE_URL != '' }}
+        run: |
+          dotnet nuget add source "${{ secrets.NUGET_PRIVATE_SOURCE_URL }}" \
+            --name private \
+            --username ci \
+            --password "${{ secrets.NUGET_PRIVATE_API_KEY }}" \
+            --store-password-in-clear-text
+
+      - name: Restore integration test packages
+        run: dotnet restore tests/integration/PyMCU.IntegrationTests.csproj --nologo
+
+      - name: Run integration tests
+        run: |
+          dotnet test tests/integration/PyMCU.IntegrationTests.csproj \
+            --no-restore \
+            --logger "console;verbosity=normal" \
+            --blame-hang-timeout 120s \
+            -- NUnit.NumberOfTestWorkers=1

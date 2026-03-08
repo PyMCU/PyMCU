@@ -310,16 +310,22 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   emit("RJMP", "main");
 
   if (!isr_map.empty()) {
-    // ATmega328P: 26 vectors. AVRA .org uses WORD addresses (1 word = 2 bytes).
-    // User-facing interrupt_vector is a BYTE address (e.g., 0x0002 for INT0).
-    // isr_map is keyed by byte address; .org is emitted as word address = vec.
+    // ATmega328P vector table: 26 slots (RESET + 25 IRQs).
+    // AVRA .org uses WORD addresses. The ATmega328P stores program memory as
+    // 16-bit words, so word address = byte address / 2.  The datasheet lists
+    // each vector's WORD address: INT0=0x0002, INT1=0x0004, PCINT0=0x0006, …
+    // @interrupt(addr) takes that same word address directly.
+    // Each slot is 2 words wide (to fit a 2-word JMP instruction).
+    // We use RJMP (1 word) and fill the second word with NOP.
     for (int vec = 1; vec <= 25; vec++) {
-      int byte_addr = vec * 2;  // byte address used in isr_map and @interrupt(...)
-      emit_raw(std::format(".org 0x{:04X}", vec));  // AVRA word address
-      if (isr_map.contains(byte_addr)) {
-        emit("RJMP", isr_map[byte_addr]->name);
+      int word_addr = vec * 2;  // word address: 0x0002, 0x0004, 0x0006, …
+      emit_raw(std::format(".org 0x{:04X}", word_addr));
+      if (isr_map.contains(word_addr)) {
+        emit("RJMP", isr_map[word_addr]->name);
+        emit_raw("\tNOP");  // fill 2nd word of the 2-word vector slot
       } else {
         emit("RETI");
+        emit_raw("\tNOP");  // fill 2nd word of the 2-word vector slot
       }
     }
     emit_raw("");

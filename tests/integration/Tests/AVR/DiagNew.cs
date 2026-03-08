@@ -1,10 +1,7 @@
-using NUnit.Framework;
 using Avr8Sharp.TestKit.Boards;
-using Avr8Sharp.TestKit;
-using AVR8Sharp.Core.Peripherals;
-using System.IO;
+using NUnit.Framework;
 
-namespace PyMCU.IntegrationTests.Tests;
+namespace PyMCU.IntegrationTests.Tests.AVR;
 
 [TestFixture]
 public class DiagNew
