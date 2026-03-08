@@ -242,3 +242,49 @@ TEST(IRGeneratorTest, MatchStatement) {
     EXPECT_TRUE(found_eq);
     EXPECT_TRUE(found_jump);
 }
+
+// Regression: visitVarDecl inside an @inline function must use
+// current_inline_prefix when building the variable_types key, otherwise
+// the type defaults to UINT8 and delay_ms(1000) loops only 232 times.
+TEST(IRGeneratorTest, InlineUint16VarDecl_PreservesType) {
+    const char *src = R"(
+from pymcu.types import uint16, inline
+
+@inline
+def count_up(limit: uint16):
+    i: uint16 = 0
+    while i < limit:
+        i = i + 1
+
+def main():
+    count_up(1000)
+)";
+    Lexer lexer(src);
+    auto tokens = lexer.tokenize();
+    Parser parser(tokens);
+    auto ast = parser.parseProgram();
+    IRGenerator ir_gen;
+    DeviceConfig cfg;
+    cfg.chip = "atmega328p";
+    cfg.arch = "avr";
+    // Must not throw; must produce exactly one function (main with inlined body).
+    auto ir = ir_gen.generate(*ast, {}, cfg);
+    ASSERT_EQ(ir.functions.size(), 1);
+
+    // After inlining, the while-loop comparison `i < limit` (with jump_if_true=false)
+    // emits JumpIfGreaterOrEqual(i, limit, end_label) — "jump to end if NOT less than".
+    // The constant 1000 must appear intact (not truncated to 232 = 1000 & 0xFF).
+    // Before the visitVarDecl fix, i defaulted to UINT8 and limit was stored as
+    // constant_variables[key] only when visited with the wrong key, so this
+    // constant would never be found or would be truncated.
+    bool found_1000 = false;
+    for (const auto &inst : ir.functions[0].body) {
+        if (auto jge = std::get_if<tacky::JumpIfGreaterOrEqual>(&inst)) {
+            if (auto c = std::get_if<tacky::Constant>(&jge->src2)) {
+                if (c->value == 1000) found_1000 = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_1000)
+        << "JumpIfGreaterOrEqual should compare against 1000 (uint16), not 232 (uint8 truncation)";
+}

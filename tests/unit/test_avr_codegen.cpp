@@ -30,9 +30,10 @@ TEST(AVRCodeGenTest, SimpleAddition) {
   codegen.compile(program, ss);
 
   std::string output = ss.str();
-  EXPECT_NE(output.find("LDI\tR16, 1"), std::string::npos);
-  EXPECT_NE(output.find("SUBI\tR16, 254"), std::string::npos);
-  EXPECT_NE(output.find("STD\tY+0, R16"), std::string::npos);
+  EXPECT_NE(output.find("LDI\tR24, 1"), std::string::npos);
+  EXPECT_NE(output.find("SUBI\tR24, 254"), std::string::npos);
+  // Variable "a" is greedy-allocated to R4, so result is stored via MOV not STD
+  EXPECT_NE(output.find("MOV\tR4, R24"), std::string::npos);
 }
 
 TEST(AVRCodeGenTest, IOOptimization) {
@@ -57,7 +58,7 @@ TEST(AVRCodeGenTest, IOOptimization) {
 
   std::string output = ss.str();
   // 0x25 (data) -> 0x05 (IO)
-  EXPECT_NE(output.find("OUT\t0x05, R16"), std::string::npos);
+  EXPECT_NE(output.find("OUT\t0x05, R24"), std::string::npos);
   // 0x24 (data) -> 0x04 (IO). SBI 0x04, 0
   EXPECT_NE(output.find("SBI\t0x04, 0"), std::string::npos);
 }
@@ -85,7 +86,7 @@ TEST(AVRCodeGenTest, ImmediateArithmetic) {
   codegen.compile(program, ss);
 
   std::string output = ss.str();
-  EXPECT_NE(output.find("ANDI\tR16, 240"), std::string::npos);
+  EXPECT_NE(output.find("ANDI\tR24, 240"), std::string::npos);
 }
 
 TEST(AVRCodeGenTest, PeepholeRedundantLDI) {

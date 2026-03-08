@@ -10,6 +10,46 @@ namespace PyMCU.IntegrationTests.Tests;
 public class DiagNew
 {
     [Test]
+    public void SoftPwm_PopCrashDiag()
+    {
+        var hex = PymcuCompiler.Build("soft-pwm");
+        var uno = new ArduinoUnoSimulation();
+        uno.WithHex(hex);
+
+        // Reflection: inspect Timer0's _ovf interrupt config
+        var timerType = uno.Timer0.GetType();
+        var rfFlags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var ovfField = timerType.GetField("_ovf", rfFlags);
+        var ovf = ovfField?.GetValue(uno.Timer0);
+        var addrField = ovf?.GetType().GetField("Address");
+        var ovfAddr = addrField?.GetValue(ovf);
+        TestContext.WriteLine($"Timer0 _ovf.Address = {ovfAddr} (0x{ovfAddr:X2})");
+
+        // Dump program memory at timer0 OVF vector and ISR
+        TestContext.WriteLine("=== ProgramMemory 0x000F..0x0025 ===");
+        for (int w = 0x000F; w <= 0x0025; w++)
+            TestContext.WriteLine($"  [0x{w:X4}] = 0x{uno.Cpu.ProgramMemory[w]:X4}");
+
+        uno.RunUntilSerial(uno.Serial, "SOFT PWM\n", maxMs: 500);
+        TestContext.WriteLine($"Banner done. SP=0x{uno.Cpu.SP:X4} Cycles={uno.Cpu.Cycles}");
+
+        while (uno.Cpu.Cycles < 262100) uno.RunInstructions(1);
+
+        for (int i = 0; i < 1_000_000 && uno.Cpu.Cycles < 262175; i++)
+        {
+            var spBefore = uno.Cpu.SP;
+            var pcBefore = uno.Cpu.PC;
+            try { uno.RunInstructions(1); }
+            catch (IndexOutOfRangeException)
+            {
+                TestContext.WriteLine($"CRASH: was at PC=0x{pcBefore:X4} SP=0x{spBefore:X4}");
+                Assert.Pass("crash traced");
+            }
+        }
+        Assert.Pass("no crash in window");
+    }
+
+    [Test]
     public void Checksum_Diag()
     {
         var hex = File.ReadAllText("/Users/begeistert/Repos/pymcu/examples/avr/checksum/dist/firmware.hex");
@@ -38,7 +78,6 @@ public class DiagNew
         var hex = File.ReadAllText("/Users/begeistert/Repos/pymcu/examples/avr/multi-isr/dist/firmware.hex");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
-        uno.AddTimer(AvrTimer.Timer0Config);
         uno.RunUntilSerial(uno.Serial, "MULTI ISR\n", maxMs: 500);
         TestContext.WriteLine($"Banner: [{uno.Serial.Text.Replace("\n","\\n")}]");
         var before = uno.Serial.ByteCount;
@@ -51,6 +90,41 @@ public class DiagNew
         TestContext.WriteLine($"Bytes added: {uno.Serial.ByteCount - before}");
         if (uno.Serial.ByteCount > before)
             TestContext.WriteLine($"First new byte: 0x{uno.Serial.Bytes[before]:X2}");
+        Assert.Pass("ok");
+    }
+
+    [Test]
+    public void PcintCounter_Diag()
+    {
+        var hex = PymcuCompiler.Build("pcint-counter");
+        var uno = new ArduinoUnoSimulation();
+        uno.WithHex(hex);
+        uno.PortB.SetPinValue(0, true);  // button released
+        uno.RunUntilSerial(uno.Serial, "PCINT COUNTER\n", maxMs: 200);
+        TestContext.WriteLine($"Banner: [{uno.Serial.Text.Replace("\n","\\n")}]");
+
+        // Single press
+        uno.PortB.SetPinValue(0, false);
+        uno.RunMilliseconds(20);
+        TestContext.WriteLine($"After press 1 (20ms): [{uno.Serial.Text.Replace("\n","\\n")}]");
+        uno.PortB.SetPinValue(0, true);
+        uno.RunMilliseconds(20);
+        TestContext.WriteLine($"After release 1 (20ms): [{uno.Serial.Text.Replace("\n","\\n")}]");
+
+        // Second press
+        uno.PortB.SetPinValue(0, false);
+        uno.RunMilliseconds(20);
+        TestContext.WriteLine($"After press 2: [{uno.Serial.Text.Replace("\n","\\n")}]");
+        uno.PortB.SetPinValue(0, true);
+        uno.RunMilliseconds(20);
+
+        // Third press
+        uno.PortB.SetPinValue(0, false);
+        uno.RunMilliseconds(20);
+        TestContext.WriteLine($"After press 3: [{uno.Serial.Text.Replace("\n","\\n")}]");
+        uno.PortB.SetPinValue(0, true);
+        uno.RunMilliseconds(20);
+        TestContext.WriteLine($"Final: [{uno.Serial.Text.Replace("\n","\\n")}]");
         Assert.Pass("ok");
     }
 

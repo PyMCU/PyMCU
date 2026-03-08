@@ -8,9 +8,11 @@
         <RootNamespace>PyMCU.IntegrationTests</RootNamespace>
     </PropertyGroup>
 
-    <!-- Use project references so local TestKit improvements are picked up -->
+    <!-- Avr8Sharp.TestKit is consumed as a NuGet package.
+         Local dev: dotnet pack /path/to/avr8sharp/src/Avr8Sharp.TestKit -o local-packages
+         CI: clones avr8sharp, packs it, restores from ./local-packages feed (see nuget.config) -->
     <ItemGroup>
-        <ProjectReference Include="/Users/begeistert/Repos/avr8sharp/src/Avr8Sharp.TestKit/Avr8Sharp.TestKit.csproj" />
+        <PackageReference Include="Avr8Sharp.TestKit" Version="1.0.0-alpha1" />
     </ItemGroup>
 
     <ItemGroup>

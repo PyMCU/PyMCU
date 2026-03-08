@@ -1,3 +1,4 @@
+import { ProjectConfigPanel } from './projectConfigPanel';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -19,13 +20,14 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('pymcu.build', () => runPymcuCommand('build')),
         vscode.commands.registerCommand('pymcu.flash', () => runPymcuCommand('flash')),
         vscode.commands.registerCommand('pymcu.clean', () => runPymcuCommand('clean')),
-        vscode.commands.registerCommand('pymcu.new', () => runNewProject())
+        vscode.commands.registerCommand('pymcu.new', () => runNewProject()),
+        vscode.commands.registerCommand('pymcu.configureProject', () => ProjectConfigPanel.createOrShow(context))
     );
 
     // Status bar: show target chip from pyproject.toml
     chipStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-    chipStatusBarItem.command = 'pymcu.build';
-    chipStatusBarItem.tooltip = 'PyMCU target chip (click to build)';
+    chipStatusBarItem.command = 'pymcu.configureProject';
+    chipStatusBarItem.tooltip = 'PyMCU target — click to configure';
     context.subscriptions.push(chipStatusBarItem);
 
     updateChipStatusBar();

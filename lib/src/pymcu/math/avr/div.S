@@ -16,39 +16,30 @@
 
 __div8:
     push r16
-    ldi r16, 9      ; Loop counter = 8 + 1
+    ldi r16, 8      ; 8 iterations: one per dividend bit
     clr r25         ; Remainder = 0
     clc             ; Clear carry
 
 __div8_loop:
     rol r24         ; Shift dividend left, MSB into Carry
     rol r25         ; Shift remainder left, Carry into LSB
-    brcs __div8_sub ; If carry set after shift, remainder overflowed -> subtract
+    brcs __div8_sub ; Remainder overflowed (>= 256) -> must subtract
     cp r25, r18     ; Compare Remainder with Divisor
-    brcs __div8_next; If Remainder < Divisor, skip subtract
+    brcs __div8_next; Remainder < Divisor: quotient bit = 0
 
 __div8_sub:
     sub r25, r18    ; Remainder -= Divisor
-    sec             ; Set carry to shift into quotient
+    sec             ; Quotient bit = 1
     rjmp __div8_dec
 
 __div8_next:
-    clc             ; Clear carry to shift 0 into quotient
+    clc             ; Quotient bit = 0
 
 __div8_dec:
     dec r16
     brne __div8_loop
 
-    rol r24         ; Final shift to get last quotient bit
-    com r24         ; Invert quotient (because we shifted in carry logic inverted? No, standard restoring division shifts in 1 on subtract)
-    ; Wait, standard algorithm:
-    ; Shift Rem:Div left.
-    ; If Rem >= Div, Rem -= Div, Quot |= 1.
-    ; My loop does: Shift Div left (R24). MSB goes to Rem (R25).
-    ; If Rem >= Div (R18), Rem -= Div, C=1. Else C=0.
-    ; Next loop ROL R24 shifts in C.
-    ; So R24 ends up with Quotient.
-    ; Correct.
+    rol r24         ; Final ROL shifts last quotient bit into R24
 
     pop r16
     ret

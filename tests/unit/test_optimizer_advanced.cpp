@@ -50,7 +50,7 @@ TEST(OptimizerAdvancedTest, InstructionCoalescing) {
 
 TEST(OptimizerAdvancedTest, FullOptimizationChain) {
     Function func;
-    func.name = "test";
+    func.name = "main";  // must be "main" to survive Dead Function Elimination (DFE)
     // x = 10
     // y = 20
     // t1 = x + y

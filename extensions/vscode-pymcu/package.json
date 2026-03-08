@@ -16,18 +16,44 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "pymcu.build", "title": "Build", "category": "PyMCU", "icon": "$(tools)" },
-      { "command": "pymcu.flash", "title": "Flash", "category": "PyMCU", "icon": "$(zap)" },
-      { "command": "pymcu.clean", "title": "Clean", "category": "PyMCU", "icon": "$(trash)" },
-      { "command": "pymcu.new", "title": "New Project", "category": "PyMCU", "icon": "$(new-folder)" }
+      {
+        "command": "pymcu.build",
+        "title": "Build",
+        "category": "PyMCU",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "pymcu.flash",
+        "title": "Flash",
+        "category": "PyMCU",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "pymcu.clean",
+        "title": "Clean",
+        "category": "PyMCU",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "pymcu.new",
+        "title": "New Project",
+        "category": "PyMCU",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "pymcu.configureProject",
+        "title": "Configure Project...",
+        "category": "PyMCU",
+        "icon": "$(settings-gear)"
+      }
     ],
     "configuration": {
       "title": "PyMCU",
       "properties": {
-        "pymcu.executablePath": { 
-          "type": "string", 
-          "default": "pymcu", 
-          "description": "Route to the PyMCU executable. If 'pymcu' is in your PATH, you can leave this as is." 
+        "pymcu.executablePath": {
+          "type": "string",
+          "default": "pymcu",
+          "description": "Route to the PyMCU executable. If 'pymcu' is in your PATH, you can leave this as is."
         }
       }
     },
@@ -36,7 +62,10 @@
         "name": "pymcuc",
         "owner": "pymcu",
         "source": "pymcuc",
-        "fileLocation": ["autoDetect", "${workspaceFolder}"],
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
         "severity": "error",
         "pattern": {
           "regexp": "^(.+):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.+)$",
@@ -52,7 +81,9 @@
       {
         "type": "pymcu",
         "label": "PyMCU",
-        "languages": ["python"]
+        "languages": [
+          "python"
+        ]
       }
     ],
     "menus": {
@@ -60,6 +91,11 @@
         {
           "command": "pymcu.build",
           "when": "resourceLangId == python && pymcu:active",
+          "group": "navigation"
+        },
+        {
+          "command": "pymcu.configureProject",
+          "when": "pymcu:active",
           "group": "navigation"
         }
       ]
