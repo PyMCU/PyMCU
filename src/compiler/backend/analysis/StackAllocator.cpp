@@ -119,6 +119,29 @@ void StackAllocator::build_graph(const tacky::Program &program) {
             } else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>) {
               register_var(arg.source);
             }
+            // Array load: register the array block as a contiguous allocation,
+            // plus the index variable and destination temporary.
+            else if constexpr (std::is_same_v<T, tacky::ArrayLoad>) {
+              if (!global_names.contains(arg.array_name) &&
+                  !node.locals.contains(arg.array_name)) {
+                node.locals.insert(arg.array_name);
+                var_sizes[arg.array_name] =
+                    arg.count * size_of(arg.elem_type);
+              }
+              register_var(arg.index);
+              register_var(arg.dst);
+            }
+            // Array store: register the array block, index var, and src value.
+            else if constexpr (std::is_same_v<T, tacky::ArrayStore>) {
+              if (!global_names.contains(arg.array_name) &&
+                  !node.locals.contains(arg.array_name)) {
+                node.locals.insert(arg.array_name);
+                var_sizes[arg.array_name] =
+                    arg.count * size_of(arg.elem_type);
+              }
+              register_var(arg.index);
+              register_var(arg.src);
+            }
 
             // Etiquetas y saltos incondicionales no usan variables, se ignoran.
           },

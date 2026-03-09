@@ -247,6 +247,24 @@ struct DebugLine {
   std::string source_file;
 };
 
+// Variable-index array load: dst = array_name[index]
+struct ArrayLoad {
+  std::string array_name;  // e.g. "main.frame"
+  Val         index;       // Constant or Variable/Temporary -- the element index
+  Val         dst;         // destination variable/temporary
+  DataType    elem_type;
+  int         count;       // total elements
+};
+
+// Variable-index array store: array_name[index] = src
+struct ArrayStore {
+  std::string array_name;  // e.g. "main.frame"
+  Val         index;       // Constant or Variable/Temporary -- the element index
+  Val         src;         // value to store
+  DataType    elem_type;
+  int         count;       // total elements
+};
+
 // --- The Instruction Container ---
 using Instruction =
     std::variant<Return, Unary, Binary, Copy, LoadIndirect, StoreIndirect,
@@ -255,7 +273,7 @@ using Instruction =
                  JumpIfBitSet, JumpIfBitClear, AugAssign, InlineAsm,
                  DebugLine, JumpIfEqual, JumpIfNotEqual, JumpIfLessThan,
                  JumpIfLessOrEqual, JumpIfGreaterThan, JumpIfGreaterOrEqual,
-                 UARTSendString>;
+                 UARTSendString, ArrayLoad, ArrayStore>;
 
 // --- Function Definition ---
 struct Function {

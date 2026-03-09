@@ -29,7 +29,9 @@
 
 #include "IRGenerator.h"
 #include <algorithm>
+#include <functional>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <typeinfo>
 
@@ -701,6 +703,11 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
     ir_func.params.push_back(current_function + "." + param.name);
   }
 
+  // Pre-scan the body to detect which arrays are accessed with variable indices.
+  // This must run before visitBlock so that visitAnnAssign chooses the right strategy.
+  arrays_with_variable_index.clear();
+  scanForVariableIndexedArrays(funcNode->body->statements, full_name + ".");
+
   visitBlock(funcNode->body.get());
 
   if (current_instructions.empty() ||
@@ -709,7 +716,105 @@ tacky::Function IRGenerator::visitFunction(const FunctionDef *funcNode) {
   }
 
   ir_func.body = current_instructions;
+  arrays_with_variable_index.clear();  // reset for next function
   return ir_func;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-scan: walk the AST to find arrays that are subscripted with a non-
+// constant (runtime) index anywhere in the function body.
+// ---------------------------------------------------------------------------
+void IRGenerator::scanForVariableIndexedArrays(
+    const std::vector<std::unique_ptr<Statement>> &stmts,
+    const std::string &prefix) {
+
+  // Recursive helpers using lambdas
+  std::function<void(const Expression *)> scanExpr;
+  std::function<void(const Statement *)>  scanStmt;
+
+  // First mini-pass: collect array names from AnnAssign declarations in this function.
+  // We need this because array_sizes is populated during visitAnnAssign (IR generation),
+  // which hasn't run yet when the pre-scan executes.
+  std::set<std::string> local_arrays;
+  std::function<void(const Statement *)> collectArrayDecls;
+  collectArrayDecls = [&](const Statement *stmt) {
+    if (!stmt) return;
+    if (auto *ann = dynamic_cast<const AnnAssign *>(stmt)) {
+      auto br = ann->annotation.find('[');
+      auto cl = ann->annotation.rfind(']');
+      if (br != std::string::npos && cl != std::string::npos) {
+        std::string inner = ann->annotation.substr(br + 1, cl - br - 1);
+        if (!inner.empty() && std::all_of(inner.begin(), inner.end(), ::isdigit))
+          local_arrays.insert(prefix + ann->target);
+      }
+    } else if (auto *block = dynamic_cast<const Block *>(stmt)) {
+      for (const auto &s : block->statements) collectArrayDecls(s.get());
+    } else if (auto *if_stmt = dynamic_cast<const IfStmt *>(stmt)) {
+      if (if_stmt->then_branch) collectArrayDecls(if_stmt->then_branch.get());
+      for (const auto &[c, b] : if_stmt->elif_branches) collectArrayDecls(b.get());
+      if (if_stmt->else_branch) collectArrayDecls(if_stmt->else_branch.get());
+    } else if (auto *wh = dynamic_cast<const WhileStmt *>(stmt)) {
+      if (wh->body) collectArrayDecls(wh->body.get());
+    }
+  };
+  for (const auto &s : stmts) collectArrayDecls(s.get());
+
+  // Second pass: look for non-constant subscripts on the collected array names.
+  scanExpr = [&](const Expression *expr) {
+    if (!expr) return;
+    if (auto *idx = dynamic_cast<const IndexExpr *>(expr)) {
+      if (auto *ve = dynamic_cast<const VariableExpr *>(idx->target.get())) {
+        std::string q = prefix + ve->name;
+        // If this is a local array AND the index is not an integer literal → needs runtime access
+        if (local_arrays.contains(q) && !dynamic_cast<const IntegerLiteral *>(idx->index.get())) {
+          arrays_with_variable_index.insert(q);
+        }
+      }
+      scanExpr(idx->target.get());
+      scanExpr(idx->index.get());
+    } else if (auto *call = dynamic_cast<const CallExpr *>(expr)) {
+      scanExpr(call->callee.get());
+      for (const auto &arg : call->args) scanExpr(arg.get());
+    } else if (auto *bin = dynamic_cast<const BinaryExpr *>(expr)) {
+      scanExpr(bin->left.get());
+      scanExpr(bin->right.get());
+    } else if (auto *un = dynamic_cast<const UnaryExpr *>(expr)) {
+      scanExpr(un->operand.get());
+    }
+    // IntegerLiteral, VariableExpr, etc. have no sub-expressions to scan
+  };
+
+  scanStmt = [&](const Statement *stmt) {
+    if (!stmt) return;
+    if (auto *assign = dynamic_cast<const AssignStmt *>(stmt)) {
+      scanExpr(assign->target.get());
+      scanExpr(assign->value.get());
+    } else if (auto *ann = dynamic_cast<const AnnAssign *>(stmt)) {
+      if (ann->value) scanExpr(ann->value.get());
+    } else if (auto *ret = dynamic_cast<const ReturnStmt *>(stmt)) {
+      if (ret->value) scanExpr(ret->value.get());
+    } else if (auto *expr_stmt = dynamic_cast<const ExprStmt *>(stmt)) {
+      scanExpr(expr_stmt->expr.get());
+    } else if (auto *if_stmt = dynamic_cast<const IfStmt *>(stmt)) {
+      scanExpr(if_stmt->condition.get());
+      if (if_stmt->then_branch) scanStmt(if_stmt->then_branch.get());
+      for (const auto &[cond, body] : if_stmt->elif_branches) {
+        scanExpr(cond.get());
+        scanStmt(body.get());
+      }
+      if (if_stmt->else_branch) scanStmt(if_stmt->else_branch.get());
+    } else if (auto *while_stmt = dynamic_cast<const WhileStmt *>(stmt)) {
+      scanExpr(while_stmt->condition.get());
+      if (while_stmt->body) scanStmt(while_stmt->body.get());
+    } else if (auto *block = dynamic_cast<const Block *>(stmt)) {
+      for (const auto &s : block->statements) scanStmt(s.get());
+    } else if (auto *aug = dynamic_cast<const AugAssignStmt *>(stmt)) {
+      scanExpr(aug->target.get());
+      scanExpr(aug->value.get());
+    }
+  };
+
+  for (const auto &s : stmts) scanStmt(s.get());
 }
 
 void IRGenerator::visitBlock(const Block *block) {
@@ -1348,15 +1453,22 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
                                   ? ve->name
                                   : current_function + "." + ve->name;
       if (array_sizes.contains(qualified)) {
-        tacky::Val idx_val = visitExpression(indexExpr->index.get());
-        if (auto *c = std::get_if<tacky::Constant>(&idx_val)) {
+        if (arrays_with_variable_index.contains(qualified)) {
+          // Variable-index path: emit ArrayStore IR
+          tacky::Val idx_val = visitExpression(indexExpr->index.get());
+          tacky::Val src_val = visitExpression(stmt->value.get());
+          emit(tacky::ArrayStore{qualified, idx_val, src_val,
+                                 array_elem_types.at(qualified),
+                                 array_sizes.at(qualified)});
+        } else {
+          // Constant-index only path: write to synthetic scalar variable
+          auto *c = dynamic_cast<const IntegerLiteral *>(indexExpr->index.get());
+          if (!c) throw std::runtime_error("Array subscript must be a compile-time constant");
           std::string elem_name = qualified + "__" + std::to_string(c->value);
-          tacky::Variable elem_var{elem_name, array_elem_types.at(qualified)};
-          tacky::Val val = visitExpression(stmt->value.get());
-          emit(tacky::Copy{val, elem_var});
-          return;
+          tacky::Val src_val = visitExpression(stmt->value.get());
+          emit(tacky::Copy{src_val, tacky::Variable{elem_name, array_elem_types.at(qualified)}});
         }
-        throw std::runtime_error("Array subscript must be a compile-time constant");
+        return;
       }
     }
 
@@ -1642,12 +1754,21 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
           }
         }
 
-        // Emit Copy for each element to a synthetic scalar variable: qualified__k
-        for (int k = 0; k < count; ++k) {
-          std::string elem_name = qualified + "__" + std::to_string(k);
-          tacky::Variable elem_var{elem_name, elem_dt};
-          variable_types[elem_name] = elem_dt;
-          emit(tacky::Copy{tacky::Constant{init_vals[k]}, elem_var});
+        if (arrays_with_variable_index.contains(qualified)) {
+          // Variable-index path: contiguous SRAM block — emit ArrayStore per element.
+          for (int k = 0; k < count; ++k) {
+            emit(tacky::ArrayStore{qualified, tacky::Constant{k},
+                                   tacky::Constant{init_vals[k]}, elem_dt, count});
+          }
+        } else {
+          // Constant-index only path: synthetic scalars — each element gets its own
+          // register-allocable variable (zero overhead on AVR).
+          for (int k = 0; k < count; ++k) {
+            std::string elem_name = qualified + "__" + std::to_string(k);
+            tacky::Variable elem_var{elem_name, elem_dt};
+            variable_types[elem_name] = elem_dt;
+            emit(tacky::Copy{tacky::Constant{init_vals[k]}, elem_var});
+          }
         }
         return;
       }
@@ -1971,12 +2092,21 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
                                 ? ve->name
                                 : current_function + "." + ve->name;
     if (array_sizes.contains(qualified)) {
-      tacky::Val idx_val = visitExpression(expr->index.get());
-      if (auto *c = std::get_if<tacky::Constant>(&idx_val)) {
+      if (arrays_with_variable_index.contains(qualified)) {
+        // Variable-index path: emit ArrayLoad IR (works for both constant and variable)
+        tacky::Val idx_val = visitExpression(expr->index.get());
+        tacky::Temporary tmp = make_temp(array_elem_types.at(qualified));
+        emit(tacky::ArrayLoad{qualified, idx_val, tmp,
+                              array_elem_types.at(qualified),
+                              array_sizes.at(qualified)});
+        return tmp;
+      } else {
+        // Constant-index only path: return synthetic scalar variable directly
+        auto *c = dynamic_cast<const IntegerLiteral *>(expr->index.get());
+        if (!c) throw std::runtime_error("Array subscript must be a compile-time constant");
         std::string elem_name = qualified + "__" + std::to_string(c->value);
         return tacky::Variable{elem_name, array_elem_types.at(qualified)};
       }
-      throw std::runtime_error("Array subscript must be a compile-time constant");
     }
   }
 

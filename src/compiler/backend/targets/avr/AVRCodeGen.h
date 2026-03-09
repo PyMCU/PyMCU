@@ -158,6 +158,10 @@ class AVRCodeGen : public CodeGen {
   void compile_variant(const tacky::DebugLine &arg);
 
   void compile_variant(const tacky::UARTSendString &arg);
+
+  void compile_variant(const tacky::ArrayLoad &arg);
+
+  void compile_variant(const tacky::ArrayStore &arg);
 };
 
 #endif  // AVRCODEGEN_H

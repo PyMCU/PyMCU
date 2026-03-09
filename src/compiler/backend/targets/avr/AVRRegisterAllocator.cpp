@@ -102,6 +102,14 @@ std::map<std::string, std::string> AVRRegisterAllocator::allocate(
             } else if constexpr (std::is_same_v<T, tacky::Call>) {
               count_val(arg.dst);
               for (const auto &a : arg.args) count_val(a);
+            } else if constexpr (std::is_same_v<T, tacky::ArrayLoad>) {
+              // Count index and dst vars -- but NOT the array base name itself
+              // (it lives on the stack as a contiguous block, not a register).
+              count_val(arg.index);
+              count_val(arg.dst);
+            } else if constexpr (std::is_same_v<T, tacky::ArrayStore>) {
+              count_val(arg.index);
+              count_val(arg.src);
             }
           },
           instr);

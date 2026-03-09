@@ -1217,6 +1217,105 @@ void AVRCodeGen::compile_variant(const tacky::InlineAsm &arg) {
 }
 
 // ---------------------------------------------------------------------------
+// Array Load / Store  (variable-index uint8/uint16 arrays on the Y-frame stack)
+// ---------------------------------------------------------------------------
+//
+// Layout: array base sits at stack_layout[array_name]; element k is at
+//   RAMSTART + stack_layout[array_name] + k * elem_size
+//
+// For constant index:  use LDD/STD Y+offset directly (offset must be 0-63).
+// For variable index:  compute Z = RAMSTART + base + index*elem_size and use
+//                      LD/ST Z (Z = R30:R31).
+// ---------------------------------------------------------------------------
+
+void AVRCodeGen::compile_variant(const tacky::ArrayLoad &arg) {
+  int elem_size = size_of(arg.elem_type);
+  bool is_16bit = (elem_size == 2);
+
+  if (!stack_layout.contains(arg.array_name)) {
+    emit_comment("ArrayLoad: array not in stack_layout -- skip");
+    return;
+  }
+  int base_offset = stack_layout.at(arg.array_name);
+
+  if (auto *c = std::get_if<tacky::Constant>(&arg.index)) {
+    // Constant index: LDD Y+(base + k*elem_size)
+    int offset = base_offset + c->value * elem_size;
+    if (offset < 64) {
+      emit("LDD", "R24", std::format("Y+{}", offset));
+      if (is_16bit) emit("LDD", "R25", std::format("Y+{}", offset + 1));
+    } else {
+      // offset >= 64: use absolute LDS (RAMSTART = 0x0100)
+      emit("LDS", "R24", std::format("0x{:04X}", 0x0100 + offset));
+      if (is_16bit) emit("LDS", "R25", std::format("0x{:04X}", 0x0100 + offset + 1));
+    }
+  } else {
+    // Variable index: Z = RAMSTART + base_offset + index * elem_size
+    emit_comment("ArrayLoad variable index via Z");
+    load_into_reg(arg.index, "R24", DataType::UINT8);
+    // R24 = index (uint8)
+    if (elem_size == 2) {
+      emit("LSL", "R24");  // index * 2 (uint8 array up to 127 elements)
+    }
+    int abs_base = 0x0100 + base_offset;
+    emit("LDI", "R30", std::format("low({})", abs_base));
+    emit("LDI", "R31", std::format("high({})", abs_base));
+    emit("ADD", "R30", "R24");
+    emit("CLR", "R16");         // R16 = 0; CLR preserves carry flag
+    emit("ADC", "R31", "R16"); // propagate carry from ADD
+    emit("LD", "R24", "Z");
+    if (is_16bit) emit("LDD", "R25", "Z+1");
+  }
+
+  store_reg_into("R24", arg.dst, arg.elem_type);
+}
+
+void AVRCodeGen::compile_variant(const tacky::ArrayStore &arg) {
+  int elem_size = size_of(arg.elem_type);
+  bool is_16bit = (elem_size == 2);
+
+  if (!stack_layout.contains(arg.array_name)) {
+    emit_comment("ArrayStore: array not in stack_layout -- skip");
+    return;
+  }
+  int base_offset = stack_layout.at(arg.array_name);
+
+  // Load src value into R24(:R25)
+  load_into_reg(arg.src, "R24", arg.elem_type);
+
+  if (auto *c = std::get_if<tacky::Constant>(&arg.index)) {
+    // Constant index: STD Y+(base + k*elem_size)
+    int offset = base_offset + c->value * elem_size;
+    if (offset < 64) {
+      emit("STD", std::format("Y+{}", offset), "R24");
+      if (is_16bit) emit("STD", std::format("Y+{}", offset + 1), "R25");
+    } else {
+      emit("STS", std::format("0x{:04X}", 0x0100 + offset), "R24");
+      if (is_16bit) emit("STS", std::format("0x{:04X}", 0x0100 + offset + 1), "R25");
+    }
+  } else {
+    // Variable index: save src, compute Z, then store.
+    // src is in R24(:R25) -- save to R18(:R19) before clobbering R24 for index
+    emit("MOV", "R18", "R24");
+    if (is_16bit) emit("MOV", "R19", "R25");
+
+    emit_comment("ArrayStore variable index via Z");
+    load_into_reg(arg.index, "R24", DataType::UINT8);
+    if (elem_size == 2) {
+      emit("LSL", "R24");
+    }
+    int abs_base = 0x0100 + base_offset;
+    emit("LDI", "R30", std::format("low({})", abs_base));
+    emit("LDI", "R31", std::format("high({})", abs_base));
+    emit("ADD", "R30", "R24");
+    emit("CLR", "R16");
+    emit("ADC", "R31", "R16");
+    emit("ST", "Z", "R18");
+    if (is_16bit) emit("STD", "Z+1", "R19");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Flash String Pool — UARTSendString
 // ---------------------------------------------------------------------------
 

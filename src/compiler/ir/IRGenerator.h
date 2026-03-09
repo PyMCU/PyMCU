@@ -150,6 +150,16 @@ class IRGenerator {
   std::map<std::string, int>      array_sizes;       // qualified_name → element count
   std::map<std::string, DataType> array_elem_types;  // qualified_name → element DataType
 
+  // Arrays that are subscripted with at least one non-constant index anywhere in the current
+  // function. These use contiguous SRAM allocation + ArrayLoad/ArrayStore IR instructions.
+  // Arrays NOT in this set keep the original synthetic-scalar approach (zero overhead).
+  std::set<std::string> arrays_with_variable_index;
+
+  // Pre-scan a function body (list of statements) to detect variable-index array accesses.
+  // Populates arrays_with_variable_index before IR generation begins.
+  void scanForVariableIndexedArrays(const std::vector<std::unique_ptr<Statement>> &body,
+                                    const std::string &function_prefix);
+
   tacky::Temporary make_temp(DataType type = DataType::UINT8);
 
   std::string make_label();
