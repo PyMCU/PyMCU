@@ -100,7 +100,7 @@ class PyMcuCompiler:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
 
-    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None):
+    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--chip", arch, "--freq", str(freq)]
@@ -112,17 +112,25 @@ class PyMcuCompiler:
 
         working_dir = search_path if search_path else input_path.parent
         cmd.extend(["-I", str(working_dir.absolute())])
-        
+
+        # Extra include paths (generated board shim, extension packages) — prepended
+        # before stdlib so they shadow any same-named modules in the vanilla stdlib.
+        if extra_includes:
+            for inc in extra_includes:
+                cmd.extend(["-I", str(inc)])
+                if verbose:
+                    self.console.print(f"[debug] Extra include: {inc}", style="dim")
+
         stdlib = self.get_stdlib_path(verbose=verbose)
         if stdlib:
             # Resolving path is critical for C++ compiler if CWD varies or if path is relative
             include_path = str(Path(stdlib).parent.resolve())
             stdlib_abs = str(Path(stdlib).resolve())
-            
+
             if verbose:
                 self.console.print(f"[debug] Stdlib found at: {stdlib_abs}", style="dim")
                 self.console.print(f"[debug] Adding include path: {include_path}", style="dim")
-            
+
             cmd.extend(["-I", include_path])
             cmd.extend(["-I", stdlib_abs]) # Add package dir itself as fallback
             

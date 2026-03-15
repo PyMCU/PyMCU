@@ -30,6 +30,7 @@ import tomlkit
 import typer
 import os
 import shutil
+import importlib.util
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
@@ -38,6 +39,37 @@ from ..toolchains import get_toolchain_for_chip
 from ..core.compiler import PyMcuCompiler
 
 console = Console()
+
+# ---------------------------------------------------------------------------
+# Board → chip mapping
+# ---------------------------------------------------------------------------
+# When pyproject.toml uses  board = "arduino_uno"  instead of  chip = "...",
+# the chip is derived from this dict.  Extension packages may supplement it
+# via a board_chips.py module (see _load_extension_board_chips()).
+# ---------------------------------------------------------------------------
+BOARD_CHIPS: dict[str, str] = {
+    "arduino_uno":   "atmega328p",
+    "arduino_nano":  "atmega328p",
+    "arduino_mega":  "atmega2560",
+    "arduino_micro": "atmega32u4",
+}
+
+
+def _load_extension_board_chips(flavor: str) -> dict[str, str]:
+    """
+    Try to import pymcu_<flavor>.board_chips and return its BOARD_CHIPS dict.
+    Returns an empty dict if the module or attribute does not exist.
+    """
+    try:
+        mod = importlib.import_module(f"pymcu_{flavor}.board_chips")
+        return dict(getattr(mod, "BOARD_CHIPS", {}))
+    except Exception:
+        return {}
+
+
+def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
+    """Return the chip name for *board*, checking extension-supplied entries first."""
+    return extra.get(board) or BOARD_CHIPS.get(board)
 
 
 def _parse_hex_flash_bytes(hex_file: Path) -> int:
@@ -72,9 +104,56 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             config = tomlkit.load(f)
 
         pymcu_config = config.get("tool", {}).get("pymcu", {})
-        chip = pymcu_config.get("chip", "pic16f84a")
-        freq = pymcu_config.get("frequency", 4000000)
-        src_path = pymcu_config.get("sources", "src")
+        chip_key  = pymcu_config.get("chip",  None)
+        board_key = pymcu_config.get("board", None)
+        freq      = pymcu_config.get("frequency", 4000000)
+        src_path  = pymcu_config.get("sources", "src")
+
+        # board and chip are mutually exclusive
+        if chip_key and board_key:
+            implied = BOARD_CHIPS.get(board_key, "?")
+            console.print(
+                f"[bold red]Error:[/bold red] Cannot set both 'chip' and 'board' in \\[tool.pymcu].\n"
+                f"  'board = \"{board_key}\"' implies chip = \"{implied}\". Remove the 'chip' key."
+            )
+            raise typer.Exit(code=1)
+
+        # Resolve extension packages and their extra board→chip entries
+        stdlib_flavors = pymcu_config.get("stdlib", [])
+        extension_board_chips: dict[str, str] = {}
+        extra_includes: list[str] = []
+        extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
+
+        for flavor in stdlib_flavors:
+            spec = importlib.util.find_spec(f"pymcu_{flavor}")
+            if spec and spec.submodule_search_locations:
+                pkg_dir = Path(list(spec.submodule_search_locations)[0])
+                pkg_parent = pkg_dir.parent
+                extra_includes.append(str(pkg_parent))
+                extra_includes.append(str(pkg_dir))
+                # Collect board_chips supplements
+                extension_board_chips.update(_load_extension_board_chips(flavor))
+                # Record boards/ dir for shim generation
+                boards_dir = pkg_dir / "boards"
+                if boards_dir.is_dir():
+                    extension_board_dirs[flavor] = boards_dir
+            else:
+                console.print(
+                    f"[bold yellow]Warning:[/bold yellow] stdlib flavor 'pymcu_{flavor}' not found. "
+                    f"Install it with: pip install pymcu-{flavor}"
+                )
+
+        # Derive chip from board or fall back to explicit chip / default
+        if board_key:
+            chip = _resolve_chip_for_board(board_key, extension_board_chips)
+            if chip is None:
+                console.print(
+                    f"[bold red]Error:[/bold red] Unknown board '{board_key}'. "
+                    f"Add it to BOARD_CHIPS in build.py or provide a board_chips.py in your extension package."
+                )
+                raise typer.Exit(code=1)
+        else:
+            chip = chip_key or "pic16f84a"
 
         project_root = pyproject_path.parent.absolute()
         sources_dir = (project_root / src_path).resolve()
@@ -107,6 +186,48 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
 
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
+
+        # Generate dist/_generated/board.py shim when board= is set.
+        # This shim is prepended to -I so `import board` finds it first.
+        if board_key:
+            generated_dir = output_dir / "_generated"
+            generated_dir.mkdir(parents=True, exist_ok=True)
+            board_shim = generated_dir / "board.py"
+
+            # Find which extension (if any) has boards/<board>.py.
+            # We copy the board file content directly into board.py so that
+            # `import board` works without star-import (not supported by pymcuc).
+            src_board_file = None
+            for flavor, boards_dir in extension_board_dirs.items():
+                candidate = boards_dir / f"{board_key}.py"
+                if candidate.exists():
+                    src_board_file = candidate
+                    break
+
+            if src_board_file:
+                board_shim_content = (
+                    f"# Auto-generated by pymcu build -- do not edit\n"
+                    + src_board_file.read_text()
+                )
+            else:
+                # Vanilla fallback: copy the vanilla board file directly
+                try:
+                    import pymcu as _pymcu_pkg
+                    vanilla_board = Path(_pymcu_pkg.__file__).parent / "boards" / f"{board_key}.py"
+                    if vanilla_board.exists():
+                        board_shim_content = (
+                            "# Auto-generated by pymcu build -- do not edit\n"
+                            + vanilla_board.read_text()
+                        )
+                    else:
+                        raise FileNotFoundError
+                except Exception:
+                    console.print(f"[bold yellow]Warning:[/bold yellow] No board file found for '{board_key}'.")
+                    board_shim_content = f"# Auto-generated by pymcu build -- no board file found for {board_key}\n"
+
+            board_shim.write_text(board_shim_content)
+            # Prepend generated dir so `import board` finds the shim first
+            extra_includes.insert(0, str(generated_dir))
 
         # 1. Factory: Get the appropriate toolchain strategy
         # Note: We rely on the chip name to decide. Assembler override in TOML could be handled
@@ -147,7 +268,8 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     search_path=sources_dir,
                     verbose=verbose,
                     reset_vector=reset_vector,
-                    interrupt_vector=interrupt_vector)
+                    interrupt_vector=interrupt_vector,
+                    extra_includes=extra_includes or None)
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")
@@ -159,7 +281,6 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             with open(output_file, "r") as asm_f:
                 asm_content = asm_f.read()
             
-            import importlib.util
             spec = importlib.util.find_spec("pymcu.math")
             
             if spec and spec.origin:
@@ -194,43 +315,105 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
                     
                     if needed_funcs:
-                        with open(output_file, "a") as asm_f:
-                            asm_f.write("\n; --- PyMCU AVR Math Runtime ---\n")
-                            
-                            # Map function names to source files
-                            func_map = {
-                                "__div8": "div.S",
-                                "__mod8": "div.S",
-                                "__mul8": "mul.S",
-                                "__div16": "div16.S"
-                            }
-                            
-                            included_files = set()
-                            for func in needed_funcs:
-                                fname = func_map.get(func)
-                                if fname and fname not in included_files:
-                                    src_path = avr_math_path / fname
-                                    if src_path.exists():
-                                        with open(src_path, "r") as lib_f:
-                                            asm_f.write(lib_f.read())
-                                            asm_f.write("\n")
-                                        included_files.add(fname)
-                                    else:
-                                        console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
+                        # Build the math runtime text
+                        func_map = {
+                            "__div8": "div.S",
+                            "__mod8": "div.S",
+                            "__mul8": "mul.S",
+                            "__div16": "div16.S"
+                        }
+                        math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
+                        included_files = set()
+                        for func in needed_funcs:
+                            fname = func_map.get(func)
+                            if fname and fname not in included_files:
+                                src_path = avr_math_path / fname
+                                if src_path.exists():
+                                    with open(src_path, "r") as lib_f:
+                                        math_runtime_text += lib_f.read() + "\n"
+                                    included_files.add(fname)
+                                else:
+                                    console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
+
+                        # Insert math runtime BEFORE the first function label so that
+                        # __div8/__mod8 are at a low word address, within RCALL range
+                        # (±2047 words) of any call site in large firmware images.
+                        with open(output_file, "r") as f:
+                            lines = f.readlines()
+
+                        insert_idx = len(lines)  # fallback: append
+                        past_vector_table = False
+                        for i, line in enumerate(lines):
+                            stripped = line.strip()
+                            if stripped.startswith(".org"):
+                                past_vector_table = True
+                            elif past_vector_table and stripped and not stripped.startswith(";") \
+                                    and not stripped.startswith(".") \
+                                    and stripped.endswith(":"):
+                                # First function label after the vector table
+                                insert_idx = i
+                                break
+
+                        lines.insert(insert_idx, math_runtime_text + "\n")
+                        with open(output_file, "w") as f:
+                            f.writelines(lines)
 
             else:
                 console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")
 
             # Step 2: Assembly (ASM -> HEX)
+            # Uses linker-relaxation: start with short RJMP/RCALL (1 word each, ±2047 words
+            # range). If AVRA reports "out of range" at specific lines, replace only those
+            # instructions with the 2-word JMP/CALL equivalents and retry. This preserves
+            # exact timing for delay loops while supporting firmware > 4 KB.
             progress.update(build_task, description="Assembling...", completed=60)
             try:
-                # The toolchain strategy handles the specific assembler invocation (gpasm, etc.)
-                hex_file = toolchain.assemble(output_file)
-            except RuntimeError as e:
+                import re as _re
+                hex_file = None
+                last_exc = None
+                # Linker-relaxation loop: start with RJMP/RCALL (1 word, ±2047 range).
+                # If AVRA reports out-of-range errors at specific lines, upgrade only
+                # those instructions to JMP/CALL (2 words, full 22-bit range) and retry.
+                # Repeat up to 8 times — each pass may expose new out-of-range cases as
+                # previously short instructions become long and shift label offsets.
+                for _pass in range(8):
+                    try:
+                        hex_file = toolchain.assemble(output_file)
+                        break  # success
+                    except RuntimeError as e:
+                        err_str = str(e)
+                        if "out of range" not in err_str.lower() or toolchain.get_name() != "avra":
+                            last_exc = e
+                            break
+                        bad_lines = set(
+                            int(m) - 1  # 0-based index
+                            for m in _re.findall(r"\((\d+)\)", err_str)
+                        )
+                        if not bad_lines:
+                            last_exc = e
+                            break
+                        with open(output_file, "r") as f:
+                            asm_lines = f.readlines()
+                        for idx in bad_lines:
+                            if 0 <= idx < len(asm_lines):
+                                ln = asm_lines[idx]
+                                ln = ln.replace("\tRCALL\t", "\tCALL\t")
+                                ln = ln.replace("\tRJMP\t",  "\tJMP\t")
+                                asm_lines[idx] = ln
+                        with open(output_file, "w") as f:
+                            f.writelines(asm_lines)
+                        last_exc = e
+                if hex_file is None:
+                    progress.stop()
+                    console.print(f"[bold red]Assembly Error:[/bold red] {last_exc}")
+                    raise typer.Exit(code=1)
+            except typer.Exit:
+                raise
+            except Exception as e:
                 progress.stop()
                 console.print(f"[bold red]Assembly Error:[/bold red] {e}")
                 raise typer.Exit(code=1)
-                
+
             progress.update(build_task, completed=90)
 
             # Step 2.5: Flash size report (HEX parse) + optional ELF generation

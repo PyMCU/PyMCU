@@ -244,4 +244,4 @@ class AvraToolchain(ExternalToolchain):
         except subprocess.CalledProcessError as e:
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
             self.console.print(f"[red]Assembler failed:[/red]\n{err}")
-            raise RuntimeError("Assembly failed.")
+            raise RuntimeError(f"Assembly failed.\n{err}")

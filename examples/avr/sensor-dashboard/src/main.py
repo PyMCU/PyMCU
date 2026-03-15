@@ -77,7 +77,7 @@ def main():
     GPIOR0[1] = 0
 
     uart = UART(9600)
-    uart.println("SENSOR DASHBOARD")
+    print("SENSOR DASHBOARD")
 
     # Enable global interrupts
     asm("SEI")
@@ -140,7 +140,7 @@ def main():
             GPIOR0[1] = 0
             if verbose == 1:
                 verbose = 0
-                uart.write_str("MODE:COMPACT\n")
+                print("MODE:COMPACT")
             else:
                 verbose = 1
-                uart.write_str("MODE:VERBOSE\n")
+                print("MODE:VERBOSE")

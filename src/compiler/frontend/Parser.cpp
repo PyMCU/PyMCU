@@ -151,6 +151,9 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   bool is_inline = false;
   bool is_interrupt = false;
   int vector = 0;
+  bool is_property_getter = false;
+  bool is_property_setter = false;
+  std::string prop_setter_of;
 
   while (check(TokenType::At)) {
     advance();  // Consume '@'
@@ -158,6 +161,26 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
         consume(TokenType::Identifier, "Expected decorator name");
     if (decorator.value == "inline") {
       is_inline = true;
+    } else if (decorator.value == "property") {
+      // @property: marks a getter; implicitly inline for ZCA
+      is_property_getter = true;
+      is_inline = true;
+    } else if (check(TokenType::Dot)) {
+      // @name.setter or @name.getter
+      advance();  // consume '.'
+      const Token suffix =
+          consume(TokenType::Identifier, "Expected 'setter' or 'getter' after '.'");
+      if (suffix.value == "setter") {
+        is_property_setter = true;
+        is_inline = true;  // property setters are implicitly inline for ZCA
+        prop_setter_of = decorator.value;
+      } else if (suffix.value == "getter") {
+        is_property_getter = true;
+        is_inline = true;
+      } else {
+        error("Unknown property modifier '@" + decorator.value + "." +
+              suffix.value + "'");
+      }
     } else if (decorator.value == "interrupt") {
       is_interrupt = true;
       vector = 0x04;  // Default generic vector for PIC14
@@ -216,9 +239,13 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   std::unique_ptr<Block> body = parseBlock();
   function_depth--;
 
-  return std::make_unique<FunctionDef>(name, std::move(params), returnType,
-                                       std::move(body), is_inline, is_interrupt,
-                                       vector);
+  auto func = std::make_unique<FunctionDef>(name, std::move(params), returnType,
+                                            std::move(body), is_inline,
+                                            is_interrupt, vector);
+  func->is_property_getter = is_property_getter;
+  func->is_property_setter = is_property_setter;
+  func->property_name = prop_setter_of;
+  return func;
 }
 
 std::unique_ptr<ClassDef> Parser::parseClassDefinition() {
@@ -254,8 +281,12 @@ std::vector<Param> Parser::parseParameters() {
   do {
     const Token name =
         consume(TokenType::Identifier, "Expected parameter name");
-    consume(TokenType::Colon, "Parameter type is required (e.g. 'a: int')");
-    const std::string type = parseTypeAnnotation();
+    // Type annotation is optional: `self` and ZCA-typed params (e.g. `pin: Pin`)
+    // default to uint8 when no annotation is provided.
+    std::string type;
+    if (match(TokenType::Colon)) {
+      type = parseTypeAnnotation();
+    }
 
     std::unique_ptr<Expression> default_val = nullptr;
     if (match(TokenType::Equal)) {
@@ -369,8 +400,13 @@ std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
       mod_name +=
           "." + consume(TokenType::Identifier, "Expected part name").value;
     }
-    return std::make_unique<ImportStmt>(mod_name, std::vector<std::string>{},
-                                        0);
+    auto stmt =
+        std::make_unique<ImportStmt>(mod_name, std::vector<std::string>{}, 0);
+    if (match(TokenType::As)) {
+      stmt->module_alias =
+          consume(TokenType::Identifier, "Expected alias name after 'as'").value;
+    }
+    return stmt;
   }
 
   consume(TokenType::From, "Expected 'from'");
@@ -394,6 +430,7 @@ std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
   consume(TokenType::Import, "Expected 'import'");
 
   std::vector<std::string> symbols;
+  std::map<std::string, std::string> sym_aliases;
 
   if (match(TokenType::Star)) {
     symbols.emplace_back("*");
@@ -401,12 +438,18 @@ std::unique_ptr<ImportStmt> Parser::parseImportStatement() {
     do {
       Token sym = consume(TokenType::Identifier, "Expected symbol name");
       symbols.push_back(sym.value);
+      if (match(TokenType::As)) {
+        Token alias = consume(TokenType::Identifier, "Expected alias name after 'as'");
+        sym_aliases[sym.value] = alias.value;
+      }
     } while (match(TokenType::Comma));
   }
 
   consumeStatementEnd();
 
-  return std::make_unique<ImportStmt>(mod_name, symbols, relative_level);
+  auto stmt = std::make_unique<ImportStmt>(mod_name, symbols, relative_level);
+  stmt->aliases = std::move(sym_aliases);
+  return stmt;
 }
 
 std::unique_ptr<GlobalStmt> Parser::parseGlobalStatement() {

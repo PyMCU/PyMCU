@@ -100,3 +100,13 @@ class UART:
     def println(self: uint8, s: const[str]):
         self.write_str(s)
         self.write(10)  # '\n'
+
+    @inline
+    def print_byte(self: uint8, value: uint8):
+        # Print a uint8 value as decimal digits followed by a newline.
+        # For float values: use print_fixed(int_part, dec_part) when available.
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_write_decimal_u8
+                uart_write_decimal_u8(value)
+        self.write(10)  # '\n'

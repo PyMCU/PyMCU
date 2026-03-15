@@ -48,7 +48,8 @@ std::string AVRAsmLine::to_string() const {
 // After these, all following instructions until the next label/raw are unreachable.
 static bool is_flow_terminator(const AVRAsmLine &line) {
   return line.type == AVRAsmLine::INSTRUCTION &&
-         (line.mnemonic == "RJMP" || line.mnemonic == "RETI");
+         (line.mnemonic == "RJMP" || line.mnemonic == "JMP" ||
+          line.mnemonic == "RETI" || line.mnemonic == "RET");
 }
 
 // Parse "Y+N" offset string, returns N or -1 on failure.
@@ -85,6 +86,7 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
     for (const auto &line : result) {
       if (line.type == AVRAsmLine::INSTRUCTION) {
         if (line.mnemonic == "RJMP" || line.mnemonic == "RCALL" ||
+            line.mnemonic == "JMP"  || line.mnemonic == "CALL"  ||
             line.mnemonic == "BREQ" || line.mnemonic == "BRNE" ||
             line.mnemonic == "BRLO" || line.mnemonic == "BRSH" ||
             line.mnemonic == "BRMI" || line.mnemonic == "BRPL" ||

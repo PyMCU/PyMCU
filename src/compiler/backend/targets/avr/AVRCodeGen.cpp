@@ -179,6 +179,15 @@ void AVRCodeGen::load_into_reg(const tacky::Val &val, const std::string &reg, Da
         }
         return;
       }
+      // offset >= 64: LDD Y+q requires q<64 → use LDS with the absolute
+      // numeric SRAM address. Using the .equ symbol name would break AVRA
+      // because dots in names are parsed as the current-address operator.
+      int abs_addr = 0x0100 + offset;
+      emit("LDS", reg, std::format("0x{:04X}", abs_addr));
+      if (is_16bit) {
+        emit("LDS", reg_h, std::format("0x{:04X}", abs_addr + 1));
+      }
+      return;
     }
 
     std::string addr = resolve_address(val);
@@ -250,6 +259,13 @@ void AVRCodeGen::store_reg_into(const std::string &reg, const tacky::Val &val, D
         }
         return;
       }
+      // offset >= 64: STD Y+q requires q<64 → use STS with absolute address.
+      int abs_addr = 0x0100 + offset;
+      emit("STS", std::format("0x{:04X}", abs_addr), reg);
+      if (is_16bit) {
+        emit("STS", std::format("0x{:04X}", abs_addr + 1), reg_h);
+      }
+      return;
     }
 
     std::string addr = resolve_address(val);
@@ -287,7 +303,11 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   for (const auto &[name, offset] : stack_layout) {
     if (reg_layout.contains(name)) continue;         // lives in named register R4-R15
     if (all_tmp_reg_names_.contains(name)) continue; // lives in R16/R17 (linear scan)
-    emit_raw(std::format(".equ {} = _stack_base + {}", name, offset));
+    // Sanitize dots → underscores: AVRA treats '.' as the current-address operator,
+    // so dotted names (e.g. inline1._foo.bar) in .equ lines cause parse errors.
+    std::string safe_name = name;
+    std::replace(safe_name.begin(), safe_name.end(), '.', '_');
+    emit_raw(std::format(".equ {} = _stack_base + {}", safe_name, offset));
   }
 
   emit_raw("");
@@ -863,10 +883,10 @@ void AVRCodeGen::compile_variant(const tacky::Binary &arg) {
       }
       break;
     case tacky::BinaryOp::Div:
-      emit("RCALL", "__div8"); // TODO: __div16
+      emit("RCALL", "__div8");
       break;
     case tacky::BinaryOp::FloorDiv:
-      emit("RCALL", "__div8"); // TODO: __div16
+      emit("RCALL", "__div8");
       break;
     case tacky::BinaryOp::Mod:
       emit("RCALL", "__mod8");
@@ -1329,8 +1349,8 @@ std::string AVRCodeGen::intern_string(const std::string &text) {
 
 void AVRCodeGen::compile_variant(const tacky::UARTSendString &arg) {
   uart_send_z_needed_ = true;
-  std::string content = arg.text;
-  if (arg.add_newline) content += '\n';
+  std::string content = arg.text + arg.end_str;
+  if (content.empty()) return;
   std::string label = intern_string(content);
   // Load Z with the byte address of the string in flash.
   // AVRA label values are WORD addresses; multiply by 2 to get byte address for LPM.

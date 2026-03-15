@@ -303,8 +303,30 @@ Token Lexer::scan_token() {
       if (match('=')) return {TokenType::MinusEqual, "-=", line, column};
       return {TokenType::Minus, "-", line, column};
     case '"':
+      // Triple-quoted docstring """...""" — consume and return empty string
+      if (peek() == '"' && peek_next() == '"') {
+        advance(); advance();  // consume second and third "
+        while (!(peek() == '"' && peek_next() == '"')) {
+          if (peek() == '\0') { error("Unterminated docstring"); break; }
+          if (peek() == '\n') line++;
+          advance();
+        }
+        if (peek() == '"') { advance(); advance(); advance(); }  // closing """
+        return {TokenType::String, "", line, column};
+      }
       return string('"');
     case '\'':
+      // Triple-quoted docstring '''...''' — same treatment
+      if (peek() == '\'' && peek_next() == '\'') {
+        advance(); advance();
+        while (!(peek() == '\'' && peek_next() == '\'')) {
+          if (peek() == '\0') { error("Unterminated docstring"); break; }
+          if (peek() == '\n') line++;
+          advance();
+        }
+        if (peek() == '\'') { advance(); advance(); advance(); }
+        return {TokenType::String, "", line, column};
+      }
       return string('\'');
     case '+':
       if (match('=')) return {TokenType::PlusEqual, "+=", line, column};

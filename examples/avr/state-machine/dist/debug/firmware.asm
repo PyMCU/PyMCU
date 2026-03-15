@@ -16,33 +16,75 @@ main:
 ; main.py:87:                         dur    = DUR_YELLOW
 ; main.py:89:                         yellow.high()
 ; main.py:92: 
-; main.py:6: #   Red    LED on PB0 (with resistor)
-; main.py:7: #   Yellow LED on PB1 (with resistor)
 ; main.py:8: #   Green  LED on PB2 (with resistor)
-	SBI	0x04, 0
 ; main.py:93:                     case _:
+; main.py:18: from pymcu.types import uint8, uint16
+; main.py:94:                         state  = State.RED
+; main.py:28:     GREEN      = 2
+; main.py:95:                         dur    = DUR_RED
+; main.py:38: 
+; main.py:96:                         red.high()
+	LDI	R24, 1
+	TST	R24
+	BRNE	L_BR_SKIP_2
+	RJMP	L_BIT_WRITE_SKIP_0
+L_BR_SKIP_2:
+	SBI	0x04, 0
+	RJMP	L_BIT_WRITE_DONE_1
+L_BIT_WRITE_SKIP_0:
+	CBI	0x04, 0
+L_BIT_WRITE_DONE_1:
+; main.py:97:                         yellow.low()
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:22: 
 ; main.py:85:                     case State.GREEN:
 ; main.py:87:                         dur    = DUR_YELLOW
 ; main.py:89:                         yellow.high()
 ; main.py:92: 
-; main.py:6: #   Red    LED on PB0 (with resistor)
-; main.py:12: #   1 overflow = 256 * 256 / 16_000_000 ≈ 4.096 ms
-; main.py:13: #   244 overflows ≈ 1 second
-	SBI	0x04, 1
+; main.py:8: #   Green  LED on PB2 (with resistor)
 ; main.py:93:                     case _:
+; main.py:18: from pymcu.types import uint8, uint16
+; main.py:94:                         state  = State.RED
+; main.py:28:     GREEN      = 2
+; main.py:95:                         dur    = DUR_RED
+; main.py:40:     red    = Pin("PB0", Pin.OUT)
+; main.py:96:                         red.high()
+	LDI	R24, 1
+	TST	R24
+	BRNE	L_BR_SKIP_5
+	RJMP	L_BIT_WRITE_SKIP_3
+L_BR_SKIP_5:
+	SBI	0x04, 1
+	RJMP	L_BIT_WRITE_DONE_4
+L_BIT_WRITE_SKIP_3:
+	CBI	0x04, 1
+L_BIT_WRITE_DONE_4:
+; main.py:97:                         yellow.low()
 ; main.py:42:     green  = Pin("PB2", Pin.OUT)
 ; main.py:22: 
 ; main.py:85:                     case State.GREEN:
 ; main.py:87:                         dur    = DUR_YELLOW
 ; main.py:89:                         yellow.high()
 ; main.py:92: 
-; main.py:6: #   Red    LED on PB0 (with resistor)
-; main.py:17: #
-; main.py:18: from pymcu.types import uint8, uint16
-	SBI	0x04, 2
+; main.py:8: #   Green  LED on PB2 (with resistor)
 ; main.py:93:                     case _:
+; main.py:18: from pymcu.types import uint8, uint16
+; main.py:94:                         state  = State.RED
+; main.py:28:     GREEN      = 2
+; main.py:95:                         dur    = DUR_RED
+; main.py:42:     green  = Pin("PB2", Pin.OUT)
+; main.py:96:                         red.high()
+	LDI	R24, 1
+	TST	R24
+	BRNE	L_BR_SKIP_8
+	RJMP	L_BIT_WRITE_SKIP_6
+L_BR_SKIP_8:
+	SBI	0x04, 2
+	RJMP	L_BIT_WRITE_DONE_7
+L_BIT_WRITE_SKIP_6:
+	CBI	0x04, 2
+L_BIT_WRITE_DONE_7:
+; main.py:97:                         yellow.low()
 ; main.py:43:     uart   = UART(9600)
 ; main.py:58:     while True:
 ; main.py:39: def main():
@@ -84,28 +126,27 @@ main:
 	CBI	0x05, 2
 ; main.py:56:     uart.println("RED")
 ; main.py:97:                         yellow.low()
-; main.py:88:                         red.low()
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
 ; main.py:71:                         dur    = DUR_RY
 ; main.py:68:                 match state:
-L_165:
+L_129:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_0
-	RJMP	L_166
-L_BR_SKIP_0:
-	RJMP	L_165
-L_166:
+	BREQ	L_BR_SKIP_9
+	RJMP	L_130
+L_BR_SKIP_9:
+	RJMP	L_129
+L_130:
 ; main.py:71:                         dur    = DUR_RY
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:58:     while True:
-L_167:
+L_131:
 ; main.py:60:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_169
+	RJMP	L_133
 ; main.py:61:             TIFR0[0] = 1      # Clear TOV0 by writing 1 (AVR convention)
 	SBI	0x15, 0
 ; main.py:62:             ticks = ticks + 1
@@ -120,9 +161,9 @@ L_167:
 	MOV	R19, R6
 	CP	R24, R18
 	CPC	R25, R19
-	BRSH	L_BR_SKIP_1
-	RJMP	L_170
-L_BR_SKIP_1:
+	BRSH	L_BR_SKIP_10
+	RJMP	L_134
+L_BR_SKIP_10:
 ; main.py:65:                 ticks = 0
 	CLR	R24
 	CLR	R25
@@ -130,9 +171,9 @@ L_BR_SKIP_1:
 	MOV	R8, R25
 	MOV	R24, R4
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_2
-	RJMP	L_172
-L_BR_SKIP_2:
+	BREQ	L_BR_SKIP_11
+	RJMP	L_136
+L_BR_SKIP_11:
 ; main.py:70:                         state  = State.RED_YELLOW
 	LDI	R24, 1
 	MOV	R4, R24
@@ -149,30 +190,29 @@ L_BR_SKIP_2:
 	CBI	0x05, 2
 ; main.py:75:                         uart.println("RED+YEL")
 ; main.py:97:                         yellow.low()
-; main.py:88:                         red.low()
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:71:                         dur    = DUR_RY
 ; main.py:68:                 match state:
-L_244:
+L_145:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_3
-	RJMP	L_245
-L_BR_SKIP_3:
-	RJMP	L_244
-L_245:
+	BREQ	L_BR_SKIP_12
+	RJMP	L_146
+L_BR_SKIP_12:
+	RJMP	L_145
+L_146:
 ; main.py:71:                         dur    = DUR_RY
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_171
-L_172:
+	RJMP	L_135
+L_136:
 	MOV	R24, R4
 	CPI	R24, 1
-	BREQ	L_BR_SKIP_4
-	RJMP	L_246
-L_BR_SKIP_4:
+	BREQ	L_BR_SKIP_13
+	RJMP	L_147
+L_BR_SKIP_13:
 ; main.py:78:                         state  = State.GREEN
 	LDI	R24, 2
 	MOV	R4, R24
@@ -189,30 +229,29 @@ L_BR_SKIP_4:
 	SBI	0x05, 2
 ; main.py:83:                         uart.println("GREEN")
 ; main.py:97:                         yellow.low()
-; main.py:88:                         red.low()
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
 ; main.py:71:                         dur    = DUR_RY
 ; main.py:68:                 match state:
-L_318:
+L_156:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_5
-	RJMP	L_319
-L_BR_SKIP_5:
-	RJMP	L_318
-L_319:
+	BREQ	L_BR_SKIP_14
+	RJMP	L_157
+L_BR_SKIP_14:
+	RJMP	L_156
+L_157:
 ; main.py:71:                         dur    = DUR_RY
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_171
-L_246:
+	RJMP	L_135
+L_147:
 	MOV	R24, R4
 	CPI	R24, 2
-	BREQ	L_BR_SKIP_6
-	RJMP	L_320
-L_BR_SKIP_6:
+	BREQ	L_BR_SKIP_15
+	RJMP	L_158
+L_BR_SKIP_15:
 ; main.py:86:                         state  = State.YELLOW
 	LDI	R24, 3
 	MOV	R4, R24
@@ -229,25 +268,24 @@ L_BR_SKIP_6:
 	CBI	0x05, 2
 ; main.py:91:                         uart.println("YELLOW")
 ; main.py:97:                         yellow.low()
-; main.py:88:                         red.low()
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
 ; main.py:71:                         dur    = DUR_RY
 ; main.py:68:                 match state:
-L_392:
+L_167:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_7
-	RJMP	L_393
-L_BR_SKIP_7:
-	RJMP	L_392
-L_393:
+	BREQ	L_BR_SKIP_16
+	RJMP	L_168
+L_BR_SKIP_16:
+	RJMP	L_167
+L_168:
 ; main.py:71:                         dur    = DUR_RY
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_171
-L_320:
+	RJMP	L_135
+L_158:
 ; main.py:94:                         state  = State.RED
 	CLR	R24
 	MOV	R4, R24
@@ -264,27 +302,26 @@ L_320:
 	CBI	0x05, 2
 ; main.py:99:                         uart.println("RED")
 ; main.py:97:                         yellow.low()
-; main.py:88:                         red.low()
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
 ; main.py:71:                         dur    = DUR_RY
 ; main.py:68:                 match state:
-L_466:
+L_178:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_467
-L_BR_SKIP_8:
-	RJMP	L_466
-L_467:
+	BREQ	L_BR_SKIP_17
+	RJMP	L_179
+L_BR_SKIP_17:
+	RJMP	L_178
+L_179:
 ; main.py:71:                         dur    = DUR_RY
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_171:
-L_170:
-L_169:
-	RJMP	L_167
+L_135:
+L_134:
+L_133:
+	RJMP	L_131
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

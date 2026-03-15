@@ -81,6 +81,25 @@ def uart_read() -> uint8:
     return result
 
 
+def uart_write_decimal_u8(value: uint8):
+    # Print uint8 value as decimal digits (0-255).
+    # Uses __div8 / __mod8 from the AVR math runtime.
+    if value >= 100:
+        hundreds: uint8 = value // 100
+        uart_write(hundreds + 48)
+        tens: uint8 = (value // 10) % 10
+        uart_write(tens + 48)
+        units: uint8 = value % 10
+        uart_write(units + 48)
+    elif value >= 10:
+        tens: uint8 = value // 10
+        uart_write(tens + 48)
+        units: uint8 = value % 10
+        uart_write(units + 48)
+    else:
+        uart_write(value + 48)
+
+
 @inline
 def uart_write_str(s: const[str]):
     # Emit a UARTSendString IR instruction — AVR backend stores the string in

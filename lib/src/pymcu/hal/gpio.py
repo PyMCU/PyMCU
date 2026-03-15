@@ -88,19 +88,18 @@ class Pin:
                     raise NotImplementedError("Alternate functions not supported on ATmega328P")
                 if drive != 0:
                     raise NotImplementedError("Drive strength control not supported on ATmega328P")
-                from pymcu.hal._gpio.atmega328p import pin_set_mode
-                pin_set_mode(name, mode)
+                from pymcu.hal._gpio.atmega328p import select_port, select_ddr, select_pin, select_bit
+                self._port = select_port(name)
+                self._ddr = select_ddr(name)
+                self._pin = select_pin(name)
+                self._bit = select_bit(name)
+                self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
-                    from pymcu.hal._gpio.atmega328p import pin_pull_up, pin_pull_off
-                    if pull == 1:
-                        pin_pull_up(name)
-                    elif pull == 0:
-                        pin_pull_off(name)
+                    self._port[self._bit] = pull
                 if value != -1:
-                    from pymcu.hal._gpio.atmega328p import pin_write
-                    pin_write(name, value)
+                    self._port[self._bit] = value
 
     @inline
     def high(self: uint8):
@@ -121,8 +120,7 @@ class Pin:
                 from pymcu.hal._gpio.pic18f45k50 import pin_high
                 pin_high(self.name)
             case "atmega328p":
-                from pymcu.hal._gpio.atmega328p import pin_high
-                pin_high(self.name)
+                self._port[self._bit] = 1
 
     @inline
     def low(self: uint8):
@@ -143,8 +141,7 @@ class Pin:
                 from pymcu.hal._gpio.pic18f45k50 import pin_low
                 pin_low(self.name)
             case "atmega328p":
-                from pymcu.hal._gpio.atmega328p import pin_low
-                pin_low(self.name)
+                self._port[self._bit] = 0
 
     @inline
     def on(self: uint8):
@@ -173,16 +170,14 @@ class Pin:
                 from pymcu.hal._gpio.pic18f45k50 import pin_toggle
                 pin_toggle(self.name)
             case "atmega328p":
-                from pymcu.hal._gpio.atmega328p import pin_toggle
-                pin_toggle(self.name)
+                self._port[self._bit] = self._port[self._bit] ^ 1
 
     @inline
     def value(self: uint8, x: const = -1) -> uint8:
         if x == -1:
             match __CHIP__.name:
                 case "atmega328p":
-                    from pymcu.hal._gpio.atmega328p import pin_read
-                    return pin_read(self.name)
+                    return self._pin[self._bit]
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_read
                     return pin_read(self.name)
@@ -216,8 +211,7 @@ class Pin:
                     from pymcu.hal._gpio.pic18f45k50 import pin_write
                     pin_write(self.name, x)
                 case "atmega328p":
-                    from pymcu.hal._gpio.atmega328p import pin_write
-                    pin_write(self.name, x)
+                    self._port[self._bit] = x
 
     @inline
     def init(self: uint8, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
@@ -239,18 +233,13 @@ class Pin:
                     from pymcu.hal._gpio.pic18f45k50 import pin_set_mode
                     pin_set_mode(self.name, mode)
                 case "atmega328p":
-                    from pymcu.hal._gpio.atmega328p import pin_set_mode
-                    pin_set_mode(self.name, mode)
+                    self._ddr[self._bit] = mode ^ 1
         if pull != -1:
             match __CHIP__.name:
                 case "atmega328p":
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
-                    from pymcu.hal._gpio.atmega328p import pin_pull_up, pin_pull_off
-                    if pull == 1:
-                        pin_pull_up(self.name)
-                    elif pull == 0:
-                        pin_pull_off(self.name)
+                    self._port[self._bit] = pull
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_pull_up, pin_pull_off
                     if pull == 1:
@@ -284,8 +273,7 @@ class Pin:
         if value != -1:
             match __CHIP__.name:
                 case "atmega328p":
-                    from pymcu.hal._gpio.atmega328p import pin_write
-                    pin_write(self.name, value)
+                    self._port[self._bit] = value
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_write
                     pin_write(self.name, value)
@@ -309,16 +297,12 @@ class Pin:
                 raise NotImplementedError("Alternate functions not supported on ATmega328P")
 
     @inline
-    def pull(self: uint8, pull_mode: uint8):
+    def pull(self: uint8, pull_mode: const):
         match __CHIP__.name:
             case "atmega328p":
                 if pull_mode == 2:
                     raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
-                from pymcu.hal._gpio.atmega328p import pin_pull_up, pin_pull_off
-                if pull_mode == 1:
-                    pin_pull_up(self.name)
-                elif pull_mode == 0:
-                    pin_pull_off(self.name)
+                self._port[self._bit] = pull_mode
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_pull_up, pin_pull_off
                 if pull_mode == 1:
@@ -377,6 +361,15 @@ class Pin:
                 raise NotImplementedError("IRQ not supported on PIC10F200")
 
     @inline
+    def pulse_in(self: uint8, state: uint8, timeout_us: uint16 = 1000) -> uint16:
+        match __CHIP__.name:
+            case "atmega328p":
+                from pymcu.hal._gpio.atmega328p import pin_pulse_in
+                return pin_pulse_in(self._pin, self._bit, state, timeout_us)
+            case _:
+                return 0
+
+    @inline
     def mode(self: uint8, m: const = -1) -> uint8:
         if m != -1:
             match __CHIP__.name:
@@ -396,5 +389,4 @@ class Pin:
                     from pymcu.hal._gpio.pic18f45k50 import pin_set_mode
                     pin_set_mode(self.name, m)
                 case "atmega328p":
-                    from pymcu.hal._gpio.atmega328p import pin_set_mode
-                    pin_set_mode(self.name, m)
+                    self._ddr[self._bit] = m ^ 1

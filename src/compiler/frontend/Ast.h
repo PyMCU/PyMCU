@@ -32,6 +32,7 @@
 
 #include <memory>
 #include <optional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -349,6 +350,9 @@ struct FunctionDef : Statement {
   bool is_inline;
   bool is_interrupt;
   int interrupt_vector;
+  bool is_property_getter = false;
+  bool is_property_setter = false;
+  std::string property_name;  // for @name.setter: the property being set
 
   FunctionDef(std::string n, std::vector<Param> p, std::string ret,
               std::unique_ptr<Block> b, bool inl = false, bool is_int = false,
@@ -366,6 +370,8 @@ struct ImportStmt : Statement {
   std::string module_name;
   std::vector<std::string> symbols;
   int relative_level;
+  std::map<std::string, std::string> aliases;  // original_sym -> alias for "from X import Y as Z"
+  std::string module_alias;                    // alias for "import X as Y"
 
   ImportStmt(std::string mod, std::vector<std::string> syms, int level = 0)
       : module_name(std::move(mod)),

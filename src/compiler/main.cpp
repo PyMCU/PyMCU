@@ -114,7 +114,14 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
       path = resolve_module(imp->module_name, includes, current_path,
                             imp->relative_level);
 
-      if (ctx->module_cache.contains(path)) continue;
+      if (ctx->module_cache.contains(path)) {
+        // File already loaded under a different module name (e.g. "pymcu.time"
+        // previously loaded, now imported as "time" or vice-versa).  Register
+        // this alias too so that IRGenerator sees both keys and produces
+        // inline-function entries under both module prefixes.
+        ctx->named_modules[imp->module_name] = ctx->module_cache.at(path).get();
+        continue;
+      }
       if (ctx->loading_modules.contains(path)) continue;
 
       std::cout << "Loading module: " << path << "\n";

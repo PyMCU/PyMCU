@@ -90,8 +90,14 @@ class IRGenerator {
 
   std::map<std::string, ModuleScope> modules;
   std::set<std::string> class_names;  // Tracks known class names for callee resolution
+  // Maps "ClassName.property_name" -> qualified setter inline function key.
+  // Populated by scan_functions when a @name.setter method is encountered.
+  // Used by visitAssign to desugar "obj.attr = val" into an inline setter call.
+  std::map<std::string, std::string> property_setters;
   std::map<std::string, std::string>
-      imported_aliases;  // Tracks Pin -> pymcu.hal.gpio
+      imported_aliases;  // Tracks Pin/_Pin -> pymcu.hal.gpio
+  std::map<std::string, std::string>
+      alias_to_original;  // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
   std::map<std::string, int>
       constant_variables;  // Tracks variables holding constants (for folding)
   std::map<std::string, std::string>
@@ -139,7 +145,11 @@ class IRGenerator {
   };
   std::vector<FunctionEntry> functions_to_compile;
   std::map<std::string, int> string_literal_ids;
-  int next_string_id = 1;
+  std::map<int, std::string> string_id_to_str;  // reverse map: id → string value
+  int next_string_id = 256;  // Start above uint8 range to avoid aliasing True(1)/False(0)
+  // Tracks temporaries/variables that hold MemoryAddress values from inline returns.
+  // Used to resolve ptr-returning inline helpers (e.g. select_port("PB5") → PORTB addr).
+  std::map<std::string, int> constant_address_variables;
   // Tracks compile-time string constant variables (for const[str] params / string for-in)
   std::unordered_map<std::string, std::string> str_constant_variables;
 

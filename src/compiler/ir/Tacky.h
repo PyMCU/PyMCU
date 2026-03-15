@@ -237,7 +237,7 @@ struct InlineAsm {
 // Other backends ignore this instruction (the AVR UART HAL is the only producer).
 struct UARTSendString {
   std::string text;      // String content (without null terminator)
-  bool add_newline;      // Append '\n' (i.e., println semantics)
+  std::string end_str;   // Appended after text; "" = nothing, "\n" = newline
 };
 
 // Debugging

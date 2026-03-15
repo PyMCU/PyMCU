@@ -82,6 +82,9 @@ tacky::Program IRGenerator::generate(
   // emit a UARTSendString IR instruction (flash string pool + LPM-Z loop).
   intrinsic_names.insert("uart_send_string");
   intrinsic_names.insert("uart_send_string_ln");
+  intrinsic_names.insert("print");     // Python-style print → UART output
+  intrinsic_names.insert("sleep_ms");  // time.sleep_ms → delay_ms intrinsic
+  intrinsic_names.insert("sleep_us");  // time.sleep_us → delay_us intrinsic
 
   // Inject compile-time constants from device configuration
   if (config.frequency > 0) {
@@ -98,9 +101,20 @@ tacky::Program IRGenerator::generate(
       intrinsic_names.insert("interrupt");
       intrinsic_names.insert("asm");
     }
-    // Record imported symbols for alias resolution
+    // `import time` or `import time as t` — register the module alias so that
+    // `time.sleep_ms(...)` / `t.sleep_ms(...)` resolves via the module-call path.
+    if (imp->symbols.empty()) {
+      const std::string &mod_key =
+          imp->module_alias.empty() ? imp->module_name : imp->module_alias;
+      modules.emplace(mod_key, ModuleScope{});
+    }
+    // Record imported symbols (using alias if provided)
     for (const auto &sym : imp->symbols) {
-      imported_aliases[sym] = imp->module_name;
+      const std::string &key =
+          imp->aliases.count(sym) ? imp->aliases.at(sym) : sym;
+      imported_aliases[key] = imp->module_name;
+      if (imp->aliases.count(sym))
+        alias_to_original[key] = sym;
     }
   }
   for (const auto &[mod_name, mod_ast] : imported_modules) {
@@ -116,7 +130,11 @@ tacky::Program IRGenerator::generate(
       // Register imported aliases for cross-module resolution
       // (e.g., gpio.py imports pin_set_mode from _gpio.atmega328p)
       for (const auto &sym : imp->symbols) {
-        imported_aliases[sym] = imp->module_name;
+        const std::string &key =
+            imp->aliases.count(sym) ? imp->aliases.at(sym) : sym;
+        imported_aliases[key] = imp->module_name;
+        if (imp->aliases.count(sym))
+          alias_to_original[key] = sym;
       }
     }
   }
@@ -195,6 +213,12 @@ tacky::Program IRGenerator::generate(
       src_prefix += "_";
 
       for (const auto &sym : imp->symbols) {
+        // Skip aliased imports (e.g. "from X import UART as _UART") — the
+        // alias means the symbol is used internally, not re-exported under
+        // the same name.  Re-exporting it would overwrite any class with the
+        // same original name that the destination module defines itself.
+        if (imp->aliases.count(sym)) continue;
+
         std::string src_class_prefix = src_prefix + sym + "_";
         std::string dst_class_prefix = dst_prefix + sym + "_";
 
@@ -346,6 +370,48 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
   if (variable_types.contains(local_name)) {
     type = variable_types.at(local_name);
   }
+
+  // Follow variable_aliases chain before returning, but ONLY for inline
+  // parameter transfer slots (names with 2+ dots, e.g.
+  // "inline1.print_byte.value") which are intentionally excluded from register
+  // allocation.  Stop if the chain passes through a Temporary name (tmp_N) —
+  // those arise from copy-value tracking (x = x+1 → alias[x]=tmp_N) and
+  // should not be followed when the variable is read, only the Copy instruction
+  // provides the write.
+  {
+    auto dot_count = [](const std::string &s) {
+      return static_cast<int>(std::count(s.begin(), s.end(), '.'));
+    };
+    auto is_temp = [](const std::string &s) {
+      return s.size() > 4 && s.substr(0, 4) == "tmp_";
+    };
+    if (dot_count(local_name) >= 2) {
+      std::string resolved = local_name;
+      std::string last_non_temp = local_name;
+      for (int depth = 0; depth < 20; ++depth) {
+        auto it = variable_aliases.find(resolved);
+        if (it == variable_aliases.end()) break;
+        const std::string &next = it->second;
+        if (is_temp(next)) break;  // stop: don't follow through temporaries
+        resolved = next;
+        last_non_temp = resolved;
+      }
+      if (last_non_temp != local_name) {
+        if (constant_variables.contains(last_non_temp)) {
+          return tacky::Constant{constant_variables.at(last_non_temp)};
+        }
+        if (constant_address_variables.contains(last_non_temp)) {
+          return tacky::MemoryAddress{constant_address_variables.at(last_non_temp)};
+        }
+        DataType resolved_type = DataType::UINT8;
+        if (variable_types.contains(last_non_temp)) {
+          resolved_type = variable_types.at(last_non_temp);
+        }
+        return tacky::Variable{last_non_temp, resolved_type};
+      }
+    }
+  }
+
   return tacky::Variable{local_name, type};
 }
 
@@ -389,7 +455,10 @@ std::string IRGenerator::resolve_callee(const std::string &name) {
     // Replace dots in module name with underscores
     std::string mangled_mod = mod_name;
     std::replace(mangled_mod.begin(), mangled_mod.end(), '.', '_');
-    return mangled_mod + "_" + name;
+    // Use the original symbol name if this is an alias (e.g. _Pin -> Pin)
+    const std::string &original =
+        alias_to_original.count(name) ? alias_to_original.at(name) : name;
+    return mangled_mod + "_" + original;
   }
 
   // Check if it's already a mangled name in current module
@@ -622,13 +691,25 @@ void IRGenerator::scan_functions(const Program &ast, ModuleScope *scope) {
               function_params[full_name] = params;
               function_param_types[full_name] = param_types;
 
-              if (func->is_inline) {
+              if (func->is_property_setter) {
+                // Register setter under a mangled key to avoid colliding with
+                // the getter that has the same Python function name.
+                std::string setter_key = full_name + "___setter";
+                inline_functions[setter_key] = func;
+                // Map "ClassName.property_name" -> setter key for visitAssign
+                std::string class_name =
+                    class_prefix.substr(0, class_prefix.size() - 1);
+                property_setters[class_name + "." + func->property_name] =
+                    setter_key;
+              } else if (func->is_inline) {
                 inline_functions[full_name] = func;
               } else {
                 functions_to_compile.push_back({current_module_prefix, func, current_source_file});
               }
-              method_instance_types[full_name] = current_module_prefix.substr(
-                  0, current_module_prefix.size() - 1);
+              if (!func->is_property_setter) {
+                method_instance_types[full_name] = current_module_prefix.substr(
+                    0, current_module_prefix.size() - 1);
+              }
             }
           }
         }
@@ -641,6 +722,17 @@ void IRGenerator::scan_functions(const Program &ast, ModuleScope *scope) {
 int IRGenerator::evaluate_constant_expr(const Expression *expr) {
   if (const auto num = dynamic_cast<const IntegerLiteral *>(expr)) {
     return num->value;
+  }
+
+  if (const auto str = dynamic_cast<const StringLiteral *>(expr)) {
+    // Assign or retrieve a string ID so module-level string constants
+    // (e.g. D2 = "PD2") can be constant-folded through match/case.
+    if (string_literal_ids.find(str->value) == string_literal_ids.end()) {
+      string_literal_ids[str->value] = next_string_id;
+      string_id_to_str[next_string_id] = str->value;
+      next_string_id++;
+    }
+    return string_literal_ids[str->value];
   }
 
   if (const auto call = dynamic_cast<const CallExpr *>(expr)) {
@@ -855,7 +947,17 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     // pymcu_hal__gpio_atmega328p_pin_set_mode)
     if (inline_depth > 0) {
       for (const auto &sym : imp->symbols) {
-        imported_aliases[sym] = imp->module_name;
+        const std::string &key =
+            imp->aliases.count(sym) ? imp->aliases.at(sym) : sym;
+        imported_aliases[key] = imp->module_name;
+        if (imp->aliases.count(sym))
+          alias_to_original[key] = sym;
+      }
+      // `import time` or `import time as t` inside inline body — register module.
+      if (imp->symbols.empty()) {
+        const std::string &mod_key =
+            imp->module_alias.empty() ? imp->module_name : imp->module_alias;
+        modules.emplace(mod_key, ModuleScope{});
       }
     }
     return;
@@ -921,6 +1023,12 @@ void IRGenerator::visitReturn(const ReturnStmt *stmt) {
       }
       if (const auto c = std::get_if<tacky::Constant>(&val)) {
         constant_variables[ctx.result_temp->name] = c->value;
+      } else if (const auto m = std::get_if<tacky::MemoryAddress>(&val)) {
+        // ptr-returning inline function: record address for later bit-slice folding.
+        // Don't emit a Copy (TACKY has no MemoryAddress→Temporary copy).
+        constant_address_variables[ctx.result_temp->name] = m->address;
+        emit(tacky::Jump{ctx.exit_label});
+        return;
       }
     }
     emit(tacky::Jump{ctx.exit_label});
@@ -1294,20 +1402,69 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
     std::string next_case_label = make_label();
 
     if (branch.pattern) {
-      // Specific Pattern
-      tacky::Val pattern_val = visitExpression(branch.pattern.get());
+      // Flatten OR patterns: `case a | b | c:` → alternatives [a, b, c]
+      // `a | b` is parsed as BinaryExpr(a, BitOr, b) by the expression parser.
+      std::vector<const Expression *> alts;
+      std::function<void(const Expression *)> flatten = [&](const Expression *e) {
+        if (const auto *bin = dynamic_cast<const BinaryExpr *>(e)) {
+          if (bin->op == BinaryOp::BitOr) {
+            flatten(bin->left.get());
+            flatten(bin->right.get());
+            return;
+          }
+        }
+        alts.push_back(e);
+      };
+      flatten(branch.pattern.get());
 
-      // Generate equality check: target == pattern
-      tacky::Temporary cmp_res = make_temp();
-      emit(tacky::Binary{tacky::BinaryOp::Equal, target_val, pattern_val,
-                         cmp_res});
+      // Evaluate all alt values (string literal visitExpression emits no instructions)
+      std::vector<tacky::Val> alt_vals;
+      for (const auto *alt : alts) {
+        alt_vals.push_back(visitExpression(alt));
+      }
 
-      // If false (0), jump to next case
-      emit(tacky::JumpIfZero{cmp_res, next_case_label});
+      // Try compile-time constant folding: if target and all alts are constants
+      const auto *ct = std::get_if<tacky::Constant>(&target_val);
+      bool all_alts_const = ct != nullptr;
+      for (auto &v : alt_vals) {
+        if (!std::get_if<tacky::Constant>(&v)) { all_alts_const = false; break; }
+      }
 
-      // Execute body
-      visitBlock(dynamic_cast<const Block *>(branch.body.get()));
-      emit(tacky::Jump{end_label});
+      bool skip_body = false;
+      if (all_alts_const) {
+        // Pure compile-time: check if target matches any alt
+        bool any_match = false;
+        for (auto &v : alt_vals) {
+          if (std::get<tacky::Constant>(v).value == ct->value) { any_match = true; break; }
+        }
+        if (!any_match) {
+          // Statically false: skip body
+          emit(tacky::Jump{next_case_label});
+          skip_body = true;
+        }
+        // else: statically true → fall through to body, no condition jump needed
+      } else if (alts.size() == 1) {
+        // Single pattern, not compile-time constant: use existing JumpIfZero path
+        tacky::Temporary cmp_res = make_temp();
+        emit(tacky::Binary{tacky::BinaryOp::Equal, target_val, alt_vals[0], cmp_res});
+        emit(tacky::JumpIfZero{cmp_res, next_case_label});
+      } else {
+        // OR pattern, runtime: jump to body if ANY alt matches
+        std::string match_label = make_label();
+        for (auto &alt_val : alt_vals) {
+          tacky::Temporary cmp = make_temp();
+          emit(tacky::Binary{tacky::BinaryOp::Equal, target_val, alt_val, cmp});
+          emit(tacky::JumpIfNotZero{cmp, match_label});
+        }
+        emit(tacky::Jump{next_case_label});
+        emit(tacky::Label{match_label});
+      }
+
+      if (!skip_body) {
+        // Execute body
+        visitBlock(dynamic_cast<const Block *>(branch.body.get()));
+        emit(tacky::Jump{end_label});
+      }
     } else {
       // Wildcard Case (_)
       // Always execute if we reached here
@@ -1475,12 +1632,37 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
     // Bit-slice path (existing behaviour for register access like PORTB[0] = 1)
     tacky::Val target = visitExpression(indexExpr->target.get());
     tacky::Val indexVal = visitExpression(indexExpr->index.get());
-    int bit = 0;
 
+    // Resolve target: inline ptr-returning helpers return a Temporary whose
+    // address is stored in constant_address_variables.
+    auto resolve_target_addr = [&](tacky::Val &v) {
+      auto try_name = [&](const std::string &name) -> bool {
+        if (constant_address_variables.contains(name)) {
+          v = tacky::MemoryAddress{constant_address_variables.at(name)};
+          return true;
+        }
+        return false;
+      };
+      if (const auto t = std::get_if<tacky::Temporary>(&v)) return try_name(t->name);
+      if (const auto var = std::get_if<tacky::Variable>(&v)) return try_name(var->name);
+      return false;
+    };
+    resolve_target_addr(target);
+
+    // Resolve index: inline uint8-returning helpers return a Temporary whose
+    // value is stored in constant_variables.
+    int bit = 0;
     if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
       bit = c->value;
     } else {
-      throw std::runtime_error("Bit index must be constant");
+      auto try_const = [&](const std::string &name) -> bool {
+        if (constant_variables.contains(name)) { bit = constant_variables.at(name); return true; }
+        return false;
+      };
+      bool resolved = false;
+      if (const auto t = std::get_if<tacky::Temporary>(&indexVal)) resolved = try_const(t->name);
+      else if (const auto v = std::get_if<tacky::Variable>(&indexVal)) resolved = try_const(v->name);
+      if (!resolved) throw std::runtime_error("Bit index must be constant");
     }
 
     tacky::Val val = visitExpression(stmt->value.get());
@@ -1502,16 +1684,140 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
   // enabling zero-cost member propagation (e.g., self.name = "RA0" → led_name).
   if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
     if (auto call = dynamic_cast<const CallExpr *>(stmt->value.get())) {
+      // Resolve callee to class name, handling both bare names (Pin(...)) and
+      // module member access (busio.UART(...) where busio is a loaded module).
+      std::string resolvedClass;
+      if (auto calleeVar =
+              dynamic_cast<const VariableExpr *>(call->callee.get())) {
+        resolvedClass = resolve_callee(calleeVar->name);
+      } else if (auto calleeMem =
+                     dynamic_cast<const MemberAccessExpr *>(call->callee.get())) {
+        if (auto objVar =
+                dynamic_cast<const VariableExpr *>(calleeMem->object.get())) {
+          if (modules.contains(objVar->name)) {
+            std::string mangled = objVar->name;
+            std::replace(mangled.begin(), mangled.end(), '.', '_');
+            resolvedClass = mangled + "_" + calleeMem->member;
+          }
+        }
+      }
+      if (!resolvedClass.empty() &&
+          inline_functions.contains(resolvedClass + "___init__")) {
+        std::string qualified_name = current_function.empty()
+                                         ? varExpr->name
+                                         : current_function + "." + varExpr->name;
+        instance_classes[qualified_name] = resolvedClass;
+        pending_constructor_target = qualified_name;
+        virtual_instances.insert(qualified_name);
+      }
+    }
+  }
+  // Same pre-registration for MemberAccessExpr targets (e.g. self._pin = _Pin(...)).
+  // Without this, the inlined constructor has no pending target and self is not bound
+  // to the flattened member name, so instance_classes["main.led__pin"] is never set
+  // and later calls like led._pin.mode() fall back to dotted CALL labels.
+  if (auto memExpr =
+          dynamic_cast<const MemberAccessExpr *>(stmt->target.get())) {
+    if (auto call = dynamic_cast<const CallExpr *>(stmt->value.get())) {
       if (auto calleeVar =
               dynamic_cast<const VariableExpr *>(call->callee.get())) {
         std::string resolvedClass = resolve_callee(calleeVar->name);
         if (inline_functions.contains(resolvedClass + "___init__")) {
-          std::string qualified_name = current_function.empty()
-                                           ? varExpr->name
-                                           : current_function + "." + varExpr->name;
-          instance_classes[qualified_name] = resolvedClass;
-          pending_constructor_target = qualified_name;
-          virtual_instances.insert(qualified_name);
+          // Resolve the object to compute the flattened member name.
+          // Visiting a plain VariableExpr (e.g. "self") is side-effect-free so
+          // it is safe to evaluate it here before the RHS.
+          tacky::Val objVal = visitExpression(memExpr->object.get());
+          std::string base_name;
+          if (auto *v = std::get_if<tacky::Variable>(&objVal))
+            base_name = v->name;
+          else if (auto *t = std::get_if<tacky::Temporary>(&objVal))
+            base_name = t->name;
+          if (!base_name.empty()) {
+            while (variable_aliases.contains(base_name))
+              base_name = variable_aliases.at(base_name);
+            std::string flattened_name = base_name + "_" + memExpr->member;
+            instance_classes[flattened_name] = resolvedClass;
+            pending_constructor_target = flattened_name;
+            virtual_instances.insert(flattened_name);
+          }
+        }
+      }
+    }
+  }
+
+  // Property setter desugaring: obj.attr = val -> inline setter body.
+  // Checked before the general value evaluation so we can route the RHS
+  // value directly into the setter's parameter binding.
+  // Constructor calls (target is MemberAccessExpr + callee is __init__) are
+  // excluded — they are already handled by the pre-registration above.
+  {
+    auto *memTarget =
+        dynamic_cast<const MemberAccessExpr *>(stmt->target.get());
+    if (memTarget && !property_setters.empty()) {
+      bool is_ctor = false;
+      if (auto *call = dynamic_cast<const CallExpr *>(stmt->value.get())) {
+        std::string rc;
+        if (auto *cv = dynamic_cast<const VariableExpr *>(call->callee.get()))
+          rc = resolve_callee(cv->name);
+        if (!rc.empty() && inline_functions.contains(rc + "___init__"))
+          is_ctor = true;
+      }
+      if (!is_ctor) {
+        // Resolve the object to its canonical qualified name.
+        tacky::Val objVal = visitExpression(memTarget->object.get());
+        std::string base;
+        if (auto *v = std::get_if<tacky::Variable>(&objVal)) base = v->name;
+        else if (auto *t = std::get_if<tacky::Temporary>(&objVal)) base = t->name;
+        while (!base.empty() && variable_aliases.contains(base))
+          base = variable_aliases.at(base);
+        if (!base.empty() && instance_classes.contains(base)) {
+          std::string cls = instance_classes.at(base);
+          std::string setter_key = cls + "." + memTarget->member;
+          if (property_setters.contains(setter_key)) {
+            // Evaluate the RHS in the caller's context.
+            tacky::Val arg_val = visitExpression(stmt->value.get());
+
+            const FunctionDef *setter =
+                inline_functions.at(property_setters.at(setter_key));
+            std::string exit_label = make_label();
+            int new_depth = inline_depth + 1;
+            // Use a unique prefix that won't clash with regular method names.
+            std::string new_prefix = "inline" + std::to_string(new_depth) +
+                                     "." + setter->name + "__setter.";
+
+            // Bind self via alias (zero-cost, same as regular method dispatch).
+            variable_aliases[new_prefix + "self"] = base;
+            instance_classes[new_prefix + "self"] = cls;
+
+            // Bind the value parameter (setter params: [self, value_param]).
+            if (setter->params.size() >= 2) {
+              std::string param_name = new_prefix + setter->params[1].name;
+              if (auto *c = std::get_if<tacky::Constant>(&arg_val))
+                constant_variables[param_name] = c->value;
+              else if (auto *v = std::get_if<tacky::Variable>(&arg_val))
+                variable_aliases[param_name] = v->name;
+              else if (auto *t = std::get_if<tacky::Temporary>(&arg_val))
+                variable_aliases[param_name] = t->name;
+            }
+
+            // Switch to the setter's inline context.
+            inline_depth++;
+            std::string saved_prefix = current_inline_prefix;
+            std::string saved_module_prefix = current_module_prefix;
+            current_inline_prefix = new_prefix;
+            // Class methods live under the class prefix (e.g. "ClassName_").
+            current_module_prefix = cls + "_";
+
+            inline_stack.push_back({exit_label, std::nullopt});
+            visitBlock(setter->body.get());
+            emit(tacky::Label{exit_label});
+            inline_stack.pop_back();
+
+            inline_depth--;
+            current_inline_prefix = saved_prefix;
+            current_module_prefix = saved_module_prefix;
+            return;
+          }
         }
       }
     }
@@ -1652,14 +1958,90 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
         }
         std::string flattened_name = base_name + "_" + memExpr->member;
 
-        // Zero-Cost Abstraction: suppress Copy for virtual instance members
-        // when value is a compile-time constant. The constant is tracked for
-        // folding at use sites, but no RAM or instructions are emitted.
+        // Zero-Cost Abstraction for virtual instance members:
+        //
+        // String-typed members (e.g. self.name = "PD5") arrive here as Constant(N)
+        // where N is a string-literal ID (>= 256, above uint8 range).  They must be
+        // tracked in constant_variables so that string-dispatch comparisons
+        // (if name == "PB5":) can be constant-folded at use sites.  No SRAM Copy is
+        // needed — the value never changes at runtime.
+        //
+        // Numeric mutable members (self.failed = False, self.humidity = 0) must NOT
+        // be constant-folded because they are reassigned in multiple branches at
+        // runtime.  They always get a SRAM slot via the Copy that follows.
         if (auto c = std::get_if<tacky::Constant>(&value)) {
-          constant_variables[flattened_name] = c->value;
-          if (virtual_instances.contains(base_name)) {
-            return;  // Virtual instance — no RAM needed
+          if (!virtual_instances.contains(base_name)) {
+            // Non-virtual base: always fold as compile-time constant.
+            constant_variables[flattened_name] = c->value;
+            // Fall through to emit Copy.
+          } else if (string_id_to_str.contains(c->value)) {
+            // Virtual instance string member: fold for dispatch, no SRAM needed.
+            constant_variables[flattened_name] = c->value;
+            str_constant_variables[flattened_name] = string_id_to_str.at(c->value);
+            return;
           }
+          // Virtual instance numeric (mutable) member: no constant fold, fall through
+          // to emit Copy so the value is stored in SRAM.
+        }
+
+        // Propagate compile-time ptr/uint values from inline function returns.
+        // Inline calls return Temporaries (never plain Constants), so the check above
+        // never fires for them. Instead we check the two constant-folding side maps:
+        //   constant_address_variables: holds MemoryAddress values (e.g. PORTB = 0x25)
+        //   constant_variables:         holds uint8 values (e.g. bit number = 5)
+        // These are always compile-time-derived (unlike plain Constant(0) which may be
+        // a mutable initial value).  Safe to fold without SRAM.
+        // This applies to both virtual and non-virtual instances (e.g. Pin._bit = select_bit(name)).
+        {
+          auto try_temp_name = [&](const std::string &tname) -> bool {
+            if (constant_address_variables.contains(tname)) {
+              constant_address_variables[flattened_name] = constant_address_variables.at(tname);
+              return true;
+            }
+            if (constant_variables.contains(tname)) {
+              constant_variables[flattened_name] = constant_variables.at(tname);
+              return true;
+            }
+            return false;
+          };
+          bool folded = false;
+          if (const auto *t = std::get_if<tacky::Temporary>(&value)) folded = try_temp_name(t->name);
+          else if (const auto *v = std::get_if<tacky::Variable>(&value)) folded = try_temp_name(v->name);
+          if (folded) return;  // compile-time constant member — no SRAM needed
+        }
+
+        // Propagate instance class when assigning a ZCA instance to a member
+        // (e.g. self.pin = pin). Without this, self.pin.low() can't find Pin's
+        // inline methods and falls back to a dotted RCALL with an invalid label.
+        // Follow the full alias chain because the param variable
+        // (e.g. inline1.DHT11___init__.pin) may itself alias the real instance
+        // (main.data_pin) which is where instance_classes is actually set.
+        if (const auto *v_val = std::get_if<tacky::Variable>(&value)) {
+          // Walk alias chain to find the instance_classes entry.
+          // Only set a variable alias (and skip Copy) when the assigned value
+          // is itself a ZCA instance (e.g. self.pin = pin).  Plain scalar
+          // variables like hum_int must fall through to emit a Copy so that
+          // the member register (e.g. sensor.humidity) is actually updated.
+          std::string cls_key = v_val->name;
+          bool is_zca_instance = false;
+          for (int depth = 0; depth < 20; ++depth) {
+            if (instance_classes.contains(cls_key)) {
+              is_zca_instance = true;
+              instance_classes[flattened_name] = instance_classes.at(cls_key);
+              virtual_instances.insert(flattened_name);
+              break;
+            }
+            auto it = variable_aliases.find(cls_key);
+            if (it != variable_aliases.end())
+              cls_key = it->second;
+            else
+              break;
+          }
+          if (is_zca_instance) {
+            variable_aliases[flattened_name] = v_val->name;
+            return;  // Alias established — no Copy instruction needed
+          }
+          // Plain scalar variable: fall through to emit Copy below.
         }
 
         emit(tacky::Copy{value,
@@ -1913,7 +2295,9 @@ tacky::Val IRGenerator::visitExpression(const Expression *expr) {
     // Multi-char strings: assign an integer ID (used only by asm() which extracts
     // the value directly from the AST, not through this path)
     if (string_literal_ids.find(str->value) == string_literal_ids.end()) {
-      string_literal_ids[str->value] = next_string_id++;
+      string_literal_ids[str->value] = next_string_id;
+      string_id_to_str[next_string_id] = str->value;
+      next_string_id++;
     }
     return tacky::Constant{string_literal_ids[str->value]};
   }
@@ -2114,11 +2498,33 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
   tacky::Val target = visitExpression(expr->target.get());
   tacky::Val indexVal = visitExpression(expr->index.get());
 
+  // Resolve target from constant_address_variables (ptr-returning inline helper).
+  auto resolve_addr = [&](tacky::Val &v) {
+    auto try_name = [&](const std::string &name) -> bool {
+      if (constant_address_variables.contains(name)) {
+        v = tacky::MemoryAddress{constant_address_variables.at(name)};
+        return true;
+      }
+      return false;
+    };
+    if (const auto t = std::get_if<tacky::Temporary>(&v)) return try_name(t->name);
+    if (const auto var = std::get_if<tacky::Variable>(&v)) return try_name(var->name);
+    return false;
+  };
+  resolve_addr(target);
+
   int bit = 0;
   if (auto c = std::get_if<tacky::Constant>(&indexVal)) {
     bit = c->value;
   } else {
-    throw std::runtime_error("Bit index must be constant for reading");
+    auto try_const = [&](const std::string &name) -> bool {
+      if (constant_variables.contains(name)) { bit = constant_variables.at(name); return true; }
+      return false;
+    };
+    bool resolved = false;
+    if (const auto t = std::get_if<tacky::Temporary>(&indexVal)) resolved = try_const(t->name);
+    else if (const auto v = std::get_if<tacky::Variable>(&indexVal)) resolved = try_const(v->name);
+    if (!resolved) throw std::runtime_error("Bit index must be constant for reading");
   }
 
   tacky::Temporary dst = make_temp();
@@ -2164,9 +2570,14 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
 
     // Fallback: if object is an imported class name, try resolving the member
     // as a module-level constant from the class's source module.
-    // This handles Pin.OUTPUT where OUTPUT is defined at module scope.
+    // This handles Pin.OUTPUT / _Pin.OUTPUT where OUTPUT is defined at module scope.
     if (imported_aliases.contains(varExpr->name)) {
       std::string mod_name = imported_aliases.at(varExpr->name);
+      // Use original class name if this is an alias (e.g. _Pin -> Pin)
+      const std::string &original_name =
+          alias_to_original.count(varExpr->name)
+              ? alias_to_original.at(varExpr->name)
+              : varExpr->name;
       std::string mod_prefix = mod_name;
       std::replace(mod_prefix.begin(), mod_prefix.end(), '.', '_');
       std::string mod_mangled = mod_prefix + "_" + expr->member;
@@ -2176,9 +2587,9 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
           return tacky::MemoryAddress{sym.value, sym.type};
         return tacky::Constant{sym.value};
       }
-      // Also check class-level constant with full prefix
+      // Also check class-level constant with full prefix (uses original name)
       std::string class_mangled =
-          mod_prefix + "_" + varExpr->name + "_" + expr->member;
+          mod_prefix + "_" + original_name + "_" + expr->member;
       if (globals.contains(class_mangled)) {
         const auto &sym = globals.at(class_mangled);
         if (sym.is_memory_address)
@@ -2225,6 +2636,10 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
     // Check if it's a known global/constant (e.g. self.CONST)
     if (constant_variables.contains(flattened_name)) {
       return tacky::Constant{constant_variables.at(flattened_name)};
+    }
+    // Check if it's a ptr-typed compile-time member (e.g. self._port = PORTB)
+    if (constant_address_variables.contains(flattened_name)) {
+      return tacky::MemoryAddress{constant_address_variables.at(flattened_name)};
     }
     if (globals.contains(flattened_name)) {
       const auto &sym = globals.at(flattened_name);
@@ -2290,6 +2705,36 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     callee += "___init__";
   }
 
+  // Normalise time intrinsics: sleep_ms / time_sleep_ms / pymcu_time_sleep_ms
+  // → the actual delay_ms inline function (arch-specific tight loop).
+  // The module may be loaded as "pymcu.time" or "time" depending on how it is
+  // imported, so we search inline_functions by suffix rather than hard-coding a
+  // prefix.  This lets users write `import time; time.sleep_ms(ms)` or
+  // `from time import sleep_ms; sleep_ms(ms)` without any extra import.
+  {
+    bool is_sleep_ms = (callee == "sleep_ms"   || callee == "time_sleep_ms" ||
+                        callee == "pymcu_time_sleep_ms");
+    bool is_sleep_us = (callee == "sleep_us"   || callee == "time_sleep_us" ||
+                        callee == "pymcu_time_sleep_us");
+    if (is_sleep_ms || is_sleep_us) {
+      const std::string target_suffix = is_sleep_ms ? "delay_ms" : "delay_us";
+      // Prefer exact match first (fast path).
+      std::string candidate = "pymcu_time_" + target_suffix;
+      if (!inline_functions.contains(candidate)) {
+        // Fall back to suffix search (module loaded as "time" vs "pymcu.time").
+        candidate = "";
+        for (const auto &[fn_name, _] : inline_functions) {
+          if (fn_name.size() > target_suffix.size() &&
+              fn_name.substr(fn_name.size() - target_suffix.size()) == target_suffix) {
+            candidate = fn_name;
+            break;
+          }
+        }
+      }
+      if (!candidate.empty()) callee = candidate;
+    }
+  }
+
   // Handle intrinsics first
   if (callee == "asm") {
     if (expr->args.size() != 1) {
@@ -2341,7 +2786,105 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
           callee + "() argument must be a compile-time string constant");
     };
     std::string text = resolve_str_arg(expr->args[0].get());
-    emit(tacky::UARTSendString{text, add_nl});
+    emit(tacky::UARTSendString{text, add_nl ? "\n" : ""});
+    return std::monostate{};
+  }
+
+  // Handle print() — Python-style print routed to UART.
+  // Supports standard Python semantics:
+  //   print(a, b, ..., sep=" ", end="\n")
+  // Each positional arg is emitted as:
+  //   - string literal / const[str] → UARTSendString (flash pool, zero overhead)
+  //   - uint8/int value             → uart_write_decimal_u8 (decimal digits)
+  // sep is emitted between args; end is emitted after all args.
+  if (callee == "print") {
+    // --- 1. Extract keyword args: end (default "\n") and sep (default " ") ---
+    std::string end_str = "\n";
+    std::string sep_str = " ";
+    for (const auto &arg : expr->args) {
+      if (const auto *kw = dynamic_cast<const KeywordArgExpr *>(arg.get())) {
+        if (kw->key == "end" || kw->key == "sep") {
+          if (const auto *lit = dynamic_cast<const StringLiteral *>(kw->value.get())) {
+            if (kw->key == "end") end_str = lit->value;
+            else                  sep_str = lit->value;
+          } else {
+            throw std::runtime_error(
+              "print() '" + kw->key + "' must be a compile-time string literal");
+          }
+        }
+      }
+    }
+
+    // --- 2. Collect positional args ---
+    std::vector<const Expression *> pos_args;
+    for (const auto &arg : expr->args) {
+      if (!dynamic_cast<const KeywordArgExpr *>(arg.get()))
+        pos_args.push_back(arg.get());
+    }
+
+    // Helper: emit a string value (sep/end) via flash string pool.
+    // Always uses UARTSendString — avoids calling uart_write directly, since
+    // uart_write is @inline (no label emitted) and cannot be called as a symbol.
+    auto emit_str = [&](const std::string &s) {
+      if (s.empty()) return;
+      emit(tacky::UARTSendString{s, ""});
+    };
+
+    // Resolve the arch-specific decimal writer function name.
+    // uart_write_decimal_u8 is compiled from the UART HAL module with a module
+    // prefix (e.g., "pymcu_hal__uart_avr_uart_write_decimal_u8"). We need the
+    // exact IR name so that Dead Function Elimination keeps the function and
+    // the AVR codegen can emit a valid label reference.
+    // Search function_return_types for a function whose name ends with the suffix.
+    std::string decimal_write_fn = resolve_callee("uart_write_decimal_u8");
+    if (decimal_write_fn == "uart_write_decimal_u8") {
+      // resolve_callee fell back to bare name — try suffix search in compiled fns
+      static const std::string DEC_SUFFIX = "uart_write_decimal_u8";
+      for (const auto &[fn_name, _rt] : function_return_types) {
+        if (fn_name.size() > DEC_SUFFIX.size() &&
+            fn_name.substr(fn_name.size() - DEC_SUFFIX.size()) == DEC_SUFFIX) {
+          decimal_write_fn = fn_name;
+          break;
+        }
+      }
+    }
+
+    // Helper: emit one positional argument
+    auto emit_print_arg = [&](const Expression *arg) {
+      // String literal
+      if (const auto *lit = dynamic_cast<const StringLiteral *>(arg)) {
+        emit(tacky::UARTSendString{lit->value, ""});
+        return;
+      }
+      // const[str] variable
+      if (const auto *var = dynamic_cast<const VariableExpr *>(arg)) {
+        std::string key = current_inline_prefix + var->name;
+        if (auto str_val = resolve_str_constant(key)) {
+          emit(tacky::UARTSendString{*str_val, ""});
+          return;
+        }
+      }
+      // uint8/int value → decimal digits
+      tacky::Val val = visitExpression(arg);
+      tacky::Temporary tmp = make_temp(DataType::UINT8);
+      emit(tacky::Copy{val, tmp});
+      emit(tacky::Call{decimal_write_fn, {tmp}, tmp});
+    };
+
+    if (pos_args.empty()) {
+      // print() with no args → just the end string
+      emit_str(end_str);
+      return std::monostate{};
+    }
+
+    // --- 3. Emit each positional arg with sep between them ---
+    for (size_t i = 0; i < pos_args.size(); ++i) {
+      if (i > 0) emit_str(sep_str);
+      emit_print_arg(pos_args[i]);
+    }
+
+    // --- 4. Emit end string ---
+    emit_str(end_str);
     return std::monostate{};
   }
 
@@ -2494,6 +3037,12 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
         // Erase stale constant entries from previous inline expansions
         constant_variables.erase(paramName);
         str_constant_variables.erase(paramName);
+        // Alias handles all uses of this parameter — emitting a Copy would
+        // allocate a second storage location (register + stack slot) for the
+        // same variable, causing FunctionCall argument loads to read from the
+        // uninitialized stack slot instead of following the alias to the
+        // correct register.
+        continue;
       }
       // Enforce const parameters — must receive compile-time constants
       if (is_const_type(func->params[param_idx].type)) {
@@ -2535,6 +3084,16 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       if (const auto c = std::get_if<tacky::Constant>(&argValues[i])) {
         constant_variables[paramName] = c->value;
         continue;  // No Copy needed — constant is folded at use sites
+      }
+
+      // Propagate compile-time memory addresses (e.g. ptr[uint8] register
+      // pointers like PIND passed as pin_reg). Without this, the address is
+      // copied into a stack slot and then read once at call time — producing
+      // a stale cached register value instead of a live per-iteration read.
+      if (const auto m = std::get_if<tacky::MemoryAddress>(&argValues[i])) {
+        constant_address_variables[paramName] = m->address;
+        constant_address_variables.erase(paramName + "_type");  // no type override
+        continue;  // No Copy needed — address is folded at use sites
       }
 
       // Copy arg to param with proper type from function signature.
