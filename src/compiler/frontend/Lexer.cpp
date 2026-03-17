@@ -51,6 +51,9 @@ static const std::map<std::string, TokenType> keywords = {
     {"global", TokenType::Global}, {"class", TokenType::Class},
     {"yield", TokenType::Yield},
     {"raise", TokenType::Raise},
+    {"with", TokenType::With},
+    {"assert", TokenType::Assert},
+    {"is", TokenType::Is},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {
@@ -220,6 +223,28 @@ Token Lexer::identifier() {
     text += advance();
   }
 
+  // f-string prefix: exactly the letter "f" followed immediately by a quote
+  if (text == "f" && (peek() == '"' || peek() == '\'')) {
+    char quote = advance();  // consume the opening quote
+    // Collect the raw interior without processing escape sequences or expressions.
+    // The Parser will handle splitting on '{' / '}' and sub-parsing each expr part.
+    std::string raw;
+    while (peek() != quote && peek() != '\0') {
+      if (peek() == '\n') line++;
+      if (peek() == '\\') {
+        raw += advance();  // keep backslash
+        if (peek() != '\0') raw += advance();
+      } else {
+        raw += advance();
+      }
+    }
+    if (peek() == '\0') {
+      error("Unterminated f-string literal");
+    }
+    advance();  // consume closing quote
+    return {TokenType::FString, raw, line, column};
+  }
+
   auto type = TokenType::Identifier;
   if (keywords.contains(text)) {
     type = keywords.at(text);
@@ -288,6 +313,7 @@ Token Lexer::scan_token() {
     case ']':
       return {TokenType::RBracket, "]", line, column};
     case ':':
+      if (match('=')) return {TokenType::Walrus, ":=", line, column};
       return {TokenType::Colon, ":", line, column};
     case ';':
       return {TokenType::Semicolon, ";", line, column};
@@ -332,6 +358,7 @@ Token Lexer::scan_token() {
       if (match('=')) return {TokenType::PlusEqual, "+=", line, column};
       return {TokenType::Plus, "+", line, column};
     case '*':
+      if (match('*')) return {TokenType::DoubleStar, "**", line, column};
       if (match('=')) return {TokenType::StarEqual, "*=", line, column};
       return {TokenType::Star, "*", line, column};
     case '/':

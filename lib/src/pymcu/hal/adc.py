@@ -1,5 +1,5 @@
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, uint16, inline
 
 class AnalogPin:
     @inline
@@ -32,3 +32,17 @@ class AnalogPin:
         elif __CHIP__.name == "atmega328p":
             from pymcu.hal._adc.atmega328p import adc_start
             adc_start(self.channel)
+
+    # Triggers ADC conversion and returns the raw 10-bit result (0-1023).
+    @inline
+    def read(self: uint8) -> uint16:
+        if __CHIP__.name == "atmega328p":
+            from pymcu.hal._adc.atmega328p import adc_read
+            return adc_read()
+
+    # Triggers ADC conversion and returns the result scaled to 16-bit (0-65535).
+    @inline
+    def read_u16(self: uint8) -> uint16:
+        if __CHIP__.name == "atmega328p":
+            from pymcu.hal._adc.atmega328p import adc_read_u16
+            return adc_read_u16()

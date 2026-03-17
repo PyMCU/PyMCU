@@ -94,6 +94,15 @@ class IRGenerator {
   // Populated by scan_functions when a @name.setter method is encountered.
   // Used by visitAssign to desugar "obj.attr = val" into an inline setter call.
   std::map<std::string, std::string> property_setters;
+
+  // Function overloading: tracks qualified function names that have multiple
+  // @inline overloads distinguished by parameter types.
+  // scan_functions populates this; visitCall uses it for type-based dispatch.
+  std::set<std::string> overloaded_functions;
+
+  // Class inheritance: maps "ChildClassName" -> "base_prefix_" (e.g., "GPIODevice_")
+  // so that super().__init__() and default-ctor inheritance can be resolved.
+  std::map<std::string, std::string> class_base_prefixes;
   std::map<std::string, std::string>
       imported_aliases;  // Tracks Pin/_Pin -> pymcu.hal.gpio
   std::map<std::string, std::string>
@@ -104,6 +113,15 @@ class IRGenerator {
       variable_aliases;  // Tracks param -> arg mappings for properties
   std::string
       pending_constructor_target;  // Target variable for constructor inlining
+
+  // Tuple-unpack multi-return support.
+  // Set by visitTupleUnpack before calling visitCall to tell the inline
+  // expansion how many result slots to allocate.
+  int pending_tuple_count_ = 0;
+  // After an inline multi-return call completes, holds the qualified names of
+  // the result variables (one per tuple element) so visitTupleUnpack can copy
+  // them to the declared targets.
+  std::vector<std::string> last_tuple_results_;
 
   // Zero-Cost Abstraction: Virtual Instance Registry
   // Tracks instance variables that are compile-time constructs (no RAM needed).
@@ -124,6 +142,16 @@ class IRGenerator {
   struct InlineContext {
     std::string exit_label;
     std::optional<tacky::Temporary> result_temp;
+    // Multi-return tuple: each result slot is a named variable "prefix.result_K"
+    // Non-empty only when the inline function returns a TupleExpr.
+    std::vector<std::string> result_vars;
+    // Full resolved callee name, used to look up function_return_types in visitReturn.
+    std::string callee_name;
+    // Set to true after the first return value has been assigned.
+    // Subsequent return statements (dead code after match/if branches) only emit
+    // Jump without overwriting the result — prevents `return 0` fallbacks from
+    // clobbering values assigned by earlier branches (e.g., return eeprom_read(addr)).
+    bool result_assigned = false;
   };
 
   std::vector<InlineContext> inline_stack;
@@ -207,6 +235,10 @@ class IRGenerator {
 
   void visitContinue(const ContinueStmt *stmt);
 
+  void visitWith(const WithStmt *stmt);      // T2.2
+
+  void visitAssert(const AssertStmt *stmt);  // T2.3
+
   void visitAssign(const AssignStmt *stmt);
 
   void visitAugAssign(const AugAssignStmt *stmt);
@@ -219,6 +251,9 @@ class IRGenerator {
 
   void visitGlobal(const GlobalStmt *stmt);
 
+  // Handles `a, b = expr` tuple unpacking assignments.
+  void visitTupleUnpack(const TupleUnpackStmt *stmt);
+
   // Helper for boolean optimization
   /// Returns: 0 = not optimized, 1 = statically true, -1 = statically false
   int emit_optimized_conditional_jump(const Expression *cond,
@@ -228,6 +263,7 @@ class IRGenerator {
   tacky::Val visitExpression(const Expression *expr);
 
   tacky::Val visitBinary(const BinaryExpr *expr);
+  tacky::Val visitTernary(const TernaryExpr *expr);
 
   tacky::Val visitUnary(const UnaryExpr *expr);
   tacky::Val visitCall(const CallExpr *expr);
@@ -240,7 +276,22 @@ class IRGenerator {
 
   tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
 
+  tacky::Val visitFStringExpr(const FStringExpr *expr);
+
   int evaluate_constant_expr(const Expression *expr);
+
+  // Infer DataType of an expression without emitting IR (best effort).
+  // Used for overload resolution at call sites.
+  DataType infer_expr_type(const Expression *expr) const;
+
+  // Build a type-suffix string from a parameter list (skipping "self").
+  // Used for function overload mangling: e.g., "uint8", "uint16_uint8".
+  static std::string build_overload_suffix(const std::vector<Param> &params);
+
+  // Unroll a list comprehension into per-element assignments for a named array.
+  // Called from visitAnnAssign when the RHS is a ListCompExpr.
+  void visitListComp(const ListCompExpr *lc, const std::string &qualified_name,
+                     int count, DataType elem_dt);
 };
 
 #endif  // IRGENERATOR_H

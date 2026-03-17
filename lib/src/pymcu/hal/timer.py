@@ -1,88 +1,150 @@
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, const, inline
 
-class Timer0:
+# ---- Unified Timer ZCA ----
+# MicroPython-style: Timer(n, prescaler) — n is a compile-time constant.
+# The compiler folds the `n` dispatch at compile time (dead-code elimination)
+# so each call site emits only the instructions for the selected timer.
+#
+# ATmega328P:
+#   Timer(0, prescaler)  -- 8-bit;  prescalers: 1/8/64/256
+#                           OVF vector 0x0010; ~977 Hz OVF at 64x, 16 MHz
+#   Timer(1, prescaler)  -- 16-bit; prescalers: 1/8/64/256/1024
+#                           OVF vector 0x000d; ~0.48 Hz OVF at 1024x, 16 MHz
+#   Timer(2, prescaler)  -- 8-bit async; prescalers: 1/8/32/64/128/256/1024
+#                           OVF vector 0x0009; ~61 Hz OVF at 1024x, 16 MHz
+#
+# PIC chips only support n=0 (Timer0).
+
+class Timer:
+
     @inline
-    def __init__(self: uint8, prescaler: uint8):
-        self.prescaler = prescaler
-        if __CHIP__.name == "pic16f877a":
-            from pymcu.hal._timer.pic16f877a import timer0_init
-            timer0_init(prescaler)
-        elif __CHIP__.name == "pic16f18877":
-            from pymcu.hal._timer.pic16f18877 import timer0_init
-            timer0_init(prescaler)
-        elif __CHIP__.name == "pic16f84a":
-            from pymcu.hal._timer.pic16f84a import timer0_init
-            timer0_init(prescaler)
-        elif __CHIP__.name == "pic10f200":
-            from pymcu.hal._timer.pic10f200 import timer0_init
-            timer0_init(prescaler)
-        elif __CHIP__.name == "pic18f45k50":
-            from pymcu.hal._timer.pic18f45k50 import timer0_init
-            timer0_init(prescaler)
-        elif __CHIP__.name == "atmega328p":
-            from pymcu.hal._timer.atmega328p import timer0_init
-            timer0_init(prescaler)
+    def __init__(self: uint8, n: const[uint8], prescaler: uint8):
+        self._n = n
+        match __CHIP__.name:
+            case "atmega328p":
+                if n == 0:
+                    from pymcu.hal._timer.atmega328p import timer0_init
+                    timer0_init(prescaler)
+                elif n == 1:
+                    from pymcu.hal._timer.atmega328p import timer1_init
+                    timer1_init(prescaler)
+                elif n == 2:
+                    from pymcu.hal._timer.atmega328p import timer2_init
+                    timer2_init(prescaler)
+            case "pic16f877a":
+                from pymcu.hal._timer.pic16f877a import timer0_init
+                timer0_init(prescaler)
+            case "pic16f18877":
+                from pymcu.hal._timer.pic16f18877 import timer0_init
+                timer0_init(prescaler)
+            case "pic16f84a":
+                from pymcu.hal._timer.pic16f84a import timer0_init
+                timer0_init(prescaler)
+            case "pic10f200":
+                from pymcu.hal._timer.pic10f200 import timer0_init
+                timer0_init(prescaler)
+            case "pic18f45k50":
+                from pymcu.hal._timer.pic18f45k50 import timer0_init
+                timer0_init(prescaler)
 
     @inline
     def start(self: uint8):
-        if __CHIP__.name == "pic16f877a":
-            from pymcu.hal._timer.pic16f877a import timer0_start
-            timer0_start()
-        elif __CHIP__.name == "pic16f18877":
-            from pymcu.hal._timer.pic16f18877 import timer0_start
-            timer0_start()
-        elif __CHIP__.name == "pic16f84a":
-            from pymcu.hal._timer.pic16f84a import timer0_start
-            timer0_start()
-        elif __CHIP__.name == "pic10f200":
-            from pymcu.hal._timer.pic10f200 import timer0_start
-            timer0_start()
-        elif __CHIP__.name == "pic18f45k50":
-            from pymcu.hal._timer.pic18f45k50 import timer0_start
-            timer0_start()
-        elif __CHIP__.name == "atmega328p":
-            from pymcu.hal._timer.atmega328p import timer0_start
-            timer0_start()
+        match __CHIP__.name:
+            case "atmega328p":
+                if self._n == 0:
+                    from pymcu.hal._timer.atmega328p import timer0_start
+                    timer0_start()
+                elif self._n == 1:
+                    from pymcu.hal._timer.atmega328p import timer1_start
+                    timer1_start()
+                elif self._n == 2:
+                    from pymcu.hal._timer.atmega328p import timer2_start
+                    timer2_start()
+            case "pic16f877a":
+                from pymcu.hal._timer.pic16f877a import timer0_start
+                timer0_start()
+            case "pic16f18877":
+                from pymcu.hal._timer.pic16f18877 import timer0_start
+                timer0_start()
+            case "pic16f84a":
+                from pymcu.hal._timer.pic16f84a import timer0_start
+                timer0_start()
+            case "pic10f200":
+                from pymcu.hal._timer.pic10f200 import timer0_start
+                timer0_start()
+            case "pic18f45k50":
+                from pymcu.hal._timer.pic18f45k50 import timer0_start
+                timer0_start()
 
     @inline
     def stop(self: uint8):
-        if __CHIP__.name == "pic16f877a":
-            from pymcu.hal._timer.pic16f877a import timer0_stop
-            timer0_stop()
-        elif __CHIP__.name == "pic16f18877":
-            from pymcu.hal._timer.pic16f18877 import timer0_stop
-            timer0_stop()
-        elif __CHIP__.name == "pic16f84a":
-            from pymcu.hal._timer.pic16f84a import timer0_stop
-            timer0_stop()
-        elif __CHIP__.name == "pic10f200":
-            from pymcu.hal._timer.pic10f200 import timer0_stop
-            timer0_stop()
-        elif __CHIP__.name == "pic18f45k50":
-            from pymcu.hal._timer.pic18f45k50 import timer0_stop
-            timer0_stop()
-        elif __CHIP__.name == "atmega328p":
-            from pymcu.hal._timer.atmega328p import timer0_stop
-            timer0_stop()
+        match __CHIP__.name:
+            case "atmega328p":
+                if self._n == 0:
+                    from pymcu.hal._timer.atmega328p import timer0_stop
+                    timer0_stop()
+                elif self._n == 1:
+                    from pymcu.hal._timer.atmega328p import timer1_stop
+                    timer1_stop()
+                elif self._n == 2:
+                    from pymcu.hal._timer.atmega328p import timer2_stop
+                    timer2_stop()
+            case "pic16f877a":
+                from pymcu.hal._timer.pic16f877a import timer0_stop
+                timer0_stop()
+            case "pic16f18877":
+                from pymcu.hal._timer.pic16f18877 import timer0_stop
+                timer0_stop()
+            case "pic16f84a":
+                from pymcu.hal._timer.pic16f84a import timer0_stop
+                timer0_stop()
+            case "pic10f200":
+                from pymcu.hal._timer.pic10f200 import timer0_stop
+                timer0_stop()
+            case "pic18f45k50":
+                from pymcu.hal._timer.pic18f45k50 import timer0_stop
+                timer0_stop()
 
     @inline
     def clear(self: uint8):
-        if __CHIP__.name == "pic16f877a":
-            from pymcu.hal._timer.pic16f877a import timer0_clear
-            timer0_clear()
-        elif __CHIP__.name == "pic16f18877":
-            from pymcu.hal._timer.pic16f18877 import timer0_clear
-            timer0_clear()
-        elif __CHIP__.name == "pic16f84a":
-            from pymcu.hal._timer.pic16f84a import timer0_clear
-            timer0_clear()
-        elif __CHIP__.name == "pic10f200":
-            from pymcu.hal._timer.pic10f200 import timer0_clear
-            timer0_clear()
-        elif __CHIP__.name == "pic18f45k50":
-            from pymcu.hal._timer.pic18f45k50 import timer0_clear
-            timer0_clear()
-        elif __CHIP__.name == "atmega328p":
-            from pymcu.hal._timer.atmega328p import timer0_clear
-            timer0_clear()
+        match __CHIP__.name:
+            case "atmega328p":
+                if self._n == 0:
+                    from pymcu.hal._timer.atmega328p import timer0_clear
+                    timer0_clear()
+                elif self._n == 1:
+                    from pymcu.hal._timer.atmega328p import timer1_clear
+                    timer1_clear()
+                elif self._n == 2:
+                    from pymcu.hal._timer.atmega328p import timer2_clear
+                    timer2_clear()
+            case "pic16f877a":
+                from pymcu.hal._timer.pic16f877a import timer0_clear
+                timer0_clear()
+            case "pic16f18877":
+                from pymcu.hal._timer.pic16f18877 import timer0_clear
+                timer0_clear()
+            case "pic16f84a":
+                from pymcu.hal._timer.pic16f84a import timer0_clear
+                timer0_clear()
+            case "pic10f200":
+                from pymcu.hal._timer.pic10f200 import timer0_clear
+                timer0_clear()
+            case "pic18f45k50":
+                from pymcu.hal._timer.pic18f45k50 import timer0_clear
+                timer0_clear()
+
+    @inline
+    def overflow(self: uint8) -> uint8:
+        if __CHIP__.name == "atmega328p":
+            if self._n == 0:
+                from pymcu.hal._timer.atmega328p import timer0_overflow
+                return timer0_overflow()
+            elif self._n == 1:
+                from pymcu.hal._timer.atmega328p import timer1_overflow
+                return timer1_overflow()
+            elif self._n == 2:
+                from pymcu.hal._timer.atmega328p import timer2_overflow
+                return timer2_overflow()
+        return 0

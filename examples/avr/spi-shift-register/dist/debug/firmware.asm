@@ -45,30 +45,30 @@ main:
 	LDI	R24, 80
 	OUT	0x2C, R24
 ; main.py:33:     uart = UART(9600)
-; main.py:58:                 msb = (pattern >> 7) & 1
+; main.py:58:                 pattern = (pattern << 1) | msb
 ; main.py:39: 
 	SBI	0x0A, 1
 ; main.py:40:     while True:
 	CBI	0x0A, 0
-; main.py:43:         spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
-; main.py:44:         spi.deselect()        # RCLK rising edge (latch shift → output)
+; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
+; main.py:44: 
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:45: 
+; main.py:45:         uart.write(pattern)
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:60:                 if pattern == 0x03:    # wrapped around
+; main.py:60:                     pattern = 0x03
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:62: 
+; main.py:62:             case _:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:35:     uart.println("SPI 74HC595 DEMO")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
+; main.py:71:             mode = mode + 1
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -77,7 +77,7 @@ L_35:
 L_BR_SKIP_0:
 	RJMP	L_35
 L_36:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+; main.py:71:             mode = mode + 1
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 1
@@ -86,52 +86,53 @@ L_36:
 	MOV	R5, R24
 ; main.py:40:     while True:
 L_37:
-; main.py:42:         spi.select()          # RCLK low (shift mode)
-; main.py:44:         spi.deselect()        # RCLK rising edge (latch shift → output)
-; main.py:44:         spi.deselect()        # RCLK rising edge (latch shift → output)
+; main.py:42:         with spi:             # select() on enter, deselect() on exit
+; main.py:72:             if mode == 3:
+; main.py:44: 
+; main.py:44: 
 	CBI	0x05, 2
-; main.py:43:         spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
-; main.py:67:         # --- Mode change on any incoming UART byte ---
-; main.py:55: 
+; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
+; main.py:67:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
+; main.py:55:             case MODE_CHASER:
 	MOV	R24, R4
 	OUT	0x2E, R24
-; main.py:56:             case MODE_CHASER:
-L_43:
+; main.py:56:                 # Two adjacent lit bits rotating left
+L_44:
 	IN	R24, 0x2D
 	ANDI	R24, 128
 	BREQ	L_BR_SKIP_1
-	RJMP	L_44
+	RJMP	L_45
 L_BR_SKIP_1:
-	RJMP	L_43
-L_44:
+	RJMP	L_44
+L_45:
 	IN	R24, 0x2E
 	STD	Y+2, R24
-; main.py:59:                 pattern = (pattern << 1) | msb
-; main.py:44:         spi.deselect()        # RCLK rising edge (latch shift → output)
-; main.py:51:             case MODE_RUNNING:
-; main.py:49:         # --- Advance pattern for next frame ---
+; main.py:59:                 if pattern == 0x03:    # wrapped around
+; main.py:76:             match mode:
+; main.py:51:                 # Rotate left: Q0→Q1→…→Q7→Q0
+; main.py:49:         match mode:
 	SBI	0x05, 2
-; main.py:46:         uart.write(pattern)
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
-L_49:
+; main.py:45:         uart.write(pattern)
+; main.py:71:             mode = mode + 1
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
+L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_2
-	RJMP	L_50
+	RJMP	L_52
 L_BR_SKIP_2:
-	RJMP	L_49
-L_50:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+	RJMP	L_51
+L_52:
+; main.py:71:             mode = mode + 1
 	MOV	R24, R4
 	STS	0x00C6, R24
-; main.py:47:         delay_ms(120)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
+; main.py:46:         delay_ms(120)
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
 	CLR	R24
 	CLR	R25
 	STD	Y+0, R24
 	STD	Y+1, R25
-L_53:
+L_55:
 	LDD	R24, Y+0
 	LDD	R25, Y+1
 	LDI	R18, 120
@@ -139,7 +140,7 @@ L_53:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_3
-	RJMP	L_54
+	RJMP	L_56
 L_BR_SKIP_3:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+0
@@ -148,12 +149,12 @@ L_BR_SKIP_3:
 	SBCI	R25, 255
 	STD	Y+0, R24
 	STD	Y+1, R25
-	RJMP	L_53
-L_54:
+	RJMP	L_55
+L_56:
 	MOV	R24, R5
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_4
-	RJMP	L_56
+	RJMP	L_58
 L_BR_SKIP_4:
 	MOV	R24, R4
 	LSR	R24
@@ -166,21 +167,21 @@ L_BR_SKIP_4:
 	MOV	R16, R24
 	ANDI	R24, 1
 	MOV	R6, R24
-; main.py:54:                 pattern = (pattern << 1) | msb
+; main.py:53:                 pattern = (pattern << 1) | msb
 	MOV	R24, R4
 	LSL	R24
 	MOV	R16, R24
 	MOV	R18, R6
 	OR	R24, R18
 	MOV	R4, R24
-	RJMP	L_55
-L_56:
+	RJMP	L_57
+L_58:
 	MOV	R24, R5
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_5
-	RJMP	L_57
+	RJMP	L_59
 L_BR_SKIP_5:
-; main.py:58:                 msb = (pattern >> 7) & 1
+; main.py:57:                 msb = (pattern >> 7) & 1
 	MOV	R24, R4
 	LSR	R24
 	LSR	R24
@@ -192,119 +193,119 @@ L_BR_SKIP_5:
 	MOV	R16, R24
 	ANDI	R24, 1
 	MOV	R6, R24
-; main.py:59:                 pattern = (pattern << 1) | msb
+; main.py:58:                 pattern = (pattern << 1) | msb
 	MOV	R24, R4
 	LSL	R24
 	MOV	R16, R24
 	MOV	R18, R6
 	OR	R24, R18
 	MOV	R4, R24
-; main.py:60:                 if pattern == 0x03:    # wrapped around
+; main.py:59:                 if pattern == 0x03:    # wrapped around
 	CPI	R24, 3
 	BREQ	L_BR_SKIP_6
-	RJMP	L_58
+	RJMP	L_60
 L_BR_SKIP_6:
-; main.py:61:                     pattern = 0x03
+; main.py:60:                     pattern = 0x03
 	LDI	R24, 3
 	MOV	R4, R24
-L_58:
-	RJMP	L_55
-L_57:
-; main.py:65:                 pattern = pattern + 1
+L_60:
+	RJMP	L_57
+L_59:
+; main.py:64:                 pattern = pattern + 1
 	INC	R4
-L_55:
-; main.py:70:         if UCSR0A[7] == 1:         # RXC0: data available
+L_57:
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
 	BRNE	L_BR_SKIP_7
-	RJMP	L_60
+	RJMP	L_62
 L_BR_SKIP_7:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 	LDS	R24, 0x00C6
 	ANDI	R24, 254
 	STS	0x00C6, R24
-; main.py:72:             mode = mode + 1
+; main.py:71:             mode = mode + 1
 	INC	R5
 	MOV	R24, R5
-; main.py:73:             if mode == 3:
+; main.py:72:             if mode == 3:
 	CPI	R24, 3
 	BREQ	L_BR_SKIP_8
-	RJMP	L_61
+	RJMP	L_63
 L_BR_SKIP_8:
-; main.py:74:                 mode = MODE_RUNNING
+; main.py:73:                 mode = MODE_RUNNING
 	CLR	R24
 	MOV	R5, R24
-L_61:
-; main.py:75:             pattern = 0x01         # reset pattern on mode change
+L_63:
+; main.py:74:             pattern = 0x01         # reset pattern on mode change
 	LDI	R24, 1
 	MOV	R4, R24
 	MOV	R24, R5
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_9
-	RJMP	L_63
+	RJMP	L_65
 L_BR_SKIP_9:
-; main.py:79:                     uart.println("MODE: RUNNING")
+; main.py:78:                     uart.println("MODE: RUNNING")
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
-L_69:
+; main.py:71:             mode = mode + 1
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
+L_71:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_70
+	RJMP	L_72
 L_BR_SKIP_10:
-	RJMP	L_69
-L_70:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+	RJMP	L_71
+L_72:
+; main.py:71:             mode = mode + 1
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_62
-L_63:
+	RJMP	L_64
+L_65:
 	MOV	R24, R5
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_11
-	RJMP	L_71
+	RJMP	L_73
 L_BR_SKIP_11:
-; main.py:81:                     uart.println("MODE: CHASER")
+; main.py:80:                     uart.println("MODE: CHASER")
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
-L_77:
+; main.py:71:             mode = mode + 1
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
+L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_78
+	RJMP	L_80
 L_BR_SKIP_12:
-	RJMP	L_77
-L_78:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+	RJMP	L_79
+L_80:
+; main.py:71:             mode = mode + 1
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_62
-L_71:
-; main.py:83:                     uart.println("MODE: COUNTER")
+	RJMP	L_64
+L_73:
+; main.py:82:                     uart.println("MODE: COUNTER")
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-; main.py:68:         # (Non-blocking: check UCSR0A RXC flag without blocking read)
-L_85:
+; main.py:71:             mode = mode + 1
+; main.py:68:         from pymcu.chips.atmega328p import UCSR0A, UDR0
+L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_86
+	RJMP	L_88
 L_BR_SKIP_13:
-	RJMP	L_85
-L_86:
-; main.py:71:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+	RJMP	L_87
+L_88:
+; main.py:71:             mode = mode + 1
 	LDI	R24, 10
 	STS	0x00C6, R24
+L_64:
 L_62:
-L_60:
 	RJMP	L_37
 
 ; --- Flash String Pool (LPM+Z UART send) ---

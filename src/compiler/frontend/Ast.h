@@ -55,7 +55,12 @@ enum class BinaryOp {
   BitOr,
   BitXor,  // Bitwise
   LShift,
-  RShift
+  RShift,
+  Pow,    // x ** n (compile-time constant fold only)
+  In,     // x in [1,2,3]
+  NotIn,  // x not in [1,2,3]
+  Is,     // x is y  (identity == equality on MCU)
+  IsNot   // x is not y
 };
 
 enum class UnaryOp {
@@ -111,6 +116,20 @@ struct StringLiteral : Expression {
   explicit StringLiteral(std::string v) : value(std::move(v)) {}
 };
 
+// One segment of an f-string: either a literal text chunk or a {expr} expression.
+struct FStringPart {
+  bool is_expr;                      // true = {expr}, false = literal text
+  std::string text;                  // for literal parts
+  std::unique_ptr<Expression> expr;  // for expression parts (is_expr=true)
+};
+
+// f-string expression: f"..." — a sequence of literal and expression parts.
+// All {expr} parts must resolve to compile-time constants (string or integer).
+struct FStringExpr : Expression {
+  std::vector<FStringPart> parts;
+  explicit FStringExpr(std::vector<FStringPart> p) : parts(std::move(p)) {}
+};
+
 struct VariableExpr : Expression {
   std::string name;
 
@@ -130,6 +149,19 @@ struct ListExpr : Expression {
 
   explicit ListExpr(std::vector<std::unique_ptr<Expression>> elems)
       : elements(std::move(elems)) {}
+};
+
+// List comprehension: [element_expr for var_name in iterable]
+// Compile-time only: iterable must be range(N) or a constant ListExpr.
+struct ListCompExpr : Expression {
+  std::unique_ptr<Expression> element;  // expression evaluated per iteration
+  std::string var_name;                 // loop variable name
+  std::unique_ptr<Expression> iterable; // range() call or ListExpr
+
+  ListCompExpr(std::unique_ptr<Expression> elem, std::string var,
+               std::unique_ptr<Expression> iter)
+      : element(std::move(elem)), var_name(std::move(var)),
+        iterable(std::move(iter)) {}
 };
 
 struct MemberAccessExpr : Expression {
@@ -286,6 +318,7 @@ struct WhileStmt : Statement {
 
 struct ForStmt : Statement {
   std::string var_name;
+  std::string var2_name;  // non-empty → tuple-unpack loop: "for var_name, var2_name in ..."
   std::unique_ptr<Expression> range_start;  // nullptr → 0 (range-based)
   std::unique_ptr<Expression> range_stop;   // nullptr → iterable-based
   std::unique_ptr<Expression> range_step;   // nullptr → 1
@@ -307,6 +340,47 @@ struct ForStmt : Statement {
         body(std::move(b)) {}
 };
 
+// Tuple unpacking assignment: a, b = expr
+// Compile-time only: RHS must be a tuple literal or a call to an @inline
+// function that returns a tuple literal.
+struct TupleUnpackStmt : Statement {
+  std::vector<std::string> targets;        // ["a", "b", ...]
+  std::unique_ptr<Expression> value;       // RHS expression
+
+  TupleUnpackStmt(std::vector<std::string> tgts,
+                  std::unique_ptr<Expression> val)
+      : targets(std::move(tgts)), value(std::move(val)) {}
+};
+
+// Tuple expression: (expr, expr, ...)
+// Only valid as RHS of TupleUnpackStmt or as return value of an @inline function.
+struct TupleExpr : Expression {
+  std::vector<std::unique_ptr<Expression>> elements;
+
+  explicit TupleExpr(std::vector<std::unique_ptr<Expression>> elems)
+      : elements(std::move(elems)) {}
+};
+
+// Walrus operator: name := expr — assigns and returns the value.
+struct WalrusExpr : Expression {
+  std::string var_name;
+  std::unique_ptr<Expression> value;
+  WalrusExpr(std::string name, std::unique_ptr<Expression> val)
+      : var_name(std::move(name)), value(std::move(val)) {}
+};
+
+// Ternary / conditional expression: true_val if condition else false_val
+struct TernaryExpr : Expression {
+  std::unique_ptr<Expression> true_val;
+  std::unique_ptr<Expression> condition;
+  std::unique_ptr<Expression> false_val;
+
+  TernaryExpr(std::unique_ptr<Expression> tv, std::unique_ptr<Expression> cond,
+              std::unique_ptr<Expression> fv)
+      : true_val(std::move(tv)), condition(std::move(cond)),
+        false_val(std::move(fv)) {}
+};
+
 struct ExprStmt : Statement {
   std::unique_ptr<Expression> expr;
 
@@ -324,6 +398,28 @@ struct BreakStmt : Statement {};
 struct ContinueStmt : Statement {};
 
 struct PassStmt : Statement {};
+
+// T2.2: with statement — calls __enter__ before body and __exit__ after.
+struct WithStmt : Statement {
+  std::unique_ptr<Expression> context_expr;
+  std::string as_name;  // optional, e.g. "with spi as s:"
+  std::unique_ptr<Statement> body;
+
+  WithStmt(std::unique_ptr<Expression> ctx, std::string name,
+           std::unique_ptr<Statement> b)
+      : context_expr(std::move(ctx)),
+        as_name(std::move(name)),
+        body(std::move(b)) {}
+};
+
+// T2.3: assert statement — compile-time check; stripped if true/runtime.
+struct AssertStmt : Statement {
+  std::unique_ptr<Expression> condition;
+  std::string message;
+
+  AssertStmt(std::unique_ptr<Expression> cond, std::string msg)
+      : condition(std::move(cond)), message(std::move(msg)) {}
+};
 
 struct RaiseStmt : Statement {
   std::string error_type;

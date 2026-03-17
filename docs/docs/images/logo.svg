@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32" width="120" height="32">
+  <text y="24" font-family="Inter, -apple-system, sans-serif" font-weight="700" font-size="28" letter-spacing="-0.5">
+    <tspan class="logo-py" fill="currentColor">Py</tspan><tspan class="logo-mcu" fill="#2a7cb5">MCU</tspan>
+  </text>
+</svg>

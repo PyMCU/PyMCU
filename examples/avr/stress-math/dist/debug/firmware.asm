@@ -240,7 +240,8 @@ L_58:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 255
-	INC	R24
+	STD	Y+7, R24
+	CLR	R24
 	MOV	R11, R24
 ; main.py:39:     uart.write(79)   # O (overflow)
 ; main.py:71: 
@@ -494,10 +495,8 @@ L_114:
 	LDI	R25, 255
 	STD	Y+11, R24
 	STD	Y+12, R25
-	LDD	R24, Y+11
-	LDD	R25, Y+12
-	SUBI	R24, 255
-	SBCI	R25, 255
+	CLR	R24
+	CLR	R25
 	MOV	R5, R24
 	MOV	R6, R25
 ; main.py:64:     uart.write(87)   # W

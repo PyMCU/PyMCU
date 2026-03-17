@@ -4,12 +4,9 @@
 .equ inline1_write_data = _stack_base + 0
 .equ inline2__delay_ms_avr_i = _stack_base + 1
 .equ tmp_29 = _stack_base + 7
-.equ tmp_32 = _stack_base + 8
-.equ tmp_33 = _stack_base + 9
-.equ tmp_34 = _stack_base + 10
-.equ tmp_36 = _stack_base + 11
-.equ tmp_37 = _stack_base + 12
-.equ tmp_38 = _stack_base + 13
+.equ tmp_31 = _stack_base + 8
+.equ tmp_32 = _stack_base + 9
+.equ tmp_33 = _stack_base + 10
 
 .org 0x0000
 	RJMP	main
@@ -100,32 +97,15 @@ L_BIT_DONE_7:
 	MOV	R16, R24
 	MOV	R6, R24
 ; main.py:32:         if cur == 0 and prev == 1:
-	CLR	R18
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_9
-	RJMP	L_SKIP_8
-L_BR_SKIP_9:
-	CLR	R24
-L_SKIP_8:
-	MOV	R16, R24
-	MOV	R24, R7
-	LDI	R18, 1
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_11
-	RJMP	L_SKIP_10
-L_BR_SKIP_11:
-	CLR	R24
-L_SKIP_10:
-	MOV	R17, R24
-	MOV	R24, R16
-	MOV	R18, R17
-	AND	R24, R18
-	TST	R24
-	BRNE	L_BR_SKIP_12
+	CPI	R24, 0
+	BREQ	L_BR_SKIP_8
 	RJMP	L_96
-L_BR_SKIP_12:
+L_BR_SKIP_8:
+	MOV	R24, R7
+	CPI	R24, 1
+	BREQ	L_BR_SKIP_9
+	RJMP	L_96
+L_BR_SKIP_9:
 ; main.py:33:             count = count + 1
 	MOV	R24, R4
 	MOV	R25, R5
@@ -135,51 +115,51 @@ L_BR_SKIP_12:
 	MOV	R5, R25
 ; main.py:34:             led.toggle()
 	SBIS	0x05, 5
-	RJMP	L_BIT_FALSE_13
+	RJMP	L_BIT_FALSE_10
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_14
-L_BIT_FALSE_13:
+	RJMP	L_BIT_DONE_11
+L_BIT_FALSE_10:
 	CLR	R24
-L_BIT_DONE_14:
+L_BIT_DONE_11:
 	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
 	MOV	R17, R24
 	TST	R24
-	BRNE	L_BR_SKIP_17
-	RJMP	L_BIT_WRITE_SKIP_15
-L_BR_SKIP_17:
+	BRNE	L_BR_SKIP_14
+	RJMP	L_BIT_WRITE_SKIP_12
+L_BR_SKIP_14:
 	SBI	0x05, 5
-	RJMP	L_BIT_WRITE_DONE_16
-L_BIT_WRITE_SKIP_15:
+	RJMP	L_BIT_WRITE_DONE_13
+L_BIT_WRITE_SKIP_12:
 	CBI	0x05, 5
-L_BIT_WRITE_DONE_16:
+L_BIT_WRITE_DONE_13:
 ; main.py:37:             uart.write((count >> 8) & 0xFF)
 	MOV	R24, R4
 	MOV	R25, R5
 	LDI	R18, 8
 	CLR	R19
-L_SHIFT_START_18:
+L_SHIFT_START_15:
 	TST	R18
-	BRNE	L_BR_SKIP_20
-	RJMP	L_SHIFT_DONE_19
-L_BR_SKIP_20:
+	BRNE	L_BR_SKIP_17
+	RJMP	L_SHIFT_DONE_16
+L_BR_SKIP_17:
 	LSR	R25
 	ROR	R24
 	DEC	R18
-	RJMP	L_SHIFT_START_18
-L_SHIFT_DONE_19:
-	STD	Y+13, R24
-	STD	Y+14, R25
-	LDD	R24, Y+13
+	RJMP	L_SHIFT_START_15
+L_SHIFT_DONE_16:
+	STD	Y+10, R24
+	STD	Y+11, R25
+	LDD	R24, Y+10
 	ANDI	R24, 255
 	STD	Y+0, R24
 L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_21
+	BREQ	L_BR_SKIP_18
 	RJMP	L_101
-L_BR_SKIP_21:
+L_BR_SKIP_18:
 	RJMP	L_100
 L_101:
 	LDD	R24, Y+0
@@ -191,9 +171,9 @@ L_101:
 L_104:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_22
+	BREQ	L_BR_SKIP_19
 	RJMP	L_105
-L_BR_SKIP_22:
+L_BR_SKIP_19:
 	RJMP	L_104
 L_105:
 	LDD	R24, Y+0
@@ -205,9 +185,9 @@ L_105:
 	LDI	R19, 3
 	CP	R24, R18
 	CPC	R25, R19
-	BREQ	L_BR_SKIP_23
+	BREQ	L_BR_SKIP_20
 	RJMP	L_106
-L_BR_SKIP_23:
+L_BR_SKIP_20:
 ; main.py:42:                 count = 0
 	CLR	R24
 	CLR	R25
@@ -217,9 +197,9 @@ L_BR_SKIP_23:
 L_109:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_24
+	BREQ	L_BR_SKIP_21
 	RJMP	L_110
-L_BR_SKIP_24:
+L_BR_SKIP_21:
 	RJMP	L_109
 L_110:
 	LDI	R24, 82
@@ -241,9 +221,9 @@ L_113:
 	CLR	R19
 	CP	R24, R18
 	CPC	R25, R19
-	BRLO	L_BR_SKIP_25
+	BRLO	L_BR_SKIP_22
 	RJMP	L_114
-L_BR_SKIP_25:
+L_BR_SKIP_22:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
 	LDD	R25, Y+2

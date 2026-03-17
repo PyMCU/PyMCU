@@ -3,13 +3,12 @@
 .equ _stack_base = RAMSTART
 .equ inline1_write_data = _stack_base + 0
 .equ inline2__delay_ms_avr_i = _stack_base + 1
-.equ tmp_18 = _stack_base + 19
-.equ tmp_19 = _stack_base + 20
+.equ tmp_18 = _stack_base + 17
+.equ tmp_19 = _stack_base + 18
 .equ tmp_28 = _stack_base + 12
 .equ tmp_31 = _stack_base + 13
 .equ tmp_44 = _stack_base + 14
 .equ tmp_47 = _stack_base + 15
-.equ tmp_54 = _stack_base + 16
 
 .org 0x0000
 	RJMP	main
@@ -198,9 +197,8 @@ L_68:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 171
-	MOV	R9, R24
-	MOV	R18, R9
-	EOR	R24, R18
+	MOV	R11, R24
+	CLR	R24
 	MOV	R6, R24
 ; main.py:30:     uart.write(66)  # B
 L_71:
@@ -325,6 +323,7 @@ L_104:
 	CLR	R24
 	MOV	R12, R24
 ; main.py:45:     if z < 1:
+	CLR	R24
 	CPI	R24, 1
 	BRLO	L_BR_SKIP_20
 	RJMP	L_106
@@ -367,32 +366,17 @@ L_118:
 	STS	0x00C6, R24
 	CLR	R24
 	LDI	R25, 128
-	MOV	R10, R24
-	MOV	R11, R25
-	LDI	R18, 15
-	CLR	R19
-L_SHIFT_START_24:
-	TST	R18
-	BRNE	L_BR_SKIP_26
-	RJMP	L_SHIFT_DONE_25
-L_BR_SKIP_26:
-	LSR	R25
-	ROR	R24
-	DEC	R18
-	RJMP	L_SHIFT_START_24
-L_SHIFT_DONE_25:
-	STD	Y+16, R24
-	STD	Y+17, R25
-	LDD	R24, Y+16
-	ANDI	R24, 1
+	MOV	R9, R24
+	MOV	R10, R25
+	LDI	R24, 1
 	MOV	R8, R24
 ; main.py:54:     uart.write(68)  # D
 L_121:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_27
+	BREQ	L_BR_SKIP_24
 	RJMP	L_122
-L_BR_SKIP_27:
+L_BR_SKIP_24:
 	RJMP	L_121
 L_122:
 	LDI	R24, 68
@@ -401,9 +385,9 @@ L_122:
 L_125:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_28
+	BREQ	L_BR_SKIP_25
 	RJMP	L_126
-L_BR_SKIP_28:
+L_BR_SKIP_25:
 	RJMP	L_125
 L_126:
 	LDI	R24, 58
@@ -416,9 +400,9 @@ L_126:
 L_129:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_29
+	BREQ	L_BR_SKIP_26
 	RJMP	L_130
-L_BR_SKIP_29:
+L_BR_SKIP_26:
 	RJMP	L_129
 L_130:
 	LDD	R24, Y+0
@@ -427,9 +411,9 @@ L_130:
 L_133:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_30
+	BREQ	L_BR_SKIP_27
 	RJMP	L_134
-L_BR_SKIP_30:
+L_BR_SKIP_27:
 	RJMP	L_133
 L_134:
 	LDI	R24, 10
@@ -448,9 +432,9 @@ L_139:
 	LDI	R19, 3
 	CP	R24, R18
 	CPC	R25, R19
-	BRLO	L_BR_SKIP_31
+	BRLO	L_BR_SKIP_28
 	RJMP	L_140
-L_BR_SKIP_31:
+L_BR_SKIP_28:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+1
 	LDD	R25, Y+2

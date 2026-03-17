@@ -1,0 +1,9 @@
+[project]
+name = "enum-state"
+version = "0.1.0"
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"

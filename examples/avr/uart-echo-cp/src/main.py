@@ -22,7 +22,6 @@
 import board
 import busio
 from digitalio import DigitalInOut, Direction
-from pymcu.types import uint8
 
 
 def main():
@@ -33,7 +32,7 @@ def main():
     print("READY")
 
     while True:
-        byte: uint8 = uart.read()
+        byte = uart.read()
         led.value = 1
         uart.write(byte)
         led.value = 0

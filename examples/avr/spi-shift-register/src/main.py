@@ -39,9 +39,8 @@ def main():
 
     while True:
         # --- Clock out one byte to 74HC595 ---
-        spi.select()          # RCLK low (shift mode)
-        spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
-        spi.deselect()        # RCLK rising edge (latch shift → output)
+        with spi:             # select() on enter, deselect() on exit
+            spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
 
         uart.write(pattern)
         delay_ms(120)

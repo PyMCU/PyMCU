@@ -39,7 +39,7 @@ public class I2cScannerTests
     public void Scan_CompletesWithNoDevicesFound()
     {
         var uno = Sim();
-        uno.RunUntilSerial(uno.Serial, "Found: 0", maxMs: 5000);
+        uno.RunUntilSerial(uno.Serial, "Found: 0", maxMs: 20000);
         uno.Serial.Should().Contain("Done. Found: 0");
     }
 

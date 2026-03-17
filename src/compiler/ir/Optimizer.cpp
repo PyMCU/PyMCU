@@ -324,9 +324,21 @@ void Optimizer::eliminate_dead_code(tacky::Function &func) {
 
 void Optimizer::propagate_copies(tacky::Function &func) {
   std::map<std::string, tacky::Val> temp_copies;
+  // Tracks variables whose value is a known compile-time constant
+  // (from Copy{Constant{N}, Variable{v}}).  Used to propagate constants into
+  // Binary/Unary operands so that fold_constants can then eliminate them.
+  std::map<std::string, int> var_consts;
+
+  // Helper: invalidate a variable in var_consts when it is written.
+  auto invalidate_var = [&](const tacky::Val &dst) {
+    if (auto *v = std::get_if<tacky::Variable>(&dst))
+      var_consts.erase(v->name);
+    else if (auto *t = std::get_if<tacky::Temporary>(&dst))
+      temp_copies.erase(t->name);
+  };
 
   for (auto &instr : func.body) {
-    // 1. Substitute uses of temporaries
+    // 1. Substitute uses of temporaries and known-constant variables
     std::visit(
         [&](auto &&arg) {
           using T = std::decay_t<decltype(arg)>;
@@ -334,6 +346,12 @@ void Optimizer::propagate_copies(tacky::Function &func) {
             if (auto t = std::get_if<tacky::Temporary>(&v)) {
               if (temp_copies.contains(t->name)) {
                 v = temp_copies[t->name];
+              }
+            } else if (auto var = std::get_if<tacky::Variable>(&v)) {
+              // Propagate known constant value into operand so fold_constants
+              // can collapse the instruction.
+              if (var_consts.contains(var->name)) {
+                v = tacky::Constant{var_consts.at(var->name)};
               }
             }
           };
@@ -390,11 +408,34 @@ void Optimizer::propagate_copies(tacky::Function &func) {
         },
         instr);
 
-    // 2. Track new copies to temporaries
+    // 2. Track new copies: Temporary → any Val, Variable → Constant only
     if (auto *copy = std::get_if<tacky::Copy>(&instr)) {
       if (auto t_dst = std::get_if<tacky::Temporary>(&copy->dst)) {
-        temp_copies[t_dst->name] = copy->src;
+        // If this Temporary has already been assigned on a different code path
+        // (multi-definition), don't propagate it — remove any existing entry so
+        // we don't substitute the wrong constant at a control-flow merge point.
+        if (temp_copies.contains(t_dst->name)) {
+          temp_copies.erase(t_dst->name);
+        } else {
+          temp_copies[t_dst->name] = copy->src;
+        }
+      } else if (auto v_dst = std::get_if<tacky::Variable>(&copy->dst)) {
+        if (auto c = std::get_if<tacky::Constant>(&copy->src)) {
+          var_consts[v_dst->name] = c->value;  // track constant assignment
+        } else {
+          var_consts.erase(v_dst->name);  // non-constant write: invalidate
+        }
       }
+    } else if (auto *aug = std::get_if<tacky::AugAssign>(&instr)) {
+      invalidate_var(aug->target);
+    } else if (auto *binary = std::get_if<tacky::Binary>(&instr)) {
+      invalidate_var(binary->dst);
+    } else if (auto *unary = std::get_if<tacky::Unary>(&instr)) {
+      invalidate_var(unary->dst);
+    } else if (std::get_if<tacky::Label>(&instr)) {
+      // Label = control-flow merge point: variable values may differ across
+      // incoming edges, so constants can no longer be assumed.
+      var_consts.clear();
     }
   }
 }

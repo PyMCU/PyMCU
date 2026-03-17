@@ -61,14 +61,19 @@ enum class TokenType {
   Class,
   Yield,
   Raise,
+  With,    // T2.2
+  Assert,  // T2.3
+  Is,      // is / is not
 
   // Literals
   Identifier,
   Number,
   String,
+  FString,  // f"..." — raw interior (without f"..."), parsed into FStringExpr
 
   // Structure & Types
   Colon,      // :
+  Walrus,     // :=
   Semicolon,  // ;
   Comma,      // ,
   Dot,        // .
@@ -82,6 +87,7 @@ enum class TokenType {
   Plus,      // +
   Minus,     // -
   Star,      // *
+  DoubleStar,  // **
   Slash,     // /
   FloorDiv,  // //
   Percent,   // %

@@ -105,3 +105,28 @@ def uart_write_str(s: const[str]):
     # Emit a UARTSendString IR instruction — AVR backend stores the string in
     # flash and sends it via a shared LPM+Z loop (much smaller than inline unrolling)
     uart_send_string(s)
+
+
+@inline
+def uart_available() -> uint8:
+    # Returns 1 if a byte is waiting in the UART receive buffer (RXC0, bit 7 of UCSR0A)
+    if UCSR0A[7]:
+        return 1
+    return 0
+
+
+@inline
+def uart_read_nb() -> uint8:
+    # Non-blocking read: if a byte is available (RXC0=1) return it, otherwise return 0.
+    if UCSR0A[7]:
+        result: uint8 = UDR0.value
+        return result
+    return 0
+
+
+@inline
+def uart_read_byte_isr() -> uint8:
+    # ISR-safe read: reads directly from UDR0 without polling UCSR0A.
+    # Call this only when invoked from a USART_RX interrupt (RXC0 is guaranteed set).
+    result: uint8 = UDR0.value
+    return result

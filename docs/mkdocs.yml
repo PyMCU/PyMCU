@@ -1,0 +1,97 @@
+site_name: PyMCU
+site_description: Python-to-MCU compiler for bare-metal microcontrollers
+site_url: https://pymcu.dev
+repo_url: https://github.com/pymcu/pymcu
+repo_name: pymcu/pymcu
+edit_uri: edit/main/docs/docs/
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: images/logo.svg
+  favicon: images/favicon.svg
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - navigation.path
+    - search.suggest
+    - search.highlight
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter
+    code: Fira Code
+
+extra_css:
+  - stylesheets/custom.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.inlinehilite
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Language:
+    - Reference: language-reference.md
+    - Limitations: limitations.md
+    - Roadmap: roadmap.md
+  - Driver CLI: driver.md
+  - Standard Library:
+    - Overview: stdlib/index.md
+    - GPIO (Pin): stdlib/gpio.md
+    - UART: stdlib/uart.md
+    - ADC: stdlib/adc.md
+    - Timer: stdlib/timer.md
+    - PWM: stdlib/pwm.md
+    - SPI: stdlib/spi.md
+    - I2C: stdlib/i2c.md
+    - EEPROM: stdlib/eeprom.md
+    - Watchdog: stdlib/watchdog.md
+    - Sleep / Power: stdlib/power.md
+    - Time / Delays: stdlib/time.md
+    - Drivers:
+      - DHT11: stdlib/drivers/dht11.md
+  - Flavors:
+    - CircuitPython: compat/circuitpython.md
+    - MicroPython: compat/micropython.md
+  - Examples:
+    - Gallery: examples/index.md
+    - Blink: examples/blink.md
+    - UART Echo: examples/uart-echo.md
+    - Sensor Dashboard: examples/sensor-dashboard.md
+    - Tuple Multi-Return: examples/tuple-ops.md
+    - ZCA Inheritance: examples/inheritance-zca.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md

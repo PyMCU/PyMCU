@@ -65,3 +65,12 @@ class SPI:
             case "avr":
                 from pymcu.hal._spi.avr import spi_transfer
                 spi_transfer(data)
+
+    # Context manager support: `with spi:` auto-selects/deselects the device
+    @inline
+    def __enter__(self: uint8):
+        self.select()
+
+    @inline
+    def __exit__(self: uint8):
+        self.deselect()

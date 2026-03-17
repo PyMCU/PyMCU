@@ -110,3 +110,32 @@ class UART:
                 from pymcu.hal._uart.avr import uart_write_decimal_u8
                 uart_write_decimal_u8(value)
         self.write(10)  # '\n'
+
+    @inline
+    def available(self: uint8) -> uint8:
+        # Returns 1 if a byte is waiting in the UART receive buffer (RXC bit set), 0 otherwise.
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_available
+                return uart_available()
+        return 0
+
+    @inline
+    def read_nb(self: uint8) -> uint8:
+        # Non-blocking read: returns the received byte if one is available, else 0.
+        # Checks the RXC0 bit (bit 7 of UCSR0A) without blocking.
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_read_nb
+                return uart_read_nb()
+        return 0
+
+    @inline
+    def read_byte_isr(self: uint8) -> uint8:
+        # ISR-safe read: reads the byte from the UART data register directly.
+        # Must only be called when RXC0 is set (e.g. from inside @interrupt USART_RX_vect).
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_read_byte_isr
+                return uart_read_byte_isr()
+        return 0

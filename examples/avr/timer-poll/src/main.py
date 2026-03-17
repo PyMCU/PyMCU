@@ -13,7 +13,7 @@
 from pymcu.types import uint8, uint16
 from pymcu.hal.gpio import Pin
 from pymcu.hal.uart import UART
-from pymcu.hal.timer import Timer0
+from pymcu.hal.timer import Timer
 from pymcu.chips.atmega328p import TIFR0
 
 
@@ -21,8 +21,8 @@ def main():
     led  = Pin("PB5", Pin.OUT)
     uart = UART(9600)
 
-    # Initialise Timer0 with prescaler 256 (starts counting immediately)
-    timer = Timer0(256)
+    # Timer(0, prescaler=256) — Timer0, 8-bit, 256 prescaler
+    timer = Timer(0, 256)
     timer.clear()
 
     ticks: uint16 = 0

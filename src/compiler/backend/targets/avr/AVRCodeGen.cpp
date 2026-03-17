@@ -609,27 +609,44 @@ void AVRCodeGen::compile_variant(const tacky::JumpIfLessOrEqual &arg) {
 }
 
 void AVRCodeGen::compile_variant(const tacky::JumpIfGreaterThan &arg) {
+  // Unsigned greater-than: a > b.
+  // AVRA does not have a BRHI mnemonic. Two strategies:
+  //   Const b, val < max: compare against val+1 and use BRSH  (a >= val+1 == a > val)
+  //   Variable b:         CMP then BREQ(skip) + BRSH(target)
   DataType type = get_val_type(arg.src1);
   load_into_reg(arg.src1, "R24", type);
 
   if (const auto c = std::get_if<tacky::Constant>(&arg.src2)) {
     int val = c->value;
-    if (size_of(type) == 2) {
-        emit("LDI", "R18", std::format("{}", val & 0xFF));
-        emit("LDI", "R19", std::format("{}", (val >> 8) & 0xFF));
-        emit("CP", "R24", "R18");
+    int max_val = (size_of(type) == 2) ? 0xFFFF : 0xFF;
+    if (val < max_val) {
+      // Promote to val+1 so we can use BRSH (>=) which equals > val
+      int cmp_val = val + 1;
+      if (size_of(type) == 2) {
+        emit("LDI", "R18", std::format("{}", cmp_val & 0xFF));
+        emit("LDI", "R19", std::format("{}", (cmp_val >> 8) & 0xFF));
+        emit("CP",  "R24", "R18");
         emit("CPC", "R25", "R19");
-    } else {
-        emit("CPI", "R24", std::format("{}", val & 0xFF));
+      } else {
+        emit("CPI", "R24", std::format("{}", cmp_val & 0xFF));
+      }
+      emit_branch("BRSH", arg.target);
+      return;
     }
-  } else {
-    load_into_reg(arg.src2, "R18", type);
-    emit("CP", "R24", "R18");
-    if (size_of(type) == 2) {
-        emit("CPC", "R25", "R19");
-    }
+    // val == max: a > max is always false for the type; no branch emitted
+    return;
   }
-  emit("BRHI", arg.target);
+
+  // Variable src2: compare, skip branch if equal, take branch if higher
+  load_into_reg(arg.src2, "R18", type);
+  emit("CP", "R24", "R18");
+  if (size_of(type) == 2) {
+    emit("CPC", "R25", "R19");
+  }
+  std::string skip = make_label("L_BRHI_SKIP");
+  emit("BREQ", skip);
+  emit_branch("BRSH", arg.target);
+  emit_label(skip);
 }
 
 void AVRCodeGen::compile_variant(const tacky::JumpIfGreaterOrEqual &arg) {

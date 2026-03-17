@@ -4,12 +4,6 @@
 .equ inline2__delay_ms_avr_i = _stack_base + 0
 .equ tmp_59 = _stack_base + 7
 .equ tmp_61 = _stack_base + 8
-.equ tmp_64 = _stack_base + 9
-.equ tmp_65 = _stack_base + 10
-.equ tmp_66 = _stack_base + 11
-.equ tmp_70 = _stack_base + 12
-.equ tmp_71 = _stack_base + 13
-.equ tmp_72 = _stack_base + 14
 
 .org 0x0000
 	RJMP	main
@@ -210,40 +204,23 @@ L_BIT_DONE_27:
 	MOV	R6, R24
 ; main.py:39:         if cur_a == 0 and prev_a == 1:
 	MOV	R24, R5
-	CLR	R18
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_29
-	RJMP	L_SKIP_28
-L_BR_SKIP_29:
-	CLR	R24
-L_SKIP_28:
-	MOV	R16, R24
-	MOV	R24, R7
-	LDI	R18, 1
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_31
-	RJMP	L_SKIP_30
-L_BR_SKIP_31:
-	CLR	R24
-L_SKIP_30:
-	MOV	R17, R24
-	MOV	R24, R16
-	MOV	R18, R17
-	AND	R24, R18
-	TST	R24
-	BRNE	L_BR_SKIP_32
+	CPI	R24, 0
+	BREQ	L_BR_SKIP_28
 	RJMP	L_286
-L_BR_SKIP_32:
+L_BR_SKIP_28:
+	MOV	R24, R7
+	CPI	R24, 1
+	BREQ	L_BR_SKIP_29
+	RJMP	L_286
+L_BR_SKIP_29:
 ; main.py:40:             step = step + 1
 	INC	R4
 	MOV	R24, R4
 ; main.py:41:             if step == 6:
 	CPI	R24, 6
-	BREQ	L_BR_SKIP_33
+	BREQ	L_BR_SKIP_30
 	RJMP	L_287
-L_BR_SKIP_33:
+L_BR_SKIP_30:
 ; main.py:42:                 step = 0
 	CLR	R24
 	MOV	R4, R24
@@ -251,32 +228,15 @@ L_287:
 L_286:
 ; main.py:45:         if cur_b == 0 and prev_b == 1:
 	MOV	R24, R6
-	CLR	R18
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_35
-	RJMP	L_SKIP_34
-L_BR_SKIP_35:
-	CLR	R24
-L_SKIP_34:
-	MOV	R16, R24
-	MOV	R24, R8
-	LDI	R18, 1
-	CP	R24, R18
-	LDI	R24, 1
-	BRNE	L_BR_SKIP_37
-	RJMP	L_SKIP_36
-L_BR_SKIP_37:
-	CLR	R24
-L_SKIP_36:
-	MOV	R17, R24
-	MOV	R24, R16
-	MOV	R18, R17
-	AND	R24, R18
-	TST	R24
-	BRNE	L_BR_SKIP_38
+	CPI	R24, 0
+	BREQ	L_BR_SKIP_31
 	RJMP	L_288
-L_BR_SKIP_38:
+L_BR_SKIP_31:
+	MOV	R24, R8
+	CPI	R24, 1
+	BREQ	L_BR_SKIP_32
+	RJMP	L_288
+L_BR_SKIP_32:
 ; main.py:46:             step = 0
 	CLR	R24
 	MOV	R4, R24
@@ -301,54 +261,54 @@ L_288:
 	CBI	0x05, 5
 	MOV	R24, R4
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_39
+	BREQ	L_BR_SKIP_33
 	RJMP	L_296
-L_BR_SKIP_39:
+L_BR_SKIP_33:
 ; main.py:61:                 led0.high()
 	SBI	0x05, 0
 	RJMP	L_295
 L_296:
 	MOV	R24, R4
 	CPI	R24, 1
-	BREQ	L_BR_SKIP_40
+	BREQ	L_BR_SKIP_34
 	RJMP	L_298
-L_BR_SKIP_40:
+L_BR_SKIP_34:
 ; main.py:63:                 led1.high()
 	SBI	0x05, 1
 	RJMP	L_295
 L_298:
 	MOV	R24, R4
 	CPI	R24, 2
-	BREQ	L_BR_SKIP_41
+	BREQ	L_BR_SKIP_35
 	RJMP	L_300
-L_BR_SKIP_41:
+L_BR_SKIP_35:
 ; main.py:65:                 led2.high()
 	SBI	0x05, 2
 	RJMP	L_295
 L_300:
 	MOV	R24, R4
 	CPI	R24, 3
-	BREQ	L_BR_SKIP_42
+	BREQ	L_BR_SKIP_36
 	RJMP	L_302
-L_BR_SKIP_42:
+L_BR_SKIP_36:
 ; main.py:67:                 led3.high()
 	SBI	0x05, 3
 	RJMP	L_295
 L_302:
 	MOV	R24, R4
 	CPI	R24, 4
-	BREQ	L_BR_SKIP_43
+	BREQ	L_BR_SKIP_37
 	RJMP	L_304
-L_BR_SKIP_43:
+L_BR_SKIP_37:
 ; main.py:69:                 led4.high()
 	SBI	0x05, 4
 	RJMP	L_295
 L_304:
 	MOV	R24, R4
 	CPI	R24, 5
-	BREQ	L_BR_SKIP_44
+	BREQ	L_BR_SKIP_38
 	RJMP	L_306
-L_BR_SKIP_44:
+L_BR_SKIP_38:
 ; main.py:71:                 led5.high()
 	SBI	0x05, 5
 	RJMP	L_295
@@ -360,9 +320,9 @@ L_295:
 L_310:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_45
+	BREQ	L_BR_SKIP_39
 	RJMP	L_311
-L_BR_SKIP_45:
+L_BR_SKIP_39:
 	RJMP	L_310
 L_311:
 ; main.py:71:                 led5.high()
@@ -381,9 +341,9 @@ L_314:
 	CLR	R19
 	CP	R24, R18
 	CPC	R25, R19
-	BRLO	L_BR_SKIP_46
+	BRLO	L_BR_SKIP_40
 	RJMP	L_315
-L_BR_SKIP_46:
+L_BR_SKIP_40:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+0
 	LDD	R25, Y+1

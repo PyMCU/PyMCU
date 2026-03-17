@@ -4,7 +4,8 @@
 .equ inline1_write_data = _stack_base + 0
 .equ inline2_i2c_ping_ack = _stack_base + 1
 .equ inline2_i2c_ping_status = _stack_base + 2
-.equ tmp_27 = _stack_base + 7
+.equ tmp_21 = _stack_base + 7
+.equ tmp_27 = _stack_base + 8
 
 .org 0x0000
 main:
@@ -127,6 +128,8 @@ L_54:
 	RJMP	L_55
 L_BR_SKIP_6:
 ; main.py:53: 
+	LDI	R24, 1
+	MOV	R16, R24
 	RJMP	L_48
 L_55:
 	RJMP	L_51
@@ -135,8 +138,10 @@ L_52:
 	LDI	R24, 148
 	STS	0x00BC, R24
 L_51:
-L_48:
 	CLR	R24
+	MOV	R16, R24
+L_48:
+	MOV	R24, R16
 	TST	R24
 	BRNE	L_BR_SKIP_7
 	RJMP	L_46

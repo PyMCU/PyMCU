@@ -36,12 +36,19 @@
 
 #include "../common/Errors.h"
 #include "Ast.h"
+#include "Lexer.h"
 
 Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
 
 const Token &Parser::peek() const {
   if (pos >= tokens.size()) return tokens.back();
   return tokens[pos];
+}
+
+const Token &Parser::peek_next() const {
+  size_t next = pos + 1;
+  if (next >= tokens.size()) return tokens.back();
+  return tokens[next];
 }
 
 const Token &Parser::previous() const {
@@ -359,6 +366,10 @@ std::unique_ptr<Statement> Parser::parseStatement() {
 
   if (check(TokenType::Raise)) return parseRaiseStatement();
 
+  if (check(TokenType::With)) return parseWithStatement();    // T2.2
+
+  if (check(TokenType::Assert)) return parseAssertStatement(); // T2.3
+
   return parseSimpleStatement();
 }
 
@@ -388,6 +399,43 @@ std::unique_ptr<Statement> Parser::parseRaiseStatement() {
   consume(TokenType::RParen, "Expected ')' after error message");
   consumeStatementEnd();
   auto stmt = std::make_unique<RaiseStmt>(error_type, message);
+  stmt->line = line;
+  return stmt;
+}
+
+// T2.2: with context_expr [as name]: body
+std::unique_ptr<Statement> Parser::parseWithStatement() {
+  int line = peek().line;
+  consume(TokenType::With, "Expected 'with'");
+  auto ctx = parseExpression();
+  std::string as_name;
+  if (match(TokenType::As)) {
+    as_name = consume(TokenType::Identifier, "Expected name after 'as'").value;
+  }
+  consume(TokenType::Colon, "Expected ':' after 'with' header");
+  consumeStatementEnd();
+  auto body = parseBlock();
+  auto stmt = std::make_unique<WithStmt>(std::move(ctx), as_name, std::move(body));
+  stmt->line = line;
+  return stmt;
+}
+
+// T2.3: assert condition [, message]
+std::unique_ptr<Statement> Parser::parseAssertStatement() {
+  int line = peek().line;
+  consume(TokenType::Assert, "Expected 'assert'");
+  auto cond = parseExpression();
+  std::string message;
+  if (match(TokenType::Comma)) {
+    if (check(TokenType::String)) {
+      message = advance().value;
+    } else {
+      // Accept any expression as message (stringify it as empty for now)
+      parseExpression();
+    }
+  }
+  consumeStatementEnd();
+  auto stmt = std::make_unique<AssertStmt>(std::move(cond), message);
   stmt->line = line;
   return stmt;
 }
@@ -563,6 +611,14 @@ std::unique_ptr<Statement> Parser::parseForStatement() {
   int line = peek().line;
   consume(TokenType::For, "Expected 'for'");
   Token var_tok = consume(TokenType::Identifier, "Expected loop variable");
+
+  // Check for tuple-unpack loop variables: for i, x in enumerate(...)
+  std::string var2_name;
+  if (match(TokenType::Comma)) {
+    Token var2_tok = consume(TokenType::Identifier, "Expected second loop variable");
+    var2_name = var2_tok.value;
+  }
+
   consume(TokenType::In, "Expected 'in'");
 
   // Check for range()-based vs general iterable
@@ -602,6 +658,7 @@ std::unique_ptr<Statement> Parser::parseForStatement() {
     auto stmt = std::make_unique<ForStmt>(
         var_tok.value, std::move(start), std::move(stop),
         std::move(step), std::move(body));
+    stmt->var2_name = var2_name;
     stmt->line = line;
     return stmt;
   }
@@ -614,6 +671,7 @@ std::unique_ptr<Statement> Parser::parseForStatement() {
 
   auto stmt = std::make_unique<ForStmt>(
       var_tok.value, std::move(iterable), std::move(body));
+  stmt->var2_name = var2_name;
   stmt->line = line;
   return stmt;
 }
@@ -652,6 +710,24 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
   int line = peek().line;
   auto expr = parseExpression();
 
+  // Tuple-unpack assignment: a, b = expr  (comma immediately after first ident)
+  if (check(TokenType::Comma)) {
+    if (const auto *first_var = dynamic_cast<const VariableExpr *>(expr.get())) {
+      std::vector<std::string> targets;
+      targets.push_back(first_var->name);
+      while (match(TokenType::Comma)) {
+        Token t = consume(TokenType::Identifier, "Expected variable name in tuple unpack");
+        targets.push_back(t.value);
+      }
+      consume(TokenType::Equal, "Expected '=' in tuple unpack assignment");
+      auto value = parseExpression();
+      consumeStatementEnd();
+      auto stmt = std::make_unique<TupleUnpackStmt>(std::move(targets), std::move(value));
+      stmt->line = line;
+      return stmt;
+    }
+  }
+
   if (match(TokenType::Colon)) {
     const auto varExpr = dynamic_cast<VariableExpr *>(expr.get());
     if (!varExpr) error("Only simple variables can be annotated with types");
@@ -679,6 +755,45 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
 
   if (match(TokenType::Equal)) {
     auto value = parseExpression();
+    // Chained assignment: a = b = 0
+    // Collect all targets; the final expression is the RHS.
+    if (check(TokenType::Equal)) {
+      std::vector<std::unique_ptr<Expression>> targets;
+      targets.push_back(std::move(expr));
+      std::unique_ptr<Expression> rhs = std::move(value);
+      while (match(TokenType::Equal)) {
+        targets.push_back(std::move(rhs));
+        rhs = parseExpression();
+      }
+      consumeStatementEnd();
+      // Emit as a Block: first assign innermost target, then copy to the rest.
+      // For simplicity: assign innermost first, then subsequent targets = innermost.
+      auto block = std::make_unique<Block>();
+      // targets[0] = leftmost (a), targets.back() = innermost (b in a=b=0)
+      // innermost = rhs; rest = innermost variable
+      auto &inner = targets.back();
+      // inner_name for subsequent assignments
+      std::string inner_name;
+      if (auto *ve = dynamic_cast<VariableExpr *>(inner.get())) {
+        inner_name = ve->name;
+      }
+      // assign innermost = rhs
+      auto inner_stmt = std::make_unique<AssignStmt>(
+          std::move(inner), std::move(rhs));
+      inner_stmt->line = line;
+      block->statements.push_back(std::move(inner_stmt));
+      // assign each remaining target = innermost_name
+      if (!inner_name.empty()) {
+        for (int ci = (int)targets.size() - 2; ci >= 0; --ci) {
+          auto chain_stmt = std::make_unique<AssignStmt>(
+              std::move(targets[ci]),
+              std::make_unique<VariableExpr>(inner_name));
+          chain_stmt->line = line;
+          block->statements.push_back(std::move(chain_stmt));
+        }
+      }
+      return block;
+    }
     consumeStatementEnd();
     auto stmt = std::make_unique<AssignStmt>(std::move(expr), std::move(value));
     stmt->line = line;
@@ -719,7 +834,17 @@ std::unique_ptr<Expression> Parser::parseExpression() {
     auto value = parseExpression();
     return std::make_unique<YieldExpr>(std::move(value));
   }
-  return parseLogicalOr();
+  // Ternary: true_val if condition else false_val
+  // Parse left (true_val) first, then check for 'if' keyword.
+  auto left = parseLogicalOr();
+  if (match(TokenType::If)) {
+    auto condition = parseExpression();
+    consume(TokenType::Else, "Expected 'else' in ternary expression");
+    auto false_val = parseExpression();
+    return std::make_unique<TernaryExpr>(std::move(left), std::move(condition),
+                                         std::move(false_val));
+  }
+  return left;
 }
 
 std::unique_ptr<Expression> Parser::parseLogicalOr() {
@@ -743,7 +868,9 @@ std::unique_ptr<Expression> Parser::parseLogicalAnd() {
 }
 
 std::unique_ptr<Expression> Parser::parseLogicalNot() {
-  if (match(TokenType::Not)) {
+  // "not in" is a binary operator — don't consume "not" when followed by "in"
+  if (check(TokenType::Not) && peek_next().type != TokenType::In) {
+    advance();  // consume "not"
     auto operand = parseLogicalNot();
     return std::make_unique<UnaryExpr>(UnaryOp::Not, std::move(operand));
   }
@@ -755,31 +882,52 @@ std::unique_ptr<Expression> Parser::parseComparison() {
 
   while (check(TokenType::EqualEqual) || check(TokenType::BangEqual) ||
          check(TokenType::Less) || check(TokenType::LessEqual) ||
-         check(TokenType::Greater) || check(TokenType::GreaterEqual)) {
-    const Token opToken = advance();
+         check(TokenType::Greater) || check(TokenType::GreaterEqual) ||
+         check(TokenType::In) || check(TokenType::Is) ||
+         (check(TokenType::Not) && peek_next().type == TokenType::In)) {
     BinaryOp op;
 
-    switch (opToken.type) {
-      case TokenType::EqualEqual:
-        op = BinaryOp::Equal;
-        break;
-      case TokenType::BangEqual:
-        op = BinaryOp::NotEqual;
-        break;
-      case TokenType::Less:
-        op = BinaryOp::Less;
-        break;
-      case TokenType::LessEqual:
-        op = BinaryOp::LessEq;
-        break;
-      case TokenType::Greater:
-        op = BinaryOp::Greater;
-        break;
-      case TokenType::GreaterEqual:
-        op = BinaryOp::GreaterEq;
-        break;
-      default:
-        break;  // Unreachable
+    if (check(TokenType::Not)) {
+      // "not in"
+      advance();  // consume "not"
+      consume(TokenType::In, "Expected 'in' after 'not'");
+      op = BinaryOp::NotIn;
+    } else if (check(TokenType::Is)) {
+      advance();  // consume "is"
+      if (check(TokenType::Not)) {
+        advance();  // consume "not"
+        op = BinaryOp::IsNot;
+      } else {
+        op = BinaryOp::Is;
+      }
+    } else if (check(TokenType::In)) {
+      advance();  // consume "in"
+      op = BinaryOp::In;
+    } else {
+      const Token opToken = advance();
+      switch (opToken.type) {
+        case TokenType::EqualEqual:
+          op = BinaryOp::Equal;
+          break;
+        case TokenType::BangEqual:
+          op = BinaryOp::NotEqual;
+          break;
+        case TokenType::Less:
+          op = BinaryOp::Less;
+          break;
+        case TokenType::LessEqual:
+          op = BinaryOp::LessEq;
+          break;
+        case TokenType::Greater:
+          op = BinaryOp::Greater;
+          break;
+        case TokenType::GreaterEqual:
+          op = BinaryOp::GreaterEq;
+          break;
+        default:
+          op = BinaryOp::Equal;  // Unreachable
+          break;
+      }
     }
 
     auto right = parseBitwiseOr();
@@ -843,7 +991,7 @@ std::unique_ptr<Expression> Parser::parseAdditive() {
 }
 
 std::unique_ptr<Expression> Parser::parseMultiplicative() {
-  auto left = parseUnary();
+  auto left = parsePower();
   while (check(TokenType::Star) || check(TokenType::Slash) ||
          check(TokenType::FloorDiv) || check(TokenType::Percent)) {
     const Token opToken = advance();
@@ -857,8 +1005,20 @@ std::unique_ptr<Expression> Parser::parseMultiplicative() {
     else
       op = BinaryOp::Mod;
 
-    auto right = parseUnary();
+    auto right = parsePower();
     left = std::make_unique<BinaryExpr>(std::move(left), op, std::move(right));
+  }
+  return left;
+}
+
+// parsePower: right-associative ** operator (compile-time constant fold only)
+std::unique_ptr<Expression> Parser::parsePower() {
+  auto left = parseUnary();
+  if (check(TokenType::DoubleStar)) {
+    advance();
+    auto right = parsePower();  // right-associative
+    left = std::make_unique<BinaryExpr>(std::move(left), BinaryOp::Pow,
+                                        std::move(right));
   }
   return left;
 }
@@ -926,13 +1086,81 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 std::unique_ptr<Expression> Parser::parsePrimary() {
   if (match(TokenType::True)) return std::make_unique<BooleanLiteral>(true);
   if (match(TokenType::False)) return std::make_unique<BooleanLiteral>(false);
+  if (match(TokenType::None)) return std::make_unique<IntegerLiteral>(-1);
 
   if (match(TokenType::Identifier)) {
-    return std::make_unique<VariableExpr>(previous().value);
+    Token t = previous();
+    // Walrus operator: name := expr
+    if (check(TokenType::Walrus)) {
+      advance();  // consume :=
+      auto val = parseExpression();
+      return std::make_unique<WalrusExpr>(t.value, std::move(val));
+    }
+    return std::make_unique<VariableExpr>(t.value);
   }
 
   if (match(TokenType::String)) {
     return std::make_unique<StringLiteral>(previous().value);
+  }
+
+  if (match(TokenType::FString)) {
+    // Parse f-string raw interior into a list of literal and expression parts.
+    // Raw interior example: "arch=" followed by {__CHIP__.arch}
+    const std::string &raw = previous().value;
+    std::vector<FStringPart> parts;
+    size_t i = 0;
+    while (i < raw.size()) {
+      if (raw[i] == '{') {
+        // Find the matching closing brace (no nesting).
+        size_t j = i + 1;
+        while (j < raw.size() && raw[j] != '}') j++;
+        if (j >= raw.size()) {
+          error("Unterminated '{' in f-string");
+        }
+        std::string expr_src = raw.substr(i + 1, j - i - 1);
+        // Parse the inner expression using a sub-Lexer + sub-Parser.
+        Lexer sub_lex(expr_src);
+        std::vector<Token> sub_tokens = sub_lex.tokenize();
+        Parser sub_parser(sub_tokens);
+        auto inner_expr = sub_parser.parseExpression_public();
+        FStringPart part;
+        part.is_expr = true;
+        part.expr = std::move(inner_expr);
+        parts.push_back(std::move(part));
+        i = j + 1;
+      } else if (raw[i] == '}') {
+        error("Unexpected '}' in f-string");
+      } else {
+        // Collect literal text until next '{' or end.
+        std::string text;
+        while (i < raw.size() && raw[i] != '{' && raw[i] != '}') {
+          // Process escape sequences in literal text.
+          if (raw[i] == '\\' && i + 1 < raw.size()) {
+            char esc = raw[i + 1];
+            switch (esc) {
+              case 'n':  text += '\n'; break;
+              case 't':  text += '\t'; break;
+              case 'r':  text += '\r'; break;
+              case '0':  text += '\0'; break;
+              case '\\': text += '\\'; break;
+              case '\'': text += '\''; break;
+              case '"':  text += '"';  break;
+              default:   text += '\\'; text += esc; break;
+            }
+            i += 2;
+          } else {
+            text += raw[i++];
+          }
+        }
+        if (!text.empty()) {
+          FStringPart part;
+          part.is_expr = false;
+          part.text = std::move(text);
+          parts.push_back(std::move(part));
+        }
+      }
+    }
+    return std::make_unique<FStringExpr>(std::move(parts));
   }
 
   if (match(TokenType::Number)) {
@@ -972,17 +1200,51 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   }
 
   if (match(TokenType::LParen)) {
-    auto expr = parseExpression();
+    // Empty tuple: ()  — not valid in pymcu, but handle gracefully
+    if (check(TokenType::RParen)) {
+      advance();
+      return std::make_unique<TupleExpr>(
+          std::vector<std::unique_ptr<Expression>>{});
+    }
+    auto first = parseExpression();
+    if (check(TokenType::Comma)) {
+      // Tuple literal: (expr, expr, ...)
+      std::vector<std::unique_ptr<Expression>> elems;
+      elems.push_back(std::move(first));
+      while (match(TokenType::Comma)) {
+        if (check(TokenType::RParen)) break;  // trailing comma allowed
+        elems.push_back(parseExpression());
+      }
+      consume(TokenType::RParen, "Expected ')'");
+      return std::make_unique<TupleExpr>(std::move(elems));
+    }
     consume(TokenType::RParen, "Expected ')'");
-    return expr;
+    return first;
   }
 
   if (match(TokenType::LBracket)) {
+    // Empty list
+    if (check(TokenType::RBracket)) {
+      advance();
+      return std::make_unique<ListExpr>(
+          std::vector<std::unique_ptr<Expression>>{});
+    }
+    // Parse first element; decide if this is a comprehension or a literal.
+    auto first = parseExpression();
+    if (match(TokenType::For)) {
+      // List comprehension: [first for var in iterable]
+      Token var_tok = consume(TokenType::Identifier, "Expected loop variable");
+      consume(TokenType::In, "Expected 'in'");
+      auto iterable = parseExpression();
+      consume(TokenType::RBracket, "Expected ']'");
+      return std::make_unique<ListCompExpr>(std::move(first), var_tok.value,
+                                            std::move(iterable));
+    }
+    // Regular list literal
     std::vector<std::unique_ptr<Expression>> elems;
-    if (!check(TokenType::RBracket)) {
-      do {
-        elems.push_back(parseExpression());
-      } while (match(TokenType::Comma));
+    elems.push_back(std::move(first));
+    while (match(TokenType::Comma)) {
+      elems.push_back(parseExpression());
     }
     consume(TokenType::RBracket, "Expected ']'");
     return std::make_unique<ListExpr>(std::move(elems));

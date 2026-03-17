@@ -13,10 +13,10 @@
 .org 0x0000
 	RJMP	main
 set_bit:
-	MOV	R10, R24
-	MOV	R9, R22
+	MOV	R6, R24
+	MOV	R5, R22
 	LDI	R24, 1
-	MOV	R18, R9
+	MOV	R18, R5
 L_SHIFT_START_0:
 	TST	R18
 	BRNE	L_BR_SKIP_2
@@ -27,7 +27,7 @@ L_BR_SKIP_2:
 	RJMP	L_SHIFT_START_0
 L_SHIFT_DONE_1:
 	MOV	R11, R24
-	MOV	R24, R10
+	MOV	R24, R6
 	MOV	R18, R11
 	OR	R24, R18
 	MOV	R12, R24
@@ -76,83 +76,83 @@ L_34:
 	STS	0x00C6, R24
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 	CLR	R24
-	MOV	R5, R24
-	CLR	R24
-	MOV	R6, R24
-	CLR	R24
 	MOV	R7, R24
 	CLR	R24
 	MOV	R8, R24
+	CLR	R24
+	MOV	R9, R24
+	CLR	R24
+	MOV	R10, R24
 	CLR	R24
 	MOV	R4, R24
 ; main.py:49:     while True:
 L_35:
 ; main.py:51:         frame[0] = 0
 	CLR	R24
-	MOV	R5, R24
+	MOV	R7, R24
 ; main.py:52:         frame[1] = 0
 	CLR	R24
-	MOV	R6, R24
+	MOV	R8, R24
 ; main.py:53:         frame[2] = 0
 	CLR	R24
-	MOV	R7, R24
+	MOV	R9, R24
 ; main.py:54:         frame[3] = 0
 	CLR	R24
-	MOV	R8, R24
+	MOV	R10, R24
 ; main.py:57:         frame[0] = set_bit(frame[0], col & 0x07)
 	MOV	R24, R4
 	ANDI	R24, 7
 	MOV	R16, R24
-	MOV	R24, R5
-	MOV	R10, R24
+	CLR	R24
+	MOV	R6, R24
 	MOV	R24, R16
-	MOV	R9, R24
-	MOV	R24, R5
+	MOV	R5, R24
+	CLR	R24
 	MOV	R22, R16
 	RCALL	set_bit
-	MOV	R5, R24
+	MOV	R7, R24
 ; main.py:58:         frame[1] = set_bit(frame[1], (col + 1) & 0x07)
 	MOV	R24, R4
 	INC	R24
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	MOV	R24, R6
-	MOV	R10, R24
+	CLR	R24
+	MOV	R6, R24
 	MOV	R24, R17
-	MOV	R9, R24
-	MOV	R24, R6
+	MOV	R5, R24
+	CLR	R24
 	MOV	R22, R17
 	RCALL	set_bit
-	MOV	R6, R24
+	MOV	R8, R24
 ; main.py:59:         frame[2] = set_bit(frame[2], (col + 2) & 0x07)
 	MOV	R24, R4
 	SUBI	R24, 254
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	MOV	R24, R7
-	MOV	R10, R24
+	CLR	R24
+	MOV	R6, R24
 	MOV	R24, R17
-	MOV	R9, R24
-	MOV	R24, R7
+	MOV	R5, R24
+	CLR	R24
 	MOV	R22, R17
 	RCALL	set_bit
-	MOV	R7, R24
+	MOV	R9, R24
 ; main.py:60:         frame[3] = set_bit(frame[3], (col + 3) & 0x07)
 	MOV	R24, R4
 	SUBI	R24, 253
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	MOV	R24, R8
-	MOV	R10, R24
+	CLR	R24
+	MOV	R6, R24
 	MOV	R24, R17
-	MOV	R9, R24
-	MOV	R24, R8
+	MOV	R5, R24
+	CLR	R24
 	MOV	R22, R17
 	RCALL	set_bit
-	MOV	R8, R24
+	MOV	R10, R24
 ; main.py:63:         uart.write(frame[0])
 ; main.py:68: 
 L_39:
@@ -163,7 +163,7 @@ L_39:
 L_BR_SKIP_4:
 	RJMP	L_39
 L_40:
-	MOV	R24, R5
+	MOV	R24, R7
 	STS	0x00C6, R24
 ; main.py:64:         uart.write(frame[1])
 ; main.py:68: 
@@ -175,7 +175,7 @@ L_43:
 L_BR_SKIP_5:
 	RJMP	L_43
 L_44:
-	MOV	R24, R6
+	MOV	R24, R8
 	STS	0x00C6, R24
 ; main.py:65:         uart.write(frame[2])
 ; main.py:68: 
@@ -187,7 +187,7 @@ L_47:
 L_BR_SKIP_6:
 	RJMP	L_47
 L_48:
-	MOV	R24, R7
+	MOV	R24, R9
 	STS	0x00C6, R24
 ; main.py:66:         uart.write(frame[3])
 ; main.py:68: 
@@ -199,7 +199,7 @@ L_51:
 L_BR_SKIP_7:
 	RJMP	L_51
 L_52:
-	MOV	R24, R8
+	MOV	R24, R10
 	STS	0x00C6, R24
 ; main.py:67:         uart.write(10)          # 0x0A frame separator
 ; main.py:68: 

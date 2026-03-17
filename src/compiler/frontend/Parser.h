@@ -44,12 +44,18 @@ class Parser {
 
   std::unique_ptr<Program> parseProgram();
 
+  // Public entry point for parsing a single expression (used by f-string sub-parsers).
+  std::unique_ptr<Expression> parseExpression_public() { return parseExpression(); }
+
  private:
   const std::vector<Token> tokens;
   size_t pos = 0;
   int function_depth = 0;
 
   [[nodiscard]] const Token &peek() const;
+
+  // Look at the token after the current one (one position ahead).
+  [[nodiscard]] const Token &peek_next() const;
 
   [[nodiscard]] const Token &previous() const;
 
@@ -93,6 +99,10 @@ class Parser {
 
   std::unique_ptr<Statement> parseRaiseStatement();
 
+  std::unique_ptr<Statement> parseWithStatement();   // T2.2
+
+  std::unique_ptr<Statement> parseAssertStatement(); // T2.3
+
   std::unique_ptr<Statement> parseAssignmentOrDeclaration();
 
   std::unique_ptr<Expression> parseExpression();  // Entry point
@@ -107,6 +117,7 @@ class Parser {
   std::unique_ptr<Expression> parseShift();           // <<, >>
   std::unique_ptr<Expression> parseAdditive();        // +, -
   std::unique_ptr<Expression> parseMultiplicative();  // *, /, %
+  std::unique_ptr<Expression> parsePower();           // **
   std::unique_ptr<Expression> parseUnary();           // -, not, ~, !
 
   std::unique_ptr<Expression> parsePostfix();
