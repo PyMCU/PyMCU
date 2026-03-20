@@ -43,6 +43,6 @@ def main():
     while True:
         if GPIOR0[0] == 1:           # Check event flag (SBIS 0x1E, 0)
             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
-            count = count + 1
+            count += 1
             led.toggle()
             uart.write(count)        # Send raw count byte over UART

@@ -30,10 +30,7 @@ def nibble_hex_lo(val: uint8) -> uint8:
 def main():
     uart = UART(9600)
 
-    # Boot banner
-    uart.write(76)   # L
-    uart.write(67)   # C
-    uart.write(10)   # \n
+    uart.println("LC")
 
     # -- 1. List comprehension over range(4): [x*2 for x in range(4)] = [0,2,4,6] --
     doubled: uint8[4] = [x * 2 for x in range(4)]
@@ -42,11 +39,11 @@ def main():
     sum_r = sum_r + doubled[1]
     sum_r = sum_r + doubled[2]
     sum_r = sum_r + doubled[3]
-    uart.write(82)   # R
-    uart.write(58)   # :
+    uart.write('R')
+    uart.write(':')
     uart.write(nibble_hex_hi(sum_r))
     uart.write(nibble_hex_lo(sum_r))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- 2. List comprehension over constant list: [v+1 for v in [10,20,30]] = [11,21,31] --
     incremented: uint8[3] = [v + 1 for v in [10, 20, 30]]
@@ -54,21 +51,21 @@ def main():
     sum_l = sum_l + incremented[0]
     sum_l = sum_l + incremented[1]
     sum_l = sum_l + incremented[2]
-    uart.write(76)   # L
-    uart.write(58)   # :
+    uart.write('L')
+    uart.write(':')
     uart.write(nibble_hex_hi(sum_l))
     uart.write(nibble_hex_lo(sum_l))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- 3. for x in constant list: sum of [1, 3, 5, 7] = 16 --
     sum_f: uint8 = 0
     for x in [1, 3, 5, 7]:
         sum_f = sum_f + x
-    uart.write(70)   # F
-    uart.write(58)   # :
+    uart.write('F')
+    uart.write(':')
     uart.write(nibble_hex_hi(sum_f))
     uart.write(nibble_hex_lo(sum_f))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     while True:
         pass

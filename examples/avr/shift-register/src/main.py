@@ -44,7 +44,7 @@ def main():
             clock.high()
             clock.low()
 
-            bit = bit - 1
+            bit -= 1
 
         # Rising edge on latch: push shift register -> storage register
         latch.high()

@@ -31,6 +31,16 @@ std::pair<std::map<std::string, int>, int> StackAllocator::allocate(
     calculate_offsets("main", global_offset);
   }
 
+  // ISR functions are never called from main's call tree but still need SRAM
+  // allocation for their inline-expanded locals. On AVR they share the same
+  // static stack with main (interrupts are non-reentrant by default), so we
+  // can safely start them at global_offset just like main's call tree.
+  for (const auto &func : program.functions) {
+    if (func.is_interrupt && call_graph.count(func.name)) {
+      calculate_offsets(func.name, global_offset);
+    }
+  }
+
   return {offsets, max_stack_usage};
 }
 

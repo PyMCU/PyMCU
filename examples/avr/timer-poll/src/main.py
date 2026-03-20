@@ -33,11 +33,11 @@ def main():
             # Clear flag by writing logic 1 (AVR convention for timer flag bits)
             TIFR0[0] = 1
 
-            ticks = ticks + 1
+            ticks += 1
 
             # ~1 second = 244 overflows at 4.096 ms each
             if ticks == 244:
                 ticks = 0
                 led.toggle()
-                uart.write(84)    # 'T'
-                uart.write(10)    # '\n'
+                uart.write('T')
+                uart.write('\n')

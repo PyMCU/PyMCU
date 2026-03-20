@@ -20,16 +20,16 @@ def main():
 
     # write_to: send one data byte (0xAB) to address 0x48
     i2c.write_to(0x48, 0xAB)
-    uart.write(73)   # I
-    uart.write(87)   # W
-    uart.write(10)   # \n
+    uart.write('I')
+    uart.write('W')
+    uart.write('\n')
 
     # read_from: attempt to read one byte from address 0x48
     # (With no device, NACK received -- result is 0xFF or 0x00 depending on bus)
     val: uint8 = i2c.read_from(0x48)
-    uart.write(73)   # I
-    uart.write(82)   # R
-    uart.write(10)   # \n
+    uart.write('I')
+    uart.write('R')
+    uart.write('\n')
 
     while True:
         pass

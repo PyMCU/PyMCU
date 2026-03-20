@@ -50,6 +50,9 @@ std::string AVRCodeGen::resolve_address(const tacky::Val &val) {
   else if (const auto t = std::get_if<tacky::Temporary>(&val))
     name = t->name;
 
+  // Sanitize dots to underscores: AVRA treats '.' as the current-address operator,
+  // so dotted names (e.g. inline1.foo.bar) in instructions cause assembler errors.
+  std::replace(name.begin(), name.end(), '.', '_');
   return name;
 }
 

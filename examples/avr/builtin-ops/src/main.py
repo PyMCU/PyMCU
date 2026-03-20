@@ -45,115 +45,112 @@ def nibble_hi(val: uint8) -> uint8:
 def main():
     uart = UART(9600)
 
-    # Boot banner
-    uart.write(66)   # B
-    uart.write(79)   # O
-    uart.write(10)   # \n
+    uart.println("BO")
 
     # -- in operator: 3 in [1, 2, 3] => 1 --
     x: uint8 = 3
     result: uint8 = 0
     if x in [1, 2, 3]:
         result = 1
-    uart.write(73)   # I
-    uart.write(58)   # :
+    uart.write('I')
+    uart.write(':')
     uart.write(nibble_hi(result))
     uart.write(nibble_lo(result))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- not in operator: 5 not in [1, 2, 3] => 1 --
     y: uint8 = 5
     result = 0
     if y not in [1, 2, 3]:
         result = 1
-    uart.write(78)   # N
-    uart.write(58)   # :
+    uart.write('N')
+    uart.write(':')
     uart.write(nibble_hi(result))
     uart.write(nibble_lo(result))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- is operator: z is 7 (z=7) => 1 --
     z: uint8 = 7
     result = 0
     if z is 7:
         result = 1
-    uart.write(83)   # S
-    uart.write(58)   # :
+    uart.write('S')
+    uart.write(':')
     uart.write(nibble_hi(result))
     uart.write(nibble_lo(result))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- is not operator: z is not 3 (z=7) => 1 --
     result = 0
     if z is not 3:
         result = 1
-    uart.write(84)   # T
-    uart.write(58)   # :
+    uart.write('T')
+    uart.write(':')
     uart.write(nibble_hi(result))
     uart.write(nibble_lo(result))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- sum([1, 2, 3]) == 6 --
     s: uint8 = sum([1, 2, 3])
-    uart.write(85)   # U
-    uart.write(58)   # :
+    uart.write('U')
+    uart.write(':')
     uart.write(nibble_hi(s))
     uart.write(nibble_lo(s))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- any([0, 0, 1]) == 1 --
     a: uint8 = any([0, 0, 1])
-    uart.write(65)   # A
-    uart.write(58)   # :
+    uart.write('A')
+    uart.write(':')
     uart.write(nibble_hi(a))
     uart.write(nibble_lo(a))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- all([1, 1, 1]) == 1 --
     l: uint8 = all([1, 1, 1])
-    uart.write(76)   # L
-    uart.write(58)   # :
+    uart.write('L')
+    uart.write(':')
     uart.write(nibble_hi(l))
     uart.write(nibble_lo(l))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- divmod(10, 3) => quotient=3, remainder=1 --
     quot: uint8 = 0
     rem: uint8 = 0
     quot, rem = divmod(10, 3)
-    uart.write(81)   # Q
-    uart.write(58)   # :
+    uart.write('Q')
+    uart.write(':')
     uart.write(nibble_hi(quot))
     uart.write(nibble_lo(quot))
-    uart.write(10)   # \n
-    uart.write(82)   # R
-    uart.write(58)   # :
+    uart.write('\n')
+    uart.write('R')
+    uart.write(':')
     uart.write(nibble_hi(rem))
     uart.write(nibble_lo(rem))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- hex(255) => "0xff" (compile-time string) --
     # Output: "H:0xff\n"
-    uart.write(72)   # H
-    uart.write(58)   # :
+    uart.write('H')
+    uart.write(':')
     uart.write_str(hex(255))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- bin(5) => "0b101" (compile-time string) --
     # Output: "B:0b101\n"
-    uart.write(66)   # B (reuse label; already printed boot banner so ok for test)
-    uart.write(58)   # :
+    uart.write('B')
+    uart.write(':')
     uart.write_str(bin(5))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- uart.available() => 0 when no data waiting --
     # (No data will be in the RX buffer at this point, so result=0)
     avail: uint8 = uart.available()
-    uart.write(86)   # V
-    uart.write(58)   # :
+    uart.write('V')
+    uart.write(':')
     uart.write(nibble_hi(avail))
     uart.write(nibble_lo(avail))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     while True:
         pass

@@ -61,14 +61,14 @@ def main():
 
             case _:
                 # Binary counter
-                pattern = pattern + 1
+                pattern += 1
 
         # --- Mode change on any incoming UART byte ---
         # (Non-blocking: check UCSR0A RXC flag without blocking read)
         from pymcu.chips.atmega328p import UCSR0A, UDR0
         if UCSR0A[7] == 1:         # RXC0: data available
             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
-            mode = mode + 1
+            mode += 1
             if mode == 3:
                 mode = MODE_RUNNING
             pattern = 0x01         # reset pattern on mode change

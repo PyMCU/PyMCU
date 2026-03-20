@@ -326,17 +326,46 @@ int main(int argc, char *argv[]) {
     // Unwraps __CHIP__ blocks and moves local imports to top-level.
     ConditionalCompilator conditional(context.config);
     conditional.process(*ast);
+    std::set<const Program *> cc_processed;
+    cc_processed.insert(ast.get());
     for (auto &[name, mod_ast] : context.named_modules) {
-      conditional.process(*const_cast<Program *>(mod_ast));
+      if (!cc_processed.count(mod_ast)) {
+        conditional.process(*const_cast<Program *>(mod_ast));
+        cc_processed.insert(mod_ast);
+      }
     }
 
     // Pass 4: Final Recursive Load (In case Conditional Compilation uncovered
     // new imports)
-    load_imports_recursively(ast.get(), &context, fs::path(filepath),
-                             include_paths);
+    load_imports_recursively(ast.get(), &context, fs::path(filepath), include_paths);
     for (auto &[name, mod_ast] : context.named_modules) {
-      load_imports_recursively(mod_ast, &context, fs::path(filepath),
+      load_imports_recursively(mod_ast, &context, fs::path(filepath), include_paths);
+    }
+
+    // Pass 4b/5: Iteratively run CC + load until stable.
+    // When gpio.py is loaded in Phase 4, it still has `match __CHIP__.name:`
+    // that CC must DCE. After CC, it may hoist new imports (e.g. _gpio/atmega328p.py)
+    // that need another load phase. Repeat until no new modules are discovered.
+    bool any_new = true;
+    while (any_new) {
+      any_new = false;
+      // CC pass: process any newly loaded modules
+      for (auto &[name, mod_ast] : context.named_modules) {
+        if (!cc_processed.count(mod_ast)) {
+          conditional.process(*const_cast<Program *>(mod_ast));
+          cc_processed.insert(mod_ast);
+          any_new = true;
+        }
+      }
+      // Load pass: discover new imports uncovered by CC
+      size_t before = context.named_modules.size();
+      load_imports_recursively(ast.get(), &context, fs::path(filepath),
                                include_paths);
+      for (auto &[name, mod_ast] : context.named_modules) {
+        load_imports_recursively(mod_ast, &context, fs::path(filepath),
+                                 include_paths);
+      }
+      if (context.named_modules.size() > before) any_new = true;
     }
 
     // IR Generation

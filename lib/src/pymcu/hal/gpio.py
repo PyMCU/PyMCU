@@ -340,11 +340,15 @@ class Pin:
             raise NotImplementedError("Drive strength control not supported on ATmega328P")
 
     @inline
-    def irq(self: uint8, trigger: const = 3):
+    def irq(self: uint8, trigger: const = 3, handler: const = 0):
+        # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
+        # handler: compile-time function reference. When provided, compile_isr()
+        # inside pin_irq_setup automatically registers the function as an ISR at
+        # the correct vector -- no @interrupt decorator needed on the handler.
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._gpio.atmega328p import pin_irq_setup
-                pin_irq_setup(self.name, trigger)
+                pin_irq_setup(self.name, trigger, handler)
             case "pic16f877a":
                 from pymcu.hal._gpio.pic16f877a import pin_irq_setup
                 pin_irq_setup(self.name, trigger)

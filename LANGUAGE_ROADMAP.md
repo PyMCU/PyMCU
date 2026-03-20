@@ -142,7 +142,73 @@ Everything in this section is shipped and tested in the current alpha build.
 
 ---
 
-## v0.4 — Next Tier
+## v0.4 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for x in b"..."`, array init, `len()` |
+| `int.from_bytes(b, 'little'/'big')` | Compile-time fold for byte literals; runtime `(hi<<8)\|lo` for variables |
+| `enumerate` on runtime arrays | `for i, x in enumerate(arr):` unrolled with `ArrayLoad` per element |
+| `UART.read_blocking()` | Polls RXC until byte arrives, returns it |
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| SPI CS pin control | `SPI(cs="PB2")` auto-asserts/deasserts CS; `select()`/`deselect()` methods |
+
+---
+
+## v0.5 — Implemented
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| Timer CTC mode | `Timer.set_compare(val)` sets OCR + WGM CTC bits; `@interrupt` handles COMPA vector |
+| ADC interrupt-driven | `AnalogPin.start_conversion()` sets ADIE+ADSC; `read_result()` reads ADCL/ADCH |
+| PWM multi-channel | Timer0/1/2 OC_A+OC_B channels; `PWM("PB1")` auto-selects Timer1 OC1A |
+
+### Drivers
+
+| Feature | Notes |
+|---------|-------|
+| `neopixel` (WS2812) | `NeoPixel(pin, n).set_pixel(r,g,b)` + `show()`; GRB wire order; AVR asm bit-bang |
+
+---
+
+## v0.6 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer×inner product unroll |
+| `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
+| `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
+
+---
+
+## v0.7 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `Pin.irq(trigger, handler)` | Configures INT0/INT1/PCINT hardware; `IRQ_FALLING`/`IRQ_RISING`/`IRQ_CHANGE` |
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| USART RX interrupt + ring buffer | `uart.enable_rx_interrupt()` + `uart.rx_isr()` + `available()` / `read_nb()` |
+| `SoftSPI` bit-bang | `SoftSPI(sck, mosi, miso, cs)` with `transfer()`, `write()`, `with softspi:` |
+
+---
+
+## v0.8 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
 
@@ -150,48 +216,38 @@ These are the highest-value features not yet implemented, in priority order.
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `Pin.irq(trigger, handler=callback)` | ~8h | MicroPython idiom; requires compile-time `compile_isr` intrinsic |
-| `enumerate` on runtime arrays | ~2h | `for i, x in enumerate(arr):` where `arr` is a variable-index array |
-| `bytes` literal / `bytearray` | ~4h | `b"\x00\xFF"` → flash or SRAM byte array |
-| `int.from_bytes(b, 'little')` | ~2h | Pack two uint8 into uint16; common in protocol parsing |
-| Nested list comprehension | ~3h | `[f(x,y) for x in row for y in col]` |
-| `round(x)` / `abs(x)` on fixed16 | ~2h | Once `fixed16` lands (v0.5) |
-| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math |
+| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
+| `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
 
 ### HAL
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| USART RX interrupt + ring buffer | ~4h | Non-blocking receive; pairs with `UART.available()` + `UART.read_nb()` |
-| `UART.read_line(buf, max_len)` | ~2h | Read until `\n`; fills fixed-size `uint8[N]` buffer |
-| SPI CS pin control from HAL | ~2h | `SPI(cs=Pin("PB2"))` auto-drives CS inside `with spi:` |
-| Timer compare match (CTC mode) | ~3h | `Timer.set_compare(val)` + `@interrupt(OCR_vect)` for precise periods |
-| ADC interrupt-driven mode | ~3h | Non-blocking ADC via `ADIF` vector `0x001a` |
-| PWM multi-channel | ~2h | Timer1 + Timer2 simultaneously; `PWM(channel=1)` |
-| `SoftSPI` / `SoftI2C` (bit-bang) | ~5h | Bit-banged fallback for non-hardware-SPI pins |
+| `SoftI2C` bit-bang | ~3h | Bit-banged I2C for non-hardware-I2C pins |
+| I2C multi-byte `write_to(addr, buf, len)` | ~3h | Extend to send N bytes; currently single-byte |
+| `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
 
 ### Drivers
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `neopixel` (WS2812) driver | ~4h | WS2812 bit-bang; widely used in CP / uPy |
 | `HD44780` LCD driver | ~4h | Common 16x2 character LCD over GPIO or I2C |
 | `SSD1306` OLED driver | ~5h | 128x64 OLED over I2C; very common in maker projects |
 | `BMP280` pressure/temp sensor | ~3h | I2C; popular environmental sensor |
-| `DS18B20` temperature sensor | ~4h | 1-Wire; very common; requires 1-wire driver first |
+| `DS18B20` temperature sensor | ~4h | 1-Wire protocol; very common |
 | `MAX7219` LED matrix | ~3h | SPI 8x8 LED matrix |
 
 ### Compat
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `machine.Timer(id, period, callback)` | ~3h | Requires `Pin.irq` / `compile_isr` intrinsic |
+| `machine.Timer(id, period, callback)` | ~3h | Requires `Pin.irq` (now available) |
 | `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API names |
 | `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
 
 ---
 
-## v0.5 — Longer Horizon
+## v0.9 — Longer Horizon
 
 | Feature | Effort | Why |
 |---------|--------|-----|

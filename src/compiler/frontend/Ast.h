@@ -151,17 +151,30 @@ struct ListExpr : Expression {
       : elements(std::move(elems)) {}
 };
 
-// List comprehension: [element_expr for var_name in iterable]
+// List comprehension: [element_expr for var_name in iterable [for var2 in iterable2] [if filter]]
 // Compile-time only: iterable must be range(N) or a constant ListExpr.
 struct ListCompExpr : Expression {
-  std::unique_ptr<Expression> element;  // expression evaluated per iteration
-  std::string var_name;                 // loop variable name
-  std::unique_ptr<Expression> iterable; // range() call or ListExpr
+  std::unique_ptr<Expression> element;   // expression evaluated per iteration
+  std::string var_name;                  // outer loop variable name
+  std::unique_ptr<Expression> iterable;  // range() call or ListExpr (outer)
+
+  // Optional inner loop (nested list comprehension):
+  //   [f(x,y) for x in outer for y in inner]
+  std::string var2_name;                  // inner loop variable (empty if not nested)
+  std::unique_ptr<Expression> iterable2;  // inner iterable (nullptr if not nested)
+
+  // Optional filter clause: [x for x in list if x > 2]
+  std::unique_ptr<Expression> filter;  // nullptr if no filter
 
   ListCompExpr(std::unique_ptr<Expression> elem, std::string var,
-               std::unique_ptr<Expression> iter)
+               std::unique_ptr<Expression> iter,
+               std::string var2 = {},
+               std::unique_ptr<Expression> iter2 = nullptr,
+               std::unique_ptr<Expression> filt = nullptr)
       : element(std::move(elem)), var_name(std::move(var)),
-        iterable(std::move(iter)) {}
+        iterable(std::move(iter)),
+        var2_name(std::move(var2)), iterable2(std::move(iter2)),
+        filter(std::move(filt)) {}
 };
 
 struct MemberAccessExpr : Expression {

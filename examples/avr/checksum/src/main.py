@@ -28,8 +28,8 @@ def main():
 
     while True:
         byte: uint8 = uart.read()
-        acc = acc ^ byte
-        count = count + 1
+        acc ^= byte
+        count += 1
         if count == 4:
             uart.write(acc)
             uart.write('\n')

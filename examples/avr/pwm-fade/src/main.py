@@ -27,9 +27,9 @@ def main():
                 if duty == 255:
                     going_up = 0
                 else:
-                    duty = duty + 1
+                    duty += 1
             case _:
                 if duty == 0:
                     going_up = 1
                 else:
-                    duty = duty - 1
+                    duty -= 1

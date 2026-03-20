@@ -3,8 +3,8 @@
 .equ _stack_base = RAMSTART
 .equ inline1_write_data = _stack_base + 0
 .equ tmp_26 = _stack_base + 2
-.equ tmp_28 = _stack_base + 3
-.equ tmp_31 = _stack_base + 4
+.equ tmp_27 = _stack_base + 3
+.equ tmp_30 = _stack_base + 4
 
 .org 0x0000
 	RJMP	main
@@ -187,7 +187,6 @@ L_BIT_DONE_5:
 	BREQ	L_BR_SKIP_6
 	RJMP	L_70
 L_BR_SKIP_6:
-; main.py:49:                 count = count + 1
 	INC	R4
 ; main.py:50:                 uart.write_str("COUNT:")
 	LDI	R30, low(__str_1 * 2)

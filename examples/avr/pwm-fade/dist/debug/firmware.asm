@@ -94,7 +94,6 @@ L_BR_SKIP_2:
 	MOV	R5, R24
 	RJMP	L_25
 L_26:
-; main.py:30:                     duty = duty + 1
 	INC	R4
 L_25:
 	RJMP	L_23
@@ -110,7 +109,6 @@ L_BR_SKIP_3:
 	MOV	R5, R24
 	RJMP	L_28
 L_29:
-; main.py:35:                     duty = duty - 1
 	DEC	R4
 L_28:
 L_23:

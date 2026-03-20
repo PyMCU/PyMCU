@@ -1,5 +1,5 @@
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, const, inline
+from pymcu.types import uint8, uint16, const, inline
 
 # ---- Unified Timer ZCA ----
 # MicroPython-style: Timer(n, prescaler) — n is a compile-time constant.
@@ -134,6 +134,24 @@ class Timer:
             case "pic18f45k50":
                 from pymcu.hal._timer.pic18f45k50 import timer0_clear
                 timer0_clear()
+
+    # Sets the OCR (Output Compare Register) for timer n and enables CTC mode.
+    # CTC vectors (ATmega328P): Timer0_COMPA=0x001C/word0x0E, Timer1_COMPA=0x0016/word0x0B,
+    #   Timer2_COMPA=0x000E/word0x07.
+    # Call start() first to configure the prescaler, then set_compare() to enable CTC.
+    @inline
+    def set_compare(self: uint8, value: uint16):
+        match __CHIP__.name:
+            case "atmega328p":
+                if self._n == 0:
+                    from pymcu.hal._timer.atmega328p import timer0_set_compare
+                    timer0_set_compare(value)
+                elif self._n == 1:
+                    from pymcu.hal._timer.atmega328p import timer1_set_compare
+                    timer1_set_compare(value)
+                elif self._n == 2:
+                    from pymcu.hal._timer.atmega328p import timer2_set_compare
+                    timer2_set_compare(value)
 
     @inline
     def overflow(self: uint8) -> uint8:

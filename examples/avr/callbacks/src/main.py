@@ -78,15 +78,14 @@ def main():
         while i < 8:
             r: uint8 = apply(cb, i)
             uart.write(r)
-            i = i + 1
+            i += 1
 
-        uart.write(10)          # newline (0x0A) frame separator
+        uart.write('\n')          # newline (0x0A) frame separator
 
         # Advance to next callback (cycle: DOUBLE → INVERT → SHIFT_L → DOUBLE)
         if cb == CB.DOUBLE:
             cb = CB.INVERT
+        elif cb == CB.INVERT:
+            cb = CB.SHIFT_L
         else:
-            if cb == CB.INVERT:
-                cb = CB.SHIFT_L
-            else:
-                cb = CB.DOUBLE
+            cb = CB.DOUBLE

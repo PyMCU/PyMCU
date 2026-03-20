@@ -46,7 +46,7 @@ def main():
             GPIOR0[0] = 0
             # Only count falling edges (button pressed = low)
             if btn.value() == 0:
-                count = count + 1
+                count += 1
                 uart.write_str("COUNT:")
                 uart.write((count / 10) + 48)
                 uart.write((count % 10) + 48)

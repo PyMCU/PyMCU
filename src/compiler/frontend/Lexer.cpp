@@ -223,6 +223,52 @@ Token Lexer::identifier() {
     text += advance();
   }
 
+  // b-string prefix: exactly the letter "b" followed immediately by a quote
+  // Produces a BytesLiteral token whose value is comma-separated decimal byte values.
+  if (text == "b" && (peek() == '"' || peek() == '\'')) {
+    char quote = advance();  // consume the opening quote
+    // Parse byte string into comma-separated decimal values (e.g. "65,66,67")
+    std::string encoded;
+    bool first_byte = true;
+    while (peek() != quote && peek() != '\0') {
+      if (peek() == '\n') line++;
+      int byte_val = 0;
+      if (peek() == '\\') {
+        advance();  // consume backslash
+        char esc = advance();
+        switch (esc) {
+          case 'n':  byte_val = '\n'; break;
+          case 't':  byte_val = '\t'; break;
+          case 'r':  byte_val = '\r'; break;
+          case '0':  byte_val = '\0'; break;
+          case '\\': byte_val = '\\'; break;
+          case '\'': byte_val = '\''; break;
+          case '"':  byte_val = '"';  break;
+          case 'x': {
+            // \xNN hex escape
+            char h1 = advance();
+            char h2 = advance();
+            int hi = isdigit(h1) ? (h1 - '0') : (tolower(h1) - 'a' + 10);
+            int lo = isdigit(h2) ? (h2 - '0') : (tolower(h2) - 'a' + 10);
+            byte_val = (hi << 4) | lo;
+            break;
+          }
+          default: byte_val = (unsigned char)esc; break;
+        }
+      } else {
+        byte_val = (unsigned char)advance();
+      }
+      if (!first_byte) encoded += ",";
+      encoded += std::to_string(byte_val);
+      first_byte = false;
+    }
+    if (peek() == '\0') {
+      error("Unterminated bytes literal");
+    }
+    advance();  // consume closing quote
+    return {TokenType::BytesLiteral, encoded, line, column};
+  }
+
   // f-string prefix: exactly the letter "f" followed immediately by a quote
   if (text == "f" && (peek() == '"' || peek() == '\'')) {
     char quote = advance();  // consume the opening quote

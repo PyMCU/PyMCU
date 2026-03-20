@@ -61,7 +61,7 @@ def main():
     val = val >> shift       # 0x08 >> 3 = 0x01
     uart.write(val)          # 1
 
-    uart.write(68)           # 'D' done
+    uart.write('D')          # done
 
     while True:
         led.toggle()

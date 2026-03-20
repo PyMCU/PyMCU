@@ -32,6 +32,14 @@
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD
 from pymcu.types import uint8, uint16, inline, const
 
+# Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
+# _rx_buf: circular storage; _rx_head: write index (ISR advances);
+# _rx_tail: read index (main loop advances).
+# Full condition: ((head + 1) & 0x0F) == tail (drop on overflow).
+_rx_buf:  uint8[16] = bytearray(16)
+_rx_head: uint8 = 0
+_rx_tail: uint8 = 0
+
 
 @inline
 def uart_init(baud: const[uint16]):
@@ -130,3 +138,44 @@ def uart_read_byte_isr() -> uint8:
     # Call this only when invoked from a USART_RX interrupt (RXC0 is guaranteed set).
     result: uint8 = UDR0.value
     return result
+
+
+@inline
+def uart_enable_rx_interrupt():
+    # Enable RXCIE0 (bit 7 of UCSR0B) to fire USART_RX ISR on each received byte.
+    # UCSR0B already has RXEN0=1, TXEN0=1 (0x18) set by uart_init.
+    # Set bit 7 (RXCIE0) without disturbing other bits by OR-ing the full byte.
+    UCSR0B[7] = 1
+
+
+@inline
+def uart_rx_isr():
+    # Called from the USART_RX ISR (vector 0x0024 / word 0x0012).
+    # Reads UDR0 and stores in ring buffer at _rx_head; advances head with wrap.
+    # Drops byte silently if buffer is full (head+1 == tail).
+    global _rx_head, _rx_tail, _rx_buf
+    next_head: uint8 = (_rx_head + 1) & 0x0F
+    if next_head != _rx_tail:
+        _rx_buf[_rx_head] = UDR0.value
+        _rx_head = next_head
+
+
+@inline
+def uart_rx_available() -> uint8:
+    # Returns 1 if at least one byte is waiting in the ring buffer.
+    global _rx_head, _rx_tail
+    if _rx_head != _rx_tail:
+        return 1
+    return 0
+
+
+@inline
+def uart_rx_read() -> uint8:
+    # Non-blocking ring-buffer read. Returns the next byte from the ring buffer
+    # and advances tail. Returns 0 if the buffer is empty (check available() first).
+    global _rx_head, _rx_tail, _rx_buf
+    if _rx_head == _rx_tail:
+        return 0
+    data: uint8 = _rx_buf[_rx_tail]
+    _rx_tail = (_rx_tail + 1) & 0x0F
+    return data

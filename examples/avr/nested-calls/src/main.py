@@ -60,4 +60,4 @@ def main():
         uart.write(lo)
         uart.write(chk)    # send checksum byte (hi ^ lo)
         uart.write('\n')
-        val = val + 1
+        val += 1

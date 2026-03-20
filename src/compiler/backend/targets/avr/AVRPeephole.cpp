@@ -321,18 +321,44 @@ std::vector<AVRAsmLine> AVRPeephole::optimize(
           int rx = parse_reg(a.op2);
           int ry = parse_reg(b.op1);
           if (rx >= 0 && ry >= 0) {
-            if (rx == ry) {
-              // Delete both: value already in Rx, no need to spill and reload
-              result[i] = AVRAsmLine::Empty();
-              result[j] = AVRAsmLine::Empty();
-            } else {
-              // Replace STD+LDD with MOV Ry, Rx
-              result[i] = AVRAsmLine::Empty();
-              result[j] = AVRAsmLine::Instruction("MOV",
-                  std::format("R{}", ry), std::format("R{}", rx));
+            // Check if there are any later LDD instructions for the same Y+N
+            // offset. If yes, the STD is still needed to hold the value.
+            bool later_load = false;
+            for (size_t k = j + 1; k < result.size(); ++k) {
+              if (result[k].type != AVRAsmLine::INSTRUCTION) continue;
+              if (result[k].mnemonic == "LDD" &&
+                  parse_y_offset(result[k].op2) == a_off) {
+                later_load = true;
+                break;
+              }
             }
-            fwd_changed = true;
-            changed = true;
+            if (!later_load) {
+              if (rx == ry) {
+                // Delete both: value already in Rx, no need to spill and reload
+                result[i] = AVRAsmLine::Empty();
+                result[j] = AVRAsmLine::Empty();
+              } else {
+                // Replace STD+LDD with MOV Ry, Rx
+                result[i] = AVRAsmLine::Empty();
+                result[j] = AVRAsmLine::Instruction("MOV",
+                    std::format("R{}", ry), std::format("R{}", rx));
+              }
+              fwd_changed = true;
+              changed = true;
+            } else {
+              // There is a later load from Y+N; keep the STD but still forward
+              // the value across the immediate LDD to avoid the redundant reload.
+              if (rx == ry) {
+                // STD Y+N, Rx; LDD Rx, Y+N → just delete the LDD (value in Rx)
+                result[j] = AVRAsmLine::Empty();
+              } else {
+                // STD Y+N, Rx; LDD Ry, Y+N → keep STD, replace LDD with MOV
+                result[j] = AVRAsmLine::Instruction("MOV",
+                    std::format("R{}", ry), std::format("R{}", rx));
+              }
+              fwd_changed = true;
+              changed = true;
+            }
           }
         }
       }

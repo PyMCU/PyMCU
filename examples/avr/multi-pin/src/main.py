@@ -37,7 +37,7 @@ def main():
 
         # Button A: advance step on falling edge
         if cur_a == 0 and prev_a == 1:
-            step = step + 1
+            step += 1
             if step == 6:
                 step = 0
 

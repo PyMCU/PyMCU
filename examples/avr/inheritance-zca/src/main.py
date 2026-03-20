@@ -41,7 +41,7 @@ class LED(GPIODevice):
         while i < code:
             self.on()
             self.off()
-            i = i + 1
+            i += 1
 
 
 # Function overloading: same name, different param types
@@ -70,10 +70,7 @@ def nibble_hex_lo(val: uint8) -> uint8:
 def main():
     uart = UART(9600)
 
-    # Boot banner
-    uart.write(73)   # I
-    uart.write(90)   # Z
-    uart.write(10)   # \n
+    uart.println("IZ")
 
     # -- Test inheritance: LED inherits on()/off()/read() from GPIODevice --
     led = LED("PB5")
@@ -81,30 +78,30 @@ def main():
     r: uint8 = led.read()
     led.off()
     # r should be 1 after on() on an output pin (output latch read = 1)
-    uart.write(65)   # A
-    uart.write(58)   # :
+    uart.write('A')
+    uart.write(':')
     uart.write(48 + r)  # '0' + r (expect '1')
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- Test function overloading: encode(uint8) --
     b: uint8 = encode(0xAB)
-    uart.write(66)   # B
-    uart.write(58)   # :
+    uart.write('B')
+    uart.write(':')
     uart.write(nibble_hex_hi(b))
     uart.write(nibble_hex_lo(b))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # -- Test function overloading: encode(uint16) --
     w: uint16 = encode(0x1234)
     hi: uint8 = (w >> 8) & 0xFF
     lo: uint8 = w & 0xFF
-    uart.write(67)   # C
-    uart.write(58)   # :
+    uart.write('C')
+    uart.write(':')
     uart.write(nibble_hex_hi(hi))
     uart.write(nibble_hex_lo(hi))
     uart.write(nibble_hex_hi(lo))
     uart.write(nibble_hex_lo(lo))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     while True:
         pass

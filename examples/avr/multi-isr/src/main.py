@@ -73,7 +73,7 @@ def main():
     while True:
         if GPIOR0[0] == 1:
             GPIOR0[0] = 0
-            tick = tick + 1
+            tick += 1
             if tick == 61:
                 tick = 0
                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
@@ -82,6 +82,6 @@ def main():
 
         if GPIOR0[1] == 1:
             GPIOR0[1] = 0
-            int_count = int_count + 1
+            int_count += 1
             uart.write(int_count)
             uart.write('\n')

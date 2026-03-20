@@ -125,6 +125,7 @@ tacky::Program IRGenerator::generate(
   modules.clear();
   functions_to_compile.clear();
   intrinsic_names.clear();
+  pending_isr_registrations.clear();
 
   // Always-available backend intrinsics (not tied to any import).
   // uart_send_string / uart_send_string_ln are called by the AVR UART HAL to
@@ -163,6 +164,7 @@ tacky::Program IRGenerator::generate(
       intrinsic_names.insert("inline");
       intrinsic_names.insert("interrupt");
       intrinsic_names.insert("asm");
+      intrinsic_names.insert("compile_isr");
     }
     // `import time` or `import time as t` — register the module alias so that
     // `time.sleep_ms(...)` / `t.sleep_ms(...)` resolves via the module-call path.
@@ -189,6 +191,7 @@ tacky::Program IRGenerator::generate(
         intrinsic_names.insert("inline");
         intrinsic_names.insert("interrupt");
         intrinsic_names.insert("asm");
+        intrinsic_names.insert("compile_isr");
       }
       // Register imported aliases for cross-module resolution
       // (e.g., gpio.py imports pin_set_mode from _gpio.atmega328p)
@@ -329,6 +332,31 @@ tacky::Program IRGenerator::generate(
     }
   }
 
+  // Apply compile_isr() registrations: mark handler functions as ISRs.
+  // This runs after all functions are compiled so ir_program.functions is full.
+  for (auto &[bare_name, vec] : pending_isr_registrations) {
+    bool found = false;
+    for (auto &fn : ir_program.functions) {
+      // Match exact name OR module-prefixed name ending with "_<bare_name>".
+      if (fn.name == bare_name ||
+          (fn.name.size() > bare_name.size() &&
+           fn.name[fn.name.size() - bare_name.size() - 1] == '_' &&
+           fn.name.substr(fn.name.size() - bare_name.size()) == bare_name)) {
+        fn.is_interrupt = true;
+        fn.interrupt_vector = vec;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      throw std::runtime_error(
+          "compile_isr(): function '" + bare_name +
+          "' not found. Ensure the handler is a top-level function defined in "
+          "the same translation unit.");
+    }
+  }
+  pending_isr_registrations.clear();
+
   // Pass mutable global variable names and types to the backend for RAM
   // allocation
   for (const auto &[name, type] : mutable_globals) {
@@ -442,6 +470,20 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
     return tacky::Constant{constant_variables.at(local_name)};
   }
 
+  // Check str_constant_variables: a string constant propagated through inline
+  // parameter chains (e.g. const[str] or str params carrying "PB0") must also
+  // resolve to Constant so that match/case arms can be constant-folded.
+  if (auto str_val = resolve_str_constant(local_name)) {
+    auto it = string_literal_ids.find(*str_val);
+    if (it != string_literal_ids.end()) {
+      return tacky::Constant{it->second};
+    }
+    // String not yet registered — assign a new ID and return it.
+    string_literal_ids[*str_val] = next_string_id;
+    string_id_to_str[next_string_id] = *str_val;
+    return tacky::Constant{next_string_id++};
+  }
+
   DataType type = DataType::UINT8;
   if (variable_types.contains(local_name)) {
     type = variable_types.at(local_name);
@@ -468,7 +510,15 @@ tacky::Val IRGenerator::resolve_binding(const std::string &name) {
         auto it = variable_aliases.find(resolved);
         if (it == variable_aliases.end()) break;
         const std::string &next = it->second;
-        if (is_temp(next)) break;  // stop: don't follow through temporaries
+        if (is_temp(next)) {
+          // If the temp has a known constant (e.g. from an inline function
+          // that returns a constant like select_bit), propagate it directly.
+          if (constant_variables.contains(next))
+            return tacky::Constant{constant_variables.at(next)};
+          if (constant_address_variables.contains(next))
+            return tacky::MemoryAddress{constant_address_variables.at(next)};
+          break;  // temp from copy-value tracking, not a constant — stop
+        }
         resolved = next;
         last_non_temp = resolved;
       }
@@ -571,6 +621,27 @@ void IRGenerator::scan_globals(const Program &ast, ModuleScope *scope) {
       name = varDecl->name;
       type = varDecl->var_type;
       initializer = varDecl->init.get();
+
+      // Module-level bytearray: register in array_sizes and module_sram_arrays now
+      // (visitVarDecl is only called inside function bodies, so we must handle this
+      // here to allow non-inline functions to access the array with variable indices).
+      if (type == "bytearray" && initializer) {
+        if (const auto *call = dynamic_cast<const CallExpr *>(initializer)) {
+          const auto *callee = dynamic_cast<const VariableExpr *>(call->callee.get());
+          if (callee && callee->name == "bytearray" && !call->args.empty()) {
+            int count = 0;
+            const Expression *arg0 = call->args[0].get();
+            if (const auto *il = dynamic_cast<const IntegerLiteral *>(arg0))
+              count = il->value;
+            if (count > 0) {
+              // Use bare name (no module prefix) to match visitVarDecl's qualified key.
+              array_sizes[name]      = count;
+              array_elem_types[name] = DataType::UINT8;
+              module_sram_arrays.insert(name);
+            }
+          }
+        }
+      }
     } else if (const auto assign =
                    dynamic_cast<const AssignStmt *>(stmt.get())) {
       if (const auto varExpr =
@@ -583,6 +654,29 @@ void IRGenerator::scan_globals(const Program &ast, ModuleScope *scope) {
       name = annAssign->target;
       type = annAssign->annotation;  // Use annotation as type
       initializer = annAssign->value.get();
+
+      // Module-level TYPE[N] array: register in array_sizes and module_sram_arrays now.
+      // This handles e.g. "_rx_buf: uint8[16] = bytearray(16)" at module scope.
+      // visitAnnAssign is only called inside function bodies, so we must pre-register
+      // here to allow non-inline functions to access the array with variable indices.
+      {
+        auto bracket = type.find('[');
+        auto close   = type.rfind(']');
+        if (bracket != std::string::npos && close != std::string::npos &&
+            close == type.size() - 1 && close > bracket + 1) {
+          std::string inner = type.substr(bracket + 1, close - bracket - 1);
+          bool is_number = !inner.empty() &&
+                           std::all_of(inner.begin(), inner.end(), ::isdigit);
+          if (is_number) {
+            int count = std::stoi(inner);
+            DataType elem_dt = resolve_type(type.substr(0, bracket));
+            // Use bare name (no module prefix) to match visitAnnAssign's qualified key.
+            array_sizes[name]      = count;
+            array_elem_types[name] = elem_dt;
+            module_sram_arrays.insert(name);
+          }
+        }
+      }
     } else if (const auto classDef =
                    dynamic_cast<const ClassDef *>(stmt.get())) {
       // Recursive scan for class static fields
@@ -1021,6 +1115,7 @@ void IRGenerator::scanForVariableIndexedArrays(
   collectArrayDecls = [&](const Statement *stmt) {
     if (!stmt) return;
     if (auto *ann = dynamic_cast<const AnnAssign *>(stmt)) {
+      // TYPE[N] arrays
       auto br = ann->annotation.find('[');
       auto cl = ann->annotation.rfind(']');
       if (br != std::string::npos && cl != std::string::npos) {
@@ -1028,6 +1123,14 @@ void IRGenerator::scanForVariableIndexedArrays(
         if (!inner.empty() && std::all_of(inner.begin(), inner.end(), ::isdigit))
           local_arrays.insert(prefix + ann->target);
       }
+      // bytearray annotation (AnnAssign path is not reachable since parser produces
+      // VarDecl, but handle defensively)
+      if (ann->annotation == "bytearray")
+        local_arrays.insert(prefix + ann->target);
+    } else if (auto *vd = dynamic_cast<const VarDecl *>(stmt)) {
+      // bytearray VarDecl: buf: bytearray = bytearray(N)
+      if (vd->var_type == "bytearray")
+        local_arrays.insert(prefix + vd->name);
     } else if (auto *block = dynamic_cast<const Block *>(stmt)) {
       for (const auto &s : block->statements) collectArrayDecls(s.get());
     } else if (auto *if_stmt = dynamic_cast<const IfStmt *>(stmt)) {
@@ -1971,8 +2074,76 @@ void IRGenerator::visitFor(const ForStmt *stmt) {
           }
         }
 
+        // enumerate(arr) where arr is a fixed-size array — compile-time unroll.
+        // For constant-only arrays: use synthetic scalars (arr__k).
+        // For variable-index SRAM arrays: emit ArrayLoad per element via visitIndex.
+        if (const auto *v = dynamic_cast<const VariableExpr *>(inner)) {
+          std::string base;
+          int arr_size = -1;
+          if (!current_inline_prefix.empty()) {
+            std::string k = current_inline_prefix + v->name;
+            if (array_sizes.contains(k)) { arr_size = array_sizes.at(k); base = k; }
+          }
+          if (arr_size < 0 && !current_function.empty()) {
+            std::string k = current_function + "." + v->name;
+            if (array_sizes.contains(k)) { arr_size = array_sizes.at(k); base = k; }
+          }
+          if (arr_size < 0 && array_sizes.contains(v->name)) {
+            arr_size = array_sizes.at(v->name); base = v->name;
+          }
+          if (arr_size > 0) {
+            DataType elem_dt = array_elem_types.contains(base)
+                ? array_elem_types.at(base) : DataType::UINT8;
+            bool use_sram = arrays_with_variable_index.contains(base) || module_sram_arrays.contains(base);
+            // Compute the qualified loop-variable name that resolve_binding returns.
+            // resolve_binding("x") computes local_name = current_function + "." + "x"
+            // so we must emit Copies targeting that same qualified name.
+            std::string qualified_val;
+            if (!current_inline_prefix.empty()) {
+              qualified_val = current_inline_prefix + stmt->var2_name;
+            } else if (!current_function.empty()) {
+              qualified_val = current_function + "." + stmt->var2_name;
+            } else {
+              qualified_val = stmt->var2_name;
+            }
+            variable_types[qualified_val] = elem_dt;
+            for (int k = 0; k < arr_size; ++k) {
+              constant_variables[idx_key] = k;
+              if (use_sram) {
+                // Variable-index SRAM array: emit ArrayLoad via a synthetic IndexExpr
+                // to reuse the existing visitIndex path, then Copy result to the
+                // function-qualified loop variable.
+                auto syn_target = std::make_unique<VariableExpr>(v->name);
+                auto syn_index  = std::make_unique<IntegerLiteral>(k);
+                auto syn_idx_expr = std::make_unique<IndexExpr>(
+                    std::move(syn_target), std::move(syn_index));
+                tacky::Val elem_val = visitIndex(syn_idx_expr.get());
+                tacky::Variable val_var{qualified_val, elem_dt};
+                emit(tacky::Copy{elem_val, val_var});
+              } else {
+                // Constant-index scalar array: synthetic scalars arr__k
+                // For constant values, use constant_variables so resolve_binding finds them.
+                // For runtime scalars, alias qualified_val to the scalar variable.
+                std::string elem_key = base + "__" + std::to_string(k);
+                if (constant_variables.contains(elem_key)) {
+                  constant_variables[val_key] = constant_variables.at(elem_key);
+                } else {
+                  // Emit a Copy from the scalar variable to the qualified loop var.
+                  tacky::Variable src_var{elem_key, elem_dt};
+                  tacky::Variable val_var{qualified_val, elem_dt};
+                  emit(tacky::Copy{src_var, val_var});
+                }
+              }
+              visitStatement(stmt->body.get());
+              constant_variables.erase(val_key);
+            }
+            constant_variables.erase(idx_key);
+            return;
+          }
+        }
+
         throw std::runtime_error(
-            "enumerate() argument must be a constant list literal or range(N).");
+            "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.");
       }
     }
 
@@ -2228,8 +2399,11 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       std::string qualified = current_function.empty()
                                   ? ve->name
                                   : current_function + "." + ve->name;
+      // Fallback: also check module-level (bare) name when local lookup fails.
+      if (!array_sizes.contains(qualified) && array_sizes.contains(ve->name))
+        qualified = ve->name;
       if (array_sizes.contains(qualified)) {
-        if (arrays_with_variable_index.contains(qualified)) {
+        if (arrays_with_variable_index.contains(qualified) || module_sram_arrays.contains(qualified)) {
           // Variable-index path: emit ArrayStore IR
           tacky::Val idx_val = visitExpression(indexExpr->index.get());
           tacky::Val src_val = visitExpression(stmt->value.get());
@@ -2281,7 +2455,13 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       bool resolved = false;
       if (const auto t = std::get_if<tacky::Temporary>(&indexVal)) resolved = try_const(t->name);
       else if (const auto v = std::get_if<tacky::Variable>(&indexVal)) resolved = try_const(v->name);
-      if (!resolved) throw std::runtime_error("Bit index must be constant");
+      if (!resolved) {
+        std::string debug_name;
+        if (const auto t = std::get_if<tacky::Temporary>(&indexVal)) debug_name = "Temp:" + t->name;
+        else if (const auto v = std::get_if<tacky::Variable>(&indexVal)) debug_name = "Var:" + v->name;
+        else debug_name = "unknown_type";
+        throw std::runtime_error("Bit index must be constant [index=" + debug_name + " inline_prefix=" + current_inline_prefix + "]");
+      }
     }
 
     tacky::Val val = visitExpression(stmt->value.get());
@@ -2322,9 +2502,14 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       }
       if (!resolvedClass.empty() &&
           inline_functions.contains(resolvedClass + "___init__")) {
-        std::string qualified_name = current_function.empty()
-                                         ? varExpr->name
-                                         : current_function + "." + varExpr->name;
+        std::string qualified_name;
+        if (!current_inline_prefix.empty()) {
+          qualified_name = current_inline_prefix + varExpr->name;
+        } else if (!current_function.empty()) {
+          qualified_name = current_function + "." + varExpr->name;
+        } else {
+          qualified_name = varExpr->name;
+        }
         instance_classes[qualified_name] = resolvedClass;
         pending_constructor_target = qualified_name;
         virtual_instances.insert(qualified_name);
@@ -2696,6 +2881,64 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
 }
 
 void IRGenerator::visitVarDecl(const VarDecl *stmt) {
+  // Handle bytearray: buf: bytearray = bytearray(N)
+  // bytearray has no '[' in the type so Parser produces a VarDecl, not AnnAssign.
+  // Delegate to the shared helper embedded in the lambda below.
+  if (stmt->var_type == "bytearray") {
+    int count = 0;
+    std::vector<int> init_vals;
+
+    if (stmt->init) {
+      if (const auto *call = dynamic_cast<const CallExpr *>(stmt->init.get())) {
+        const auto *callee = dynamic_cast<const VariableExpr *>(call->callee.get());
+        if (callee && callee->name == "bytearray" && !call->args.empty()) {
+          const Expression *arg0 = call->args[0].get();
+          if (const auto *il = dynamic_cast<const IntegerLiteral *>(arg0)) {
+            count = il->value;
+            init_vals.assign(count, 0);
+          } else if (const auto *le = dynamic_cast<const ListExpr *>(arg0)) {
+            count = (int)le->elements.size();
+            for (const auto &e : le->elements) {
+              if (const auto *il2 = dynamic_cast<const IntegerLiteral *>(e.get()))
+                init_vals.push_back(il2->value);
+              else
+                init_vals.push_back(0);
+            }
+          }
+        }
+      }
+    }
+
+    if (count <= 0) {
+      throw std::runtime_error("bytearray: could not determine buffer size from initializer.");
+    }
+
+    std::string qualified;
+    if (!current_inline_prefix.empty())
+      qualified = current_inline_prefix + stmt->name;
+    else if (!current_function.empty())
+      qualified = current_function + "." + stmt->name;
+    else
+      qualified = stmt->name;
+
+    array_sizes[qualified]      = count;
+    array_elem_types[qualified] = DataType::UINT8;
+    variable_types[qualified]   = DataType::UINT8;
+    // Force SRAM path so indexed writes/reads use ArrayStore/ArrayLoad.
+    arrays_with_variable_index.insert(qualified);
+    // Also register in the persistent module_sram_arrays set so that non-inline
+    // functions can access module-level bytearrays with variable indices even after
+    // arrays_with_variable_index is cleared between function compilations.
+    if (current_function.empty() && current_inline_prefix.empty())
+      module_sram_arrays.insert(qualified);
+
+    for (int k = 0; k < count; ++k) {
+      emit(tacky::ArrayStore{qualified, tacky::Constant{k},
+                             tacky::Constant{init_vals[k]}, DataType::UINT8, count});
+    }
+    return;
+  }
+
   // Track variable type
   DataType dt = resolve_type(stmt->var_type);
   // MUST mirror make_variable(): inside inline expansion use current_inline_prefix
@@ -2736,6 +2979,61 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
 }
 
 void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
+  // Handle bytearray annotation: bytearray is syntactic sugar for a SRAM uint8[N].
+  // Supported RHS forms:
+  //   bytearray(N)            -> N-element zero-initialized buffer
+  //   bytearray(b"...")       -> init from bytes literal (ListExpr after lexer decoding)
+  //   bytearray([v0, v1, ...])-> init from list literal
+  if (stmt->annotation == "bytearray") {
+    int count = 0;
+    std::vector<int> init_vals;
+
+    if (stmt->value) {
+      if (const auto *call = dynamic_cast<const CallExpr *>(stmt->value.get())) {
+        const auto *callee = dynamic_cast<const VariableExpr *>(call->callee.get());
+        if (callee && callee->name == "bytearray" && !call->args.empty()) {
+          const Expression *arg0 = call->args[0].get();
+          // bytearray(N): integer size, zero-init
+          if (const auto *il = dynamic_cast<const IntegerLiteral *>(arg0)) {
+            count = il->value;
+            init_vals.assign(count, 0);
+          }
+          // bytearray(b"...") or bytearray([...]): list of bytes
+          else if (const auto *le = dynamic_cast<const ListExpr *>(arg0)) {
+            count = (int)le->elements.size();
+            for (const auto &e : le->elements) {
+              if (const auto *il2 = dynamic_cast<const IntegerLiteral *>(e.get()))
+                init_vals.push_back(il2->value);
+              else
+                init_vals.push_back(0);
+            }
+          }
+        }
+      }
+    }
+
+    if (count <= 0) {
+      throw std::runtime_error("bytearray: could not determine buffer size from initializer.");
+    }
+
+    std::string qualified = current_function.empty()
+                                ? stmt->target
+                                : current_function + "." + stmt->target;
+    array_sizes[qualified]      = count;
+    array_elem_types[qualified] = DataType::UINT8;
+    variable_types[qualified]   = DataType::UINT8;
+
+    // bytearray is always variable-index accessible (mutable buffer), so use SRAM.
+    // Force SRAM path by registering it in arrays_with_variable_index.
+    arrays_with_variable_index.insert(qualified);
+
+    for (int k = 0; k < count; ++k) {
+      emit(tacky::ArrayStore{qualified, tacky::Constant{k},
+                             tacky::Constant{init_vals[k]}, DataType::UINT8, count});
+    }
+    return;
+  }
+
   // Check for array annotation: TYPE[N] where N is a pure integer, e.g. "uint8[4]".
   // Distinguished from ptr[TYPE] / const[TYPE] by the bracket content being all digits.
   {
@@ -2770,9 +3068,27 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
                 init_vals[k] = il->value;
             }
           }
+          // list * N or b"..." * N  — compile-time repeat: [v] * N or [v0,v1,...] * N
+          if (auto *be = dynamic_cast<const BinaryExpr *>(stmt->value.get())) {
+            if (be->op == BinaryOp::Mul) {
+              const auto *le_rep = dynamic_cast<const ListExpr *>(be->left.get());
+              const auto *repeat_lit = dynamic_cast<const IntegerLiteral *>(be->right.get());
+              if (le_rep && repeat_lit && repeat_lit->value > 0) {
+                // Fill init_vals by repeating the list elements
+                for (int k = 0; k < count; ++k) {
+                  size_t src_idx = k % le_rep->elements.size();
+                  if (src_idx < le_rep->elements.size()) {
+                    if (auto *il = dynamic_cast<const IntegerLiteral *>(
+                            le_rep->elements[src_idx].get()))
+                      init_vals[k] = il->value;
+                  }
+                }
+              }
+            }
+          }
         }
 
-        if (arrays_with_variable_index.contains(qualified)) {
+        if (arrays_with_variable_index.contains(qualified) || module_sram_arrays.contains(qualified)) {
           // Variable-index path: contiguous SRAM block — emit ArrayStore per element.
           for (int k = 0; k < count; ++k) {
             emit(tacky::ArrayStore{qualified, tacky::Constant{k},
@@ -2838,90 +3154,177 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
 void IRGenerator::visitListComp(const ListCompExpr *lc,
                                 const std::string &qualified_name,
                                 int count, DataType elem_dt) {
-  // Build the sequence of (loop_variable_value) for each iteration.
+  // Build the full sequence of (outer_val, [inner_val]) pairs.
   // Supported iterables:
-  //   range(N)           → values 0, 1, …, N-1
-  //   range(start, stop) → values start, start+1, …, stop-1
-  //   [v0, v1, …]        → values v0, v1, … (must be constant integers)
-  std::vector<int> iter_vals;
+  //   range(N)           -> values 0, 1, ..., N-1
+  //   range(start, stop) -> values start, start+1, ..., stop-1
+  //   [v0, v1, ...]      -> values v0, v1, ... (must be constant integers)
 
   // Helper: evaluate a compile-time-constant expression to int.
-  auto eval_const = [&](const Expression *e) -> std::optional<int> {
+  // Supports: integer literals, loop variables bound in constant_variables,
+  // and binary expressions (arithmetic + comparisons) over constants.
+  std::function<std::optional<int>(const Expression *)> eval_const;
+  eval_const = [&](const Expression *e) -> std::optional<int> {
     if (const auto *il = dynamic_cast<const IntegerLiteral *>(e))
       return il->value;
+    if (const auto *bl = dynamic_cast<const BooleanLiteral *>(e))
+      return bl->value ? 1 : 0;
     if (const auto *v = dynamic_cast<const VariableExpr *>(e)) {
       std::string k = current_inline_prefix + v->name;
       if (constant_variables.contains(k)) return constant_variables.at(k);
     }
+    if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
+      auto lv = eval_const(be->left.get());
+      auto rv = eval_const(be->right.get());
+      if (!lv || !rv) return std::nullopt;
+      switch (be->op) {
+        case BinaryOp::Add:      return *lv + *rv;
+        case BinaryOp::Sub:      return *lv - *rv;
+        case BinaryOp::Mul:      return *lv * *rv;
+        case BinaryOp::Div:      return (*rv != 0) ? *lv / *rv : std::optional<int>{};
+        case BinaryOp::FloorDiv: return (*rv != 0) ? *lv / *rv : std::optional<int>{};
+        case BinaryOp::Mod:      return (*rv != 0) ? *lv % *rv : std::optional<int>{};
+        case BinaryOp::Equal:    return (*lv == *rv) ? 1 : 0;
+        case BinaryOp::NotEqual: return (*lv != *rv) ? 1 : 0;
+        case BinaryOp::Less:     return (*lv < *rv)  ? 1 : 0;
+        case BinaryOp::Greater:  return (*lv > *rv)  ? 1 : 0;
+        case BinaryOp::LessEq:   return (*lv <= *rv) ? 1 : 0;
+        case BinaryOp::GreaterEq:return (*lv >= *rv) ? 1 : 0;
+        case BinaryOp::And:      return (*lv && *rv) ? 1 : 0;
+        case BinaryOp::Or:       return (*lv || *rv) ? 1 : 0;
+        case BinaryOp::BitAnd:   return *lv & *rv;
+        case BinaryOp::BitOr:    return *lv | *rv;
+        case BinaryOp::BitXor:   return *lv ^ *rv;
+        case BinaryOp::LShift:   return *lv << *rv;
+        case BinaryOp::RShift:   return *lv >> *rv;
+        default: return std::nullopt;
+      }
+    }
+    if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+      auto val = eval_const(ue->operand.get());
+      if (!val) return std::nullopt;
+      switch (ue->op) {
+        case UnaryOp::Negate: return -*val;
+        case UnaryOp::Not:    return !*val ? 1 : 0;
+        case UnaryOp::BitNot: return ~*val;
+        default: return std::nullopt;
+      }
+    }
     return std::nullopt;
   };
 
-  if (const auto *call = dynamic_cast<const CallExpr *>(lc->iterable.get())) {
-    // Must be range(...)
-    const auto *callee_var = dynamic_cast<const VariableExpr *>(call->callee.get());
-    if (!callee_var || callee_var->name != "range") {
-      throw std::runtime_error(
-          "List comprehension iterable must be range() or a constant list.");
-    }
-    int start = 0, stop = 0;
-    if (call->args.size() == 1) {
-      auto sv = eval_const(call->args[0].get());
-      if (!sv) throw std::runtime_error(
-          "List comprehension: range() argument must be a compile-time constant.");
-      stop = *sv;
-    } else if (call->args.size() >= 2) {
-      auto sv = eval_const(call->args[0].get());
-      auto ev = eval_const(call->args[1].get());
-      if (!sv || !ev) throw std::runtime_error(
-          "List comprehension: range() arguments must be compile-time constants.");
-      start = *sv;
-      stop = *ev;
+  // Helper: collect values from a range() call or ListExpr iterable.
+  auto collect_iterable = [&](const Expression *iter_expr) -> std::vector<int> {
+    std::vector<int> vals;
+    if (const auto *call = dynamic_cast<const CallExpr *>(iter_expr)) {
+      const auto *callee_var = dynamic_cast<const VariableExpr *>(call->callee.get());
+      if (!callee_var || callee_var->name != "range") {
+        throw std::runtime_error(
+            "List comprehension iterable must be range() or a constant list.");
+      }
+      int start = 0, stop = 0;
+      if (call->args.size() == 1) {
+        auto sv = eval_const(call->args[0].get());
+        if (!sv) throw std::runtime_error(
+            "List comprehension: range() argument must be a compile-time constant.");
+        stop = *sv;
+      } else if (call->args.size() >= 2) {
+        auto sv = eval_const(call->args[0].get());
+        auto ev = eval_const(call->args[1].get());
+        if (!sv || !ev) throw std::runtime_error(
+            "List comprehension: range() arguments must be compile-time constants.");
+        start = *sv;
+        stop = *ev;
+      } else {
+        throw std::runtime_error("List comprehension: range() requires at least one argument.");
+      }
+      for (int i = start; i < stop; ++i)
+        vals.push_back(i);
+    } else if (const auto *le = dynamic_cast<const ListExpr *>(iter_expr)) {
+      for (const auto &e : le->elements) {
+        auto v = eval_const(e.get());
+        if (!v) throw std::runtime_error(
+            "List comprehension: list iterable elements must be compile-time constants.");
+        vals.push_back(*v);
+      }
     } else {
-      throw std::runtime_error("List comprehension: range() requires at least one argument.");
+      throw std::runtime_error(
+          "List comprehension iterable must be range() or a constant list literal.");
     }
-    for (int i = start; i < stop; ++i)
-      iter_vals.push_back(i);
-  } else if (const auto *le = dynamic_cast<const ListExpr *>(lc->iterable.get())) {
-    for (const auto &e : le->elements) {
-      auto v = eval_const(e.get());
-      if (!v) throw std::runtime_error(
-          "List comprehension: list iterable elements must be compile-time constants.");
-      iter_vals.push_back(*v);
+    return vals;
+  };
+
+  std::vector<int> outer_vals = collect_iterable(lc->iterable.get());
+
+  // Build the full flat list of element values by unrolling all loop combinations.
+  // For nested: for each outer val, bind outer var, then for each inner val bind inner var.
+  // For filter:  after binding var(s), evaluate filter; skip element if filter == 0.
+  std::string outer_key = current_inline_prefix + lc->var_name;
+  std::string inner_key = lc->var2_name.empty() ? "" : (current_inline_prefix + lc->var2_name);
+  bool has_inner = !lc->var2_name.empty() && lc->iterable2 != nullptr;
+
+  // Collect all (outer, inner) pairs and compute element values.
+  struct ElemEntry { tacky::Val val; };
+  std::vector<ElemEntry> entries;
+
+  for (int oval : outer_vals) {
+    constant_variables[outer_key] = oval;
+
+    if (has_inner) {
+      // Nested: collect inner values (inner iterable may reference outer var via eval_const).
+      std::vector<int> inner_vals = collect_iterable(lc->iterable2.get());
+      for (int ival : inner_vals) {
+        constant_variables[inner_key] = ival;
+
+        // Apply filter if present.
+        if (lc->filter) {
+          auto fv = eval_const(lc->filter.get());
+          if (!fv) throw std::runtime_error(
+              "List comprehension: filter condition must be a compile-time constant.");
+          if (*fv == 0) continue;
+        }
+
+        tacky::Val elem_val = visitExpression(lc->element.get());
+        entries.push_back({elem_val});
+      }
+      constant_variables.erase(inner_key);
+    } else {
+      // Single loop, optional filter.
+      if (lc->filter) {
+        auto fv = eval_const(lc->filter.get());
+        if (!fv) throw std::runtime_error(
+            "List comprehension: filter condition must be a compile-time constant.");
+        if (*fv == 0) {
+          continue;
+        }
+      }
+
+      tacky::Val elem_val = visitExpression(lc->element.get());
+      entries.push_back({elem_val});
     }
-  } else {
+  }
+  constant_variables.erase(outer_key);
+
+  // Validate total count against declared array size.
+  if ((int)entries.size() != count) {
     throw std::runtime_error(
-        "List comprehension iterable must be range() or a constant list literal.");
+        "List comprehension: generated " + std::to_string(entries.size()) +
+        " elements but array size is " + std::to_string(count) + ".");
   }
 
-  if ((int)iter_vals.size() != count) {
-    throw std::runtime_error(
-        "List comprehension: iterable length (" +
-        std::to_string(iter_vals.size()) + ") does not match array size (" +
-        std::to_string(count) + ").");
-  }
-
-  bool use_sram = arrays_with_variable_index.contains(qualified_name);
-  std::string var_key = current_inline_prefix + lc->var_name;
+  bool use_sram = arrays_with_variable_index.contains(qualified_name) || module_sram_arrays.contains(qualified_name);
 
   for (int k = 0; k < count; ++k) {
-    // Bind loop variable as a compile-time constant.
-    constant_variables[var_key] = iter_vals[k];
-
-    // Evaluate the element expression.
-    tacky::Val elem_val = visitExpression(lc->element.get());
-
-    // Assign to the k-th element of the array.
     if (use_sram) {
-      emit(tacky::ArrayStore{qualified_name, tacky::Constant{k}, elem_val,
+      emit(tacky::ArrayStore{qualified_name, tacky::Constant{k}, entries[k].val,
                              elem_dt, count});
     } else {
       std::string elem_name = qualified_name + "__" + std::to_string(k);
       tacky::Variable elem_var{elem_name, elem_dt};
       variable_types[elem_name] = elem_dt;
-      emit(tacky::Copy{elem_val, elem_var});
+      emit(tacky::Copy{entries[k].val, elem_var});
     }
   }
-  constant_variables.erase(var_key);
 }
 
 DataType IRGenerator::resolve_type(const std::string &type_str) {
@@ -2990,8 +3393,11 @@ void IRGenerator::visitAugAssign(const AugAssignStmt *stmt) {
       std::string qualified = current_function.empty()
                                   ? ve->name
                                   : current_function + "." + ve->name;
+      // Fallback: also check module-level (bare) name when local lookup fails.
+      if (!array_sizes.contains(qualified) && array_sizes.contains(ve->name))
+        qualified = ve->name;
       if (array_sizes.contains(qualified)) {
-        if (arrays_with_variable_index.contains(qualified)) {
+        if (arrays_with_variable_index.contains(qualified) || module_sram_arrays.contains(qualified)) {
           tacky::Val idx_val = visitExpression(indexExpr->index.get());
           emit(tacky::ArrayStore{qualified, idx_val, result,
                                  array_elem_types.at(qualified),
@@ -3547,8 +3953,11 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
     std::string qualified = current_function.empty()
                                 ? ve->name
                                 : current_function + "." + ve->name;
+    // Fallback: also check module-level (bare) name when local lookup fails.
+    if (!array_sizes.contains(qualified) && array_sizes.contains(ve->name))
+      qualified = ve->name;
     if (array_sizes.contains(qualified)) {
-      if (arrays_with_variable_index.contains(qualified)) {
+      if (arrays_with_variable_index.contains(qualified) || module_sram_arrays.contains(qualified)) {
         // Variable-index path: emit ArrayLoad IR (works for both constant and variable)
         tacky::Val idx_val = visitExpression(expr->index.get());
         tacky::Temporary tmp = make_temp(array_elem_types.at(qualified));
@@ -3817,6 +4226,10 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
         // Static class method call: flatten to ClassName_method
         callee = current_module_prefix + varExpr->name + "_" + mem->member;
         resolved_as_module = true;
+      } else if (varExpr->name == "int") {
+        // int.from_bytes() pseudo-static intrinsic
+        callee = "int_" + mem->member;
+        resolved_as_module = true;
       }
     }
     if (!resolved_as_module) {
@@ -3944,6 +4357,50 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       }
     }
     throw std::runtime_error("len() argument must be a fixed-size array or list literal");
+  }
+
+  // int.from_bytes(b, endian) — pack 2 bytes into uint16.
+  // Compile-time fold when b is a constant list; runtime: (hi<<8)|lo or (lo<<8)|hi.
+  // Syntax: int.from_bytes(b"\x01\x02", 'little')  or  int.from_bytes([lo, hi], 'little')
+  // Object 'int' is not a module, so callee is resolved as "int_from_bytes" via
+  // the bare-name flattening path (varExpr->name + "_" + member).
+  if (callee == "int_from_bytes") {
+    if (expr->args.size() != 2)
+      throw std::runtime_error("int.from_bytes() expects exactly two arguments (bytes, endian)");
+    // Determine endianness from second arg (string literal 'little' or 'big')
+    bool little_endian = true;
+    if (const auto *estr = dynamic_cast<const StringLiteral *>(expr->args[1].get())) {
+      if (estr->value == "big") little_endian = false;
+      else if (estr->value != "little")
+        throw std::runtime_error("int.from_bytes() endian must be 'little' or 'big'");
+    } else {
+      throw std::runtime_error("int.from_bytes() endian argument must be a string literal");
+    }
+    // First arg: list literal (from bytes literal or explicit list)
+    if (const auto *le = dynamic_cast<const ListExpr *>(expr->args[0].get())) {
+      if (le->elements.size() < 2)
+        throw std::runtime_error("int.from_bytes() requires at least 2 bytes");
+      tacky::Val b0 = visitExpression(le->elements[0].get());
+      tacky::Val b1 = visitExpression(le->elements[1].get());
+      // Constant fold
+      if (auto c0 = std::get_if<tacky::Constant>(&b0))
+        if (auto c1 = std::get_if<tacky::Constant>(&b1)) {
+          int val = little_endian
+              ? ((c1->value & 0xFF) << 8) | (c0->value & 0xFF)
+              : ((c0->value & 0xFF) << 8) | (c1->value & 0xFF);
+          return tacky::Constant{val};
+        }
+      // Runtime: emit (hi << 8) | lo
+      tacky::Val lo_val = little_endian ? b0 : b1;
+      tacky::Val hi_val = little_endian ? b1 : b0;
+      tacky::Temporary hi_shifted = make_temp(DataType::UINT16);
+      tacky::Temporary result_t   = make_temp(DataType::UINT16);
+      emit(tacky::Binary{tacky::BinaryOp::LShift, hi_val, tacky::Constant{8}, hi_shifted});
+      emit(tacky::Binary{tacky::BinaryOp::BitOr, hi_shifted, lo_val, result_t});
+      return result_t;
+    }
+    throw std::runtime_error(
+        "int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]");
   }
 
   // T1.4: abs(), min(), max() built-in intrinsics.
@@ -4517,6 +4974,76 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
         "const() argument must be a compile-time constant expression");
   }
 
+  // Handle compile_isr(handler, vector) intrinsic.
+  // Marks the referenced handler function as an ISR at the given vector,
+  // eliminating the need for a manual @interrupt(vector) decorator.
+  // Called from pin_irq_setup() when Pin.irq(trigger, handler) is used.
+  // handler is a function reference (bare identifier), vector is a constant.
+  if (callee == "compile_isr" && intrinsic_names.contains("compile_isr")) {
+    if (expr->args.size() != 2) {
+      throw std::runtime_error("compile_isr() expects exactly 2 arguments: "
+                               "compile_isr(handler, vector)");
+    }
+
+    // Resolve the interrupt vector (arg 1) — must be compile-time constant
+    tacky::Val vec_val = visitExpression(expr->args[1].get());
+    int vector = 0;
+    if (auto c = std::get_if<tacky::Constant>(&vec_val)) {
+      vector = c->value;
+    } else {
+      throw std::runtime_error(
+          "compile_isr() second argument (vector) must be a compile-time "
+          "constant");
+    }
+
+    // Resolve the handler function name (arg 0).
+    // The handler is passed as a bare identifier (e.g. on_press) through one
+    // or more levels of @inline expansion.  It lives in variable_aliases as a
+    // chain ending at "<enclosing_func>.<func_name>", e.g. "main.on_press".
+    std::string handler_func_name;
+    bool handler_provided = false;
+
+    if (auto *var = dynamic_cast<const VariableExpr *>(expr->args[0].get())) {
+      std::string key = current_inline_prefix + var->name;
+
+      // If the handler slot holds Constant{0} the caller used the default
+      // (no handler provided) — silently skip ISR registration.
+      if (constant_variables.count(key) && constant_variables.at(key) == 0) {
+        return std::monostate{};
+      }
+
+      // Follow the variable_aliases chain to the root name.
+      for (int depth = 0; depth < 20; ++depth) {
+        auto it = variable_aliases.find(key);
+        if (it == variable_aliases.end()) break;
+        key = it->second;
+      }
+
+      // key is now something like "main.on_press" (enclosing-function prefix
+      // + "." + bare-function-name).  Strip everything up to the first dot.
+      auto dot_pos = key.find('.');
+      handler_func_name =
+          (dot_pos != std::string::npos) ? key.substr(dot_pos + 1) : key;
+      handler_provided = !handler_func_name.empty();
+    } else {
+      // Arg was evaluated to a Constant — 0 means no handler.
+      tacky::Val arg0 = visitExpression(expr->args[0].get());
+      if (auto c = std::get_if<tacky::Constant>(&arg0)) {
+        if (c->value == 0) return std::monostate{};
+      }
+      throw std::runtime_error(
+          "compile_isr() first argument must be a function reference or 0");
+    }
+
+    if (!handler_provided) return std::monostate{};
+
+    // Store the registration for apply in generate() after all functions are
+    // compiled. generate() has access to ir_program.functions; visitCall does
+    // not (ir_program is a local variable there).
+    pending_isr_registrations[handler_func_name] = vector;
+    return std::monostate{};
+  }
+
   // Inlining Support
   if (inline_functions.contains(callee)) {
     const FunctionDef *func = inline_functions.at(callee);
@@ -4637,6 +5164,19 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
       // Track aliases for properties
       if (const auto v = std::get_if<tacky::Variable>(&argValues[i])) {
+        // Special case: if the target param is const[str] and the passed
+        // variable resolves to a compile-time string constant, propagate it
+        // directly into str_constant_variables so downstream match/case string
+        // comparisons can constant-fold (e.g. passing cs="PB0" through a
+        // const[str] SPI param into Pin's const[str] name param).
+        if (func->params[param_idx].type == "const[str]") {
+          if (auto str_val = resolve_str_constant(v->name)) {
+            str_constant_variables[paramName] = *str_val;
+            constant_variables.erase(paramName);
+            variable_aliases.erase(paramName);
+            continue;
+          }
+        }
         variable_aliases[paramName] = v->name;
         // Erase stale constant entries from previous inline expansions
         constant_variables.erase(paramName);
@@ -4708,12 +5248,14 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       }
 
       // Copy arg to param with proper type from function signature.
-      // Erase any stale constant_variables entry (e.g., from a previous
-      // call where this same param slot held a compile-time constant).
+      // Erase any stale constant_variables / alias entries from a previous
+      // call at the same inline depth where this same param slot held a
+      // compile-time constant or was aliased to a caller variable.
       // Without this, body expressions that read the parameter would see
-      // the old constant instead of the runtime value just stored.
+      // the old constant or stale alias instead of the runtime value.
       constant_variables.erase(paramName);
       str_constant_variables.erase(paramName);
+      variable_aliases.erase(paramName);
       DataType param_type = resolve_type(func->params[param_idx].type);
       emit(tacky::Copy{argValues[i],
                         tacky::Variable{paramName, param_type}});

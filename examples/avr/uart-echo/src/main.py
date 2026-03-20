@@ -12,12 +12,7 @@ from pymcu.hal.uart import UART
 def main():
     uart = UART(9600)
 
-    # Boot banner: "ECHO\n"
-    uart.write(69)   # E
-    uart.write(67)   # C
-    uart.write(72)   # H
-    uart.write(79)   # O
-    uart.write(10)   # \n
+    uart.println("ECHO")
 
     while True:
         b: uint8 = uart.read()

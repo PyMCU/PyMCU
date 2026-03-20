@@ -112,6 +112,21 @@ class UART:
         self.write(10)  # '\n'
 
     @inline
+    def read_blocking(self: uint8) -> uint8:
+        # Blocking read: polls until a byte arrives (RXC0 set), then returns it.
+        # This is identical to read() but named explicitly to distinguish from read_nb().
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_read
+                return uart_read()
+            case "pic14":
+                from pymcu.hal._uart.pic14 import uart_read
+                return uart_read()
+            case "pic18":
+                from pymcu.hal._uart.pic18 import uart_read
+                return uart_read()
+
+    @inline
     def available(self: uint8) -> uint8:
         # Returns 1 if a byte is waiting in the UART receive buffer (RXC bit set), 0 otherwise.
         match __CHIP__.arch:
@@ -138,4 +153,43 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_read_byte_isr
                 return uart_read_byte_isr()
+        return 0
+
+    @inline
+    def enable_rx_interrupt(self: uint8):
+        # Enable RXCIE0 in UCSR0B so the USART_RX ISR fires on each received byte.
+        # After calling this, define an @interrupt(0x0024) handler that calls rx_isr().
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_enable_rx_interrupt
+                uart_enable_rx_interrupt()
+
+    @inline
+    def rx_isr(self: uint8):
+        # Call from inside the @interrupt(0x0024) USART_RX handler.
+        # Reads UDR0 into the 16-byte ring buffer and advances the head index.
+        # Bytes are dropped silently if the buffer is full.
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_rx_isr
+                uart_rx_isr()
+
+    @inline
+    def rx_available(self: uint8) -> uint8:
+        # Returns 1 if at least one byte is waiting in the ring buffer, 0 otherwise.
+        # Use after enable_rx_interrupt() to check before calling rx_read().
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_rx_available
+                return uart_rx_available()
+        return 0
+
+    @inline
+    def rx_read(self: uint8) -> uint8:
+        # Read one byte from the ring buffer and advance the tail pointer.
+        # Returns 0 if the buffer is empty. Check rx_available() before calling.
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._uart.avr import uart_rx_read
+                return uart_rx_read()
         return 0

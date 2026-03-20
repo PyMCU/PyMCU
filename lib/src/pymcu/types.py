@@ -110,6 +110,13 @@ def interrupt(f, vector: int = 0):
     return f
 
 
+def compile_isr(handler, vector: int = 0):
+    # Compiler intrinsic: marks `handler` as an ISR at `vector` without
+    # requiring an @interrupt decorator on the function definition.
+    # Called from Pin.irq() / pin_irq_setup() at compile time.
+    pass
+
+
 # Integer width aliases — defined as TypeAlias so int literals are always
 # assignable (e.g. `x: uint16 = 0` is valid) while still communicating the
 # intended bit width to the pymcuc compiler via the annotation text.

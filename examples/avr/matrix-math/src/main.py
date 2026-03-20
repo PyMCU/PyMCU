@@ -64,7 +64,7 @@ def main():
         uart.write(frame[1])
         uart.write(frame[2])
         uart.write(frame[3])
-        uart.write(10)          # 0x0A frame separator
+        uart.write('\n')        # frame separator
 
         # Advance diagonal and wrap at 8 columns
         col = (col + 1) & 0x07

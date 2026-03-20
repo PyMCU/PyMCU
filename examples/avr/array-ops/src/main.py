@@ -19,12 +19,7 @@ def nibble_hex_lo(val: uint8) -> uint8:
 
 def main():
     uart = UART(9600)
-    uart.write(65)  # A
-    uart.write(82)  # R
-    uart.write(82)  # R
-    uart.write(65)  # A
-    uart.write(89)  # Y
-    uart.write(10)  # \n
+    uart.println("ARRAY")
 
     data: uint8[8] = [10, 20, 30, 40, 50, 60, 70, 80]
 
@@ -32,15 +27,15 @@ def main():
     total: uint8 = 0
     i: uint8 = 0
     while i < 8:
-        total = total + data[i]
-        i = i + 1
+        total += data[i]
+        i += 1
 
     # Output sum as hex: 10+20+30+40+50+60+70+80 = 360 -> 0x168 -> low byte 0x68
-    uart.write(83)   # S
-    uart.write(58)   # :
+    uart.write('S')
+    uart.write(':')
     uart.write(nibble_hex_hi(total))
     uart.write(nibble_hex_lo(total))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # Find minimum using variable index
     min_val: uint8 = data[0]
@@ -48,13 +43,13 @@ def main():
     while i < 8:
         if data[i] < min_val:
             min_val = data[i]
-        i = i + 1
+        i += 1
 
-    uart.write(77)   # M
-    uart.write(58)   # :
+    uart.write('M')
+    uart.write(':')
     uart.write(nibble_hex_hi(min_val))
     uart.write(nibble_hex_lo(min_val))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     while True:
         delay_ms(1000)

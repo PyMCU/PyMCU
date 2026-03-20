@@ -69,7 +69,8 @@ enum class TokenType {
   Identifier,
   Number,
   String,
-  FString,  // f"..." — raw interior (without f"..."), parsed into FStringExpr
+  FString,      // f"..." — raw interior (without f"..."), parsed into FStringExpr
+  BytesLiteral, // b"..." — sequence of byte values, treated as uint8 list
 
   // Structure & Types
   Colon,      // :

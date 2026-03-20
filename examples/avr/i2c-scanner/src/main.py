@@ -43,9 +43,9 @@ def main():
             else:
                 uart.write(lo + 55)
             uart.write('\n')
-            found = found + 1
+            found += 1
 
-        addr = addr + 1
+        addr += 1
 
     uart.write_str("Done. Found: ")
     uart.write(found + 48)

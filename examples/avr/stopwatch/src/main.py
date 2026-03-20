@@ -108,9 +108,9 @@ def main():
         if GPIOR0[0] == 1:
             GPIOR0[0] = 0
             if running == 1:
-                ticks = ticks + 1
+                ticks += 1
                 if ticks >= 61:
                     ticks = 0
-                    seconds = seconds + 1
+                    seconds += 1
                     uart.write(seconds & 0xFF)
                     uart.write('\n')

@@ -18,11 +18,7 @@ def main():
     uart = UART(9600)
     adc  = AnalogPin("PC0")
 
-    # Boot banner: "ADC\n"
-    uart.write(65)   # A
-    uart.write(68)   # D
-    uart.write(67)   # C
-    uart.write(10)   # \n
+    uart.println("ADC")
 
     while True:
         # Trigger conversion (ADSC = ADCSRA bit 6)

@@ -12,8 +12,7 @@ def main():
     uart = UART(9600)
     ee   = EEPROM()
 
-    uart.write_str("EEPROM TEST")
-    uart.write(10)
+    uart.println("EEPROM TEST")
 
     # Write pattern
     ee.write(0, 0xA1)
@@ -28,11 +27,9 @@ def main():
     d: uint8 = ee.read(3)
 
     if a == 0xA1 and b == 0xB2 and c == 0xC3 and d == 0xD4:
-        uart.write_str("EEPROM OK")
-        uart.write(10)
+        uart.println("EEPROM OK")
     else:
-        uart.write_str("EEPROM FAIL")
-        uart.write(10)
+        uart.println("EEPROM FAIL")
 
     while True:
         pass

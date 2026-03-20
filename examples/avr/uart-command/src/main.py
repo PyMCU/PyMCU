@@ -50,7 +50,7 @@ def main():
                 while i < 10:
                     led.toggle()
                     delay_ms(100)
-                    i = i + 1
+                    i += 1
                 led_on = 0
                 led.low()
 

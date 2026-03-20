@@ -13,14 +13,14 @@ from pymcu.time import delay_ms
 
 def main():
     uart = UART(9600)
-    uart.write(82)    # 'R' -- ready
+    uart.write('R')   # ready
 
     delay_ms(1000)
-    uart.write(65)    # 'A' -- 1000 ms elapsed
+    uart.write('A')   # 1000 ms elapsed
 
     delay_ms(3000)
-    uart.write(66)    # 'B' -- another 3000 ms elapsed (3000 > 255 tests uint16)
+    uart.write('B')   # another 3000 ms elapsed (3000 > 255 tests uint16)
 
     while True:
-        uart.write(72)    # 'H' -- heartbeat so simulator does not stall
+        uart.write('H')   # heartbeat so simulator does not stall
         delay_ms(500)

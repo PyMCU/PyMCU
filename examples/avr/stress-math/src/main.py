@@ -25,49 +25,43 @@ def nibble_hex(n: uint8) -> uint8:
 
 def main():
     uart = UART(9600)
-    uart.write(83)  # S
-    uart.write(84)  # T
-    uart.write(82)  # R
-    uart.write(69)  # E
-    uart.write(83)  # S
-    uart.write(83)  # S
-    uart.write(10)  # \n
+    uart.println("STRESS")
 
     # Test overflow wraparound: 255 + 1 = 0
     a: uint8 = 255
     b: uint8 = a + 1
-    uart.write(79)   # O (overflow)
-    uart.write(58)   # :
+    uart.write('O')
+    uart.write(':')
     uart.write(nibble_hex(b))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # Test 4-arg clamp_add: clamp_add(200, 40, 10, 230) = 230 (clamped to hi)
     # 200 + 40 = 240 which is > 230, so result is clamped to 230 = 0xE6
     r1: uint8 = clamp_add(200, 40, 10, 230)
-    uart.write(67)   # C
-    uart.write(58)   # :
+    uart.write('C')
+    uart.write(':')
     uart.write(nibble_hex(r1 >> 4))
     uart.write(nibble_hex(r1 & 0x0F))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # Test polynomial: poly(5) = 25 + 15 + 7 = 47 = 0x2F
     p: uint8 = poly(5)
-    uart.write(80)   # P
-    uart.write(58)   # :
+    uart.write('P')
+    uart.write(':')
     uart.write(nibble_hex(p >> 4))
     uart.write(nibble_hex(p & 0x0F))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     # 16-bit overflow: 65535 + 1 = 0
     w: uint16 = 65535
     w2: uint16 = w + 1
-    uart.write(87)   # W
-    uart.write(58)   # :
+    uart.write('W')
+    uart.write(':')
     uart.write(nibble_hex((w2 >> 12) & 0xF))
     uart.write(nibble_hex((w2 >> 8) & 0xF))
     uart.write(nibble_hex((w2 >> 4) & 0xF))
     uart.write(nibble_hex(w2 & 0xF))
-    uart.write(10)   # \n
+    uart.write('\n')
 
     while True:
         delay_ms(1000)

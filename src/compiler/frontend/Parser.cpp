@@ -1099,6 +1099,27 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     return std::make_unique<VariableExpr>(t.value);
   }
 
+  if (match(TokenType::BytesLiteral)) {
+    // b"..." token value is comma-separated decimal byte values.
+    // Parse and return as a ListExpr of IntegerLiterals for uniform handling.
+    const std::string &encoded = previous().value;
+    std::vector<std::unique_ptr<Expression>> elems;
+    if (!encoded.empty()) {
+      // Parse comma-separated integers
+      size_t start = 0;
+      while (start <= encoded.size()) {
+        size_t comma = encoded.find(',', start);
+        if (comma == std::string::npos) comma = encoded.size();
+        std::string tok = encoded.substr(start, comma - start);
+        if (!tok.empty()) {
+          elems.push_back(std::make_unique<IntegerLiteral>(std::stoi(tok)));
+        }
+        start = comma + 1;
+      }
+    }
+    return std::make_unique<ListExpr>(std::move(elems));
+  }
+
   if (match(TokenType::String)) {
     return std::make_unique<StringLiteral>(previous().value);
   }
@@ -1232,13 +1253,36 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     // Parse first element; decide if this is a comprehension or a literal.
     auto first = parseExpression();
     if (match(TokenType::For)) {
-      // List comprehension: [first for var in iterable]
+      // List comprehension: [first for var in iterable [for var2 in iterable2] [if cond]]
+      // Use parseLogicalOr() for iterables so that 'if' and 'for' keywords are not
+      // consumed as part of a ternary expression within the iterable.
       Token var_tok = consume(TokenType::Identifier, "Expected loop variable");
       consume(TokenType::In, "Expected 'in'");
-      auto iterable = parseExpression();
+      auto iterable = parseLogicalOr();
+
+      // Check for optional inner 'for' clause (nested comprehension)
+      std::string var2_name;
+      std::unique_ptr<Expression> iterable2;
+      if (match(TokenType::For)) {
+        Token var2_tok = consume(TokenType::Identifier, "Expected loop variable");
+        consume(TokenType::In, "Expected 'in'");
+        iterable2 = parseLogicalOr();
+        var2_name = var2_tok.value;
+      }
+
+      // Check for optional 'if' filter clause.
+      // The filter is also parsed with parseLogicalOr() to avoid ambiguity.
+      std::unique_ptr<Expression> filter;
+      if (match(TokenType::If)) {
+        filter = parseLogicalOr();
+      }
+
       consume(TokenType::RBracket, "Expected ']'");
       return std::make_unique<ListCompExpr>(std::move(first), var_tok.value,
-                                            std::move(iterable));
+                                            std::move(iterable),
+                                            std::move(var2_name),
+                                            std::move(iterable2),
+                                            std::move(filter));
     }
     // Regular list literal
     std::vector<std::unique_ptr<Expression>> elems;

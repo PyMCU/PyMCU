@@ -13,22 +13,19 @@ def main():
     uart = UART(9600)
     wdt  = Watchdog(timeout_ms=500)
 
-    uart.write_str("WDT INIT")
-    uart.write(10)
+    uart.println("WDT INIT")
 
     wdt.enable()
 
     i: uint8 = 0
     while i < 10:
         wdt.feed()
-        uart.write_str("FEED")
-        uart.write(10)
-        i = i + 1
+        uart.println("FEED")
+        i += 1
 
     wdt.disable()
 
-    uart.write_str("DONE")
-    uart.write(10)
+    uart.println("DONE")
 
     while True:
         pass

@@ -93,7 +93,7 @@ def main():
         # Timer0 OVF handler: count ticks, sample ADC every 64
         if GPIOR0[0] == 1:
             GPIOR0[0] = 0
-            tick = tick + 1
+            tick += 1
             if tick == 64:
                 tick = 0
 

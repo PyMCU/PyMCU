@@ -166,6 +166,11 @@ class IRGenerator {
   // Intrinsic tracking
   std::set<std::string> intrinsic_names;
 
+  // compile_isr() registrations: bare function name -> interrupt vector.
+  // Filled during visitCall when compile_isr() is encountered; applied to
+  // ir_program.functions after all functions are compiled in generate().
+  std::map<std::string, int> pending_isr_registrations;
+
   struct FunctionEntry {
     std::string prefix;
     const FunctionDef *func;
@@ -192,6 +197,11 @@ class IRGenerator {
   // function. These use contiguous SRAM allocation + ArrayLoad/ArrayStore IR instructions.
   // Arrays NOT in this set keep the original synthetic-scalar approach (zero overhead).
   std::set<std::string> arrays_with_variable_index;
+
+  // Module-level arrays that unconditionally use SRAM (bytearray declarations at global scope).
+  // Unlike arrays_with_variable_index this set is NEVER cleared between functions so that
+  // non-inline functions can access module-level ring buffers with variable indices.
+  std::set<std::string> module_sram_arrays;
 
   // Pre-scan a function body (list of statements) to detect variable-index array accesses.
   // Populates arrays_with_variable_index before IR generation begins.

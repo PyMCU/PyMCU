@@ -45,7 +45,7 @@ def main():
     while True:
         if GPIOR0[0] == 1:
             GPIOR0[0] = 0
-            ovf_count = ovf_count + 1
+            ovf_count += 1
             if ovf_count == 61:
                 ovf_count = 0
                 led.toggle()

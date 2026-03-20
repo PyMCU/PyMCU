@@ -21,34 +21,53 @@
 # NOTICE: STRICT COPYLEFT & STATIC LINKING - see uart.py for full notice.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, inline, const
 from pymcu.chips import __CHIP__
 
 
 # SPI - Hardware SPI master, zero-cost abstraction (all methods @inline)
 # Default: Mode 0, MSB-first, fosc/4, MOSI=PB3, MISO=PB4, SCK=PB5, SS=PB2
+# Optional cs parameter: pin name for chip-select (e.g. "PB2").
+# When cs is set, __enter__ drives it low and __exit__ drives it high.
 class SPI:
 
     @inline
-    def __init__(self: uint8):
+    def __init__(self: uint8, cs: const[str] = ""):
+        # Store the CS pin name (empty string means use the default SS/PB2 via spi_select)
+        self._cs = cs
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._spi.avr import spi_init
                 spi_init()
+                if cs != "":
+                    # Configure the user-specified CS pin as output, idle high
+                    from pymcu.hal.gpio import Pin
+                    _cs_pin = Pin(cs, Pin.OUT)
+                    _cs_pin.high()
 
     @inline
     def select(self: uint8):
         match __CHIP__.arch:
             case "avr":
-                from pymcu.hal._spi.avr import spi_select
-                spi_select()
+                if self._cs != "":
+                    from pymcu.hal.gpio import Pin
+                    _cs_pin = Pin(self._cs, Pin.OUT)
+                    _cs_pin.low()
+                else:
+                    from pymcu.hal._spi.avr import spi_select
+                    spi_select()
 
     @inline
     def deselect(self: uint8):
         match __CHIP__.arch:
             case "avr":
-                from pymcu.hal._spi.avr import spi_deselect
-                spi_deselect()
+                if self._cs != "":
+                    from pymcu.hal.gpio import Pin
+                    _cs_pin = Pin(self._cs, Pin.OUT)
+                    _cs_pin.high()
+                else:
+                    from pymcu.hal._spi.avr import spi_deselect
+                    spi_deselect()
 
     @inline
     def transfer(self: uint8, data: uint8) -> uint8:

@@ -30,7 +30,7 @@ def main():
 
         # Detect falling edge (button press)
         if cur == 0 and prev == 1:
-            count = count + 1
+            count += 1
             led.toggle()
 
             # Send count as big-endian uint16
@@ -40,7 +40,7 @@ def main():
             # Roll over at 1000 — exercises 16-bit JumpIfEqual with immediate
             if count == 1000:
                 count = 0
-                uart.write(82)   # 'R' reset
+                uart.write('R')   # 'R' reset
 
         prev = cur
         delay_ms(10)    # 10 ms debounce window

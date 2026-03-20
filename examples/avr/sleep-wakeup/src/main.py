@@ -21,8 +21,7 @@ def main():
     btn  = Pin("PD2", Pin.IN)
     btn.init(Pin.IN, Pin.PULL_UP)
 
-    uart.write_str("SLEEP DEMO")
-    uart.write(10)
+    uart.println("SLEEP DEMO")
 
     # Configure INT0: falling edge (EICRA ISC01=1, ISC00=0)
     EICRA.value = 0x02
@@ -32,17 +31,14 @@ def main():
 
     count: uint8 = 0
     while count < 5:
-        uart.write_str("SLEEP")
-        uart.write(10)
+        uart.println("SLEEP")
         sleep_idle()
         if GPIOR0[0] == 1:
             GPIOR0[0] = 0
-            count = count + 1
-            uart.write_str("WAKE")
-            uart.write(10)
+            count += 1
+            uart.println("WAKE")
 
-    uart.write_str("DONE")
-    uart.write(10)
+    uart.println("DONE")
 
     while True:
         pass
