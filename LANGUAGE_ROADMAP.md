@@ -70,6 +70,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `@property` / `@name.setter` | Compile-time expansion only |
 | `@staticmethod` | Silently ignored (all class methods are effectively static) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
+| `__FREQ__` | Compile-time clock frequency in Hz (e.g. `16000000` at 16 MHz); use for timing calculations |
 | `.value` dereference | 8/16-bit memory read/write via `ptr` |
 
 ### HAL
@@ -236,7 +237,7 @@ These are the highest-value features not yet implemented, in priority order.
 | `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins; no hardware TWI dependency |
 | `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes in one transaction; currently single-byte only |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| `Pin.pulse_in(timeout)` | ~2h | Measure pulse duration in microseconds |
+| ~~`Pin.pulse_in(timeout)`~~ | ✅ Done | Implemented; uses `__FREQ__` for µs-accurate loop calibration |
 | Timer `millis()` / `micros()` | ~4h | Elapsed-time counter via Timer0 overflow accumulation |
 | Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
 | `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |

@@ -191,18 +191,25 @@ def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
 
 @inline
 def pin_pulse_in(pin_reg: ptr[uint8], bit: uint8, state: uint8, timeout_us: uint16) -> uint16:
-    # Wait for pin to reach desired state (with timeout)
+    # AVR inner loop body: SBIS/SBIC (1 cyc) + BRNE (1 cyc) + ADIW (2 cyc) +
+    # CP/CPC (2 cyc) + BRCS (1 cyc) = ~8 cycles per "pin active" iteration.
+    # iters_per_us = __FREQ__ / (8 * 1_000_000); folded to a constant at build time.
+    iters_per_us: uint8 = __FREQ__ // 8000000
+    if iters_per_us == 0:
+        iters_per_us = 1
+    max_count: uint16 = timeout_us * iters_per_us
+    # Wait for pin to reach desired state
     wait: uint16 = 0
-    while wait < timeout_us:
+    while wait < max_count:
         if pin_reg[bit] == state:
             break
         wait = wait + 1
-    if wait >= timeout_us:
+    if wait >= max_count:
         return 0
-    # Measure how long pin stays in that state
+    # Measure how long pin stays in that state; divide by iters_per_us -> us
     count: uint16 = 0
-    while count < timeout_us:
+    while count < max_count:
         if pin_reg[bit] != state:
             break
         count = count + 1
-    return count
+    return count // iters_per_us

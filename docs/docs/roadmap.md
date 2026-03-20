@@ -66,6 +66,7 @@ Everything below is shipped and covered by integration tests.
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
 | `@property` / `@name.setter` | Compile-time expansion |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
+| `__FREQ__` | Compile-time clock frequency in Hz (e.g. `16000000` at 16 MHz); use for timing calculations |
 
 ### HAL
 
@@ -230,7 +231,7 @@ Highest-value features not yet implemented, in priority order.
 | `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins |
 | `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes; currently single-byte |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size buffer |
-| `Pin.pulse_in(timeout)` | ~2h | Measure pulse duration in microseconds |
+| ~~`Pin.pulse_in(timeout)`~~ | ✅ Done | Implemented; uses `__FREQ__` for µs-accurate loop calibration |
 | Timer `millis()` / `micros()` | ~4h | Running clock via Timer0 overflow |
 | `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor |
 

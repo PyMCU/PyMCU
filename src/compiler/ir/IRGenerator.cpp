@@ -151,8 +151,11 @@ tacky::Program IRGenerator::generate(
   intrinsic_names.insert("reversed");  // reversed(iter) — compile-time reversed iteration
   intrinsic_names.insert("divmod");    // divmod(a,b) — quotient + remainder
 
-  // Inject compile-time constants from device configuration
+  // Inject compile-time constants from device configuration.
+  // __FREQ__ is the canonical public name; __FREQUENCY__ is kept for
+  // backwards-compatibility with any existing internal HAL code.
   if (config.frequency > 0) {
+    constant_variables["__FREQ__"] = static_cast<int>(config.frequency);
     constant_variables["__FREQUENCY__"] = static_cast<int>(config.frequency);
   }
 
