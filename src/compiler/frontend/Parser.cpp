@@ -161,6 +161,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   bool is_property_getter = false;
   bool is_property_setter = false;
   std::string prop_setter_of;
+  bool is_extern = false;
+  std::string extern_symbol;
 
   while (check(TokenType::At)) {
     advance();  // Consume '@'
@@ -168,6 +170,15 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
         consume(TokenType::Identifier, "Expected decorator name");
     if (decorator.value == "inline") {
       is_inline = true;
+    } else if (decorator.value == "extern") {
+      // @extern("symbol_name"): declares a C function callable from PyMCU.
+      // The function body is a stub (ignored); the compiler emits CALL symbol.
+      is_extern = true;
+      consume(TokenType::LParen, "Expected '(' after @extern");
+      const Token sym_tok = consume(TokenType::String,
+          "Expected C symbol name as a string literal in @extern(\"name\")");
+      extern_symbol = sym_tok.value;
+      consume(TokenType::RParen, "Expected ')' after @extern symbol name");
     } else if (decorator.value == "property") {
       // @property: marks a getter; implicitly inline for ZCA
       is_property_getter = true;
@@ -252,6 +263,8 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   func->is_property_getter = is_property_getter;
   func->is_property_setter = is_property_setter;
   func->property_name = prop_setter_of;
+  func->is_extern = is_extern;
+  func->extern_symbol = extern_symbol;
   return func;
 }
 

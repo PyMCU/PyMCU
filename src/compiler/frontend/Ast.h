@@ -462,6 +462,9 @@ struct FunctionDef : Statement {
   bool is_property_getter = false;
   bool is_property_setter = false;
   std::string property_name;  // for @name.setter: the property being set
+  // @extern("symbol"): body is a stub; compiler emits CALL to the C symbol.
+  bool is_extern = false;
+  std::string extern_symbol;  // C symbol name, e.g. "uart_hw_init"
 
   FunctionDef(std::string n, std::vector<Param> p, std::string ret,
               std::unique_ptr<Block> b, bool inl = false, bool is_int = false,
