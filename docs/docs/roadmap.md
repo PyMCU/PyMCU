@@ -15,7 +15,7 @@ Everything below is shipped and covered by integration tests.
 | `for i in range(n)` | Runtime or compile-time bound; `range(start, stop, step)` |
 | `for x in array` / `for x in [1, 2, 3]` | Fixed-size array or constant list literal |
 | `for i, x in enumerate(iterable)` | Compile-time index counter |
-| `match` / `case` | Literal, wildcard `_`, OR (`\|`), dotted-name patterns; DCE on `__CHIP__` |
+| `match` / `case` | Literal, wildcard `_`, OR (`|`), dotted-name patterns; DCE on `__CHIP__` |
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
@@ -35,10 +35,10 @@ Everything below is shipped and covered by integration tests.
 | String literals | Single- and double-quoted |
 | Arithmetic `+ - * / % //` | Full constant folding |
 | Comparison `== != < <= > >=` | |
-| Bitwise `& \| ^ ~ << >>` | |
+| Bitwise `& | ^ ~ << >>` | |
 | Logical `and` / `or` / `not` | Full short-circuit evaluation |
 | Ternary `x if cond else y` | |
-| Augmented assignment `+= -= *= //= &= \|= ^= <<= >>=` | Variable, subscript, and member targets |
+| Augmented assignment `+= -= *= //= &= |= ^= <<= >>=` | Variable, subscript, and member targets |
 | Type cast `uint8(val)`, `uint16(val)` | Constant-fold; truncate/zero-extend at runtime |
 | `abs(x)`, `min(a, b)`, `max(a, b)`, `len(x)` | Intrinsic built-ins |
 | `ord('A')`, `chr(n)` | Compile-time constant only |
@@ -83,7 +83,7 @@ Everything below is shipped and covered by integration tests.
 | `pymcu.hal.power` | `sleep_idle/adc_noise/power_down/power_save/standby` |
 | `pymcu.drivers.dht11` | `DHT11` — portable temperature/humidity driver |
 | `pymcu.time` | `delay_ms`, `delay_us` |
-| `pymcu.boards.arduino_uno` | `D0`–`D13`, `A0`–`A5`, `LED_BUILTIN` |
+| `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5`, `LED_BUILTIN` |
 
 ### Compat Packages
 
@@ -144,7 +144,7 @@ Everything below is shipped and covered by integration tests.
 | Feature | Notes |
 |---------|-------|
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
-| `int.from_bytes(b, 'little'/'big')` | Compile-time fold for byte literals; runtime `(hi<<8)\|lo` for variables |
+| `int.from_bytes(b, 'little'/'big')` | Compile-time fold for byte literals; runtime `(hi<<8)|lo` for variables |
 | `enumerate` on runtime arrays | `for i, x in enumerate(arr):` unrolled with `ArrayLoad` per element |
 | `UART.read_blocking()` | Polls RXC until byte arrives, returns it |
 
@@ -180,7 +180,7 @@ Everything below is shipped and covered by integration tests.
 
 | Feature | Notes |
 |---------|-------|
-| Nested list comprehension | `[f(x, y) for x in row for y in col]` — full outer×inner product unroll |
+| Nested list comprehension | `[f(x, y) for x in row for y in col]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 
@@ -203,12 +203,12 @@ Everything below is shipped and covered by integration tests.
 
 ### Drivers
 
-| Feature | Notes |
-|---------|-------|
-| `HD44780` LCD | `LCD(rs, en, d4–d7)` — 4-bit parallel; `init/clear/home/print_str/set_cursor/write_char` |
+| Driver | Notes |
+|--------|-------|
+| `HD44780` LCD | `LCD(rs, en, d4-d7)` — 4-bit parallel; `init/clear/home/print_str/set_cursor/write_char` |
 | `SSD1306` OLED | 128x64 OLED over I2C; `init/clear/draw_pixel/draw_line/print_str` |
 | `MAX7219` 8-digit display | SPI 7-segment driver; `set_digit/set_raw/clear/set_brightness` |
-| `BMP280` pressure/temp | I2C barometric pressure + temperature sensor |
+| `BMP280` barometer | I2C barometric pressure + temperature sensor; `read_pressure/read_temp` |
 
 ---
 
@@ -220,14 +220,43 @@ Highest-value features not yet implemented, in priority order.
 
 | Feature | Effort | Notes |
 |---------|--------|-------|
-| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
+| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math |
+| `const uint8[N]` (PROGMEM) | ~3h | Read-only lookup tables in flash |
 
 ### HAL
 
 | Feature | Effort | Notes |
 |---------|--------|-------|
-| `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| I2C multi-byte `write_to(addr, buf, len)` | ~3h | Extend to send N bytes; currently single-byte |
+| `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins |
+| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes; currently single-byte |
+| `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size buffer |
+| `Pin.pulse_in(timeout)` | ~2h | Measure pulse duration in microseconds |
+| Timer `millis()` / `micros()` | ~4h | Running clock via Timer0 overflow |
+| `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor |
+
+### C Interop (avr-as migration)
+
+Migrates the assembler backend from `avra` to `avr-as` (GNU binutils, ELF output),
+enabling mixed Python + C firmware and proper symbol linking.
+
+| Feature | Effort | Notes |
+|---------|--------|-------|
+| Migrate to `avr-as` + `avr-ld` | ~1 week | ELF output; `.extern`/`.global`; linker script |
+| `@extern("symbol")` decorator | ~3h | Call an external C function from PyMCU code |
+| `[tool.pymcu.ffi]` build config | ~2h | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
+| `pymcu.ffi` stdlib module | ~1h | Re-exports `extern`; no runtime code |
+| `avr-gcc` C compilation step | ~2h | Build driver compiles `.c` sources and links with ELF firmware |
+
+```python
+# Usage example
+from pymcu.ffi import extern
+from pymcu.types import uint16
+
+@extern("uart_hw_init")
+def uart_hw_init(baud: uint16) -> None: ...
+
+uart_hw_init(9600)  # emits CALL uart_hw_init with AVR ABI
+```
 
 ### Compat
 
@@ -236,7 +265,7 @@ Highest-value features not yet implemented, in priority order.
 | `machine.Timer(id, period, callback)` | ~3h | Timer callback via `@interrupt` + `compile_isr` |
 | `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API |
 | `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
-| `analogio.AnalogOut` (DAC stub) | ~1h | Raise CompileError with guidance (no DAC on ATmega328P) |
+| `analogio.AnalogOut` (DAC stub) | ~1h | CompileError with guidance (no DAC on ATmega328P) |
 
 ---
 
@@ -244,11 +273,11 @@ Highest-value features not yet implemented, in priority order.
 
 | Feature | Reason |
 |---------|--------|
-| Heap allocation / `list.append` / `dict` / `set` | No heap; 32–2048 bytes SRAM |
+| Heap allocation / `list.append` / `dict` / `set` | No heap; 32-2048 bytes SRAM |
 | Garbage collection | No runtime |
 | `try` / `except` | No runtime; use return-code error handling |
 | `async` / `await` | Use `@interrupt` + polling loop |
-| `float` / `complex` | Use `fixed16` (Beta) or integer-scaled arithmetic |
+| `float` / `complex` | Use `fixed16` or integer-scaled arithmetic |
 | `f"..."` runtime interpolation | Use `uart.write_str()` / `uart.print_byte()` |
 | Closures / nested `def` | Captured variables require heap |
 | `*args` / `**kwargs` | Requires heap |

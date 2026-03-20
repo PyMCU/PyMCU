@@ -16,11 +16,11 @@ suggests the idiomatic PyMCU alternative where one exists.
 | `list` as a dynamic container (`lst.append(x)`) | Heap allocation required; no `malloc` | `uint8[N]` fixed-size array |
 | `dict` | Hash table requires heap | `match / case` for key dispatch |
 | `set` | Hash set requires heap | `uint8` bitmask |
-| `bytearray` as mutable buffer | Dynamic allocation | `uint8[N]` array |
-| `bytes` object operations | Runtime length + allocation | Flash string pool (`__str_N`) |
-| `str` as a mutable or runtime value | No heap string buffer | String literals in flash only |
 
-**Rule of thumb:** if the size isn't known at compile time, it cannot be compiled.
+**Supported:** `bytearray(N)` and `bytearray(b"...")` are compiled to SRAM `uint8[N]` arrays.
+Fixed-size arrays `arr: uint8[N]` are fully supported with constant- and variable-index access.
+
+**Rule of thumb:** if the size is not known at compile time, it cannot be compiled.
 
 ---
 
@@ -28,13 +28,15 @@ suggests the idiomatic PyMCU alternative where one exists.
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `f"prefix {value}"` at runtime | Requires heap format buffer | `uart.write(value)` + `print("prefix")` |
+| `f"prefix {value}"` at runtime | Requires heap format buffer | `uart.write_str("prefix"); uart.write(value)` |
 | `str.split()`, `str.join()`, `str.format()` | Heap strings | Not available |
-| `len(string_variable)` | Runtime string object required | Avoid; use fixed-size buffers |
-| `str + str` concatenation | Heap allocation | Separate `print()` calls |
-| `str[i]` indexing on a runtime string | No runtime string object | Flash-only strings can be iterated at compile time via `for ch in "literal"` |
+| `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
+| `str + str` concatenation | Heap allocation | Separate `uart.write_str()` / `uart.println()` calls |
+| `str[i]` indexing on a runtime string | No runtime string object | Iterate compile-time literals: `for ch in "literal":` |
 
-**Supported:** String literals in flash, `print("literal")`, `uart.write(byte)`, `for ch in "literal"` (compile-time unroll).
+**Supported:** String literals in flash, `uart.println("literal")`, `uart.write_str("text")`,
+`for ch in "ABC":` (compile-time unroll), `f"text={const}"` where all interpolations are
+compile-time constants.
 
 ---
 
@@ -42,11 +44,12 @@ suggests the idiomatic PyMCU alternative where one exists.
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `try / except` | Exception table + unwinding stack required | Return error codes; use match/case |
+| `try / except` | Exception table + unwinding stack required | Return error codes; use `match/case` |
 | `raise` (runtime) | No exception runtime | `return ERROR_CODE`; compile-time `raise` is supported |
-| `assert` | Raises `AssertionError` at runtime | Not yet available (planned T2.3 for compile-time validation) |
 | `finally` | Requires exception unwinding | Restructure control flow |
-| `with` (context managers) | Requires `__enter__`/`__exit__` protocol | Not yet available (planned T2.2 for inline expansion) |
+
+**Supported:** `assert condition, msg` is supported as a compile-time check — a statically false
+assertion is a CompileError; a true or runtime assertion is stripped.
 
 ---
 
@@ -63,9 +66,9 @@ suggests the idiomatic PyMCU alternative where one exists.
 | `nonlocal` | Requires closure cell | Not available |
 | Nested `def` inside a function | Closure capture required | Module-level or class `@inline` |
 
-**Supported:** `@inline` functions are expanded at call sites — zero call overhead, zero stack.
-Non-`@inline` functions use a conventional call/ret ABI and can call themselves recursively up
-to the stack depth limit (~80 frames on ATmega328P with default stack).
+**Supported:** `@inline` functions expand at call sites — zero call overhead, zero stack.
+Non-`@inline` functions use a conventional call/ret ABI and can recurse up to the stack
+depth limit (~80 frames on ATmega328P with 2KB SRAM).
 
 ---
 
@@ -76,14 +79,14 @@ to the stack depth limit (~80 frames on ATmega328P with default stack).
 | Multiple inheritance / MRO | C3 linearization is a runtime concept | Single-level inheritance only |
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
 | `isinstance()` / `type()` | No type tags at runtime | Not available |
-| `__dunder__` magic methods beyond `__init__` | Operator overloading requires dispatch | Explicit `@inline` helpers |
-| `__repr__`, `__str__` | No runtime string formatting | `print()` with explicit fields |
-| `classmethod` / `staticmethod` | Runtime descriptor protocol | Module-level `@inline` function |
+| `__dunder__` magic methods beyond `__init__`, `__enter__`, `__exit__` | Operator overloading requires dispatch | Explicit `@inline` helpers |
+| `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
 | `dataclass` / `namedtuple` | Metaclass + runtime heap | Manual `@inline` class |
 | Abstract base classes | ABC machinery requires runtime | Document the interface convention |
 
 **Supported:** ZCA `@inline` classes (zero SRAM), `@property` / `@name.setter`, single-level
-class inheritance, method resolution on the inlined class only.
+class inheritance with `super()`, `with obj:` context managers (`__enter__`/`__exit__`),
+`@staticmethod` (silently treated as a module-level function).
 
 ---
 
@@ -91,16 +94,17 @@ class inheritance, method resolution on the inlined class only.
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `float` arithmetic (native) | No FPU on AVR; soft-float not yet implemented | Fixed-point `int16` with manual scaling (soft float planned for Phase 3) |
+| `float` arithmetic (native) | No FPU on AVR; soft-float not yet implemented | Fixed-point `int16` with manual scaling (`fixed16` planned v0.8) |
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
-| `None` as a value (runtime check) | Folds to `Constant{-1}` at compile time | Use a sentinel value (e.g. `0xFF`) or `None` literal |
+| `None` as a runtime-checked value | Folds to `Constant{-1}` at compile time | Use a sentinel value (e.g. `0xFF`) |
 | `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern |
 | `Union` types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
 
 **Supported:** `uint8`, `uint16`, `uint32`, `int8`, `int16`, `int32`, `bool` (as `uint8`),
-fixed-size arrays `uint8[N]`, tuple literals and tuple unpacking for multi-return functions.
+fixed-size arrays `uint8[N]`, `bytearray`, `bytes` literal `b"..."`, tuple literals and
+tuple unpacking for multi-return functions.
 
 ---
 
@@ -108,18 +112,18 @@ fixed-size arrays `uint8[N]`, tuple literals and tuple unpacking for multi-retur
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| List comprehension over **runtime** iterable | Length not known at compile time | Use a `for` loop with a fixed-size array |
-| List comprehension with **runtime** bounds | Cannot unroll variable-length comprehension | Compile-time constant comprehensions work: `[i*2 for i in range(10)]` |
+| List comprehension over a **runtime** iterable | Length not known at compile time | Use a `for` loop with a fixed-size array |
+| List comprehension with **runtime** bounds | Cannot unroll variable-length comprehension | Compile-time constant bounds work: `[i*2 for i in range(10)]` |
 | Dict comprehension | Heap allocation | Not available |
 | Set comprehension | Heap allocation | Not available |
 | Generator expressions | Coroutine frame required | Not available |
 | `yield` / `yield from` | Generator state requires heap | Not available |
-| `zip()`, `map()`, `filter()` with runtime iterables | Lazy iterator requires heap | Unrolled `for` loops |
-| `range()` with non-constant bounds in comprehension | Cannot unroll | `for i in range(n):` loop (n can be runtime) |
+| `map()` / `filter()` with runtime iterables | Lazy iterator requires heap | Explicit `for` loop |
 
-**Supported:** `for i in range(N)` loop with runtime or constant N, `for x in array` over
-fixed-size arrays, `for i, x in enumerate(iterable)` with compile-time index counter, list
-comprehensions with compile-time constant bounds (e.g., `[i*2 for i in range(10)]`).
+**Supported:** `for i in range(N)` (runtime or constant N), `for x in array`, `for x in [...]`,
+`for x in b"..."`, `for i, x in enumerate(iterable)`, `for x, y in zip(list1, list2)`,
+`for x in reversed([...])`, list comprehensions with compile-time constant bounds,
+nested list comprehensions, `if`-filtered list comprehensions.
 
 ---
 
@@ -132,7 +136,8 @@ comprehensions with compile-time constant bounds (e.g., `[i*2 for i in range(10)
 | `threading` / `multiprocessing` | OS required | `@interrupt` ISRs |
 | `concurrent.futures` | OS required | Not available |
 
-**Supported:** `@interrupt` decorator for hardware ISRs, atomic flag patterns via `GPIOR0`.
+**Supported:** `@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for
+external pin interrupts, atomic flag patterns via `GPIOR0`.
 
 ---
 
@@ -146,49 +151,54 @@ comprehensions with compile-time constant bounds (e.g., `[i*2 for i in range(10)
 | `__all__` / `__init__.py` re-exports (at runtime) | No runtime | Place all symbols in the module file directly |
 
 **Supported:** `import foo`, `from foo import Bar`, `from foo import Bar as B` (aliased imports),
-relative imports (`from . import foo`, `from .sub import helper`), multi-module projects, `pymcu`
-stdlib, `pymcu-circuitpython` and `pymcu-micropython` compat packages.
+relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` and
+`pymcu-micropython` compat packages.
 
 ---
 
 ## Built-ins
 
-| Built-in | Status | Alternative |
+| Built-in | Status | Notes |
 |---|---|---|
-| `print(str)` | ✅ Supported (routes to UART) | — |
-| `print(int)` | ✅ Supported | — |
-| `range(n)` | ✅ Supported (for loops) | — |
-| `len()` | ❌ Not supported | Use fixed array size constant |
-| `abs()` | ❌ Not yet (planned T1.4) | Manual: `if x < 0: x = -x` |
-| `min()` / `max()` | ❌ Not yet (planned T1.4) | Inline helper |
-| `sum()` | ❌ Not supported | Accumulate in loop |
-| `sorted()` / `reversed()` | ❌ Not supported | Not available |
-| `enumerate()` | ✅ Supported (compile-time index counter) | — |
-| `zip()` | ❌ Not supported (runtime) | Manual parallel loops |
-| `map()` / `filter()` | ❌ Not supported | Explicit for loops |
-| `input()` | ❌ Not supported | `uart.read()` |
-| `chr()` / `ord()` | ❌ Not yet (planned T1.5) | Integer literal for ASCII value |
-| `hex()` / `bin()` | ❌ Not supported | Custom nibble-to-hex helper |
+| `print(str)` / `print(int)` | ✅ Supported | Routes to UART |
+| `range(n)` | ✅ Supported | For-loop bounds; runtime or constant |
+| `len(arr)` / `len(b"...")` | ✅ Supported | Compile-time constant fold |
+| `abs(x)` | ✅ Supported | Intrinsic |
+| `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic |
+| `sum(iterable)` | ✅ Supported | Compile-time fold or unrolled additions |
+| `enumerate(iterable)` | ✅ Supported | Compile-time index counter |
+| `zip(a, b)` | ✅ Supported | Compile-time unroll over constant lists |
+| `reversed(iterable)` | ✅ Supported | Compile-time reverse unroll |
+| `any(iterable)` / `all(iterable)` | ✅ Supported | Compile-time fold or OR/AND chain |
+| `divmod(a, b)` | ✅ Supported | Compile-time or runtime via `__div8`/`__mod8` |
+| `pow(x, n)` / `x ** n` | ✅ Supported | Compile-time constant fold |
+| `hex(n)` / `bin(n)` | ✅ Supported | Compile-time: `hex(255)` → `"0xff"` |
+| `str(n)` | ✅ Supported | Compile-time: `str(42)` → `"42"` |
+| `ord('A')` / `chr(n)` | ✅ Supported | Compile-time constant only |
+| `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime `(hi<<8)|lo` |
+| `sorted()` | ❌ Not supported | No dynamic allocation |
+| `map()` / `filter()` | ❌ Not supported | Explicit `for` loops |
+| `input()` | ❌ Not supported | `uart.read()` or `uart.read_blocking()` |
+| `open()` / file I/O | ❌ Not supported | No filesystem |
 | `id()` | ❌ Not supported | Not applicable on MCU |
 | `globals()` / `locals()` | ❌ Not supported | Not applicable |
 | `exec()` / `eval()` | ❌ Not supported | Interpreter required |
-| `open()` / file I/O | ❌ Not supported | No filesystem |
-
-**Note:** Features marked "planned" with a tier number (e.g., T1.4, T1.5) are scheduled for upcoming
-releases. See `LANGUAGE_ROADMAP.md` for details.
 
 ---
 
 ## Platform-Specific Notes (ATmega328P / Arduino Uno)
 
 - **Stack depth:** ~80 nested non-inline calls before stack overflow (2KB SRAM, ~16 bytes/frame).
-  Use `@inline` for leaf helpers to avoid using stack frames.
-- **No soft float yet:** Use integer arithmetic and manual fixed-point scaling.
-- **No heap:** Every variable must have a size known at compile time. No `None`, no `Optional`.
+  Use `@inline` for leaf helpers to avoid stack frames.
+- **No soft float yet:** Use integer arithmetic and manual fixed-point scaling. `fixed16` (Q8.8)
+  is planned for v0.8.
+- **No heap:** Every variable must have a size known at compile time.
 - **Interrupts and globals:** Mutable globals written from an ISR must be declared `global` inside
-  the ISR and accessed atomically (disable interrupts / use GPIOR0 flag pattern).
-- **String literals are in flash:** They are read-only and can only be sent to UART via the flash
-  string pool. They cannot be compared, indexed, or modified at runtime.
+  the ISR and accessed atomically (disable interrupts or use `GPIOR0` flag pattern).
+- **String literals are in flash:** Read-only; can only be sent to UART via the flash string pool.
+  They cannot be compared, indexed, or modified at runtime.
+- **C interop:** Currently requires inline `asm()`. Native C function calls via `@extern` are
+  planned for v0.8 (requires migration from avra to avr-as).
 
 ---
 
@@ -197,4 +207,4 @@ releases. See `LANGUAGE_ROADMAP.md` for details.
 If you hit a compile error on a Python construct not covered here, please open an issue at the
 PyMCU repository. Include the source snippet and the compiler error message.
 
-For feature requests, check the project roadmap in `docs/` for planned features.
+For feature requests, see the [roadmap](roadmap.md).

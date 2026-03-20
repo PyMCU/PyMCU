@@ -88,7 +88,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
-| `pymcu.boards.arduino_uno` | `D0`–`D13`, `A0`–`A5` | ATmega328P | Pin name constants |
+| `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
 
 ### Compat Packages
 
@@ -149,7 +149,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for x in b"..."`, array init, `len()` |
-| `int.from_bytes(b, 'little'/'big')` | Compile-time fold for byte literals; runtime `(hi<<8)\|lo` for variables |
+| `int.from_bytes(b, 'little'/'big')` | Compile-time fold for byte literals; runtime `(hi<<8)|lo` for variables |
 | `enumerate` on runtime arrays | `for i, x in enumerate(arr):` unrolled with `ArrayLoad` per element |
 | `UART.read_blocking()` | Polls RXC until byte arrives, returns it |
 
@@ -185,7 +185,7 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Feature | Notes |
 |---------|-------|
-| Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer×inner product unroll |
+| Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 
@@ -206,6 +206,15 @@ Everything in this section is shipped and tested in the current alpha build.
 | USART RX interrupt + ring buffer | `uart.enable_rx_interrupt()` + `uart.rx_isr()` + `available()` / `read_nb()` |
 | `SoftSPI` bit-bang | `SoftSPI(sck, mosi, miso, cs)` with `transfer()`, `write()`, `with softspi:` |
 
+### Drivers
+
+| Driver | Notes |
+|--------|-------|
+| `HD44780` LCD | `LCD(rs, en, d4-d7)` — 4-bit parallel; `init/clear/home/print_str/set_cursor/write_char` |
+| `SSD1306` OLED | 128x64 OLED over I2C; `init/clear/draw_pixel/draw_line/print_str` |
+| `MAX7219` 8-digit display | SPI 7-segment driver; `set_digit/set_raw/clear/set_brightness` |
+| `BMP280` barometer | I2C barometric pressure + temperature sensor; `read_pressure/read_temp` |
+
 ---
 
 ## v0.8 — Next Tier
@@ -218,24 +227,67 @@ These are the highest-value features not yet implemented, in priority order.
 |---------|--------|-----|
 | Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
 | `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
+| `const uint8[N]` (PROGMEM arrays) | ~3h | Read-only lookup tables in flash; `PROGMEM` + `pgm_read_byte` |
 
 ### HAL
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `SoftI2C` bit-bang | ~3h | Bit-banged I2C for non-hardware-I2C pins |
-| I2C multi-byte `write_to(addr, buf, len)` | ~3h | Extend to send N bytes; currently single-byte |
+| `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins; no hardware TWI dependency |
+| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes in one transaction; currently single-byte only |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
+| `Pin.pulse_in(timeout)` | ~2h | Measure pulse duration in microseconds |
+| Timer `millis()` / `micros()` | ~4h | Elapsed-time counter via Timer0 overflow accumulation |
+| Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
+| `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |
 
-### Drivers
+### C Interop (avr-as migration)
+
+This tier migrates the assembler backend from `avra` (Intel HEX only) to `avr-as` (GNU binutils,
+ELF output), enabling mixed Python + C firmware and proper symbol linking.
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `HD44780` LCD driver | ~4h | Common 16x2 character LCD over GPIO or I2C |
-| `SSD1306` OLED driver | ~5h | 128x64 OLED over I2C; very common in maker projects |
-| `BMP280` pressure/temp sensor | ~3h | I2C; popular environmental sensor |
-| `DS18B20` temperature sensor | ~4h | 1-Wire protocol; very common |
-| `MAX7219` LED matrix | ~3h | SPI 8x8 LED matrix |
+| Migrate backend to `avr-as` + `avr-ld` | ~1 week | ELF output; relocations; `.extern`/`.global`; linker script |
+| `@extern("symbol")` decorator | ~3h | Declare and call an external C function from PyMCU code |
+| `[tool.pymcu.ffi]` build config | ~2h | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
+| `pymcu.ffi` stdlib module | ~1h | Re-export `extern`; no runtime code |
+| `avr-gcc` C compilation step | ~2h | Build driver compiles `.c` sources listed in `[tool.pymcu.ffi]` |
+
+**Design: `@extern` decorator**
+
+```python
+from pymcu.ffi import extern
+
+# Declare an external C symbol — body is ignored by the compiler
+@extern("uart_hw_init")
+def uart_hw_init(baud: uint16) -> None: ...
+
+# Call it like any other function
+uart_hw_init(9600)
+```
+
+The compiler emits `.extern uart_hw_init` in the assembly preamble and a `CALL uart_hw_init`
+at every call site using the standard AVR register ABI (arg0→R24, arg1→R22, return→R24:R25).
+
+C sources are compiled separately by the build driver:
+
+```toml
+# pyproject.toml
+[tool.pymcu.ffi]
+sources = ["src/c/mylib.c", "src/c/sensor.c"]
+include_dirs = ["src/c/include"]
+cflags = ["-O2", "-std=c11"]
+```
+
+Build pipeline with avr-as:
+```
+.py  →  pymcuc  →  firmware.asm
+firmware.asm  →  avr-as  →  firmware.o  (ELF)
+mylib.c       →  avr-gcc -c  →  mylib.o  (ELF)
+firmware.o + mylib.o  →  avr-ld  →  firmware.elf
+firmware.elf  →  avr-objcopy -O ihex  →  firmware.hex
+```
 
 ### Compat
 
@@ -257,6 +309,7 @@ These are the highest-value features not yet implemented, in priority order.
 | RP2040 PIO backend | ~1 week | Programmable I/O state machine output |
 | Over-the-air (OTA) support | ~1 week | Bootloader + pymcu flash over UART |
 | LLVM IR backend | ~4 weeks | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
+| ARM Cortex-M0/M4 backend | ~3 weeks | STM32, nRF52; via LLVM or direct codegen |
 
 ---
 
@@ -266,12 +319,12 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 
 | Feature | Reason |
 |---------|--------|
-| Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32–2048 bytes SRAM |
+| Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32-2048 bytes SRAM |
 | Garbage collection | No runtime |
 | `try` / `except` | No runtime; use return-code error handling |
 | `async` / `await` | Use `@interrupt` + polling loop |
-| `float` / `complex` / `Decimal` | Use `fixed16` when available (Beta) |
-| `f"..."` runtime interpolation | Use compile-time only (Beta) |
+| `float` / `complex` / `Decimal` | Use `fixed16` when available |
+| `f"..."` runtime interpolation | Compile-time only (constants only) |
 | Closures / nested `def` | Captured variables require heap |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |

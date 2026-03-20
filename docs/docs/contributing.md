@@ -18,8 +18,7 @@ pymcu/
   src/driver/             # Python CLI driver (pymcu build/flash/new)
   tests/integration/      # .NET / AVR8Sharp integration tests
   examples/avr/           # Firmware examples (each with a full test suite)
-  docs/                   # Markdown reference docs
-  docs-site/              # MkDocs + Material documentation site
+  docs/                   # This documentation site
 ```
 
 ## Building the compiler
@@ -35,8 +34,8 @@ cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)
 dotnet test tests/integration/PyMCU.IntegrationTests.csproj
 ```
 
-All 175+ tests must stay green. Add new tests in `tests/integration/Tests/AVR/` for any new
-compiler feature.
+All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
+compiler or HAL feature.
 
 ## Adding a stdlib module
 
@@ -54,9 +53,42 @@ compiler feature.
 
 - No em dashes (U+2014) or other non-ASCII in source.
 - No statements after `match` blocks — put defaults in `case _:` inside the match.
-- Dotted names (`ClassName.ATTR`) are value patterns in `match/case`.
-- Bare names (`CONST_NAME`) are capture patterns — use dotted names for named constants.
+- Dotted names (`ClassName.ATTR`) are value patterns in `match/case`; bare names are capture patterns.
 - `@inline` functions containing `asm()` with labels must delegate to a non-inline sub-helper.
+
+## Commit format
+
+PyMCU uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit must follow:
+
+```
+<type>(<scope>): <short description>
+```
+
+**Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`, `style`
+
+**Scopes:** `avr`, `ir`, `parser`, `hal`, `driver`, `stdlib`, `drivers`, `test`, `docs`, `ci`
+
+```
+feat(avr): add PROGMEM flash array support
+fix(ir): wrong register spill in 16-bit aug-assign
+test(avr): add NestedListCompTests for filtered comprehension
+docs: update limitations — bytearray and with are now supported
+```
+
+## Splitting feature commits
+
+**Each distinct feature must land as small, focused commits** — never bundle unrelated changes.
+A typical feature is 2-5 commits:
+
+```
+feat(parser): parse @extern decorator on function definitions
+feat(ir): emit Extern IR instruction and register extern symbols
+feat(avr): emit .extern and CALL with AVR ABI for @extern
+test(avr): add ExternCallTests for @extern C interop
+docs: add @extern to roadmap and limitations
+```
+
+One logical change per commit. Each commit must leave the test suite green.
 
 ## Docs site
 
@@ -67,11 +99,11 @@ mkdocs build --strict    # must pass with no warnings
 mkdocs serve             # preview at http://127.0.0.1:8000
 ```
 
-## Commit style
+## Pull requests
 
-```
-feat: add ternary expression (T1.1)
-fix: peephole pattern A corrupts inline multi-return
-docs: add LANGUAGE_REFERENCE.md for alpha release
-test: add TupleOpsTests for divmod8 multi-return
-```
+1. Fork the repository and create your branch from `main`.
+2. Each commit must follow Conventional Commits format.
+3. All integration tests must pass.
+4. Add a test for any new compiler or HAL feature.
+5. Update `LANGUAGE_ROADMAP.md` and `docs/docs/roadmap.md` if applicable.
+6. Update `docs/docs/limitations.md` if the supported/unsupported status of a feature changes.
