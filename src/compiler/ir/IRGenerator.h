@@ -171,6 +171,11 @@ class IRGenerator {
   // ir_program.functions after all functions are compiled in generate().
   std::map<std::string, int> pending_isr_registrations;
 
+  // @extern("symbol") registrations: PyMCU function name -> C symbol name.
+  // Functions in this map have no IR body; call sites emit Call{c_symbol, ...}.
+  // The set of C symbol values is exported to tacky::Program::extern_symbols.
+  std::map<std::string, std::string> extern_function_map;
+
   struct FunctionEntry {
     std::string prefix;
     const FunctionDef *func;

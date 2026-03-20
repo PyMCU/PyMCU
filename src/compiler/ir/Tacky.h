@@ -288,6 +288,10 @@ struct Function {
 struct Program {
   std::vector<Variable> globals;  // Mutable global variable names needing RAM
   std::vector<Function> functions;
+  // C symbols declared via @extern("name") in the source.
+  // The AVR backend emits ".extern name" for each entry (avr-as syntax).
+  // The build driver compiles any associated C sources and links them.
+  std::vector<std::string> extern_symbols;
 };
 }  // namespace tacky
 

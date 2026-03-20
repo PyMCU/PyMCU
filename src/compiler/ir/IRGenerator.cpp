@@ -126,6 +126,7 @@ tacky::Program IRGenerator::generate(
   functions_to_compile.clear();
   intrinsic_names.clear();
   pending_isr_registrations.clear();
+  extern_function_map.clear();
 
   // Always-available backend intrinsics (not tied to any import).
   // uart_send_string / uart_send_string_ln are called by the AVR UART HAL to
@@ -363,7 +364,16 @@ tacky::Program IRGenerator::generate(
     ir_program.globals.push_back(tacky::Variable{name, type});
   }
 
+  // Collect unique C symbol names from @extern-decorated functions.
+  // The AVR backend emits ".extern symbol" for each entry.
+  std::set<std::string> seen_extern;
+  for (const auto &[_fname, sym] : extern_function_map) {
+    if (seen_extern.insert(sym).second)
+      ir_program.extern_symbols.push_back(sym);
+  }
+
   loop_stack.clear();
+  extern_function_map.clear();
   return ir_program;
 }
 
@@ -847,7 +857,10 @@ void IRGenerator::scan_functions(const Program &ast, ModuleScope *scope) {
       scope->function_params[func->name] = params;
     }
 
-    if (func->is_inline) {
+    if (func->is_extern) {
+      // @extern: no IR body; call sites emit CALL to the C symbol directly.
+      extern_function_map[full_name] = func->extern_symbol;
+    } else if (func->is_inline) {
       if (inline_functions.contains(full_name)) {
         // Overload collision: mangle the existing entry on first collision.
         if (!overloaded_functions.contains(full_name)) {
@@ -5042,6 +5055,33 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     // not (ir_program is a local variable there).
     pending_isr_registrations[handler_func_name] = vector;
     return std::monostate{};
+  }
+
+  // @extern fast-path: emit Call directly to the C symbol, no inlining.
+  if (extern_function_map.contains(callee)) {
+    const std::string &c_sym = extern_function_map.at(callee);
+    std::vector<tacky::Val> ext_args;
+    for (const auto &arg : expr->args)
+      ext_args.push_back(visitExpression(arg.get()));
+
+    tacky::Call ext_call;
+    ext_call.function_name = c_sym;
+    ext_call.args = ext_args;
+
+    // Determine return type from the function registration.
+    bool returns_void = !function_return_types.contains(callee) ||
+                        function_return_types.at(callee) == "void" ||
+                        function_return_types.at(callee) == "None";
+    if (returns_void) {
+      ext_call.dst = std::monostate{};
+      emit(ext_call);
+      return std::monostate{};
+    }
+    tacky::Temporary ext_dst = make_temp(
+        resolve_type(function_return_types.at(callee)));
+    ext_call.dst = ext_dst;
+    emit(ext_call);
+    return ext_dst;
   }
 
   // Inlining Support
