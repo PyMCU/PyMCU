@@ -299,6 +299,14 @@ void AVRCodeGen::compile(const tacky::Program &program, std::ostream &os) {
   // NOTE: .device directive omitted — avra 1.3.0 crashes on .device atmega328p with .db
   // emit_raw(".device " + config.chip);
 
+  // Emit .extern directives for @extern C symbols (avr-as / GNU AS syntax).
+  // avra ignores unrecognised directives starting with '.', so this is safe
+  // for both assemblers; avr-ld uses them to resolve external ELF symbols.
+  for (const auto &sym : program.extern_symbols) {
+    emit_raw(".extern " + sym);
+  }
+  if (!program.extern_symbols.empty()) emit_raw("");
+
   // Stack and Memory setup — skip .equ for register-allocated variables.
   emit_raw(".equ RAMSTART = 0x0100");
   emit_raw(std::format(".equ _stack_base = RAMSTART"));
