@@ -29,6 +29,7 @@ from rich.console import Console
 from .base import ExternalToolchain
 from .gputils import GputilsToolchain
 from .avra import AvraToolchain
+from .avrgas import AvrgasToolchain
 
 def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
     """
@@ -36,7 +37,7 @@ def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
     Currently supports:
     - Gputils (PIC10/12/14/16/17/18)
     - Avra (AVR)
-    
+
     Raises:
         ValueError: If no toolchain supports the given chip.
     """
@@ -51,3 +52,18 @@ def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
             return toolchain_cls(console)
 
     raise ValueError(f"No toolchain found supporting chip: {chip}")
+
+
+def get_ffi_toolchain_for_chip(chip: str, console: Console) -> AvrgasToolchain:
+    """
+    Return an AvrgasToolchain (avr-as + avr-ld + avr-objcopy) for chips that
+    support C interop via @extern().  Currently all AVR chips are supported.
+
+    Raises:
+        ValueError: If the chip is not supported by AvrgasToolchain.
+    """
+    if not AvrgasToolchain.supports(chip):
+        raise ValueError(
+            f"C interop ([tool.pymcu.ffi]) is not supported for chip: {chip}"
+        )
+    return AvrgasToolchain(console, chip)

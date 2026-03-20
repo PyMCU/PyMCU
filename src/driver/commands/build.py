@@ -35,7 +35,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 # New Architecture Imports
-from ..toolchains import get_toolchain_for_chip
+from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..core.compiler import PyMcuCompiler
 
 console = Console()
@@ -229,11 +229,23 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
-        # 1. Factory: Get the appropriate toolchain strategy
-        # Note: We rely on the chip name to decide. Assembler override in TOML could be handled
-        # by passing it to the factory if needed, but for now we follow the simple Architecture.
-        toolchain = get_toolchain_for_chip(chip, console)
-        
+        # Detect C interop: [tool.pymcu.ffi] sources = [...]
+        ffi_config = pymcu_config.get("ffi", {})
+        ffi_sources_raw: list[str] = list(ffi_config.get("sources", []))
+        use_ffi = bool(ffi_sources_raw)
+
+        # 1. Factory: Get the appropriate toolchain strategy.
+        # When [tool.pymcu.ffi] sources are declared the GNU binutils pipeline
+        # (avr-as + avr-ld + avr-objcopy) is used instead of avra.
+        if use_ffi:
+            try:
+                toolchain = get_ffi_toolchain_for_chip(chip, console)
+            except ValueError as e:
+                console.print(f"[bold red]Error:[/bold red] {e}")
+                raise typer.Exit(code=1)
+        else:
+            toolchain = get_toolchain_for_chip(chip, console)
+
         # 2. Interactive Install Check (BEFORE Progress Bar)
         if not toolchain.is_cached():
             try:
@@ -306,7 +318,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 # Since AVRA doesn't support linking multiple objects easily like ld,
                 # we will append the math assembly source directly to the output file
                 # if the compiler emitted calls to __div8, __mod8, etc.
-                if toolchain.get_name() == "avra":
+                if toolchain.get_name() in ("avra", "avr-as"):
                     progress.update(build_task, description="Injecting AVR Math Runtime...")
                     avr_math_path = math_lib_path / "avr"
                     
@@ -362,51 +374,94 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")
 
             # Step 2: Assembly (ASM -> HEX)
-            # Uses linker-relaxation: start with short RJMP/RCALL (1 word each, ±2047 words
-            # range). If AVRA reports "out of range" at specific lines, replace only those
-            # instructions with the 2-word JMP/CALL equivalents and retry. This preserves
-            # exact timing for delay loops while supporting firmware > 4 KB.
             progress.update(build_task, description="Assembling...", completed=60)
+            hex_file: Path | None = None
             try:
-                import re as _re
-                hex_file = None
-                last_exc = None
-                # Linker-relaxation loop: start with RJMP/RCALL (1 word, ±2047 range).
-                # If AVRA reports out-of-range errors at specific lines, upgrade only
-                # those instructions to JMP/CALL (2 words, full 22-bit range) and retry.
-                # Repeat up to 8 times — each pass may expose new out-of-range cases as
-                # previously short instructions become long and shift label offsets.
-                for _pass in range(8):
-                    try:
-                        hex_file = toolchain.assemble(output_file)
-                        break  # success
-                    except RuntimeError as e:
-                        err_str = str(e)
-                        if "out of range" not in err_str.lower() or toolchain.get_name() != "avra":
-                            last_exc = e
+                if use_ffi:
+                    # ── FFI pipeline: avr-as + avr-gcc + avr-ld + avr-objcopy ──────────
+                    from ..toolchains.avrgas import AvrgasToolchain as _AvrgasToolchain
+                    ffi_tc: _AvrgasToolchain = toolchain  # type: ignore[assignment]
+
+                    # 2a. Assemble firmware.asm → firmware.o (ELF)
+                    firmware_obj = ffi_tc.assemble(output_file)
+
+                    # 2b. Compile C sources declared in [tool.pymcu.ffi]
+                    progress.update(build_task, description="Compiling C sources...", completed=65)
+                    c_source_paths = [
+                        (project_root / p).resolve() for p in ffi_sources_raw
+                    ]
+                    include_dirs_raw: list[str] = list(ffi_config.get("include_dirs", []))
+                    include_dirs = [
+                        (project_root / d).resolve() for d in include_dirs_raw
+                    ]
+                    cflags: list[str] = list(ffi_config.get("cflags", []))
+                    c_objects = ffi_tc.compile_c(
+                        c_source_paths, include_dirs, cflags, output_dir
+                    )
+
+                    # 2c. Link firmware.o + C objects → firmware.elf
+                    progress.update(build_task, description="Linking...", completed=75)
+                    linker_script_rel: str | None = ffi_config.get("linker_script", None)
+                    linker_script_path = (
+                        (project_root / linker_script_rel).resolve()
+                        if linker_script_rel else None
+                    )
+                    elf_file = ffi_tc.link(
+                        firmware_obj, c_objects, output_dir, linker_script_path
+                    )
+
+                    # 2d. ELF → Intel HEX
+                    progress.update(build_task, description="Generating HEX...", completed=85)
+                    hex_file = ffi_tc.elf_to_hex(elf_file)
+
+                    # Move ELF to dist/debug/
+                    debug_dir = output_dir / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(elf_file), str(debug_dir / elf_file.name))
+                    # Clean up intermediate objects
+                    for obj in [firmware_obj] + c_objects:
+                        if obj.exists():
+                            obj.unlink()
+
+                else:
+                    # ── Standard avra pipeline with linker-relaxation ─────────────────
+                    import re as _re
+                    last_exc = None
+                    # Linker-relaxation loop: start with RJMP/RCALL (1 word, ±2047 range).
+                    # If AVRA reports out-of-range errors at specific lines, upgrade only
+                    # those instructions to JMP/CALL (2 words, full 22-bit range) and retry.
+                    for _pass in range(8):
+                        try:
+                            hex_file = toolchain.assemble(output_file)
                             break
-                        bad_lines = set(
-                            int(m) - 1  # 0-based index
-                            for m in _re.findall(r"\((\d+)\)", err_str)
-                        )
-                        if not bad_lines:
+                        except RuntimeError as e:
+                            err_str = str(e)
+                            if "out of range" not in err_str.lower() or toolchain.get_name() != "avra":
+                                last_exc = e
+                                break
+                            bad_lines = set(
+                                int(m) - 1
+                                for m in _re.findall(r"\((\d+)\)", err_str)
+                            )
+                            if not bad_lines:
+                                last_exc = e
+                                break
+                            with open(output_file, "r") as f:
+                                asm_lines = f.readlines()
+                            for idx in bad_lines:
+                                if 0 <= idx < len(asm_lines):
+                                    ln = asm_lines[idx]
+                                    ln = ln.replace("\tRCALL\t", "\tCALL\t")
+                                    ln = ln.replace("\tRJMP\t",  "\tJMP\t")
+                                    asm_lines[idx] = ln
+                            with open(output_file, "w") as f:
+                                f.writelines(asm_lines)
                             last_exc = e
-                            break
-                        with open(output_file, "r") as f:
-                            asm_lines = f.readlines()
-                        for idx in bad_lines:
-                            if 0 <= idx < len(asm_lines):
-                                ln = asm_lines[idx]
-                                ln = ln.replace("\tRCALL\t", "\tCALL\t")
-                                ln = ln.replace("\tRJMP\t",  "\tJMP\t")
-                                asm_lines[idx] = ln
-                        with open(output_file, "w") as f:
-                            f.writelines(asm_lines)
-                        last_exc = e
-                if hex_file is None:
-                    progress.stop()
-                    console.print(f"[bold red]Assembly Error:[/bold red] {last_exc}")
-                    raise typer.Exit(code=1)
+                    if hex_file is None:
+                        progress.stop()
+                        console.print(f"[bold red]Assembly Error:[/bold red] {last_exc}")
+                        raise typer.Exit(code=1)
+
             except typer.Exit:
                 raise
             except Exception as e:
@@ -447,6 +502,27 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     if not debug_dir.exists():
                         debug_dir.mkdir(parents=True)
                     shutil.move(str(elf_path), str(debug_dir / elf_path.name))
+            elif use_ffi and hex_file is not None:
+                # Flash size report for FFI builds
+                progress.update(build_task, description="Reporting size...")
+                flash_bytes = _parse_hex_flash_bytes(hex_file)
+                if flash_bytes > 0:
+                    flash_sizes = {
+                        "atmega328p": 32768, "atmega328": 32768,
+                        "atmega2560": 262144, "atmega168": 16384,
+                        "atmega88": 8192, "atmega48": 4096,
+                        "attiny85": 8192, "attiny84": 8192,
+                        "attiny2313": 2048,
+                    }
+                    flash_total = flash_sizes.get(chip.lower(), 0)
+                    if flash_total:
+                        pct = flash_bytes * 100 // flash_total
+                        console.print(
+                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
+                            f"({pct}% of program storage)"
+                        )
+                    else:
+                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
 
             # Step 3: Cleanup
             progress.update(build_task, description="Cleaning up...")
