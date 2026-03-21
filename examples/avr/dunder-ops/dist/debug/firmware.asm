@@ -89,11 +89,11 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:72:     uart = UART(9600)
 ; main.py:58:         if val == self.y:
-; main.py:47:     def __sub__(self: uint8, other: uint8) -> uint8:
+; main.py:47:     def __sub__(self, other: uint8) -> uint8:
 	SBI	0x0A, 1
 ; main.py:48:         return Vec(self.x - other.x, self.y - other.y)
 	CBI	0x0A, 0
-; main.py:51:     def __len__(self: uint8) -> uint8:
+; main.py:51:     def __len__(self) -> uint8:
 ; main.py:52:         return 2
 	LDI	R24, 103
 	STS	0x00C4, R24
