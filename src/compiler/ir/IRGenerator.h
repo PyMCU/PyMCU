@@ -275,6 +275,11 @@ class IRGenerator {
 
   void visitGlobal(const GlobalStmt *stmt);
 
+  // F10 (PEP 3104): nonlocal name1, name2
+  // Inside an @inline expansion, aliases inner-prefixed names to the outer
+  // function's qualified variables so reads and writes bypass the inline scope.
+  void visitNonlocal(const NonlocalStmt *stmt);
+
   // Handles `a, b = expr` tuple unpacking assignments.
   void visitTupleUnpack(const TupleUnpackStmt *stmt);
 

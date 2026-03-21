@@ -344,7 +344,13 @@ std::unique_ptr<Statement> Parser::parseStatement() {
   if (check(TokenType::For)) return parseForStatement();
   if (check(TokenType::Def) || check(TokenType::At)) {
     if (function_depth > 0) {
-      error("Nested function definitions are not supported");
+      // Allow @inline nested functions (for nonlocal variable capture, PEP 3104).
+      // A bare `def` without @inline inside a function is still unsupported.
+      bool is_inline_decorator = check(TokenType::At) &&
+                                 peek_next().value == "inline";
+      if (!is_inline_decorator) {
+        error("Nested function definitions require the @inline decorator");
+      }
     }
     return parseFunction();
   }
@@ -356,6 +362,10 @@ std::unique_ptr<Statement> Parser::parseStatement() {
 
   if (check(TokenType::Global)) {
     return parseGlobalStatement();
+  }
+
+  if (check(TokenType::Nonlocal)) {
+    return parseNonlocalStatement();
   }
 
   if (check(TokenType::Class)) {
@@ -546,6 +556,24 @@ std::unique_ptr<GlobalStmt> Parser::parseGlobalStatement() {
   consumeStatementEnd();
 
   auto stmt = std::make_unique<GlobalStmt>(names);
+  stmt->line = line;
+  return stmt;
+}
+
+// F10 (PEP 3104): nonlocal name1, name2
+std::unique_ptr<NonlocalStmt> Parser::parseNonlocalStatement() {
+  int line = peek().line;
+  consume(TokenType::Nonlocal, "Expected 'nonlocal'");
+  std::vector<std::string> names;
+
+  do {
+    Token name = consume(TokenType::Identifier, "Expected variable name");
+    names.push_back(name.value);
+  } while (match(TokenType::Comma));
+
+  consumeStatementEnd();
+
+  auto stmt = std::make_unique<NonlocalStmt>(names);
   stmt->line = line;
   return stmt;
 }

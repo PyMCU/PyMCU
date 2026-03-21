@@ -422,6 +422,14 @@ struct GlobalStmt : Statement {
   explicit GlobalStmt(std::vector<std::string> n) : names(std::move(n)) {}
 };
 
+// F10 (PEP 3104): nonlocal name1, name2
+// Marks names as referencing the immediately enclosing (non-global) scope.
+struct NonlocalStmt : Statement {
+  std::vector<std::string> names;
+
+  explicit NonlocalStmt(std::vector<std::string> n) : names(std::move(n)) {}
+};
+
 struct BreakStmt : Statement {};
 
 struct ContinueStmt : Statement {};

@@ -1300,6 +1300,28 @@ void IRGenerator::visitStatement(const Statement *stmt) {
     return visitExprStmt(exprStmt);
   if (auto *tupleUnpack = dynamic_cast<const TupleUnpackStmt *>(stmt))
     return visitTupleUnpack(tupleUnpack);
+  if (auto *nonloc = dynamic_cast<const NonlocalStmt *>(stmt)) {
+    visitNonlocal(nonloc);
+    return;
+  }
+  if (auto *funcDef = dynamic_cast<const FunctionDef *>(stmt)) {
+    // F10: Nested @inline function — register so call sites within this function
+    // can find it. The raw pointer is valid for the lifetime of the AST.
+    if (!funcDef->is_inline)
+      throw std::runtime_error("Nested function '" + funcDef->name +
+                               "' must be @inline");
+    inline_functions[funcDef->name] = funcDef;
+    function_return_types[funcDef->name] = funcDef->return_type;
+    std::vector<std::string> params;
+    std::vector<DataType>    param_types;
+    for (const auto &p : funcDef->params) {
+      params.push_back(p.name);
+      param_types.push_back(resolve_type(p.type));
+    }
+    function_params[funcDef->name]      = params;
+    function_param_types[funcDef->name] = param_types;
+    return;
+  }
   if (auto global = dynamic_cast<const GlobalStmt *>(stmt)) {
     visitGlobal(global);
   } else if (auto cls = dynamic_cast<const ClassDef *>(stmt)) {
@@ -3263,14 +3285,24 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
                   if (stop  < 0) stop  += src_size;
                   start = std::max(0, std::min(start, src_size));
                   stop  = std::max(0, std::min(stop,  src_size));
+                  bool src_sram = arrays_with_variable_index.contains(src_q) ||
+                                  module_sram_arrays.contains(src_q);
                   int k = 0;
                   for (int i = start; (step > 0 ? i < stop : i > stop) && k < count;
                        i += step, ++k) {
-                    std::string src_elem = src_q + "__" + std::to_string(i);
                     std::string dst_elem = qualified + "__" + std::to_string(k);
                     variable_types[dst_elem] = elem_dt;
-                    emit(tacky::Copy{tacky::Variable{src_elem, src_edt},
-                                     tacky::Variable{dst_elem, elem_dt}});
+                    tacky::Val src_val;
+                    if (src_sram) {
+                      // SRAM array: read element via ArrayLoad into a temporary
+                      tacky::Temporary tmp = make_temp(src_edt);
+                      emit(tacky::ArrayLoad{src_q, tacky::Constant{i}, tmp,
+                                            src_edt, src_size});
+                      src_val = tmp;
+                    } else {
+                      src_val = tacky::Variable{src_q + "__" + std::to_string(i), src_edt};
+                    }
+                    emit(tacky::Copy{src_val, tacky::Variable{dst_elem, elem_dt}});
                   }
                   // Zero-fill any remaining destination elements
                   for (; k < count; ++k) {
@@ -3692,6 +3724,22 @@ void IRGenerator::visitExprStmt(const ExprStmt *stmt) {
 void IRGenerator::visitGlobal(const GlobalStmt *stmt) {
   for (const auto &name : stmt->names) {
     current_function_globals.insert(name);
+  }
+}
+
+// F10 (PEP 3104): nonlocal inside an @inline expansion.
+// For each declared name, register an alias from the inline-prefixed key
+// (e.g. "inline1.increment.count") to the outer function's qualified variable
+// (e.g. "main.count").  resolve_binding and visitAssign both follow
+// variable_aliases chains for names with >= 2 dots, which inline-prefixed
+// names always satisfy — so both reads and writes transparently redirect to
+// the enclosing function's scope without any AVR-level indirection.
+void IRGenerator::visitNonlocal(const NonlocalStmt *stmt) {
+  if (current_inline_prefix.empty()) return;  // No-op outside inline context
+  for (const auto &name : stmt->names) {
+    std::string inner_key  = current_inline_prefix + name;
+    std::string outer_name = current_function + "." + name;
+    variable_aliases[inner_key] = outer_name;
   }
 }
 
@@ -4452,13 +4500,21 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
         std::string tmp_name = "__slice_" + std::to_string(temp_counter++);
         array_sizes[tmp_name]      = result_count;
         array_elem_types[tmp_name] = elem_dt;
+        bool src_sram = arrays_with_variable_index.contains(src_q) ||
+                        module_sram_arrays.contains(src_q);
         int k = 0;
         for (int i = start; (step > 0 ? i < stop : i > stop); i += step, ++k) {
-          std::string src_elem = src_q + "__" + std::to_string(i);
           std::string dst_elem = tmp_name + "__" + std::to_string(k);
           variable_types[dst_elem] = elem_dt;
-          emit(tacky::Copy{tacky::Variable{src_elem, elem_dt},
-                           tacky::Variable{dst_elem, elem_dt}});
+          tacky::Val src_val;
+          if (src_sram) {
+            tacky::Temporary tmp = make_temp(elem_dt);
+            emit(tacky::ArrayLoad{src_q, tacky::Constant{i}, tmp, elem_dt, src_size});
+            src_val = tmp;
+          } else {
+            src_val = tacky::Variable{src_q + "__" + std::to_string(i), elem_dt};
+          }
+          emit(tacky::Copy{src_val, tacky::Variable{dst_elem, elem_dt}});
         }
         return tacky::Variable{tmp_name, elem_dt};
       }

@@ -127,6 +127,7 @@ class Parser {
   std::unique_ptr<ImportStmt> parseImportStatement();
 
   std::unique_ptr<GlobalStmt> parseGlobalStatement();
+  std::unique_ptr<NonlocalStmt> parseNonlocalStatement();
 };
 
 #endif  // PARSER_H
