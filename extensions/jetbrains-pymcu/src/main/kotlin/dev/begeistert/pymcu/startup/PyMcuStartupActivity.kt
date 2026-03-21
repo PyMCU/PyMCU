@@ -8,11 +8,16 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.settings.PyMcuSettings
+import dev.begeistert.pymcu.stdlib.PyMcuStubInstaller
 
 /**
  * Runs once after a project is fully opened.
- * When a [tool.pymcu] section is detected in pyproject.toml, it performs a
- * background dependency sync using the configured package manager.
+ *
+ * When a [tool.pymcu] section is detected in pyproject.toml it:
+ *  1. Immediately installs compat shims (board.py, digitalio.py, machine.py…)
+ *     into .venv/site-packages so PyCharm resolves CircuitPython/MicroPython imports.
+ *  2. Runs a background dependency sync (uv sync / pip install / …).
+ *  3. Reinstalls shims after sync in case the .venv was freshly created.
  */
 class PyMcuStartupActivity : ProjectActivity {
 
@@ -20,17 +25,28 @@ class PyMcuStartupActivity : ProjectActivity {
 
     override suspend fun execute(project: Project) {
         val config = PyMcuConfigReader.findConfig(project) ?: return
-        log.info("PyMCU project detected (chip=${config.chip}), scheduling sync.")
-
         val basePath = project.basePath ?: return
-        val settings = PyMcuSettings.getInstance()
 
+        log.info("PyMCU project detected (${config.displayName}), starting setup.")
+
+        // Install shims immediately — covers projects whose .venv already exists
+        if (config.stdlib.isNotEmpty()) {
+            PyMcuStubInstaller.install(basePath, config.stdlib, config.board)
+        }
+
+        val settings = PyMcuSettings.getInstance()
         ApplicationManager.getApplication().executeOnPooledThread {
-            runSync(project, basePath, settings.packageManager)
+            runSync(project, basePath, settings.packageManager, config.stdlib, config.board)
         }
     }
 
-    private fun runSync(project: Project, basePath: String, packageManager: String) {
+    private fun runSync(
+        project: Project,
+        basePath: String,
+        packageManager: String,
+        stdlib: List<String>,
+        board: String?
+    ) {
         val command: List<String> = when (packageManager) {
             "uv"     -> listOf("uv", "sync")
             "poetry" -> listOf("poetry", "install")
@@ -52,6 +68,10 @@ class PyMcuStartupActivity : ProjectActivity {
 
             if (exitCode == 0) {
                 log.info("PyMCU sync succeeded.")
+                // Reinstall shims — .venv may have just been created by this sync
+                if (stdlib.isNotEmpty()) {
+                    PyMcuStubInstaller.install(basePath, stdlib, board)
+                }
                 notifySuccess(project)
             } else {
                 log.warn("PyMCU sync failed (exit $exitCode):\n$output")
@@ -74,9 +94,7 @@ class PyMcuStartupActivity : ProjectActivity {
                         NotificationType.INFORMATION
                     )
                     ?.notify(project)
-            } catch (_: Exception) {
-                // Notification group may not exist in all environments
-            }
+            } catch (_: Exception) { }
         }
     }
 
@@ -91,9 +109,7 @@ class PyMcuStartupActivity : ProjectActivity {
                         NotificationType.WARNING
                     )
                     ?.notify(project)
-            } catch (_: Exception) {
-                // Notification group may not exist in all environments
-            }
+            } catch (_: Exception) { }
         }
     }
 }
