@@ -2566,6 +2566,24 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       }
     }
 
+    // F7: __setitem__ — if target is a class instance with __setitem__, call it.
+    {
+      tacky::Val tgt_val = visitExpression(indexExpr->target.get());
+      std::string cls = get_val_class(tgt_val);
+      if (!cls.empty()) {
+        std::string func_key = cls + "_" + "__setitem__";
+        if (inline_functions.contains(func_key)) {
+          std::string self_name;
+          if (auto *v = std::get_if<tacky::Variable>(&tgt_val)) self_name = v->name;
+          else if (auto *t = std::get_if<tacky::Temporary>(&tgt_val)) self_name = t->name;
+          tacky::Val idx_val = visitExpression(indexExpr->index.get());
+          tacky::Val src_val = visitExpression(stmt->value.get());
+          emit_dunder_call(self_name, cls, func_key, {idx_val, src_val});
+          return;
+        }
+      }
+    }
+
     // Bit-slice path (existing behaviour for register access like PORTB[0] = 1)
     tacky::Val target = visitExpression(indexExpr->target.get());
     tacky::Val indexVal = visitExpression(indexExpr->index.get());
@@ -3822,6 +3840,81 @@ tacky::Val IRGenerator::visitLambdaExpr(const LambdaExpr *expr) {
   return tacky::Constant{0};
 }
 
+// F7: Get the class name of a Val (via instance_classes lookup), or "".
+std::string IRGenerator::get_val_class(const tacky::Val &v) const {
+  auto try_name = [&](const std::string &name) -> std::string {
+    // Walk alias chain up to 10 levels.
+    std::string cur = name;
+    for (int i = 0; i < 10; ++i) {
+      if (instance_classes.count(cur)) return instance_classes.at(cur);
+      auto it = variable_aliases.find(cur);
+      if (it == variable_aliases.end()) break;
+      cur = it->second;
+    }
+    return "";
+  };
+  if (const auto *var = std::get_if<tacky::Variable>(&v)) return try_name(var->name);
+  if (const auto *tmp = std::get_if<tacky::Temporary>(&v)) return try_name(tmp->name);
+  return "";
+}
+
+// F7: Inline a dunder method on a receiver instance.
+// self_qname: qualified variable name of the receiver.
+// class_name: the class prefix (used to set current_module_prefix).
+// func_key: the key in inline_functions.
+// extra_args: additional arguments beyond self.
+tacky::Val IRGenerator::emit_dunder_call(const std::string &self_qname,
+                                          const std::string &class_name,
+                                          const std::string &func_key,
+                                          const std::vector<tacky::Val> &extra_args) {
+  const FunctionDef *func = inline_functions.at(func_key);
+  std::string exit_label = make_label();
+  int new_depth = inline_depth + 1;
+  std::string new_prefix = "inline" + std::to_string(new_depth) + "." + func->name + ".";
+
+  // Bind self via alias.
+  variable_aliases[new_prefix + "self"] = self_qname;
+  instance_classes[new_prefix + "self"] = class_name;
+
+  // Bind extra args to non-self params.
+  int extra_idx = 0;
+  for (size_t pi = 1; pi < func->params.size() && extra_idx < (int)extra_args.size(); ++pi, ++extra_idx) {
+    std::string param_key = new_prefix + func->params[pi].name;
+    DataType dt = resolve_type(func->params[pi].type);
+    if (auto *c = std::get_if<tacky::Constant>(&extra_args[extra_idx])) {
+      constant_variables[param_key] = c->value;
+    } else {
+      emit(tacky::Copy{extra_args[extra_idx], tacky::Variable{param_key, dt}});
+      variable_types[param_key] = dt;
+    }
+  }
+
+  // Set up result slot.
+  std::optional<tacky::Temporary> result;
+  if (func->return_type != "void" && func->return_type != "None")
+    result = make_temp(resolve_type(func->return_type));
+
+  // Push inline context.
+  std::string saved_prefix = current_inline_prefix;
+  std::string saved_mod = current_module_prefix;
+  int saved_depth = inline_depth;
+  current_inline_prefix = new_prefix;
+  current_module_prefix = class_name + "_";
+  inline_depth = new_depth;
+  inline_stack.push_back({exit_label, result, {}, func_key});
+
+  visitBlock(dynamic_cast<const Block *>(func->body.get()));
+  emit(tacky::Label{exit_label});
+  inline_stack.pop_back();
+
+  inline_depth = saved_depth;
+  current_inline_prefix = saved_prefix;
+  current_module_prefix = saved_mod;
+
+  if (result) return *result;
+  return tacky::Constant{0};
+}
+
 tacky::Val IRGenerator::visitFStringExpr(const FStringExpr *expr) {
   // Concatenate all parts. Every {expr} part must resolve to a compile-time
   // string or integer constant; otherwise a CompileError is thrown.
@@ -3863,12 +3956,84 @@ tacky::Val IRGenerator::visitVariable(const VariableExpr *expr) {
   return resolve_binding(expr->name);
 }
 
+// Map BinaryOp to its Python dunder method name (nullptr if no dunder).
+static const char *binary_op_dunder(BinaryOp op) {
+  switch (op) {
+    case BinaryOp::Add:      return "__add__";
+    case BinaryOp::Sub:      return "__sub__";
+    case BinaryOp::Mul:      return "__mul__";
+    case BinaryOp::Div:      return "__truediv__";
+    case BinaryOp::FloorDiv: return "__floordiv__";
+    case BinaryOp::Mod:      return "__mod__";
+    case BinaryOp::BitAnd:   return "__and__";
+    case BinaryOp::BitOr:    return "__or__";
+    case BinaryOp::BitXor:   return "__xor__";
+    case BinaryOp::LShift:   return "__lshift__";
+    case BinaryOp::RShift:   return "__rshift__";
+    case BinaryOp::Equal:    return "__eq__";
+    case BinaryOp::NotEqual: return "__ne__";
+    case BinaryOp::Less:     return "__lt__";
+    case BinaryOp::LessEq:   return "__le__";
+    case BinaryOp::Greater:  return "__gt__";
+    case BinaryOp::GreaterEq:return "__ge__";
+    default: return nullptr;
+  }
+}
+
 tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
+  // F7: Dunder operator dispatch — check if LHS is a class instance without
+  // evaluating it yet (to avoid double-evaluation if no dunder applies).
+  // Only check when LHS is a plain VariableExpr (the common case for instances).
+  {
+    const char *dunder = binary_op_dunder(expr->op);
+    if (dunder) {
+      if (const auto *lv = dynamic_cast<const VariableExpr *>(expr->left.get())) {
+        // Determine qualified name without emitting any IR.
+        std::string qname;
+        if (!current_inline_prefix.empty()) qname = current_inline_prefix + lv->name;
+        else if (!current_function.empty()) qname = current_function + "." + lv->name;
+        else qname = lv->name;
+        std::string cls;
+        if (instance_classes.count(qname)) cls = instance_classes.at(qname);
+        if (!cls.empty()) {
+          std::string func_key = cls + "_" + dunder;  // e.g. "Vector___add__"
+          if (inline_functions.contains(func_key)) {
+            tacky::Val lhs = visitExpression(expr->left.get());
+            tacky::Val rhs = visitExpression(expr->right.get());
+            return emit_dunder_call(qname, cls, func_key, {rhs});
+          }
+        }
+      }
+    }
+  }
+
   // in / not in — membership test against a list literal (compile-time or runtime OR-chain).
   // is / is not — identity check, maps to == / != for integer types on MCU.
   if (expr->op == BinaryOp::In || expr->op == BinaryOp::NotIn) {
     bool negate = (expr->op == BinaryOp::NotIn);
     tacky::Val lhs = visitExpression(expr->left.get());
+
+    // F7: __contains__ — if RHS is a class instance with __contains__, call it.
+    if (const auto *rv = dynamic_cast<const VariableExpr *>(expr->right.get())) {
+      std::string qname;
+      if (!current_inline_prefix.empty()) qname = current_inline_prefix + rv->name;
+      else if (!current_function.empty()) qname = current_function + "." + rv->name;
+      else qname = rv->name;
+      std::string cls;
+      if (instance_classes.count(qname)) cls = instance_classes.at(qname);
+      if (!cls.empty()) {
+        std::string func_key = cls + "_" + "__contains__";  // e.g. "Vector___contains__"
+        if (inline_functions.contains(func_key)) {
+          tacky::Val result = emit_dunder_call(qname, cls, func_key, {lhs});
+          if (negate) {
+            tacky::Temporary neg = make_temp();
+            emit(tacky::Binary{tacky::BinaryOp::Equal, result, tacky::Constant{0}, neg});
+            return neg;
+          }
+          return result;
+        }
+      }
+    }
 
     // RHS must be a list literal
     const auto *rlist = dynamic_cast<const ListExpr *>(expr->right.get());
@@ -4155,6 +4320,25 @@ tacky::Val IRGenerator::visitTernary(const TernaryExpr *expr) {
 tacky::Val IRGenerator::visitUnary(const UnaryExpr *expr) {
   tacky::Val operand = visitExpression(expr->operand.get());
 
+  // F7: __neg__ / __invert__ dispatch for class instances.
+  {
+    std::string cls = get_val_class(operand);
+    if (!cls.empty()) {
+      const char *dunder = nullptr;
+      if (expr->op == UnaryOp::Negate) dunder = "__neg__";
+      else if (expr->op == UnaryOp::BitNot) dunder = "__invert__";
+      if (dunder) {
+        std::string func_key = cls + "_" + dunder;  // e.g. "Vector___neg__"
+        if (inline_functions.contains(func_key)) {
+          std::string self_name;
+          if (auto *v = std::get_if<tacky::Variable>(&operand)) self_name = v->name;
+          else if (auto *t = std::get_if<tacky::Temporary>(&operand)) self_name = t->name;
+          return emit_dunder_call(self_name, cls, func_key, {});
+        }
+      }
+    }
+  }
+
   // Constant folding: resolve at compile time if operand is constant
   if (auto c = std::get_if<tacky::Constant>(&operand)) {
     switch (expr->op) {
@@ -4224,6 +4408,22 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
         if (!c) throw std::runtime_error("Array subscript must be a compile-time constant");
         std::string elem_name = qualified + "__" + std::to_string(c->value);
         return tacky::Variable{elem_name, array_elem_types.at(qualified)};
+      }
+    }
+  }
+
+  // F7: __getitem__ — if target is a class instance with __getitem__, call it.
+  {
+    tacky::Val tgt_val = visitExpression(expr->target.get());
+    std::string cls = get_val_class(tgt_val);
+    if (!cls.empty()) {
+      std::string func_key = cls + "_" + "__getitem__";
+      if (inline_functions.contains(func_key)) {
+        std::string self_name;
+        if (auto *v = std::get_if<tacky::Variable>(&tgt_val)) self_name = v->name;
+        else if (auto *t = std::get_if<tacky::Temporary>(&tgt_val)) self_name = t->name;
+        tacky::Val idx_val = visitExpression(expr->index.get());
+        return emit_dunder_call(self_name, cls, func_key, {idx_val});
       }
     }
   }
@@ -4656,6 +4856,18 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       // Try bare name (module-level array)
       if (array_sizes.contains(v->name)) {
         return tacky::Constant{array_sizes.at(v->name)};
+      }
+    }
+    // F7: __len__ — if argument is a class instance with __len__, call it.
+    tacky::Val arg_val = visitExpression(expr->args[0].get());
+    std::string cls = get_val_class(arg_val);
+    if (!cls.empty()) {
+      std::string func_key = cls + "_" + "__len__";
+      if (inline_functions.contains(func_key)) {
+        std::string self_name;
+        if (auto *v = std::get_if<tacky::Variable>(&arg_val)) self_name = v->name;
+        else if (auto *t = std::get_if<tacky::Temporary>(&arg_val)) self_name = t->name;
+        return emit_dunder_call(self_name, cls, func_key, {});
       }
     }
     throw std::runtime_error("len() argument must be a fixed-size array or list literal");

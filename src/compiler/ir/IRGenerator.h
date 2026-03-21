@@ -304,6 +304,19 @@ class IRGenerator {
 
   tacky::Val visitLambdaExpr(const LambdaExpr *expr);  // F9
 
+  // F7: Dunder dispatch helper. Inlines ClassName___method(self, args...).
+  // self_val: the Val of the LHS/receiver. self_qname: its qualified variable name.
+  // class_name: the ClassName prefix. func_key: inline_functions key.
+  // extra_args: additional Val arguments (beyond self).
+  // Returns the result Val, or Constant{0} for void.
+  tacky::Val emit_dunder_call(const std::string &self_qname,
+                              const std::string &class_name,
+                              const std::string &func_key,
+                              const std::vector<tacky::Val> &extra_args);
+
+  // Returns the class name of a Val (via instance_classes lookup), or empty string.
+  std::string get_val_class(const tacky::Val &v) const;
+
   int evaluate_constant_expr(const Expression *expr);
 
   // Infer DataType of an expression without emitting IR (best effort).
