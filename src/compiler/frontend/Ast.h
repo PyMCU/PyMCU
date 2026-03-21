@@ -453,6 +453,16 @@ struct Param {
       : name(std::move(n)), type(std::move(t)), default_value(std::move(def)) {}
 };
 
+// Lambda expression (PEP 3, F9): lambda params: body_expr
+// No capture allowed — params can only reference their own names or module-level constants.
+struct LambdaExpr : Expression {
+  std::vector<Param> params;
+  std::unique_ptr<Expression> body;
+
+  LambdaExpr(std::vector<Param> p, std::unique_ptr<Expression> b)
+      : params(std::move(p)), body(std::move(b)) {}
+};
+
 struct FunctionDef : Statement {
   std::string name;
   std::vector<Param> params;

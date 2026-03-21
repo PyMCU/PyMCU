@@ -1154,6 +1154,53 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
 }
 
 std::unique_ptr<Expression> Parser::parsePrimary() {
+  // PEP 3 (F9): lambda [params]: expr
+  if (match(TokenType::Lambda)) {
+    std::vector<Param> params;
+    // Parse comma-separated parameter names (optionally typed: name: type)
+    while (!check(TokenType::Colon) && !check(TokenType::EndOfFile)) {
+      std::string pname = consume(TokenType::Identifier, "Expected parameter name").value;
+      std::string ptype = "uint8";  // default type
+      if (match(TokenType::Colon)) {
+        // Typed parameter: lambda x: uint8, y: uint8: body
+        // But ':' also terminates the param list — peek ahead: if followed by
+        // the body expression (not another identifier+colon), stop.
+        // Heuristic: if the token after ':' is an identifier and the one after
+        // that is also ':', treat it as a type annotation.
+        size_t save_pos = pos;
+        if (check(TokenType::Identifier)) {
+          std::string type_tok = peek().value;
+          size_t next = pos + 1;
+          while (next < tokens.size() && tokens[next].type == TokenType::LBracket) {
+            // e.g. ptr[uint8] — consume brackets
+            next += 3;  // '[', type, ']'
+          }
+          // If what follows is ',' or another param, it's a type annotation
+          if (next < tokens.size() &&
+              (tokens[next].type == TokenType::Comma ||
+               tokens[next].type == TokenType::Colon)) {
+            // Consume type tokens (simple: one identifier, optionally [inner])
+            ptype = advance().value;
+            if (check(TokenType::LBracket)) {
+              advance(); ptype += "[" + advance().value + "]";
+              consume(TokenType::RBracket, "Expected ']'");
+            }
+          } else {
+            // The colon is the lambda body separator — rewind
+            pos = save_pos;
+          }
+        } else {
+          pos = save_pos;  // rewind
+        }
+      }
+      params.emplace_back(pname, ptype);
+      if (!match(TokenType::Comma)) break;
+    }
+    consume(TokenType::Colon, "Expected ':' after lambda parameters");
+    auto body = parseExpression();
+    return std::make_unique<LambdaExpr>(std::move(params), std::move(body));
+  }
+
   if (match(TokenType::True)) return std::make_unique<BooleanLiteral>(true);
   if (match(TokenType::False)) return std::make_unique<BooleanLiteral>(false);
   if (match(TokenType::None)) return std::make_unique<IntegerLiteral>(-1);

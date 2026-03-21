@@ -2771,6 +2771,25 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
     }
   }
 
+  // F9: Lambda assignment — record binding without emitting any runtime copy.
+  if (const auto *lam_rhs = dynamic_cast<const LambdaExpr *>(stmt->value.get())) {
+    if (const auto *varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
+      pending_lambda_key.clear();
+      visitLambdaExpr(lam_rhs);  // registers lambda; sets pending_lambda_key
+      std::string qname;
+      if (!current_inline_prefix.empty())
+        qname = current_inline_prefix + varExpr->name;
+      else if (!current_function.empty())
+        qname = current_function + "." + varExpr->name;
+      else
+        qname = varExpr->name;
+      if (!pending_lambda_key.empty())
+        lambda_variable_names[qname] = pending_lambda_key;
+      pending_lambda_key.clear();
+      return;
+    }
+  }
+
   tacky::Val value = visitExpression(stmt->value.get());
 
   if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
@@ -3727,7 +3746,22 @@ tacky::Val IRGenerator::visitExpression(const Expression *expr) {
     return var;
   }
 
+  // Lambda expression (F9)
+  if (const auto *lam = dynamic_cast<const LambdaExpr *>(expr))
+    return visitLambdaExpr(lam);
+
   throw std::runtime_error("IR Generation: Unknown Expression type");
+}
+
+// F9: Lambda expression — synthesize an anonymous @inline closure and register it.
+// The returned Constant{0} is a dummy (lambdas are never read as numeric values).
+// The caller (visitAssign or a call site) uses pending_lambda_key to get the key.
+tacky::Val IRGenerator::visitLambdaExpr(const LambdaExpr *expr) {
+  std::string key = "__lambda_" + std::to_string(lambda_counter++);
+  // Register so that lambda_variable_names can look it up by key.
+  lambda_functions_map[key] = expr;
+  pending_lambda_key = key;
+  return tacky::Constant{0};
 }
 
 tacky::Val IRGenerator::visitFStringExpr(const FStringExpr *expr) {
@@ -4414,6 +4448,55 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     }
   } else {
     throw std::runtime_error("Indirect calls not yet supported");
+  }
+
+  // F9: Lambda call — if callee resolves to a variable bound to a lambda, expand inline.
+  {
+    // Build qualified name of the variable (matches the key in lambda_variable_names).
+    std::string qcallee;
+    if (const auto *var = dynamic_cast<const VariableExpr *>(expr->callee.get())) {
+      if (!current_inline_prefix.empty())
+        qcallee = current_inline_prefix + var->name;
+      else if (!current_function.empty())
+        qcallee = current_function + "." + var->name;
+      else
+        qcallee = var->name;
+    }
+    // Also try the raw resolved callee as a key.
+    std::string lambda_key;
+    if (!qcallee.empty() && lambda_variable_names.contains(qcallee))
+      lambda_key = lambda_variable_names.at(qcallee);
+    else if (lambda_variable_names.contains(callee))
+      lambda_key = lambda_variable_names.at(callee);
+
+    if (!lambda_key.empty() && lambda_functions_map.contains(lambda_key)) {
+      const LambdaExpr *lam = lambda_functions_map.at(lambda_key);
+      // Inline-expand: bind params, evaluate body, restore context.
+      std::string pfx = "__lam" + std::to_string(lambda_counter++) + "_";
+      for (int i = 0; i < (int)lam->params.size() && i < (int)expr->args.size(); ++i) {
+        std::string param_key = pfx + lam->params[i].name;
+        tacky::Val arg_val = visitExpression(expr->args[i].get());
+        DataType dt = resolve_type(lam->params[i].type);
+        if (auto *c = std::get_if<tacky::Constant>(&arg_val)) {
+          constant_variables[param_key] = c->value;
+        } else {
+          tacky::Variable pvar{param_key, dt};
+          emit(tacky::Copy{arg_val, pvar});
+          variable_types[param_key] = dt;
+        }
+      }
+      std::string saved_inline = current_inline_prefix;
+      current_inline_prefix = pfx;
+      tacky::Val result = visitExpression(lam->body.get());
+      current_inline_prefix = saved_inline;
+      // Clean up param bindings.
+      for (const auto &p : lam->params) {
+        std::string param_key = pfx + p.name;
+        constant_variables.erase(param_key);
+        variable_types.erase(param_key);
+      }
+      return result;
+    }
   }
 
   // Constructor support: Class() -> Class___init__()

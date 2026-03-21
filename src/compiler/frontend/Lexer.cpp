@@ -54,6 +54,8 @@ static const std::map<std::string, TokenType> keywords = {
     {"with", TokenType::With},
     {"assert", TokenType::Assert},
     {"is", TokenType::Is},
+    {"lambda", TokenType::Lambda},
+    {"nonlocal", TokenType::Nonlocal},
 };
 
 Lexer::Lexer(const std::string_view source) : src(source) {

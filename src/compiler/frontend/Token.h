@@ -64,6 +64,8 @@ enum class TokenType {
   With,    // T2.2
   Assert,  // T2.3
   Is,      // is / is not
+  Lambda,  // lambda  — PEP 3 (F9)
+  Nonlocal,// nonlocal — PEP 3104 (F10)
 
   // Literals
   Identifier,

@@ -208,6 +208,15 @@ class IRGenerator {
   // non-inline functions can access module-level ring buffers with variable indices.
   std::set<std::string> module_sram_arrays;
 
+  // Lambda support (F9).
+  // lambda_functions_map: lambda key → const LambdaExpr* (owned by AST).
+  // lambda_variable_names: qualified var name → lambda key.
+  // pending_lambda_key: set by visitLambdaExpr, consumed by visitAssign / call site.
+  std::unordered_map<std::string, const LambdaExpr *> lambda_functions_map;
+  std::unordered_map<std::string, std::string> lambda_variable_names;
+  int lambda_counter = 0;
+  std::string pending_lambda_key;
+
   // Pre-scan a function body (list of statements) to detect variable-index array accesses.
   // Populates arrays_with_variable_index before IR generation begins.
   void scanForVariableIndexedArrays(const std::vector<std::unique_ptr<Statement>> &body,
@@ -292,6 +301,8 @@ class IRGenerator {
   tacky::Val visitMemberAccess(const MemberAccessExpr *expr);
 
   tacky::Val visitFStringExpr(const FStringExpr *expr);
+
+  tacky::Val visitLambdaExpr(const LambdaExpr *expr);  // F9
 
   int evaluate_constant_expr(const Expression *expr);
 
