@@ -1813,6 +1813,104 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
     std::string next_case_label = make_label();
 
     if (branch.pattern) {
+      // PEP 634: Sequence pattern — case [a, b, c]: or case [0xFF, cmd, data]:
+      // Destructures a fixed-size array element-by-element.
+      if (const auto *seq = dynamic_cast<const ListExpr *>(branch.pattern.get())) {
+        // Resolve subject array name.
+        std::string arr_name;
+        if (const auto *av = std::get_if<tacky::Variable>(&target_val))
+          arr_name = av->name;
+        else
+          throw std::runtime_error("match/case sequence pattern: subject must be an array variable");
+
+        int pat_size = static_cast<int>(seq->elements.size());
+
+        // Compile-time size check.
+        if (array_sizes.contains(arr_name) && array_sizes.at(arr_name) != pat_size) {
+          // Statically impossible: skip this case entirely.
+          emit(tacky::Jump{next_case_label});
+          emit(tacky::Label{next_case_label});
+          continue;
+        }
+
+        bool use_sram = arrays_with_variable_index.contains(arr_name) ||
+                        module_sram_arrays.contains(arr_name);
+        DataType elem_dt = array_elem_types.contains(arr_name)
+                               ? array_elem_types.at(arr_name)
+                               : DataType::UINT8;
+
+        // For each element: emit comparison (literal) or deferred binding (name).
+        // Collect captures to emit after all checks pass.
+        struct CapturePending { int idx; std::string name; };
+        std::vector<CapturePending> captures;
+
+        for (int i = 0; i < pat_size; ++i) {
+          const Expression *elem = seq->elements[i].get();
+
+          // Load array element at position i.
+          tacky::Val elem_val;
+          if (use_sram) {
+            tacky::Temporary tmp = make_temp(elem_dt);
+            emit(tacky::ArrayLoad{arr_name, tacky::Constant{i}, tmp,
+                                  elem_dt, pat_size});
+            elem_val = tmp;
+          } else {
+            // Constant-index path: synthetic scalar arr__i.
+            elem_val = tacky::Variable{arr_name + "__" + std::to_string(i), elem_dt};
+          }
+
+          // Identifier → capture (always matches); literal → equality check.
+          if (const auto *ve = dynamic_cast<const VariableExpr *>(elem)) {
+            // Identifier element = capture; bind after all checks.
+            std::string qname = current_function.empty()
+                                    ? ve->name
+                                    : current_function + "." + ve->name;
+            captures.push_back({i, qname});
+          } else {
+            // Literal element: must match exactly.
+            tacky::Val pat_val = visitExpression(elem);
+            tacky::Temporary cmp = make_temp();
+            emit(tacky::Binary{tacky::BinaryOp::Equal, elem_val, pat_val, cmp});
+            emit(tacky::JumpIfZero{cmp, next_case_label});
+          }
+        }
+
+        // All element checks passed — emit guard (if any).
+        if (branch.guard) {
+          tacky::Val g = visitExpression(branch.guard.get());
+          emit(tacky::JumpIfZero{g, next_case_label});
+        }
+
+        // Emit capture bindings now that we know we matched.
+        for (const auto &cap : captures) {
+          tacky::Val src;
+          if (use_sram) {
+            tacky::Temporary tmp = make_temp(elem_dt);
+            emit(tacky::ArrayLoad{arr_name, tacky::Constant{cap.idx}, tmp,
+                                  elem_dt, pat_size});
+            src = tmp;
+          } else {
+            src = tacky::Variable{arr_name + "__" + std::to_string(cap.idx), elem_dt};
+          }
+          emit(tacky::Copy{src, tacky::Variable{cap.name, elem_dt}});
+          variable_types[cap.name] = elem_dt;
+        }
+
+        // Emit as-capture (if any).
+        if (!branch.capture_name.empty()) {
+          std::string qname = current_function.empty()
+                                  ? branch.capture_name
+                                  : current_function + "." + branch.capture_name;
+          emit(tacky::Copy{target_val, tacky::Variable{qname, elem_dt}});
+          variable_types[qname] = elem_dt;
+        }
+
+        visitBlock(dynamic_cast<const Block *>(branch.body.get()));
+        emit(tacky::Jump{end_label});
+        emit(tacky::Label{next_case_label});
+        continue;
+      }
+
       // Flatten OR patterns: `case a | b | c:` → alternatives [a, b, c]
       // `a | b` is parsed as BinaryExpr(a, BitOr, b) by the expression parser.
       std::vector<const Expression *> alts;
