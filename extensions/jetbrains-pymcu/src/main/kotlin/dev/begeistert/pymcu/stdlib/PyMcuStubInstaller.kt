@@ -7,90 +7,128 @@ import java.nio.file.Path
 import kotlin.io.path.exists
 
 /**
- * Installs top-level shim modules into the project's .venv site-packages so
- * PyCharm can resolve CircuitPython and MicroPython imports.
+ * Writes PEP 561 `.pyi` stub files into `.venv/site-packages` for the
+ * CircuitPython and MicroPython compat layers.
  *
- * The compat packages are installed as:
- *   pymcu_circuitpython/digitalio.py   (not importable as  import digitalio)
- *   pymcu_micropython/machine.py       (not importable as  import machine)
+ * WHY .pyi instead of .py re-exports:
+ *   The pymcu compiler searches include paths in order:
+ *     1. dist/_generated          (generated board.py)
+ *     2. site-packages            ← .py shims would be found HERE
+ *     3. site-packages/pymcu_circuitpython  (actual implementations)
  *
- * This installer writes thin re-export shims at the site-packages root:
- *   digitalio.py  →  from pymcu_circuitpython.digitalio import *
- *   board.py      →  from pymcu_circuitpython.boards.arduino_uno import *
- *   machine.py    →  from pymcu_micropython.machine import *
- *   … etc.
+ *   A `.py` re-export shim in site-packages is found before the real module,
+ *   so the compiler registers `DigitalInOut` under module name `digitalio` and
+ *   generates label `digitalio_DigitalInOut` — but the real label in the
+ *   compiled implementation is `pymcu_circuitpython_digitalio_DigitalInOut`.
+ *   This mismatch causes assembler "label not found" errors.
  *
- * Called once on project open (in case .venv already exists) and once after
- * every uv/pip sync (so freshly created envs get shims immediately).
+ *   `.pyi` files are ignored by the pymcu compiler (which only loads `.py`),
+ *   so they are invisible to compilation while still resolving IDE imports.
+ *
+ * VFS refresh:
+ *   Files are written via standard Java I/O (bypassing IntelliJ's VFS), so we
+ *   call LocalFileSystem.refresh() afterward to trigger PyCharm re-indexing.
  */
 object PyMcuStubInstaller {
 
     private val log = Logger.getInstance(PyMcuStubInstaller::class.java)
 
-    private val CP_SHIMS = listOf("digitalio", "busio", "analogio", "pwmio", "microcontroller")
-    private val MP_SHIMS = listOf("machine", "utime", "micropython")
+    // Legacy .py shim names — cleaned up if present from a previous install
+    private val CP_PY_SHIMS = listOf("board.py", "digitalio.py", "busio.py",
+        "analogio.py", "pwmio.py", "microcontroller.py")
+    private val MP_PY_SHIMS = listOf("machine.py", "utime.py", "micropython.py")
 
-    fun install(basePath: String, stdlib: List<String>, board: String?) {
-        val sitePackages = findSitePackages(basePath) ?: return
-        if ("circuitpython" in stdlib) installCircuitPython(sitePackages, board)
-        if ("micropython"   in stdlib) installMicroPython(sitePackages)
+    /**
+     * Writes `.pyi` stubs into `.venv/site-packages`. Returns the site-packages
+     * [Path] if any stubs were written (so the caller can refresh the VFS), or
+     * null if nothing changed or no `.venv` was found.
+     */
+    fun install(basePath: String, stdlib: List<String>, board: String?): Path? {
+        val sitePackages = findSitePackages(basePath) ?: return null
+        var changed = false
+
+        if ("circuitpython" in stdlib) {
+            changed = installCircuitPython(sitePackages, board) || changed
+        }
+        if ("micropython" in stdlib) {
+            changed = installMicroPython(sitePackages) || changed
+        }
+
+        return if (changed) sitePackages else null
     }
 
     // ── CircuitPython ────────────────────────────────────────────────────────
 
-    private fun installCircuitPython(sitePackages: Path, board: String?) {
+    private fun installCircuitPython(sitePackages: Path, board: String?): Boolean {
         val pkg = sitePackages.resolve("pymcu_circuitpython")
         if (!pkg.exists()) {
             log.warn("PyMCU stubs: pymcu_circuitpython not found in $sitePackages — run sync first")
-            return
+            return false
         }
 
-        for (module in CP_SHIMS) {
-            if (pkg.resolve("$module.py").exists()) {
-                writeShim(sitePackages.resolve("$module.py"),
-                    "from pymcu_circuitpython.$module import *\n")
-            }
-        }
+        // Remove any legacy .py re-export shims that break compilation
+        CP_PY_SHIMS.forEach { sitePackages.resolve(it).toFile().delete() }
 
-        // board.py is board-specific; fall back to arduino_uno when unset
+        // board.pyi — generated from the board constants file
         val boardId = board?.replace("-", "_") ?: "arduino_uno"
-        val boardPkg = "pymcu_circuitpython.boards.$boardId"
         val boardFile = pkg.resolve("boards/$boardId.py")
         val fallback  = pkg.resolve("boards/arduino_uno.py")
-        val boardContent = when {
-            boardFile.exists()  -> "from $boardPkg import *\n"
-            fallback.exists()   -> "from pymcu_circuitpython.boards.arduino_uno import *\n"
-            else                -> null
+        val sourceBoard = when {
+            boardFile.exists() -> boardFile
+            fallback.exists()  -> fallback
+            else               -> null
         }
-        if (boardContent != null) {
-            writeShim(sitePackages.resolve("board.py"), boardContent)
+        if (sourceBoard != null) {
+            writeStub(sitePackages.resolve("board.pyi"), buildBoardStub(sourceBoard))
         }
 
-        log.info("PyMCU stubs: CircuitPython shims installed in $sitePackages")
+        writeStub(sitePackages.resolve("digitalio.pyi"), DIGITALIO_STUB)
+        writeStub(sitePackages.resolve("busio.pyi"),     BUSIO_STUB)
+
+        if (pkg.resolve("analogio.py").exists())
+            writeStub(sitePackages.resolve("analogio.pyi"), ANALOGIO_STUB)
+        if (pkg.resolve("pwmio.py").exists())
+            writeStub(sitePackages.resolve("pwmio.pyi"),    PWMIO_STUB)
+        if (pkg.resolve("microcontroller.py").exists())
+            writeStub(sitePackages.resolve("microcontroller.pyi"), MICROCONTROLLER_STUB)
+
+        log.info("PyMCU stubs: CircuitPython .pyi stubs installed in $sitePackages")
+        return true
+    }
+
+    /** Parse `VAR = "VALUE"` lines from a board constants file → `VAR: str` stubs. */
+    private fun buildBoardStub(boardFile: Path): String {
+        val lineRe = Regex("""^\s*([A-Z][A-Z0-9_]*)\s*=\s*["']""")
+        val sb = StringBuilder("# PyMCU — generated board pin stubs\n")
+        boardFile.toFile().forEachLine { line ->
+            lineRe.find(line)?.let { sb.append("${it.groupValues[1]}: str\n") }
+        }
+        return sb.toString()
     }
 
     // ── MicroPython ──────────────────────────────────────────────────────────
 
-    private fun installMicroPython(sitePackages: Path) {
+    private fun installMicroPython(sitePackages: Path): Boolean {
         val pkg = sitePackages.resolve("pymcu_micropython")
         if (!pkg.exists()) {
             log.warn("PyMCU stubs: pymcu_micropython not found in $sitePackages — run sync first")
-            return
+            return false
         }
 
-        for (module in MP_SHIMS) {
-            if (pkg.resolve("$module.py").exists()) {
-                writeShim(sitePackages.resolve("$module.py"),
-                    "from pymcu_micropython.$module import *\n")
-            }
-        }
+        // Remove any legacy .py re-export shims
+        MP_PY_SHIMS.forEach { sitePackages.resolve(it).toFile().delete() }
 
-        log.info("PyMCU stubs: MicroPython shims installed in $sitePackages")
+        writeStub(sitePackages.resolve("machine.pyi"),     MACHINE_STUB)
+        writeStub(sitePackages.resolve("utime.pyi"),       UTIME_STUB)
+        writeStub(sitePackages.resolve("micropython.pyi"), MICROPYTHON_STUB)
+
+        log.info("PyMCU stubs: MicroPython .pyi stubs installed in $sitePackages")
+        return true
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private fun writeShim(target: Path, content: String) {
+    private fun writeStub(target: Path, content: String) {
         try {
             Files.writeString(target, content)
         } catch (e: Exception) {
@@ -98,9 +136,6 @@ object PyMcuStubInstaller {
         }
     }
 
-    /**
-     * Finds `.venv/lib/pythonX.Y/site-packages` (or `venv/...`) inside [basePath].
-     */
     fun findSitePackages(basePath: String): Path? {
         for (venvName in listOf(".venv", "venv")) {
             val libDir = File(basePath).resolve("$venvName/lib")
@@ -112,4 +147,150 @@ object PyMcuStubInstaller {
         }
         return null
     }
+
+    // ── Stub content ─────────────────────────────────────────────────────────
+
+    private val DIGITALIO_STUB = """
+# PyMCU — CircuitPython digitalio stubs
+class Direction:
+    INPUT: int
+    OUTPUT: int
+
+class Pull:
+    NONE: int
+    UP: int
+    DOWN: int
+
+class DriveMode:
+    PUSH_PULL: int
+    OPEN_DRAIN: int
+
+class DigitalInOut:
+    direction: int
+    value: int
+    pull: int
+    drive_mode: int
+    def __init__(self, pin: str) -> None: ...
+    def set_direction(self, d: int) -> None: ...
+    def set_value(self, val: int) -> None: ...
+    def get_value(self) -> int: ...
+    def set_pull(self, p: int) -> None: ...
+    def deinit(self) -> None: ...
+""".trimIndent() + "\n"
+
+    private val BUSIO_STUB = """
+# PyMCU — CircuitPython busio stubs
+class UART:
+    def __init__(self, tx: str, rx: str, baudrate: int = 9600) -> None: ...
+    def write(self, data: int) -> None: ...
+    def write_str(self, s: str) -> None: ...
+    def println(self, s: str) -> None: ...
+    def print_byte(self, value: int) -> None: ...
+    def read(self) -> int: ...
+
+class I2C:
+    def __init__(self, scl: str, sda: str, frequency: int = 100000) -> None: ...
+    def scan(self) -> list: ...
+    def readfrom_into(self, address: int, buffer: object) -> None: ...
+    def writeto(self, address: int, buffer: bytes) -> None: ...
+
+class SPI:
+    def __init__(self, clock: str, MOSI: str = ..., MISO: str = ...) -> None: ...
+    def configure(self, baudrate: int = 100000, polarity: int = 0, phase: int = 0, bits: int = 8) -> None: ...
+    def write(self, buf: bytes) -> None: ...
+    def readinto(self, buf: object) -> None: ...
+""".trimIndent() + "\n"
+
+    private val ANALOGIO_STUB = """
+# PyMCU — CircuitPython analogio stubs
+class AnalogIn:
+    value: int
+    reference_voltage: float
+    def __init__(self, pin: str) -> None: ...
+    def deinit(self) -> None: ...
+
+class AnalogOut:
+    value: int
+    def __init__(self, pin: str) -> None: ...
+    def deinit(self) -> None: ...
+""".trimIndent() + "\n"
+
+    private val PWMIO_STUB = """
+# PyMCU — CircuitPython pwmio stubs
+class PWMOut:
+    duty_cycle: int
+    frequency: int
+    def __init__(self, pin: str, frequency: int = 500, duty_cycle: int = 0) -> None: ...
+    def deinit(self) -> None: ...
+""".trimIndent() + "\n"
+
+    private val MICROCONTROLLER_STUB = """
+# PyMCU — CircuitPython microcontroller stubs
+def delay_us(duration: int) -> None: ...
+def reset() -> None: ...
+""".trimIndent() + "\n"
+
+    private val MACHINE_STUB = """
+# PyMCU — MicroPython machine stubs
+class Pin:
+    IN: int
+    OUT: int
+    PULL_UP: int
+    PULL_DOWN: int
+    def __init__(self, id: object, mode: int = ..., pull: int = ...) -> None: ...
+    def value(self, x: int = ...) -> int: ...
+    def high(self) -> None: ...
+    def low(self) -> None: ...
+    def toggle(self) -> None: ...
+
+class UART:
+    def __init__(self, id: int, baudrate: int = 9600, tx: object = None, rx: object = None) -> None: ...
+    def read(self, nbytes: int = ...) -> bytes: ...
+    def write(self, buf: object) -> int: ...
+    def any(self) -> int: ...
+
+class ADC:
+    def __init__(self, pin: object) -> None: ...
+    def read(self) -> int: ...
+    def read_u16(self) -> int: ...
+
+class PWM:
+    def __init__(self, pin: object, freq: int = 500, duty: int = 0) -> None: ...
+    def freq(self, value: int = ...) -> int: ...
+    def duty(self, value: int = ...) -> int: ...
+    def duty_u16(self, value: int = ...) -> int: ...
+
+class SPI:
+    def __init__(self, id: int, baudrate: int = 100000, polarity: int = 0, phase: int = 0, bits: int = 8, sck: object = None, mosi: object = None, miso: object = None) -> None: ...
+    def write(self, buf: bytes) -> None: ...
+    def read(self, nbytes: int, write: int = 0) -> bytes: ...
+    def readinto(self, buf: object, write: int = 0) -> None: ...
+    def write_readinto(self, write_buf: bytes, read_buf: object) -> None: ...
+
+class I2C:
+    def __init__(self, id: int = 0, scl: object = None, sda: object = None, freq: int = 400000) -> None: ...
+    def scan(self) -> list: ...
+    def readfrom(self, addr: int, nbytes: int) -> bytes: ...
+    def readfrom_into(self, addr: int, buf: object) -> None: ...
+    def writeto(self, addr: int, buf: bytes) -> None: ...
+    def writeto_mem(self, addr: int, memaddr: int, buf: bytes) -> None: ...
+    def readfrom_mem_into(self, addr: int, memaddr: int, buf: object) -> None: ...
+""".trimIndent() + "\n"
+
+    private val UTIME_STUB = """
+# PyMCU — MicroPython utime stubs
+def sleep_ms(ms: int) -> None: ...
+def sleep_us(us: int) -> None: ...
+def sleep(seconds: int) -> None: ...
+def ticks_ms() -> int: ...
+def ticks_diff(new_ticks: int, old_ticks: int) -> int: ...
+""".trimIndent() + "\n"
+
+    private val MICROPYTHON_STUB = """
+# PyMCU — MicroPython micropython stubs
+def const(x: int) -> int: ...
+def opt_level(level: int = ...) -> int: ...
+def mem_info(verbose: int = ...) -> None: ...
+def qstr_info(verbose: int = ...) -> None: ...
+""".trimIndent() + "\n"
 }

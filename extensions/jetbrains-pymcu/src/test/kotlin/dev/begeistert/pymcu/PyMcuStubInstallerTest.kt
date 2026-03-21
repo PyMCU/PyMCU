@@ -1,7 +1,6 @@
 package dev.begeistert.pymcu
 
 import dev.begeistert.pymcu.stdlib.PyMcuStubInstaller
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,12 +15,6 @@ class PyMcuStubInstallerTest {
     @JvmField
     val tmp = TemporaryFolder()
 
-    // ── helpers ──────────────────────────────────────────────────────────────
-
-    /**
-     * Creates a fake .venv layout under [base] with the given [packageName] and
-     * [moduleFiles] inside it, then returns the site-packages directory.
-     */
     private fun fakeSitePackages(
         base: File,
         packageName: String,
@@ -42,26 +35,27 @@ class PyMcuStubInstallerTest {
         return sp
     }
 
-    // ── CircuitPython ─────────────────────────────────────────────────────────
+    // ── CircuitPython: .pyi stubs written ────────────────────────────────────
 
     @Test
-    fun `installs digitalio shim for circuitpython stdlib`() {
-        val base = tmp.newFolder("project-cp")
+    fun `writes digitalio pyi stub for circuitpython stdlib`() {
+        val base = tmp.newFolder("cp-digitalio")
         fakeSitePackages(base, "pymcu_circuitpython",
-            moduleFiles = listOf("digitalio.py", "busio.py"),
+            moduleFiles = listOf("digitalio.py"),
             subPackages = mapOf("boards" to listOf("arduino_uno.py"))
         )
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/digitalio.py")
-        assertTrue("digitalio.py shim should exist", shim.exists())
-        assertTrue(shim.readText().contains("from pymcu_circuitpython.digitalio import *"))
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/digitalio.pyi")
+        assertTrue("digitalio.pyi should exist", stub.exists())
+        assertTrue(stub.readText().contains("class DigitalInOut"))
+        assertTrue(stub.readText().contains("class Direction"))
     }
 
     @Test
-    fun `installs busio shim for circuitpython stdlib`() {
-        val base = tmp.newFolder("project-cp-busio")
+    fun `writes busio pyi stub for circuitpython stdlib`() {
+        val base = tmp.newFolder("cp-busio")
         fakeSitePackages(base, "pymcu_circuitpython",
             moduleFiles = listOf("busio.py"),
             subPackages = mapOf("boards" to listOf("arduino_uno.py"))
@@ -69,95 +63,150 @@ class PyMcuStubInstallerTest {
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/busio.py")
-        assertTrue(shim.exists())
-        assertTrue(shim.readText().contains("from pymcu_circuitpython.busio import *"))
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/busio.pyi")
+        assertTrue(stub.exists())
+        assertTrue(stub.readText().contains("class UART"))
     }
 
     @Test
-    fun `installs board shim pointing to correct board module`() {
-        val base = tmp.newFolder("project-board")
-        fakeSitePackages(base, "pymcu_circuitpython",
-            moduleFiles = listOf("digitalio.py"),
-            subPackages = mapOf("boards" to listOf("arduino_uno.py", "arduino_nano.py"))
+    fun `board pyi contains constants from board file`() {
+        val base = tmp.newFolder("cp-board")
+        val sp = fakeSitePackages(base, "pymcu_circuitpython",
+            subPackages = mapOf("boards" to emptyList())
         )
+        // Write a minimal board file with pin constants
+        sp.resolve("pymcu_circuitpython/boards/arduino_uno.py").writeText(
+            "LED = \"PB5\"\nLED_BUILTIN = \"PB5\"\nD13 = \"PB5\"\n"
+        )
+
+        PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
+
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/board.pyi")
+        assertTrue("board.pyi should exist", stub.exists())
+        val content = stub.readText()
+        assertTrue("LED should be str", content.contains("LED: str"))
+        assertTrue("LED_BUILTIN should be str", content.contains("LED_BUILTIN: str"))
+        assertTrue("D13 should be str", content.contains("D13: str"))
+    }
+
+    @Test
+    fun `board pyi uses specified board id`() {
+        val base = tmp.newFolder("cp-board-nano")
+        val sp = fakeSitePackages(base, "pymcu_circuitpython",
+            subPackages = mapOf("boards" to emptyList())
+        )
+        sp.resolve("pymcu_circuitpython/boards/arduino_uno.py").writeText("LED = \"PB5\"\n")
+        sp.resolve("pymcu_circuitpython/boards/arduino_nano.py").writeText("LED_NANO = \"PB5\"\n")
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_nano")
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/board.py")
-        assertTrue("board.py shim should exist", shim.exists())
-        assertTrue(shim.readText().contains("pymcu_circuitpython.boards.arduino_nano"))
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/board.pyi")
+        assertTrue(stub.readText().contains("LED_NANO: str"))
+        assertFalse("should NOT contain arduino_uno constants", stub.readText().contains("LED: str\n"))
     }
 
     @Test
-    fun `board shim falls back to arduino_uno when board not found`() {
-        val base = tmp.newFolder("project-board-fallback")
-        fakeSitePackages(base, "pymcu_circuitpython",
-            subPackages = mapOf("boards" to listOf("arduino_uno.py"))
+    fun `board pyi falls back to arduino_uno when board not found`() {
+        val base = tmp.newFolder("cp-board-fallback")
+        val sp = fakeSitePackages(base, "pymcu_circuitpython",
+            subPackages = mapOf("boards" to emptyList())
         )
+        sp.resolve("pymcu_circuitpython/boards/arduino_uno.py").writeText("LED_UNO = \"PB5\"\n")
 
-        PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "unknown_board")
+        PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "nonexistent_board")
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/board.py")
-        assertTrue(shim.exists())
-        assertTrue(shim.readText().contains("arduino_uno"))
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/board.pyi")
+        assertTrue(stub.exists())
+        assertTrue(stub.readText().contains("LED_UNO: str"))
     }
 
     @Test
-    fun `does not install shim when package module file is absent`() {
-        val base = tmp.newFolder("project-cp-missing")
-        // analogio.py is NOT in the package
+    fun `does NOT write py shims — only pyi stubs`() {
+        val base = tmp.newFolder("cp-no-py-shims")
         fakeSitePackages(base, "pymcu_circuitpython",
-            moduleFiles = listOf("digitalio.py"),
+            moduleFiles = listOf("digitalio.py", "busio.py"),
             subPackages = mapOf("boards" to listOf("arduino_uno.py"))
         )
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
 
-        val missing = base.resolve(".venv/lib/python3.14/site-packages/analogio.py")
-        assertFalse("analogio.py shim should NOT be created", missing.exists())
+        val sp = base.resolve(".venv/lib/python3.14/site-packages")
+        assertFalse(".py shim must NOT exist", sp.resolve("digitalio.py").exists())
+        assertFalse(".py shim must NOT exist", sp.resolve("busio.py").exists())
+        assertTrue(".pyi stub must exist",     sp.resolve("digitalio.pyi").exists())
+        assertTrue(".pyi stub must exist",     sp.resolve("busio.pyi").exists())
+    }
+
+    @Test
+    fun `removes legacy py shims if present`() {
+        val base = tmp.newFolder("cp-remove-legacy")
+        val sp = fakeSitePackages(base, "pymcu_circuitpython",
+            moduleFiles = listOf("digitalio.py"),
+            subPackages = mapOf("boards" to listOf("arduino_uno.py"))
+        )
+        // Simulate old .py shims left from a previous plugin version
+        sp.resolve("digitalio.py").writeText("from pymcu_circuitpython.digitalio import *\n")
+        sp.resolve("board.py").writeText("from pymcu_circuitpython.boards.arduino_uno import *\n")
+
+        PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
+
+        assertFalse("legacy board.py should be removed",    sp.resolve("board.py").exists())
+        assertFalse("legacy digitalio.py should be removed", sp.resolve("digitalio.py").exists())
     }
 
     @Test
     fun `does nothing when circuitpython package not installed`() {
-        val base = tmp.newFolder("project-cp-nopkg")
-        // site-packages exists but pymcu_circuitpython is absent
+        val base = tmp.newFolder("cp-nopkg")
         base.resolve(".venv/lib/python3.14/site-packages").mkdirs()
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("circuitpython"), "arduino_uno")
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/digitalio.py")
-        assertFalse(shim.exists())
+        assertFalse(base.resolve(".venv/lib/python3.14/site-packages/digitalio.pyi").exists())
     }
 
-    // ── MicroPython ───────────────────────────────────────────────────────────
+    // ── MicroPython: .pyi stubs written ──────────────────────────────────────
 
     @Test
-    fun `installs machine shim for micropython stdlib`() {
-        val base = tmp.newFolder("project-mp")
+    fun `writes machine pyi stub for micropython stdlib`() {
+        val base = tmp.newFolder("mp-machine")
         fakeSitePackages(base, "pymcu_micropython",
             moduleFiles = listOf("machine.py", "utime.py", "micropython.py")
         )
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("micropython"), null)
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/machine.py")
-        assertTrue(shim.exists())
-        assertEquals("from pymcu_micropython.machine import *\n", shim.readText())
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/machine.pyi")
+        assertTrue(stub.exists())
+        assertTrue(stub.readText().contains("class Pin"))
+        assertTrue(stub.readText().contains("class UART"))
+        assertTrue(stub.readText().contains("class ADC"))
     }
 
     @Test
-    fun `installs utime shim for micropython stdlib`() {
-        val base = tmp.newFolder("project-mp-utime")
-        fakeSitePackages(base, "pymcu_micropython",
-            moduleFiles = listOf("utime.py")
-        )
+    fun `writes utime pyi stub for micropython stdlib`() {
+        val base = tmp.newFolder("mp-utime")
+        fakeSitePackages(base, "pymcu_micropython", moduleFiles = listOf("utime.py"))
 
         PyMcuStubInstaller.install(base.absolutePath, listOf("micropython"), null)
 
-        val shim = base.resolve(".venv/lib/python3.14/site-packages/utime.py")
-        assertTrue(shim.exists())
-        assertTrue(shim.readText().contains("from pymcu_micropython.utime import *"))
+        val stub = base.resolve(".venv/lib/python3.14/site-packages/utime.pyi")
+        assertTrue(stub.exists())
+        assertTrue(stub.readText().contains("def sleep_ms"))
+        assertTrue(stub.readText().contains("def ticks_ms"))
+    }
+
+    @Test
+    fun `does NOT write py shims for micropython — only pyi`() {
+        val base = tmp.newFolder("mp-no-py")
+        fakeSitePackages(base, "pymcu_micropython", moduleFiles = listOf("machine.py", "utime.py"))
+
+        PyMcuStubInstaller.install(base.absolutePath, listOf("micropython"), null)
+
+        val sp = base.resolve(".venv/lib/python3.14/site-packages")
+        assertFalse(sp.resolve("machine.py").exists())
+        assertFalse(sp.resolve("utime.py").exists())
+        assertTrue(sp.resolve("machine.pyi").exists())
+        assertTrue(sp.resolve("utime.pyi").exists())
     }
 
     // ── site-packages discovery ───────────────────────────────────────────────
@@ -170,18 +219,18 @@ class PyMcuStubInstallerTest {
 
     @Test
     fun `findSitePackages finds venv directory as fallback`() {
-        val base = tmp.newFolder("project-venv")
+        val base = tmp.newFolder("venv-fallback")
         val sp = base.resolve("venv/lib/python3.12/site-packages")
         sp.mkdirs()
 
         val found = PyMcuStubInstaller.findSitePackages(base.absolutePath)
-        assertEquals(sp.canonicalPath, found?.toFile()?.canonicalPath)
+        assertTrue(found != null)
+        assertTrue(found!!.toFile().canonicalPath == sp.canonicalPath)
     }
 
     @Test
     fun `install is no-op when stdlib is empty`() {
-        val base = tmp.newFolder("project-nostdlib")
-        // No .venv at all — should not throw
-        PyMcuStubInstaller.install(base.absolutePath, emptyList(), null)
+        val base = tmp.newFolder("empty-stdlib")
+        PyMcuStubInstaller.install(base.absolutePath, emptyList(), null)  // must not throw
     }
 }

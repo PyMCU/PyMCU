@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.intellij.openapi.vfs.LocalFileSystem
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.settings.PyMcuSettings
 import dev.begeistert.pymcu.stdlib.PyMcuStubInstaller
@@ -29,9 +30,11 @@ class PyMcuStartupActivity : ProjectActivity {
 
         log.info("PyMCU project detected (${config.displayName}), starting setup.")
 
-        // Install shims immediately — covers projects whose .venv already exists
+        // Install stubs immediately — covers projects whose .venv already exists
         if (config.stdlib.isNotEmpty()) {
-            PyMcuStubInstaller.install(basePath, config.stdlib, config.board)
+            val sp = PyMcuStubInstaller.install(basePath, config.stdlib, config.board)
+            // Refresh VFS so PyCharm re-indexes the new .pyi files
+            sp?.let { LocalFileSystem.getInstance().refreshAndFindFileByNioFile(it)?.refresh(false, false) }
         }
 
         val settings = PyMcuSettings.getInstance()
@@ -68,9 +71,10 @@ class PyMcuStartupActivity : ProjectActivity {
 
             if (exitCode == 0) {
                 log.info("PyMCU sync succeeded.")
-                // Reinstall shims — .venv may have just been created by this sync
+                // Reinstall stubs — .venv may have just been created by this sync
                 if (stdlib.isNotEmpty()) {
-                    PyMcuStubInstaller.install(basePath, stdlib, board)
+                    val sp = PyMcuStubInstaller.install(basePath, stdlib, board)
+                    sp?.let { LocalFileSystem.getInstance().refreshAndFindFileByNioFile(it)?.refresh(false, false) }
                 }
                 notifySuccess(project)
             } else {
