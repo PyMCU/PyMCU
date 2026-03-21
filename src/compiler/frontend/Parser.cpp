@@ -416,21 +416,41 @@ std::unique_ptr<Statement> Parser::parseRaiseStatement() {
   return stmt;
 }
 
-// T2.2: with context_expr [as name]: body
+// T2.2: with context_expr [as name] [, context_expr [as name]]* : body
+// PEP 343: multi-item with desugared to nested WithStmt at parse time.
 std::unique_ptr<Statement> Parser::parseWithStatement() {
   int line = peek().line;
   consume(TokenType::With, "Expected 'with'");
-  auto ctx = parseExpression();
-  std::string as_name;
-  if (match(TokenType::As)) {
-    as_name = consume(TokenType::Identifier, "Expected name after 'as'").value;
-  }
+
+  // Collect all (ctx, as_name) items.
+  struct WithItem {
+    std::unique_ptr<Expression> ctx;
+    std::string as_name;
+  };
+  std::vector<WithItem> items;
+
+  do {
+    auto ctx = parseExpression();
+    std::string as_name;
+    if (match(TokenType::As)) {
+      as_name = consume(TokenType::Identifier, "Expected name after 'as'").value;
+    }
+    items.push_back({std::move(ctx), std::move(as_name)});
+  } while (match(TokenType::Comma));
+
   consume(TokenType::Colon, "Expected ':' after 'with' header");
   consumeStatementEnd();
-  auto body = parseBlock();
-  auto stmt = std::make_unique<WithStmt>(std::move(ctx), as_name, std::move(body));
-  stmt->line = line;
-  return stmt;
+  std::unique_ptr<Statement> body = parseBlock();
+
+  // Desugar right-to-left: innermost item wraps the original body.
+  for (int i = static_cast<int>(items.size()) - 1; i >= 0; --i) {
+    auto ws = std::make_unique<WithStmt>(std::move(items[i].ctx),
+                                        std::move(items[i].as_name),
+                                        std::move(body));
+    ws->line = line;
+    body = std::unique_ptr<Statement>(std::move(ws));
+  }
+  return body;
 }
 
 // T2.3: assert condition [, message]
