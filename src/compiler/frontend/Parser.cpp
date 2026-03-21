@@ -781,18 +781,29 @@ std::unique_ptr<Statement> Parser::parseAssignmentOrDeclaration() {
   auto expr = parseExpression();
 
   // Tuple-unpack assignment: a, b = expr  (comma immediately after first ident)
+  // PEP 3132: a, *rest = expr  or  first, *mid, last = expr
   if (check(TokenType::Comma)) {
     if (const auto *first_var = dynamic_cast<const VariableExpr *>(expr.get())) {
       std::vector<std::string> targets;
+      int starred_index = -1;
       targets.push_back(first_var->name);
       while (match(TokenType::Comma)) {
-        Token t = consume(TokenType::Identifier, "Expected variable name in tuple unpack");
-        targets.push_back(t.value);
+        if (check(TokenType::Star)) {
+          advance();  // consume '*'
+          if (starred_index != -1)
+            throw std::runtime_error("Only one starred expression allowed in assignment");
+          Token t = consume(TokenType::Identifier, "Expected name after '*' in tuple unpack");
+          starred_index = static_cast<int>(targets.size());
+          targets.push_back(t.value);
+        } else {
+          Token t = consume(TokenType::Identifier, "Expected variable name in tuple unpack");
+          targets.push_back(t.value);
+        }
       }
       consume(TokenType::Equal, "Expected '=' in tuple unpack assignment");
       auto value = parseExpression();
       consumeStatementEnd();
-      auto stmt = std::make_unique<TupleUnpackStmt>(std::move(targets), std::move(value));
+      auto stmt = std::make_unique<TupleUnpackStmt>(std::move(targets), std::move(value), starred_index);
       stmt->line = line;
       return stmt;
     }

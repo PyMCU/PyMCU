@@ -3647,20 +3647,78 @@ void IRGenerator::visitTupleUnpack(const TupleUnpackStmt *stmt) {
 
   // Case 1: RHS is a tuple literal  (a, b) = (expr0, expr1)
   if (const auto *tup = dynamic_cast<const TupleExpr *>(stmt->value.get())) {
-    if (tup->elements.size() != stmt->targets.size()) {
-      throw std::runtime_error(
-          "Tuple size mismatch: " + std::to_string(tup->elements.size()) +
-          " values, " + std::to_string(stmt->targets.size()) + " targets");
-    }
-    for (size_t _k = 0; _k < stmt->targets.size(); ++_k) {
-      tacky::Val v = visitExpression(tup->elements[_k].get());
-      std::string qualified = qualify_target(stmt->targets[_k]);
-      DataType dt = variable_types.contains(qualified)
-                        ? variable_types.at(qualified)
-                        : DataType::UINT8;
-      emit(tacky::Copy{v, tacky::Variable{qualified, dt}});
-      if (const auto *c = std::get_if<tacky::Constant>(&v))
-        constant_variables[qualified] = c->value;
+    int n_tup = static_cast<int>(tup->elements.size());
+    int n_tgt = static_cast<int>(stmt->targets.size());
+
+    if (stmt->starred_index < 0) {
+      // No star: exact match required.
+      if (n_tup != n_tgt) {
+        throw std::runtime_error(
+            "Tuple size mismatch: " + std::to_string(n_tup) +
+            " values, " + std::to_string(n_tgt) + " targets");
+      }
+      for (int _k = 0; _k < n_tgt; ++_k) {
+        tacky::Val v = visitExpression(tup->elements[_k].get());
+        std::string qualified = qualify_target(stmt->targets[_k]);
+        DataType dt = variable_types.contains(qualified)
+                          ? variable_types.at(qualified)
+                          : DataType::UINT8;
+        emit(tacky::Copy{v, tacky::Variable{qualified, dt}});
+        if (const auto *c = std::get_if<tacky::Constant>(&v))
+          constant_variables[qualified] = c->value;
+      }
+    } else {
+      // PEP 3132: starred target collects a slice of the tuple.
+      // Required: n_tup >= n_tgt - 1  (at least 0 elements for the star)
+      int n_fixed = n_tgt - 1;  // non-starred targets
+      if (n_tup < n_fixed) {
+        throw std::runtime_error(
+            "Not enough values to unpack: need at least " +
+            std::to_string(n_fixed) + ", got " + std::to_string(n_tup));
+      }
+      int star_idx = stmt->starred_index;
+      int star_count = n_tup - n_fixed;  // how many elements go into *name
+
+      // Bind non-starred targets before the star.
+      for (int _k = 0; _k < star_idx; ++_k) {
+        tacky::Val v = visitExpression(tup->elements[_k].get());
+        std::string qualified = qualify_target(stmt->targets[_k]);
+        DataType dt = DataType::UINT8;
+        emit(tacky::Copy{v, tacky::Variable{qualified, dt}});
+        if (const auto *c = std::get_if<tacky::Constant>(&v))
+          constant_variables[qualified] = c->value;
+        variable_types[qualified] = dt;
+      }
+
+      // Bind starred target as a fixed-size array.
+      {
+        std::string star_name = qualify_target(stmt->targets[star_idx]);
+        DataType elem_dt = DataType::UINT8;
+        array_sizes[star_name]      = star_count;
+        array_elem_types[star_name] = elem_dt;
+        for (int _k = 0; _k < star_count; ++_k) {
+          int src_idx = star_idx + _k;
+          tacky::Val v = visitExpression(tup->elements[src_idx].get());
+          std::string elem_key = star_name + "__" + std::to_string(_k);
+          emit(tacky::Copy{v, tacky::Variable{elem_key, elem_dt}});
+          if (const auto *c = std::get_if<tacky::Constant>(&v))
+            constant_variables[elem_key] = c->value;
+          variable_types[elem_key] = elem_dt;
+        }
+      }
+
+      // Bind non-starred targets after the star.
+      int n_after = n_tgt - star_idx - 1;
+      for (int _k = 0; _k < n_after; ++_k) {
+        int src_idx = star_idx + star_count + _k;
+        tacky::Val v = visitExpression(tup->elements[src_idx].get());
+        std::string qualified = qualify_target(stmt->targets[star_idx + 1 + _k]);
+        DataType dt = DataType::UINT8;
+        emit(tacky::Copy{v, tacky::Variable{qualified, dt}});
+        if (const auto *c = std::get_if<tacky::Constant>(&v))
+          constant_variables[qualified] = c->value;
+        variable_types[qualified] = dt;
+      }
     }
     return;
   }

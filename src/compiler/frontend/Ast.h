@@ -359,12 +359,14 @@ struct ForStmt : Statement {
 // Compile-time only: RHS must be a tuple literal or a call to an @inline
 // function that returns a tuple literal.
 struct TupleUnpackStmt : Statement {
-  std::vector<std::string> targets;        // ["a", "b", ...]
+  std::vector<std::string> targets;        // ["a", "b", ...] ("*rest" stored without star)
   std::unique_ptr<Expression> value;       // RHS expression
+  int starred_index = -1;                  // PEP 3132: index of the *name target (-1 if none)
 
   TupleUnpackStmt(std::vector<std::string> tgts,
-                  std::unique_ptr<Expression> val)
-      : targets(std::move(tgts)), value(std::move(val)) {}
+                  std::unique_ptr<Expression> val,
+                  int star_idx = -1)
+      : targets(std::move(tgts)), value(std::move(val)), starred_index(star_idx) {}
 };
 
 // Tuple expression: (expr, expr, ...)
