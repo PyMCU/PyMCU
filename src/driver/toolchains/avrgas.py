@@ -30,12 +30,17 @@
 """
 AvrgasToolchain -- AVR GNU AS + avr-ld + avr-objcopy pipeline.
 
-This toolchain replaces avra for projects that require C interop via
+This toolchain replaces avra for projects that require C/C++ interop via
 @extern().  It uses the standard GNU binutils for AVR:
 
   Assemble:   avr-as -mmcu=<chip> firmware.asm -o firmware.o
+  Compile C:  avr-gcc -mmcu=<chip> -Os -c mylib.c -o mylib.o
+  Compile C++: avr-g++ -mmcu=<chip> -Os -fno-exceptions -fno-rtti -c lib.cpp -o lib.o
   Link:       avr-ld -T <linker-script> firmware.o [c_objs...] -o firmware.elf
   HEX:        avr-objcopy -O ihex firmware.elf firmware.hex
+
+Both .c and .cpp/.cc/.cxx sources are supported in [tool.pymcu.ffi] sources.
+This enables use of Arduino libraries and other C++ AVR libraries.
 
 Auto-install is supported on macOS (Homebrew) and Linux (apt).
 On Windows, WinAVR or the Arduino IDE toolchain directory must be on PATH.
@@ -62,8 +67,9 @@ _BREW_FORMULA = "avr-gcc"
 # apt packages for Debian/Ubuntu
 _APT_PACKAGES = ["gcc-avr", "binutils-avr"]
 
-# Required binaries
+# Required binaries (avr-g++ is optional: needed only when .cpp sources are present)
 _REQUIRED_BINS = ["avr-as", "avr-ld", "avr-objcopy", "avr-gcc"]
+_CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".C"}
 
 
 class AvrgasToolchain(ExternalToolchain):
@@ -373,36 +379,63 @@ SECTIONS
         output_dir: Path,
     ) -> list[Path]:
         """
-        Compile a list of C source files to ELF object files using avr-gcc.
+        Compile a list of C and C++ source files to ELF object files.
+
+        - .c files are compiled with avr-gcc
+        - .cpp / .cc / .cxx / .C files are compiled with avr-g++ with
+          -fno-exceptions -fno-rtti (no runtime overhead) to support
+          Arduino libraries and other C++ AVR code.
+
         Returns a list of .o paths.
         """
         avr_gcc = shutil.which("avr-gcc")
         if not avr_gcc:
             raise RuntimeError(
                 "avr-gcc not found on PATH. "
-                "Install it to use C interop (see AGENTS.md)."
+                "Install it to use C/C++ interop (see AGENTS.md)."
             )
+
         objects: list[Path] = []
         for src in c_files:
+            is_cpp = src.suffix in _CPP_EXTENSIONS
+            if is_cpp:
+                compiler = shutil.which("avr-g++")
+                if not compiler:
+                    raise RuntimeError(
+                        f"avr-g++ not found on PATH but {src.name} is a C++ source.\n"
+                        "Install avr-g++ (it ships alongside avr-gcc in the same package) "
+                        "or rename the file to .c to compile as C."
+                    )
+                # Disable C++ runtime features that don't belong on a bare-metal AVR:
+                # -fno-exceptions: no try/catch overhead or exception tables
+                # -fno-rtti:       no dynamic_cast / typeid; saves flash and SRAM
+                extra_flags = ["-fno-exceptions", "-fno-rtti", "-std=c++17"]
+                compiler_label = "avr-g++"
+            else:
+                compiler = avr_gcc
+                extra_flags = []
+                compiler_label = "avr-gcc"
+
             obj = output_dir / (src.stem + ".o")
             cmd = [
-                avr_gcc,
+                compiler,
                 f"-mmcu={self.chip}",
                 "-Os",
                 "-c",
+                *extra_flags,
                 *cflags,
                 *[f"-I{d}" for d in include_dirs],
                 str(src),
                 "-o", str(obj),
             ]
             self.console.print(
-                f"[debug] avr-gcc: {' '.join(cmd)}", style="dim"
+                f"[debug] {compiler_label}: {' '.join(cmd)}", style="dim"
             )
             try:
                 subprocess.run(cmd, check=True, capture_output=True)
             except subprocess.CalledProcessError as e:
                 err = e.stderr.decode() if e.stderr else e.stdout.decode()
-                raise RuntimeError(f"avr-gcc failed on {src.name}:\n{err}")
+                raise RuntimeError(f"{compiler_label} failed on {src.name}:\n{err}")
             objects.append(obj)
         return objects
 
