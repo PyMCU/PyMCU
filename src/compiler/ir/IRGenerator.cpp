@@ -1872,13 +1872,43 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
       }
 
       if (!skip_body) {
-        // Execute body
+        // PEP 634: guard — emitted after pattern match, before body.
+        // If the guard is false, fall through to the next case.
+        if (branch.guard) {
+          tacky::Val g = visitExpression(branch.guard.get());
+          emit(tacky::JumpIfZero{g, next_case_label});
+        }
+        // PEP 634: capture binding — bind matched subject to name.
+        if (!branch.capture_name.empty()) {
+          std::string qname = current_function.empty()
+                                  ? branch.capture_name
+                                  : current_function + "." + branch.capture_name;
+          DataType dt = DataType::UINT8;
+          if (const auto *v = std::get_if<tacky::Variable>(&target_val)) dt = v->type;
+          else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
+          emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
+        }
         visitBlock(dynamic_cast<const Block *>(branch.body.get()));
         emit(tacky::Jump{end_label});
       }
     } else {
-      // Wildcard Case (_)
-      // Always execute if we reached here
+      // Wildcard Case (_) or bare-name capture (always matches)
+      // PEP 634: guard on wildcard/capture.
+      if (branch.guard) {
+        tacky::Val g = visitExpression(branch.guard.get());
+        emit(tacky::JumpIfZero{g, next_case_label});
+      }
+      // Capture binding for bare-name capture (case x:)
+      if (!branch.capture_name.empty()) {
+        std::string qname = current_function.empty()
+                                ? branch.capture_name
+                                : current_function + "." + branch.capture_name;
+        DataType dt = DataType::UINT8;
+        if (const auto *v = std::get_if<tacky::Variable>(&target_val)) dt = v->type;
+        else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
+        emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
+        variable_types[qname] = dt;
+      }
       visitBlock(dynamic_cast<const Block *>(branch.body.get()));
       emit(tacky::Jump{end_label});
     }
