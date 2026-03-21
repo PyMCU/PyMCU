@@ -6,26 +6,21 @@
 # Licensed under the GNU General Public License v3. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# AVR Software SPI (bit-bang) HAL -- ATmega328P
+# AVR Software SPI (bit-bang) HAL
 #
-# SPI Mode 0 (CPOL=0, CPHA=0), MSB-first, no hardware SPI required.
-# All pins are controlled via the generic Pin HAL.
-#
-# Transfer protocol per bit (SCK idle low):
-#   1. Set MOSI to the current bit (MSB first)
-#   2. Pulse SCK high
-#   3. Sample MISO
-#   4. Pulse SCK low
+# SPI Mode 0 (CPOL=0, CPHA=0), MSB-first.
+# softspi_init() configures DDR once at construction time.
+# softspi_transfer_zca() takes pre-resolved port/bit values stored by the
+# SoftSPI ZCA, avoiding DDR re-initialisation and string dispatch on every byte.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline, const
+from pymcu.types import uint8, inline, const, ptr
 from pymcu.hal.gpio import Pin
 
 
 @inline
 def softspi_init(sck: const[str], mosi: const[str], miso: const[str]):
-    # Configure SCK and MOSI as outputs, MISO as input.
-    # SCK is idle low (CPOL=0).
+    # Configure SCK and MOSI as outputs, MISO as input. SCK idles low.
     _sck_pin  = Pin(sck,  Pin.OUT)
     _mosi_pin = Pin(mosi, Pin.OUT)
     _miso_pin = Pin(miso, Pin.IN)
@@ -34,96 +29,90 @@ def softspi_init(sck: const[str], mosi: const[str], miso: const[str]):
 
 
 @inline
-def softspi_transfer(sck: const[str], mosi: const[str], miso: const[str], data: uint8) -> uint8:
-    # Bit-bang SPI Mode 0, MSB-first.
-    # Returns received byte (sampled on SCK rising edge).
-    _sck_pin  = Pin(sck,  Pin.OUT)
-    _mosi_pin = Pin(mosi, Pin.OUT)
-    _miso_pin = Pin(miso, Pin.IN)
-
+def softspi_transfer_zca(sck_port: ptr[uint8], sck_bit: uint8, mosi_port: ptr[uint8], mosi_bit: uint8, miso_pin_reg: ptr[uint8], miso_bit: uint8, data: uint8) -> uint8:
+    # Bit-bang SPI Mode 0, MSB-first, using pre-resolved port/bit from the ZCA.
+    # Each bit: set MOSI -> SCK high -> sample MISO -> SCK low.
+    # All port/bit values are compile-time constants -> SBI/CBI/SBIS/SBIC.
     result: uint8 = 0
-    bit:    uint8 = 7
 
-    # Unroll 8 iterations via compile-time list comprehension is not available here,
-    # so use a counted down variable approach with explicit bit checks.
     # Bit 7 (MSB)
     if data & 0x80:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x80
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 6
     if data & 0x40:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x40
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 5
     if data & 0x20:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x20
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 4
     if data & 0x10:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x10
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 3
     if data & 0x08:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x08
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 2
     if data & 0x04:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x04
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 1
     if data & 0x02:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x02
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     # Bit 0 (LSB)
     if data & 0x01:
-        _mosi_pin.high()
+        mosi_port[mosi_bit] = 1
     else:
-        _mosi_pin.low()
-    _sck_pin.high()
-    if _miso_pin.value():
+        mosi_port[mosi_bit] = 0
+    sck_port[sck_bit] = 1
+    if miso_pin_reg[miso_bit]:
         result = result | 0x01
-    _sck_pin.low()
+    sck_port[sck_bit] = 0
 
     return result

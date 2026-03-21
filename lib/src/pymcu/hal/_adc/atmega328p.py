@@ -1,39 +1,51 @@
 from pymcu.types import uint8, uint16, inline
-from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCSRB, ADCL, ADCH
+from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH
 
 
 @inline
-def adc_init(channel: str):
-    ADCSRA = 0x87
-    if channel == "PC0":
-        ADMUX = 0x40
-    elif channel == "PC1":
-        ADMUX = 0x41
-    elif channel == "PC2":
-        ADMUX = 0x42
-    elif channel == "PC3":
-        ADMUX = 0x43
-    elif channel == "PC4":
-        ADMUX = 0x44
-    elif channel == "PC5":
-        ADMUX = 0x45
+def adc_channel_admux(channel: str) -> uint8:
+    # Returns the ADMUX register value for the given AVR pin name.
+    # Bits 7:6 = REFS1:0 = 01 (AVcc reference); bits 3:0 = MUX3:0 = channel.
+    # Folded at compile time when channel is a const[str].
+    match channel:
+        case "PC0":
+            return 0x40
+        case "PC1":
+            return 0x41
+        case "PC2":
+            return 0x42
+        case "PC3":
+            return 0x43
+        case "PC4":
+            return 0x44
+        case "PC5":
+            return 0x45
+        case _:
+            return 0x40
 
 
 @inline
-def adc_start(channel: str):
+def adc_init(admux_val: uint8):
+    # Enable ADC with prescaler 128 (ADPS=111 -> 125 kHz at 16 MHz).
+    # admux_val encodes both the reference (AVcc) and the channel.
+    ADMUX.value = admux_val
+    ADCSRA.value = 0x87
+
+
+@inline
+def adc_start():
     ADCSRA[6] = 1
 
+
 # Start a conversion with ADC Interrupt Enable (ADIE bit 3).
-# The ADC complete ISR fires at vector byte 0x002A / word 0x0015 on ATmega328P.
-# Call from main or a timer ISR; handle result in @interrupt(0x002A).
+# The ADC complete ISR fires at vector byte 0x002A / word 0x0015.
 @inline
 def adc_start_int():
-    ADCSRA[3] = 1   # ADIE = 1
-    ADCSRA[6] = 1   # ADSC = 1
+    ADCSRA[3] = 1
+    ADCSRA[6] = 1
 
-# Read the 10-bit ADC result after conversion completes.
-# Must be called after ADIF flag (bit 4) is set, or from within the ISR.
-# Reads ADCL first (locks ADCH), then ADCH. Returns 10-bit value 0-1023.
+
+# Read the 10-bit result after conversion completes (ADIF set or from ISR).
 @inline
 def adc_read_result() -> uint16:
     lo: uint8 = ADCL.value
@@ -42,8 +54,7 @@ def adc_read_result() -> uint16:
     return result
 
 
-# Start conversion, wait for ADSC (bit 6) to clear, then read ADCL/ADCH.
-# Returns raw 10-bit result (0-1023).
+# Start conversion, poll ADSC until clear, return raw 10-bit result (0-1023).
 @inline
 def adc_read() -> uint16:
     ADCSRA[6] = 1
@@ -55,8 +66,7 @@ def adc_read() -> uint16:
     return result
 
 
-# Start conversion, wait for ADSC (bit 6) to clear, then read ADCL/ADCH.
-# Returns 10-bit result scaled to 16-bit range (0-65535) by multiplying by 64.
+# Start conversion, poll, return result scaled to 16-bit (0-65535).
 @inline
 def adc_read_u16() -> uint16:
     ADCSRA[6] = 1
