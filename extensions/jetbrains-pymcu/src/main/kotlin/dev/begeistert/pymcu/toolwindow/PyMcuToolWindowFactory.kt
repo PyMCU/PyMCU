@@ -92,12 +92,16 @@ private class PyMcuToolWindowPanel(private val project: Project) : JPanel(Border
 
     private fun refreshChipLabel() {
         val config = PyMcuConfigReader.findConfig(project)
-        if (config?.chip != null) {
-            val freq = config.frequency ?: "?"
-            chipLabel.text = "Chip: ${config.chip} @ ${freq} Hz"
-        } else {
+        if (config == null) {
             chipLabel.text = "No PyMCU project detected"
+            return
         }
+        val sb = StringBuilder(if (config.board != null) "Board: " else "Chip: ")
+        sb.append(config.displayName)
+        if (config.frequency != null) sb.append(" @ ${config.frequency} Hz")
+        if (config.stdlib.isNotEmpty()) sb.append(" · ${config.stdlib.joinToString(", ")}")
+        if (config.hasFfi) sb.append(" · C/C++ FFI")
+        chipLabel.text = sb.toString()
     }
 
     private fun registerVfsListener() {

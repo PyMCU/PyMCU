@@ -81,4 +81,86 @@ class PyMcuConfigReaderTest {
         assertNull(config.sources)
         assertNull(config.entry)
     }
+
+    @Test
+    fun `parses board field`() {
+        val toml = """
+            [tool.pymcu]
+            board = "arduino_uno"
+            frequency = "16000000"
+            sources = "src"
+            entry = "main.py"
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)
+        assertNotNull(config)
+        assertEquals("arduino_uno", config!!.board)
+        assertNull(config.chip)
+    }
+
+    @Test
+    fun `displayName resolves board alias`() {
+        val toml = """
+            [tool.pymcu]
+            board = "arduino_uno"
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)!!
+        assertEquals("Arduino Uno (atmega328p)", config.displayName)
+    }
+
+    @Test
+    fun `displayName falls back to chip name`() {
+        val toml = """
+            [tool.pymcu]
+            chip = "attiny85"
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)!!
+        assertEquals("attiny85", config.displayName)
+    }
+
+    @Test
+    fun `parses stdlib array single value`() {
+        val toml = """
+            [tool.pymcu]
+            chip = "atmega328p"
+            stdlib = ["micropython"]
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)!!
+        assertEquals(listOf("micropython"), config.stdlib)
+    }
+
+    @Test
+    fun `parses stdlib array multiple values`() {
+        val toml = """
+            [tool.pymcu]
+            chip = "atmega328p"
+            stdlib = ["circuitpython", "extra"]
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)!!
+        assertEquals(listOf("circuitpython", "extra"), config.stdlib)
+    }
+
+    @Test
+    fun `stdlib defaults to empty when absent`() {
+        val config = PyMcuConfigReader.parseContent(sampleToml)!!
+        assertEquals(emptyList<String>(), config.stdlib)
+    }
+
+    @Test
+    fun `detects ffi section`() {
+        val toml = """
+            [tool.pymcu]
+            chip = "atmega328p"
+
+            [tool.pymcu.ffi]
+            sources = ["lib.c"]
+        """.trimIndent()
+        val config = PyMcuConfigReader.parseContent(toml)!!
+        assertEquals(true, config.hasFfi)
+    }
+
+    @Test
+    fun `hasFfi is false when ffi section absent`() {
+        val config = PyMcuConfigReader.parseContent(sampleToml)!!
+        assertEquals(false, config.hasFfi)
+    }
 }

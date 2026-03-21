@@ -66,8 +66,12 @@ class PyMcuStatusBarWidget(private val project: Project) :
     override fun getAlignment(): Float = 0.5f  // center
 
     override fun getTooltipText(): String {
-        val config = PyMcuConfigReader.findConfig(project)
-        return if (config?.chip != null) "PyMCU: ${config.chip}" else "No PyMCU project detected"
+        val config = PyMcuConfigReader.findConfig(project) ?: return "No PyMCU project detected"
+        val sb = StringBuilder("PyMCU: ${config.displayName}")
+        if (config.frequency != null) sb.append(" @ ${config.frequency} Hz")
+        if (config.stdlib.isNotEmpty()) sb.append(" · ${config.stdlib.joinToString(", ")}")
+        if (config.hasFfi) sb.append(" · C/C++ FFI")
+        return sb.toString()
     }
 
     override fun getClickConsumer(): Consumer<MouseEvent> = Consumer {
@@ -80,8 +84,8 @@ class PyMcuStatusBarWidget(private val project: Project) :
     // Helpers ------------------------------------------------------------------
 
     private fun buildChipText(): String {
-        val config = PyMcuConfigReader.findConfig(project)
-        return if (config?.chip != null) "\u2699 ${config.chip}" else ""
+        val config = PyMcuConfigReader.findConfig(project) ?: return ""
+        return "\u2699 ${config.displayName}"
     }
 }
 
