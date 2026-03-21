@@ -54,6 +54,11 @@
         <directoryProjectGenerator
             implementation="dev.begeistert.pymcu.newproject.PyMcuProjectGenerator"/>
 
+        <!-- Extra library roots: pymcu_circuitpython/ and pymcu_micropython/ dirs
+             so PyCharm resolves 'import digitalio', 'import machine', 'import board' -->
+        <additionalLibraryRootsProvider
+            implementation="dev.begeistert.pymcu.resolver.PyMcuAdditionalLibraryRootsProvider"/>
+
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij">
