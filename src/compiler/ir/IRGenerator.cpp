@@ -3394,6 +3394,23 @@ void IRGenerator::visitAugAssign(const AugAssignStmt *stmt) {
 
   if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
     tacky::Val target = resolve_binding(varExpr->name);
+    // If the variable was const-folded (e.g. module-level `e = CONST`),
+    // AugAssign mutates it.  Force a Variable target and evict from
+    // constant_variables so future reads return the new runtime value.
+    if (std::holds_alternative<tacky::Constant>(target)) {
+      std::string qualified;
+      if (!current_inline_prefix.empty())
+        qualified = current_inline_prefix + varExpr->name;
+      else if (!current_function.empty())
+        qualified = current_function + "." + varExpr->name;
+      else
+        qualified = varExpr->name;
+      DataType dt = variable_types.contains(qualified)
+                        ? variable_types.at(qualified)
+                        : DataType::UINT8;
+      target = tacky::Variable{qualified, dt};
+      constant_variables.erase(qualified);
+    }
     emit(tacky::AugAssign{map_augop(stmt->op), target, operand});
   } else if (auto indexExpr = dynamic_cast<const IndexExpr *>(stmt->target.get())) {
     // T1.3: Desugar arr[i] op= x  →  arr[i] = arr[i] op x

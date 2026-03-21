@@ -402,7 +402,9 @@ void Optimizer::propagate_copies(tacky::Function &func) {
           else if constexpr (std::is_same_v<T, tacky::JumpIfBitClear>)
             replace_val(arg.source);
           else if constexpr (std::is_same_v<T, tacky::AugAssign>) {
-            replace_val(arg.target);
+            // Do NOT replace arg.target: AugAssign both reads from and writes
+            // to the target.  Replacing it with a constant makes the load
+            // return the wrong value and the store a no-op.
             replace_val(arg.operand);
           }
         },
