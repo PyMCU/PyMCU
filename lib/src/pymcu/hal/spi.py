@@ -21,38 +21,43 @@
 # NOTICE: STRICT COPYLEFT & STATIC LINKING - see uart.py for full notice.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline, const
+from pymcu.types import uint8, inline, const, ptr
 from pymcu.chips import __CHIP__
 
 
-# SPI - Hardware SPI master, zero-cost abstraction (all methods @inline)
-# Default: Mode 0, MSB-first, fosc/4, MOSI=PB3, MISO=PB4, SCK=PB5, SS=PB2
-# Optional cs parameter: pin name for chip-select (e.g. "PB2").
-# When cs is set, __enter__ drives it low and __exit__ drives it high.
+# SPI -- Hardware SPI master, zero-cost abstraction (all methods @inline).
+# Default: Mode 0, MSB-first, fosc/4, MOSI=PB3, MISO=PB4, SCK=PB5, SS=PB2.
+# Optional cs parameter: custom chip-select pin name (e.g. "PB0").
+# When cs is non-empty, the CS port pointer and bit are resolved once at
+# construction time and stored as self._cs_port / self._cs_bit so that
+# select/deselect are single SBI/CBI instructions -- no re-dispatch per call.
+# self._cs is kept as a const[str] so the `if self._cs != ""` guards are
+# folded to true/false at compile time (zero SRAM cost).
 class SPI:
 
     @inline
     def __init__(self: uint8, cs: const[str] = ""):
-        # Store the CS pin name (empty string means use the default SS/PB2 via spi_select)
         self._cs = cs
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._spi.avr import spi_init
                 spi_init()
                 if cs != "":
-                    # Configure the user-specified CS pin as output, idle high
-                    from pymcu.hal.gpio import Pin
-                    _cs_pin = Pin(cs, Pin.OUT)
-                    _cs_pin.high()
+                    # Resolve CS pin once; configure as output and idle high.
+                    from pymcu.hal._gpio.atmega328p import select_port, select_ddr, select_bit
+                    _cs_ddr = select_ddr(cs)
+                    _cs_ddr[select_bit(cs)] = 1
+                    self._cs_port = select_port(cs)
+                    self._cs_bit  = select_bit(cs)
+                    self._cs_port[self._cs_bit] = 1
 
     @inline
     def select(self: uint8):
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
-                    from pymcu.hal.gpio import Pin
-                    _cs_pin = Pin(self._cs, Pin.OUT)
-                    _cs_pin.low()
+                    # Drive CS low via stored port/bit -- single CBI instruction.
+                    self._cs_port[self._cs_bit] = 0
                 else:
                     from pymcu.hal._spi.avr import spi_select
                     spi_select()
@@ -62,9 +67,8 @@ class SPI:
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
-                    from pymcu.hal.gpio import Pin
-                    _cs_pin = Pin(self._cs, Pin.OUT)
-                    _cs_pin.high()
+                    # Drive CS high via stored port/bit -- single SBI instruction.
+                    self._cs_port[self._cs_bit] = 1
                 else:
                     from pymcu.hal._spi.avr import spi_deselect
                     spi_deselect()
@@ -85,7 +89,7 @@ class SPI:
                 from pymcu.hal._spi.avr import spi_transfer
                 spi_transfer(data)
 
-    # Context manager support: `with spi:` auto-selects/deselects the device
+    # Context manager support: `with spi:` auto-selects/deselects the device.
     @inline
     def __enter__(self: uint8):
         self.select()

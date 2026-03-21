@@ -2,9 +2,9 @@ from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, const, inline
 
 # ---- Unified Timer ZCA ----
-# MicroPython-style: Timer(n, prescaler) — n is a compile-time constant.
-# The compiler folds the `n` dispatch at compile time (dead-code elimination)
-# so each call site emits only the instructions for the selected timer.
+# Timer(n, prescaler) -- n is a compile-time constant; all methods @inline.
+# The compiler folds both the chip dispatch and the timer-number dispatch at
+# compile time, emitting only the instructions for the selected timer.
 #
 # ATmega328P:
 #   Timer(0, prescaler)  -- 8-bit;  prescalers: 1/8/64/256
@@ -23,15 +23,16 @@ class Timer:
         self._n = n
         match __CHIP__.name:
             case "atmega328p":
-                if n == 0:
-                    from pymcu.hal._timer.atmega328p import timer0_init
-                    timer0_init(prescaler)
-                elif n == 1:
-                    from pymcu.hal._timer.atmega328p import timer1_init
-                    timer1_init(prescaler)
-                elif n == 2:
-                    from pymcu.hal._timer.atmega328p import timer2_init
-                    timer2_init(prescaler)
+                match n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_init
+                        timer0_init(prescaler)
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_init
+                        timer1_init(prescaler)
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_init
+                        timer2_init(prescaler)
             case "pic16f877a":
                 from pymcu.hal._timer.pic16f877a import timer0_init
                 timer0_init(prescaler)
@@ -52,15 +53,16 @@ class Timer:
     def start(self: uint8):
         match __CHIP__.name:
             case "atmega328p":
-                if self._n == 0:
-                    from pymcu.hal._timer.atmega328p import timer0_start
-                    timer0_start()
-                elif self._n == 1:
-                    from pymcu.hal._timer.atmega328p import timer1_start
-                    timer1_start()
-                elif self._n == 2:
-                    from pymcu.hal._timer.atmega328p import timer2_start
-                    timer2_start()
+                match self._n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_start
+                        timer0_start()
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_start
+                        timer1_start()
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_start
+                        timer2_start()
             case "pic16f877a":
                 from pymcu.hal._timer.pic16f877a import timer0_start
                 timer0_start()
@@ -81,15 +83,16 @@ class Timer:
     def stop(self: uint8):
         match __CHIP__.name:
             case "atmega328p":
-                if self._n == 0:
-                    from pymcu.hal._timer.atmega328p import timer0_stop
-                    timer0_stop()
-                elif self._n == 1:
-                    from pymcu.hal._timer.atmega328p import timer1_stop
-                    timer1_stop()
-                elif self._n == 2:
-                    from pymcu.hal._timer.atmega328p import timer2_stop
-                    timer2_stop()
+                match self._n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_stop
+                        timer0_stop()
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_stop
+                        timer1_stop()
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_stop
+                        timer2_stop()
             case "pic16f877a":
                 from pymcu.hal._timer.pic16f877a import timer0_stop
                 timer0_stop()
@@ -110,15 +113,16 @@ class Timer:
     def clear(self: uint8):
         match __CHIP__.name:
             case "atmega328p":
-                if self._n == 0:
-                    from pymcu.hal._timer.atmega328p import timer0_clear
-                    timer0_clear()
-                elif self._n == 1:
-                    from pymcu.hal._timer.atmega328p import timer1_clear
-                    timer1_clear()
-                elif self._n == 2:
-                    from pymcu.hal._timer.atmega328p import timer2_clear
-                    timer2_clear()
+                match self._n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_clear
+                        timer0_clear()
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_clear
+                        timer1_clear()
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_clear
+                        timer2_clear()
             case "pic16f877a":
                 from pymcu.hal._timer.pic16f877a import timer0_clear
                 timer0_clear()
@@ -135,34 +139,37 @@ class Timer:
                 from pymcu.hal._timer.pic18f45k50 import timer0_clear
                 timer0_clear()
 
-    # Sets the OCR (Output Compare Register) for timer n and enables CTC mode.
-    # CTC vectors (ATmega328P): Timer0_COMPA=0x001C/word0x0E, Timer1_COMPA=0x0016/word0x0B,
-    #   Timer2_COMPA=0x000E/word0x07.
-    # Call start() first to configure the prescaler, then set_compare() to enable CTC.
+    # Sets the OCR (Output Compare Register) and enables CTC mode.
+    # CTC vectors (ATmega328P): Timer0_COMPA=0x001C, Timer1_COMPA=0x0016,
+    #   Timer2_COMPA=0x000E.
+    # Call start() first to configure the prescaler, then set_compare().
     @inline
     def set_compare(self: uint8, value: uint16):
         match __CHIP__.name:
             case "atmega328p":
-                if self._n == 0:
-                    from pymcu.hal._timer.atmega328p import timer0_set_compare
-                    timer0_set_compare(value)
-                elif self._n == 1:
-                    from pymcu.hal._timer.atmega328p import timer1_set_compare
-                    timer1_set_compare(value)
-                elif self._n == 2:
-                    from pymcu.hal._timer.atmega328p import timer2_set_compare
-                    timer2_set_compare(value)
+                match self._n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_set_compare
+                        timer0_set_compare(value)
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_set_compare
+                        timer1_set_compare(value)
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_set_compare
+                        timer2_set_compare(value)
 
     @inline
     def overflow(self: uint8) -> uint8:
-        if __CHIP__.name == "atmega328p":
-            if self._n == 0:
-                from pymcu.hal._timer.atmega328p import timer0_overflow
-                return timer0_overflow()
-            elif self._n == 1:
-                from pymcu.hal._timer.atmega328p import timer1_overflow
-                return timer1_overflow()
-            elif self._n == 2:
-                from pymcu.hal._timer.atmega328p import timer2_overflow
-                return timer2_overflow()
+        match __CHIP__.name:
+            case "atmega328p":
+                match self._n:
+                    case 0:
+                        from pymcu.hal._timer.atmega328p import timer0_overflow
+                        return timer0_overflow()
+                    case 1:
+                        from pymcu.hal._timer.atmega328p import timer1_overflow
+                        return timer1_overflow()
+                    case 2:
+                        from pymcu.hal._timer.atmega328p import timer2_overflow
+                        return timer2_overflow()
         return 0
