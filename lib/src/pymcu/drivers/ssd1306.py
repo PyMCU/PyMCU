@@ -29,19 +29,19 @@ _ssd1306_buf: uint8[1024] = bytearray(1024)
 class SSD1306:
 
     @inline
-    def __init__(self: uint8, i2c: uint8, addr: uint8):
+    def __init__(self, i2c: uint8, addr: uint8):
         self._i2c = i2c
         self._addr = addr
 
     @inline
-    def init(self: uint8):
+    def init(self):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._ssd1306.i2c import ssd1306_init_seq
                 ssd1306_init_seq(self._i2c, self._addr)
 
     @inline
-    def clear(self: uint8):
+    def clear(self):
         # Zero the framebuffer.
         i: uint16 = 0
         while i < 1024:
@@ -49,7 +49,7 @@ class SSD1306:
             i = i + 1
 
     @inline
-    def pixel(self: uint8, x: uint8, y: uint8, color: uint8):
+    def pixel(self, x: uint8, y: uint8, color: uint8):
         # Set or clear a pixel at (x, y).
         # Buffer layout: page = y/8, column = x.
         # Byte index = page*128 + x. Bit = y%8.
@@ -67,7 +67,7 @@ class SSD1306:
             _ssd1306_buf[idx] = _ssd1306_buf[idx] & ~(1 << bit)
 
     @inline
-    def show(self: uint8):
+    def show(self):
         # Flush the entire 1024-byte framebuffer to GDDRAM via I2C.
         match __CHIP__.arch:
             case "avr":
@@ -79,7 +79,7 @@ class SSD1306:
                     i = i + 1
 
     @inline
-    def print_str(self: uint8, x: uint8, y: uint8, s: str):
+    def print_str(self, x: uint8, y: uint8, s: str):
         # Write ASCII text at pixel position (x, y) to the framebuffer.
         # Writes the raw character codes into the buffer at the given page row.
         # Page row = y / 8. Each character occupies one byte in the page row.

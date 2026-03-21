@@ -22,11 +22,11 @@ from pymcu.types import uint8, uint16, inline
 class DHT11:
 
     @inline
-    def __init__(self: uint8, pin: str):
+    def __init__(self, pin: str):
         self.name = pin
 
     @inline
-    def read(self: uint8) -> uint16:
+    def read(self) -> uint16:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._dht11.avr import _avr_read

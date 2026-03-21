@@ -37,7 +37,7 @@ from pymcu.chips import __CHIP__
 class SoftSPI:
 
     @inline
-    def __init__(self: uint8, sck: const[str], mosi: const[str], miso: const[str], cs: const[str] = ""):
+    def __init__(self, sck: const[str], mosi: const[str], miso: const[str], cs: const[str] = ""):
         self._cs = cs
         match __CHIP__.arch:
             case "avr":
@@ -63,7 +63,7 @@ class SoftSPI:
                     self._cs_port[self._cs_bit] = 1
 
     @inline
-    def transfer(self: uint8, data: uint8) -> uint8:
+    def transfer(self, data: uint8) -> uint8:
         # Send data byte MSB-first; simultaneously receive one byte.
         # All port/bit values are compile-time constants -> SBI/CBI/SBIS/SBIC.
         match __CHIP__.arch:
@@ -74,7 +74,7 @@ class SoftSPI:
                 return 0
 
     @inline
-    def write(self: uint8, data: uint8):
+    def write(self, data: uint8):
         # Transmit one byte; received byte is discarded.
         match __CHIP__.arch:
             case "avr":
@@ -82,22 +82,22 @@ class SoftSPI:
                 softspi_transfer_zca(self._sck_port, self._sck_bit, self._mosi_port, self._mosi_bit, self._miso_pin_reg, self._miso_bit, data)
 
     @inline
-    def select(self: uint8):
+    def select(self):
         # Assert CS low (if configured).
         if self._cs != "":
             self._cs_port[self._cs_bit] = 0
 
     @inline
-    def deselect(self: uint8):
+    def deselect(self):
         # Deassert CS high (if configured).
         if self._cs != "":
             self._cs_port[self._cs_bit] = 1
 
     # Context manager: `with spi:` auto-selects/deselects the device.
     @inline
-    def __enter__(self: uint8):
+    def __enter__(self):
         self.select()
 
     @inline
-    def __exit__(self: uint8):
+    def __exit__(self):
         self.deselect()

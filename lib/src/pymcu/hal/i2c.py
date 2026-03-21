@@ -27,14 +27,14 @@ class I2C:
     SLA_R_ACK = 0x40   # SLA+R sent, ACK received
 
     @inline
-    def __init__(self: uint8):
+    def __init__(self):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_init
                 i2c_init()
 
     @inline
-    def ping(self: uint8, addr: uint8) -> uint8:
+    def ping(self, addr: uint8) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_ping
@@ -43,7 +43,7 @@ class I2C:
                 return 0
 
     @inline
-    def start(self: uint8) -> uint8:
+    def start(self) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_start
@@ -52,21 +52,21 @@ class I2C:
                 return 0
 
     @inline
-    def stop(self: uint8):
+    def stop(self):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_stop
                 i2c_stop()
 
     @inline
-    def end(self: uint8):
+    def end(self):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_stop
                 i2c_stop()
 
     @inline
-    def write(self: uint8, data: uint8) -> uint8:
+    def write(self, data: uint8) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_write
@@ -75,7 +75,7 @@ class I2C:
                 return 0
 
     @inline
-    def read_ack(self: uint8) -> uint8:
+    def read_ack(self) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_read_ack
@@ -84,7 +84,7 @@ class I2C:
                 return 0
 
     @inline
-    def read_nack(self: uint8) -> uint8:
+    def read_nack(self) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._i2c.avr import i2c_read_nack
@@ -93,7 +93,7 @@ class I2C:
                 return 0
 
     @inline
-    def write_to(self: uint8, addr: uint8, data: uint8) -> uint8:
+    def write_to(self, addr: uint8, data: uint8) -> uint8:
         # Send START, address byte (write), one data byte, then STOP.
         # addr: 7-bit I2C address; data: byte to send.
         # Returns 1 on success (ACK), 0 if address NACK.
@@ -105,7 +105,7 @@ class I2C:
                 return 0
 
     @inline
-    def read_from(self: uint8, addr: uint8) -> uint8:
+    def read_from(self, addr: uint8) -> uint8:
         # Send START, address byte (read), read one byte with NACK, then STOP.
         # addr: 7-bit I2C address. Returns the byte read, or 0 if NACK.
         match __CHIP__.arch:
@@ -117,9 +117,9 @@ class I2C:
 
     # Context manager support: `with i2c:` auto-sends START/STOP
     @inline
-    def __enter__(self: uint8):
+    def __enter__(self):
         self.start()
 
     @inline
-    def __exit__(self: uint8):
+    def __exit__(self):
         self.stop()

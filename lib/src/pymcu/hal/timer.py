@@ -19,7 +19,7 @@ from pymcu.types import uint8, uint16, const, inline
 class Timer:
 
     @inline
-    def __init__(self: uint8, n: const[uint8], prescaler: uint8):
+    def __init__(self, n: const[uint8], prescaler: uint8):
         self._n = n
         match __CHIP__.name:
             case "atmega328p":
@@ -50,7 +50,7 @@ class Timer:
                 timer0_init(prescaler)
 
     @inline
-    def start(self: uint8):
+    def start(self):
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -80,7 +80,7 @@ class Timer:
                 timer0_start()
 
     @inline
-    def stop(self: uint8):
+    def stop(self):
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -110,7 +110,7 @@ class Timer:
                 timer0_stop()
 
     @inline
-    def clear(self: uint8):
+    def clear(self):
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -144,7 +144,7 @@ class Timer:
     #   Timer2_COMPA=0x000E.
     # Call start() first to configure the prescaler, then set_compare().
     @inline
-    def set_compare(self: uint8, value: uint16):
+    def set_compare(self, value: uint16):
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -159,7 +159,7 @@ class Timer:
                         timer2_set_compare(value)
 
     @inline
-    def overflow(self: uint8) -> uint8:
+    def overflow(self) -> uint8:
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:

@@ -36,7 +36,7 @@ from pymcu.chips import __CHIP__
 class SPI:
 
     @inline
-    def __init__(self: uint8, cs: const[str] = ""):
+    def __init__(self, cs: const[str] = ""):
         self._cs = cs
         match __CHIP__.arch:
             case "avr":
@@ -52,7 +52,7 @@ class SPI:
                     self._cs_port[self._cs_bit] = 1
 
     @inline
-    def select(self: uint8):
+    def select(self):
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
@@ -63,7 +63,7 @@ class SPI:
                     spi_select()
 
     @inline
-    def deselect(self: uint8):
+    def deselect(self):
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
@@ -74,7 +74,7 @@ class SPI:
                     spi_deselect()
 
     @inline
-    def transfer(self: uint8, data: uint8) -> uint8:
+    def transfer(self, data: uint8) -> uint8:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._spi.avr import spi_transfer
@@ -83,7 +83,7 @@ class SPI:
                 return 0
 
     @inline
-    def write(self: uint8, data: uint8):
+    def write(self, data: uint8):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.hal._spi.avr import spi_transfer
@@ -91,9 +91,9 @@ class SPI:
 
     # Context manager support: `with spi:` auto-selects/deselects the device.
     @inline
-    def __enter__(self: uint8):
+    def __enter__(self):
         self.select()
 
     @inline
-    def __exit__(self: uint8):
+    def __exit__(self):
         self.deselect()

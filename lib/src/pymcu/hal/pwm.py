@@ -13,7 +13,7 @@ from pymcu.types import uint8, inline
 class PWM:
 
     @inline
-    def __init__(self: uint8, pin: str, duty: uint8):
+    def __init__(self, pin: str, duty: uint8):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
@@ -35,7 +35,7 @@ class PWM:
                 pwm_init(pin, duty)
 
     @inline
-    def set_duty(self: uint8, duty: uint8):
+    def set_duty(self, duty: uint8):
         match __CHIP__.name:
             case "atmega328p":
                 # Direct OCR write -- single STS instruction.
@@ -51,7 +51,7 @@ class PWM:
                 pwm_set_duty(self.pin, duty)
 
     @inline
-    def start(self: uint8):
+    def start(self):
         match __CHIP__.name:
             case "atmega328p":
                 # Restore prescaler value to re-enable the timer.
@@ -67,7 +67,7 @@ class PWM:
                 pwm_start(self.pin)
 
     @inline
-    def stop(self: uint8):
+    def stop(self):
         match __CHIP__.name:
             case "atmega328p":
                 # Clear TCCRxB to stop the timer clock.

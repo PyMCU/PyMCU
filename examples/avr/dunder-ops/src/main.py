@@ -35,24 +35,24 @@ class Vec:
     y: uint8
 
     @inline
-    def __init__(self: uint8, xv: uint8, yv: uint8):
+    def __init__(self, xv: uint8, yv: uint8):
         self.x = xv
         self.y = yv
 
     @inline
-    def __add__(self: uint8, other: uint8) -> uint8:
+    def __add__(self, other: uint8) -> uint8:
         return Vec(self.x + other.x, self.y + other.y)
 
     @inline
-    def __sub__(self: uint8, other: uint8) -> uint8:
+    def __sub__(self, other: uint8) -> uint8:
         return Vec(self.x - other.x, self.y - other.y)
 
     @inline
-    def __len__(self: uint8) -> uint8:
+    def __len__(self) -> uint8:
         return 2
 
     @inline
-    def __contains__(self: uint8, val: uint8) -> uint8:
+    def __contains__(self, val: uint8) -> uint8:
         if val == self.x:
             return 1
         if val == self.y:
@@ -60,7 +60,7 @@ class Vec:
         return 0
 
     @inline
-    def __getitem__(self: uint8, idx: uint8) -> uint8:
+    def __getitem__(self, idx: uint8) -> uint8:
         match idx:
             case 0:
                 return self.x

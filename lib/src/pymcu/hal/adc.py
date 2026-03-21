@@ -5,7 +5,7 @@ from pymcu.types import uint8, uint16, inline
 class AnalogPin:
 
     @inline
-    def __init__(self: uint8, channel: str):
+    def __init__(self, channel: str):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_channel_admux, adc_init
@@ -27,7 +27,7 @@ class AnalogPin:
                 adc_init(channel)
 
     @inline
-    def start(self: uint8):
+    def start(self):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_start
@@ -44,7 +44,7 @@ class AnalogPin:
 
     # Trigger conversion and return the raw 10-bit result (0-1023).
     @inline
-    def read(self: uint8) -> uint16:
+    def read(self) -> uint16:
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_read
@@ -54,7 +54,7 @@ class AnalogPin:
     # ATmega328P vector: byte 0x002A / word 0x0015.
     # Define @interrupt(0x002A) and call read_result() from inside that ISR.
     @inline
-    def start_conversion(self: uint8):
+    def start_conversion(self):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_start_int
@@ -63,7 +63,7 @@ class AnalogPin:
     # Read the raw 10-bit result without triggering a new conversion.
     # Call from the ADC complete ISR or after polling the ADIF flag.
     @inline
-    def read_result(self: uint8) -> uint16:
+    def read_result(self) -> uint16:
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_read_result
@@ -71,7 +71,7 @@ class AnalogPin:
 
     # Trigger conversion and return result scaled to 16-bit (0-65535).
     @inline
-    def read_u16(self: uint8) -> uint16:
+    def read_u16(self) -> uint16:
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._adc.atmega328p import adc_read_u16

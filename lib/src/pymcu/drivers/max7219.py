@@ -27,11 +27,11 @@ from pymcu.types import uint8, inline
 class MAX7219:
 
     @inline
-    def __init__(self: uint8, spi: uint8):
+    def __init__(self, spi: uint8):
         self._spi = spi
 
     @inline
-    def _write_reg(self: uint8, reg: uint8, val: uint8):
+    def _write_reg(self, reg: uint8, val: uint8):
         # Send one MAX7219 register write: CS low, addr byte, data byte, CS high.
         match __CHIP__.arch:
             case "avr":
@@ -41,7 +41,7 @@ class MAX7219:
                 self._spi.deselect()
 
     @inline
-    def init(self: uint8):
+    def init(self):
         # Normal operation (not shutdown): 0x0C = 0x01
         self._write_reg(0x0C, 0x01)
         # Decode mode off (raw LED control): 0x09 = 0x00
@@ -54,7 +54,7 @@ class MAX7219:
         self._write_reg(0x0F, 0x00)
 
     @inline
-    def clear(self: uint8):
+    def clear(self):
         # Zero all 8 digit/row registers.
         self._write_reg(0x01, 0x00)
         self._write_reg(0x02, 0x00)
@@ -66,14 +66,14 @@ class MAX7219:
         self._write_reg(0x08, 0x00)
 
     @inline
-    def set_row(self: uint8, row: uint8, data: uint8):
+    def set_row(self, row: uint8, data: uint8):
         # Set one row (0-7) to the given 8-bit LED pattern.
         # MAX7219 digit registers are 0x01 (row 0) through 0x08 (row 7).
         reg: uint8 = row + 1
         self._write_reg(reg, data)
 
     @inline
-    def set_brightness(self: uint8, level: uint8):
+    def set_brightness(self, level: uint8):
         # Set intensity: 0 (minimum) to 15 (maximum).
         val: uint8 = level & 0x0F
         self._write_reg(0x0A, val)

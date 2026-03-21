@@ -21,19 +21,19 @@ from pymcu.types import uint8, uint16, inline
 class BMP280:
 
     @inline
-    def __init__(self: uint8, i2c: uint8, addr: uint8):
+    def __init__(self, i2c: uint8, addr: uint8):
         self._i2c = i2c
         self._addr = addr
 
     @inline
-    def init(self: uint8):
+    def init(self):
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._bmp280.i2c import bmp280_init
                 bmp280_init(self._i2c, self._addr)
 
     @inline
-    def read_temp_raw(self: uint8) -> uint16:
+    def read_temp_raw(self) -> uint16:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._bmp280.i2c import bmp280_read_temp_raw
@@ -42,7 +42,7 @@ class BMP280:
                 return 0
 
     @inline
-    def read_press_raw(self: uint8) -> uint16:
+    def read_press_raw(self) -> uint16:
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._bmp280.i2c import bmp280_read_press_raw

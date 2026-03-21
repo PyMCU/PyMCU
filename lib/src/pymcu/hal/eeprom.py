@@ -23,18 +23,18 @@ class EEPROM:
     #   val: uint8 = ee.read(0x10)
 
     @inline
-    def __init__(self: uint8):
+    def __init__(self):
         pass
 
     @inline
-    def write(self: uint8, addr: uint16, value: uint8):
+    def write(self, addr: uint16, value: uint8):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._eeprom.atmega328p import eeprom_write
                 eeprom_write(addr, value)
 
     @inline
-    def read(self: uint8, addr: uint16) -> uint8:
+    def read(self, addr: uint16) -> uint8:
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._eeprom.atmega328p import eeprom_read

@@ -25,11 +25,11 @@ class Watchdog:
     #       wdt.feed()    # must call within 500ms or MCU resets
 
     @inline
-    def __init__(self: uint8, timeout_ms: const[uint16] = 500):
+    def __init__(self, timeout_ms: const[uint16] = 500):
         self._timeout_ms = timeout_ms
 
     @inline
-    def enable(self: uint8):
+    def enable(self):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._watchdog.atmega328p import wdt_enable, wdt_timeout_wdp
@@ -37,14 +37,14 @@ class Watchdog:
                 wdt_enable(wdp)
 
     @inline
-    def disable(self: uint8):
+    def disable(self):
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._watchdog.atmega328p import wdt_disable
                 wdt_disable()
 
     @inline
-    def feed(self: uint8):
+    def feed(self):
         # Reset the watchdog counter. Must be called within the configured timeout.
         match __CHIP__.name:
             case "atmega328p":

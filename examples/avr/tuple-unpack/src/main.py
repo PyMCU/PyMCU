@@ -33,15 +33,15 @@ class Flag:
     entered: uint8
 
     @inline
-    def __init__(self: uint8, v: uint8):
+    def __init__(self, v: uint8):
         self.entered = v
 
     @inline
-    def __enter__(self: uint8):
+    def __enter__(self):
         pass
 
     @inline
-    def __exit__(self: uint8):
+    def __exit__(self):
         pass
 
 

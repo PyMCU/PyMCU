@@ -18,7 +18,7 @@ class Pin:
     IRQ_HIGH_LEVEL = 8
 
     @inline
-    def __init__(self: uint8, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    def __init__(self, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
         self.name = name
         match __CHIP__.name:
             case "pic16f18877":
@@ -102,7 +102,7 @@ class Pin:
                     self._port[self._bit] = value
 
     @inline
-    def high(self: uint8):
+    def high(self):
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_high
@@ -123,7 +123,7 @@ class Pin:
                 self._port[self._bit] = 1
 
     @inline
-    def low(self: uint8):
+    def low(self):
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_low
@@ -144,15 +144,15 @@ class Pin:
                 self._port[self._bit] = 0
 
     @inline
-    def on(self: uint8):
+    def on(self):
         self.high()
 
     @inline
-    def off(self: uint8):
+    def off(self):
         self.low()
 
     @inline
-    def toggle(self: uint8):
+    def toggle(self):
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_toggle
@@ -173,7 +173,7 @@ class Pin:
                 self._port[self._bit] = self._port[self._bit] ^ 1
 
     @inline
-    def value(self: uint8, x: const = -1) -> uint8:
+    def value(self, x: const = -1) -> uint8:
         if x == -1:
             match __CHIP__.name:
                 case "atmega328p":
@@ -214,7 +214,7 @@ class Pin:
                     self._port[self._bit] = x
 
     @inline
-    def init(self: uint8, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
         if mode != -1:
             match __CHIP__.name:
                 case "pic16f18877":
@@ -297,7 +297,7 @@ class Pin:
                 raise NotImplementedError("Alternate functions not supported on ATmega328P")
 
     @inline
-    def pull(self: uint8, pull_mode: const):
+    def pull(self, pull_mode: const):
         match __CHIP__.name:
             case "atmega328p":
                 if pull_mode == 2:
@@ -335,12 +335,12 @@ class Pin:
                     pin_pull_off(self.name)
 
     @inline
-    def drive(self: uint8, strength: uint8):
+    def drive(self, strength: uint8):
         if __CHIP__.name == "atmega328p":
             raise NotImplementedError("Drive strength control not supported on ATmega328P")
 
     @inline
-    def irq(self: uint8, trigger: const = 3, handler: const = 0):
+    def irq(self, trigger: const = 3, handler: const = 0):
         # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
         # handler: compile-time function reference. When provided, compile_isr()
         # inside pin_irq_setup automatically registers the function as an ISR at
@@ -365,7 +365,7 @@ class Pin:
                 raise NotImplementedError("IRQ not supported on PIC10F200")
 
     @inline
-    def pulse_in(self: uint8, state: uint8, timeout_us: uint16 = 1000) -> uint16:
+    def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
         match __CHIP__.name:
             case "atmega328p":
                 from pymcu.hal._gpio.atmega328p import pin_pulse_in
@@ -374,7 +374,7 @@ class Pin:
                 return 0
 
     @inline
-    def mode(self: uint8, m: const = -1) -> uint8:
+    def mode(self, m: const = -1) -> uint8:
         if m != -1:
             match __CHIP__.name:
                 case "pic16f18877":

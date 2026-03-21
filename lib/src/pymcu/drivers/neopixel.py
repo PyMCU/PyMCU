@@ -23,7 +23,7 @@ from pymcu.types import uint8, inline
 class NeoPixel:
 
     @inline
-    def __init__(self: uint8, pin: str, n: uint8):
+    def __init__(self, pin: str, n: uint8):
         self._pin = pin
         self._n = n
         if __CHIP__.arch == "avr":
@@ -33,7 +33,7 @@ class NeoPixel:
     # Write one GRB byte sequence for a single pixel (r, g, b).
     # WS2812 wire order is Green, Red, Blue.
     @inline
-    def set_pixel(self: uint8, r: uint8, g: uint8, b: uint8):
+    def set_pixel(self, r: uint8, g: uint8, b: uint8):
         if __CHIP__.arch == "avr":
             from pymcu.drivers._neopixel.avr import ws2812_write_byte
             ws2812_write_byte(self._pin, g)
@@ -42,14 +42,14 @@ class NeoPixel:
 
     # Write one raw byte to the strip (used for manual GRB sequencing).
     @inline
-    def write_byte(self: uint8, val: uint8):
+    def write_byte(self, val: uint8):
         if __CHIP__.arch == "avr":
             from pymcu.drivers._neopixel.avr import ws2812_write_byte
             ws2812_write_byte(self._pin, val)
 
     # Send reset pulse (>50 us LOW) to latch the pixel data.
     @inline
-    def show(self: uint8):
+    def show(self):
         if __CHIP__.arch == "avr":
             from pymcu.drivers._neopixel.avr import ws2812_reset
             ws2812_reset(self._pin)
