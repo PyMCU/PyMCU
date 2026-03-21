@@ -269,6 +269,23 @@ Token Lexer::identifier() {
     return {TokenType::BytesLiteral, encoded, line, column};
   }
 
+  // r-string prefix: exactly the letter "r" followed immediately by a quote.
+  // Raw strings suppress all escape-sequence processing -- every character
+  // is appended verbatim.  r"\n" is two chars (backslash + n), not a newline.
+  if (text == "r" && (peek() == '"' || peek() == '\'')) {
+    char quote = advance();  // consume opening quote
+    std::string raw;
+    while (peek() != quote && peek() != '\0') {
+      if (peek() == '\n') line++;
+      raw += advance();  // verbatim -- no escape processing
+    }
+    if (peek() == '\0') {
+      error("Unterminated raw string literal");
+    }
+    advance();  // consume closing quote
+    return {TokenType::String, raw, line, column};
+  }
+
   // f-string prefix: exactly the letter "f" followed immediately by a quote
   if (text == "f" && (peek() == '"' || peek() == '\'')) {
     char quote = advance();  // consume the opening quote
