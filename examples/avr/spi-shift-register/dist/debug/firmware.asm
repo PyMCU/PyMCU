@@ -6,10 +6,10 @@
 .equ pymcu_hal__uart_avr__rx_buf = _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head = _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail = _stack_base + 2
-.equ tmp_24 = _stack_base + 9
-.equ tmp_26 = _stack_base + 10
-.equ tmp_29 = _stack_base + 11
-.equ tmp_31 = _stack_base + 12
+.equ tmp_23 = _stack_base + 11
+.equ tmp_25 = _stack_base + 12
+.equ tmp_27 = _stack_base + 13
+.equ tmp_29 = _stack_base + 14
 
 .org 0x0000
 	RJMP	main
@@ -35,8 +35,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:32:     spi  = SPI()
-; main.py:37:     pattern: uint8 = 0x01
-; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:40:     while True:
+; main.py:44: 
 ; main.py:32:     spi  = SPI()
 	SBI	0x04, 3
 ; main.py:33:     uart = UART(9600)
@@ -48,7 +48,7 @@ main:
 ; main.py:39: 
 	LDI	R24, 80
 	OUT	0x2C, R24
-; main.py:42:         with spi:             # select() on enter, deselect() on exit
+; main.py:45:         uart.write(pattern)
 ; main.py:33:     uart = UART(9600)
 ; main.py:58:                 pattern = (pattern << 1) | msb
 ; main.py:47: 
@@ -92,8 +92,8 @@ L_37:
 ; main.py:40:     while True:
 L_38:
 ; main.py:42:         with spi:             # select() on enter, deselect() on exit
-; main.py:52:                 msb: uint8 = (pattern >> 7) & 1
 ; main.py:58:                 pattern = (pattern << 1) | msb
+; main.py:63:                 # Binary counter
 ; main.py:44: 
 	CBI	0x05, 2
 ; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
@@ -112,8 +112,8 @@ L_48:
 	IN	R24, 0x2E
 	STD	Y+5, R24
 ; main.py:59:                 if pattern == 0x03:    # wrapped around
-; main.py:64:                 pattern += 1
-; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
+; main.py:74:             pattern = 0x01         # reset pattern on mode change
 ; main.py:49:         match mode:
 	SBI	0x05, 2
 ; main.py:45:         uart.write(pattern)
@@ -156,10 +156,7 @@ L_BR_SKIP_3:
 	RJMP	L_60
 L_61:
 	MOV	R24, R5
-	CPI	R24, 0
-	BREQ	L_BR_SKIP_4
-	RJMP	L_63
-L_BR_SKIP_4:
+	MOV	R8, R24
 	MOV	R24, R4
 	LSR	R24
 	LSR	R24
@@ -178,51 +175,16 @@ L_BR_SKIP_4:
 	MOV	R18, R6
 	OR	R24, R18
 	MOV	R4, R24
-	RJMP	L_62
-L_63:
-	MOV	R24, R5
-	CPI	R24, 1
-	BREQ	L_BR_SKIP_5
-	RJMP	L_64
-L_BR_SKIP_5:
 ; main.py:57:                 msb = (pattern >> 7) & 1
-	MOV	R24, R4
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	MOV	R16, R24
-	ANDI	R24, 1
-	MOV	R6, R24
 ; main.py:58:                 pattern = (pattern << 1) | msb
-	MOV	R24, R4
-	LSL	R24
-	MOV	R16, R24
-	MOV	R18, R6
-	OR	R24, R18
-	MOV	R4, R24
 ; main.py:59:                 if pattern == 0x03:    # wrapped around
-	CPI	R24, 3
-	BREQ	L_BR_SKIP_6
-	RJMP	L_65
-L_BR_SKIP_6:
 ; main.py:60:                     pattern = 0x03
-	LDI	R24, 3
-	MOV	R4, R24
-L_65:
-	RJMP	L_62
-L_64:
-	INC	R4
-L_62:
 ; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
-	BRNE	L_BR_SKIP_7
+	BRNE	L_BR_SKIP_5
 	RJMP	L_67
-L_BR_SKIP_7:
+L_BR_SKIP_5:
 ; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 	LDS	R24, 0x00C6
 	ANDI	R24, 254
@@ -231,9 +193,9 @@ L_BR_SKIP_7:
 	MOV	R24, R5
 ; main.py:72:             if mode == 3:
 	CPI	R24, 3
-	BREQ	L_BR_SKIP_8
+	BREQ	L_BR_SKIP_6
 	RJMP	L_68
-L_BR_SKIP_8:
+L_BR_SKIP_6:
 ; main.py:73:                 mode = MODE_RUNNING
 	CLR	R24
 	MOV	R5, R24
@@ -242,10 +204,7 @@ L_68:
 	LDI	R24, 1
 	MOV	R4, R24
 	MOV	R24, R5
-	CPI	R24, 0
-	BREQ	L_BR_SKIP_9
-	RJMP	L_70
-L_BR_SKIP_9:
+	MOV	R8, R24
 ; main.py:78:                     uart.println("MODE: RUNNING")
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
@@ -255,52 +214,39 @@ L_BR_SKIP_9:
 L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_10
+	BREQ	L_BR_SKIP_7
 	RJMP	L_77
-L_BR_SKIP_10:
+L_BR_SKIP_7:
 	RJMP	L_76
 L_77:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	RJMP	L_69
-L_70:
-	MOV	R24, R5
-	CPI	R24, 1
-	BREQ	L_BR_SKIP_11
-	RJMP	L_78
-L_BR_SKIP_11:
 ; main.py:80:                     uart.println("MODE: CHASER")
-	LDI	R30, low(__str_2 * 2)
-	LDI	R31, high(__str_2 * 2)
-	RCALL	__uart_send_z
 ; main.py:71:             mode += 1
 ; main.py:76:             match mode:
 L_84:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
+	BREQ	L_BR_SKIP_8
 	RJMP	L_85
-L_BR_SKIP_12:
+L_BR_SKIP_8:
 	RJMP	L_84
 L_85:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	RJMP	L_69
-L_78:
 ; main.py:82:                     uart.println("MODE: COUNTER")
-	LDI	R30, low(__str_3 * 2)
-	LDI	R31, high(__str_3 * 2)
-	RCALL	__uart_send_z
 ; main.py:71:             mode += 1
 ; main.py:76:             match mode:
 L_92:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
+	BREQ	L_BR_SKIP_9
 	RJMP	L_93
-L_BR_SKIP_13:
+L_BR_SKIP_9:
 	RJMP	L_92
 L_93:
 ; main.py:79:                 case MODE_CHASER:

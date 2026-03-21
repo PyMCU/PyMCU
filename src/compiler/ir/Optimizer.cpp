@@ -324,6 +324,9 @@ void Optimizer::eliminate_dead_code(tacky::Function &func) {
 
 void Optimizer::propagate_copies(tacky::Function &func) {
   std::map<std::string, tacky::Val> temp_copies;
+  // Temporaries that have been written on multiple paths — permanently excluded
+  // from propagation so that a later lone definition doesn't incorrectly win.
+  std::set<std::string> blacklisted_temps;
   // Tracks variables whose value is a known compile-time constant
   // (from Copy{Constant{N}, Variable{v}}).  Used to propagate constants into
   // Binary/Unary operands so that fold_constants can then eliminate them.
@@ -414,10 +417,13 @@ void Optimizer::propagate_copies(tacky::Function &func) {
     if (auto *copy = std::get_if<tacky::Copy>(&instr)) {
       if (auto t_dst = std::get_if<tacky::Temporary>(&copy->dst)) {
         // If this Temporary has already been assigned on a different code path
-        // (multi-definition), don't propagate it — remove any existing entry so
-        // we don't substitute the wrong constant at a control-flow merge point.
-        if (temp_copies.contains(t_dst->name)) {
+        // (multi-definition), permanently blacklist it — never propagate so that
+        // a later lone definition doesn't incorrectly dominate earlier paths.
+        if (blacklisted_temps.contains(t_dst->name)) {
+          // Already blacklisted — do not add back, even for a "new" definition.
+        } else if (temp_copies.contains(t_dst->name)) {
           temp_copies.erase(t_dst->name);
+          blacklisted_temps.insert(t_dst->name);
         } else {
           temp_copies[t_dst->name] = copy->src;
         }

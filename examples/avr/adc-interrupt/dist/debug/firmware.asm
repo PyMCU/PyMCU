@@ -123,15 +123,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:31:     adc  = AnalogPin("PC0")
-; main.py:7: #
-; main.py:19: 
-; main.py:7: #
-	LDI	R24, 135
-	STS	0x007A, R24
-; main.py:8: # ADCSRA = 0x87: ADEN=1, ADPS[2:0]=111 (prescaler 128, ~125 kHz ADC clock)
-; main.py:9: # ADMUX  = 0x40: REFS1:0=01 (AVCC), MUX3:0=0000 (ADC0/PC0)
+; main.py:14: #
+; main.py:12: #   - ADC0 = PC0 (analog in)
+; main.py:24:     # Must read ADCL first to lock ADCH.
+; main.py:15: from pymcu.types import uint8, uint16, interrupt, asm
+; main.py:31:     adc  = AnalogPin("PC0")
 	LDI	R24, 64
 	STS	0x007C, R24
+; main.py:32: 
+	LDI	R24, 135
+	STS	0x007A, R24
 ; main.py:33:     GPIOR0[1] = 0
 	CBI	0x1E, 1
 ; main.py:34:     GPIOR1.value = 0
@@ -143,67 +144,67 @@ SEI
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-L_41:
+L_44:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_42
+	RJMP	L_45
 L_BR_SKIP_0:
-	RJMP	L_41
-L_42:
+	RJMP	L_44
+L_45:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:40:     adc.start_conversion()
-; main.py:31:     adc  = AnalogPin("PC0")
+; main.py:44:             GPIOR0[1] = 0
 	LDS	R24, 0x007A
 	ORI	R24, 8
 	STS	0x007A, R24
-; main.py:32: 
+; main.py:45:             result: uint8 = GPIOR1.value
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
 ; main.py:42:     while True:
-L_45:
+L_48:
 ; main.py:43:         if GPIOR0[1] == 1:
 	SBIS	0x1E, 1
-	RJMP	L_47
+	RJMP	L_50
 ; main.py:44:             GPIOR0[1] = 0
 	CBI	0x1E, 1
 	IN	R24, 0x2A
 	MOV	R4, R24
 ; main.py:46:             uart.write(result)
-L_50:
+L_53:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_1
-	RJMP	L_51
+	RJMP	L_54
 L_BR_SKIP_1:
-	RJMP	L_50
-L_51:
+	RJMP	L_53
+L_54:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:47:             uart.write('\n')
-L_54:
+L_57:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_2
-	RJMP	L_55
+	RJMP	L_58
 L_BR_SKIP_2:
-	RJMP	L_54
-L_55:
+	RJMP	L_57
+L_58:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:49:             adc.start_conversion()
-; main.py:31:     adc  = AnalogPin("PC0")
+; main.py:44:             GPIOR0[1] = 0
 	LDS	R24, 0x007A
 	ORI	R24, 8
 	STS	0x007A, R24
-; main.py:32: 
+; main.py:45:             result: uint8 = GPIOR1.value
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
-L_47:
-	RJMP	L_45
+L_50:
+	RJMP	L_48
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

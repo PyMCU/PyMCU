@@ -41,46 +41,46 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:19:     adc  = AnalogPin("PC0")
-; main.py:7: #
-; main.py:19:     adc  = AnalogPin("PC0")
-; main.py:7: #
-	LDI	R24, 135
-	STS	0x007A, R24
-; main.py:8: # ADC result is 10-bit; we read only ADCL (low 8 bits) for a simple 8-bit value.
-; main.py:9: #
+; main.py:14: from pymcu.time import delay_ms
+; main.py:12: from pymcu.hal.uart import UART
+; main.py:24:         # Trigger conversion (ADSC = ADCSRA bit 6)
+; main.py:15: 
+; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 	LDI	R24, 64
 	STS	0x007C, R24
+; main.py:32:         result: uint8 = ADCL[0]
+	LDI	R24, 135
+	STS	0x007A, R24
 ; main.py:21:     uart.println("ADC")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-L_41:
+L_44:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_42
+	RJMP	L_45
 L_BR_SKIP_0:
-	RJMP	L_41
-L_42:
+	RJMP	L_44
+L_45:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:23:     while True:
-L_43:
+L_46:
 ; main.py:25:         adc.start()
 ; main.py:34: 
-; main.py:24:         # Trigger conversion (ADSC = ADCSRA bit 6)
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
 ; main.py:28:         while ADCSRA[6] == 1:
-L_47:
+L_50:
 	LDS	R24, 0x007A
 	ANDI	R24, 64
 	BRNE	L_BR_SKIP_1
-	RJMP	L_48
+	RJMP	L_51
 L_BR_SKIP_1:
-	RJMP	L_47
-L_48:
+	RJMP	L_50
+L_51:
 	LDS	R24, 0x0078
 	ANDI	R24, 1
 	LDI	R18, 1
@@ -91,14 +91,14 @@ L_BR_SKIP_3:
 L_SKIP_2:
 	MOV	R4, R18
 ; main.py:33:         uart.write(result)
-L_51:
+L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_52
+	RJMP	L_55
 L_BR_SKIP_4:
-	RJMP	L_51
-L_52:
+	RJMP	L_54
+L_55:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:35:         delay_ms(100)
@@ -106,7 +106,7 @@ L_52:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_55:
+L_58:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 100
@@ -114,7 +114,7 @@ L_55:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_5
-	RJMP	L_56
+	RJMP	L_59
 L_BR_SKIP_5:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+3
@@ -123,9 +123,9 @@ L_BR_SKIP_5:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_55
-L_56:
-	RJMP	L_43
+	RJMP	L_58
+L_59:
+	RJMP	L_46
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

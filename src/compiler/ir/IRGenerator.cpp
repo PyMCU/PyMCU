@@ -1992,13 +1992,8 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
       }
 
       if (!skip_body) {
-        // PEP 634: guard — emitted after pattern match, before body.
-        // If the guard is false, fall through to the next case.
-        if (branch.guard) {
-          tacky::Val g = visitExpression(branch.guard.get());
-          emit(tacky::JumpIfZero{g, next_case_label});
-        }
-        // PEP 634: capture binding — bind matched subject to name.
+        // PEP 634: bind as-capture BEFORE evaluating the guard, so that the
+        // guard expression can reference the capture variable.
         if (!branch.capture_name.empty()) {
           std::string qname = current_function.empty()
                                   ? branch.capture_name
@@ -2007,18 +2002,19 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
           if (const auto *v = std::get_if<tacky::Variable>(&target_val)) dt = v->type;
           else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
           emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
+          variable_types[qname] = dt;
+        }
+        // PEP 634: guard — evaluated after capture binding.
+        if (branch.guard) {
+          tacky::Val g = visitExpression(branch.guard.get());
+          emit(tacky::JumpIfZero{g, next_case_label});
         }
         visitBlock(dynamic_cast<const Block *>(branch.body.get()));
         emit(tacky::Jump{end_label});
       }
     } else {
       // Wildcard Case (_) or bare-name capture (always matches)
-      // PEP 634: guard on wildcard/capture.
-      if (branch.guard) {
-        tacky::Val g = visitExpression(branch.guard.get());
-        emit(tacky::JumpIfZero{g, next_case_label});
-      }
-      // Capture binding for bare-name capture (case x:)
+      // PEP 634: bind capture BEFORE evaluating guard so guard can reference it.
       if (!branch.capture_name.empty()) {
         std::string qname = current_function.empty()
                                 ? branch.capture_name
@@ -2028,6 +2024,10 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
         else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
         emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
         variable_types[qname] = dt;
+      }
+      if (branch.guard) {
+        tacky::Val g = visitExpression(branch.guard.get());
+        emit(tacky::JumpIfZero{g, next_case_label});
       }
       visitBlock(dynamic_cast<const Block *>(branch.body.get()));
       emit(tacky::Jump{end_label});
@@ -2510,8 +2510,13 @@ void IRGenerator::visitWith(const WithStmt *stmt) {
       std::string qualified = current_function.empty()
                                   ? stmt->as_name
                                   : current_function + "." + stmt->as_name;
-      // Alias: as_name points to same object
-      variable_aliases[qualified] = obj_name;
+      // Alias: as_name points to same object.
+      // Use fully qualified object name so that member access (fa.entered)
+      // resolves to the correct flattened variable (e.g. main.a_entered).
+      std::string qualified_obj = current_function.empty()
+                                      ? obj_name
+                                      : current_function + "." + obj_name;
+      variable_aliases[qualified] = qualified_obj;
     }
 
     // Build a synthetic CallExpr for obj.__enter__() and emit it
@@ -2697,6 +2702,75 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
         instance_classes[qualified_name] = resolvedClass;
         pending_constructor_target = qualified_name;
         virtual_instances.insert(qualified_name);
+      }
+    }
+  }
+  // F7: Pre-register constructor target for dunder binary ops that return new
+  // class instances.  E.g. v3 = v1 + v2  where Vec.__add__ returns Vec(...).
+  // Without this, pending_constructor_target is empty when the inner Vec(...)
+  // constructor is called, so self is not bound to main.v3 and fields go to
+  // anonymous inline slots instead of main.v3_x / main.v3_y.
+  if (!pending_constructor_target.empty()) {
+    // Already set by the constructor-call pre-scan above; nothing to do.
+  } else if (auto varExpr = dynamic_cast<const VariableExpr *>(stmt->target.get())) {
+    if (auto binExpr = dynamic_cast<const BinaryExpr *>(stmt->value.get())) {
+      // Identify the LHS class instance.
+      const VariableExpr *lhsVar = nullptr;
+      if (auto *binLhs = dynamic_cast<const VariableExpr *>(binExpr->left.get()))
+        lhsVar = binLhs;
+      if (lhsVar) {
+        std::string lhs_q = current_inline_prefix.empty()
+                                ? (current_function.empty() ? lhsVar->name : current_function + "." + lhsVar->name)
+                                : current_inline_prefix + lhsVar->name;
+        if (instance_classes.contains(lhs_q)) {
+          std::string cls = instance_classes.at(lhs_q);
+          // Map binary op to dunder name.
+          std::string dunder;
+          switch (binExpr->op) {
+            case BinaryOp::Add:      dunder = "__add__"; break;
+            case BinaryOp::Sub:      dunder = "__sub__"; break;
+            case BinaryOp::Mul:      dunder = "__mul__"; break;
+            case BinaryOp::FloorDiv: dunder = "__floordiv__"; break;
+            case BinaryOp::Mod:      dunder = "__mod__"; break;
+            case BinaryOp::BitAnd:   dunder = "__and__"; break;
+            case BinaryOp::BitOr:    dunder = "__or__"; break;
+            case BinaryOp::BitXor:   dunder = "__xor__"; break;
+            case BinaryOp::LShift:   dunder = "__lshift__"; break;
+            case BinaryOp::RShift:   dunder = "__rshift__"; break;
+            default: break;
+          }
+          if (!dunder.empty()) {
+            std::string func_key = cls + "_" + dunder;
+            if (inline_functions.contains(func_key)) {
+              // Check if the dunder method's body returns a class constructor call.
+              const FunctionDef *dfunc = inline_functions.at(func_key);
+              if (const auto *body = dynamic_cast<const Block *>(dfunc->body.get())) {
+                bool returns_ctor = false;
+                for (const auto &bs : body->statements) {
+                  if (const auto *ret = dynamic_cast<const ReturnStmt *>(bs.get())) {
+                    if (ret->value) {
+                      if (const auto *rc = dynamic_cast<const CallExpr *>(ret->value.get())) {
+                        if (const auto *rv = dynamic_cast<const VariableExpr *>(rc->callee.get())) {
+                          std::string resolved = resolve_callee(rv->name);
+                          if (inline_functions.contains(resolved + "___init__"))
+                            returns_ctor = true;
+                        }
+                      }
+                    }
+                  }
+                }
+                if (returns_ctor) {
+                  std::string qualified_name = current_inline_prefix.empty()
+                                                   ? (current_function.empty() ? varExpr->name : current_function + "." + varExpr->name)
+                                                   : current_inline_prefix + varExpr->name;
+                  instance_classes[qualified_name] = cls;
+                  pending_constructor_target = qualified_name;
+                  virtual_instances.insert(qualified_name);
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -3156,6 +3230,15 @@ void IRGenerator::visitVarDecl(const VarDecl *stmt) {
   }
   variable_types[qualified] = dt;
 
+  // F1: str type variable with a string literal initializer — store in
+  // str_constant_variables so that subscript access (raw_str[0]) can resolve
+  // the actual character at compile time.
+  if (stmt->var_type == "str" && stmt->init) {
+    if (const auto *sl = dynamic_cast<const StringLiteral *>(stmt->init.get())) {
+      str_constant_variables[qualified] = sl->value;
+    }
+  }
+
   // Create the Variable
   if (stmt->init) {
     tacky::Val val = visitExpression(stmt->init.get());
@@ -3389,6 +3472,15 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
     qualified = stmt->target;
   }
   variable_types[qualified] = type;
+
+  // F1: str type annotation with a string literal initializer — store in
+  // str_constant_variables so that subscript access (raw_str[0]) can resolve
+  // the actual character at compile time.
+  if (stmt->annotation == "str" && stmt->value) {
+    if (const auto *sl = dynamic_cast<const StringLiteral *>(stmt->value.get())) {
+      str_constant_variables[qualified] = sl->value;
+    }
+  }
 
   // Generate assignment IR if initializer present
   if (stmt->value) {
@@ -3972,6 +4064,12 @@ tacky::Val IRGenerator::emit_dunder_call(const std::string &self_qname,
     DataType dt = resolve_type(func->params[pi].type);
     if (auto *c = std::get_if<tacky::Constant>(&extra_args[extra_idx])) {
       constant_variables[param_key] = c->value;
+    } else if (auto *v = std::get_if<tacky::Variable>(&extra_args[extra_idx])) {
+      // Bind via alias (zero-copy): param_key → v->name so that member accesses
+      // on the param (e.g. other.x) resolve directly to the caller's fields
+      // (e.g. main.vb_x) rather than to uninitialized inline-slot fields.
+      variable_aliases[param_key] = v->name;
+      variable_types[param_key] = dt;
     } else {
       emit(tacky::Copy{extra_args[extra_idx], tacky::Variable{param_key, dt}});
       variable_types[param_key] = dt;
@@ -4565,6 +4663,21 @@ tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
     }
   }
 
+  // String subscript: str_var[i] -> ord(str_var[i]) as a compile-time constant.
+  // Handles raw_str[0] where raw_str is a str constant variable.
+  if (auto *ve = dynamic_cast<const VariableExpr *>(expr->target.get())) {
+    std::string local_name = current_inline_prefix.empty()
+                                 ? (current_function.empty() ? ve->name : current_function + "." + ve->name)
+                                 : current_inline_prefix + ve->name;
+    if (auto str_val = resolve_str_constant(local_name)) {
+      auto *ic = dynamic_cast<const IntegerLiteral *>(expr->index.get());
+      if (!ic) throw std::runtime_error("String subscript index must be a compile-time constant");
+      if (ic->value < 0 || ic->value >= (int)str_val->size())
+        throw std::runtime_error("String subscript index out of range");
+      return tacky::Constant{(int)(unsigned char)(*str_val)[ic->value]};
+    }
+  }
+
   // Bit-slice path (existing behaviour for register access like PORTB[0])
   tacky::Val target = visitExpression(expr->target.get());
   tacky::Val indexVal = visitExpression(expr->index.get());
@@ -4701,7 +4814,12 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
 
   if (!base_name.empty()) {
     while (variable_aliases.contains(base_name)) {
-      base_name = variable_aliases.at(base_name);
+      const std::string &next = variable_aliases.at(base_name);
+      // Temporaries (tmp_N) have no field members — stop alias-following here.
+      // This prevents v3 (aliased to tmp_18 from a dunder-op assignment) from
+      // being flattened to tmp_18_y instead of main.v3_y.
+      if (next.size() > 4 && next.substr(0, 4) == "tmp_") break;
+      base_name = next;
     }
     std::string flattened_name = base_name + "_" + expr->member;
     // Check if it's a known global/constant (e.g. self.CONST)

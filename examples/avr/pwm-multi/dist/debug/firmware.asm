@@ -47,71 +47,75 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:27:     ch_a = PWM("PD6", 0)
-; main.py:7: #
-; main.py:19: from pymcu.hal.uart import UART
-; main.py:7: #
-; main.py:9: # A UART banner confirms init, then "D\n" is sent each full cycle completion.
+; main.py:20: from pymcu.time import delay_ms
+; main.py:56:         cycle += 1
 	SBI	0x0A, 6
-; main.py:10: #
+; main.py:57:         if cycle == 0:
 	CLR	R24
 	OUT	0x27, R24
-; main.py:11: # Hardware: Arduino Uno
+; main.py:58:             uart.write('D')
 	LDI	R24, 131
 	OUT	0x24, R24
-; main.py:12: #   PD6 = Arduino pin 6 (OC0A)
+; main.py:59:             uart.write('\n')
 	LDI	R24, 3
 	OUT	0x25, R24
+; main.py:21: 
+; main.py:14: #   PB1 = Arduino pin 9  (OC1A)
+; main.py:22: 
+; main.py:32:     ch_b.start()
+; main.py:23: def main():
+; main.py:44: 
 ; main.py:28:     ch_a.start()
-; main.py:49: 
+; main.py:58:             uart.write('D')
 	OUT	0x25, R24
 ; main.py:31:     ch_b = PWM("PB3", 128)
-; main.py:7: #
-; main.py:19: from pymcu.hal.uart import UART
-; main.py:7: #
-; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
+; main.py:20: from pymcu.time import delay_ms
 	SBI	0x04, 3
-; main.py:35:     ch_c = PWM("PB1", 64)
 	LDI	R24, 128
 	STS	0x00B3, R24
-; main.py:36:     ch_c.start()
 	LDI	R24, 131
 	STS	0x00B0, R24
-; main.py:37: 
 	LDI	R24, 4
 	STS	0x00B1, R24
+; main.py:21: 
+; main.py:22: 
+; main.py:22: 
+; main.py:36:     ch_c.start()
+; main.py:23: def main():
+; main.py:48:         ch_c.set_duty(duty_c)
 ; main.py:32:     ch_b.start()
-; main.py:49: 
+; main.py:58:             uart.write('D')
 	STS	0x00B1, R24
 ; main.py:35:     ch_c = PWM("PB1", 64)
-; main.py:7: #
-; main.py:19: from pymcu.hal.uart import UART
-; main.py:7: #
-; main.py:22: 
+; main.py:20: from pymcu.time import delay_ms
 	SBI	0x04, 1
-; main.py:23: def main():
 	LDI	R24, 64
 	STS	0x0088, R24
-; main.py:24:     uart = UART(9600)
 	LDI	R24, 130
 	STS	0x0080, R24
-; main.py:25: 
 	LDI	R24, 10
 	STS	0x0081, R24
+; main.py:21: 
+; main.py:18: from pymcu.hal.pwm import PWM
+; main.py:22: 
+; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
+; main.py:23: def main():
+; main.py:46:         ch_a.set_duty(duty_a)
 ; main.py:36:     ch_c.start()
-; main.py:49: 
+; main.py:58:             uart.write('D')
 	STS	0x0081, R24
 ; main.py:38:     uart.println("PWM3")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-L_81:
+L_117:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_82
+	RJMP	L_118
 L_BR_SKIP_0:
-	RJMP	L_81
-L_82:
+	RJMP	L_117
+L_118:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
@@ -123,23 +127,17 @@ L_82:
 	CLR	R24
 	MOV	R4, R24
 ; main.py:45:     while True:
-L_83:
+L_119:
 ; main.py:46:         ch_a.set_duty(duty_a)
-; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
-; main.py:47:         ch_b.set_duty(duty_b)
-; main.py:48:         ch_c.set_duty(duty_c)
+; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R5
 	OUT	0x27, R24
 ; main.py:47:         ch_b.set_duty(duty_b)
-; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
-; main.py:47:         ch_b.set_duty(duty_b)
-; main.py:56:         cycle += 1
+; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R6
 	STS	0x00B3, R24
 ; main.py:48:         ch_c.set_duty(duty_c)
-; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
-; main.py:47:         ch_b.set_duty(duty_b)
-; main.py:52:         duty_a += 1
+; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R7
 	STS	0x0088, R24
 ; main.py:50:         delay_ms(5)
@@ -147,7 +145,7 @@ L_83:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_111:
+L_126:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 5
@@ -155,7 +153,7 @@ L_111:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_1
-	RJMP	L_112
+	RJMP	L_127
 L_BR_SKIP_1:
 	RCALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+3
@@ -164,8 +162,8 @@ L_BR_SKIP_1:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_111
-L_112:
+	RJMP	L_126
+L_127:
 	INC	R5
 	MOV	R24, R5
 	INC	R6
@@ -177,32 +175,32 @@ L_112:
 ; main.py:57:         if cycle == 0:
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_2
-	RJMP	L_113
+	RJMP	L_128
 L_BR_SKIP_2:
 ; main.py:58:             uart.write('D')
-L_116:
+L_131:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_117
+	RJMP	L_132
 L_BR_SKIP_3:
-	RJMP	L_116
-L_117:
+	RJMP	L_131
+L_132:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:59:             uart.write('\n')
-L_120:
+L_135:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_121
+	RJMP	L_136
 L_BR_SKIP_4:
-	RJMP	L_120
-L_121:
+	RJMP	L_135
+L_136:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_113:
-	RJMP	L_83
+L_128:
+	RJMP	L_119
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

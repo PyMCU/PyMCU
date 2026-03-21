@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf = _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head = _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail = _stack_base + 2
-.equ tmp_24 = _stack_base + 6
-.equ tmp_25 = _stack_base + 7
+.equ tmp_27 = _stack_base + 6
+.equ tmp_28 = _stack_base + 7
 
 .org 0x0000
 main:
@@ -45,8 +45,7 @@ L_BIT_WRITE_DONE_1:
 ; main.py:23: 
 	CLR	R24
 	MOV	R6, R24
-; main.py:26:     timer.clear()
-; main.py:28:     ticks: uint16 = 0
+; main.py:29: 
 ; main.py:10: #   LED on PB5 (built-in): toggles every ~1 second
 	CLR	R24
 	OUT	0x24, R24
@@ -58,41 +57,43 @@ L_BIT_WRITE_DONE_1:
 	MOV	R24, R6
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_3
-	RJMP	L_70
+	RJMP	L_71
 L_BR_SKIP_3:
 ; main.py:31:         # Poll Timer0 Overflow Flag (TOV0 = bit 0 of TIFR0, address 0x35)
 	CLR	R24
 	OUT	0x26, R24
-	RJMP	L_69
-L_70:
+	RJMP	L_70
+L_71:
 	MOV	R24, R6
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_4
-	RJMP	L_72
+	RJMP	L_73
 L_BR_SKIP_4:
 	CLR	R24
 	STS	0x0084, R24
 	CLR	R24
 	STS	0x0085, R24
-	RJMP	L_69
-L_72:
+	RJMP	L_70
+L_73:
 	MOV	R24, R6
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_5
-	RJMP	L_69
+	RJMP	L_75
 L_BR_SKIP_5:
 	CLR	R24
 	STS	0x00B2, R24
-L_69:
+	RJMP	L_70
+L_75:
+L_70:
 	CLR	R24
 	CLR	R25
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:30:     while True:
-L_75:
+L_77:
 ; main.py:32:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_77
+	RJMP	L_79
 ; main.py:34:             TIFR0[0] = 1
 	SBI	0x15, 0
 	MOV	R24, R4
@@ -107,7 +108,7 @@ L_75:
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_6
-	RJMP	L_78
+	RJMP	L_80
 L_BR_SKIP_6:
 ; main.py:40:                 ticks = 0
 	CLR	R24
@@ -136,27 +137,27 @@ L_BIT_WRITE_SKIP_9:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_10:
 ; main.py:42:                 uart.write('T')
-L_82:
+L_84:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_83
+	RJMP	L_85
 L_BR_SKIP_12:
-	RJMP	L_82
-L_83:
+	RJMP	L_84
+L_85:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
-L_86:
+L_88:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_87
+	RJMP	L_89
 L_BR_SKIP_13:
-	RJMP	L_86
-L_87:
+	RJMP	L_88
+L_89:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_78:
-L_77:
-	RJMP	L_75
+L_80:
+L_79:
+	RJMP	L_77

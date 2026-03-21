@@ -1226,6 +1226,8 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     while (!check(TokenType::Colon) && !check(TokenType::EndOfFile)) {
       std::string pname = consume(TokenType::Identifier, "Expected parameter name").value;
       std::string ptype = "uint8";  // default type
+      // Save pos BEFORE consuming ':' so we can rewind it if ':' is the body separator.
+      size_t colon_pos = pos;
       if (match(TokenType::Colon)) {
         // Typed parameter: lambda x: uint8, y: uint8: body
         // But ':' also terminates the param list — peek ahead: if followed by
@@ -1251,11 +1253,11 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
               consume(TokenType::RBracket, "Expected ']'");
             }
           } else {
-            // The colon is the lambda body separator — rewind
-            pos = save_pos;
+            // The colon is the lambda body separator — rewind past the ':' too
+            pos = colon_pos;
           }
         } else {
-          pos = save_pos;  // rewind
+          pos = colon_pos;  // rewind past the ':'
         }
       }
       params.emplace_back(pname, ptype);
