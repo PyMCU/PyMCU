@@ -2,32 +2,24 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline1_write_data = _stack_base + 3
-.equ main_even__2 = _stack_base + 6
-.equ main_even__3 = _stack_base + 7
-.equ main_first__1 = _stack_base + 9
-.equ main_first__2 = _stack_base + 10
 .equ main_first__3 = _stack_base + 11
 .equ main_last__0 = _stack_base + 12
 .equ main_last__1 = _stack_base + 13
 .equ main_last__2 = _stack_base + 14
 .equ main_src = _stack_base + 16
-.equ main_src__0 = _stack_base + 24
-.equ main_src__1 = _stack_base + 25
-.equ main_src__3 = _stack_base + 27
-.equ main_src__7 = _stack_base + 31
 .equ pymcu_hal__uart_avr__rx_buf = _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head = _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail = _stack_base + 2
-.equ tmp_18 = _stack_base + 36
-.equ tmp_20 = _stack_base + 37
-.equ tmp_21 = _stack_base + 38
-.equ tmp_23 = _stack_base + 36
-.equ tmp_24 = _stack_base + 37
+.equ tmp_18 = _stack_base + 28
+.equ tmp_20 = _stack_base + 29
+.equ tmp_21 = _stack_base + 30
+.equ tmp_23 = _stack_base + 28
+.equ tmp_24 = _stack_base + 29
 
 .org 0x0000
 	RJMP	main
 nibble_hi:
-	MOV	R9, R24
+	MOV	R8, R24
 	LSR	R24
 	LSR	R24
 	LSR	R24
@@ -35,38 +27,38 @@ nibble_hi:
 	MOV	R16, R24
 	ANDI	R24, 15
 	MOV	R10, R24
-; main.py:22:     if n < 10:
+; main.py:20:     if n < 10:
 	CPI	R24, 10
 	BRLO	L_BR_SKIP_0
 	RJMP	L_21
 L_BR_SKIP_0:
-; main.py:23:         return n + 48
+; main.py:21:         return n + 48
 	MOV	R24, R10
 	SUBI	R24, 208
 	MOV	R16, R24
 	RET
 L_21:
-; main.py:24:     return n + 55
+; main.py:22:     return n + 55
 	MOV	R24, R10
 	SUBI	R24, 201
 	MOV	R16, R24
 	RET
 nibble_lo:
-	MOV	R4, R24
+	MOV	R9, R24
 	ANDI	R24, 15
 	MOV	R11, R24
-; main.py:29:     if n < 10:
+; main.py:27:     if n < 10:
 	CPI	R24, 10
 	BRLO	L_BR_SKIP_1
 	RJMP	L_22
 L_BR_SKIP_1:
-; main.py:30:         return n + 48
+; main.py:28:         return n + 48
 	MOV	R24, R11
 	SUBI	R24, 208
 	MOV	R16, R24
 	RET
 L_22:
-; main.py:31:     return n + 55
+; main.py:29:     return n + 55
 	MOV	R24, R11
 	SUBI	R24, 201
 	MOV	R16, R24
@@ -78,31 +70,28 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
-; main.py:35:     uart = UART(9600)
-; main.py:58:     uart.write('B')
-; main.py:47: 
+; main.py:33:     uart = UART(9600)
+; main.py:58:     uart.write(nibble_hi(even[0]))
+; main.py:47:     last: uint8[4] = src[4:8]
 	SBI	0x0A, 1
-; main.py:48:     # Slice: first 4 elements
+; main.py:48:     uart.write('B')
 	CBI	0x0A, 0
-; main.py:51:     uart.write(':')
-; main.py:52:     uart.write(nibble_hi(first__0))
+; main.py:51:     uart.write(nibble_lo(last[3]))
+; main.py:52:     uart.write('\n')
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:     uart.write(nibble_lo(first__0))
+; main.py:53: 
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68:     uart.write(nibble_hi(even__0))
+; main.py:68:     while True:
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70:     uart.write('\n')
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:36:     uart.println("SL")
+; main.py:34:     uart.println("SL")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -111,62 +100,34 @@ L_35:
 L_BR_SKIP_2:
 	RJMP	L_35
 L_36:
-; main.py:79:         pass
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:38:     src: uint8[8]
-	CLR	R24
+; main.py:36:     src: uint8[8] = [10, 20, 30, 40, 50, 60, 70, 80]
 	STD	Y+16, R24
-	CLR	R24
+	LDI	R24, 20
 	STD	Y+17, R24
-	CLR	R24
+	LDI	R24, 30
 	STD	Y+18, R24
-	CLR	R24
+	LDI	R24, 40
 	STD	Y+19, R24
-	CLR	R24
-	STD	Y+20, R24
-	CLR	R24
-	STD	Y+21, R24
-	CLR	R24
-	STD	Y+22, R24
-	CLR	R24
-	STD	Y+23, R24
-; main.py:39:     src__0 = 10
-	LDI	R24, 10
-	STD	Y+24, R24
-; main.py:40:     src__1 = 20
-	LDI	R24, 20
-	STD	Y+25, R24
-; main.py:41:     src__2 = 30
-	LDI	R24, 30
-	MOV	R14, R24
-; main.py:42:     src__3 = 40
-	LDI	R24, 40
-	STD	Y+27, R24
-; main.py:43:     src__4 = 50
 	LDI	R24, 50
-	MOV	R12, R24
-; main.py:44:     src__5 = 60
+	STD	Y+20, R24
 	LDI	R24, 60
-	MOV	R15, R24
-; main.py:45:     src__6 = 70
+	STD	Y+21, R24
 	LDI	R24, 70
-	MOV	R13, R24
-; main.py:46:     src__7 = 80
+	STD	Y+22, R24
 	LDI	R24, 80
-	STD	Y+31, R24
-; main.py:49:     first: uint8[4] = src[0:4]
-	LDI	R24, 10
+	STD	Y+23, R24
+; main.py:39:     first: uint8[4] = src[0:4]
+	LDD	R24, Y+16
 	MOV	R6, R24
-	LDI	R24, 20
-	STD	Y+9, R24
-	LDI	R24, 30
-	STD	Y+10, R24
-	LDI	R24, 40
+	LDD	R24, Y+17
+	MOV	R14, R24
+	LDD	R24, Y+18
+	MOV	R15, R24
+	LDD	R24, Y+19
 	STD	Y+11, R24
-; main.py:50:     uart.write('A')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:40:     uart.write('A')
 L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -175,12 +136,9 @@ L_39:
 L_BR_SKIP_3:
 	RJMP	L_39
 L_40:
-; main.py:79:         pass
 	LDI	R24, 65
 	STS	0x00C6, R24
-; main.py:51:     uart.write(':')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:41:     uart.write(':')
 L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -189,16 +147,13 @@ L_43:
 L_BR_SKIP_4:
 	RJMP	L_43
 L_44:
-; main.py:79:         pass
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:52:     uart.write(nibble_hi(first__0))
+; main.py:42:     uart.write(nibble_hi(first[0]))
 	MOV	R24, R6
-	MOV	R9, R24
+	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -207,16 +162,13 @@ L_47:
 L_BR_SKIP_5:
 	RJMP	L_47
 L_48:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:53:     uart.write(nibble_lo(first__0))
+; main.py:43:     uart.write(nibble_lo(first[0]))
 	MOV	R24, R6
-	MOV	R4, R24
+	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -225,12 +177,9 @@ L_51:
 L_BR_SKIP_6:
 	RJMP	L_51
 L_52:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:54:     uart.write('\n')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:44:     uart.write('\n')
 L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -239,21 +188,18 @@ L_55:
 L_BR_SKIP_7:
 	RJMP	L_55
 L_56:
-; main.py:79:         pass
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:57:     last: uint8[4] = src[4:8]
-	MOV	R24, R12
+; main.py:47:     last: uint8[4] = src[4:8]
+	LDD	R24, Y+20
 	STD	Y+12, R24
-	MOV	R24, R15
+	LDD	R24, Y+21
 	STD	Y+13, R24
-	MOV	R24, R13
+	LDD	R24, Y+22
 	STD	Y+14, R24
-	LDD	R24, Y+31
+	LDD	R24, Y+23
 	MOV	R7, R24
-; main.py:58:     uart.write('B')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:48:     uart.write('B')
 L_59:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -262,12 +208,9 @@ L_59:
 L_BR_SKIP_8:
 	RJMP	L_59
 L_60:
-; main.py:79:         pass
 	LDI	R24, 66
 	STS	0x00C6, R24
-; main.py:59:     uart.write(':')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:49:     uart.write(':')
 L_63:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -276,16 +219,13 @@ L_63:
 L_BR_SKIP_9:
 	RJMP	L_63
 L_64:
-; main.py:79:         pass
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:60:     uart.write(nibble_hi(last__3))
+; main.py:50:     uart.write(nibble_hi(last[3]))
 	MOV	R24, R7
-	MOV	R9, R24
+	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_67:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -294,16 +234,13 @@ L_67:
 L_BR_SKIP_10:
 	RJMP	L_67
 L_68:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:61:     uart.write(nibble_lo(last__3))
+; main.py:51:     uart.write(nibble_lo(last[3]))
 	MOV	R24, R7
-	MOV	R4, R24
+	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_71:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -312,12 +249,9 @@ L_71:
 L_BR_SKIP_11:
 	RJMP	L_71
 L_72:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:62:     uart.write('\n')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:52:     uart.write('\n')
 L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -326,21 +260,18 @@ L_75:
 L_BR_SKIP_12:
 	RJMP	L_75
 L_76:
-; main.py:79:         pass
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:65:     even: uint8[4] = src[0:8:2]
-	LDD	R24, Y+24
-	MOV	R8, R24
-	MOV	R24, R14
+; main.py:55:     even: uint8[4] = src[0:8:2]
+	LDD	R24, Y+16
+	MOV	R4, R24
+	LDD	R24, Y+18
 	MOV	R5, R24
-	MOV	R24, R12
-	STD	Y+6, R24
-	MOV	R24, R13
-	STD	Y+7, R24
-; main.py:66:     uart.write('C')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+	LDD	R24, Y+20
+	MOV	R12, R24
+	LDD	R24, Y+22
+	MOV	R13, R24
+; main.py:56:     uart.write('C')
 L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -349,12 +280,9 @@ L_79:
 L_BR_SKIP_13:
 	RJMP	L_79
 L_80:
-; main.py:79:         pass
 	LDI	R24, 67
 	STS	0x00C6, R24
-; main.py:67:     uart.write(':')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:57:     uart.write(':')
 L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -363,16 +291,13 @@ L_83:
 L_BR_SKIP_14:
 	RJMP	L_83
 L_84:
-; main.py:79:         pass
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:68:     uart.write(nibble_hi(even__0))
-	MOV	R24, R8
-	MOV	R9, R24
+; main.py:58:     uart.write(nibble_hi(even[0]))
+	MOV	R24, R4
+	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -381,16 +306,13 @@ L_87:
 L_BR_SKIP_15:
 	RJMP	L_87
 L_88:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:69:     uart.write(nibble_lo(even__0))
-	MOV	R24, R8
-	MOV	R4, R24
+; main.py:59:     uart.write(nibble_lo(even[0]))
+	MOV	R24, R4
+	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -399,12 +321,9 @@ L_91:
 L_BR_SKIP_16:
 	RJMP	L_91
 L_92:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:70:     uart.write('\n')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:60:     uart.write('\n')
 L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -413,12 +332,9 @@ L_95:
 L_BR_SKIP_17:
 	RJMP	L_95
 L_96:
-; main.py:79:         pass
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:72:     uart.write('D')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:62:     uart.write('D')
 L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -427,12 +343,9 @@ L_99:
 L_BR_SKIP_18:
 	RJMP	L_99
 L_100:
-; main.py:79:         pass
 	LDI	R24, 68
 	STS	0x00C6, R24
-; main.py:73:     uart.write(':')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:63:     uart.write(':')
 L_103:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -441,16 +354,13 @@ L_103:
 L_BR_SKIP_19:
 	RJMP	L_103
 L_104:
-; main.py:79:         pass
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:74:     uart.write(nibble_hi(even__1))
+; main.py:64:     uart.write(nibble_hi(even[1]))
 	MOV	R24, R5
-	MOV	R9, R24
+	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_107:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -459,16 +369,13 @@ L_107:
 L_BR_SKIP_20:
 	RJMP	L_107
 L_108:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:75:     uart.write(nibble_lo(even__1))
+; main.py:65:     uart.write(nibble_lo(even[1]))
 	MOV	R24, R5
-	MOV	R4, R24
+	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
-; main.py:76:     uart.write('\n')
 L_111:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -477,12 +384,9 @@ L_111:
 L_BR_SKIP_21:
 	RJMP	L_111
 L_112:
-; main.py:79:         pass
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:76:     uart.write('\n')
-; main.py:71: 
-; main.py:76:     uart.write('\n')
+; main.py:66:     uart.write('\n')
 L_115:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -491,10 +395,9 @@ L_115:
 L_BR_SKIP_22:
 	RJMP	L_115
 L_116:
-; main.py:79:         pass
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:78:     while True:
+; main.py:68:     while True:
 L_117:
 	RJMP	L_117
 
