@@ -136,9 +136,21 @@ struct VariableExpr : Expression {
   explicit VariableExpr(std::string n) : name(std::move(n)) {}
 };
 
+// Slice expression (PEP 197, F8): [start:stop] or [start:stop:step]
+// All components are optional (nullptr means default: 0, len, 1 respectively).
+struct SliceExpr : Expression {
+  std::unique_ptr<Expression> start;  // nullptr → 0
+  std::unique_ptr<Expression> stop;   // nullptr → array length
+  std::unique_ptr<Expression> step;   // nullptr → 1
+
+  SliceExpr(std::unique_ptr<Expression> st, std::unique_ptr<Expression> sp,
+            std::unique_ptr<Expression> step_)
+      : start(std::move(st)), stop(std::move(sp)), step(std::move(step_)) {}
+};
+
 struct IndexExpr : Expression {
   std::unique_ptr<Expression> target;
-  std::unique_ptr<Expression> index;
+  std::unique_ptr<Expression> index;  // may be SliceExpr for arr[1:3]
 
   IndexExpr(std::unique_ptr<Expression> t, std::unique_ptr<Expression> i)
       : target(std::move(t)), index(std::move(i)) {}

@@ -3243,6 +3243,47 @@ void IRGenerator::visitAnnAssign(const AnnAssign *stmt) {
             visitListComp(lc, qualified, count, elem_dt);
             return;
           }
+          // F8: Slice initializer — half: uint8[4] = arr[0:4] (compile-time, direct copy)
+          if (const auto *idx_rhs = dynamic_cast<const IndexExpr *>(stmt->value.get())) {
+            if (const auto *sl = dynamic_cast<const SliceExpr *>(idx_rhs->index.get())) {
+              if (auto *src_ve = dynamic_cast<const VariableExpr *>(idx_rhs->target.get())) {
+                std::string src_q = current_function.empty()
+                                        ? src_ve->name
+                                        : current_function + "." + src_ve->name;
+                if (!array_sizes.contains(src_q) && array_sizes.contains(src_ve->name))
+                  src_q = src_ve->name;
+                if (array_sizes.contains(src_q)) {
+                  int src_size     = array_sizes.at(src_q);
+                  DataType src_edt = array_elem_types.at(src_q);
+                  int start = sl->start ? evaluate_constant_expr(sl->start.get()) : 0;
+                  int stop  = sl->stop  ? evaluate_constant_expr(sl->stop.get())  : src_size;
+                  int step  = sl->step  ? evaluate_constant_expr(sl->step.get())  : 1;
+                  if (step == 0) throw std::runtime_error("Slice step cannot be zero");
+                  if (start < 0) start += src_size;
+                  if (stop  < 0) stop  += src_size;
+                  start = std::max(0, std::min(start, src_size));
+                  stop  = std::max(0, std::min(stop,  src_size));
+                  int k = 0;
+                  for (int i = start; (step > 0 ? i < stop : i > stop) && k < count;
+                       i += step, ++k) {
+                    std::string src_elem = src_q + "__" + std::to_string(i);
+                    std::string dst_elem = qualified + "__" + std::to_string(k);
+                    variable_types[dst_elem] = elem_dt;
+                    emit(tacky::Copy{tacky::Variable{src_elem, src_edt},
+                                     tacky::Variable{dst_elem, elem_dt}});
+                  }
+                  // Zero-fill any remaining destination elements
+                  for (; k < count; ++k) {
+                    std::string dst_elem = qualified + "__" + std::to_string(k);
+                    variable_types[dst_elem] = elem_dt;
+                    emit(tacky::Copy{tacky::Constant{0}, tacky::Variable{dst_elem, elem_dt}});
+                  }
+                  return;
+                }
+              }
+              throw std::runtime_error("Slice initializer target must be a named fixed-size array");
+            }
+          }
           if (auto *le = dynamic_cast<const ListExpr *>(stmt->value.get())) {
             for (int k = 0; k < std::min(count, (int)le->elements.size()); ++k) {
               if (auto *il = dynamic_cast<const IntegerLiteral *>(le->elements[k].get()))
@@ -4385,6 +4426,46 @@ tacky::Val IRGenerator::visitYield(const YieldExpr *expr) {
 }
 
 tacky::Val IRGenerator::visitIndex(const IndexExpr *expr) {
+  // F8 (PEP 197): Slice expression — arr[start:stop:step] (compile-time only).
+  // Must be checked before the array_sizes block since SliceExpr is not an element index.
+  if (const auto *sl = dynamic_cast<const SliceExpr *>(expr->index.get())) {
+    if (auto *src_ve = dynamic_cast<const VariableExpr *>(expr->target.get())) {
+      std::string src_q = current_function.empty()
+                              ? src_ve->name
+                              : current_function + "." + src_ve->name;
+      if (!array_sizes.contains(src_q) && array_sizes.contains(src_ve->name))
+        src_q = src_ve->name;
+      if (array_sizes.contains(src_q)) {
+        int src_size     = array_sizes.at(src_q);
+        DataType elem_dt = array_elem_types.at(src_q);
+        int start = sl->start ? evaluate_constant_expr(sl->start.get()) : 0;
+        int stop  = sl->stop  ? evaluate_constant_expr(sl->stop.get())  : src_size;
+        int step  = sl->step  ? evaluate_constant_expr(sl->step.get())  : 1;
+        if (step == 0) throw std::runtime_error("Slice step cannot be zero");
+        if (start < 0) start += src_size;
+        if (stop  < 0) stop  += src_size;
+        start = std::max(0, std::min(start, src_size));
+        stop  = std::max(0, std::min(stop,  src_size));
+        int result_count = 0;
+        for (int i = start; (step > 0 ? i < stop : i > stop); i += step) ++result_count;
+        // Allocate a synthetic array to hold the slice result.
+        std::string tmp_name = "__slice_" + std::to_string(temp_counter++);
+        array_sizes[tmp_name]      = result_count;
+        array_elem_types[tmp_name] = elem_dt;
+        int k = 0;
+        for (int i = start; (step > 0 ? i < stop : i > stop); i += step, ++k) {
+          std::string src_elem = src_q + "__" + std::to_string(i);
+          std::string dst_elem = tmp_name + "__" + std::to_string(k);
+          variable_types[dst_elem] = elem_dt;
+          emit(tacky::Copy{tacky::Variable{src_elem, elem_dt},
+                           tacky::Variable{dst_elem, elem_dt}});
+        }
+        return tacky::Variable{tmp_name, elem_dt};
+      }
+    }
+    throw std::runtime_error("Slice indexing is only supported on named fixed-size arrays");
+  }
+
   // Disambiguation: if the target is a declared array, treat as element access.
   if (auto *ve = dynamic_cast<const VariableExpr *>(expr->target.get())) {
     std::string qualified = current_function.empty()

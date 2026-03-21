@@ -1150,7 +1150,33 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
       consume(TokenType::RParen, "Expected ')'");
       expr = std::make_unique<CallExpr>(std::move(expr), std::move(args));
     } else if (match(TokenType::LBracket)) {
-      auto index = parseExpression();
+      // PEP 197 (F8): detect slice syntax [start:stop:step].
+      // If a ':' appears before ']', parse as SliceExpr.
+      std::unique_ptr<Expression> index;
+      if (check(TokenType::Colon)) {
+        // [: ...] — start is omitted
+        advance();  // consume ':'
+        std::unique_ptr<Expression> stop = check(TokenType::RBracket) || check(TokenType::Colon)
+                                               ? nullptr : parseExpression();
+        std::unique_ptr<Expression> step;
+        if (match(TokenType::Colon))
+          step = check(TokenType::RBracket) ? nullptr : parseExpression();
+        index = std::make_unique<SliceExpr>(nullptr, std::move(stop), std::move(step));
+      } else {
+        auto first = parseExpression();
+        if (check(TokenType::Colon)) {
+          // [start: ...] — have start, may have stop and step
+          advance();  // consume ':'
+          std::unique_ptr<Expression> stop = check(TokenType::RBracket) || check(TokenType::Colon)
+                                                 ? nullptr : parseExpression();
+          std::unique_ptr<Expression> step;
+          if (match(TokenType::Colon))
+            step = check(TokenType::RBracket) ? nullptr : parseExpression();
+          index = std::make_unique<SliceExpr>(std::move(first), std::move(stop), std::move(step));
+        } else {
+          index = std::move(first);  // plain index
+        }
+      }
       consume(TokenType::RBracket, "Expected ']'");
       expr = std::make_unique<IndexExpr>(std::move(expr), std::move(index));
     } else if (match(TokenType::Dot)) {
