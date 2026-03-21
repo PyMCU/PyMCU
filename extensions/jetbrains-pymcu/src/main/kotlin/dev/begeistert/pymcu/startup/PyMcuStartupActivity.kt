@@ -5,7 +5,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.startup.StartupActivity
+import com.intellij.openapi.startup.ProjectActivity
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.settings.PyMcuSettings
 
@@ -14,11 +14,11 @@ import dev.begeistert.pymcu.settings.PyMcuSettings
  * When a [tool.pymcu] section is detected in pyproject.toml, it performs a
  * background dependency sync using the configured package manager.
  */
-class PyMcuStartupActivity : StartupActivity {
+class PyMcuStartupActivity : ProjectActivity {
 
     private val log = Logger.getInstance(PyMcuStartupActivity::class.java)
 
-    override fun runActivity(project: Project) {
+    override suspend fun execute(project: Project) {
         val config = PyMcuConfigReader.findConfig(project) ?: return
         log.info("PyMCU project detected (chip=${config.chip}), scheduling sync.")
 

@@ -19,7 +19,7 @@
             serviceImplementation="dev.begeistert.pymcu.settings.PyMcuSettings"/>
 
         <!-- Startup activity: sync deps on project open -->
-        <postStartupActivity
+        <projectActivity
             implementation="dev.begeistert.pymcu.startup.PyMcuStartupActivity"/>
 
         <!-- Status bar widget factory -->
