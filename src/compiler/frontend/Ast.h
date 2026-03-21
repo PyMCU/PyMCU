@@ -309,7 +309,9 @@ struct IfStmt : Statement {
 };
 
 struct CaseBranch {
-  std::unique_ptr<Expression> pattern;  // nullptr if it's the wildcard case (_)
+  std::unique_ptr<Expression> pattern;   // nullptr if wildcard (_) or bare-name capture
+  std::unique_ptr<Expression> guard;     // PEP 634: `case P if expr:` -- nullptr if absent
+  std::string capture_name;             // PEP 634: `case P as name:` or `case name:` -- empty if absent
   std::unique_ptr<Statement> body;
 };
 

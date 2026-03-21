@@ -582,22 +582,59 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
     consume(TokenType::Case, "Expected 'case'");
 
     std::unique_ptr<Expression> pattern = nullptr;
+    std::string capture_name;
+
     // Check for wildcard '_'
-    // Since we don't have a dedicated Underscore token, check for Identifier
-    // with value "_"
     if (check(TokenType::Identifier) && peek().value == "_") {
       advance();          // consume '_'
       pattern = nullptr;  // Wildcard
+    }
+    // PEP 634: bare unqualified identifier = capture pattern (binds subject to name).
+    // Distinguish from dotted-name value patterns: `case Pin.OUT:` has a dot.
+    else if (check(TokenType::Identifier) &&
+             (pos + 1 >= tokens.size() ||
+              (tokens[pos + 1].type != TokenType::Dot &&
+               tokens[pos + 1].type != TokenType::LParen))) {
+      // Peek ahead: if the next meaningful token after the identifier is ':',
+      // 'if', or 'as', this is a bare-name capture (not a value comparison).
+      // If the identifier is followed by '|', it could be part of an OR pattern
+      // — treat the whole expression as a value pattern in that case.
+      size_t lookahead = pos + 1;
+      while (lookahead < tokens.size() && tokens[lookahead].type == TokenType::Newline)
+        ++lookahead;
+      bool next_is_or = lookahead < tokens.size() && tokens[lookahead].type == TokenType::Pipe;
+      if (!next_is_or) {
+        capture_name = peek().value;
+        advance();   // consume the identifier
+        pattern = nullptr;   // wildcard-capture: always matches
+      } else {
+        pattern = parseExpression();  // part of OR pattern, treat as value
+      }
     } else {
-      // Limited pattern matching: literals or variable
       pattern = parseExpression();
+    }
+
+    // PEP 634: optional `as name` capture after the pattern.
+    if (check(TokenType::As)) {
+      advance();  // consume 'as'
+      if (!check(TokenType::Identifier))
+        throw std::runtime_error("Expected identifier after 'as' in case pattern");
+      capture_name = peek().value;
+      advance();
+    }
+
+    // PEP 634: optional guard `if expr` after pattern (and optional as-clause).
+    std::unique_ptr<Expression> guard = nullptr;
+    if (check(TokenType::If)) {
+      advance();  // consume 'if'
+      guard = parseExpression();
     }
 
     consume(TokenType::Colon, "Expected ':'");
     consume(TokenType::Newline, "Expected newline");
 
     auto body = parseBlock();
-    branches.push_back({std::move(pattern), std::move(body)});
+    branches.push_back({std::move(pattern), std::move(guard), capture_name, std::move(body)});
   }
 
   if (!match(TokenType::Dedent) && !check(TokenType::EndOfFile)) {
