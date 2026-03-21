@@ -213,7 +213,52 @@ Everything below is shipped and covered by integration tests.
 
 ---
 
-## v0.8 — Next Tier
+## v0.8 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| Raw strings `r"\n"` | Suppress escape processing; `r"\n"` = backslash + n, not newline |
+| `match/case` guard `if cond` | `case x if x > 100:` — guard evaluated after pattern match (PEP 634) |
+| `match/case` sequence patterns `[a, b, c]` | Destructures fixed-size arrays/tuples by position (PEP 634) |
+| `match/case` capture `case x as name` | Bare identifier capture; `or-pattern as name` binding (PEP 634) |
+| Multi-item `with a as x, b as y:` | Desugared to nested `with` at parse time (PEP 343) |
+| Extended unpacking `first, *rest = tup` | Starred target captures middle slice; compile-time tuples only (PEP 3132) |
+| `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function; no closure capture |
+| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices; produces fixed-size array (PEP 197) |
+| `nonlocal` in nested `@inline` | Mutates enclosing scope variable via SRAM alias (PEP 3104) |
+| Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, and all comparison/bitwise dunders |
+
+### C/C++ Interop
+
+| Feature | Notes |
+|---------|-------|
+| `@extern("symbol")` decorator | Declares and calls external C/C++ symbols with AVR ABI |
+| `[tool.pymcu.ffi]` build config | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
+| C compilation (`avr-gcc`) | Compiles `.c` sources listed in `ffi.sources` |
+| C++ compilation (`avr-g++`) | Compiles `.cpp` / `.cc` / `.cxx`; `-fno-exceptions -fno-rtti`; enables Arduino library interop |
+
+```python
+from pymcu.ffi import extern
+from pymcu.types import uint16
+
+@extern("arduino_millis")
+def millis() -> uint16: ...
+
+t: uint16 = millis()
+```
+
+```toml
+[tool.pymcu.ffi]
+sources      = ["src/sensor.c", "src/ArduinoLib.cpp"]
+include_dirs = ["src/include"]
+cflags       = ["-O2"]
+```
+
+---
+
+## v0.9 — Next Tier
 
 Highest-value features not yet implemented, in priority order.
 
@@ -231,33 +276,8 @@ Highest-value features not yet implemented, in priority order.
 | `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins |
 | `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes; currently single-byte |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size buffer |
-| ~~`Pin.pulse_in(timeout)`~~ | ✅ Done | Implemented; uses `__FREQ__` for µs-accurate loop calibration |
 | Timer `millis()` / `micros()` | ~4h | Running clock via Timer0 overflow |
 | `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor |
-
-### C Interop (avr-as migration)
-
-Migrates the assembler backend from `avra` to `avr-as` (GNU binutils, ELF output),
-enabling mixed Python + C firmware and proper symbol linking.
-
-| Feature | Effort | Notes |
-|---------|--------|-------|
-| Migrate to `avr-as` + `avr-ld` | ~1 week | ELF output; `.extern`/`.global`; linker script |
-| `@extern("symbol")` decorator | ~3h | Call an external C function from PyMCU code |
-| `[tool.pymcu.ffi]` build config | ~2h | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
-| `pymcu.ffi` stdlib module | ~1h | Re-exports `extern`; no runtime code |
-| `avr-gcc` C compilation step | ~2h | Build driver compiles `.c` sources and links with ELF firmware |
-
-```python
-# Usage example
-from pymcu.ffi import extern
-from pymcu.types import uint16
-
-@extern("uart_hw_init")
-def uart_hw_init(baud: uint16) -> None: ...
-
-uart_hw_init(9600)  # emits CALL uart_hw_init with AVR ABI
-```
 
 ### Compat
 
@@ -266,7 +286,6 @@ uart_hw_init(9600)  # emits CALL uart_hw_init with AVR ABI
 | `machine.Timer(id, period, callback)` | ~3h | Timer callback via `@interrupt` + `compile_isr` |
 | `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API |
 | `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
-| `analogio.AnalogOut` (DAC stub) | ~1h | CompileError with guidance (no DAC on ATmega328P) |
 
 ---
 
@@ -280,7 +299,7 @@ uart_hw_init(9600)  # emits CALL uart_hw_init with AVR ABI
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `float` / `complex` | Use `fixed16` or integer-scaled arithmetic |
 | `f"..."` runtime interpolation | Use `uart.write_str()` / `uart.print_byte()` |
-| Closures / nested `def` | Captured variables require heap |
+| Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Reflection / `getattr` / `hasattr` | No runtime type info |

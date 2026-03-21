@@ -34,9 +34,9 @@ Fixed-size arrays `arr: uint8[N]` are fully supported with constant- and variabl
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` / `uart.println()` calls |
 | `str[i]` indexing on a runtime string | No runtime string object | Iterate compile-time literals: `for ch in "literal":` |
 
-**Supported:** String literals in flash, `uart.println("literal")`, `uart.write_str("text")`,
-`for ch in "ABC":` (compile-time unroll), `f"text={const}"` where all interpolations are
-compile-time constants.
+**Supported:** String literals in flash, raw string literals `r"\n"` (no escape processing),
+`uart.println("literal")`, `uart.write_str("text")`, `for ch in "ABC":` (compile-time unroll),
+`f"text={const}"` where all interpolations are compile-time constants.
 
 ---
 
@@ -57,18 +57,17 @@ assertion is a CompileError; a true or runtime assertion is stripped.
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `lambda` | Closure capture requires heap | Inline helper function |
-| Closures (`def inner():` capturing outer vars) | Closure cell requires heap | Pass captured values as explicit parameters |
+| Closures capturing mutable vars (`def inner():`) | Closure cell requires heap | Pass captured values as explicit parameters; use `nonlocal` in `@inline` nested functions |
 | `*args` / `**kwargs` | Variadic convention needs stack inspection | Fixed parameter lists |
 | `functools.partial` | Runtime partial object | Wrapper `@inline` function |
 | Higher-order functions (passing functions as values) | No function pointer type | `match / case` dispatch table |
 | Recursion (unbounded depth) | Stack overflow undefined on MCU | Iterative equivalent; fixed-depth allowed |
-| `nonlocal` | Requires closure cell | Not available |
-| Nested `def` inside a function | Closure capture required | Module-level or class `@inline` |
 
 **Supported:** `@inline` functions expand at call sites — zero call overhead, zero stack.
 Non-`@inline` functions use a conventional call/ret ABI and can recurse up to the stack
 depth limit (~80 frames on ATmega328P with 2KB SRAM).
+`lambda x: expr` (no closure capture) is supported and inlined at the call site.
+`nonlocal` is supported inside nested `@inline` functions (one level of nesting).
 
 ---
 
@@ -79,14 +78,16 @@ depth limit (~80 frames on ATmega328P with 2KB SRAM).
 | Multiple inheritance / MRO | C3 linearization is a runtime concept | Single-level inheritance only |
 | Runtime polymorphism (vtable dispatch) | Requires vtable + heap class objects | Compile-time `match / case` dispatch |
 | `isinstance()` / `type()` | No type tags at runtime | Not available |
-| `__dunder__` magic methods beyond `__init__`, `__enter__`, `__exit__` | Operator overloading requires dispatch | Explicit `@inline` helpers |
+| Abstract base classes | ABC machinery requires runtime | Document the interface convention |
 | `__repr__`, `__str__` | No runtime string formatting | `uart.println()` with explicit fields |
 | `dataclass` / `namedtuple` | Metaclass + runtime heap | Manual `@inline` class |
 | Abstract base classes | ABC machinery requires runtime | Document the interface convention |
 
 **Supported:** ZCA `@inline` classes (zero SRAM), `@property` / `@name.setter`, single-level
 class inheritance with `super()`, `with obj:` context managers (`__enter__`/`__exit__`),
-`@staticmethod` (silently treated as a module-level function).
+`@staticmethod` (silently treated as a module-level function), operator dunder methods
+(`__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`,
+and all comparison / bitwise dunders).
 
 ---
 
@@ -197,8 +198,9 @@ relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` a
   the ISR and accessed atomically (disable interrupts or use `GPIOR0` flag pattern).
 - **String literals are in flash:** Read-only; can only be sent to UART via the flash string pool.
   They cannot be compared, indexed, or modified at runtime.
-- **C interop:** Currently requires inline `asm()`. Native C function calls via `@extern` are
-  planned for v0.8 (requires migration from avra to avr-as).
+- **C/C++ interop:** Supported via `@extern` and `[tool.pymcu.ffi]` in `pyproject.toml`.
+  C sources use `avr-gcc`; C++ sources (`.cpp`/`.cc`/`.cxx`) use `avr-g++` with
+  `-fno-exceptions -fno-rtti`, enabling use of Arduino libraries.
 
 ---
 

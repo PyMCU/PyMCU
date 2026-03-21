@@ -218,7 +218,65 @@ Everything in this section is shipped and tested in the current alpha build.
 
 ---
 
-## v0.8 — Next Tier
+## v0.8 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| Raw strings `r"\n"` | `r"..."` / `r'...'` suppress all escape processing (PEP 3) |
+| `match/case` guard `if cond` | `case x if x > 100:` — guard evaluated after pattern match (PEP 634) |
+| `match/case` sequence patterns `[a, b, c]` | Destructures fixed-size arrays/tuples by position (PEP 634) |
+| `match/case` capture `case x as name` | Bare identifier capture; `or-pattern as name` binding (PEP 634) |
+| Multi-item `with a as x, b as y:` | Desugared to nested `with` at parse time (PEP 343) |
+| Extended unpacking `first, *rest = tup` | Starred target captures middle slice; compile-time tuples only (PEP 3132) |
+| `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function; no closure capture (PEP 3) |
+| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices only; produces fixed-size array (PEP 197) |
+| `nonlocal` in nested `@inline` | Mutates enclosing scope variable via SRAM alias (PEP 3104) |
+| Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__floordiv__`, `__mod__`, `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`, `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__neg__`, `__invert__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__` |
+
+### C/C++ Interop
+
+All C interop features are implemented. The build pipeline uses `avr-as` + `avr-ld`
+instead of `avra` whenever `[tool.pymcu.ffi]` is present in `pyproject.toml`.
+
+| Feature | Notes |
+|---------|-------|
+| `@extern("symbol")` decorator | Declares and calls external C/C++ symbols with AVR ABI |
+| `[tool.pymcu.ffi]` build config | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
+| `pymcu.ffi` stdlib module | Re-exports `extern`; no runtime code |
+| C compilation (`avr-gcc`) | Compiles `.c` sources listed in `ffi.sources` |
+| C++ compilation (`avr-g++`) | Compiles `.cpp` / `.cc` / `.cxx` sources; `-fno-exceptions -fno-rtti -std=c++17` |
+
+```python
+from pymcu.ffi import extern
+
+@extern("arduino_millis")
+def millis() -> uint16: ...
+
+t: uint16 = millis()
+```
+
+```toml
+# pyproject.toml — supports both C and C++ sources
+[tool.pymcu.ffi]
+sources      = ["src/c/sensor.c", "src/cpp/ArduinoLib.cpp"]
+include_dirs = ["src/include"]
+cflags       = ["-O2"]
+```
+
+Build pipeline:
+```
+.py → pymcuc → firmware.asm
+firmware.asm   → avr-as  → firmware.o
+sensor.c       → avr-gcc → sensor.o
+ArduinoLib.cpp → avr-g++ → ArduinoLib.o
+firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.hex
+```
+
+---
+
+## v0.9 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
 
@@ -237,58 +295,9 @@ These are the highest-value features not yet implemented, in priority order.
 | `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins; no hardware TWI dependency |
 | `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes in one transaction; currently single-byte only |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| ~~`Pin.pulse_in(timeout)`~~ | ✅ Done | Implemented; uses `__FREQ__` for µs-accurate loop calibration |
 | Timer `millis()` / `micros()` | ~4h | Elapsed-time counter via Timer0 overflow accumulation |
 | Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
 | `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |
-
-### C Interop (avr-as migration)
-
-This tier migrates the assembler backend from `avra` (Intel HEX only) to `avr-as` (GNU binutils,
-ELF output), enabling mixed Python + C firmware and proper symbol linking.
-
-| Feature | Effort | Why |
-|---------|--------|-----|
-| Migrate backend to `avr-as` + `avr-ld` | ~1 week | ELF output; relocations; `.extern`/`.global`; linker script |
-| `@extern("symbol")` decorator | ~3h | Declare and call an external C function from PyMCU code |
-| `[tool.pymcu.ffi]` build config | ~2h | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
-| `pymcu.ffi` stdlib module | ~1h | Re-export `extern`; no runtime code |
-| `avr-gcc` C compilation step | ~2h | Build driver compiles `.c` sources listed in `[tool.pymcu.ffi]` |
-
-**Design: `@extern` decorator**
-
-```python
-from pymcu.ffi import extern
-
-# Declare an external C symbol — body is ignored by the compiler
-@extern("uart_hw_init")
-def uart_hw_init(baud: uint16) -> None: ...
-
-# Call it like any other function
-uart_hw_init(9600)
-```
-
-The compiler emits `.extern uart_hw_init` in the assembly preamble and a `CALL uart_hw_init`
-at every call site using the standard AVR register ABI (arg0→R24, arg1→R22, return→R24:R25).
-
-C sources are compiled separately by the build driver:
-
-```toml
-# pyproject.toml
-[tool.pymcu.ffi]
-sources = ["src/c/mylib.c", "src/c/sensor.c"]
-include_dirs = ["src/c/include"]
-cflags = ["-O2", "-std=c11"]
-```
-
-Build pipeline with avr-as:
-```
-.py  →  pymcuc  →  firmware.asm
-firmware.asm  →  avr-as  →  firmware.o  (ELF)
-mylib.c       →  avr-gcc -c  →  mylib.o  (ELF)
-firmware.o + mylib.o  →  avr-ld  →  firmware.elf
-firmware.elf  →  avr-objcopy -O ihex  →  firmware.hex
-```
 
 ### Compat
 
@@ -300,7 +309,7 @@ firmware.elf  →  avr-objcopy -O ihex  →  firmware.hex
 
 ---
 
-## v0.9 — Longer Horizon
+## v1.0 — Longer Horizon
 
 | Feature | Effort | Why |
 |---------|--------|-----|
@@ -326,7 +335,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `float` / `complex` / `Decimal` | Use `fixed16` when available |
 | `f"..."` runtime interpolation | Compile-time only (constants only) |
-| Closures / nested `def` | Captured variables require heap |
+| Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |
 | Metaclasses | No runtime type system |
