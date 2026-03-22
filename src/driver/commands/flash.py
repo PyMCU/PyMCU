@@ -68,9 +68,20 @@ def flash(
             config = tomlkit.load(f)
 
         pymcu_config = config.get("tool", {}).get("pymcu", {})
-        chip = pymcu_config.get("chip", "")
+
+        _BOARD_CHIP_MAP = {
+            "arduino_uno":   "atmega328p",
+            "arduino_nano":  "atmega328p",
+            "arduino_mega":  "atmega2560",
+            "arduino_micro": "atmega32u4",
+        }
+        chip = pymcu_config.get("chip") or _BOARD_CHIP_MAP.get(
+            str(pymcu_config.get("board", "")).replace("-", "_"), ""
+        )
         if not chip:
-            console.print("[red]No 'chip' specified in [tool.pymcu] of pyproject.toml.[/red]")
+            console.print(
+                "[red]No 'chip' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
+            )
             raise typer.Exit(code=1)
 
         flash_config = pymcu_config.get("flash", {})
