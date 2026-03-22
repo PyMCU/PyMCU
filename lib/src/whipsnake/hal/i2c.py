@@ -1,8 +1,8 @@
 # -----------------------------------------------------------------------------
-# PyMCU Standard Library & HAL Definitions
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whipsnake Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
-# This file is part of the PyMCU Standard Library (pymcu-stdlib).
+# This file is part of the Whipsnake Standard Library (whipsnake-stdlib).
 # Licensed under the GNU General Public License v3. See LICENSE for details.
 # -----------------------------------------------------------------------------
 # NOTICE: STRICT COPYLEFT & STATIC LINKING - see uart.py for full notice.

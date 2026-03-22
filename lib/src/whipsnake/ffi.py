@@ -1,7 +1,7 @@
-# PyMCU Foreign Function Interface
+# Whipsnake Foreign Function Interface
 #
 # Provides the @extern decorator for declaring C functions callable from
-# PyMCU firmware. The decorator is handled entirely by the compiler; this
+# Whipsnake firmware. The decorator is handled entirely by the compiler; this
 # module exists so that IDEs and type-checkers can resolve the import.
 #
 # Usage:
@@ -24,7 +24,7 @@
 #   include_dirs = ["src/c/include"]
 #   cflags = ["-O2", "-std=c11"]
 #
-# The build driver (pymcu build) compiles those C files with avr-gcc and
+# The build driver (whip build) compiles those C files with avr-gcc and
 # links the resulting ELF objects with the firmware via avr-ld.
 #
 # Requires: [tool.whipsnake.assembler] = "avr-as"  (or automatic detection when

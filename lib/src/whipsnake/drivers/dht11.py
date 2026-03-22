@@ -14,7 +14,7 @@
 #   2. _avr_read(self.name) — const[str] dispatch, eliminates non-matching pins
 #
 # To add a new architecture, add a new case to DHT11.read() and create
-# lib/src/pymcu/drivers/_dht11/<arch>.py following the avr.py template.
+# lib/src/whipsnake/drivers/_dht11/<arch>.py following the avr.py template.
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, inline
 

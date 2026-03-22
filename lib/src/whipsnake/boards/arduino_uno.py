@@ -1,4 +1,4 @@
-# Arduino Uno board definitions for PyMCU
+# Arduino Uno board definitions for Whipsnake
 #
 # Target chip: ATmega328P @ 16 MHz (arch = avr)
 # Package: DIP-28 / TQFP-32
