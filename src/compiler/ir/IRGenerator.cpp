@@ -29,6 +29,7 @@
 
 #include "IRGenerator.h"
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <set>
@@ -696,6 +697,10 @@ void IRGenerator::scan_globals(const Program &ast, ModuleScope *scope) {
       if (classDef->body) {
         std::string old_prefix = current_module_prefix;
         current_module_prefix += classDef->name + "_";
+        // Record class name → module prefix so visitMemberAccess can resolve
+        // ClassName.CONSTANT inside inline bodies (e.g. Direction.OUTPUT → digitalio_Direction_OUTPUT).
+        // Only register the unqualified class name (not nested: Module_Class_SubClass).
+        class_module_map.emplace(classDef->name, old_prefix);
 
         // T2.1: Enum classes fold ALL fields to integer constants.
         bool is_enum = false;
@@ -4007,6 +4012,15 @@ tacky::Val IRGenerator::visitExpression(const Expression *expr) {
   if (const auto *lam = dynamic_cast<const LambdaExpr *>(expr))
     return visitLambdaExpr(lam);
 
+  // Compile-time float literal — stored in float_constant_variables, never emitted
+  // to AVR. Used for CircuitPython-style APIs (e.g. time.sleep(0.5)) where the
+  // value is folded to an integer constant via arithmetic before AVR code is emitted.
+  if (const auto *floatLit = dynamic_cast<const FloatLiteral *>(expr)) {
+    std::string name = "float_ct_" + std::to_string(float_ct_counter_++);
+    float_constant_variables[name] = floatLit->value;
+    return tacky::Variable{name, DataType::UINT8};
+  }
+
   throw std::runtime_error("IR Generation: Unknown Expression type");
 }
 
@@ -4378,6 +4392,41 @@ tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
   tacky::Val v1 = visitExpression(expr->left.get());
   tacky::Val v2 = visitExpression(expr->right.get());
 
+  // Compile-time float folding: if either operand is a float_ct variable (or
+  // the other is a plain integer Constant), fold the result to an integer Constant.
+  // This enables time.sleep(0.5) → 0.5*1000 = 500 → delay_ms(500).
+  {
+    auto as_float_ct = [&](const tacky::Val &v) -> std::optional<double> {
+      if (const auto *var = std::get_if<tacky::Variable>(&v))
+        if (float_constant_variables.contains(var->name))
+          return float_constant_variables.at(var->name);
+      if (const auto *c = std::get_if<tacky::Constant>(&v))
+        return static_cast<double>(c->value);
+      return std::nullopt;
+    };
+    bool v1_is_float = std::get_if<tacky::Variable>(&v1) &&
+        float_constant_variables.contains(std::get<tacky::Variable>(v1).name);
+    bool v2_is_float = std::get_if<tacky::Variable>(&v2) &&
+        float_constant_variables.contains(std::get<tacky::Variable>(v2).name);
+    if (v1_is_float || v2_is_float) {
+      auto f1 = as_float_ct(v1);
+      auto f2 = as_float_ct(v2);
+      if (f1 && f2) {
+        double result = 0;
+        switch (expr->op) {
+          case BinaryOp::Add:      result = *f1 + *f2; break;
+          case BinaryOp::Sub:      result = *f1 - *f2; break;
+          case BinaryOp::Mul:      result = *f1 * *f2; break;
+          case BinaryOp::Div:
+          case BinaryOp::FloorDiv: result = *f2 != 0.0 ? *f1 / *f2 : 0.0; break;
+          case BinaryOp::Mod:      result = std::fmod(*f1, *f2); break;
+          default: break;
+        }
+        return tacky::Constant{static_cast<int>(std::lround(result))};
+      }
+    }
+  }
+
   auto get_val_type = [](const tacky::Val &v) {
     if (auto var = std::get_if<tacky::Variable>(&v)) return var->type;
     if (auto tmp = std::get_if<tacky::Temporary>(&v)) return tmp->type;
@@ -4743,6 +4792,20 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
           function_return_types.contains(mangled_name)) {
         return tacky::Variable{mangled_name, DataType::UINT8};
       }
+      // Check if the member is a class namespace (e.g. Direction within digitalio).
+      // If globals contains any key starting with "mangled_name_", this is a class
+      // whose sub-constants are registered under that prefix. Return a class-handle
+      // Variable so the outer .CONSTANT member access at line ~4806 can resolve it
+      // via flattened_name = class_handle + "_" + CONSTANT.
+      {
+        std::string class_prefix = mangled_name + "_";
+        for (const auto &[key, _] : globals) {
+          if (key.size() > class_prefix.size() &&
+              key.compare(0, class_prefix.size(), class_prefix) == 0) {
+            return tacky::Variable{mangled_name, DataType::UINT8};
+          }
+        }
+      }
       throw std::runtime_error("Unknown module member: " + mangled_name);
     }
 
@@ -4779,6 +4842,27 @@ tacky::Val IRGenerator::visitMemberAccess(const MemberAccessExpr *expr) {
         if (sym.is_memory_address)
           return tacky::MemoryAddress{sym.value, sym.type};
         return tacky::Constant{sym.value};
+      }
+    }
+
+    // class_module_map: resolve unqualified ClassName.MEMBER inside @inline bodies.
+    // e.g. Direction.OUTPUT inside digitalio's @inline setter → digitalio_Direction_OUTPUT
+    if (class_module_map.contains(varExpr->name)) {
+      std::string mod_prefix = class_module_map.at(varExpr->name);
+      std::string full_name = mod_prefix + varExpr->name + "_" + expr->member;
+      if (globals.contains(full_name)) {
+        const auto &sym = globals.at(full_name);
+        if (sym.is_memory_address) return tacky::MemoryAddress{sym.value, sym.type};
+        return tacky::Constant{sym.value};
+      }
+      if (mutable_globals.contains(full_name))
+        return tacky::Variable{full_name, mutable_globals.at(full_name)};
+      // Check for further nested class handle (e.g. Module.SubClass.CONST)
+      std::string sub_prefix = full_name + "_";
+      for (const auto &[key, _] : globals) {
+        if (key.size() > sub_prefix.size() &&
+            key.compare(0, sub_prefix.size(), sub_prefix) == 0)
+          return tacky::Variable{full_name, DataType::UINT8};
       }
     }
   }
@@ -5817,8 +5901,15 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
   if (extern_function_map.contains(callee)) {
     const std::string &c_sym = extern_function_map.at(callee);
     std::vector<tacky::Val> ext_args;
-    for (const auto &arg : expr->args)
-      ext_args.push_back(visitExpression(arg.get()));
+    for (const auto &arg : expr->args) {
+      tacky::Val av = visitExpression(arg.get());
+      // Coerce compile-time float constants to integers at @extern call boundaries.
+      if (const auto *var = std::get_if<tacky::Variable>(&av))
+        if (float_constant_variables.contains(var->name))
+          av = tacky::Constant{static_cast<int>(
+              std::lround(float_constant_variables.at(var->name)))};
+      ext_args.push_back(av);
+    }
 
     tacky::Call ext_call;
     ext_call.function_name = c_sym;
@@ -5972,6 +6063,16 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
             variable_aliases.erase(paramName);
             continue;
           }
+        }
+        // Propagate compile-time float constant (e.g. time.sleep(0.5)).
+        // The float_ct variable is a phantom — never in registers — so we must
+        // propagate through the inline boundary instead of emitting a Copy.
+        if (float_constant_variables.contains(v->name)) {
+          float_constant_variables[paramName] = float_constant_variables.at(v->name);
+          constant_variables.erase(paramName);
+          str_constant_variables.erase(paramName);
+          variable_aliases.erase(paramName);
+          continue;
         }
         variable_aliases[paramName] = v->name;
         // Erase stale constant entries from previous inline expansions

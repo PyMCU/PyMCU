@@ -190,6 +190,13 @@ class IRGenerator {
   std::map<std::string, int> constant_address_variables;
   // Tracks compile-time string constant variables (for const[str] params / string for-in)
   std::unordered_map<std::string, std::string> str_constant_variables;
+  // Tracks compile-time float constant variables (never emitted to AVR; folded to int at use)
+  std::unordered_map<std::string, double> float_constant_variables;
+  int float_ct_counter_ = 0;
+  // Maps class name → module prefix where the class is defined.
+  // Allows Direction.OUTPUT inside inline bodies to resolve to the correct global
+  // (e.g. class_module_map["Direction"] = "digitalio_" → "digitalio_Direction_OUTPUT").
+  std::unordered_map<std::string, std::string> class_module_map;
 
   // Fixed-size array support: maps qualified variable name → element count / element type.
   // Only variables declared with a TYPE[N] annotation (e.g. "uint8[4]") are in these maps.
