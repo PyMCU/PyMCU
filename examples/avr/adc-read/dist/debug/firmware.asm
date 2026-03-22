@@ -2,13 +2,13 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline2__delay_ms_avr_i = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -30,6 +30,7 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:18:     uart = UART(9600)
+; main.py:18:     uart = UART(9600)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -41,10 +42,8 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:19:     adc  = AnalogPin("PC0")
-; main.py:14: from whisnake.time import delay_ms
-; main.py:12: from whisnake.hal.uart import UART
+; main.py:12: from whipsnake.hal.uart import UART
 ; main.py:24:         # Trigger conversion (ADSC = ADCSRA bit 6)
-; main.py:15: 
 ; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 	LDI	R24, 64
 	STS	0x007C, R24
@@ -55,6 +54,7 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 L_44:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -68,7 +68,6 @@ L_45:
 ; main.py:23:     while True:
 L_46:
 ; main.py:25:         adc.start()
-; main.py:34: 
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
@@ -91,6 +90,7 @@ L_BR_SKIP_3:
 L_SKIP_2:
 	MOV	R4, R18
 ; main.py:33:         uart.write(result)
+; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -102,6 +102,7 @@ L_55:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:35:         delay_ms(100)
+; main.py:29:             pass
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -116,7 +117,7 @@ L_58:
 	BRLO	L_BR_SKIP_5
 	RJMP	L_59
 L_BR_SKIP_5:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255
