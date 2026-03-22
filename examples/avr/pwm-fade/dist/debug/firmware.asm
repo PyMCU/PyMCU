@@ -5,7 +5,7 @@
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -27,7 +27,7 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:15:     pwm = PWM("PD6", 0)
-; main.py:20: 
+; main.py:22:         pwm.set_duty(duty)
 	SBI	0x0A, 6
 	CLR	R24
 	OUT	0x27, R24
@@ -35,11 +35,11 @@ main:
 	OUT	0x24, R24
 	LDI	R24, 3
 	OUT	0x25, R24
-; main.py:21:     while True:
-; main.py:14:     # PD6 = OC0A: Timer0 Fast PWM, initial duty = 0
-; main.py:22:         pwm.set_duty(duty)
-; main.py:32:                 if duty == 0:
 ; main.py:23:         delay_ms(5)
+; main.py:14:     # PD6 = OC0A: Timer0 Fast PWM, initial duty = 0
+; main.py:24: 
+; main.py:32:                 if duty == 0:
+; main.py:25:         match going_up:
 ; main.py:16:     pwm.start()
 	OUT	0x25, R24
 	CLR	R24
@@ -52,6 +52,7 @@ L_28:
 	MOV	R24, R4
 	OUT	0x27, R24
 ; main.py:23:         delay_ms(5)
+; main.py:29:                 else:
 	CLR	R24
 	CLR	R25
 	STD	Y+0, R24
@@ -66,7 +67,7 @@ L_33:
 	BRLO	L_BR_SKIP_0
 	RJMP	L_34
 L_BR_SKIP_0:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+0
 	LDD	R25, Y+1
 	SUBI	R24, 255
