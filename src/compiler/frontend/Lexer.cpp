@@ -398,15 +398,20 @@ Token Lexer::scan_token() {
       if (match('=')) return {TokenType::MinusEqual, "-=", line, column};
       return {TokenType::Minus, "-", line, column};
     case '"':
-      // Triple-quoted docstring """...""" — consume and return empty string
+      // Triple-quoted docstring """...""" — consume all content and return empty string.
+      // Correctly handles "" (two quotes) inside the body by checking all three chars.
       if (peek() == '"' && peek_next() == '"') {
-        advance(); advance();  // consume second and third "
-        while (!(peek() == '"' && peek_next() == '"')) {
+        advance(); advance();  // consume second and third opening "
+        for (;;) {
           if (peek() == '\0') { error("Unterminated docstring"); break; }
           if (peek() == '\n') line++;
-          advance();
+          char ch = advance();
+          // Check if ch + next two chars form the closing """
+          if (ch == '"' && peek() == '"' && peek_next() == '"') {
+            advance(); advance();  // consume the remaining two closing "
+            break;
+          }
         }
-        if (peek() == '"') { advance(); advance(); advance(); }  // closing """
         return {TokenType::String, "", line, column};
       }
       return string('"');
@@ -414,12 +419,15 @@ Token Lexer::scan_token() {
       // Triple-quoted docstring '''...''' — same treatment
       if (peek() == '\'' && peek_next() == '\'') {
         advance(); advance();
-        while (!(peek() == '\'' && peek_next() == '\'')) {
+        for (;;) {
           if (peek() == '\0') { error("Unterminated docstring"); break; }
           if (peek() == '\n') line++;
-          advance();
+          char ch = advance();
+          if (ch == '\'' && peek() == '\'' && peek_next() == '\'') {
+            advance(); advance();
+            break;
+          }
         }
-        if (peek() == '\'') { advance(); advance(); advance(); }
         return {TokenType::String, "", line, column};
       }
       return string('\'');
