@@ -11,28 +11,26 @@
 # Supported architectures: AVR, PIC.
 #
 # AnalogPin(channel) accepts a port-pin name string (e.g. "PC0").
-# AnalogPin(pin) also accepts a Pin ZCA instance; pin.name is extracted at
-# compile time via the alias chain with no runtime cost.
+# If you hold a Pin instance, pass pin.name -- it is a compile-time const[str]
+# in the ZCA alias chain with no runtime cost: AnalogPin(my_pin.name).
 #
 # Channel-to-register mapping, reference selection, and conversion clock
 # are resolved at construction time; subsequent reads require no string dispatch.
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, inline
-from whipsnake.hal.gpio import Pin
 
 
 # noinspection PyProtectedMember
 class AnalogPin:
     """Hardware ADC channel, zero-cost abstraction (all methods @inline).
 
-    Accepts a port-pin name string or a Pin ZCA instance. The channel-to-
-    register mapping is resolved at construction time; subsequent reads use
-    the stored value directly with no string dispatch.
-
-    Usage::
+    Accepts a port-pin name string. If you hold a Pin instance, pass pin.name --
+    it is a compile-time const[str] in the ZCA alias chain, so there is no
+    runtime cost:
 
         adc = AnalogPin("PC0")
-        val: uint16 = adc.read()    # 0-1023
+        adc = AnalogPin(my_pin.name)   # identical generated code
+        val: uint16 = adc.read()       # 0-1023
     """
 
     def __init__(self, channel: str):
@@ -60,31 +58,6 @@ class AnalogPin:
                 from whipsnake.hal._adc.pic18f45k50 import adc_init
                 self.channel = channel
                 adc_init(channel)
-
-    def __init__(self, pin: Pin):
-        """Initialize an ADC channel from a Pin ZCA instance.
-
-        Extracts pin.name at compile time via the ZCA alias chain -- no runtime cost.
-        Useful when the same port pin is first set up as a GPIO Pin and then used
-        as an analog input.
-        """
-        match __CHIP__.name:
-            case "atmega328p":
-                from whipsnake.hal._adc.atmega328p import adc_channel_admux, adc_init
-                self._admux = adc_channel_admux(pin.name)
-                adc_init(self._admux)
-            case "pic16f877a":
-                from whipsnake.hal._adc.pic16f877a import adc_init
-                self.channel = pin.name
-                adc_init(pin.name)
-            case "pic16f18877":
-                from whipsnake.hal._adc.pic16f18877 import adc_init
-                self.channel = pin.name
-                adc_init(pin.name)
-            case "pic18f45k50":
-                from whipsnake.hal._adc.pic18f45k50 import adc_init
-                self.channel = pin.name
-                adc_init(pin.name)
 
     @inline
     def start(self):
