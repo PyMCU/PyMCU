@@ -18,9 +18,9 @@
         <applicationService
             serviceImplementation="dev.begeistert.pymcu.settings.PyMcuSettings"/>
 
-        <!-- Startup activity: sync deps on project open -->
-        <projectActivity
-            implementation="dev.begeistert.pymcu.startup.PyMcuStartupActivity"/>
+        <!-- Notification group used by PyMcuStartupActivity -->
+        <notificationGroup id="PyMCU" displayType="BALLOON" isLogByDefault="true"/>
+
 
         <!-- Status bar widget factory -->
         <statusBarWidgetFactory
@@ -66,5 +66,12 @@
             implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationProducer"
             order="last"/>
     </extensions>
+
+    <!-- Project-open hook: fires reliably in PyCharm Community 2024.3 -->
+    <applicationListeners>
+        <listener
+            class="dev.begeistert.pymcu.startup.PyMcuStartupActivity"
+            topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </applicationListeners>
 
 </idea-plugin>
