@@ -25,6 +25,9 @@ import kotlin.io.path.exists
  *   `.pyi` files are ignored by the pymcu compiler (which only loads `.py`),
  *   so they are invisible to compilation while still resolving IDE imports.
  *
+ * Stubs are generated dynamically from the installed stdlib source files via
+ * [PyStubGenerator], so they stay in sync with the stdlib automatically.
+ *
  * VFS refresh:
  *   Files are written via standard Java I/O (bypassing IntelliJ's VFS), so we
  *   call LocalFileSystem.refresh() afterward to trigger PyCharm re-indexing.
@@ -33,97 +36,159 @@ object PyMcuStubInstaller {
 
     private val log = Logger.getInstance(PyMcuStubInstaller::class.java)
 
-    // Legacy .py shim names — cleaned up if present from a previous install
-    private val CP_PY_SHIMS = listOf("board.py", "digitalio.py", "busio.py",
-        "analogio.py", "pwmio.py", "microcontroller.py")
-    private val MP_PY_SHIMS = listOf("machine.py", "utime.py", "micropython.py")
-
     /**
-     * Writes `.pyi` stubs into `.venv/site-packages`. Returns the site-packages
-     * [Path] if any stubs were written (so the caller can refresh the VFS), or
-     * null if nothing changed or no `.venv` was found.
+     * Writes `.pyi` stubs into `.venv/site-packages` and proactively generates
+     * `dist/_generated/board.py` so PyCharm can resolve `import board` before the
+     * first build. Returns the site-packages [Path] if any stubs were written (so
+     * the caller can refresh the VFS), or null if nothing changed or no `.venv`
+     * was found.
      */
     fun install(basePath: String, stdlib: List<String>, board: String?): Path? {
-        val sitePackages = findSitePackages(basePath) ?: return null
+        val sitePackages = findSitePackages(basePath)
         var changed = false
 
-        if ("circuitpython" in stdlib) {
-            changed = installCircuitPython(sitePackages, board) || changed
+        if (sitePackages != null) {
+            if ("circuitpython" in stdlib) {
+                changed = installPackage(sitePackages, "pymcu_circuitpython") || changed
+                changed = installBoardStub(sitePackages, board) || changed
+            }
+            if ("micropython" in stdlib) {
+                changed = installPackage(sitePackages, "pymcu_micropython") || changed
+            }
         }
-        if ("micropython" in stdlib) {
-            changed = installMicroPython(sitePackages) || changed
+
+        // Proactively write dist/_generated/board.py so `import board` resolves
+        // in the IDE even before the first build.
+        if ("circuitpython" in stdlib) {
+            changed = generateDistBoard(basePath, board, sitePackages) || changed
         }
 
         return if (changed) sitePackages else null
     }
 
-    // ── CircuitPython ────────────────────────────────────────────────────────
+    // ── Generic package stub installer ───────────────────────────────────────
 
-    private fun installCircuitPython(sitePackages: Path, board: String?): Boolean {
-        val pkg = sitePackages.resolve("pymcu_circuitpython")
-        if (!pkg.exists()) {
-            log.warn("PyMCU stubs: pymcu_circuitpython not found in $sitePackages — run sync first")
+    /**
+     * For every public `.py` in `site-packages/<pkgName>/`:
+     *  1. Removes any legacy `.py` re-export shim at `site-packages/<module>.py`
+     *  2. Generates a `.pyi` stub via [PyStubGenerator] and writes it to
+     *     `site-packages/<module>.pyi`
+     *
+     * "Public" means: not `__init__.py`, not starting with `_`, not `board_chips.py`
+     * (internal helper). Subdirectories (e.g. `boards/`) are skipped.
+     */
+    private fun installPackage(sitePackages: Path, pkgName: String): Boolean {
+        val pkgDir = sitePackages.resolve(pkgName)
+        if (!pkgDir.exists()) {
+            log.warn("PyMCU stubs: $pkgName not found in $sitePackages — run sync first")
             return false
         }
 
-        // Remove any legacy .py re-export shims that break compilation
-        CP_PY_SHIMS.forEach { sitePackages.resolve(it).toFile().delete() }
+        val sourceFiles = pkgDir.toFile()
+            .listFiles { f ->
+                f.isFile &&
+                f.extension == "py" &&
+                !f.name.startsWith("_") &&
+                f.name != "board_chips.py"
+            }
+            ?: return false
 
-        // board.pyi — generated from the board constants file
-        val boardId = board?.replace("-", "_") ?: "arduino_uno"
-        val boardFile = pkg.resolve("boards/$boardId.py")
-        val fallback  = pkg.resolve("boards/arduino_uno.py")
-        val sourceBoard = when {
-            boardFile.exists() -> boardFile
-            fallback.exists()  -> fallback
-            else               -> null
-        }
-        if (sourceBoard != null) {
-            writeStub(sitePackages.resolve("board.pyi"), buildBoardStub(sourceBoard))
+        if (sourceFiles.isEmpty()) {
+            log.warn("PyMCU stubs: no public .py files found in $pkgDir")
+            return false
         }
 
-        writeStub(sitePackages.resolve("digitalio.pyi"), DIGITALIO_STUB)
-        writeStub(sitePackages.resolve("busio.pyi"),     BUSIO_STUB)
+        for (source in sourceFiles) {
+            val moduleName = source.nameWithoutExtension
+            // Remove any legacy .py re-export shim that would break compilation
+            sitePackages.resolve("$moduleName.py").toFile().delete()
+            // Generate and write the .pyi stub from the actual source
+            val stub = PyStubGenerator.generateFrom(source.toPath()) ?: continue
+            writeStub(sitePackages.resolve("$moduleName.pyi"), stub)
+        }
 
-        if (pkg.resolve("analogio.py").exists())
-            writeStub(sitePackages.resolve("analogio.pyi"), ANALOGIO_STUB)
-        if (pkg.resolve("pwmio.py").exists())
-            writeStub(sitePackages.resolve("pwmio.pyi"),    PWMIO_STUB)
-        if (pkg.resolve("microcontroller.py").exists())
-            writeStub(sitePackages.resolve("microcontroller.pyi"), MICROCONTROLLER_STUB)
-
-        log.info("PyMCU stubs: CircuitPython .pyi stubs installed in $sitePackages")
+        log.info("PyMCU stubs: generated .pyi stubs for $pkgName in $sitePackages")
         return true
     }
 
-    /** Parse `VAR = "VALUE"` lines from a board constants file → `VAR: str` stubs. */
+    // ── board.pyi ─────────────────────────────────────────────────────────────
+
+    /**
+     * Generates `board.pyi` in site-packages from the board constants file bundled
+     * inside `pymcu_circuitpython/boards/<boardId>.py`. Each `NAME = "value"` line
+     * becomes a typed `NAME: str` stub with an inline docstring.
+     */
+    private fun installBoardStub(sitePackages: Path, board: String?): Boolean {
+        val pkg     = sitePackages.resolve("pymcu_circuitpython")
+        val boardId = board?.replace("-", "_") ?: "arduino_uno"
+        val source  = listOf(
+            pkg.resolve("boards/$boardId.py"),
+            pkg.resolve("boards/arduino_uno.py")
+        ).firstOrNull { it.exists() } ?: run {
+            log.debug("PyMCU: no board constants file found — skipping board.pyi")
+            return false
+        }
+        // Remove legacy .py shim
+        sitePackages.resolve("board.py").toFile().delete()
+        writeStub(sitePackages.resolve("board.pyi"), buildBoardStub(source))
+        return true
+    }
+
+    /** Parse `NAME = "value"` lines from a board constants file → typed `NAME: str` stubs. */
     private fun buildBoardStub(boardFile: Path): String {
-        val lineRe = Regex("""^\s*([A-Z][A-Z0-9_]*)\s*=\s*["']""")
-        val sb = StringBuilder("# PyMCU — generated board pin stubs\n")
+        val lineRe = Regex("""^\s*([A-Z][A-Z0-9_]*)\s*=\s*["']([^"']*)["']""")
+        val sb      = StringBuilder("# PyMCU — generated board pin stubs (do not edit manually)\n")
+        val dquote3 = "\"\"\""
+        sb.append("$dquote3\n")
+        sb.append("Board-specific pin name constants.\n\n")
+        sb.append("Each constant is a string identifier that maps to a physical pin on the board.\n")
+        sb.append("Pass these directly to DigitalInOut, AnalogIn, PWMOut, busio.UART, etc.\n")
+        sb.append("$dquote3\n\n")
         boardFile.toFile().forEachLine { line ->
-            lineRe.find(line)?.let { sb.append("${it.groupValues[1]}: str\n") }
+            lineRe.find(line)?.let { m ->
+                val name  = m.groupValues[1]
+                val value = m.groupValues[2]
+                sb.append("$name: str\n")
+                sb.append("${dquote3}Pin identifier for $name (hardware value: \"$value\").${dquote3}\n")
+            }
         }
         return sb.toString()
     }
 
-    // ── MicroPython ──────────────────────────────────────────────────────────
+    // ── dist/_generated/board.py ─────────────────────────────────────────────
 
-    private fun installMicroPython(sitePackages: Path): Boolean {
-        val pkg = sitePackages.resolve("pymcu_micropython")
-        if (!pkg.exists()) {
-            log.warn("PyMCU stubs: pymcu_micropython not found in $sitePackages — run sync first")
+    /**
+     * Copies the board constants file from the installed `pymcu_circuitpython`
+     * package into `<projectRoot>/dist/_generated/board.py`.
+     *
+     * This lets PyCharm resolve `import board` via the AdditionalLibraryRootsProvider
+     * even before the first build (which would normally generate the file).
+     * The build will overwrite it with identical content; no conflict arises.
+     */
+    private fun generateDistBoard(basePath: String, board: String?, sitePackages: Path?): Boolean {
+        val pkg     = sitePackages?.resolve("pymcu_circuitpython")
+        val boardId = board?.replace("-", "_") ?: "arduino_uno"
+        val source  = when {
+            pkg != null -> listOf(
+                pkg.resolve("boards/$boardId.py"),
+                pkg.resolve("boards/arduino_uno.py")
+            ).firstOrNull { it.exists() }
+            else -> null
+        }
+        if (source == null) {
+            log.debug("PyMCU: no board constants file found — skipping dist/_generated/board.py")
             return false
         }
-
-        // Remove any legacy .py re-export shims
-        MP_PY_SHIMS.forEach { sitePackages.resolve(it).toFile().delete() }
-
-        writeStub(sitePackages.resolve("machine.pyi"),     MACHINE_STUB)
-        writeStub(sitePackages.resolve("utime.pyi"),       UTIME_STUB)
-        writeStub(sitePackages.resolve("micropython.pyi"), MICROPYTHON_STUB)
-
-        log.info("PyMCU stubs: MicroPython .pyi stubs installed in $sitePackages")
-        return true
+        return try {
+            val generatedDir = Path.of(basePath, "dist", "_generated")
+            Files.createDirectories(generatedDir)
+            Files.writeString(generatedDir.resolve("board.py"), source.toFile().readText())
+            log.info("PyMCU: wrote dist/_generated/board.py for IDE `import board` support")
+            true
+        } catch (e: Exception) {
+            log.warn("PyMCU: failed to write dist/_generated/board.py", e)
+            false
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -147,150 +212,4 @@ object PyMcuStubInstaller {
         }
         return null
     }
-
-    // ── Stub content ─────────────────────────────────────────────────────────
-
-    private val DIGITALIO_STUB = """
-# PyMCU — CircuitPython digitalio stubs
-class Direction:
-    INPUT: int
-    OUTPUT: int
-
-class Pull:
-    NONE: int
-    UP: int
-    DOWN: int
-
-class DriveMode:
-    PUSH_PULL: int
-    OPEN_DRAIN: int
-
-class DigitalInOut:
-    direction: int
-    value: int
-    pull: int
-    drive_mode: int
-    def __init__(self, pin: str) -> None: ...
-    def set_direction(self, d: int) -> None: ...
-    def set_value(self, val: int) -> None: ...
-    def get_value(self) -> int: ...
-    def set_pull(self, p: int) -> None: ...
-    def deinit(self) -> None: ...
-""".trimIndent() + "\n"
-
-    private val BUSIO_STUB = """
-# PyMCU — CircuitPython busio stubs
-class UART:
-    def __init__(self, tx: str, rx: str, baudrate: int = 9600) -> None: ...
-    def write(self, data: int) -> None: ...
-    def write_str(self, s: str) -> None: ...
-    def println(self, s: str) -> None: ...
-    def print_byte(self, value: int) -> None: ...
-    def read(self) -> int: ...
-
-class I2C:
-    def __init__(self, scl: str, sda: str, frequency: int = 100000) -> None: ...
-    def scan(self) -> list: ...
-    def readfrom_into(self, address: int, buffer: object) -> None: ...
-    def writeto(self, address: int, buffer: bytes) -> None: ...
-
-class SPI:
-    def __init__(self, clock: str, MOSI: str = ..., MISO: str = ...) -> None: ...
-    def configure(self, baudrate: int = 100000, polarity: int = 0, phase: int = 0, bits: int = 8) -> None: ...
-    def write(self, buf: bytes) -> None: ...
-    def readinto(self, buf: object) -> None: ...
-""".trimIndent() + "\n"
-
-    private val ANALOGIO_STUB = """
-# PyMCU — CircuitPython analogio stubs
-class AnalogIn:
-    value: int
-    reference_voltage: float
-    def __init__(self, pin: str) -> None: ...
-    def deinit(self) -> None: ...
-
-class AnalogOut:
-    value: int
-    def __init__(self, pin: str) -> None: ...
-    def deinit(self) -> None: ...
-""".trimIndent() + "\n"
-
-    private val PWMIO_STUB = """
-# PyMCU — CircuitPython pwmio stubs
-class PWMOut:
-    duty_cycle: int
-    frequency: int
-    def __init__(self, pin: str, frequency: int = 500, duty_cycle: int = 0) -> None: ...
-    def deinit(self) -> None: ...
-""".trimIndent() + "\n"
-
-    private val MICROCONTROLLER_STUB = """
-# PyMCU — CircuitPython microcontroller stubs
-def delay_us(duration: int) -> None: ...
-def reset() -> None: ...
-""".trimIndent() + "\n"
-
-    private val MACHINE_STUB = """
-# PyMCU — MicroPython machine stubs
-class Pin:
-    IN: int
-    OUT: int
-    PULL_UP: int
-    PULL_DOWN: int
-    def __init__(self, id: object, mode: int = ..., pull: int = ...) -> None: ...
-    def value(self, x: int = ...) -> int: ...
-    def high(self) -> None: ...
-    def low(self) -> None: ...
-    def toggle(self) -> None: ...
-
-class UART:
-    def __init__(self, id: int, baudrate: int = 9600, tx: object = None, rx: object = None) -> None: ...
-    def read(self, nbytes: int = ...) -> bytes: ...
-    def write(self, buf: object) -> int: ...
-    def any(self) -> int: ...
-
-class ADC:
-    def __init__(self, pin: object) -> None: ...
-    def read(self) -> int: ...
-    def read_u16(self) -> int: ...
-
-class PWM:
-    def __init__(self, pin: object, freq: int = 500, duty: int = 0) -> None: ...
-    def freq(self, value: int = ...) -> int: ...
-    def duty(self, value: int = ...) -> int: ...
-    def duty_u16(self, value: int = ...) -> int: ...
-
-class SPI:
-    def __init__(self, id: int, baudrate: int = 100000, polarity: int = 0, phase: int = 0, bits: int = 8, sck: object = None, mosi: object = None, miso: object = None) -> None: ...
-    def write(self, buf: bytes) -> None: ...
-    def read(self, nbytes: int, write: int = 0) -> bytes: ...
-    def readinto(self, buf: object, write: int = 0) -> None: ...
-    def write_readinto(self, write_buf: bytes, read_buf: object) -> None: ...
-
-class I2C:
-    def __init__(self, id: int = 0, scl: object = None, sda: object = None, freq: int = 400000) -> None: ...
-    def scan(self) -> list: ...
-    def readfrom(self, addr: int, nbytes: int) -> bytes: ...
-    def readfrom_into(self, addr: int, buf: object) -> None: ...
-    def writeto(self, addr: int, buf: bytes) -> None: ...
-    def writeto_mem(self, addr: int, memaddr: int, buf: bytes) -> None: ...
-    def readfrom_mem_into(self, addr: int, memaddr: int, buf: object) -> None: ...
-""".trimIndent() + "\n"
-
-    private val UTIME_STUB = """
-# PyMCU — MicroPython utime stubs
-def sleep_ms(ms: int) -> None: ...
-def sleep_us(us: int) -> None: ...
-def sleep(seconds: int) -> None: ...
-def ticks_ms() -> int: ...
-def ticks_diff(new_ticks: int, old_ticks: int) -> int: ...
-""".trimIndent() + "\n"
-
-    private val MICROPYTHON_STUB = """
-# PyMCU — MicroPython micropython stubs
-def const(x: int) -> int: ...
-def opt_level(level: int = ...) -> int: ...
-def mem_info(verbose: int = ...) -> None: ...
-def qstr_info(verbose: int = ...) -> None: ...
-""".trimIndent() + "\n"
 }
