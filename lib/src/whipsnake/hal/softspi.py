@@ -19,6 +19,7 @@ from whipsnake.chips import __CHIP__
 # every byte is transferred with pure SBI/CBI/SBIS/SBIC instructions and no
 # string dispatch at runtime.
 # self._cs is kept as a const[str] so `if self._cs != ""` guards are DCE'd.
+# noinspection PyProtectedMember
 class SoftSPI:
 
     @inline

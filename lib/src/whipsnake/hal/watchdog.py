@@ -9,6 +9,8 @@
 from whipsnake.types import uint8, uint16, inline, const
 from whipsnake.chips import __CHIP__
 
+
+# noinspection PyProtectedMember
 class Watchdog:
     # Zero-cost Watchdog Timer HAL.
     # Generates a system reset if firmware does not call feed() within timeout.

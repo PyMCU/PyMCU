@@ -29,6 +29,7 @@ from whipsnake.chips import __CHIP__
 #       sleep_power_down()    # wakes on INT0
 #       led.toggle()
 
+# noinspection PyProtectedMember
 @inline
 def sleep_idle():
     match __CHIP__.name:
@@ -36,6 +37,7 @@ def sleep_idle():
             from whipsnake.hal._power.atmega328p import sleep_idle as _sleep_idle
             _sleep_idle()
 
+# noinspection PyProtectedMember
 @inline
 def sleep_adc_noise():
     match __CHIP__.name:
@@ -43,6 +45,7 @@ def sleep_adc_noise():
             from whipsnake.hal._power.atmega328p import sleep_adc_noise as _sleep_adc_noise
             _sleep_adc_noise()
 
+# noinspection PyProtectedMember
 @inline
 def sleep_power_down():
     match __CHIP__.name:
@@ -50,6 +53,8 @@ def sleep_power_down():
             from whipsnake.hal._power.atmega328p import sleep_power_down as _sleep_power_down
             _sleep_power_down()
 
+
+# noinspection PyProtectedMember
 @inline
 def sleep_power_save():
     match __CHIP__.name:
@@ -57,6 +62,8 @@ def sleep_power_save():
             from whipsnake.hal._power.atmega328p import sleep_power_save as _sleep_power_save
             _sleep_power_save()
 
+
+# noinspection PyProtectedMember
 @inline
 def sleep_standby():
     match __CHIP__.name:

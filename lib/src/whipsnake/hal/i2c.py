@@ -14,6 +14,7 @@ from whipsnake.chips import __CHIP__
 # Default: 100 kHz, SDA=PC4, SCL=PC5 (Arduino Uno A4/A5)
 # Status constants for match patterns: I2C.START, I2C.SLA_ACK, I2C.SLA_NACK
 # High-level: i2c.ping(addr) returns 1 if device present, 0 if not
+# noinspection PyProtectedMember
 class I2C:
 
     # TWI status codes - use as dotted-name match patterns so IDEs treat them

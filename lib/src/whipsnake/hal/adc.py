@@ -2,6 +2,7 @@ from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, inline
 
 
+# noinspection PyProtectedMember
 class AnalogPin:
 
     @inline

@@ -1,6 +1,8 @@
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, const, inline
 
+
+# noinspection PyProtectedMember
 class Pin:
     IN  = 1
     OUT = 0

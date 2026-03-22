@@ -18,6 +18,7 @@ from whipsnake.chips import __CHIP__
 # select/deselect are single SBI/CBI instructions -- no re-dispatch per call.
 # self._cs is kept as a const[str] so the `if self._cs != ""` guards are
 # folded to true/false at compile time (zero SRAM cost).
+# noinspection PyProtectedMember
 class SPI:
 
     @inline

@@ -16,6 +16,7 @@ from whipsnake.types import uint8, uint16, const, inline
 #
 # PIC chips only support n=0 (Timer0).
 
+# noinspection PyProtectedMember
 class Timer:
 
     @inline
