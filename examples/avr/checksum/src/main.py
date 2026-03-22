@@ -15,8 +15,8 @@
 # Protocol:
 #   Send 4 bytes -> receive XOR(byte0, byte1, byte2, byte3), then '\n'
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 
 def main():

@@ -1,5 +1,5 @@
-from pymcu.types import uint8, uint16, inline
-from pymcu.hal.gpio import Pin
+from whisnake.types import uint8, uint16, inline
+from whisnake.hal.gpio import Pin
 # Asumimos que tu módulo time se llama así:
 from pymcu.time import delay_ms, delay_us
 

@@ -17,9 +17,9 @@
 #   1 = chaser pair     (two adjacent bits)
 #   2 = binary counter  (0x00 → 0xFF → 0x00 …)
 #
-from pymcu.types import uint8
-from pymcu.hal.spi import SPI
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.spi import SPI
+from whisnake.hal.uart import UART
 from pymcu.time import delay_ms
 
 # Animation mode constants
@@ -65,7 +65,7 @@ def main():
 
         # --- Mode change on any incoming UART byte ---
         # (Non-blocking: check UCSR0A RXC flag without blocking read)
-        from pymcu.chips.atmega328p import UCSR0A, UDR0
+        from whisnake.chips.atmega328p import UCSR0A, UDR0
         if UCSR0A[7] == 1:         # RXC0: data available
             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
             mode += 1

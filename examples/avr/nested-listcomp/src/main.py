@@ -18,8 +18,8 @@
 #   "F:0F\n"   -- filtered listcomp sum 15=0x0F
 #   "B:65\n"   -- bytearray write/read test
 #
-from pymcu.types import uint8, uint16
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, uint16
+from whisnake.hal.uart import UART
 
 def nibble_hex_hi(val: uint8) -> uint8:
     n: uint8 = (val >> 4) & 0x0F

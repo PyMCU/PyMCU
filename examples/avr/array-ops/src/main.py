@@ -1,8 +1,8 @@
 # PyMCU -- array-ops: variable-index array access
 # Tests: uint8[8] array, variable index loop, sum, min
 # Output on UART: "ARRAY\n" banner, then S:HH (sum), M:HH (min)
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 from pymcu.time import delay_ms
 
 def nibble_hex_hi(val: uint8) -> uint8:

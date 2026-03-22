@@ -14,9 +14,9 @@
 #   PB1 = Arduino pin 9  (OC1A)
 #   UART TX on PD1 at 9600 baud
 #
-from pymcu.types import uint8
-from pymcu.hal.pwm import PWM
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.pwm import PWM
+from whisnake.hal.uart import UART
 from pymcu.time import delay_ms
 
 

@@ -11,9 +11,9 @@
 #   "B:AB\n"       -- encode(uint8=0xAB) returns 0xAB
 #   "C:1234\n"     -- encode(uint16=0x1234) high byte=0x12, low byte=0x34
 #
-from pymcu.types import uint8, uint16, inline
-from pymcu.hal.uart import UART
-from pymcu.hal.gpio import Pin
+from whisnake.types import uint8, uint16, inline
+from whisnake.hal.uart import UART
+from whisnake.hal.gpio import Pin
 
 
 class GPIODevice:

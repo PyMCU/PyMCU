@@ -8,8 +8,8 @@
 #   "RB\n"    -- boot banner
 #   <echoed byte>  -- every received byte echoed back
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 
 def main():

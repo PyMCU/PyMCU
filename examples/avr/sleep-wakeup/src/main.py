@@ -1,16 +1,16 @@
 # ATmega328P: Sleep / Power Management demo
-# Tests: sleep_idle(), sleep_power_down() from pymcu.hal.power
+# Tests: sleep_idle(), sleep_power_down() from whisnake.hal.power
 #
 # Behavior: prints "SLEEP" before sleeping in idle mode, wakes on INT0 (PD2 button),
 #           prints "WAKE" after each wake. Counts 5 wakes then prints "DONE".
 #
 # Hardware: button on PD2 (INT0, pull-up), UART at 9600 baud
 #
-from pymcu.types import uint8, interrupt, asm
-from pymcu.chips.atmega328p import EICRA, EIMSK, GPIOR0
-from pymcu.hal.uart import UART
-from pymcu.hal.gpio import Pin
-from pymcu.hal.power import sleep_idle
+from whisnake.types import uint8, interrupt, asm
+from whisnake.chips.atmega328p import EICRA, EIMSK, GPIOR0
+from whisnake.hal.uart import UART
+from whisnake.hal.gpio import Pin
+from whisnake.hal.power import sleep_idle
 
 @interrupt(0x0002)   # INT0 vector (word addr 1)
 def int0_isr():

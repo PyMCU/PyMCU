@@ -9,9 +9,9 @@
 #   "IW\n"  -- init + write_to done
 #   "IR\n"  -- read_from done
 #
-from pymcu.types import uint8
-from pymcu.hal.i2c import I2C
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.i2c import I2C
+from whisnake.hal.uart import UART
 
 
 def main():

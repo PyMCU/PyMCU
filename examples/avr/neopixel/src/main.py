@@ -10,8 +10,8 @@
 # Global interrupts must be off during transmission for correct timing.
 # This example disables interrupts only during pixel write + show.
 #
-from pymcu.types import uint8, asm
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, asm
+from whisnake.hal.uart import UART
 from pymcu.time import delay_ms
 from pymcu.drivers.neopixel import NeoPixel
 

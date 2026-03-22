@@ -5,8 +5,8 @@
 # Each test sends 'P' (pass=80) or 'F' (fail=70) over UART at 9600 baud.
 # Final output: "PPPPPP\nDONE\n" if all tests pass.
 #
-from pymcu.types import uint8, uint16
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, uint16
+from whisnake.hal.uart import UART
 
 
 def main():

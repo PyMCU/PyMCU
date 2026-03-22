@@ -1,5 +1,5 @@
-from pymcu.chips.pic16f877a import *
-from pymcu.hal.gpio import Pin
+from whisnake.chips.pic16f877a import *
+from whisnake.hal.gpio import Pin
 
 # Función de retardo simple para hacer visible el efecto
 # Como no hay temporizadores complejos ni interrupciones aún,

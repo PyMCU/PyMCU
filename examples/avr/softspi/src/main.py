@@ -18,9 +18,9 @@
 #   "D:XX\n"    -- byte sent via SoftSPI (0xA5 = test byte)
 #   "OK\n"      -- transfer completed
 #
-from pymcu.types import uint8
-from pymcu.hal.softspi import SoftSPI
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.softspi import SoftSPI
+from whisnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

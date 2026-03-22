@@ -4,7 +4,7 @@
 # Hardware: Arduino Uno or any ATmega328P board
 #   - Built-in LED on PB5 (Arduino digital pin 13)
 #
-from pymcu.hal.gpio import Pin
+from whisnake.hal.gpio import Pin
 from pymcu.time import delay_ms
 
 def main():

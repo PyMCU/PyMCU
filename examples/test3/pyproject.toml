@@ -1,7 +1,7 @@
 [project]
 name = "test3"
 version = "0.1.0"
-dependencies = ["pymcu-stdlib==0.1.2a3", "pymcu-compiler==0.1.0a22"]
+dependencies = ["whisnake-stdlib==0.1.2a3", "whipsnake==0.1.0a22"]
 
 [[tool.uv.index]]
 name = "gitea"
@@ -9,17 +9,17 @@ url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
 explicit = true
 
 [tool.uv.sources]
-pymcu-stdlib = {index = "gitea"}
-pymcu-compiler = {index = "gitea"}
+whisnake-stdlib = {index = "gitea"}
+whipsnake = {index = "gitea"}
 
-[tool.pymcu]
+[tool.whip]
 chip = "pic18f45k50"
 frequency = 4000000
 sources = "src"
 entry = "app.py"
 
-[tool.pymcu.config]
+[tool.whip.config]
 # FOSC = "HS"
 
-[tool.pymcu.toolchain]
+[tool.whip.toolchain]
 # assembler = "gpasm"

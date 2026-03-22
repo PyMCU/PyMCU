@@ -12,9 +12,9 @@
 #   0x07=  7  (0xC7 & 0x3F >> 3)
 #   'D'       done marker
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
-from pymcu.hal.gpio import Pin
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
+from whisnake.hal.gpio import Pin
 from pymcu.time import delay_ms
 
 

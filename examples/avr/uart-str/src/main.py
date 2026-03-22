@@ -4,8 +4,8 @@
 # Hardware: Any ATmega328P board
 #   - Connect a serial terminal at 9600 8N1
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 
 def main():

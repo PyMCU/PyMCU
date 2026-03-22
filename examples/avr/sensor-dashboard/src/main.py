@@ -25,14 +25,14 @@
 #   overflow every 256 * 256 / 16e6 = 4.096 ms
 #   64 overflows => ADC sample every ~262 ms
 #
-from pymcu.types import uint8, interrupt
-from pymcu.chips.atmega328p import PORTB, DDRB
-from pymcu.chips.atmega328p import TCCR0B, TIMSK0
-from pymcu.chips.atmega328p import EICRA, EIMSK
-from pymcu.chips.atmega328p import ADCSRA, ADMUX, ADCL
-from pymcu.chips.atmega328p import GPIOR0
-from pymcu.hal.uart import UART
-from pymcu.types import asm
+from whisnake.types import uint8, interrupt
+from whisnake.chips.atmega328p import PORTB, DDRB
+from whisnake.chips.atmega328p import TCCR0B, TIMSK0
+from whisnake.chips.atmega328p import EICRA, EIMSK
+from whisnake.chips.atmega328p import ADCSRA, ADMUX, ADCL
+from whisnake.chips.atmega328p import GPIOR0
+from whisnake.hal.uart import UART
+from whisnake.types import asm
 
 
 @interrupt(0x0020)

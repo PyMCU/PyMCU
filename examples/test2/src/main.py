@@ -1,4 +1,4 @@
-from pymcu.chips.pic16f877a import *
+from whisnake.chips.pic16f877a import *
 
 def main():
     # Configuración de Puertos

@@ -2,7 +2,7 @@
 #
 # Demonstrates calling C functions from PyMCU firmware using:
 #   @extern("c_symbol") -- declares an external C function
-#   [tool.pymcu.ffi]    -- pyproject.toml section listing C sources
+#   [tool.whip.ffi]    -- pyproject.toml section listing C sources
 #
 # The C functions live in c_src/math_helper.c and are compiled with
 # avr-gcc, then linked with the firmware via avr-ld.
@@ -14,8 +14,8 @@
 #   "A:0A\n"      -- c_add_saturate(4, 6) = 10 = 0x0A
 #   "OK\n"        -- done
 
-from pymcu.types import uint8, inline
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, inline
+from whisnake.hal.uart import UART
 from pymcu.ffi import extern
 
 

@@ -13,10 +13,10 @@
 # TIMSK1 bit 0 = TOIE1 (Timer1 Overflow Interrupt Enable)
 # TIMER1_OVF vector = 0x001A (13 * 2 = 26 = 0x1A)
 #
-from pymcu.types import uint8, interrupt, asm
-from pymcu.chips.atmega328p import TCCR1B, TIMSK1, GPIOR0
-from pymcu.hal.gpio import Pin
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, interrupt, asm
+from whisnake.chips.atmega328p import TCCR1B, TIMSK1, GPIOR0
+from whisnake.hal.gpio import Pin
+from whisnake.hal.uart import UART
 
 
 @interrupt(0x001A)

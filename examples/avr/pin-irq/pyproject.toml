@@ -1,9 +1,9 @@
 [project]
 name = "pin-irq"
 version = "0.1.0"
-dependencies = ["pymcu-stdlib"]
+dependencies = ["whisnake-stdlib"]
 
-[tool.pymcu]
+[tool.whip]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"

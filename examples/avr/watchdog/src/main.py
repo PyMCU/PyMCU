@@ -5,9 +5,9 @@
 # Behavior: prints "WDT INIT" on start, feeds watchdog every loop iteration,
 #           prints "FEED" on each feed, disables WDT after 10 feeds, prints "DONE"
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
-from pymcu.hal.watchdog import Watchdog
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
+from whisnake.hal.watchdog import Watchdog
 
 def main():
     uart = UART(9600)

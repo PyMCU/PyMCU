@@ -9,8 +9,8 @@
 #   "LCD\n"   -- boot banner
 #   "OK\n"    -- init complete
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 from pymcu.drivers.lcd import LCD
 
 

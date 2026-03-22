@@ -1,7 +1,7 @@
 # PIC16F18877: LED toggle on button press via IOC interrupt
 # Demonstrates: Pin HAL, const parameters, Pin.irq(), @interrupt
-from pymcu.hal.gpio import Pin
-from pymcu.types import interrupt
+from whisnake.hal.gpio import Pin
+from whisnake.types import interrupt
 
 # LED on RB0 (start ON)
 led = Pin("RB0", Pin.OUT, value=1)

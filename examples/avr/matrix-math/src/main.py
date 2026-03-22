@@ -24,8 +24,8 @@
 #   Frame 2: 04 08 10 20   (cols 2,3,4,5)
 #   ...
 
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 
 def set_bit(val: uint8, col: uint8) -> uint8:

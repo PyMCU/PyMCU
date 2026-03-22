@@ -32,12 +32,12 @@
 #   On each second increment while running: raw byte = seconds mod 256, '\n'
 #   On reset: sends 0, '\n'
 #
-from pymcu.types import uint8, uint16, interrupt
-from pymcu.chips.atmega328p import PORTB, DDRB, GPIOR0
-from pymcu.chips.atmega328p import TCCR0B, TIMSK0
-from pymcu.chips.atmega328p import EICRA, EIMSK
-from pymcu.hal.uart import UART
-from pymcu.types import asm
+from whisnake.types import uint8, uint16, interrupt
+from whisnake.chips.atmega328p import PORTB, DDRB, GPIOR0
+from whisnake.chips.atmega328p import TCCR0B, TIMSK0
+from whisnake.chips.atmega328p import EICRA, EIMSK
+from whisnake.hal.uart import UART
+from whisnake.types import asm
 
 
 @interrupt(0x0020)  # TIMER0_OVF word addr 0x10

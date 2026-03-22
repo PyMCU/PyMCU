@@ -9,9 +9,9 @@
 #   "MAX7219\n"  -- boot banner
 #   "OK\n"       -- init complete
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
-from pymcu.hal.spi import SPI
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
+from whisnake.hal.spi import SPI
 from pymcu.drivers.max7219 import MAX7219
 from pymcu.time import delay_ms
 

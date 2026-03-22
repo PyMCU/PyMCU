@@ -11,9 +11,9 @@
 #   "T:XXXX\n"   -- raw temperature MSB+LSB (hex high byte then low byte)
 #   "P:XXXX\n"   -- raw pressure MSB+LSB
 #
-from pymcu.types import uint8, uint16
-from pymcu.hal.uart import UART
-from pymcu.hal.i2c import I2C
+from whisnake.types import uint8, uint16
+from whisnake.hal.uart import UART
+from whisnake.hal.i2c import I2C
 from pymcu.drivers.bmp280 import BMP280
 from pymcu.time import delay_ms
 

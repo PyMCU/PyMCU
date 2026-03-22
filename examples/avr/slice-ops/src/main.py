@@ -11,8 +11,8 @@
 #   "C:0A\n"  -- even[0]  = 10
 #   "D:1E\n"  -- even[1]  = 30 (0x1E)
 #
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

@@ -19,8 +19,8 @@
 #   "I:03\n"        -- enumerate idx_sum 0+1+2 = 3 = 0x03
 #   "V:3C\n"        -- enumerate val_sum 10+20+30 = 60 = 0x3C
 #
-from pymcu.types import uint8, uint16
-from pymcu.hal.uart import UART
+from whisnake.types import uint8, uint16
+from whisnake.hal.uart import UART
 
 def nibble_hex_hi(val: uint8) -> uint8:
     n: uint8 = (val >> 4) & 0x0F

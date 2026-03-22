@@ -5,8 +5,8 @@
 # Hardware: Arduino Uno
 #   - LED (with resistor) on PD6 (Arduino pin 6, OC0A — Timer0 Fast PWM)
 #
-from pymcu.types import uint8
-from pymcu.hal.pwm import PWM
+from whisnake.types import uint8
+from whisnake.hal.pwm import PWM
 from pymcu.time import delay_ms
 
 

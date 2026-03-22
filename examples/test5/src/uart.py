@@ -1,6 +1,6 @@
 # uart.py
-from pymcu.chips.pic16f18877 import *
-from pymcu.types import inline
+from whisnake.chips.pic16f18877 import *
+from whisnake.types import inline
 
 # Constantes privadas del módulo
 BAUD_VAL = 25  # 9600 baudios @ 4MHz
