@@ -51,7 +51,7 @@ class PyMcuAdditionalLibraryRootsProvider : AdditionalLibraryRootsProvider() {
                 ?.let  { roots.add(it) }
         }
 
-        // dist/_generated/ contains board.py (created on first build)
+        // dist/_generated/ contains board.py (written by the build or proactively by startup)
         lfs.findFileByNioFile(Path.of(basePath, "dist", "_generated"))
             ?.also { log.debug("PyMCU: adding generated root ${it.path}") }
             ?.let  { roots.add(it) }
@@ -73,6 +73,7 @@ class PyMcuAdditionalLibraryRootsProvider : AdditionalLibraryRootsProvider() {
                 lfs.findFileByNioFile(sp.resolve("pymcu_micropython"))?.let { add(it) }
         }
     }
+
 }
 
 private class PyMcuCompatLibrary(private val roots: List<VirtualFile>) :
