@@ -5,13 +5,13 @@
 .equ tmp_35 = _stack_base + 7
 .equ tmp_43 = _stack_base + 8
 .equ tmp_44 = _stack_base + 9
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -33,7 +33,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:22:     uart = UART(9600)
-; main.py:58:     val = val << shift       # 0x01 << 3 = 0x08
+; main.py:27:     # OR: 0x0F | 0xF0 = 0xFF
+; main.py:31:     # AND: 0xFF & 0x0F = 0x0F
 ; main.py:47:     # Bitwise NOT: ~0x38 = 0xC7
 	SBI	0x0A, 1
 ; main.py:48:     val = ~val
@@ -51,9 +52,10 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:23:     led  = Pin("PB5", Pin.OUT)
-; main.py:22:     uart = UART(9600)
+; main.py:51:     # Combined: (0xC7 & 0x3F) >> 3 = (0x07) >> 3 = 0
+; main.py:52:     val = (val & 0x3F) >> 3
 ; main.py:8: #   0xF0=240  (0x0F ^ 0xFF)
-; main.py:18: from whisnake.time import delay_ms
+; main.py:18: from whipsnake.time import delay_ms
 ; main.py:28:     val = val | 0xF0
 ; main.py:48:     val = ~val
 	LDI	R24, 1
@@ -72,6 +74,8 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 255
 	MOV	R4, R24
 ; main.py:29:     uart.write(val)          # 255
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_61:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -86,6 +90,8 @@ L_62:
 	ANDI	R24, 15
 	MOV	R4, R24
 ; main.py:33:     uart.write(val)          # 15
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -101,6 +107,8 @@ L_66:
 	EOR	R24, R18
 	MOV	R4, R24
 ; main.py:37:     uart.write(val)          # 240
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_69:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -115,6 +123,8 @@ L_70:
 	LSL	R24
 	MOV	R4, R24
 ; main.py:41:     uart.write(val)          # 224
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_73:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -130,6 +140,8 @@ L_74:
 	LSR	R24
 	MOV	R4, R24
 ; main.py:45:     uart.write(val)          # 56
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_77:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -144,6 +156,8 @@ L_78:
 	COM	R24
 	MOV	R4, R24
 ; main.py:49:     uart.write(val)          # 199
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -162,6 +176,8 @@ L_82:
 	LSR	R24
 	MOV	R4, R24
 ; main.py:53:     uart.write(val)          # 7 → then >>3 gives 0
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_85:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -181,6 +197,8 @@ L_86:
 	LDI	R24, 8
 	MOV	R4, R24
 ; main.py:59:     uart.write(val)          # 8
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_89:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -204,6 +222,8 @@ L_BR_SKIP_13:
 L_SHIFT_DONE_12:
 	MOV	R4, R24
 ; main.py:62:     uart.write(val)          # 1
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_93:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -215,6 +235,8 @@ L_94:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:64:     uart.write('D')          # done
+; main.py:41:     uart.write(val)          # 224
+; main.py:45:     uart.write(val)          # 56
 L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -249,7 +271,8 @@ L_BIT_WRITE_SKIP_18:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_19:
 ; main.py:68:         delay_ms(500)
-; main.py:68:         delay_ms(500)
+; main.py:21: def main():
+; main.py:30: 
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -264,7 +287,7 @@ L_104:
 	BRLO	L_BR_SKIP_21
 	RJMP	L_105
 L_BR_SKIP_21:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255

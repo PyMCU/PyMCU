@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ inline1_enable_wdp = _stack_base + 3
 .equ tmp_19 = _stack_base + 6
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -16,6 +16,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:13:     uart = UART(9600)
+; main.py:27: 
+; main.py:31:         pass
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -27,7 +29,7 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:14:     wdt  = Watchdog(timeout_ms=500)
-; main.py:29: 
+; main.py:31:         pass
 	LDI	R24, 244
 	MOV	R4, R24
 ; main.py:16:     uart.println("WDT INIT")

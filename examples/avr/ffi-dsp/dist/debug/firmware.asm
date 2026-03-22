@@ -13,9 +13,9 @@
 .equ tmp_21, _stack_base + 16
 .equ tmp_23, _stack_base + 14
 .equ tmp_24, _stack_base + 15
-.equ whisnake_hal__uart_avr__rx_buf, _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head, _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail, _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
 .org 0x0000
 .global main
@@ -73,7 +73,8 @@ main:
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
 ; main.py:81:     uart = UART(9600)
-; main.py:58: 
+; main.py:27: from whipsnake.hal.uart import UART
+; main.py:31: # --- math_utils.c ---
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: @extern("c_smooth8")
@@ -92,13 +93,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:82:     uart.println("FFIDSP")
-; main.py:101:     r5: uint8 = c_deadband8(30, 50)
-; main.py:97:     r4: uint8 = c_smooth8(50, 200, 64)
+; main.py:77:     uart.write('\n')
+; main.py:78: 
+; main.py:69:     return n + 55
+; main.py:73:     uart.write(tag)
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	RCALL	__uart_send_z
-; main.py:102:     print_hex(uart, 'D', r5)
-; main.py:71: @inline
+; main.py:79: 
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_35:
 	LDS	R24, 0x00C0
@@ -118,7 +122,8 @@ L_36:
 	MOV	R6, R24
 ; main.py:86:     print_hex(uart, 'C', r1)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_40:
 	LDS	R24, 0x00C0
@@ -132,7 +137,8 @@ L_41:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_44:
 	LDS	R24, 0x00C0
@@ -150,7 +156,8 @@ L_45:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_48:
 	LDS	R24, 0x00C0
@@ -168,7 +175,8 @@ L_49:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_52:
 	LDS	R24, 0x00C0
@@ -182,7 +190,8 @@ L_53:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_56:
 	LDS	R24, 0x00C0
@@ -202,7 +211,8 @@ L_57:
 	MOV	R7, R24
 ; main.py:90:     print_hex(uart, 'L', r2)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_61:
 	LDS	R24, 0x00C0
@@ -216,7 +226,8 @@ L_62:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_65:
 	LDS	R24, 0x00C0
@@ -234,7 +245,8 @@ L_66:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_69:
 	LDS	R24, 0x00C0
@@ -252,7 +264,8 @@ L_70:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_73:
 	LDS	R24, 0x00C0
@@ -266,7 +279,8 @@ L_74:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_77:
 	LDS	R24, 0x00C0
@@ -285,7 +299,8 @@ L_78:
 	MOV	R8, R24
 ; main.py:94:     print_hex(uart, 'K', r3)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_82:
 	LDS	R24, 0x00C0
@@ -299,7 +314,8 @@ L_83:
 	LDI	R24, 75
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_86:
 	LDS	R24, 0x00C0
@@ -317,7 +333,8 @@ L_87:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_90:
 	LDS	R24, 0x00C0
@@ -335,7 +352,8 @@ L_91:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_94:
 	LDS	R24, 0x00C0
@@ -349,7 +367,8 @@ L_95:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_98:
 	LDS	R24, 0x00C0
@@ -369,7 +388,8 @@ L_99:
 	MOV	R9, R24
 ; main.py:98:     print_hex(uart, 'E', r4)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_103:
 	LDS	R24, 0x00C0
@@ -383,7 +403,8 @@ L_104:
 	LDI	R24, 69
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_107:
 	LDS	R24, 0x00C0
@@ -401,7 +422,8 @@ L_108:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_111:
 	LDS	R24, 0x00C0
@@ -419,7 +441,8 @@ L_112:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_115:
 	LDS	R24, 0x00C0
@@ -433,7 +456,8 @@ L_116:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_119:
 	LDS	R24, 0x00C0
@@ -452,7 +476,8 @@ L_120:
 	MOV	R10, R24
 ; main.py:102:     print_hex(uart, 'D', r5)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_124:
 	LDS	R24, 0x00C0
@@ -466,7 +491,8 @@ L_125:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_128:
 	LDS	R24, 0x00C0
@@ -484,7 +510,8 @@ L_129:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_132:
 	LDS	R24, 0x00C0
@@ -502,7 +529,8 @@ L_133:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_136:
 	LDS	R24, 0x00C0
@@ -516,7 +544,8 @@ L_137:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_140:
 	LDS	R24, 0x00C0
@@ -535,7 +564,8 @@ L_141:
 	MOV	R11, R24
 ; main.py:106:     print_hex(uart, 'B', r6)
 ; main.py:73:     uart.write(tag)
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_145:
 	LDS	R24, 0x00C0
@@ -549,7 +579,8 @@ L_146:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_149:
 	LDS	R24, 0x00C0
@@ -567,7 +598,8 @@ L_150:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_153:
 	LDS	R24, 0x00C0
@@ -585,7 +617,8 @@ L_154:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_157:
 	LDS	R24, 0x00C0
@@ -599,7 +632,8 @@ L_158:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71: @inline
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_161:
 	LDS	R24, 0x00C0
@@ -613,13 +647,16 @@ L_162:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:108:     uart.println("OK")
-; main.py:101:     r5: uint8 = c_deadband8(30, 50)
-; main.py:97:     r4: uint8 = c_smooth8(50, 200, 64)
+; main.py:77:     uart.write('\n')
+; main.py:78: 
+; main.py:69:     return n + 55
+; main.py:73:     uart.write(tag)
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	RCALL	__uart_send_z
-; main.py:102:     print_hex(uart, 'D', r5)
-; main.py:71: @inline
+; main.py:79: 
+; main.py:41: @extern("c_scale8")
+; main.py:45: 
 ; main.py:76:     uart.write(nibble_lo(val))
 L_168:
 	LDS	R24, 0x00C0

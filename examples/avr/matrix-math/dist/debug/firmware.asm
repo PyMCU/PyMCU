@@ -9,9 +9,9 @@
 .equ tmp_29 = _stack_base + 15
 .equ tmp_30 = _stack_base + 16
 .equ tmp_37 = _stack_base + 17
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -44,7 +44,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:40:     uart = UART(9600)
-; main.py:58:         frame[1] = set_bit(frame[1], (col + 1) & 0x07)
+; main.py:27: from whipsnake.types import uint8
+; main.py:31: def set_bit(val: uint8, col: uint8) -> uint8:
 ; main.py:47:     col: uint8 = 0      # current diagonal offset (0-7)
 	SBI	0x0A, 1
 ; main.py:48: 
@@ -63,9 +64,12 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:41:     uart.println("MATRIX")
+; main.py:69:         # Advance diagonal and wrap at 8 columns
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_33:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -156,6 +160,8 @@ L_35:
 	RCALL	set_bit
 	MOV	R10, R24
 ; main.py:63:         uart.write(frame[0])
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -167,6 +173,8 @@ L_40:
 	MOV	R24, R7
 	STS	0x00C6, R24
 ; main.py:64:         uart.write(frame[1])
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -178,6 +186,8 @@ L_44:
 	MOV	R24, R8
 	STS	0x00C6, R24
 ; main.py:65:         uart.write(frame[2])
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -189,6 +199,8 @@ L_48:
 	MOV	R24, R9
 	STS	0x00C6, R24
 ; main.py:66:         uart.write(frame[3])
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -200,6 +212,8 @@ L_52:
 	MOV	R24, R10
 	STS	0x00C6, R24
 ; main.py:67:         uart.write('\n')        # frame separator
+; main.py:41:     uart.println("MATRIX")
+; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
 L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

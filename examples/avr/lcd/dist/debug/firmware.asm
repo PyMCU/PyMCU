@@ -150,13 +150,13 @@
 .equ tmp_90 = _stack_base + 150
 .equ tmp_91 = _stack_base + 151
 .equ tmp_92 = _stack_base + 152
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -178,6 +178,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:18:     uart = UART(9600)
+; main.py:27:     lcd.clear()
+; main.py:31:     lcd.print_str("PyMCU")
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -222,6 +224,8 @@ L_35:
 	CBI	0x0B, 7
 	CBI	0x05, 0
 	CBI	0x05, 1
+; main.py:21:     uart.println("LCD")
+; main.py:30:     lcd.set_cursor(0, 1)
 	CLR	R24
 	CLR	R25
 	STD	Y+7, R24
@@ -236,7 +240,7 @@ L_304:
 	BRLO	L_BR_SKIP_1
 	RJMP	L_305
 L_BR_SKIP_1:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+7
 	LDD	R25, Y+8
 	SUBI	R24, 255
@@ -302,6 +306,8 @@ L_BR_SKIP_3:
 	STD	Y+10, R24
 	RJMP	L_475
 L_476:
+; main.py:21:     uart.println("LCD")
+; main.py:30:     lcd.set_cursor(0, 1)
 	CLR	R24
 	CLR	R25
 	STD	Y+7, R24
@@ -316,7 +322,7 @@ L_479:
 	BRLO	L_BR_SKIP_4
 	RJMP	L_480
 L_BR_SKIP_4:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+7
 	LDD	R25, Y+8
 	SUBI	R24, 255
@@ -600,7 +606,7 @@ L_1012:
 	BRNE	L_BR_SKIP_16
 	RJMP	L_1059
 L_BR_SKIP_16:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_1058
 L_1059:
@@ -702,7 +708,7 @@ L_1249:
 	BRNE	L_BR_SKIP_22
 	RJMP	L_1296
 L_BR_SKIP_22:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_1295
 L_1296:
@@ -830,7 +836,7 @@ L_1515:
 	BRNE	L_BR_SKIP_29
 	RJMP	L_1562
 L_BR_SKIP_29:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_1561
 L_1562:
@@ -932,7 +938,7 @@ L_1752:
 	BRNE	L_BR_SKIP_35
 	RJMP	L_1799
 L_BR_SKIP_35:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_1798
 L_1799:
@@ -1060,7 +1066,7 @@ L_2018:
 	BRNE	L_BR_SKIP_42
 	RJMP	L_2065
 L_BR_SKIP_42:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_2064
 L_2065:
@@ -1161,7 +1167,7 @@ L_2255:
 	BRNE	L_BR_SKIP_48
 	RJMP	L_2302
 L_BR_SKIP_48:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_2301
 L_2302:
@@ -1232,6 +1238,8 @@ L_BR_SKIP_51:
 	STD	Y+11, R24
 	RJMP	L_2443
 L_2444:
+; main.py:21:     uart.println("LCD")
+; main.py:30:     lcd.set_cursor(0, 1)
 	CLR	R24
 	CLR	R25
 	STD	Y+7, R24
@@ -1246,7 +1254,7 @@ L_2447:
 	BRLO	L_BR_SKIP_52
 	RJMP	L_2448
 L_BR_SKIP_52:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+7
 	LDD	R25, Y+8
 	SUBI	R24, 255
@@ -1287,7 +1295,7 @@ L_2521:
 	BRNE	L_BR_SKIP_55
 	RJMP	L_2568
 L_BR_SKIP_55:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_2567
 L_2568:
@@ -1389,7 +1397,7 @@ L_2758:
 	BRNE	L_BR_SKIP_61
 	RJMP	L_2805
 L_BR_SKIP_61:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_2804
 L_2805:
@@ -1532,7 +1540,7 @@ L_3033:
 	BRNE	L_BR_SKIP_69
 	RJMP	L_3080
 L_BR_SKIP_69:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_3079
 L_3080:
@@ -1633,7 +1641,7 @@ L_3270:
 	BRNE	L_BR_SKIP_75
 	RJMP	L_3317
 L_BR_SKIP_75:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_3316
 L_3317:
@@ -1704,6 +1712,8 @@ L_BR_SKIP_78:
 	STD	Y+11, R24
 	RJMP	L_3458
 L_3459:
+; main.py:21:     uart.println("LCD")
+; main.py:30:     lcd.set_cursor(0, 1)
 	CLR	R24
 	CLR	R25
 	STD	Y+7, R24
@@ -1718,7 +1728,7 @@ L_3462:
 	BRLO	L_BR_SKIP_79
 	RJMP	L_3463
 L_BR_SKIP_79:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+7
 	LDD	R25, Y+8
 	SUBI	R24, 255
@@ -1760,7 +1770,7 @@ L_3538:
 	BRNE	L_BR_SKIP_82
 	RJMP	L_3585
 L_BR_SKIP_82:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_3584
 L_3585:
@@ -1862,7 +1872,7 @@ L_3775:
 	BRNE	L_BR_SKIP_88
 	RJMP	L_3822
 L_BR_SKIP_88:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_3821
 L_3822:
@@ -1933,6 +1943,8 @@ L_BR_SKIP_91:
 	STD	Y+11, R24
 	RJMP	L_3963
 L_3964:
+; main.py:21:     uart.println("LCD")
+; main.py:30:     lcd.set_cursor(0, 1)
 	CLR	R24
 	CLR	R25
 	STD	Y+7, R24
@@ -1947,7 +1959,7 @@ L_3967:
 	BRLO	L_BR_SKIP_92
 	RJMP	L_3968
 L_BR_SKIP_92:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+7
 	LDD	R25, Y+8
 	SUBI	R24, 255
@@ -1989,7 +2001,7 @@ L_4043:
 	BRNE	L_BR_SKIP_95
 	RJMP	L_4090
 L_BR_SKIP_95:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_4089
 L_4090:
@@ -2091,7 +2103,7 @@ L_4280:
 	BRNE	L_BR_SKIP_101
 	RJMP	L_4327
 L_BR_SKIP_101:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_4326
 L_4327:
@@ -2219,7 +2231,7 @@ L_4546:
 	BRNE	L_BR_SKIP_108
 	RJMP	L_4593
 L_BR_SKIP_108:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_4592
 L_4593:
@@ -2321,7 +2333,7 @@ L_4783:
 	BRNE	L_BR_SKIP_114
 	RJMP	L_4830
 L_BR_SKIP_114:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_4829
 L_4830:
@@ -2449,7 +2461,7 @@ L_5049:
 	BRNE	L_BR_SKIP_121
 	RJMP	L_5096
 L_BR_SKIP_121:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_5095
 L_5096:
@@ -2551,7 +2563,7 @@ L_5286:
 	BRNE	L_BR_SKIP_127
 	RJMP	L_5333
 L_BR_SKIP_127:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_5332
 L_5333:
@@ -2679,7 +2691,7 @@ L_5552:
 	BRNE	L_BR_SKIP_134
 	RJMP	L_5599
 L_BR_SKIP_134:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_5598
 L_5599:
@@ -2781,7 +2793,7 @@ L_5789:
 	BRNE	L_BR_SKIP_140
 	RJMP	L_5836
 L_BR_SKIP_140:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_5835
 L_5836:
@@ -2909,7 +2921,7 @@ L_6055:
 	BRNE	L_BR_SKIP_147
 	RJMP	L_6102
 L_BR_SKIP_147:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_6101
 L_6102:
@@ -3011,7 +3023,7 @@ L_6292:
 	BRNE	L_BR_SKIP_153
 	RJMP	L_6339
 L_BR_SKIP_153:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_6338
 L_6339:
@@ -3139,7 +3151,7 @@ L_6558:
 	BRNE	L_BR_SKIP_160
 	RJMP	L_6605
 L_BR_SKIP_160:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_6604
 L_6605:
@@ -3241,7 +3253,7 @@ L_6795:
 	BRNE	L_BR_SKIP_166
 	RJMP	L_6842
 L_BR_SKIP_166:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_6841
 L_6842:
@@ -3369,7 +3381,7 @@ L_7061:
 	BRNE	L_BR_SKIP_173
 	RJMP	L_7108
 L_BR_SKIP_173:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_7107
 L_7108:
@@ -3471,7 +3483,7 @@ L_7298:
 	BRNE	L_BR_SKIP_179
 	RJMP	L_7345
 L_BR_SKIP_179:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_7344
 L_7345:
@@ -3599,7 +3611,7 @@ L_7564:
 	BRNE	L_BR_SKIP_186
 	RJMP	L_7611
 L_BR_SKIP_186:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_7610
 L_7611:
@@ -3701,7 +3713,7 @@ L_7801:
 	BRNE	L_BR_SKIP_192
 	RJMP	L_7848
 L_BR_SKIP_192:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_7847
 L_7848:
@@ -3829,7 +3841,7 @@ L_8067:
 	BRNE	L_BR_SKIP_199
 	RJMP	L_8114
 L_BR_SKIP_199:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_8113
 L_8114:
@@ -3931,7 +3943,7 @@ L_8304:
 	BRNE	L_BR_SKIP_205
 	RJMP	L_8351
 L_BR_SKIP_205:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_8350
 L_8351:
@@ -4059,7 +4071,7 @@ L_8570:
 	BRNE	L_BR_SKIP_212
 	RJMP	L_8617
 L_BR_SKIP_212:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_8616
 L_8617:
@@ -4161,7 +4173,7 @@ L_8807:
 	BRNE	L_BR_SKIP_218
 	RJMP	L_8854
 L_BR_SKIP_218:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_8853
 L_8854:
@@ -4289,7 +4301,7 @@ L_9073:
 	BRNE	L_BR_SKIP_225
 	RJMP	L_9120
 L_BR_SKIP_225:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_9119
 L_9120:
@@ -4391,7 +4403,7 @@ L_9310:
 	BRNE	L_BR_SKIP_231
 	RJMP	L_9357
 L_BR_SKIP_231:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_9356
 L_9357:
@@ -4535,7 +4547,7 @@ L_9581:
 	BRNE	L_BR_SKIP_238
 	RJMP	L_9628
 L_BR_SKIP_238:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_9627
 L_9628:
@@ -4639,7 +4651,7 @@ L_9818:
 	BRNE	L_BR_SKIP_244
 	RJMP	L_9865
 L_BR_SKIP_244:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_9864
 L_9865:
@@ -4768,7 +4780,7 @@ L_10086:
 	BRNE	L_BR_SKIP_251
 	RJMP	L_10133
 L_BR_SKIP_251:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_10132
 L_10133:
@@ -4870,7 +4882,7 @@ L_10323:
 	BRNE	L_BR_SKIP_257
 	RJMP	L_10370
 L_BR_SKIP_257:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_10369
 L_10370:
@@ -4998,7 +5010,7 @@ L_10589:
 	BRNE	L_BR_SKIP_264
 	RJMP	L_10636
 L_BR_SKIP_264:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_10635
 L_10636:
@@ -5100,7 +5112,7 @@ L_10826:
 	BRNE	L_BR_SKIP_270
 	RJMP	L_10873
 L_BR_SKIP_270:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_10872
 L_10873:
@@ -5228,7 +5240,7 @@ L_11092:
 	BRNE	L_BR_SKIP_277
 	RJMP	L_11139
 L_BR_SKIP_277:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_11138
 L_11139:
@@ -5330,7 +5342,7 @@ L_11329:
 	BRNE	L_BR_SKIP_283
 	RJMP	L_11376
 L_BR_SKIP_283:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_11375
 L_11376:
@@ -5458,7 +5470,7 @@ L_11595:
 	BRNE	L_BR_SKIP_290
 	RJMP	L_11642
 L_BR_SKIP_290:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_11641
 L_11642:
@@ -5560,7 +5572,7 @@ L_11832:
 	BRNE	L_BR_SKIP_296
 	RJMP	L_11879
 L_BR_SKIP_296:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_11878
 L_11879:
@@ -5688,7 +5700,7 @@ L_12098:
 	BRNE	L_BR_SKIP_303
 	RJMP	L_12145
 L_BR_SKIP_303:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_12144
 L_12145:
@@ -5790,7 +5802,7 @@ L_12335:
 	BRNE	L_BR_SKIP_309
 	RJMP	L_12382
 L_BR_SKIP_309:
-; main.py:14: from whisnake.drivers.lcd import LCD
+; main.py:14: from whipsnake.drivers.lcd import LCD
 	SBI	0x05, 0
 	RJMP	L_12381
 L_12382:

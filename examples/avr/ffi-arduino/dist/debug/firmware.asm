@@ -15,9 +15,9 @@
 .equ tmp_21, _stack_base + 24
 .equ tmp_23, _stack_base + 22
 .equ tmp_24, _stack_base + 23
-.equ whisnake_hal__uart_avr__rx_buf, _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head, _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail, _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
 .org 0x0000
 .global main
@@ -75,7 +75,8 @@ main:
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
 ; main.py:77:     uart = UART(9600)
-; main.py:58:     if n < 10:
+; main.py:27: 
+; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: # --- UART helpers ---
@@ -94,13 +95,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:78:     uart.println("ARDUINO")
-; main.py:101:     p1: uint8 = adc_to_pwm(512)
-; main.py:97:     c2: uint16 = arduino_constrain(5, 10, 200)
+; main.py:77:     uart = UART(9600)
+; main.py:78:     uart.println("ARDUINO")
+; main.py:69: 
+; main.py:73:     print_u8(uart, tag, lo)
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	RCALL	__uart_send_z
-; main.py:102:     print_u8(uart, 'P', p1)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:79: 
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_35:
 	LDS	R24, 0x00C0
@@ -126,7 +130,8 @@ L_36:
 	STD	Y+3, R24
 ; main.py:73:     print_u8(uart, tag, lo)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_41:
 	LDS	R24, 0x00C0
@@ -140,7 +145,8 @@ L_42:
 	LDI	R24, 77
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_45:
 	LDS	R24, 0x00C0
@@ -159,7 +165,8 @@ L_46:
 	LDD	R24, Y+3
 	RCALL	nibble_hi
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_49:
 	LDS	R24, 0x00C0
@@ -178,7 +185,8 @@ L_50:
 	LDD	R24, Y+3
 	RCALL	nibble_lo
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_53:
 	LDS	R24, 0x00C0
@@ -192,7 +200,8 @@ L_54:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_57:
 	LDS	R24, 0x00C0
@@ -219,7 +228,8 @@ L_58:
 	STD	Y+3, R24
 ; main.py:73:     print_u8(uart, tag, lo)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_63:
 	LDS	R24, 0x00C0
@@ -233,7 +243,8 @@ L_64:
 	LDI	R24, 70
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_67:
 	LDS	R24, 0x00C0
@@ -252,7 +263,8 @@ L_68:
 	LDD	R24, Y+3
 	RCALL	nibble_hi
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_71:
 	LDS	R24, 0x00C0
@@ -271,7 +283,8 @@ L_72:
 	LDD	R24, Y+3
 	RCALL	nibble_lo
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_75:
 	LDS	R24, 0x00C0
@@ -285,7 +298,8 @@ L_76:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_79:
 	LDS	R24, 0x00C0
@@ -311,7 +325,8 @@ L_80:
 	STD	Y+3, R24
 ; main.py:73:     print_u8(uart, tag, lo)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_85:
 	LDS	R24, 0x00C0
@@ -325,7 +340,8 @@ L_86:
 	LDI	R24, 90
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_89:
 	LDS	R24, 0x00C0
@@ -344,7 +360,8 @@ L_90:
 	LDD	R24, Y+3
 	RCALL	nibble_hi
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_93:
 	LDS	R24, 0x00C0
@@ -363,7 +380,8 @@ L_94:
 	LDD	R24, Y+3
 	RCALL	nibble_lo
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_97:
 	LDS	R24, 0x00C0
@@ -377,7 +395,8 @@ L_98:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_101:
 	LDS	R24, 0x00C0
@@ -402,7 +421,8 @@ L_102:
 	STD	Y+3, R24
 ; main.py:73:     print_u8(uart, tag, lo)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_107:
 	LDS	R24, 0x00C0
@@ -416,7 +436,8 @@ L_108:
 	LDI	R24, 72
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_111:
 	LDS	R24, 0x00C0
@@ -435,7 +456,8 @@ L_112:
 	LDD	R24, Y+3
 	RCALL	nibble_hi
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_115:
 	LDS	R24, 0x00C0
@@ -454,7 +476,8 @@ L_116:
 	LDD	R24, Y+3
 	RCALL	nibble_lo
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_119:
 	LDS	R24, 0x00C0
@@ -468,7 +491,8 @@ L_120:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_123:
 	LDS	R24, 0x00C0
@@ -492,7 +516,8 @@ L_124:
 	STD	Y+3, R24
 ; main.py:73:     print_u8(uart, tag, lo)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_129:
 	LDS	R24, 0x00C0
@@ -506,7 +531,8 @@ L_130:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_133:
 	LDS	R24, 0x00C0
@@ -525,7 +551,8 @@ L_134:
 	LDD	R24, Y+3
 	RCALL	nibble_hi
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_137:
 	LDS	R24, 0x00C0
@@ -544,7 +571,8 @@ L_138:
 	LDD	R24, Y+3
 	RCALL	nibble_lo
 	STD	Y+5, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_141:
 	LDS	R24, 0x00C0
@@ -558,7 +586,8 @@ L_142:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_145:
 	LDS	R24, 0x00C0
@@ -577,7 +606,8 @@ L_146:
 	MOV	R6, R24
 ; main.py:102:     print_u8(uart, 'P', p1)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_150:
 	LDS	R24, 0x00C0
@@ -591,7 +621,8 @@ L_151:
 	LDI	R24, 80
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_154:
 	LDS	R24, 0x00C0
@@ -609,7 +640,8 @@ L_155:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+4, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_158:
 	LDS	R24, 0x00C0
@@ -627,7 +659,8 @@ L_159:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+4, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_162:
 	LDS	R24, 0x00C0
@@ -641,7 +674,8 @@ L_163:
 	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_166:
 	LDS	R24, 0x00C0
@@ -660,7 +694,8 @@ L_167:
 	MOV	R7, R24
 ; main.py:106:     print_u8(uart, 'T', p2)
 ; main.py:64:     uart.write(tag)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_171:
 	LDS	R24, 0x00C0
@@ -674,7 +709,8 @@ L_172:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_175:
 	LDS	R24, 0x00C0
@@ -692,7 +728,8 @@ L_176:
 	MOV	R4, R24
 	RCALL	nibble_hi
 	STD	Y+4, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_179:
 	LDS	R24, 0x00C0
@@ -710,7 +747,8 @@ L_180:
 	MOV	R5, R24
 	RCALL	nibble_lo
 	STD	Y+4, R24
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_183:
 	LDS	R24, 0x00C0
@@ -724,7 +762,8 @@ L_184:
 	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_187:
 	LDS	R24, 0x00C0
@@ -738,13 +777,16 @@ L_188:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:108:     uart.println("OK")
-; main.py:101:     p1: uint8 = adc_to_pwm(512)
-; main.py:97:     c2: uint16 = arduino_constrain(5, 10, 200)
+; main.py:77:     uart = UART(9600)
+; main.py:78:     uart.println("ARDUINO")
+; main.py:69: 
+; main.py:73:     print_u8(uart, tag, lo)
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	RCALL	__uart_send_z
-; main.py:102:     print_u8(uart, 'P', p1)
-; main.py:71: def print_u16_lo(uart: UART, tag: uint8, val: uint16):
+; main.py:79: 
+; main.py:41:     pass
+; main.py:45:     pass
 ; main.py:76: def main():
 L_194:
 	LDS	R24, 0x00C0

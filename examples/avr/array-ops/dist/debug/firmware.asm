@@ -11,13 +11,13 @@
 .equ tmp_24 = _stack_base + 24
 .equ tmp_26 = _stack_base + 19
 .equ tmp_35 = _stack_base + 20
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -84,6 +84,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:21:     uart = UART(9600)
+; main.py:27:     total: uint8 = 0
+; main.py:31:         i += 1
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     uart.write('M')
@@ -103,6 +105,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -157,6 +161,8 @@ L_BR_SKIP_3:
 	RJMP	L_37
 L_38:
 ; main.py:34:     uart.write('S')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_41:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -168,6 +174,8 @@ L_42:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:35:     uart.write(':')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_45:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -183,6 +191,8 @@ L_46:
 	MOV	R9, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_49:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -198,6 +208,8 @@ L_50:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_53:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -209,6 +221,8 @@ L_54:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:38:     uart.write('\n')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_57:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -261,6 +275,8 @@ L_61:
 	RJMP	L_59
 L_60:
 ; main.py:48:     uart.write('M')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_64:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -272,6 +288,8 @@ L_65:
 	LDI	R24, 77
 	STS	0x00C6, R24
 ; main.py:49:     uart.write(':')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_68:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -287,6 +305,8 @@ L_69:
 	MOV	R9, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -302,6 +322,8 @@ L_73:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -313,6 +335,8 @@ L_77:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
+; main.py:41:     min_val: uint8 = data[0]
+; main.py:45:             min_val = data[i]
 L_80:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -326,6 +350,8 @@ L_81:
 ; main.py:54:     while True:
 L_82:
 ; main.py:55:         delay_ms(1000)
+; main.py:21:     uart = UART(9600)
+; main.py:30:         total += data[i]
 	CLR	R24
 	CLR	R25
 	STD	Y+4, R24
@@ -340,7 +366,7 @@ L_86:
 	BRLO	L_BR_SKIP_16
 	RJMP	L_87
 L_BR_SKIP_16:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	SUBI	R24, 255

@@ -7,9 +7,9 @@
 .equ tmp_21 = _stack_base + 12
 .equ tmp_23 = _stack_base + 10
 .equ tmp_24 = _stack_base + 11
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -66,7 +66,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:32:     uart = UART(9600)
-; main.py:58:     uart.write(nibble_hi(ch))
+; main.py:27:         return n + 48
+; main.py:31: def main():
 ; main.py:47:     uart.write(':')
 	SBI	0x0A, 1
 ; main.py:48:     uart.write(nibble_hi(result))
@@ -86,6 +87,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -100,6 +103,8 @@ L_36:
 	LDI	R24, 5
 	MOV	R4, R24
 ; main.py:38:     uart.write('D')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -111,6 +116,8 @@ L_40:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:39:     uart.write(':')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -126,6 +133,8 @@ L_44:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -141,6 +150,8 @@ L_48:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -152,6 +163,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:42:     uart.write('\n')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -167,6 +180,8 @@ L_56:
 	LDI	R24, 9
 	MOV	R4, R24
 ; main.py:46:     uart.write('T')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_59:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -178,6 +193,8 @@ L_60:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:47:     uart.write(':')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_63:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -193,6 +210,8 @@ L_64:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_67:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -208,6 +227,8 @@ L_68:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_71:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -219,6 +240,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:50:     uart.write('\n')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -229,11 +252,13 @@ L_BR_SKIP_12:
 L_76:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	LDI	R24, 1
+	LDI	R24, 2
 	LDI	R25, 1
 	LDI	R24, 92
 	MOV	R5, R24
 ; main.py:56:     uart.write('R')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -245,6 +270,8 @@ L_80:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:57:     uart.write(':')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -260,6 +287,8 @@ L_84:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -275,6 +304,8 @@ L_88:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -286,6 +317,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:60:     uart.write('\n')
+; main.py:41:     uart.write(nibble_lo(result))
+; main.py:45:     result = triple(3)
 L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

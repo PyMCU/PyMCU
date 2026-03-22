@@ -5,9 +5,9 @@
 .equ tmp_36 = _stack_base + 8
 .equ tmp_41 = _stack_base + 9
 .equ tmp_46 = _stack_base + 10
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -18,6 +18,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:12:     uart = UART(9600)
+; main.py:27:     d: uint8 = ee.read(3)
+; main.py:31:     else:
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -29,6 +31,7 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:13:     ee   = EEPROM()
+; main.py:30:         uart.println("EEPROM OK")
 ; main.py:15:     uart.println("EEPROM TEST")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
@@ -44,7 +47,6 @@ L_35:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:18:     ee.write(0, 0xA1)
-; main.py:34:     while True:
 ; main.py:14: 
 L_38:
 	SBIS	0x1F, 1
@@ -67,7 +69,6 @@ out 0x1f, r16
 ; main.py:26:     c: uint8 = ee.read(2)
 sbi 0x1f, 1
 ; main.py:19:     ee.write(1, 0xB2)
-; main.py:34:     while True:
 ; main.py:14: 
 L_42:
 	SBIS	0x1F, 1
@@ -90,7 +91,6 @@ out 0x1f, r16
 ; main.py:26:     c: uint8 = ee.read(2)
 sbi 0x1f, 1
 ; main.py:20:     ee.write(2, 0xC3)
-; main.py:34:     while True:
 ; main.py:14: 
 L_46:
 	SBIS	0x1F, 1
@@ -113,7 +113,6 @@ out 0x1f, r16
 ; main.py:26:     c: uint8 = ee.read(2)
 sbi 0x1f, 1
 ; main.py:21:     ee.write(3, 0xD4)
-; main.py:34:     while True:
 ; main.py:14: 
 L_50:
 	SBIS	0x1F, 1

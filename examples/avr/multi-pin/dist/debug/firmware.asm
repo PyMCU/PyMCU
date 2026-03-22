@@ -4,13 +4,13 @@
 .equ inline2__delay_ms_avr_i = _stack_base + 3
 .equ tmp_59 = _stack_base + 10
 .equ tmp_61 = _stack_base + 11
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -32,7 +32,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -48,7 +49,8 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_1:
 ; main.py:19:     led1 = Pin("PB1", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -64,7 +66,8 @@ L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 1
 L_BIT_WRITE_DONE_4:
 ; main.py:20:     led2 = Pin("PB2", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -80,7 +83,8 @@ L_BIT_WRITE_SKIP_6:
 	CBI	0x04, 2
 L_BIT_WRITE_DONE_7:
 ; main.py:21:     led3 = Pin("PB3", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -96,7 +100,8 @@ L_BIT_WRITE_SKIP_9:
 	CBI	0x04, 3
 L_BIT_WRITE_DONE_10:
 ; main.py:22:     led4 = Pin("PB4", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -112,7 +117,8 @@ L_BIT_WRITE_SKIP_12:
 	CBI	0x04, 4
 L_BIT_WRITE_DONE_13:
 ; main.py:23:     led5 = Pin("PB5", Pin.OUT)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 ; main.py:18:     led0 = Pin("PB0", Pin.OUT)
 ; main.py:28:     uart = UART(9600)
@@ -128,8 +134,9 @@ L_BIT_WRITE_SKIP_15:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_16:
 ; main.py:25:     btn_a = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
-; main.py:12: from whisnake.hal.gpio import Pin
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
+; main.py:12: from whipsnake.hal.gpio import Pin
 ; main.py:22:     led4 = Pin("PB4", Pin.OUT)
 ; main.py:32:     prev_b: uint8 = 1
 ; main.py:42:                 step = 0
@@ -145,8 +152,9 @@ L_BIT_WRITE_SKIP_18:
 L_BIT_WRITE_DONE_19:
 	SBI	0x0B, 2
 ; main.py:26:     btn_b = Pin("PD3", Pin.IN, pull=Pin.PULL_UP)
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
-; main.py:12: from whisnake.hal.gpio import Pin
+; main.py:51:         # All LEDs off, then light exactly one based on current step
+; main.py:52:         led0.low()
+; main.py:12: from whipsnake.hal.gpio import Pin
 ; main.py:22:     led4 = Pin("PB4", Pin.OUT)
 ; main.py:32:     prev_b: uint8 = 1
 ; main.py:44:         # Button B: reset to step 0 on falling edge
@@ -162,7 +170,8 @@ L_BIT_WRITE_SKIP_21:
 L_BIT_WRITE_DONE_22:
 	SBI	0x0B, 3
 ; main.py:28:     uart = UART(9600)
-; main.py:58: 
+; main.py:27: 
+; main.py:31:     prev_a: uint8 = 1
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:         prev_a = cur_a
@@ -317,7 +326,8 @@ L_BR_SKIP_38:
 L_306:
 L_295:
 ; main.py:73:         uart.write(step)
-; main.py:71:                 led5.high()
+; main.py:41:             if step == 6:
+; main.py:45:         if cur_b == 0 and prev_b == 1:
 L_310:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -329,7 +339,8 @@ L_311:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:74:         delay_ms(20)
-; main.py:68:             case 4:
+; main.py:21:     led3 = Pin("PB3", Pin.OUT)
+; main.py:30:     step: uint8 = 0
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -344,7 +355,7 @@ L_314:
 	BRLO	L_BR_SKIP_40
 	RJMP	L_315
 L_BR_SKIP_40:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255

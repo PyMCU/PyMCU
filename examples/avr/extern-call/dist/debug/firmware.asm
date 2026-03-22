@@ -10,9 +10,9 @@
 .equ tmp_21, _stack_base + 13
 .equ tmp_23, _stack_base + 11
 .equ tmp_24, _stack_base + 12
-.equ whisnake_hal__uart_avr__rx_buf, _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head, _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail, _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
 .org 0x0000
 .global main
@@ -70,7 +70,8 @@ main:
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
 ; main.py:53:     uart = UART(9600)
-; main.py:58:     print_hex(uart, 'M', m)
+; main.py:27: @extern("c_add_saturate")
+; main.py:31: 
 ; main.py:47:     uart.write(':')
 	SBI	0x0A, 1
 ; main.py:48:     uart.write(nibble_hi(val))
@@ -101,7 +102,8 @@ main:
 	MOV	R5, R24
 ; main.py:58:     print_hex(uart, 'M', m)
 ; main.py:46:     uart.write(prefix)
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_33:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -113,7 +115,8 @@ L_34:
 	LDI	R24, 77
 	STS	0x00C6, R24
 ; main.py:47:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_37:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -129,7 +132,8 @@ L_38:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_41:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -145,7 +149,8 @@ L_42:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_45:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -157,7 +162,8 @@ L_46:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:50:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_49:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -174,7 +180,8 @@ L_50:
 	MOV	R6, R24
 ; main.py:62:     print_hex(uart, 'S', s)
 ; main.py:46:     uart.write(prefix)
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -186,7 +193,8 @@ L_55:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:47:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_58:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -202,7 +210,8 @@ L_59:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_62:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -218,7 +227,8 @@ L_63:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_66:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -230,7 +240,8 @@ L_67:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:50:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_70:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -247,7 +258,8 @@ L_71:
 	MOV	R4, R24
 ; main.py:66:     print_hex(uart, 'A', a)
 ; main.py:46:     uart.write(prefix)
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -259,7 +271,8 @@ L_76:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:47:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -275,7 +288,8 @@ L_80:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -291,7 +305,8 @@ L_84:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -303,7 +318,8 @@ L_88:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:50:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:         return n + 48
+; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
 L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

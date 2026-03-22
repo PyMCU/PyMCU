@@ -5,13 +5,13 @@
 .equ tmp_34 = _stack_base + 9
 .equ tmp_36 = _stack_base + 10
 .equ tmp_38 = _stack_base + 11
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -33,7 +33,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:21:     data  = Pin("PB0", Pin.OUT)
-; main.py:22:     clock = Pin("PB1", Pin.OUT)
+; main.py:51: 
+; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
 ; main.py:18: 
 ; main.py:28: 
@@ -49,7 +50,8 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_1:
 ; main.py:22:     clock = Pin("PB1", Pin.OUT)
-; main.py:22:     clock = Pin("PB1", Pin.OUT)
+; main.py:51: 
+; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
 ; main.py:18: 
 ; main.py:28: 
@@ -65,7 +67,8 @@ L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 1
 L_BIT_WRITE_DONE_4:
 ; main.py:23:     latch = Pin("PB2", Pin.OUT)
-; main.py:22:     clock = Pin("PB1", Pin.OUT)
+; main.py:51: 
+; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
 ; main.py:18: 
 ; main.py:28: 
@@ -81,7 +84,8 @@ L_BIT_WRITE_SKIP_6:
 	CBI	0x04, 2
 L_BIT_WRITE_DONE_7:
 ; main.py:24:     uart  = UART(9600)
-; main.py:58: 
+; main.py:27:     pattern: uint8 = 0x01
+; main.py:31:         latch.low()
 ; main.py:47:             bit -= 1
 	SBI	0x0A, 1
 ; main.py:48: 
@@ -148,6 +152,8 @@ L_125:
 ; main.py:50:         latch.high()
 	SBI	0x05, 2
 ; main.py:53:         uart.write(pattern)
+; main.py:41:                 data.low()
+; main.py:45:             clock.low()
 L_135:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -176,6 +182,8 @@ L_136:
 	OR	R24, R18
 	MOV	R4, R24
 ; main.py:59:         delay_ms(150)
+; main.py:21:     data  = Pin("PB0", Pin.OUT)
+; main.py:30:         # Pull latch low before clocking data
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -190,7 +198,7 @@ L_139:
 	BRLO	L_BR_SKIP_15
 	RJMP	L_140
 L_BR_SKIP_15:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255

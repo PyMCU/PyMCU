@@ -10,9 +10,9 @@
 .equ tmp_24 = _stack_base + 17
 .equ tmp_67 = _stack_base + 12
 .equ tmp_68 = _stack_base + 13
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -69,7 +69,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:37:     uart = UART(9600)
-; main.py:58:     uart.write(nibble_lo(rev_sum))
+; main.py:27: 
+; main.py:31:     if n < 10:
 ; main.py:47:     uart.write(nibble_hi(total))
 	SBI	0x0A, 1
 ; main.py:48:     uart.write(nibble_lo(total))
@@ -88,10 +89,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:39:     uart.println("NB")
+; main.py:77:     uart.write('W')
+; main.py:78:     uart.write(':')
+; main.py:69:     uart.write('P')
+; main.py:73:     uart.write('\n')
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:79:     uart.write(nibble_hi(w))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_35:
 	LDS	R24, 0x00C0
@@ -115,7 +122,8 @@ L_36:
 	LDI	R24, 66
 	MOV	R5, R24
 ; main.py:45:     uart.write('Z')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_39:
 	LDS	R24, 0x00C0
@@ -129,7 +137,8 @@ L_40:
 	LDI	R24, 90
 	STS	0x00C6, R24
 ; main.py:46:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_43:
 	LDS	R24, 0x00C0
@@ -147,7 +156,8 @@ L_44:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_47:
 	LDS	R24, 0x00C0
@@ -165,7 +175,8 @@ L_48:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_51:
 	LDS	R24, 0x00C0
@@ -179,7 +190,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:49:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_55:
 	LDS	R24, 0x00C0
@@ -205,7 +217,8 @@ L_56:
 	LDI	R24, 50
 	MOV	R4, R24
 ; main.py:55:     uart.write('R')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_59:
 	LDS	R24, 0x00C0
@@ -219,7 +232,8 @@ L_60:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:56:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_63:
 	LDS	R24, 0x00C0
@@ -237,7 +251,8 @@ L_64:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_67:
 	LDS	R24, 0x00C0
@@ -255,7 +270,8 @@ L_68:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_71:
 	LDS	R24, 0x00C0
@@ -269,7 +285,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:59:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_75:
 	LDS	R24, 0x00C0
@@ -283,7 +300,8 @@ L_76:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:62:     uart.write('S')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_79:
 	LDS	R24, 0x00C0
@@ -297,7 +315,8 @@ L_80:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:63:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_83:
 	LDS	R24, 0x00C0
@@ -311,11 +330,14 @@ L_84:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:64:     uart.write_str(str(42))
+; main.py:69:     uart.write('P')
+; main.py:73:     uart.write('\n')
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:65:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_89:
 	LDS	R24, 0x00C0
@@ -331,7 +353,8 @@ L_90:
 	LDI	R24, 81
 	MOV	R9, R24
 ; main.py:69:     uart.write('P')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_93:
 	LDS	R24, 0x00C0
@@ -345,7 +368,8 @@ L_94:
 	LDI	R24, 80
 	STS	0x00C6, R24
 ; main.py:70:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_97:
 	LDS	R24, 0x00C0
@@ -363,7 +387,8 @@ L_98:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_101:
 	LDS	R24, 0x00C0
@@ -381,7 +406,8 @@ L_102:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_105:
 	LDS	R24, 0x00C0
@@ -395,7 +421,8 @@ L_106:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:73:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_109:
 	LDS	R24, 0x00C0
@@ -411,7 +438,8 @@ L_110:
 	LDI	R24, 64
 	MOV	R10, R24
 ; main.py:77:     uart.write('W')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_113:
 	LDS	R24, 0x00C0
@@ -425,7 +453,8 @@ L_114:
 	LDI	R24, 87
 	STS	0x00C6, R24
 ; main.py:78:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_117:
 	LDS	R24, 0x00C0
@@ -443,7 +472,8 @@ L_118:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_121:
 	LDS	R24, 0x00C0
@@ -461,7 +491,8 @@ L_122:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_125:
 	LDS	R24, 0x00C0
@@ -475,7 +506,8 @@ L_126:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:81:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_129:
 	LDS	R24, 0x00C0
@@ -504,7 +536,8 @@ L_132:
 	MOV	R17, R24
 	MOV	R8, R24
 ; main.py:85:     uart.write('N')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_136:
 	LDS	R24, 0x00C0
@@ -518,7 +551,8 @@ L_137:
 	LDI	R24, 78
 	STS	0x00C6, R24
 ; main.py:86:     uart.write('R')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_140:
 	LDS	R24, 0x00C0
@@ -532,7 +566,8 @@ L_141:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:87:     uart.write(':')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_144:
 	LDS	R24, 0x00C0
@@ -550,7 +585,8 @@ L_145:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_148:
 	LDS	R24, 0x00C0
@@ -568,7 +604,8 @@ L_149:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_152:
 	LDS	R24, 0x00C0
@@ -582,7 +619,8 @@ L_153:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:90:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hi(p))
+; main.py:41:     # -- zip([1,2,3], [10,20,30]) sum of pairs => (1+10)+(2+20)+(3+30)=66=0x42 --
+; main.py:45:     uart.write('Z')
 ; main.py:76:     w: uint8 = 2 ** 6
 L_156:
 	LDS	R24, 0x00C0

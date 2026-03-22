@@ -9,13 +9,13 @@
 .equ tmp_27 = _stack_base + 16
 .equ tmp_40 = _stack_base + 17
 .equ tmp_43 = _stack_base + 18
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -55,7 +55,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:14:     uart = UART(9600)
-; main.py:58:         delay_ms(1000)
+; main.py:27:     b: uint8 = x ^ x
+; main.py:31:     uart.write('\n')
 ; main.py:47:     uart.write('\n')
 	SBI	0x0A, 1
 ; main.py:48: 
@@ -75,6 +76,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_34:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -88,6 +91,8 @@ L_35:
 	LDI	R24, 128
 	MOV	R5, R24
 ; main.py:19:     uart.write('A')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_38:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -99,6 +104,8 @@ L_39:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:20:     uart.write(':')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -119,6 +126,8 @@ L_43:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -136,6 +145,8 @@ L_47:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_50:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -147,6 +158,8 @@ L_51:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:23:     uart.write('\n')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -162,6 +175,8 @@ L_55:
 	CLR	R24
 	MOV	R6, R24
 ; main.py:28:     uart.write('B')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_58:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -173,6 +188,8 @@ L_59:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:29:     uart.write(':')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_62:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -188,6 +205,8 @@ L_63:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_66:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -199,6 +218,8 @@ L_67:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:31:     uart.write('\n')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_70:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -212,6 +233,8 @@ L_71:
 	LDI	R24, 205
 	MOV	R7, R24
 ; main.py:35:     uart.write('C')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_74:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -223,6 +246,8 @@ L_75:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:36:     uart.write(':')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_78:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -243,6 +268,8 @@ L_79:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -260,6 +287,8 @@ L_83:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -271,6 +300,8 @@ L_87:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:39:     uart.write('\n')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -290,6 +321,8 @@ L_91:
 	RJMP	L_93
 L_BR_SKIP_16:
 ; main.py:44:         uart.write('T')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_96:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -303,6 +336,8 @@ L_97:
 	RJMP	L_92
 L_93:
 ; main.py:46:         uart.write('F')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -315,6 +350,8 @@ L_101:
 	STS	0x00C6, R24
 L_92:
 ; main.py:47:     uart.write('\n')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_104:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -332,6 +369,8 @@ L_105:
 	LDI	R24, 1
 	MOV	R8, R24
 ; main.py:52:     uart.write('D')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_108:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -343,6 +382,8 @@ L_109:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:53:     uart.write(':')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_112:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -358,6 +399,8 @@ L_113:
 	MOV	R4, R24
 	RCALL	nibble_hex
 	STD	Y+3, R24
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_116:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -369,6 +412,8 @@ L_117:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:55:     uart.write('\n')
+; main.py:41:     # Zero comparison: 0 < 1 = true (send T)
+; main.py:45:     else:
 L_120:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -382,6 +427,8 @@ L_121:
 ; main.py:57:     while True:
 L_122:
 ; main.py:58:         delay_ms(1000)
+; main.py:21:     uart.write(nibble_hex(a >> 4))
+; main.py:30:     uart.write(nibble_hex(b))
 	CLR	R24
 	CLR	R25
 	STD	Y+4, R24
@@ -396,7 +443,7 @@ L_126:
 	BRLO	L_BR_SKIP_24
 	RJMP	L_127
 L_BR_SKIP_24:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	SUBI	R24, 255

@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ tmp_25 = _stack_base + 4
 .equ tmp_26 = _stack_base + 5
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -109,9 +109,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:30:     led  = Pin("PB5", Pin.OUT)
-; main.py:22: 
 ; main.py:8: #   - Serial terminal at 9600 baud — receives count byte on each press
-; main.py:18: from whisnake.hal.gpio import Pin
+; main.py:18: from whipsnake.hal.gpio import Pin
 ; main.py:28: 
 ; main.py:48:             uart.write(count)        # Send raw count byte over UART
 	LDI	R24, 1
@@ -124,6 +123,8 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
+; main.py:31:     uart = UART(9600)
+; main.py:27: 
 ; main.py:31:     uart = UART(9600)
 ; main.py:47:             led.toggle()
 	SBI	0x0A, 1
@@ -153,6 +154,8 @@ SEI
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.println("INT COUNTER")
+; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
 L_64:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -193,6 +196,8 @@ L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_7:
 ; main.py:48:             uart.write(count)        # Send raw count byte over UART
+; main.py:41:     uart.println("INT COUNTER")
+; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
 L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

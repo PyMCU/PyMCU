@@ -2,9 +2,9 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline2_uart_read_result = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -15,6 +15,7 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:12:     uart = UART(9600)
+; main.py:27:     while True:
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -25,7 +26,7 @@ main:
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:15:     uart.write_str("Hello, Whisnake!\n")
+; main.py:15:     uart.write_str("Hello, Whipsnake!\n")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
@@ -139,6 +140,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.db 72, 101, 108, 108, 111, 44, 32, 87, 104, 105, 115, 110, 97, 107, 101, 33, 10, 0
+.db 72, 101, 108, 108, 111, 44, 32, 87, 104, 105, 112, 115, 110, 97, 107, 101, 33, 10, 0
 __str_1:
 .db 85, 65, 82, 84, 32, 115, 116, 114, 105, 110, 103, 32, 115, 117, 112, 112, 111, 114, 116, 32, 119, 111, 114, 107, 115, 33, 0

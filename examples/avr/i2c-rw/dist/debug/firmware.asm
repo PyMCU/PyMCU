@@ -8,9 +8,9 @@
 .equ inline2_i2c_write_to_ack_status = _stack_base + 7
 .equ inline2_i2c_write_to_start_status = _stack_base + 8
 .equ tmp_30 = _stack_base + 10
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -21,6 +21,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:18:     uart = UART(9600)
+; main.py:27:     # read_from: attempt to read one byte from address 0x48
+; main.py:31:     uart.write('R')
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -32,7 +34,6 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:19:     i2c  = I2C()
-; main.py:34:     while True:
 	LDI	R24, 72
 	STS	0x00B8, R24
 	CLR	R24

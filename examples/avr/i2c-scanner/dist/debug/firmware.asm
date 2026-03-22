@@ -6,9 +6,9 @@
 .equ inline2_i2c_ping_status = _stack_base + 5
 .equ tmp_21 = _stack_base + 10
 .equ tmp_27 = _stack_base + 11
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -19,6 +19,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:21:     uart = UART(9600)
+; main.py:27:     found: uint8 = 0
+; main.py:31:         if i2c.ping(addr):
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:         addr += 1
@@ -35,7 +37,8 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:22:     i2c  = I2C()
-; main.py:34:             hi: uint8 = (addr >> 4) & 0x0F
+; main.py:37:             else:
+; main.py:41:             if lo < 10:
 	LDI	R24, 72
 	STS	0x00B8, R24
 	CLR	R24
@@ -46,6 +49,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -60,6 +65,8 @@ L_36:
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -82,7 +89,8 @@ L_44:
 	RJMP	L_45
 L_BR_SKIP_2:
 ; main.py:31:         if i2c.ping(addr):
-; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
+; main.py:49: 
 ; main.py:41:             if lo < 10:
 	LDI	R24, 164
 	STS	0x00BC, R24
@@ -170,6 +178,8 @@ L_BR_SKIP_8:
 	MOV	R24, R5
 	SUBI	R24, 208
 	STD	Y+3, R24
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_62:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -186,6 +196,8 @@ L_59:
 	MOV	R24, R5
 	SUBI	R24, 201
 	STD	Y+3, R24
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_66:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -209,6 +221,8 @@ L_BR_SKIP_11:
 	MOV	R24, R6
 	SUBI	R24, 208
 	STD	Y+3, R24
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -225,6 +239,8 @@ L_69:
 	MOV	R24, R6
 	SUBI	R24, 201
 	STD	Y+3, R24
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -236,6 +252,8 @@ L_77:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 L_68:
+; main.py:45:             uart.write('\n')
+; main.py:41:             if lo < 10:
 ; main.py:45:             uart.write('\n')
 L_80:
 	LDS	R24, 0x00C0
@@ -260,6 +278,8 @@ L_45:
 	MOV	R24, R7
 	SUBI	R24, 208
 	STD	Y+3, R24
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -271,6 +291,8 @@ L_87:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
+; main.py:41:             if lo < 10:
+; main.py:45:             uart.write('\n')
 L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

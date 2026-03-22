@@ -2,9 +2,9 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline3_uart_read_result = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -15,7 +15,6 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:28:     led = DigitalInOut(board.LED)
-; main.py:22: import board
 ; main.py:8: #
 ; main.py:18: # Wiring:
 ; main.py:28:     led = DigitalInOut(board.LED)
@@ -49,7 +48,8 @@ L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_4:
 ; main.py:31:     uart = busio.UART(board.TX, board.RX, baudrate=9600)
-; main.py:23: import busio
+; main.py:27: def main():
+; main.py:31:     uart = busio.UART(board.TX, board.RX, baudrate=9600)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -84,7 +84,6 @@ L_73:
 ; main.py:36:         led.value = 1
 	SBI	0x05, 5
 ; main.py:37:         uart.write(byte)
-; main.py:27: def main():
 L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

@@ -10,9 +10,9 @@
 .equ tmp_23 = _stack_base + 12
 .equ tmp_24 = _stack_base + 13
 .equ tmp_25 = _stack_base + 9
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -69,6 +69,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:38:     uart = UART(9600)
+; main.py:27:     return n + 55
+; main.py:31:     n: uint8 = val & 0x0F
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     uart.write('D')
@@ -85,8 +87,9 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:39:     spi = SPI(cs="PB0")
-; main.py:40: 
-; main.py:44: 
+; main.py:37: def main():
+; main.py:38:     uart = UART(9600)
+; main.py:42: 
 ; main.py:32:     if n < 10:
 	SBI	0x04, 3
 ; main.py:33:         return n + 48
@@ -98,24 +101,26 @@ main:
 ; main.py:39:     spi = SPI(cs="PB0")
 	LDI	R24, 80
 	OUT	0x2C, R24
-; main.py:45:     with spi:
-; main.py:48:     uart.write('D')
-; main.py:18: from whisnake.hal.spi import SPI
+; main.py:43:     test_byte: uint8 = 0xA5
+; main.py:46:         spi.write(test_byte)
+; main.py:18: from whipsnake.hal.spi import SPI
 	MOV	R24, R16
 	STD	Y+3, R24
-; main.py:49:     uart.write(':')
+; main.py:47: 
 ; main.py:38:     uart = UART(9600)
 	SBI	0x04, 0
-; main.py:50:     uart.write(nibble_hi(test_byte))
+; main.py:48:     uart.write('D')
 ; main.py:8: # Hardware: Arduino Uno
-; main.py:51:     uart.write(nibble_lo(test_byte))
+; main.py:49:     uart.write(':')
 ; main.py:38:     uart = UART(9600)
-; main.py:52:     uart.write('\n')
+; main.py:50:     uart.write(nibble_hi(test_byte))
 	SBI	0x05, 0
 ; main.py:41:     uart.println("SCS")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_68:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -129,6 +134,8 @@ L_69:
 	LDI	R24, 165
 	MOV	R4, R24
 ; main.py:45:     with spi:
+; main.py:54:     uart.println("OK")
+; main.py:57:         pass
 	CBI	0x05, 0
 ; main.py:44: 
 ; main.py:46:         spi.write(test_byte)
@@ -148,6 +155,8 @@ L_78:
 	SBI	0x05, 0
 ; main.py:49:     uart.write(':')
 ; main.py:48:     uart.write('D')
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -159,6 +168,8 @@ L_87:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:49:     uart.write(':')
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -174,6 +185,8 @@ L_91:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+4, R24
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_94:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -189,6 +202,8 @@ L_95:
 	MOV	R8, R24
 	RCALL	nibble_lo
 	STD	Y+4, R24
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_98:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -200,6 +215,8 @@ L_99:
 	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_102:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -214,6 +231,8 @@ L_103:
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.println("SCS")
+; main.py:45:     with spi:
 L_109:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

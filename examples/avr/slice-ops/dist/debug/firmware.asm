@@ -12,9 +12,9 @@
 .equ tmp_21 = _stack_base + 30
 .equ tmp_23 = _stack_base + 28
 .equ tmp_24 = _stack_base + 29
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -71,7 +71,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:33:     uart = UART(9600)
-; main.py:58:     uart.write(nibble_hi(even[0]))
+; main.py:27:     if n < 10:
+; main.py:31: 
 ; main.py:47:     last: uint8[4] = src[4:8]
 	SBI	0x0A, 1
 ; main.py:48:     uart.write('B')
@@ -89,9 +90,12 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:34:     uart.println("SL")
+; main.py:69:         pass
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -128,6 +132,8 @@ L_36:
 	LDD	R24, Y+19
 	STD	Y+11, R24
 ; main.py:40:     uart.write('A')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -139,6 +145,8 @@ L_40:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:41:     uart.write(':')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -154,6 +162,8 @@ L_44:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -169,6 +179,8 @@ L_48:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -180,6 +192,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:44:     uart.write('\n')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -200,6 +214,8 @@ L_56:
 	LDD	R24, Y+23
 	MOV	R7, R24
 ; main.py:48:     uart.write('B')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_59:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -211,6 +227,8 @@ L_60:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:49:     uart.write(':')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_63:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -226,6 +244,8 @@ L_64:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_67:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -241,6 +261,8 @@ L_68:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_71:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -252,6 +274,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -272,6 +296,8 @@ L_76:
 	LDD	R24, Y+22
 	MOV	R13, R24
 ; main.py:56:     uart.write('C')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -283,6 +309,8 @@ L_80:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:57:     uart.write(':')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -298,6 +326,8 @@ L_84:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -313,6 +343,8 @@ L_88:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -324,6 +356,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:60:     uart.write('\n')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -335,6 +369,8 @@ L_96:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:62:     uart.write('D')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -346,6 +382,8 @@ L_100:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:63:     uart.write(':')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_103:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -361,6 +399,8 @@ L_104:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_107:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -376,6 +416,8 @@ L_108:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_111:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -387,6 +429,8 @@ L_112:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:66:     uart.write('\n')
+; main.py:41:     uart.write(':')
+; main.py:45: 
 L_115:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

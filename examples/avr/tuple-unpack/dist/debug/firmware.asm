@@ -7,9 +7,9 @@
 .equ tmp_21 = _stack_base + 17
 .equ tmp_23 = _stack_base + 15
 .equ tmp_24 = _stack_base + 16
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -66,7 +66,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:49:     uart = UART(9600)
-; main.py:58:     uart.write('H')
+; main.py:27:     if n < 10:
+; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: def main():
@@ -85,10 +86,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:50:     uart.println("TU")
+; main.py:77:     a = Flag(1)
+; main.py:78:     b = Flag(2)
+; main.py:69: 
+; main.py:73:     uart.write(nibble_lo(last))
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:     uart.write(':')
+; main.py:79:     with a as fa, b as fb:
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_35:
 	LDS	R24, 0x00C0
@@ -124,7 +131,8 @@ L_36:
 	LDI	R24, 5
 	MOV	R11, R24
 ; main.py:58:     uart.write('H')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_39:
 	LDS	R24, 0x00C0
@@ -138,7 +146,8 @@ L_40:
 	LDI	R24, 72
 	STS	0x00C6, R24
 ; main.py:59:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_43:
 	LDS	R24, 0x00C0
@@ -156,7 +165,8 @@ L_44:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_47:
 	LDS	R24, 0x00C0
@@ -174,7 +184,8 @@ L_48:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_51:
 	LDS	R24, 0x00C0
@@ -188,7 +199,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:62:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_55:
 	LDS	R24, 0x00C0
@@ -202,7 +214,8 @@ L_56:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:64:     uart.write('R')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_59:
 	LDS	R24, 0x00C0
@@ -216,7 +229,8 @@ L_60:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_63:
 	LDS	R24, 0x00C0
@@ -234,7 +248,8 @@ L_64:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_67:
 	LDS	R24, 0x00C0
@@ -252,7 +267,8 @@ L_68:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_71:
 	LDS	R24, 0x00C0
@@ -266,7 +282,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_75:
 	LDS	R24, 0x00C0
@@ -280,7 +297,8 @@ L_76:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:70:     uart.write('L')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_79:
 	LDS	R24, 0x00C0
@@ -294,7 +312,8 @@ L_80:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:71:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_83:
 	LDS	R24, 0x00C0
@@ -312,7 +331,8 @@ L_84:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_87:
 	LDS	R24, 0x00C0
@@ -330,7 +350,8 @@ L_88:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_91:
 	LDS	R24, 0x00C0
@@ -344,7 +365,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:74:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_95:
 	LDS	R24, 0x00C0
@@ -367,7 +389,8 @@ L_96:
 	MOV	R14, R24
 ; main.py:79:     with a as fa, b as fb:
 ; main.py:80:         uart.write('W')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_103:
 	LDS	R24, 0x00C0
@@ -381,7 +404,8 @@ L_104:
 	LDI	R24, 87
 	STS	0x00C6, R24
 ; main.py:81:         uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_107:
 	LDS	R24, 0x00C0
@@ -399,7 +423,8 @@ L_108:
 	MOV	R6, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_111:
 	LDS	R24, 0x00C0
@@ -417,7 +442,8 @@ L_112:
 	MOV	R7, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_115:
 	LDS	R24, 0x00C0
@@ -431,7 +457,8 @@ L_116:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:84:         uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         pass
+; main.py:45:         pass
 ; main.py:76:     # F5: multi-item with
 L_119:
 	LDS	R24, 0x00C0

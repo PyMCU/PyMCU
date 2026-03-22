@@ -7,13 +7,13 @@
 .equ tmp_30 = _stack_base + 11
 .equ tmp_31 = _stack_base + 12
 .equ tmp_32 = _stack_base + 13
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -35,7 +35,6 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:21:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
-; main.py:22:     led  = Pin("PB5", Pin.OUT)
 ; main.py:12: # Each press sends the counter value as two bytes (big-endian).
 ; main.py:22:     led  = Pin("PB5", Pin.OUT)
 ; main.py:32:         if cur == 0 and prev == 1:
@@ -52,7 +51,6 @@ L_BIT_WRITE_SKIP_0:
 L_BIT_WRITE_DONE_1:
 	SBI	0x0B, 2
 ; main.py:22:     led  = Pin("PB5", Pin.OUT)
-; main.py:22:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: #   - Serial terminal at 9600 baud
 ; main.py:18: 
 ; main.py:28:     while True:
@@ -67,6 +65,8 @@ L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_4:
 ; main.py:23:     uart = UART(9600)
+; main.py:27: 
+; main.py:31:         # Detect falling edge (button press)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -151,6 +151,8 @@ L_SHIFT_DONE_16:
 	LDD	R24, Y+13
 	ANDI	R24, 255
 	STD	Y+3, R24
+; main.py:41:             if count == 1000:
+; main.py:45:         prev = cur
 L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -165,6 +167,8 @@ L_101:
 	MOV	R24, R4
 	ANDI	R24, 255
 	STD	Y+3, R24
+; main.py:41:             if count == 1000:
+; main.py:45:         prev = cur
 L_104:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -191,6 +195,8 @@ L_BR_SKIP_20:
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:43:                 uart.write('R')   # 'R' reset
+; main.py:41:             if count == 1000:
+; main.py:45:         prev = cur
 L_109:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -207,6 +213,8 @@ L_96:
 	MOV	R24, R6
 	MOV	R7, R24
 ; main.py:46:         delay_ms(10)    # 10 ms debounce window
+; main.py:21:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
+; main.py:30: 
 	CLR	R24
 	CLR	R25
 	STD	Y+4, R24
@@ -221,7 +229,7 @@ L_113:
 	BRLO	L_BR_SKIP_22
 	RJMP	L_114
 L_BR_SKIP_22:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	SUBI	R24, 255

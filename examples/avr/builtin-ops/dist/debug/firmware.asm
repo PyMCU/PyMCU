@@ -17,9 +17,9 @@
 .equ tmp_29 = _stack_base + 21
 .equ tmp_37 = _stack_base + 22
 .equ tmp_40 = _stack_base + 23
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -76,7 +76,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:46:     uart = UART(9600)
-; main.py:58:     uart.write(nibble_lo(result))
+; main.py:27: from whipsnake.types import uint8, inline
+; main.py:31: def nibble_lo(val: uint8) -> uint8:
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     uart.println("BO")
@@ -95,14 +96,17 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:48:     uart.println("BO")
-; main.py:101:     # -- any([0, 0, 1]) == 1 --
-; main.py:97:     uart.write(nibble_hi(s))
+; main.py:77:     uart.write('S')
+; main.py:78:     uart.write(':')
+; main.py:69:     uart.write(nibble_lo(result))
+; main.py:73:     z: uint8 = 7
 ; main.py:115:     uart.write('\n')
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:102:     a: uint8 = any([0, 0, 1])
-; main.py:71: 
+; main.py:79:     uart.write(nibble_hi(result))
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_35:
 	LDS	R24, 0x00C0
@@ -158,7 +162,8 @@ L_BR_SKIP_7:
 	MOV	R4, R24
 L_37:
 ; main.py:55:     uart.write('I')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_42:
 	LDS	R24, 0x00C0
@@ -172,7 +177,8 @@ L_43:
 	LDI	R24, 73
 	STS	0x00C6, R24
 ; main.py:56:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_46:
 	LDS	R24, 0x00C0
@@ -190,7 +196,8 @@ L_47:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_50:
 	LDS	R24, 0x00C0
@@ -208,7 +215,8 @@ L_51:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_54:
 	LDS	R24, 0x00C0
@@ -222,7 +230,8 @@ L_55:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:59:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_58:
 	LDS	R24, 0x00C0
@@ -278,7 +287,8 @@ L_BR_SKIP_17:
 	MOV	R4, R24
 L_60:
 ; main.py:66:     uart.write('N')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_65:
 	LDS	R24, 0x00C0
@@ -292,7 +302,8 @@ L_66:
 	LDI	R24, 78
 	STS	0x00C6, R24
 ; main.py:67:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_69:
 	LDS	R24, 0x00C0
@@ -310,7 +321,8 @@ L_70:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_73:
 	LDS	R24, 0x00C0
@@ -328,7 +340,8 @@ L_74:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_77:
 	LDS	R24, 0x00C0
@@ -342,7 +355,8 @@ L_78:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:70:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_81:
 	LDS	R24, 0x00C0
@@ -371,7 +385,8 @@ L_BR_SKIP_23:
 	MOV	R4, R24
 L_83:
 ; main.py:77:     uart.write('S')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_86:
 	LDS	R24, 0x00C0
@@ -385,7 +400,8 @@ L_87:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:78:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_90:
 	LDS	R24, 0x00C0
@@ -403,7 +419,8 @@ L_91:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_94:
 	LDS	R24, 0x00C0
@@ -421,7 +438,8 @@ L_95:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_98:
 	LDS	R24, 0x00C0
@@ -435,7 +453,8 @@ L_99:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:81:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_102:
 	LDS	R24, 0x00C0
@@ -462,7 +481,8 @@ L_BR_SKIP_29:
 	MOV	R4, R24
 L_104:
 ; main.py:87:     uart.write('T')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_107:
 	LDS	R24, 0x00C0
@@ -476,7 +496,8 @@ L_108:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:88:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_111:
 	LDS	R24, 0x00C0
@@ -494,7 +515,8 @@ L_112:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_115:
 	LDS	R24, 0x00C0
@@ -512,7 +534,8 @@ L_116:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_119:
 	LDS	R24, 0x00C0
@@ -526,7 +549,8 @@ L_120:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:91:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_123:
 	LDS	R24, 0x00C0
@@ -542,7 +566,8 @@ L_124:
 	LDI	R24, 6
 	MOV	R12, R24
 ; main.py:95:     uart.write('U')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_127:
 	LDS	R24, 0x00C0
@@ -556,7 +581,8 @@ L_128:
 	LDI	R24, 85
 	STS	0x00C6, R24
 ; main.py:96:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_131:
 	LDS	R24, 0x00C0
@@ -574,7 +600,8 @@ L_132:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_135:
 	LDS	R24, 0x00C0
@@ -592,7 +619,8 @@ L_136:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_139:
 	LDS	R24, 0x00C0
@@ -606,7 +634,8 @@ L_140:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:99:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_143:
 	LDS	R24, 0x00C0
@@ -622,7 +651,8 @@ L_144:
 	LDI	R24, 1
 	MOV	R9, R24
 ; main.py:103:     uart.write('A')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_147:
 	LDS	R24, 0x00C0
@@ -636,7 +666,8 @@ L_148:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:104:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_151:
 	LDS	R24, 0x00C0
@@ -654,7 +685,8 @@ L_152:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_155:
 	LDS	R24, 0x00C0
@@ -672,7 +704,8 @@ L_156:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_159:
 	LDS	R24, 0x00C0
@@ -686,7 +719,8 @@ L_160:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:107:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_163:
 	LDS	R24, 0x00C0
@@ -702,7 +736,8 @@ L_164:
 	LDI	R24, 1
 	MOV	R11, R24
 ; main.py:111:     uart.write('L')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_167:
 	LDS	R24, 0x00C0
@@ -716,7 +751,8 @@ L_168:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:112:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_171:
 	LDS	R24, 0x00C0
@@ -734,7 +770,8 @@ L_172:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_175:
 	LDS	R24, 0x00C0
@@ -752,7 +789,8 @@ L_176:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_179:
 	LDS	R24, 0x00C0
@@ -766,7 +804,8 @@ L_180:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:115:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_183:
 	LDS	R24, 0x00C0
@@ -793,7 +832,8 @@ L_184:
 	LDI	R24, 1
 	MOV	R8, R24
 ; main.py:121:     uart.write('Q')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_187:
 	LDS	R24, 0x00C0
@@ -807,7 +847,8 @@ L_188:
 	LDI	R24, 81
 	STS	0x00C6, R24
 ; main.py:122:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_191:
 	LDS	R24, 0x00C0
@@ -825,7 +866,8 @@ L_192:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_195:
 	LDS	R24, 0x00C0
@@ -843,7 +885,8 @@ L_196:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_199:
 	LDS	R24, 0x00C0
@@ -857,7 +900,8 @@ L_200:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:125:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_203:
 	LDS	R24, 0x00C0
@@ -871,7 +915,8 @@ L_204:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:126:     uart.write('R')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_207:
 	LDS	R24, 0x00C0
@@ -885,7 +930,8 @@ L_208:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:127:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_211:
 	LDS	R24, 0x00C0
@@ -903,7 +949,8 @@ L_212:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_215:
 	LDS	R24, 0x00C0
@@ -921,7 +968,8 @@ L_216:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_219:
 	LDS	R24, 0x00C0
@@ -935,7 +983,8 @@ L_220:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:130:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_223:
 	LDS	R24, 0x00C0
@@ -949,7 +998,8 @@ L_224:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:134:     uart.write('H')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_227:
 	LDS	R24, 0x00C0
@@ -963,7 +1013,8 @@ L_228:
 	LDI	R24, 72
 	STS	0x00C6, R24
 ; main.py:135:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_231:
 	LDS	R24, 0x00C0
@@ -977,13 +1028,15 @@ L_232:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:136:     uart.write_str(hex(255))
-; main.py:97:     uart.write(nibble_hi(s))
+; main.py:69:     uart.write(nibble_lo(result))
+; main.py:73:     z: uint8 = 7
 ; main.py:115:     uart.write('\n')
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:137:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_237:
 	LDS	R24, 0x00C0
@@ -997,7 +1050,8 @@ L_238:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:141:     uart.write('B')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_241:
 	LDS	R24, 0x00C0
@@ -1011,7 +1065,8 @@ L_242:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:142:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_245:
 	LDS	R24, 0x00C0
@@ -1025,13 +1080,15 @@ L_246:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:143:     uart.write_str(bin(5))
-; main.py:97:     uart.write(nibble_hi(s))
+; main.py:69:     uart.write(nibble_lo(result))
+; main.py:73:     z: uint8 = 7
 ; main.py:115:     uart.write('\n')
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
 ; main.py:144:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_251:
 	LDS	R24, 0x00C0
@@ -1044,7 +1101,8 @@ L_252:
 ; main.py:79:     uart.write(nibble_hi(result))
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:135:     uart.write(':')
+; main.py:112:     uart.write(':')
+; main.py:116: 
 ; main.py:121:     uart.write('Q')
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
@@ -1062,10 +1120,11 @@ L_255:
 L_254:
 	MOV	R24, R16
 	MOV	R17, R24
-; main.py:136:     uart.write_str(hex(255))
+; main.py:117:     # -- divmod(10, 3) => quotient=3, remainder=1 --
 	MOV	R10, R24
 ; main.py:149:     uart.write('V')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_258:
 	LDS	R24, 0x00C0
@@ -1079,7 +1138,8 @@ L_259:
 	LDI	R24, 86
 	STS	0x00C6, R24
 ; main.py:150:     uart.write(':')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_262:
 	LDS	R24, 0x00C0
@@ -1097,7 +1157,8 @@ L_263:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_266:
 	LDS	R24, 0x00C0
@@ -1115,7 +1176,8 @@ L_267:
 	MOV	R6, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_270:
 	LDS	R24, 0x00C0
@@ -1129,7 +1191,8 @@ L_271:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:153:     uart.write('\n')
-; main.py:71: 
+; main.py:41:         return n + 48
+; main.py:45: def main():
 ; main.py:76:         result = 1
 L_274:
 	LDS	R24, 0x00C0

@@ -30,7 +30,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:18:     uart = UART(9600)
-; main.py:18:     uart = UART(9600)
+; main.py:27:         # Wait for conversion complete: ADSC clears to 0 when done
+; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -54,7 +55,6 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 L_44:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -90,7 +90,6 @@ L_BR_SKIP_3:
 L_SKIP_2:
 	MOV	R4, R18
 ; main.py:33:         uart.write(result)
-; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -102,7 +101,8 @@ L_55:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:35:         delay_ms(100)
-; main.py:29:             pass
+; main.py:21:     uart.println("ADC")
+; main.py:30: 
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24

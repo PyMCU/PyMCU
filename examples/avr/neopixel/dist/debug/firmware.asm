@@ -3,13 +3,13 @@
 .equ _stack_base = RAMSTART
 .equ inline2__delay_ms_avr_i = _stack_base + 3
 .equ inline4__delay_us_avr_i = _stack_base + 5
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_drivers__neopixel_avr__ws2812_d:
+whipsnake_drivers__neopixel_avr__ws2812_d:
 	MOV	R4, R24
 	MOV	R5, R22
 	LDI	R24, 8
@@ -139,7 +139,7 @@ L_22:
 	RJMP	L_20
 L_21:
 	RET
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -161,6 +161,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:20:     uart  = UART(9600)
+; main.py:27:     while True:
+; main.py:31:             # Red
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:         phase += 1
@@ -188,6 +190,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:             strip.show()
+; main.py:45:         uart.write(phase)
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -218,7 +222,7 @@ L_BR_SKIP_15:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:40:             strip.set_pixel(0, 0, 255)
 	LDI	R24, 6
 	MOV	R4, R24
@@ -226,7 +230,7 @@ L_BR_SKIP_15:
 	MOV	R5, R24
 	LDI	R24, 6
 	LDI	R22, 255
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:41:             strip.show()
 	LDI	R24, 6
 	MOV	R4, R24
@@ -234,7 +238,7 @@ L_BR_SKIP_15:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:33:             strip.show()
 	CBI	0x0B, 6
 	CLR	R24
@@ -277,7 +281,7 @@ L_BR_SKIP_17:
 	MOV	R5, R24
 	LDI	R24, 6
 	LDI	R22, 255
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:40:             strip.set_pixel(0, 0, 255)
 	LDI	R24, 6
 	MOV	R4, R24
@@ -285,7 +289,7 @@ L_BR_SKIP_17:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:41:             strip.show()
 	LDI	R24, 6
 	MOV	R4, R24
@@ -293,7 +297,7 @@ L_BR_SKIP_17:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:37:             strip.show()
 	CBI	0x0B, 6
 	CLR	R24
@@ -336,7 +340,7 @@ L_BR_SKIP_19:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:40:             strip.set_pixel(0, 0, 255)
 	LDI	R24, 6
 	MOV	R4, R24
@@ -344,7 +348,7 @@ L_BR_SKIP_19:
 	MOV	R5, R24
 	LDI	R24, 6
 	CLR	R22
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:41:             strip.show()
 	LDI	R24, 6
 	MOV	R4, R24
@@ -352,7 +356,7 @@ L_BR_SKIP_19:
 	MOV	R5, R24
 	LDI	R24, 6
 	LDI	R22, 255
-	RCALL	whisnake_drivers__neopixel_avr__ws2812_d
+	RCALL	whipsnake_drivers__neopixel_avr__ws2812_d
 ; main.py:41:             strip.show()
 	CBI	0x0B, 6
 	CLR	R24
@@ -384,6 +388,8 @@ L_91:
 ; main.py:43:         asm("SEI")
 SEI
 ; main.py:45:         uart.write(phase)
+; main.py:41:             strip.show()
+; main.py:45:         uart.write(phase)
 L_270:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -395,6 +401,8 @@ L_271:
 	MOV	R24, R7
 	STS	0x00C6, R24
 ; main.py:46:         uart.write('\n')
+; main.py:41:             strip.show()
+; main.py:45:         uart.write(phase)
 L_274:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -417,6 +425,8 @@ L_BR_SKIP_23:
 	MOV	R7, R24
 L_276:
 ; main.py:52:         delay_ms(500)
+; main.py:21:     strip = NeoPixel("PD6", 1)
+; main.py:30:         if phase == 0:
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -431,7 +441,7 @@ L_279:
 	BRLO	L_BR_SKIP_24
 	RJMP	L_280
 L_BR_SKIP_24:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255

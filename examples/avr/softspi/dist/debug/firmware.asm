@@ -26,9 +26,9 @@
 .equ tmp_71 = _stack_base + 23
 .equ tmp_73 = _stack_base + 24
 .equ tmp_74 = _stack_base + 25
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -85,7 +85,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:41:     uart = UART(9600)
-; main.py:58: 
+; main.py:27:     n: uint8 = (val >> 4) & 0x0F
+; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     with spi:
@@ -102,10 +103,12 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:42:     spi  = SoftSPI(sck="PC0", mosi="PC1", miso="PC2", cs="PC3")
-; main.py:41:     uart = UART(9600)
-; main.py:47: 
+; main.py:38: 
+; main.py:39: 
+; main.py:45: 
 ; main.py:24: 
-; main.py:22: from whisnake.hal.softspi import SoftSPI
+; main.py:51:     uart.write('D')
+; main.py:52:     uart.write(':')
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
 ; main.py:20: #
 ; main.py:30:     return n + 55
@@ -121,7 +124,8 @@ L_BIT_WRITE_SKIP_2:
 	CBI	0x07, 0
 L_BIT_WRITE_DONE_3:
 ; main.py:25: 
-; main.py:22: from whisnake.hal.softspi import SoftSPI
+; main.py:51:     uart.write('D')
+; main.py:52:     uart.write(':')
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
 ; main.py:20: #
 ; main.py:30:     return n + 55
@@ -137,7 +141,8 @@ L_BIT_WRITE_SKIP_5:
 	CBI	0x07, 1
 L_BIT_WRITE_DONE_6:
 ; main.py:26: def nibble_hi(val: uint8) -> uint8:
-; main.py:22: from whisnake.hal.softspi import SoftSPI
+; main.py:51:     uart.write('D')
+; main.py:52:     uart.write(':')
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
 ; main.py:20: #
 ; main.py:30:     return n + 55
@@ -156,33 +161,37 @@ L_BIT_WRITE_DONE_9:
 	CBI	0x08, 0
 ; main.py:28:     if n < 10:
 	CBI	0x08, 1
-; main.py:49:         spi.write(test_byte)
+; main.py:47: 
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
-; main.py:50: 
+; main.py:48:     with spi:
 ; main.py:38: 
-; main.py:52:     uart.write(':')
+; main.py:50: 
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
-; main.py:53:     uart.write(nibble_hi(test_byte))
+; main.py:51:     uart.write('D')
 ; main.py:40: def main():
-; main.py:55:     uart.write('\n')
+; main.py:53:     uart.write(nibble_hi(test_byte))
 ; main.py:30:     return n + 55
-; main.py:56: 
+; main.py:54:     uart.write(nibble_lo(test_byte))
 ; main.py:42:     spi  = SoftSPI(sck="PC0", mosi="PC1", miso="PC2", cs="PC3")
+; main.py:55:     uart.write('\n')
 ; main.py:57:     uart.println("OK")
-; main.py:59:     while True:
 ; main.py:20: #
 	MOV	R24, R16
 	STD	Y+3, R24
-; main.py:60:         pass
+; main.py:58: 
 ; main.py:44:     uart.println("SSPI")
 	SBI	0x07, 3
+; main.py:59:     while True:
 ; main.py:10: #   SCK  = PC0 (A0)  -- clock
+; main.py:60:         pass
 ; main.py:44:     uart.println("SSPI")
 	SBI	0x08, 3
 ; main.py:44:     uart.println("SSPI")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_208:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -458,6 +467,8 @@ L_238:
 	CBI	0x08, 0
 	SBI	0x08, 3
 ; main.py:51:     uart.write('D')
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_244:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -469,6 +480,8 @@ L_245:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:52:     uart.write(':')
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_248:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -484,6 +497,8 @@ L_249:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+4, R24
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_252:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -499,6 +514,8 @@ L_253:
 	MOV	R8, R24
 	RCALL	nibble_lo
 	STD	Y+4, R24
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_256:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -510,6 +527,8 @@ L_257:
 	LDD	R24, Y+4
 	STS	0x00C6, R24
 ; main.py:55:     uart.write('\n')
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_260:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -524,6 +543,8 @@ L_261:
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     uart = UART(9600)
+; main.py:45: 
 L_267:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

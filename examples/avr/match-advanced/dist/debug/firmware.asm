@@ -10,9 +10,9 @@
 .equ tmp_21 = _stack_base + 21
 .equ tmp_23 = _stack_base + 19
 .equ tmp_24 = _stack_base + 20
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -69,7 +69,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:35:     uart = UART(9600)
-; main.py:58:             uart.write(':')
+; main.py:27: def nibble_lo(val: uint8) -> uint8:
+; main.py:31:     return n + 55
 ; main.py:47:     match val:
 	SBI	0x0A, 1
 ; main.py:48:         case x if x > 50:
@@ -88,10 +89,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:36:     uart.println("MA")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_35:
 	LDS	R24, 0x00C0
@@ -113,10 +120,16 @@ L_36:
 	RJMP	L_38
 L_BR_SKIP_3:
 ; main.py:42:             uart.println("G:HI")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_44:
 	LDS	R24, 0x00C0
@@ -132,10 +145,16 @@ L_45:
 	RJMP	L_37
 L_38:
 ; main.py:44:             uart.println("G:LO")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_52:
 	LDS	R24, 0x00C0
@@ -159,10 +178,16 @@ L_37:
 	RJMP	L_55
 L_BR_SKIP_6:
 ; main.py:49:             uart.println("G:HI")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_61:
 	LDS	R24, 0x00C0
@@ -178,10 +203,16 @@ L_62:
 	RJMP	L_54
 L_55:
 ; main.py:51:             uart.println("G:LO")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_69:
 	LDS	R24, 0x00C0
@@ -212,7 +243,8 @@ L_BR_SKIP_9:
 	CLR	R24
 	MOV	R14, R24
 ; main.py:57:             uart.write('S')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_75:
 	LDS	R24, 0x00C0
@@ -226,7 +258,8 @@ L_76:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:58:             uart.write(':')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_79:
 	LDS	R24, 0x00C0
@@ -244,7 +277,8 @@ L_80:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_83:
 	LDS	R24, 0x00C0
@@ -262,7 +296,8 @@ L_84:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_87:
 	LDS	R24, 0x00C0
@@ -276,7 +311,8 @@ L_88:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:61:             uart.write('\n')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_91:
 	LDS	R24, 0x00C0
@@ -292,10 +328,16 @@ L_92:
 	RJMP	L_71
 L_72:
 ; main.py:63:             uart.println("S:XX")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_99:
 	LDS	R24, 0x00C0
@@ -313,7 +355,8 @@ L_71:
 	STD	Y+11, R24
 	MOV	R6, R24
 ; main.py:69:             uart.write('C')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_105:
 	LDS	R24, 0x00C0
@@ -327,7 +370,8 @@ L_106:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:70:             uart.write(':')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_109:
 	LDS	R24, 0x00C0
@@ -345,7 +389,8 @@ L_110:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_113:
 	LDS	R24, 0x00C0
@@ -363,7 +408,8 @@ L_114:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_117:
 	LDS	R24, 0x00C0
@@ -377,7 +423,8 @@ L_118:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:73:             uart.write('\n')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_121:
 	LDS	R24, 0x00C0
@@ -407,7 +454,8 @@ L_125:
 	MOV	R24, R11
 	MOV	R5, R24
 ; main.py:79:             uart.write('O')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_128:
 	LDS	R24, 0x00C0
@@ -421,7 +469,8 @@ L_129:
 	LDI	R24, 79
 	STS	0x00C6, R24
 ; main.py:80:             uart.write(':')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_132:
 	LDS	R24, 0x00C0
@@ -439,7 +488,8 @@ L_133:
 	MOV	R8, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_136:
 	LDS	R24, 0x00C0
@@ -457,7 +507,8 @@ L_137:
 	MOV	R10, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_140:
 	LDS	R24, 0x00C0
@@ -471,7 +522,8 @@ L_141:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:83:             uart.write('\n')
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_144:
 	LDS	R24, 0x00C0
@@ -487,10 +539,16 @@ L_145:
 	RJMP	L_123
 L_124:
 ; main.py:85:             uart.println("O:XX")
+; main.py:77:     match code:
+; main.py:78:         case 1 | 2 as n:
+; main.py:69:             uart.write('C')
+; main.py:73:             uart.write('\n')
 	LDI	R30, low(__str_4 * 2)
 	LDI	R31, high(__str_4 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             uart.write(nibble_hi(v))
+; main.py:79:             uart.write('O')
+; main.py:41:         case x if x > 50:
+; main.py:45: 
 ; main.py:76:     code: uint8 = 2
 L_152:
 	LDS	R24, 0x00C0

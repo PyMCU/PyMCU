@@ -22,9 +22,9 @@
 .equ tmp_56 = _stack_base + 26
 .equ tmp_57 = _stack_base + 27
 .equ tmp_60 = _stack_base + 28
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -186,7 +186,8 @@ main:
 ; main.py:77:     GPIOR0[1] = 0
 	CBI	0x1E, 1
 ; main.py:79:     uart = UART(9600)
-; main.py:58:     DDRB[5] = 1
+; main.py:27: #
+; main.py:31: from whipsnake.chips.atmega328p import EICRA, EIMSK
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: # Convert a 4-bit nibble (0-15) to its ASCII hex character.
@@ -325,7 +326,8 @@ L_BIT_WRITE_DONE_11:
 	RJMP	L_39
 L_BR_SKIP_13:
 ; main.py:120:                     uart.write_str("R:")
-; main.py:97:             if tick == 64:
+; main.py:69: 
+; main.py:73:     ADCSRA.value = 135
 ; main.py:115:                 # Blink LED on each sample
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
@@ -342,7 +344,8 @@ L_BR_SKIP_13:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_44:
 	LDS	R24, 0x00C0
@@ -362,7 +365,8 @@ L_45:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_48:
 	LDS	R24, 0x00C0
@@ -376,7 +380,8 @@ L_49:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:123:                     uart.write_str(" A:")
-; main.py:97:             if tick == 64:
+; main.py:69: 
+; main.py:73:     ADCSRA.value = 135
 ; main.py:115:                 # Blink LED on each sample
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
@@ -393,7 +398,8 @@ L_49:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_54:
 	LDS	R24, 0x00C0
@@ -413,7 +419,8 @@ L_55:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_58:
 	LDS	R24, 0x00C0
@@ -427,7 +434,8 @@ L_59:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:126:                     uart.write_str(" L:")
-; main.py:97:             if tick == 64:
+; main.py:69: 
+; main.py:73:     ADCSRA.value = 135
 ; main.py:115:                 # Blink LED on each sample
 	LDI	R30, low(__str_4 * 2)
 	LDI	R31, high(__str_4 * 2)
@@ -444,7 +452,8 @@ L_59:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_64:
 	LDS	R24, 0x00C0
@@ -464,7 +473,8 @@ L_65:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_68:
 	LDS	R24, 0x00C0
@@ -478,7 +488,8 @@ L_69:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:129:                     uart.write_str(" H:")
-; main.py:97:             if tick == 64:
+; main.py:69: 
+; main.py:73:     ADCSRA.value = 135
 ; main.py:115:                 # Blink LED on each sample
 	LDI	R30, low(__str_5 * 2)
 	LDI	R31, high(__str_5 * 2)
@@ -495,7 +506,8 @@ L_69:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_74:
 	LDS	R24, 0x00C0
@@ -515,7 +527,8 @@ L_75:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_78:
 	LDS	R24, 0x00C0
@@ -529,7 +542,8 @@ L_79:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:132:                     uart.write('\n')
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_82:
 	LDS	R24, 0x00C0
@@ -556,7 +570,8 @@ L_39:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_86:
 	LDS	R24, 0x00C0
@@ -576,7 +591,8 @@ L_87:
 	MOV	R4, R24
 	RCALL	nibble_to_hex
 	STD	Y+3, R24
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_90:
 	LDS	R24, 0x00C0
@@ -590,7 +606,8 @@ L_91:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:136:                     uart.write('\n')
-; main.py:71:     ADMUX.value = 64
+; main.py:41: 
+; main.py:45:     GPIOR0[1] = 1
 ; main.py:76:     GPIOR0[0] = 0
 L_94:
 	LDS	R24, 0x00C0

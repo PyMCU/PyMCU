@@ -9,9 +9,9 @@
 .equ tmp_27 = _stack_base + 10
 .equ tmp_28 = _stack_base + 11
 .equ tmp_30 = _stack_base + 12
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -67,7 +67,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:51:     uart = UART(9600)
-; main.py:58:         chk: uint8 = encode_byte(val, val)   # also tests 2-arg call
+; main.py:27: #   Then:  "00\n01\n02\n...\nFF\n" cycling, each byte on its own line
+; main.py:31: 
 ; main.py:47:     return chk
 	SBI	0x0A, 1
 ; main.py:48: 
@@ -87,6 +88,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41: # Encode one byte as two hex chars sent via UART.
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -125,6 +128,8 @@ L_37:
 	RCALL	encode_byte
 	MOV	R10, R24
 ; main.py:59:         uart.write(hi)
+; main.py:41: # Encode one byte as two hex chars sent via UART.
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 L_41:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -136,6 +141,8 @@ L_42:
 	MOV	R24, R11
 	STS	0x00C6, R24
 ; main.py:60:         uart.write(lo)
+; main.py:41: # Encode one byte as two hex chars sent via UART.
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 L_45:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -147,6 +154,8 @@ L_46:
 	MOV	R24, R12
 	STS	0x00C6, R24
 ; main.py:61:         uart.write(chk)    # send checksum byte (hi ^ lo)
+; main.py:41: # Encode one byte as two hex chars sent via UART.
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 L_49:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -158,6 +167,8 @@ L_50:
 	MOV	R24, R10
 	STS	0x00C6, R24
 ; main.py:62:         uart.write('\n')
+; main.py:41: # Encode one byte as two hex chars sent via UART.
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 L_53:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

@@ -9,9 +9,9 @@
 .equ tmp_21 = _stack_base + 20
 .equ tmp_23 = _stack_base + 18
 .equ tmp_24 = _stack_base + 19
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -68,7 +68,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:31:     uart = UART(9600)
-; main.py:58:     uart.write('\n')
+; main.py:27:         return n + 48
+; main.py:31:     uart = UART(9600)
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     # -- 2. List comprehension over constant list: [v+1 for v in [10,20,30]] = [11,21,31] --
@@ -87,10 +88,12 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:33:     uart.println("LC")
+; main.py:69: 
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -124,7 +127,8 @@ L_36:
 	LDI	R24, 12
 	MOV	R5, R24
 ; main.py:42:     uart.write('R')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -136,7 +140,8 @@ L_40:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:43:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -152,7 +157,8 @@ L_44:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -168,7 +174,8 @@ L_48:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -180,7 +187,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:46:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -210,7 +218,8 @@ L_56:
 	LDI	R24, 63
 	MOV	R6, R24
 ; main.py:54:     uart.write('L')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_59:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -222,7 +231,8 @@ L_60:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:55:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_63:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -238,7 +248,8 @@ L_64:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_67:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -254,7 +265,8 @@ L_68:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_71:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -266,7 +278,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:58:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -290,7 +303,8 @@ L_76:
 	LDI	R24, 16
 	MOV	R4, R24
 ; main.py:64:     uart.write('F')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -302,7 +316,8 @@ L_80:
 	LDI	R24, 70
 	STS	0x00C6, R24
 ; main.py:65:     uart.write(':')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -318,7 +333,8 @@ L_84:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -334,7 +350,8 @@ L_88:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -346,7 +363,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:68:     uart.write('\n')
-; main.py:71:         pass
+; main.py:41:     sum_r = sum_r + doubled[3]
+; main.py:45:     uart.write(nibble_hex_lo(sum_r))
 L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

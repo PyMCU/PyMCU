@@ -2,9 +2,9 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline1_write_data = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -161,7 +161,8 @@ main:
 ; main.py:75:     GPIOR0[2] = 0
 	CBI	0x1E, 2
 ; main.py:77:     uart = UART(9600)
-; main.py:58: def main():
+; main.py:27: #   LED:               PB5 (Arduino pin 13, built-in) - on while running
+; main.py:31: #   Boot: "STOPWATCH\n"
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: @interrupt(0x0002)  # INT0 word addr 0x01
@@ -180,14 +181,17 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:78:     uart.println("STOPWATCH")
-; main.py:101:             seconds = 0
-; main.py:97:         # Handle INT1: reset
+; main.py:77:     uart = UART(9600)
+; main.py:78:     uart.println("STOPWATCH")
+; main.py:69:     # Enable INT0 (bit 0) and INT1 (bit 1) in EIMSK
+; main.py:73:     GPIOR0[0] = 0
 ; main.py:115:                     uart.write(seconds & 0xFF)
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:102:             running = 0
-; main.py:71: 
+; main.py:79: 
+; main.py:41: 
+; main.py:45:     GPIOR0[0] = 1
 ; main.py:76: 
 L_33:
 	LDS	R24, 0x00C0
@@ -256,7 +260,8 @@ L_37:
 ; main.py:103:             PORTB[5] = 0
 	CBI	0x05, 5
 ; main.py:104:             uart.write(0)
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     GPIOR0[0] = 1
 ; main.py:76: 
 L_43:
 	LDS	R24, 0x00C0
@@ -270,7 +275,8 @@ L_44:
 	CLR	R24
 	STS	0x00C6, R24
 ; main.py:105:             uart.write('\n')
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     GPIOR0[0] = 1
 ; main.py:76: 
 L_47:
 	LDS	R24, 0x00C0
@@ -314,7 +320,8 @@ L_BR_SKIP_5:
 ; main.py:115:                     uart.write(seconds & 0xFF)
 	ANDI	R24, 255
 	STD	Y+3, R24
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     GPIOR0[0] = 1
 ; main.py:76: 
 L_54:
 	LDS	R24, 0x00C0
@@ -328,7 +335,8 @@ L_55:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:116:                     uart.write('\n')
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     GPIOR0[0] = 1
 ; main.py:76: 
 L_58:
 	LDS	R24, 0x00C0

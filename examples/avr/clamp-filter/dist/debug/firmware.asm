@@ -4,9 +4,9 @@
 .equ inline2_uart_read_result = _stack_base + 6
 .equ tmp_18 = _stack_base + 19
 .equ tmp_20 = _stack_base + 20
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -69,7 +69,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:49:     uart = UART(9600)
-; main.py:58:         predicted: uint8 = predict(prev, clamped)
+; main.py:27: #
+; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: def main():
@@ -89,6 +90,8 @@ main:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41: # Simple 1st-order linear predictor: returns average of prev and curr,
+; main.py:45:     return clamp(avg, 32, 126)
 L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -103,6 +106,8 @@ L_36:
 	MOV	R8, R24
 ; main.py:54:     while True:
 L_37:
+; main.py:55:         raw: uint8 = uart.read()
+; main.py:59: 
 L_41:
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
@@ -132,6 +137,8 @@ L_42:
 	RCALL	predict
 	MOV	R11, R24
 ; main.py:60:         uart.write(clamped)
+; main.py:41: # Simple 1st-order linear predictor: returns average of prev and curr,
+; main.py:45:     return clamp(avg, 32, 126)
 L_45:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -143,6 +150,8 @@ L_46:
 	MOV	R24, R5
 	STS	0x00C6, R24
 ; main.py:61:         uart.write(predicted)
+; main.py:41: # Simple 1st-order linear predictor: returns average of prev and curr,
+; main.py:45:     return clamp(avg, 32, 126)
 L_49:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -154,6 +163,8 @@ L_50:
 	MOV	R24, R11
 	STS	0x00C6, R24
 ; main.py:62:         uart.write('\n')
+; main.py:41: # Simple 1st-order linear predictor: returns average of prev and curr,
+; main.py:45:     return clamp(avg, 32, 126)
 L_53:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

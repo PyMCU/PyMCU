@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ tmp_20 = _stack_base + 6
 .equ tmp_21 = _stack_base + 7
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -143,7 +143,8 @@ main:
 ; main.py:59:     GPIOR0[1] = 0
 	CBI	0x1E, 1
 ; main.py:61:     uart = UART(9600)
-; main.py:58:     GPIOR0[0] = 0
+; main.py:27: from whipsnake.chips.atmega328p import EICRA, EIMSK
+; main.py:31: 
 ; main.py:47:     # Timer0: normal mode, prescaler 1024 (CS02=1, CS00=1 = 5)
 	SBI	0x0A, 1
 ; main.py:48:     TCCR0B.value = 5
@@ -162,10 +163,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:62:     uart.println("MULTI ISR")
+; main.py:77:             if tick == 61:
+; main.py:78:                 tick = 0
+; main.py:69:     # overflow every 256 * 1024 / 16e6 = 16.384ms. 61 overflows ~ 1s.
+; main.py:73:     while True:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:     int_count: uint8  = 0
+; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
+; main.py:41: 
+; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
 L_33:
 	LDS	R24, 0x00C0
@@ -234,7 +241,8 @@ L_BIT_WRITE_SKIP_4:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_5:
 ; main.py:80:                 uart.write('T')
-; main.py:71:     int_count: uint8  = 0
+; main.py:41: 
+; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
 L_41:
 	LDS	R24, 0x00C0
@@ -248,7 +256,8 @@ L_42:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:81:                 uart.write('\n')
-; main.py:71:     int_count: uint8  = 0
+; main.py:41: 
+; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
 L_45:
 	LDS	R24, 0x00C0
@@ -270,7 +279,8 @@ L_37:
 	CBI	0x1E, 1
 	INC	R6
 ; main.py:86:             uart.write(int_count)
-; main.py:71:     int_count: uint8  = 0
+; main.py:41: 
+; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
 L_50:
 	LDS	R24, 0x00C0
@@ -284,7 +294,8 @@ L_51:
 	MOV	R24, R6
 	STS	0x00C6, R24
 ; main.py:87:             uart.write('\n')
-; main.py:71:     int_count: uint8  = 0
+; main.py:41: 
+; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
 L_54:
 	LDS	R24, 0x00C0

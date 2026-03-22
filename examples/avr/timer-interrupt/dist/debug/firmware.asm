@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ tmp_25 = _stack_base + 3
 .equ tmp_26 = _stack_base + 4
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -109,9 +109,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:29:     led  = Pin("PB5", Pin.OUT)
-; main.py:22: @interrupt(0x001A)
 ; main.py:8: #
-; main.py:18: from whisnake.hal.gpio import Pin
+; main.py:18: from whipsnake.hal.gpio import Pin
 ; main.py:28: def main():
 	LDI	R24, 1
 	TST	R24
@@ -124,6 +123,8 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
 ; main.py:30:     uart = UART(9600)
+; main.py:27: 
+; main.py:31: 
 ; main.py:47:             uart.write('\n')
 	SBI	0x0A, 1
 	CBI	0x0A, 0
@@ -149,6 +150,8 @@ SEI
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41: 
+; main.py:45:             led.toggle()
 L_64:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -188,6 +191,8 @@ L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_7:
 ; main.py:46:             uart.write('T')
+; main.py:41: 
+; main.py:45:             led.toggle()
 L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -199,6 +204,8 @@ L_73:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:47:             uart.write('\n')
+; main.py:41: 
+; main.py:45:             led.toggle()
 L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

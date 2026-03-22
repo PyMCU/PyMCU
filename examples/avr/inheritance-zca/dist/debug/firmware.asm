@@ -8,9 +8,9 @@
 .equ tmp_23 = _stack_base + 16
 .equ tmp_24 = _stack_base + 17
 .equ tmp_33 = _stack_base + 13
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -67,7 +67,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:71:     uart = UART(9600)
-; main.py:58:     n: uint8 = (val >> 4) & 0x0F
+; main.py:27: 
+; main.py:31: 
 ; main.py:47: # Function overloading: same name, different param types
 	SBI	0x0A, 1
 ; main.py:48: @inline
@@ -86,13 +87,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:73:     uart.println("IZ")
-; main.py:101:     uart.write(nibble_hex_lo(hi))
-; main.py:97:     lo: uint8 = w & 0xFF
+; main.py:77:     led.on()
+; main.py:78:     r: uint8 = led.read()
+; main.py:69: 
+; main.py:73:     uart.println("IZ")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:102:     uart.write(nibble_hex_hi(lo))
-; main.py:71:     uart = UART(9600)
+; main.py:79:     led.off()
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_35:
 	LDS	R24, 0x00C0
@@ -107,19 +111,12 @@ L_36:
 	STS	0x00C6, R24
 ; main.py:76:     led = LED("PB5")
 ; main.py:22:         self._pin = Pin(pin_name, Pin.OUT)
-; main.py:22:         self._pin = Pin(pin_name, Pin.OUT)
-; main.py:85: 
-; main.py:87:     b: uint8 = encode(0xAB)
-; main.py:89:     uart.write(':')
-; main.py:92:     uart.write('\n')
+; main.py:51: 
+; main.py:52: @inline
 ; main.py:8: # Output on UART (9600 baud):
-; main.py:93: 
 ; main.py:18: 
-; main.py:94:     # -- Test function overloading: encode(uint16) --
 ; main.py:28:     @inline
-; main.py:95:     w: uint16 = encode(0x1234)
 ; main.py:48: @inline
-; main.py:96:     hi: uint8 = (w >> 8) & 0xFF
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -130,8 +127,6 @@ L_BR_SKIP_5:
 L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_4:
-; main.py:97:     lo: uint8 = w & 0xFF
-; main.py:101:     uart.write(nibble_hex_lo(hi))
 	MOV	R12, R24
 ; main.py:77:     led.on()
 ; main.py:26:         self._pin.high()
@@ -150,7 +145,8 @@ L_BIT_DONE_7:
 ; main.py:30:         self._pin.low()
 	CBI	0x05, 5
 ; main.py:81:     uart.write('A')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_79:
 	LDS	R24, 0x00C0
@@ -164,7 +160,8 @@ L_80:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:82:     uart.write(':')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_83:
 	LDS	R24, 0x00C0
@@ -182,7 +179,8 @@ L_84:
 	MOV	R18, R11
 	ADD	R24, R18
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_87:
 	LDS	R24, 0x00C0
@@ -196,7 +194,8 @@ L_88:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:84:     uart.write('\n')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_91:
 	LDS	R24, 0x00C0
@@ -213,7 +212,8 @@ L_92:
 	LDI	R24, 171
 	MOV	R4, R24
 ; main.py:88:     uart.write('B')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_96:
 	LDS	R24, 0x00C0
@@ -227,7 +227,8 @@ L_97:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:89:     uart.write(':')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_100:
 	LDS	R24, 0x00C0
@@ -245,7 +246,8 @@ L_101:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_104:
 	LDS	R24, 0x00C0
@@ -263,7 +265,8 @@ L_105:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_108:
 	LDS	R24, 0x00C0
@@ -277,7 +280,8 @@ L_109:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:92:     uart.write('\n')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_112:
 	LDS	R24, 0x00C0
@@ -300,7 +304,8 @@ L_113:
 	LDI	R24, 52
 	MOV	R6, R24
 ; main.py:98:     uart.write('C')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_117:
 	LDS	R24, 0x00C0
@@ -314,7 +319,8 @@ L_118:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:99:     uart.write(':')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_121:
 	LDS	R24, 0x00C0
@@ -332,7 +338,8 @@ L_122:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_125:
 	LDS	R24, 0x00C0
@@ -350,7 +357,8 @@ L_126:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_129:
 	LDS	R24, 0x00C0
@@ -368,7 +376,8 @@ L_130:
 	MOV	R8, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_133:
 	LDS	R24, 0x00C0
@@ -386,7 +395,8 @@ L_134:
 	MOV	R10, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_137:
 	LDS	R24, 0x00C0
@@ -400,7 +410,8 @@ L_138:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:104:     uart.write('\n')
-; main.py:71:     uart = UART(9600)
+; main.py:41:         while i < code:
+; main.py:45: 
 ; main.py:76:     led = LED("PB5")
 L_141:
 	LDS	R24, 0x00C0

@@ -2,13 +2,13 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline2__delay_ms_avr_i = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -30,7 +30,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:24:     uart = UART(9600)
-; main.py:58:             uart.write('D')
+; main.py:27:     ch_a = PWM("PD6", 0)
+; main.py:31:     ch_b = PWM("PB3", 128)
 ; main.py:47:         ch_b.set_duty(duty_b)
 	SBI	0x0A, 1
 ; main.py:48:         ch_c.set_duty(duty_c)
@@ -47,7 +48,8 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:27:     ch_a = PWM("PD6", 0)
-; main.py:20: from whisnake.time import delay_ms
+; main.py:44: 
+; main.py:48:         ch_c.set_duty(duty_c)
 ; main.py:56:         cycle += 1
 	SBI	0x0A, 6
 ; main.py:57:         if cycle == 0:
@@ -59,17 +61,17 @@ main:
 ; main.py:59:             uart.write('\n')
 	LDI	R24, 3
 	OUT	0x25, R24
-; main.py:21: 
+; main.py:49: 
 ; main.py:14: #   PB1 = Arduino pin 9  (OC1A)
-; main.py:22: 
+; main.py:50:         delay_ms(5)
 ; main.py:32:     ch_b.start()
-; main.py:23: def main():
+; main.py:51: 
 ; main.py:44: 
 ; main.py:28:     ch_a.start()
-; main.py:58:             uart.write('D')
 	OUT	0x25, R24
 ; main.py:31:     ch_b = PWM("PB3", 128)
-; main.py:20: from whisnake.time import delay_ms
+; main.py:44: 
+; main.py:48:         ch_c.set_duty(duty_c)
 	SBI	0x04, 3
 	LDI	R24, 128
 	STS	0x00B3, R24
@@ -77,17 +79,17 @@ main:
 	STS	0x00B0, R24
 	LDI	R24, 4
 	STS	0x00B1, R24
-; main.py:21: 
+; main.py:49: 
 ; main.py:22: 
-; main.py:22: 
+; main.py:50:         delay_ms(5)
 ; main.py:36:     ch_c.start()
-; main.py:23: def main():
+; main.py:51: 
 ; main.py:48:         ch_c.set_duty(duty_c)
 ; main.py:32:     ch_b.start()
-; main.py:58:             uart.write('D')
 	STS	0x00B1, R24
 ; main.py:35:     ch_c = PWM("PB1", 64)
-; main.py:20: from whisnake.time import delay_ms
+; main.py:44: 
+; main.py:48:         ch_c.set_duty(duty_c)
 	SBI	0x04, 1
 	LDI	R24, 64
 	STS	0x0088, R24
@@ -95,19 +97,20 @@ main:
 	STS	0x0080, R24
 	LDI	R24, 10
 	STS	0x0081, R24
-; main.py:21: 
-; main.py:18: from whisnake.hal.pwm import PWM
-; main.py:22: 
+; main.py:49: 
+; main.py:18: from whipsnake.hal.pwm import PWM
+; main.py:50:         delay_ms(5)
 ; main.py:34:     # Channel C: Timer1 OC1A on PB1 (phase offset = 64)
-; main.py:23: def main():
+; main.py:51: 
 ; main.py:46:         ch_a.set_duty(duty_a)
 ; main.py:36:     ch_c.start()
-; main.py:58:             uart.write('D')
 	STS	0x0081, R24
 ; main.py:38:     uart.println("PWM3")
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     duty_b: uint8 = 128
+; main.py:45:     while True:
 L_117:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -129,18 +132,17 @@ L_118:
 ; main.py:45:     while True:
 L_119:
 ; main.py:46:         ch_a.set_duty(duty_a)
-; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R5
 	OUT	0x27, R24
 ; main.py:47:         ch_b.set_duty(duty_b)
-; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R6
 	STS	0x00B3, R24
 ; main.py:48:         ch_c.set_duty(duty_c)
-; main.py:42:     duty_c: uint8 = 64
 	MOV	R24, R7
 	STS	0x0088, R24
 ; main.py:50:         delay_ms(5)
+; main.py:21: 
+; main.py:30:     # Channel B: Timer2 OC2A on PB3 (phase offset = 128)
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -155,7 +157,7 @@ L_126:
 	BRLO	L_BR_SKIP_1
 	RJMP	L_127
 L_BR_SKIP_1:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255
@@ -178,6 +180,8 @@ L_127:
 	RJMP	L_128
 L_BR_SKIP_2:
 ; main.py:58:             uart.write('D')
+; main.py:41:     duty_b: uint8 = 128
+; main.py:45:     while True:
 L_131:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -189,6 +193,8 @@ L_132:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:59:             uart.write('\n')
+; main.py:41:     duty_b: uint8 = 128
+; main.py:45:     while True:
 L_135:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

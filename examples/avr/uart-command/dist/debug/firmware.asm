@@ -8,13 +8,13 @@
 .equ tmp_31 = _stack_base + 11
 .equ tmp_38 = _stack_base + 12
 .equ tmp_39 = _stack_base + 13
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -36,11 +36,10 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:34:     led  = Pin("PB5", Pin.OUT)
-; main.py:22: # Command byte constants — wrap in a class so match/case sees dotted names
-; main.py:85:                 # Unknown command: echo it back with '?' prefix
-; main.py:87:                 uart.write(cmd)
+; main.py:51:                     led.toggle()
+; main.py:52:                     delay_ms(100)
 ; main.py:8: #     'B' (66)  — blink LED 5 times
-; main.py:18: from whisnake.hal.uart import UART
+; main.py:18: from whipsnake.hal.uart import UART
 ; main.py:28:     TOGGLE = 84   # 'T'
 ; main.py:48:                 uart.println("BLINK x5")
 	LDI	R24, 1
@@ -54,7 +53,8 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
 ; main.py:35:     uart = UART(9600)
-; main.py:58:                 led.high()
+; main.py:27:     LOW    = 76   # 'L'
+; main.py:31: 
 ; main.py:47:                 # Blink 5 times (10 toggles)
 	SBI	0x0A, 1
 ; main.py:48:                 uart.println("BLINK x5")
@@ -73,10 +73,16 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:37:     uart.println("UART CMD READY")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_64:
 	LDS	R24, 0x00C0
@@ -90,10 +96,16 @@ L_65:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:38:     uart.println("B=Blink H=High L=Low T=Toggle S=Status ?=Help")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_71:
 	LDS	R24, 0x00C0
@@ -110,7 +122,8 @@ L_72:
 	MOV	R5, R24
 ; main.py:42:     while True:
 L_73:
-; main.py:84:             case _:
+; main.py:55:                 led.low()
+; main.py:59:                 led_on = 1
 ; main.py:85:                 # Unknown command: echo it back with '?' prefix
 L_77:
 	LDS	R24, 0x00C0
@@ -127,10 +140,16 @@ L_78:
 	RJMP	L_80
 L_BR_SKIP_6:
 ; main.py:48:                 uart.println("BLINK x5")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_2 * 2)
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_86:
 	LDS	R24, 0x00C0
@@ -174,7 +193,8 @@ L_BIT_WRITE_SKIP_11:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_12:
 ; main.py:52:                     delay_ms(100)
-; main.py:68:                 led.toggle()
+; main.py:21: 
+; main.py:30:     HELP   = 63   # '?'
 	CLR	R24
 	CLR	R25
 	STD	Y+4, R24
@@ -189,7 +209,7 @@ L_93:
 	BRLO	L_BR_SKIP_14
 	RJMP	L_94
 L_BR_SKIP_14:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	SUBI	R24, 255
@@ -219,10 +239,16 @@ L_BR_SKIP_15:
 	LDI	R24, 1
 	MOV	R5, R24
 ; main.py:60:                 uart.println("LED ON")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_103:
 	LDS	R24, 0x00C0
@@ -248,10 +274,16 @@ L_BR_SKIP_17:
 	CLR	R24
 	MOV	R5, R24
 ; main.py:65:                 uart.println("LED OFF")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_4 * 2)
 	LDI	R31, high(__str_4 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_112:
 	LDS	R24, 0x00C0
@@ -302,10 +334,16 @@ L_BR_SKIP_25:
 	CLR	R24
 	MOV	R5, R24
 ; main.py:71:                     uart.println("LED OFF")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_4 * 2)
 	LDI	R31, high(__str_4 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_123:
 	LDS	R24, 0x00C0
@@ -324,10 +362,16 @@ L_117:
 	LDI	R24, 1
 	MOV	R5, R24
 ; main.py:74:                     uart.println("LED ON")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_130:
 	LDS	R24, 0x00C0
@@ -349,6 +393,8 @@ L_114:
 	RJMP	L_132
 L_BR_SKIP_28:
 ; main.py:77:                 uart.write_str("LED=")
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_5 * 2)
 	LDI	R31, high(__str_5 * 2)
 	RCALL	__uart_send_z
@@ -356,7 +402,8 @@ L_BR_SKIP_28:
 	MOV	R24, R5
 	SUBI	R24, 208
 	STD	Y+3, R24
-; main.py:71:                     uart.println("LED OFF")
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_137:
 	LDS	R24, 0x00C0
@@ -370,7 +417,8 @@ L_138:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:79:                 uart.write('\n')
-; main.py:71:                     uart.println("LED OFF")
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_141:
 	LDS	R24, 0x00C0
@@ -391,10 +439,16 @@ L_132:
 	RJMP	L_143
 L_BR_SKIP_31:
 ; main.py:82:                 uart.println("B=Blink H=High L=Low T=Toggle S=Status ?=Help")
+; main.py:77:                 uart.write_str("LED=")
+; main.py:78:                 uart.write(led_on + 48)    # 48='0', 49='1'
+; main.py:69:                 if led_on == 1:
+; main.py:73:                     led_on = 1
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:                     uart.println("LED OFF")
+; main.py:79:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_149:
 	LDS	R24, 0x00C0
@@ -410,7 +464,8 @@ L_150:
 	RJMP	L_79
 L_143:
 ; main.py:86:                 uart.write('?')
-; main.py:71:                     uart.println("LED OFF")
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_154:
 	LDS	R24, 0x00C0
@@ -424,7 +479,8 @@ L_155:
 	LDI	R24, 63
 	STS	0x00C6, R24
 ; main.py:87:                 uart.write(cmd)
-; main.py:71:                     uart.println("LED OFF")
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_158:
 	LDS	R24, 0x00C0
@@ -438,7 +494,8 @@ L_159:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:88:                 uart.write('\n')
-; main.py:71:                     uart.println("LED OFF")
+; main.py:41: 
+; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
 L_162:
 	LDS	R24, 0x00C0

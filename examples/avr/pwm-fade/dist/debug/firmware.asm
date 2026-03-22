@@ -27,7 +27,6 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:15:     pwm = PWM("PD6", 0)
-; main.py:22:         pwm.set_duty(duty)
 	SBI	0x0A, 6
 	CLR	R24
 	OUT	0x27, R24
@@ -35,11 +34,8 @@ main:
 	OUT	0x24, R24
 	LDI	R24, 3
 	OUT	0x25, R24
-; main.py:23:         delay_ms(5)
 ; main.py:14:     # PD6 = OC0A: Timer0 Fast PWM, initial duty = 0
-; main.py:24: 
 ; main.py:32:                 if duty == 0:
-; main.py:25:         match going_up:
 ; main.py:16:     pwm.start()
 	OUT	0x25, R24
 	CLR	R24
@@ -52,7 +48,8 @@ L_28:
 	MOV	R24, R4
 	OUT	0x27, R24
 ; main.py:23:         delay_ms(5)
-; main.py:29:                 else:
+; main.py:21:     while True:
+; main.py:30:                     duty += 1
 	CLR	R24
 	CLR	R25
 	STD	Y+0, R24

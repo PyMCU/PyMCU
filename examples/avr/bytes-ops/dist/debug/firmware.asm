@@ -19,9 +19,9 @@
 .equ tmp_21 = _stack_base + 32
 .equ tmp_23 = _stack_base + 30
 .equ tmp_24 = _stack_base + 31
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -78,7 +78,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:38:     uart = UART(9600)
-; main.py:58:     uart.write('\n')
+; main.py:27:     if n < 10:
+; main.py:31: def nibble_hex_lo(val: uint8) -> uint8:
 ; main.py:47:     uart.write(':')
 	SBI	0x0A, 1
 ; main.py:48:     uart.write(nibble_hex_hi(sum_f))
@@ -97,13 +98,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:40:     uart.println("BYTES")
-; main.py:101:     uart.write('\n')
-; main.py:97:     uart.write('I')
+; main.py:77:     uart.write('\n')
+; main.py:78: 
+; main.py:69:     lo_b: uint8 = 1
+; main.py:73:     uart.write('L')
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:102: 
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:79:     # -- 5. int.from_bytes compile-time big b"\x01\x02" -> 0x0102; low = 0x02 --
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_35:
 	LDS	R24, 0x00C0
@@ -125,7 +129,8 @@ L_36:
 	LDI	R24, 139
 	MOV	R8, R24
 ; main.py:46:     uart.write('F')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_39:
 	LDS	R24, 0x00C0
@@ -139,7 +144,8 @@ L_40:
 	LDI	R24, 70
 	STS	0x00C6, R24
 ; main.py:47:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_43:
 	LDS	R24, 0x00C0
@@ -157,7 +163,8 @@ L_44:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_47:
 	LDS	R24, 0x00C0
@@ -175,7 +182,8 @@ L_48:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_51:
 	LDS	R24, 0x00C0
@@ -189,7 +197,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:50:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_55:
 	LDS	R24, 0x00C0
@@ -209,7 +218,8 @@ L_56:
 	LDI	R24, 43
 	STD	Y+6, R24
 ; main.py:54:     uart.write('A')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_59:
 	LDS	R24, 0x00C0
@@ -223,7 +233,8 @@ L_60:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:55:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_63:
 	LDS	R24, 0x00C0
@@ -241,7 +252,8 @@ L_64:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_67:
 	LDS	R24, 0x00C0
@@ -259,7 +271,8 @@ L_68:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_71:
 	LDS	R24, 0x00C0
@@ -273,7 +286,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:58:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_75:
 	LDS	R24, 0x00C0
@@ -296,7 +310,8 @@ L_76:
 	CLR	R24
 	STD	Y+25, R24
 ; main.py:62:     uart.write('Z')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_79:
 	LDS	R24, 0x00C0
@@ -310,7 +325,8 @@ L_80:
 	LDI	R24, 90
 	STS	0x00C6, R24
 ; main.py:63:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_83:
 	LDS	R24, 0x00C0
@@ -328,7 +344,8 @@ L_84:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_87:
 	LDS	R24, 0x00C0
@@ -346,7 +363,8 @@ L_88:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_91:
 	LDS	R24, 0x00C0
@@ -360,7 +378,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:66:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_95:
 	LDS	R24, 0x00C0
@@ -383,7 +402,8 @@ L_96:
 	STD	Y+19, R25
 	MOV	R12, R24
 ; main.py:73:     uart.write('L')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_99:
 	LDS	R24, 0x00C0
@@ -397,7 +417,8 @@ L_100:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:74:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_103:
 	LDS	R24, 0x00C0
@@ -415,7 +436,8 @@ L_104:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_107:
 	LDS	R24, 0x00C0
@@ -433,7 +455,8 @@ L_108:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_111:
 	LDS	R24, 0x00C0
@@ -447,7 +470,8 @@ L_112:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:77:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_115:
 	LDS	R24, 0x00C0
@@ -466,7 +490,8 @@ L_116:
 	STD	Y+17, R25
 	MOV	R11, R24
 ; main.py:82:     uart.write('B')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_119:
 	LDS	R24, 0x00C0
@@ -480,7 +505,8 @@ L_120:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:83:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_123:
 	LDS	R24, 0x00C0
@@ -498,7 +524,8 @@ L_124:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_127:
 	LDS	R24, 0x00C0
@@ -516,7 +543,8 @@ L_128:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_131:
 	LDS	R24, 0x00C0
@@ -530,7 +558,8 @@ L_132:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:86:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_135:
 	LDS	R24, 0x00C0
@@ -577,7 +606,8 @@ L_136:
 	LDI	R24, 60
 	MOV	R7, R24
 ; main.py:97:     uart.write('I')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_139:
 	LDS	R24, 0x00C0
@@ -591,7 +621,8 @@ L_140:
 	LDI	R24, 73
 	STS	0x00C6, R24
 ; main.py:98:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_143:
 	LDS	R24, 0x00C0
@@ -609,7 +640,8 @@ L_144:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_147:
 	LDS	R24, 0x00C0
@@ -627,7 +659,8 @@ L_148:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_151:
 	LDS	R24, 0x00C0
@@ -641,7 +674,8 @@ L_152:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:101:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_155:
 	LDS	R24, 0x00C0
@@ -655,7 +689,8 @@ L_156:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:104:     uart.write('V')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_159:
 	LDS	R24, 0x00C0
@@ -669,7 +704,8 @@ L_160:
 	LDI	R24, 86
 	STS	0x00C6, R24
 ; main.py:105:     uart.write(':')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_163:
 	LDS	R24, 0x00C0
@@ -687,7 +723,8 @@ L_164:
 	MOV	R5, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_167:
 	LDS	R24, 0x00C0
@@ -705,7 +742,8 @@ L_168:
 	MOV	R4, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_171:
 	LDS	R24, 0x00C0
@@ -719,7 +757,8 @@ L_172:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:108:     uart.write('\n')
-; main.py:71:     val_l: uint16 = int.from_bytes([lo_b, hi_b], 'little')
+; main.py:41: 
+; main.py:45:         sum_f = sum_f + x
 ; main.py:76:     uart.write(nibble_hex_lo(low_l))
 L_175:
 	LDS	R24, 0x00C0

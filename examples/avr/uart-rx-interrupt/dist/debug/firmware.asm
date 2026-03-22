@@ -10,7 +10,7 @@
 .equ tmp_23 = _stack_base + 23
 .equ tmp_24 = _stack_base + 24
 .equ tmp_26 = _stack_base + 25
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
 
 .org 0x0000
 	RJMP	main
@@ -136,6 +136,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:29:     uart = UART(9600)
+; main.py:27: 
+; main.py:31: 
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103

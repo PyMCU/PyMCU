@@ -2,13 +2,13 @@
 .equ RAMSTART = 0x0100
 .equ _stack_base = RAMSTART
 .equ inline2__delay_ms_avr_i = _stack_base + 3
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -52,6 +52,7 @@ L_31:
 	LDI	R24, 82
 	STS	0x00C6, R24
 ; main.py:18:     delay_ms(1000)
+; main.py:21:     delay_ms(3000)
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -66,7 +67,7 @@ L_34:
 	BRLO	L_BR_SKIP_1
 	RJMP	L_35
 L_BR_SKIP_1:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255
@@ -87,6 +88,7 @@ L_39:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:21:     delay_ms(3000)
+; main.py:21:     delay_ms(3000)
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -101,7 +103,7 @@ L_42:
 	BRLO	L_BR_SKIP_3
 	RJMP	L_43
 L_BR_SKIP_3:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255
@@ -135,6 +137,7 @@ L_53:
 	LDI	R24, 72
 	STS	0x00C6, R24
 ; main.py:26:         delay_ms(500)
+; main.py:21:     delay_ms(3000)
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -149,7 +152,7 @@ L_56:
 	BRLO	L_BR_SKIP_6
 	RJMP	L_57
 L_BR_SKIP_6:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255

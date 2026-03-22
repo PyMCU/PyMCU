@@ -12,7 +12,7 @@
 #   board.TX  -> D1   board.RX  -> D0
 #   board.SCK -> D13  board.MOSI -> D11  board.MISO -> D12  board.SS -> D10
 #
-# Note: explicit string literals are required here because the pymcu compiler only
+# Note: explicit string literals are required here because the Whipsnake compiler only
 # registers module-level globals for explicit assignments, not re-exported imports.
 
 # Digital pins

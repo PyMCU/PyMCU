@@ -5,9 +5,9 @@
 .equ tmp_26 = _stack_base + 5
 .equ tmp_27 = _stack_base + 6
 .equ tmp_30 = _stack_base + 7
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -88,9 +88,9 @@
 	NOP
 
 
-; --- Whisnake AVR Math Runtime ---
+; --- Whipsnake AVR Math Runtime ---
 ; -----------------------------------------------------------------------------
-; PyMCU AVR Math Runtime
+; Whipsnake AVR Math Runtime
 ; -----------------------------------------------------------------------------
 ;
 ; __div8: Unsigned 8-bit Division
@@ -165,9 +165,10 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:29:     btn  = Pin("PB0", Pin.IN, pull=Pin.PULL_UP)
-; main.py:22: 
+; main.py:51:                 uart.write((count / 10) + 48)
+; main.py:52:                 uart.write((count % 10) + 48)
 ; main.py:8: #   - Serial terminal at 9600 baud: prints "COUNT:NN\n" on each press
-; main.py:18: from whisnake.chips.atmega328p import PCICR, PCMSK0, GPIOR0
+; main.py:18: from whipsnake.chips.atmega328p import PCICR, PCMSK0, GPIOR0
 ; main.py:28: def main():
 ; main.py:38:     asm("SEI")
 	CLR	R24
@@ -182,6 +183,8 @@ L_BIT_WRITE_SKIP_0:
 L_BIT_WRITE_DONE_1:
 	SBI	0x05, 0
 ; main.py:30:     uart = UART(9600)
+; main.py:27: 
+; main.py:31: 
 ; main.py:47:             # Only count falling edges (button pressed = low)
 	SBI	0x0A, 1
 ; main.py:48:             if btn.value() == 0:
@@ -212,6 +215,8 @@ SEI
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41: 
+; main.py:45:         if GPIOR0[0] == 1:
 L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -256,6 +261,8 @@ L_BR_SKIP_6:
 	MOV	R16, R24
 	SUBI	R24, 208
 	STD	Y+3, R24
+; main.py:41: 
+; main.py:45:         if GPIOR0[0] == 1:
 L_78:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -273,6 +280,8 @@ L_79:
 	MOV	R16, R24
 	SUBI	R24, 208
 	STD	Y+3, R24
+; main.py:41: 
+; main.py:45:         if GPIOR0[0] == 1:
 L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -284,6 +293,8 @@ L_83:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:53:                 uart.write('\n')
+; main.py:41: 
+; main.py:45:         if GPIOR0[0] == 1:
 L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

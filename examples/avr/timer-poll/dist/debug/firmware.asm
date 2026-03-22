@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ tmp_27 = _stack_base + 6
 .equ tmp_28 = _stack_base + 7
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -16,7 +16,6 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:21:     led  = Pin("PB5", Pin.OUT)
-; main.py:22:     uart = UART(9600)
 ; main.py:8: #
 ; main.py:18: 
 ; main.py:28:     ticks: uint16 = 0
@@ -31,6 +30,8 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
 ; main.py:22:     uart = UART(9600)
+; main.py:27: 
+; main.py:31:         # Poll Timer0 Overflow Flag (TOV0 = bit 0 of TIFR0, address 0x35)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -42,10 +43,10 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:25:     timer = Timer(0, 256)
-; main.py:23: 
+; main.py:42:                 uart.write('T')
+; main.py:43:                 uart.write('\n')
 	CLR	R24
 	MOV	R6, R24
-; main.py:29: 
 ; main.py:10: #   LED on PB5 (built-in): toggles every ~1 second
 	CLR	R24
 	OUT	0x24, R24
@@ -137,6 +138,7 @@ L_BIT_WRITE_SKIP_9:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_10:
 ; main.py:42:                 uart.write('T')
+; main.py:41:                 led.toggle()
 L_84:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -148,6 +150,7 @@ L_85:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
+; main.py:41:                 led.toggle()
 L_88:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

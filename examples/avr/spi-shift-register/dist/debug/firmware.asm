@@ -7,13 +7,13 @@
 .equ tmp_25 = _stack_base + 12
 .equ tmp_27 = _stack_base + 13
 .equ tmp_29 = _stack_base + 14
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
-whisnake_time__delay_1ms_avr:
+whipsnake_time__delay_1ms_avr:
     PUSH R24
     PUSH R25
     LDI R24, 21
@@ -35,8 +35,9 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:32:     spi  = SPI()
-; main.py:40:     while True:
-; main.py:44: 
+; main.py:37:     pattern: uint8 = 0x01
+; main.py:38:     mode:    uint8 = MODE_RUNNING
+; main.py:42:         with spi:             # select() on enter, deselect() on exit
 ; main.py:32:     spi  = SPI()
 	SBI	0x04, 3
 ; main.py:33:     uart = UART(9600)
@@ -48,9 +49,10 @@ main:
 ; main.py:39: 
 	LDI	R24, 80
 	OUT	0x2C, R24
-; main.py:45:         uart.write(pattern)
+; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
 ; main.py:33:     uart = UART(9600)
-; main.py:58:                 pattern = (pattern << 1) | msb
+; main.py:27: MODE_CHASER  = 1
+; main.py:31: def main():
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:         # --- Advance pattern for next frame ---
@@ -62,17 +64,23 @@ main:
 ; main.py:53:                 pattern = (pattern << 1) | msb
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68:         from whisnake.chips.atmega328p import UCSR0A, UDR0
+; main.py:68:         from whipsnake.chips.atmega328p import UCSR0A, UDR0
 	LDI	R24, 6
 	STS	0x00C2, R24
 ; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:35:     uart.println("SPI 74HC595 DEMO")
+; main.py:77:                 case MODE_RUNNING:
+; main.py:78:                     uart.println("MODE: RUNNING")
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
+; main.py:73:                 mode = MODE_RUNNING
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             mode += 1
+; main.py:79:                 case MODE_CHASER:
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
 L_36:
 	LDS	R24, 0x00C0
@@ -92,8 +100,9 @@ L_37:
 ; main.py:40:     while True:
 L_38:
 ; main.py:42:         with spi:             # select() on enter, deselect() on exit
-; main.py:58:                 pattern = (pattern << 1) | msb
-; main.py:63:                 # Binary counter
+; main.py:54: 
+; main.py:57:                 msb = (pattern >> 7) & 1
+; main.py:62:             case _:
 ; main.py:44: 
 	CBI	0x05, 2
 ; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
@@ -112,12 +121,14 @@ L_48:
 	IN	R24, 0x2E
 	STD	Y+5, R24
 ; main.py:59:                 if pattern == 0x03:    # wrapped around
+; main.py:66:         # --- Mode change on any incoming UART byte ---
 ; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
 ; main.py:74:             pattern = 0x01         # reset pattern on mode change
 ; main.py:49:         match mode:
 	SBI	0x05, 2
 ; main.py:45:         uart.write(pattern)
-; main.py:71:             mode += 1
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
 L_56:
 	LDS	R24, 0x00C0
@@ -131,7 +142,8 @@ L_57:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:46:         delay_ms(120)
-; main.py:68:         from whisnake.chips.atmega328p import UCSR0A, UDR0
+; main.py:21: from whipsnake.hal.spi import SPI
+; main.py:30: 
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -146,7 +158,7 @@ L_60:
 	BRLO	L_BR_SKIP_3
 	RJMP	L_61
 L_BR_SKIP_3:
-	RCALL	whisnake_time__delay_1ms_avr
+	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	SUBI	R24, 255
@@ -206,10 +218,16 @@ L_68:
 	MOV	R24, R5
 	MOV	R8, R24
 ; main.py:78:                     uart.println("MODE: RUNNING")
+; main.py:77:                 case MODE_RUNNING:
+; main.py:78:                     uart.println("MODE: RUNNING")
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
+; main.py:73:                 mode = MODE_RUNNING
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
-; main.py:71:             mode += 1
+; main.py:79:                 case MODE_CHASER:
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
 L_76:
 	LDS	R24, 0x00C0
@@ -224,7 +242,13 @@ L_77:
 	STS	0x00C6, R24
 	RJMP	L_69
 ; main.py:80:                     uart.println("MODE: CHASER")
-; main.py:71:             mode += 1
+; main.py:77:                 case MODE_RUNNING:
+; main.py:78:                     uart.println("MODE: RUNNING")
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
+; main.py:73:                 mode = MODE_RUNNING
+; main.py:79:                 case MODE_CHASER:
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
 L_84:
 	LDS	R24, 0x00C0
@@ -239,7 +263,13 @@ L_85:
 	STS	0x00C6, R24
 	RJMP	L_69
 ; main.py:82:                     uart.println("MODE: COUNTER")
-; main.py:71:             mode += 1
+; main.py:77:                 case MODE_RUNNING:
+; main.py:78:                     uart.println("MODE: RUNNING")
+; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
+; main.py:73:                 mode = MODE_RUNNING
+; main.py:79:                 case MODE_CHASER:
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
+; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
 L_92:
 	LDS	R24, 0x00C0

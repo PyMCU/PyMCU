@@ -7,9 +7,9 @@
 .equ tmp_21 = _stack_base + 12
 .equ tmp_23 = _stack_base + 10
 .equ tmp_24 = _stack_base + 11
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -66,7 +66,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:33:     uart = UART(9600)
-; main.py:58:     def add(delta: uint8):
+; main.py:27:     if n < 10:
+; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48:     uart.write('A')
@@ -85,10 +86,14 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:34:     uart.println("NL")
+; main.py:77:         pass
+; main.py:69:     add(15)
+; main.py:73:     uart.write(nibble_lo(total))
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_35:
 	LDS	R24, 0x00C0
@@ -118,7 +123,8 @@ L_36:
 	INC	R24
 	MOV	R5, R24
 ; main.py:48:     uart.write('A')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_42:
 	LDS	R24, 0x00C0
@@ -131,7 +137,8 @@ L_43:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:49:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_46:
 	LDS	R24, 0x00C0
@@ -148,7 +155,8 @@ L_47:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_50:
 	LDS	R24, 0x00C0
@@ -165,7 +173,8 @@ L_51:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_54:
 	LDS	R24, 0x00C0
@@ -178,7 +187,8 @@ L_55:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_58:
 	LDS	R24, 0x00C0
@@ -198,7 +208,8 @@ L_59:
 	LDI	R24, 10
 	MOV	R4, R24
 ; main.py:63:     uart.write('B')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_63:
 	LDS	R24, 0x00C0
@@ -211,7 +222,8 @@ L_64:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:64:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_67:
 	LDS	R24, 0x00C0
@@ -228,7 +240,8 @@ L_68:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_71:
 	LDS	R24, 0x00C0
@@ -245,7 +258,8 @@ L_72:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_75:
 	LDS	R24, 0x00C0
@@ -258,7 +272,8 @@ L_76:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:67:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_79:
 	LDS	R24, 0x00C0
@@ -277,7 +292,8 @@ L_80:
 	SUBI	R24, 241
 	MOV	R4, R24
 ; main.py:70:     uart.write('C')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_84:
 	LDS	R24, 0x00C0
@@ -290,7 +306,8 @@ L_85:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:71:     uart.write(':')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_88:
 	LDS	R24, 0x00C0
@@ -307,7 +324,8 @@ L_89:
 	MOV	R7, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_92:
 	LDS	R24, 0x00C0
@@ -324,7 +342,8 @@ L_93:
 	MOV	R9, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_96:
 	LDS	R24, 0x00C0
@@ -337,7 +356,8 @@ L_97:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:74:     uart.write('\n')
-; main.py:71:     uart.write(':')
+; main.py:41:         nonlocal count
+; main.py:45:     increment()
 ; main.py:76:     while True:
 L_100:
 	LDS	R24, 0x00C0

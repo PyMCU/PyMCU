@@ -3,9 +3,9 @@
 .equ _stack_base = RAMSTART
 .equ main_hi = _stack_base + 15
 .equ main_lo = _stack_base + 16
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 main:
@@ -16,7 +16,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:13:     uart = UART(9600)
-; main.py:58:     else:
+; main.py:27:     if d == 234:
+; main.py:31: 
 ; main.py:47:     if e == 0:
 	SBI	0x0A, 1
 ; main.py:48:         uart.write('P')
@@ -53,6 +54,8 @@ main:
 	RJMP	L_29
 L_BR_SKIP_0:
 ; main.py:21:         uart.write('P')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_32:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -66,6 +69,8 @@ L_33:
 	RJMP	L_28
 L_29:
 ; main.py:23:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_36:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -94,6 +99,8 @@ L_28:
 	RJMP	L_39
 L_BR_SKIP_3:
 ; main.py:28:         uart.write('P')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -107,6 +114,8 @@ L_43:
 	RJMP	L_38
 L_39:
 ; main.py:30:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -129,6 +138,8 @@ L_38:
 	RJMP	L_49
 L_BR_SKIP_6:
 ; main.py:34:         uart.write('P')        # 1000 < 1234
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_52:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -142,6 +153,8 @@ L_53:
 	RJMP	L_48
 L_49:
 ; main.py:36:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_56:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -167,6 +180,8 @@ L_BR_SKIP_9:
 	RJMP	L_59
 L_BR_SKIP_10:
 ; main.py:40:         uart.write('P')        # 1234 > 234
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_62:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -180,6 +195,8 @@ L_63:
 	RJMP	L_58
 L_59:
 ; main.py:42:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_66:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -211,6 +228,8 @@ L_58:
 	RJMP	L_69
 L_BR_SKIP_13:
 ; main.py:48:         uart.write('P')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -224,6 +243,8 @@ L_73:
 	RJMP	L_68
 L_69:
 ; main.py:50:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -254,6 +275,8 @@ L_BR_SKIP_16:
 	RJMP	L_79
 L_BR_SKIP_17:
 ; main.py:57:         uart.write('P')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -267,6 +290,8 @@ L_83:
 	RJMP	L_78
 L_79:
 ; main.py:59:         uart.write('F')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -279,6 +304,8 @@ L_87:
 	STS	0x00C6, R24
 L_78:
 ; main.py:62:     uart.write('\n')
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -293,6 +320,8 @@ L_91:
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
+; main.py:41:     else:
+; main.py:45:     e: uint16 = 65535
 L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32

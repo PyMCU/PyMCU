@@ -19,9 +19,9 @@
 .equ tmp_24 = _stack_base + 32
 .equ tmp_62 = _stack_base + 27
 .equ tmp_63 = _stack_base + 28
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -78,7 +78,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:37:     uart = UART(9600)
-; main.py:58:     uart.write(nibble_hex_lo(lo))
+; main.py:27:         return n + 48
+; main.py:31:     n: uint8 = val & 0x0F
 ; main.py:47:     sum_n = sum_n + nested[2]
 	SBI	0x0A, 1
 ; main.py:48:     sum_n = sum_n + nested[3]
@@ -97,10 +98,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:39:     uart.println("NLC")
+; main.py:77:     buf[3] = 0xBB
+; main.py:78:     result: uint8 = buf[0] + buf[3]
+; main.py:69:     uart.write(':')
+; main.py:73: 
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:79:     # 0xAA(170) + 0xBB(187) = 357 = 0x165, low byte = 0x65
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_35:
 	LDS	R24, 0x00C0
@@ -174,7 +181,8 @@ L_36:
 	MOV	R4, R24
 	MOV	R7, R24
 ; main.py:55:     uart.write('N')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_39:
 	LDS	R24, 0x00C0
@@ -188,7 +196,8 @@ L_40:
 	LDI	R24, 78
 	STS	0x00C6, R24
 ; main.py:56:     uart.write(':')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_43:
 	LDS	R24, 0x00C0
@@ -206,7 +215,8 @@ L_44:
 	MOV	R10, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_47:
 	LDS	R24, 0x00C0
@@ -224,7 +234,8 @@ L_48:
 	MOV	R12, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_51:
 	LDS	R24, 0x00C0
@@ -238,7 +249,8 @@ L_52:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:59:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_55:
 	LDS	R24, 0x00C0
@@ -270,7 +282,8 @@ L_56:
 	LDI	R24, 15
 	MOV	R6, R24
 ; main.py:68:     uart.write('F')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_59:
 	LDS	R24, 0x00C0
@@ -284,7 +297,8 @@ L_60:
 	LDI	R24, 70
 	STS	0x00C6, R24
 ; main.py:69:     uart.write(':')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_63:
 	LDS	R24, 0x00C0
@@ -302,7 +316,8 @@ L_64:
 	MOV	R10, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_67:
 	LDS	R24, 0x00C0
@@ -320,7 +335,8 @@ L_68:
 	MOV	R12, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_71:
 	LDS	R24, 0x00C0
@@ -334,7 +350,8 @@ L_72:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:72:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_75:
 	LDS	R24, 0x00C0
@@ -370,7 +387,8 @@ L_76:
 	ADD	R24, R18
 	MOV	R8, R24
 ; main.py:80:     uart.write('B')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_79:
 	LDS	R24, 0x00C0
@@ -384,7 +402,8 @@ L_80:
 	LDI	R24, 66
 	STS	0x00C6, R24
 ; main.py:81:     uart.write(':')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_83:
 	LDS	R24, 0x00C0
@@ -402,7 +421,8 @@ L_84:
 	MOV	R10, R24
 	RCALL	nibble_hex_hi
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_87:
 	LDS	R24, 0x00C0
@@ -420,7 +440,8 @@ L_88:
 	MOV	R12, R24
 	RCALL	nibble_hex_lo
 	STD	Y+3, R24
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_91:
 	LDS	R24, 0x00C0
@@ -434,7 +455,8 @@ L_92:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:84:     uart.write('\n')
-; main.py:71:     uart.write(nibble_hex_lo(sum_f))
+; main.py:41:     # 1. Nested list comprehension: [x+y for x in [1,2,3] for y in [10,20,30]]
+; main.py:45:     sum_n = sum_n + nested[0]
 ; main.py:76:     buf[0] = 0xAA
 L_95:
 	LDS	R24, 0x00C0

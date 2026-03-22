@@ -4,9 +4,9 @@
 .equ tmp_22 = _stack_base + 13
 .equ tmp_24 = _stack_base + 14
 .equ tmp_26 = _stack_base + 15
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -80,7 +80,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:69:     uart = UART(9600)
-; main.py:58:         case CB.DOUBLE:
+; main.py:27: 
+; main.py:31:     DOUBLE  = 0
 ; main.py:47: 
 	SBI	0x0A, 1
 ; main.py:48: def shift_left_one(x: uint8) -> uint8:
@@ -99,10 +100,16 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:70:     uart.println("CALLBACKS")
+; main.py:77:         i: uint8 = 0
+; main.py:78:         while i < 8:
+; main.py:69:     uart = UART(9600)
+; main.py:73: 
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:71: 
+; main.py:79:             r: uint8 = apply(cb, i)
+; main.py:41: 
+; main.py:45:     return result
 ; main.py:76: 
 L_38:
 	LDS	R24, 0x00C0
@@ -120,7 +127,8 @@ L_39:
 ; main.py:74:     while True:
 L_40:
 ; main.py:75:         uart.write(cb)          # header: current callback ID
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     return result
 ; main.py:76: 
 L_44:
 	LDS	R24, 0x00C0
@@ -151,7 +159,8 @@ L_BR_SKIP_5:
 	RCALL	apply
 	MOV	R13, R24
 ; main.py:80:             uart.write(r)
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     return result
 ; main.py:76: 
 L_50:
 	LDS	R24, 0x00C0
@@ -168,7 +177,8 @@ L_51:
 	RJMP	L_46
 L_47:
 ; main.py:83:         uart.write('\n')          # newline (0x0A) frame separator
-; main.py:71: 
+; main.py:41: 
+; main.py:45:     return result
 ; main.py:76: 
 L_54:
 	LDS	R24, 0x00C0

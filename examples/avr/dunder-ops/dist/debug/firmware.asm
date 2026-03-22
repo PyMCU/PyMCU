@@ -29,9 +29,9 @@
 .equ tmp_37 = _stack_base + 33
 .equ tmp_38 = _stack_base + 34
 .equ tmp_54 = _stack_base + 35
-.equ whisnake_hal__uart_avr__rx_buf = _stack_base + 0
-.equ whisnake_hal__uart_avr__rx_head = _stack_base + 1
-.equ whisnake_hal__uart_avr__rx_tail = _stack_base + 2
+.equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
+.equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
+.equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
 
 .org 0x0000
 	RJMP	main
@@ -88,7 +88,8 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:72:     uart = UART(9600)
-; main.py:58:         if val == self.y:
+; main.py:27:     n: uint8 = val & 0x0F
+; main.py:31: 
 ; main.py:47:     def __sub__(self, other: uint8) -> uint8:
 	SBI	0x0A, 1
 ; main.py:48:         return Vec(self.x - other.x, self.y - other.y)
@@ -107,14 +108,17 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:73:     uart.println("DO")
-; main.py:101:     uart.write(nibble_hi(n))
-; main.py:97:     vl = Vec(3, 4)
+; main.py:77:     v3 = v1 + v2
+; main.py:78: 
+; main.py:69: 
+; main.py:73:     uart.println("DO")
 ; main.py:115:     vg = Vec(3, 4)
 	LDI	R30, low(__str_0 * 2)
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
-; main.py:102:     uart.write(nibble_lo(n))
-; main.py:71: def main():
+; main.py:79:     # v3.y = 4 + 3 = 7
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_35:
 	LDS	R24, 0x00C0
@@ -162,7 +166,8 @@ L_36:
 	MOV	R7, R24
 	STD	Y+13, R24
 ; main.py:80:     uart.write('A')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_43:
 	LDS	R24, 0x00C0
@@ -176,7 +181,8 @@ L_44:
 	LDI	R24, 65
 	STS	0x00C6, R24
 ; main.py:81:     uart.write(':')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_47:
 	LDS	R24, 0x00C0
@@ -194,7 +200,8 @@ L_48:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_51:
 	LDS	R24, 0x00C0
@@ -212,7 +219,8 @@ L_52:
 	MOV	R4, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_55:
 	LDS	R24, 0x00C0
@@ -226,7 +234,8 @@ L_56:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:84:     uart.write('\n')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_59:
 	LDS	R24, 0x00C0
@@ -275,7 +284,8 @@ L_60:
 	STD	Y+24, R24
 	STD	Y+20, R24
 ; main.py:90:     uart.write('S')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_67:
 	LDS	R24, 0x00C0
@@ -289,7 +299,8 @@ L_68:
 	LDI	R24, 83
 	STS	0x00C6, R24
 ; main.py:91:     uart.write(':')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_71:
 	LDS	R24, 0x00C0
@@ -307,7 +318,8 @@ L_72:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_75:
 	LDS	R24, 0x00C0
@@ -325,7 +337,8 @@ L_76:
 	MOV	R4, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_79:
 	LDS	R24, 0x00C0
@@ -339,7 +352,8 @@ L_80:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:94:     uart.write('\n')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_83:
 	LDS	R24, 0x00C0
@@ -363,7 +377,8 @@ L_84:
 	LDI	R24, 2
 	MOV	R10, R24
 ; main.py:99:     uart.write('L')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_89:
 	LDS	R24, 0x00C0
@@ -377,7 +392,8 @@ L_90:
 	LDI	R24, 76
 	STS	0x00C6, R24
 ; main.py:100:     uart.write(':')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_93:
 	LDS	R24, 0x00C0
@@ -395,7 +411,8 @@ L_94:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_97:
 	LDS	R24, 0x00C0
@@ -413,7 +430,8 @@ L_98:
 	MOV	R4, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_101:
 	LDS	R24, 0x00C0
@@ -427,7 +445,8 @@ L_102:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:103:     uart.write('\n')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_105:
 	LDS	R24, 0x00C0
@@ -478,7 +497,8 @@ L_108:
 	MOV	R24, R16
 	MOV	R8, R24
 ; main.py:108:     uart.write('C')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_113:
 	LDS	R24, 0x00C0
@@ -492,7 +512,8 @@ L_114:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:109:     uart.write(':')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_117:
 	LDS	R24, 0x00C0
@@ -510,7 +531,8 @@ L_118:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_121:
 	LDS	R24, 0x00C0
@@ -528,7 +550,8 @@ L_122:
 	MOV	R4, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_125:
 	LDS	R24, 0x00C0
@@ -542,7 +565,8 @@ L_126:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:112:     uart.write('\n')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_129:
 	LDS	R24, 0x00C0
@@ -564,7 +588,8 @@ L_130:
 ; main.py:68:                 return self.y
 	MOV	R6, R24
 ; main.py:117:     uart.write('G')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_138:
 	LDS	R24, 0x00C0
@@ -578,7 +603,8 @@ L_139:
 	LDI	R24, 71
 	STS	0x00C6, R24
 ; main.py:118:     uart.write(':')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_142:
 	LDS	R24, 0x00C0
@@ -596,7 +622,8 @@ L_143:
 	MOV	R5, R24
 	RCALL	nibble_hi
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_146:
 	LDS	R24, 0x00C0
@@ -614,7 +641,8 @@ L_147:
 	MOV	R4, R24
 	RCALL	nibble_lo
 	STD	Y+3, R24
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_150:
 	LDS	R24, 0x00C0
@@ -628,7 +656,8 @@ L_151:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:121:     uart.write('\n')
-; main.py:71: def main():
+; main.py:41: 
+; main.py:45: 
 ; main.py:76:     v2 = Vec(1, 3)
 L_154:
 	LDS	R24, 0x00C0
