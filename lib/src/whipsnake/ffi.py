@@ -1,8 +1,17 @@
+# -----------------------------------------------------------------------------
+# Whipsnake Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+#
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
+# -----------------------------------------------------------------------------
+#
 # Whipsnake Foreign Function Interface
 #
 # Provides the @extern decorator for declaring C functions callable from
 # Whipsnake firmware. The decorator is handled entirely by the compiler; this
-# module exists so that IDEs and type-checkers can resolve the import.
+# module exists so that IDEs and type-checkers can resolve the import without
+# errors.
 #
 # Usage:
 #
@@ -19,7 +28,7 @@
 #
 # The C source files containing the implementation are listed in pyproject.toml:
 #
-#   [tool.whipsnake.ffi]
+#   [tool.whip.ffi]
 #   sources = ["src/c/mylib.c"]
 #   include_dirs = ["src/c/include"]
 #   cflags = ["-O2", "-std=c11"]
@@ -27,13 +36,20 @@
 # The build driver (whip build) compiles those C files with avr-gcc and
 # links the resulting ELF objects with the firmware via avr-ld.
 #
-# Requires: [tool.whipsnake.assembler] = "avr-as"  (or automatic detection when
-# [tool.whipsnake.ffi] is present -- the build driver switches to the avr-as
-# toolchain automatically when C sources are declared).
+# Note: [tool.whip.ffi] triggers automatic toolchain selection -- whip build
+# switches to the avr-as / avr-ld pipeline when C sources are declared.
 
-# @extern("symbol") is recognized syntactically by the compiler in
-# parseFunction(). This stub exists so 'from whipsnake.ffi import extern'
-# resolves without error. The compiler never calls this function at
-# compile time -- it only reads its name from the import.
-def extern(symbol):
-    return symbol
+from typing import Callable, TypeVar
+
+_F = TypeVar("_F", bound=Callable)
+
+
+def extern(symbol: str) -> Callable[[_F], _F]:
+    # @extern("symbol") is recognised syntactically by the compiler in
+    # parseFunction(). This stub exists only so IDEs can resolve the import
+    # and infer the correct return type of the decorated function.
+    # The compiler never executes this code -- it reads the symbol name
+    # from the AST directly.
+    def _decorator(f: _F) -> _F:
+        return f
+    return _decorator
