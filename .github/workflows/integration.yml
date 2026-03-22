@@ -63,11 +63,11 @@ jobs:
             --store-password-in-clear-text
 
       - name: Restore integration test packages
-        run: dotnet restore tests/integration/PyMCU.IntegrationTests.csproj --nologo
+        run: dotnet restore tests/integration/Whipsnake.IntegrationTests.csproj --nologo
 
       - name: Run integration tests
         run: |
-          dotnet test tests/integration/PyMCU.IntegrationTests.csproj \
+          dotnet test tests/integration/Whipsnake.IntegrationTests.csproj \
             --no-restore \
             --logger "console;verbosity=normal" \
             --blame-hang-timeout 120s \
