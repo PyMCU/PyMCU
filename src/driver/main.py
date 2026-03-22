@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -46,29 +50,29 @@ def _ensure_venv():
     
     is_verbose = "--verbose" in sys.argv or "-v" in sys.argv
     if is_verbose:
-        os.environ["PYMCU_VERBOSE"] = "1"
-    
+        os.environ["WHIP_VERBOSE"] = "1"
+
     if venv_path.exists() and venv_path.is_dir():
         # Check if we are already using this venv
         try:
             current_prefix = Path(sys.prefix).resolve()
             target_prefix = venv_path.resolve()
-            
+
             if is_verbose:
                 console.print(f"[debug] Current prefix: {current_prefix}", style="dim")
                 console.print(f"[debug] Target prefix: {target_prefix}", style="dim")
-            
+
             if current_prefix != target_prefix:
                  # Determine executable path based on platform
                 if sys.platform == "win32":
-                    local_exe = venv_path / "Scripts" / "pymcu.exe"
+                    local_exe = venv_path / "Scripts" / "whip.exe"
                 else:
-                    local_exe = venv_path / "bin" / "pymcu"
+                    local_exe = venv_path / "bin" / "whip"
                 
                 if is_verbose:
                     console.print(f"[debug] Checking local executable: {local_exe}", style="dim")
                 
-                # If the local pymcu executable exists, switch to it
+                # If the local whip executable exists, switch to it
                 if local_exe.exists():
                     if is_verbose:
                         console.print(f"[debug] Switching to local venv: {local_exe}", style="dim")
@@ -91,7 +95,7 @@ from .commands.clean import clean
 from .commands.flash import flash
 from .commands.version import version
 
-app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
+app = typer.Typer(help="whip: Python-to-MCU compiler driver")
 
 def version_callback(value: bool):
     if value:
@@ -104,7 +108,7 @@ def main(
     version_flag: Optional[bool] = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show the version and exit")
 ):
     if verbose:
-        os.environ["PYMCU_VERBOSE"] = "1"
+        os.environ["WHIP_VERBOSE"] = "1"
 
 app.command()(new)
 app.command()(build)

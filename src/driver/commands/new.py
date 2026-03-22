@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -43,13 +47,13 @@ console = Console()
 
 def get_available_chips() -> List[str]:
     """
-    Dynamically scans the installed 'pymcu-stdlib' package for chip definitions.
+    Dynamically scans the installed 'whisnake-stdlib' package for chip definitions.
     Returns a list of chip names (e.g., ['pic16f84a', 'pic16f877a']).
     """
     try:
-        import pymcu
-        if hasattr(pymcu, '__file__') and pymcu.__file__:
-            chips_dir = Path(pymcu.__file__).parent / "chips"
+        import whisnake
+        if hasattr(whisnake, '__file__') and whisnake.__file__:
+            chips_dir = Path(whisnake.__file__).parent / "chips"
             if chips_dir.is_dir():
                 # List .py files, ignore __init__.py
                 chips = [
@@ -65,7 +69,7 @@ def get_available_chips() -> List[str]:
     return []
 
 def new(name: str):
-    console.print(Panel(f"[bold blue]Scaffolding new pymcu project: [green]{name}[/green][/bold blue]"))
+    console.print(Panel(f"[bold blue]Scaffolding new whip project: [green]{name}[/green][/bold blue]"))
 
     project_path = Path(name)
     if project_path.exists():
@@ -116,16 +120,16 @@ def new(name: str):
             project.add("version", "0.1.0")
 
             deps = tomlkit.array()
-            deps.append("pymcu-stdlib")
+            deps.append("whisnake-stdlib")
             # Pin the compiler version to the one currently running to ensure reproducibility
             try:
                 from importlib.metadata import version
-                current_version = version("pymcu-compiler")
-                deps.append(f"pymcu-compiler=={current_version}")
+                current_version = version("whip-compiler")
+                deps.append(f"whip-compiler=={current_version}")
             except Exception:
                 # Fallback if running from source or version not found
-                console.print("[yellow]Warning: Could not detect pymcu-compiler version. Adding unpinned dependency.[/yellow]")
-                deps.append("pymcu-compiler")
+                console.print("[yellow]Warning: Could not detect whip-compiler version. Adding unpinned dependency.[/yellow]")
+                deps.append("whip-compiler")
 
             project.add("dependencies", deps)
 
@@ -144,9 +148,9 @@ def new(name: str):
                 tool_uv.add("index", uv_indices)
 
                 sources = tomlkit.table()
-                pymcu_stdlib_source = tomlkit.inline_table()
-                pymcu_stdlib_source.update({"index": "gitea"})
-                sources.add("pymcu-stdlib", pymcu_stdlib_source)
+                whisnake_stdlib_source = tomlkit.inline_table()
+                whisnake_stdlib_source.update({"index": "gitea"})
+                sources.add("whisnake-stdlib", whisnake_stdlib_source)
                 tool_uv.add("sources", sources)
 
                 tool = tomlkit.table()
@@ -170,69 +174,69 @@ def new(name: str):
                     doc.add("tool", tomlkit.table())
                 doc["tool"].add("poetry", tool_poetry)
 
-            # Pymcu specific config
-            pymcu_tool = tomlkit.table()
-            pymcu_tool.add("chip", chip)
-            pymcu_tool.add("frequency", freq)
-            pymcu_tool.add("sources", sources_dir)
-            pymcu_tool.add("entry", entry_file)
+            # Whip specific config
+            whip_tool = tomlkit.table()
+            whip_tool.add("chip", chip)
+            whip_tool.add("frequency", freq)
+            whip_tool.add("sources", sources_dir)
+            whip_tool.add("entry", entry_file)
 
-            pymcu_config = tomlkit.table()
-            pymcu_config.add(tomlkit.comment("FOSC = \"HS\""))
-            pymcu_tool.add("config", pymcu_config)
+            whip_config = tomlkit.table()
+            whip_config.add(tomlkit.comment("FOSC = \"HS\""))
+            whip_tool.add("config", whip_config)
 
             # Auto-detected toolchain
-            pymcu_toolchain = tomlkit.table()
-            pymcu_toolchain.add("name", toolchain_name)
-            pymcu_tool.add("toolchain", pymcu_toolchain)
+            whip_toolchain = tomlkit.table()
+            whip_toolchain.add("name", toolchain_name)
+            whip_tool.add("toolchain", whip_toolchain)
 
             # Programmer configuration
-            pymcu_programmer = tomlkit.table()
-            pymcu_programmer.add("name", "pickit2")
-            pymcu_tool.add("programmer", pymcu_programmer)
+            whip_programmer = tomlkit.table()
+            whip_programmer.add("name", "pickit2")
+            whip_tool.add("programmer", whip_programmer)
 
             if "tool" not in doc:
                 doc.add("tool", tomlkit.table())
 
-            doc["tool"].add("pymcu", pymcu_tool)
+            doc["tool"].add("whip", whip_tool)
 
             with open(project_path / "pyproject.toml", "w") as f:
                 f.write(tomlkit.dumps(doc))
 
         else: # pip
-            # For pip, we'll create a simple pyproject.toml for pymcu config
+            # For pip, we'll create a simple pyproject.toml for whip config
             # and a requirements.txt for dependencies
             doc = tomlkit.document()
             tool = tomlkit.table()
-            pymcu_tool = tomlkit.table()
-            pymcu_tool.add("chip", chip)
-            pymcu_tool.add("frequency", freq)
-            pymcu_tool.add("sources", sources_dir)
-            pymcu_tool.add("entry", entry_file)
-            pymcu_tool.add("config", tomlkit.table())
+            whip_tool = tomlkit.table()
+            whip_tool.add("chip", chip)
+            whip_tool.add("frequency", freq)
+            whip_tool.add("sources", sources_dir)
+            whip_tool.add("entry", entry_file)
+            whip_tool.add("config", tomlkit.table())
 
-            pymcu_toolchain = tomlkit.table()
-            pymcu_toolchain.add("name", toolchain_name)
-            pymcu_tool.add("toolchain", pymcu_toolchain)
+            whip_toolchain = tomlkit.table()
+            whip_toolchain.add("name", toolchain_name)
+            whip_tool.add("toolchain", whip_toolchain)
 
-            pymcu_programmer = tomlkit.table()
-            pymcu_programmer.add("name", "pickit2")
-            pymcu_tool.add("programmer", pymcu_programmer)
+            whip_programmer = tomlkit.table()
+            whip_programmer.add("name", "pickit2")
+            whip_tool.add("programmer", whip_programmer)
 
-            tool.add("pymcu", pymcu_tool)
+            tool.add("whip", whip_tool)
             doc.add("tool", tool)
 
             with open(project_path / "pyproject.toml", "w") as f:
                 f.write(tomlkit.dumps(doc))
 
-            requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\npymcu-stdlib\n"
+            requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\nwhisnake-stdlib\n"
 
             try:
                 from importlib.metadata import version
-                curr_ver = version("pymcu-compiler")
-                requirements_content += f"pymcu-compiler=={curr_ver}\n"
+                curr_ver = version("whip-compiler")
+                requirements_content += f"whip-compiler=={curr_ver}\n"
             except Exception:
-                requirements_content += "pymcu-compiler\n"
+                requirements_content += "whip-compiler\n"
 
             with open(project_path / "requirements.txt", "w") as f:
                 f.write(requirements_content)
@@ -244,25 +248,25 @@ def new(name: str):
             "version": "2.0.0",
             "tasks": [
                 {
-                    "label": "pymcu: build",
+                    "label": "whip: build",
                     "type": "shell",
-                    "command": "pymcu build",
+                    "command": "whip build",
                     "group": {
                         "kind": "build",
                         "isDefault": True
                     },
-                    "problemMatcher": ["$pymcuc"]
+                    "problemMatcher": ["$whipc"]
                 },
                 {
-                    "label": "pymcu: clean",
+                    "label": "whip: clean",
                     "type": "shell",
-                    "command": "pymcu clean",
+                    "command": "whip clean",
                     "problemMatcher": []
                 },
                 {
-                    "label": "pymcu: flash",
+                    "label": "whip: flash",
                     "type": "shell",
-                    "command": "pymcu flash",
+                    "command": "whip flash",
                     "problemMatcher": []
                 }
             ]
@@ -284,7 +288,7 @@ dist/
             f.write(gitignore_content)
 
         # Entry point file
-        main_py_content = f"from pymcu.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
+        main_py_content = f"from whisnake.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
         entry_dir = project_path / sources_dir if use_src else project_path
         with open(entry_dir / entry_file, "w") as f:
             f.write(main_py_content)

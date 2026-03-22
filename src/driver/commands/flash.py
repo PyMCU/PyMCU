@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -45,7 +49,7 @@ def flash(
     port: Optional[str] = typer.Option(
         None, "--port", "-P",
         help="Serial port for flashing (e.g. /dev/cu.usbmodem14101). "
-             "Overrides [tool.pymcu.flash].port in pyproject.toml.",
+             "Overrides [tool.whip.flash].port in pyproject.toml.",
     ),
 ):
     """
@@ -53,13 +57,13 @@ def flash(
 
     Port resolution order:
       1. --port / -P CLI argument
-      2. port = "..." in [tool.pymcu.flash] of pyproject.toml
+      2. port = "..." in [tool.whip.flash] of pyproject.toml
       3. Auto-detection (first matching USB-serial device)
       4. Error with configuration instructions
     """
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
-        console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
+        console.print("[red]No pyproject.toml found. Are you in a whip project?[/red]")
         raise typer.Exit(code=1)
 
     try:
@@ -67,7 +71,7 @@ def flash(
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
-        pymcu_config = config.get("tool", {}).get("pymcu", {})
+        whip_config = config.get("tool", {}).get("whip", {})
 
         _BOARD_CHIP_MAP = {
             "arduino_uno":   "atmega328p",
@@ -75,16 +79,16 @@ def flash(
             "arduino_mega":  "atmega2560",
             "arduino_micro": "atmega32u4",
         }
-        chip = pymcu_config.get("chip") or _BOARD_CHIP_MAP.get(
-            str(pymcu_config.get("board", "")).replace("-", "_"), ""
+        chip = whip_config.get("chip") or _BOARD_CHIP_MAP.get(
+            str(whip_config.get("board", "")).replace("-", "_"), ""
         )
         if not chip:
             console.print(
-                "[red]No 'chip' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
+                "[red]No 'chip' or 'board' specified in [tool.whip] of pyproject.toml.[/red]"
             )
             raise typer.Exit(code=1)
 
-        flash_config = pymcu_config.get("flash", {})
+        flash_config = whip_config.get("flash", {})
         programmer_name = flash_config.get("programmer") or _default_programmer(chip)
         cfg_port = flash_config.get("port")
         cfg_baud = flash_config.get("baud")
@@ -97,7 +101,7 @@ def flash(
         hex_file = Path("dist") / "firmware.hex"
         if not hex_file.exists():
             console.print("[red]Firmware file 'dist/firmware.hex' not found.[/red]")
-            console.print("Please run [bold]pymcu build[/bold] first.")
+            console.print("Please run [bold]whip build[/bold] first.")
             raise typer.Exit(code=1)
 
         # 3. Get programmer

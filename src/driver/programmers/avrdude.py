@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -34,7 +38,7 @@ from typing import Dict, Any
 from .base import HardwareProgrammer
 from rich.prompt import Confirm
 
-# Mapping from PyMCU chip names to avrdude abbreviated part names.
+# Mapping from Whisnake chip names to avrdude abbreviated part names.
 _CHIP_MAP: dict[str, str] = {
     "atmega328p":  "m328p",
     "atmega328":   "m328",
@@ -56,7 +60,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
 
     Binary resolution order:
       1. System PATH (shutil.which) — handles Homebrew, apt, and system installs.
-      2. Locally cached binary in ~/.pymcu/tools/{platform}/avrdude/.
+      2. Locally cached binary in ~/.whisnake/tools/{platform}/avrdude/.
       3. Download v8.1 from GitHub (user is prompted first).
     """
 
@@ -142,7 +146,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
         cached = self._find_cached_binary()
         if cached:
             return cached
-        raise RuntimeError("avrdude binary not found. Run 'pymcu flash' again to install it.")
+        raise RuntimeError("avrdude binary not found. Run 'whip flash' again to install it.")
 
     def is_cached(self) -> bool:
         if self.find_system_avrdude() is not None:
@@ -177,7 +181,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print("[bold cyan]PyMCU Hardware Manager[/bold cyan]")
+        self.console.print("[bold cyan]Whisnake Hardware Manager[/bold cyan]")
         self.console.print(
             f"Programmer '{name}' ({desc}) is not found in system PATH or local cache."
         )
@@ -237,7 +241,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
             raise RuntimeError(
                 "No serial port specified and auto-detection found none.\n"
                 "Pass --port /dev/cu.usbmodemXXXX on the command line, or add:\n\n"
-                "  [tool.pymcu.flash]\n"
+                "  [tool.whip.flash]\n"
                 '  port = "/dev/cu.usbmodemXXXX"\n\n'
                 "to your pyproject.toml."
             )

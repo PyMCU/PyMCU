@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -36,7 +40,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
-from ..core.compiler import PyMcuCompiler
+from ..core.compiler import WhipCompiler
 
 console = Console()
 
@@ -57,11 +61,11 @@ BOARD_CHIPS: dict[str, str] = {
 
 def _load_extension_board_chips(flavor: str) -> dict[str, str]:
     """
-    Try to import pymcu_<flavor>.board_chips and return its BOARD_CHIPS dict.
+    Try to import whisnake_<flavor>.board_chips and return its BOARD_CHIPS dict.
     Returns an empty dict if the module or attribute does not exist.
     """
     try:
-        mod = importlib.import_module(f"pymcu_{flavor}.board_chips")
+        mod = importlib.import_module(f"whisnake_{flavor}.board_chips")
         return dict(getattr(mod, "BOARD_CHIPS", {}))
     except Exception:
         return {}
@@ -96,36 +100,36 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
 def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
-        console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
+        console.print("[red]No pyproject.toml found. Are you in a whip project?[/red]")
         raise typer.Exit(code=1)
 
     try:
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
-        pymcu_config = config.get("tool", {}).get("pymcu", {})
-        chip_key  = pymcu_config.get("chip",  None)
-        board_key = pymcu_config.get("board", None)
-        freq      = pymcu_config.get("frequency", 4000000)
-        src_path  = pymcu_config.get("sources", "src")
+        whip_config = config.get("tool", {}).get("whip", {})
+        chip_key  = whip_config.get("chip",  None)
+        board_key = whip_config.get("board", None)
+        freq      = whip_config.get("frequency", 4000000)
+        src_path  = whip_config.get("sources", "src")
 
         # board and chip are mutually exclusive
         if chip_key and board_key:
             implied = BOARD_CHIPS.get(board_key, "?")
             console.print(
-                f"[bold red]Error:[/bold red] Cannot set both 'chip' and 'board' in \\[tool.pymcu].\n"
+                f"[bold red]Error:[/bold red] Cannot set both 'chip' and 'board' in \\[tool.whip].\n"
                 f"  'board = \"{board_key}\"' implies chip = \"{implied}\". Remove the 'chip' key."
             )
             raise typer.Exit(code=1)
 
         # Resolve extension packages and their extra board→chip entries
-        stdlib_flavors = pymcu_config.get("stdlib", [])
+        stdlib_flavors = whip_config.get("stdlib", [])
         extension_board_chips: dict[str, str] = {}
         extra_includes: list[str] = []
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
 
         for flavor in stdlib_flavors:
-            spec = importlib.util.find_spec(f"pymcu_{flavor}")
+            spec = importlib.util.find_spec(f"whisnake_{flavor}")
             if spec and spec.submodule_search_locations:
                 pkg_dir = Path(list(spec.submodule_search_locations)[0])
                 pkg_parent = pkg_dir.parent
@@ -139,8 +143,8 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     extension_board_dirs[flavor] = boards_dir
             else:
                 console.print(
-                    f"[bold yellow]Warning:[/bold yellow] stdlib flavor 'pymcu_{flavor}' not found. "
-                    f"Install it with: pip install pymcu-{flavor}"
+                    f"[bold yellow]Warning:[/bold yellow] stdlib flavor 'whisnake_{flavor}' not found. "
+                    f"Install it with: pip install whisnake-{flavor}"
                 )
 
         # Derive chip from board or fall back to explicit chip / default
@@ -158,7 +162,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         project_root = pyproject_path.parent.absolute()
         sources_dir = (project_root / src_path).resolve()
 
-        entry_file_name = pymcu_config.get("entry", "main.py")
+        entry_file_name = whip_config.get("entry", "main.py")
         entry_point = (sources_dir / entry_file_name).resolve()
 
         output_dir = project_root / "dist"
@@ -170,12 +174,12 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             raise typer.Exit(code=1)
         
         config_map = {}
-        tool_config = pymcu_config.get("config", {})
+        tool_config = whip_config.get("config", {})
         for key, val in tool_config.items():
             config_map[str(key)] = str(val)
 
         # Read vector configuration for bootloader support
-        vectors_config = pymcu_config.get("vectors", {})
+        vectors_config = whip_config.get("vectors", {})
         reset_vector = vectors_config.get("reset", None)
         interrupt_vector = vectors_config.get("interrupt", None)
 
@@ -196,7 +200,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
 
             # Find which extension (if any) has boards/<board>.py.
             # We copy the board file content directly into board.py so that
-            # `import board` works without star-import (not supported by pymcuc).
+            # `import board` works without star-import (not supported by whipc).
             src_board_file = None
             for flavor, boards_dir in extension_board_dirs.items():
                 candidate = boards_dir / f"{board_key}.py"
@@ -206,36 +210,36 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
 
             if src_board_file:
                 board_shim_content = (
-                    f"# Auto-generated by pymcu build -- do not edit\n"
+                    f"# Auto-generated by whip build -- do not edit\n"
                     + src_board_file.read_text()
                 )
             else:
                 # Vanilla fallback: copy the vanilla board file directly
                 try:
-                    import pymcu as _pymcu_pkg
-                    vanilla_board = Path(_pymcu_pkg.__file__).parent / "boards" / f"{board_key}.py"
+                    import whisnake as _whisnake_pkg
+                    vanilla_board = Path(_whisnake_pkg.__file__).parent / "boards" / f"{board_key}.py"
                     if vanilla_board.exists():
                         board_shim_content = (
-                            "# Auto-generated by pymcu build -- do not edit\n"
+                            "# Auto-generated by whip build -- do not edit\n"
                             + vanilla_board.read_text()
                         )
                     else:
                         raise FileNotFoundError
                 except Exception:
                     console.print(f"[bold yellow]Warning:[/bold yellow] No board file found for '{board_key}'.")
-                    board_shim_content = f"# Auto-generated by pymcu build -- no board file found for {board_key}\n"
+                    board_shim_content = f"# Auto-generated by whip build -- no board file found for {board_key}\n"
 
             board_shim.write_text(board_shim_content)
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
-        # Detect C interop: [tool.pymcu.ffi] sources = [...]
-        ffi_config = pymcu_config.get("ffi", {})
+        # Detect C interop: [tool.whip.ffi] sources = [...]
+        ffi_config = whip_config.get("ffi", {})
         ffi_sources_raw: list[str] = list(ffi_config.get("sources", []))
         use_ffi = bool(ffi_sources_raw)
 
         # 1. Factory: Get the appropriate toolchain strategy.
-        # When [tool.pymcu.ffi] sources are declared the GNU binutils pipeline
+        # When [tool.whip.ffi] sources are declared the GNU binutils pipeline
         # (avr-as + avr-ld + avr-objcopy) is used instead of avra.
         if use_ffi:
             try:
@@ -255,7 +259,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 raise typer.Exit(code=1)
 
         # 3. Core Compiler Wrapper
-        compiler = PyMcuCompiler(console)
+        compiler = WhipCompiler(console)
 
         with Progress(
             SpinnerColumn(),
@@ -293,7 +297,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             with open(output_file, "r") as asm_f:
                 asm_content = asm_f.read()
             
-            spec = importlib.util.find_spec("pymcu.math")
+            spec = importlib.util.find_spec("whisnake.math")
             
             if spec and spec.origin:
                 math_lib_path = Path(spec.origin).parent
@@ -334,7 +338,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                             "__mul8": "mul.S",
                             "__div16": "div16.S"
                         }
-                        math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
+                        math_runtime_text = "\n; --- Whisnake AVR Math Runtime ---\n"
                         included_files = set()
                         for func in needed_funcs:
                             fname = func_map.get(func)
@@ -371,7 +375,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                             f.writelines(lines)
 
             else:
-                console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")
+                console.print("[bold yellow]Warning:[/bold yellow] whisnake-stdlib not installed, math operations may fail.")
 
             # Step 2: Assembly (ASM -> HEX)
             progress.update(build_task, description="Assembling...", completed=60)
@@ -385,7 +389,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     # 2a. Assemble firmware.asm → firmware.o (ELF)
                     firmware_obj = ffi_tc.assemble(output_file)
 
-                    # 2b. Compile C sources declared in [tool.pymcu.ffi]
+                    # 2b. Compile C sources declared in [tool.whip.ffi]
                     progress.update(build_task, description="Compiling C sources...", completed=65)
                     c_source_paths = [
                         (project_root / p).resolve() for p in ffi_sources_raw

@@ -1,29 +1,32 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
-# THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR ENTERTAINMENT FOR USE IN
-# HAZARDOUS ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE
-# OPERATION OF NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION
-# SYSTEMS, AIR TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS
-# SYSTEMS.
+# THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+# ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+# NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+# TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
 
@@ -39,7 +42,7 @@ This toolchain replaces avra for projects that require C/C++ interop via
   Link:       avr-ld -T <linker-script> firmware.o [c_objs...] -o firmware.elf
   HEX:        avr-objcopy -O ihex firmware.elf firmware.hex
 
-Both .c and .cpp/.cc/.cxx sources are supported in [tool.pymcu.ffi] sources.
+Both .c and .cpp/.cc/.cxx sources are supported in [tool.whip.ffi] sources.
 This enables use of Arduino libraries and other C++ AVR libraries.
 
 Auto-install is supported on macOS (Homebrew) and Linux (apt).
@@ -75,13 +78,13 @@ _CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".C"}
 class AvrgasToolchain(ExternalToolchain):
     """
     GNU AS + avr-ld + avr-objcopy toolchain for AVR targets.
-    Used automatically when [tool.pymcu.ffi] sources are declared, enabling
+    Used automatically when [tool.whip.ffi] sources are declared, enabling
     C-interop via @extern().
     """
 
     # Shared linker script template: places .text at 0x0000, .data at SRAM start.
     # Sufficient for ATmega328P; extended linker scripts are user-providable via
-    # [tool.pymcu.ffi] linker_script = "path/to/custom.ld".
+    # [tool.whip.ffi] linker_script = "path/to/custom.ld".
     _DEFAULT_LD_SCRIPT = """\
 OUTPUT_FORMAT("elf32-avr","elf32-avr","elf32-avr")
 OUTPUT_ARCH(avr:5)
@@ -170,7 +173,7 @@ SECTIONS
             )
 
         self.console.print(
-            f"[bold cyan]PyMCU Toolchain Manager[/bold cyan]\n"
+            f"[bold cyan]Whisnake Toolchain Manager[/bold cyan]\n"
             f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
             f"This will run:\n"
             f"  brew tap {_BREW_TAP}\n"
@@ -217,7 +220,7 @@ SECTIONS
 
         pkgs = " ".join(_APT_PACKAGES)
         self.console.print(
-            f"[bold cyan]PyMCU Toolchain Manager[/bold cyan]\n"
+            f"[bold cyan]Whisnake Toolchain Manager[/bold cyan]\n"
             f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
             f"This will run: sudo apt-get install -y {pkgs}"
         )
@@ -480,7 +483,7 @@ SECTIONS
 
         # Write default linker script if none provided
         if linker_script is None:
-            ld_script_path = output_dir / "_pymcu.ld"
+            ld_script_path = output_dir / "_whip.ld"
             ld_script_path.write_text(self._DEFAULT_LD_SCRIPT)
             linker_script = ld_script_path
 

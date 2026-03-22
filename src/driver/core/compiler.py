@@ -1,22 +1,26 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+# Whisnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
 #
-# This file is part of the PyMCU Development Ecosystem.
+# SPDX-License-Identifier: MIT
 #
-# PyMCU is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# PyMCU is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
-# You should have received a copy of the GNU General Public License
-# along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
-#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -31,9 +35,9 @@ import subprocess
 from pathlib import Path
 from rich.console import Console
 
-class PyMcuCompiler:
+class WhipCompiler:
     """
-    Wrapper for the core C++ build tool (pymcuc).
+    Wrapper for the core C++ build tool (whipc).
     Handles path resolution, stdlib detection, and binary invocation.
     """
     
@@ -55,9 +59,9 @@ class PyMcuCompiler:
         # We'll search relative to src/driver (parent of this file's dir)
         base_path = self._get_start_path() 
         
-        candidates = ["pymcuc"]
+        candidates = ["whipc"]
         if sys.platform == "win32":
-            candidates.insert(0, "pymcuc.exe")
+            candidates.insert(0, "whipc.exe")
 
         # 1. Check adjacent (standard wheel layout)
         for name in candidates:
@@ -75,27 +79,27 @@ class PyMcuCompiler:
                 p = project_root / d / name
                 if p.exists(): return p
             
-        return Path("pymcuc") # Fallback to PATH
+        return Path("whipc") # Fallback to PATH
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """
-        Resolves the PyMCU Standard Library path.
+        Resolves the Whisnake Standard Library path.
         """
         try:
             # Diagnostic for debugging import failure
-            is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+            is_verbose = verbose or os.environ.get("WHIP_VERBOSE") == "1"
             if is_verbose:
                 self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
                 self.console.print(f"[debug] sys.path: {sys.path}", style="dim")
-            
-            import pymcu
-            if hasattr(pymcu, "__file__") and pymcu.__file__:
-                p = Path(pymcu.__file__).parent / "chips"
+
+            import whisnake
+            if hasattr(whisnake, "__file__") and whisnake.__file__:
+                p = Path(whisnake.__file__).parent / "chips"
                 if p.is_dir():
                     # Return the package directory itself
-                    return str(Path(pymcu.__file__).parent)
+                    return str(Path(whisnake.__file__).parent)
         except ImportError as e:
-            self.console.print(f"[debug] Failed to import pymcu: {e}", style="red")
+            self.console.print(f"[debug] Failed to import whisnake: {e}", style="red")
         except Exception as e:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
