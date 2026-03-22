@@ -83,11 +83,11 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
         // stdlib compat package dependency + config line
         val (stdlibDep, stdlibLine) = when (s.stdlib) {
             "micropython"   -> Pair(
-                "\n    \"pymcu-micropython>=0.1.0\",",
+                "\n    \"whipsnake-micropython>=0.1.0a1\",",
                 "\nstdlib = [\"micropython\"]"
             )
             "circuitpython" -> Pair(
-                "\n    \"pymcu-circuitpython>=0.1.0\",",
+                "\n    \"whipsnake-circuitpython>=0.1.0a1\",",
                 "\nstdlib = [\"circuitpython\"]"
             )
             else -> Pair("", "")
@@ -99,8 +99,8 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
             version = "0.1.0"
             requires-python = ">=3.11"
             dependencies = [
-                "pymcu-stdlib>=0.1.2a5",
-                "pymcu-compiler>=0.1.0a27"$stdlibDep
+                "whipsnake-stdlib>=0.1.0a1",
+                "whipsnake>=0.1.0a1"$stdlibDep
             ]
 
             [tool.whip]
@@ -131,16 +131,16 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
         }
     }
 
-    /** Bare Whipsnake template using pymcu.hal directly. */
+    /** Bare Whipsnake template using whipsnake.hal directly. */
     private fun buildAvrTemplate(board: String?, chip: String): String {
         val target = if (board != null) "$board ($chip)" else chip
         val ledPin = if (board?.startsWith("arduino") == true) "PB5" else "PB5"
         return """
-            # Whipsnake — target: $target
+            # Whipsnake -- target: $target
             # Blinks the built-in LED on pin $ledPin (Arduino D13).
-            from pymcu.types import uint8
-            from pymcu.hal.gpio import Pin
-            from pymcu.time import delay_ms
+            from whipsnake.types import uint8
+            from whipsnake.hal.gpio import Pin
+            from whipsnake.time import delay_ms
 
 
             def main():
@@ -156,9 +156,9 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
 
     /** Bare Whipsnake template for non-AVR chips. */
     private fun buildGenericTemplate(chip: String): String = """
-        # Whipsnake — target: $chip
-        from pymcu.types import uint8
-        from pymcu.time import delay_ms
+        # Whipsnake -- target: $chip
+        from whipsnake.types import uint8
+        from whipsnake.time import delay_ms
 
 
         def main():
@@ -167,14 +167,14 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
     """.trimIndent()
 
     /**
-     * MicroPython compat template (pymcu-micropython).
+     * MicroPython compat template (whipsnake-micropython).
      * Uses the `machine` and `utime` modules from the compat layer.
      */
     private fun buildMicroPythonTemplate(board: String?, chip: String): String {
         val target = if (board != null) "$board ($chip)" else chip
         return """
-            # Whipsnake — target: $target  [MicroPython compat]
-            # Requires pymcu-micropython in pyproject.toml dependencies.
+            # Whipsnake -- target: $target  [MicroPython compat]
+            # Requires whipsnake-micropython in pyproject.toml dependencies.
             from machine import Pin
             from utime import sleep_ms
 
@@ -191,14 +191,14 @@ class WhipsnakeProjectGenerator : DirectoryProjectGenerator<WhipsnakeNewProjectS
     }
 
     /**
-     * CircuitPython compat template (pymcu-circuitpython).
+     * CircuitPython compat template (whipsnake-circuitpython).
      * Uses the `board`, `digitalio`, and `time` modules from the compat layer.
      */
     private fun buildCircuitPythonTemplate(board: String?, chip: String): String {
         val target = if (board != null) "$board ($chip)" else chip
         return """
-            # Whipsnake — target: $target  [CircuitPython compat]
-            # Requires pymcu-circuitpython in pyproject.toml dependencies.
+            # Whipsnake -- target: $target  [CircuitPython compat]
+            # Requires whipsnake-circuitpython in pyproject.toml dependencies.
             import board
             import digitalio
             import time
