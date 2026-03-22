@@ -11,6 +11,8 @@ from typing import TypeAlias
 
 T = TypeVar("T")
 
+
+# noinspection PyPep8Naming
 class ptr(Generic[T]):
     def __init__(self, address: int):
         self.address = address
@@ -39,6 +41,7 @@ class ptr(Generic[T]):
     def value(self, value: T):
         raise RuntimeError("Writing to a register only works in compiled code")
 
+# noinspection PyPep8Naming
 class const(Generic[T]):
     def __init__(self, value: object):
         self.value = value

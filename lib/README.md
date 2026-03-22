@@ -1,6 +1,6 @@
-# PyMCU Lib
+# Whipsnake Lib
 
-This repository contains the Python stub files for **PyMCU**, a Python-to-microcontroller toolchain. 
+This repository contains the Python stub files for **Whipsnake**, a Python-to-microcontroller toolchain.
 
 These files provide type definitions, hardware register mappings, and phantom types that allow Python IDEs (like PyCharm or VS Code) to provide autocompletion and type checking for microcontroller code, while being compatible with the `pymcuc` compiler.
 
@@ -36,13 +36,13 @@ PORTB[RB0] = 1  # Set RB0 high
 If you are using Poetry:
 
 ```bash
-poetry add git+https://github.com/your-username/pymcu-lib.git
+poetry add git+https://github.com/whipsnake/whipsnake-stdlib.git
 ```
 
 Or via pip:
 
 ```bash
-pip install git+https://github.com/your-username/pymcu-lib.git
+pip install git+https://github.com/whipsnake/whipsnake-stdlib.git
 ```
 
 ## License

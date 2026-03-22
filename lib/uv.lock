@@ -3,6 +3,6 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
-name = "pymcu-stdlib"
-version = "0.1.2a1"
+name = "whipsnake-stdlib"
+version = "0.1.0a1"
 source = { editable = "." }

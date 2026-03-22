@@ -9,6 +9,8 @@
 from whipsnake.types import uint8, uint16, inline
 from whipsnake.chips import __CHIP__
 
+
+# noinspection PyProtectedMember
 class EEPROM:
     # Zero-cost EEPROM HAL.
     # Supports blocking byte-level read/write to internal EEPROM.
