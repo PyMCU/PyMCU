@@ -51,3 +51,24 @@ class _ChipInfo:
 # The compiler replaces every __CHIP__ reference; this object is only here
 # so that static analysers see a well-typed value instead of NameError.
 __CHIP__: _ChipInfo = _ChipInfo()
+
+# CPU clock frequency in Hz.  Set via `frequency = ...` in [tool.whip] of
+# pyproject.toml (defaults to 16 000 000 when omitted).
+# The compiler substitutes the actual value at compile time; this stub
+# exists only for IDE type inference and autocomplete.
+#
+# Usage:
+#   from whipsnake.chips import __FREQ__
+#
+#   if __FREQ__ == 16_000_000:
+#       ...  # dead-code-eliminated on other targets
+#
+#   match __FREQ__:
+#       case 8_000_000:
+#           ...
+#       case 16_000_000:
+#           ...
+__FREQ__: int = 16_000_000
+
+# GCC / avr-libc convention alias -- same compile-time value as __FREQ__.
+F_CPU: int = __FREQ__
