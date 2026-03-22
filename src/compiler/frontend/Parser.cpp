@@ -245,6 +245,14 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
   const Token nameToken = advance();
   const std::string name = nameToken.value;
 
+  // Dunder methods (__name__) are implicitly @inline -- same as @property.
+  // A ZCA __init__ or __enter__ that forgets @inline now inlines correctly.
+  if (name.size() >= 4 &&
+      name.substr(0, 2) == "__" &&
+      name.substr(name.size() - 2) == "__") {
+    is_inline = true;
+  }
+
   consume(TokenType::LParen, "Expected '(' after function name");
   std::vector<Param> params = parseParameters();
   consume(TokenType::RParen, "Expected ')' after parameters");
