@@ -26,7 +26,6 @@ class EEPROM:
         val: uint8 = ee.read(0x10)
     """
 
-    @inline
     def __init__(self):
         """Initialize the EEPROM peripheral."""
         pass

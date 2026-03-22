@@ -38,7 +38,6 @@ class PWM:
         pwm.set_duty(128)    # 50% duty cycle
     """
 
-    @inline
     def __init__(self, pin: str, duty: uint8):
         """Initialize a hardware PWM channel from a port-pin name string.
 
@@ -65,7 +64,6 @@ class PWM:
                 self.pin = pin
                 pwm_init(pin, duty)
 
-    @inline
     def __init__(self, pin: Pin, duty: uint8):
         """Initialize a hardware PWM channel from a Pin ZCA instance.
 

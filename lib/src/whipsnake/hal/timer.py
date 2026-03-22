@@ -34,7 +34,6 @@ class Timer:
     frequencies depend on the target chip and selected timer.
     """
 
-    @inline
     def __init__(self, n: const[uint8], prescaler: uint8):
         """Initialize a hardware timer.
 

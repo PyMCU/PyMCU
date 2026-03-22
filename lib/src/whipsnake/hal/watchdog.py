@@ -27,7 +27,6 @@ class Watchdog:
             wdt.feed()    # must call within timeout_ms or the MCU resets
     """
 
-    @inline
     def __init__(self, timeout_ms: const[uint16] = 500):
         """Store the desired watchdog timeout in milliseconds."""
         self._timeout_ms = timeout_ms

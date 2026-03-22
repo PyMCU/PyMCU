@@ -35,7 +35,6 @@ class AnalogPin:
         val: uint16 = adc.read()    # 0-1023
     """
 
-    @inline
     def __init__(self, channel: str):
         """Initialize an ADC channel from a port-pin name string.
 
@@ -62,7 +61,6 @@ class AnalogPin:
                 self.channel = channel
                 adc_init(channel)
 
-    @inline
     def __init__(self, pin: Pin):
         """Initialize an ADC channel from a Pin ZCA instance.
 

@@ -39,7 +39,6 @@ class Pin:
     IRQ_LOW_LEVEL  = 4
     IRQ_HIGH_LEVEL = 8
 
-    @inline
     def __init__(self, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
         """Configure a digital I/O pin.
 

@@ -23,7 +23,6 @@ class UART:
         b: uint8 = uart.read()   # blocking receive
     """
 
-    @inline
     def __init__(self, baud: const[uint16] = 9600):
         """Initialize the UART peripheral at the given baud rate."""
         match __CHIP__.arch:

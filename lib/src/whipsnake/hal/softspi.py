@@ -30,7 +30,6 @@ class SoftSPI:
             ...
     """
 
-    @inline
     def __init__(self, sck: const[str], mosi: const[str], miso: const[str], cs: const[str] = ""):
         """Configure the bit-bang SPI pins and resolve port/bit pointers.
 
@@ -97,12 +96,10 @@ class SoftSPI:
         if self._cs != "":
             self._cs_port[self._cs_bit] = 1
 
-    @inline
     def __enter__(self):
         """Assert the chip-select line (context manager entry)."""
         self.select()
 
-    @inline
     def __exit__(self):
         """Deassert the chip-select line (context manager exit)."""
         self.deselect()

@@ -29,7 +29,6 @@ class SPI:
             spi.write(0xFF)
     """
 
-    @inline
     def __init__(self, cs: const[str] = ""):
         """Initialize the SPI peripheral.
 
@@ -92,12 +91,10 @@ class SPI:
                 from whipsnake.hal._spi.avr import spi_transfer
                 spi_transfer(data)
 
-    @inline
     def __enter__(self):
         """Assert the chip-select line (context manager entry)."""
         self.select()
 
-    @inline
     def __exit__(self):
         """Deassert the chip-select line (context manager exit)."""
         self.deselect()

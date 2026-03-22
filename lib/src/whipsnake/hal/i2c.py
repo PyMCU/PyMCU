@@ -33,7 +33,6 @@ class I2C:
     DATA_ACK  = 0x28   # Data byte sent, ACK received
     SLA_R_ACK = 0x40   # SLA+R sent, ACK received
 
-    @inline
     def __init__(self):
         """Initialize the I2C peripheral."""
         match __CHIP__.arch:
@@ -134,12 +133,10 @@ class I2C:
             case _:
                 return 0
 
-    @inline
     def __enter__(self):
         """Send a START condition (context manager entry)."""
         self.start()
 
-    @inline
     def __exit__(self):
         """Send a STOP condition (context manager exit)."""
         self.stop()
