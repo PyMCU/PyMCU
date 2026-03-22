@@ -9,17 +9,17 @@ import com.intellij.util.xmlb.XmlSerializerUtil
 
 /**
  * Application-level persistent settings for the Whipsnake plugin.
- * Stored in pymcu.xml inside the IDE config directory.
+ * Stored in whipsnake.xml inside the IDE config directory.
  */
 @Service(Service.Level.APP)
 @State(
     name = "WhipsnakeSettings",
-    storages = [Storage("pymcu.xml")]
+    storages = [Storage("whipsnake.xml")]
 )
 class WhipsnakeSettings : PersistentStateComponent<WhipsnakeSettings> {
 
-    /** Path to the `pymcu` executable. Defaults to bare name (resolved via PATH). */
-    var executablePath: String = "whipsnake"
+    /** Path to the `whip` executable. Defaults to bare name (resolved via PATH). */
+    var executablePath: String = "whip"
 
     /**
      * Package manager used for dependency sync.

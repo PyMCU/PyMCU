@@ -1,12 +1,12 @@
 <idea-plugin>
     <id>dev.begeistert.whipsnake</id>
     <name>Whipsnake</name>
-    <version>0.0.1</version>
-    <vendor email="begeistert@gmail.com" url="https://github.com/begeistert/pymcu">begeistert</vendor>
+    <version>0.1.0a1</version>
+    <vendor email="begeistert@gmail.com" url="https://github.com/begeistert/whipsnake">begeistert</vendor>
 
     <description><![CDATA[
         Whipsnake support for PyCharm: run configurations, error highlighting, tool window,
-        status bar chip indicator, and automatic project sync for pymcu projects.
+        status bar chip indicator, and automatic project sync for Whipsnake projects.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -54,7 +54,7 @@
         <directoryProjectGenerator
             implementation="dev.begeistert.whipsnake.newproject.WhipsnakeProjectGenerator"/>
 
-        <!-- Extra library roots: pymcu_circuitpython/ and pymcu_micropython/ dirs
+        <!-- Extra library roots: whipsnake_circuitpython/ and whipsnake_micropython/ dirs
              so PyCharm resolves 'import digitalio', 'import machine', 'import board' -->
         <additionalLibraryRootsProvider
             implementation="dev.begeistert.whipsnake.resolver.WhipsnakeAdditionalLibraryRootsProvider"/>

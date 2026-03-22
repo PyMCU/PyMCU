@@ -17,7 +17,7 @@ data class WhipsnakeConfig(
     val entry: String?,
     /** Compat stdlib flavors declared via  stdlib = ["micropython"]  or  ["circuitpython"]. */
     val stdlib: List<String> = emptyList(),
-    /** True when a [tool.pymcu.ffi] section is present in pyproject.toml. */
+    /** True when a [tool.whip.ffi] (or legacy [tool.pymcu.ffi]) section is present. */
     val hasFfi: Boolean = false
 ) {
     /** Human-readable display name: prettified board name, chip name, or "(unknown)". */
@@ -32,13 +32,22 @@ data class WhipsnakeConfig(
 }
 
 /**
- * Reads [tool.whip] from pyproject.toml located at the project base directory.
+ * Reads [tool.whip] (or legacy [tool.pymcu]) from pyproject.toml at the project base directory.
  * Uses simple regex — no external TOML library required.
+ *
+ * New projects use [tool.whip]; legacy projects that have not been migrated still use
+ * [tool.pymcu]. Both are detected transparently so the IDE works without manual migration.
  */
 object WhipsnakeConfigReader {
 
-    private val SECTION_RE      = Regex("""\[tool\.pymcu]""")
-    private val FFI_SECTION_RE  = Regex("""\[tool\.pymcu\.ffi]""")
+    // New-style section header
+    private val SECTION_NEW_RE      = Regex("""\[tool\.whip]""")
+    // Legacy section header (projects created before the rebrand)
+    private val SECTION_LEGACY_RE   = Regex("""\[tool\.pymcu]""")
+
+    // FFI section (new and legacy)
+    private val FFI_NEW_RE          = Regex("""\[tool\.whip\.ffi]""")
+    private val FFI_LEGACY_RE       = Regex("""\[tool\.pymcu\.ffi]""")
 
     // Matches key = "value"  or  key = 'value'  or  key = bare_value (not arrays)
     private val KV_RE           = Regex("""^\s*(\w+)\s*=\s*["']?([^"'\[\n\r]+?)["']?\s*$""")
@@ -58,7 +67,8 @@ object WhipsnakeConfigReader {
     }
 
     /**
-     * Parse [tool.whip] and return a [WhipsnakeConfig], or null if the file/section is absent.
+     * Parse [tool.whip] (falling back to [tool.pymcu]) and return a [WhipsnakeConfig],
+     * or null if the file/section is absent.
      */
     fun findConfig(project: Project): WhipsnakeConfig? {
         val file = findPyproject(project) ?: return null
@@ -71,13 +81,13 @@ object WhipsnakeConfigReader {
     fun parseContent(content: String): WhipsnakeConfig? {
         val lines = content.lines()
 
-        // Check for [tool.pymcu.ffi] anywhere in the file
-        val hasFfi = lines.any { FFI_SECTION_RE.containsMatchIn(it) }
+        // Check for FFI section anywhere in the file (new or legacy name)
+        val hasFfi = lines.any { FFI_NEW_RE.containsMatchIn(it) || FFI_LEGACY_RE.containsMatchIn(it) }
 
-        // Find the [tool.whip] section start
+        // Find the section start — prefer [tool.whip], fall back to [tool.pymcu]
         var sectionStart = -1
         for ((index, line) in lines.withIndex()) {
-            if (SECTION_RE.containsMatchIn(line)) {
+            if (SECTION_NEW_RE.containsMatchIn(line) || SECTION_LEGACY_RE.containsMatchIn(line)) {
                 sectionStart = index + 1
                 break
             }
