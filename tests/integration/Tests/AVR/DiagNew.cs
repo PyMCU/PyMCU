@@ -1,7 +1,7 @@
 using Avr8Sharp.TestKit.Boards;
 using NUnit.Framework;
 
-namespace PyMCU.IntegrationTests.Tests.AVR;
+namespace Whisnake.IntegrationTests.Tests.AVR;
 
 [TestFixture]
 public class DiagNew

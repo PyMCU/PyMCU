@@ -4,7 +4,7 @@ using Avr8Sharp.TestKit.Boards;
 using Avr8Sharp.TestKit;
 using AVR8Sharp.Core.Peripherals;
 
-namespace PyMCU.IntegrationTests.Tests.AVR;
+namespace Whisnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/stopwatch.

@@ -2,7 +2,7 @@ using Avr8Sharp.TestKit.Boards;
 using FluentAssertions;
 using NUnit.Framework;
 
-namespace PyMCU.IntegrationTests.Tests.AVR;
+namespace Whisnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/ffi-arduino.

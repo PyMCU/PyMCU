@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PyMCU.IntegrationTests", "PyMCU.IntegrationTests.csproj", "{CEE10B5C-4163-4332-B0DF-EE54947C57A5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whisnake.IntegrationTests", "Whisnake.IntegrationTests.csproj", "{CEE10B5C-4163-4332-B0DF-EE54947C57A5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

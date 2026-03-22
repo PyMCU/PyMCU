@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace PyMCU.IntegrationTests;
+namespace Whisnake.IntegrationTests;
 
 /// <summary>
-/// Compiles PyMCU example firmware using the <c>pymcu build</c> CLI driver
+/// Compiles Whisnake example firmware using the <c>whip build</c> CLI driver
 /// and returns the resulting Intel HEX content, ready to load into a simulator.
 /// Results are cached in-process so each example is compiled at most once per
 /// test session regardless of how many test fixtures reference it.
@@ -12,7 +12,7 @@ namespace PyMCU.IntegrationTests;
 public static class PymcuCompiler
 {
     private static readonly string RepoRoot = FindRepoRoot();
-    private static readonly string PymcuExe = Path.Combine(RepoRoot, ".venv", "bin", "pymcu");
+    private static readonly string WhipExe = Path.Combine(RepoRoot, ".venv", "bin", "whip");
     private static readonly ConcurrentDictionary<string, string> Cache = new();
 
     /// <summary>
@@ -31,7 +31,7 @@ public static class PymcuCompiler
         var exampleDir = Path.Combine(RepoRoot, "examples", "avr", name);
 
         Console.WriteLine($"[PymcuCompiler] RepoRoot    : {RepoRoot}");
-        Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
+        Console.WriteLine($"[PymcuCompiler] WhipExe    : {WhipExe} (exists={File.Exists(WhipExe)})");
         Console.WriteLine($"[PymcuCompiler] ExampleDir  : {exampleDir} (exists={Directory.Exists(exampleDir)})");
         Console.WriteLine($"[PymcuCompiler] PATH        : {Environment.GetEnvironmentVariable("PATH")}");
 
@@ -41,18 +41,18 @@ public static class PymcuCompiler
 
         var psi = new ProcessStartInfo
         {
-            FileName = PymcuExe,
+            FileName = WhipExe,
             Arguments = "build",
             WorkingDirectory = exampleDir,
             RedirectStandardOutput = true,
             RedirectStandardError  = true,
             UseShellExecute = false,
         };
-        // Verbose pymcu output so compiler path resolution is visible in CI logs
+        // Verbose whip output so compiler path resolution is visible in CI logs
         psi.Environment["PYMCU_VERBOSE"] = "1";
 
         using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start pymcu process.");
+            ?? throw new InvalidOperationException("Failed to start whip process.");
 
         // Collect output on background threads to avoid deadlock
         var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
@@ -66,7 +66,7 @@ public static class PymcuCompiler
         {
             proc.Kill();
             throw new TimeoutException(
-                $"pymcu build timed out after 60 s for example '{name}'.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                $"whip build timed out after 60 s for example '{name}'.\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
         if (proc.ExitCode != 0)
@@ -75,7 +75,7 @@ public static class PymcuCompiler
             Console.WriteLine($"[PymcuCompiler] stdout:\n{stdout}");
             Console.WriteLine($"[PymcuCompiler] stderr:\n{stderr}");
             throw new InvalidOperationException(
-                $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                $"whip build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
         var hexFile = Path.Combine(exampleDir, "dist", "firmware.hex");
@@ -96,6 +96,6 @@ public static class PymcuCompiler
             dir = Directory.GetParent(dir)?.FullName;
         }
         throw new DirectoryNotFoundException(
-            "Cannot locate pymcu repo root (no 'examples/avr' directory found in any parent).");
+            "Cannot locate Whisnake repo root (no 'examples/avr' directory found in any parent).");
     }
 }

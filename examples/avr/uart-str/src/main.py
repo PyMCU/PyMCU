@@ -12,7 +12,7 @@ def main():
     uart = UART(9600)
 
     # Test write_str (compile-time string expansion)
-    uart.write_str("Hello, PyMCU!\n")
+    uart.write_str("Hello, Whisnake!\n")
 
     # Test println (write_str + newline)
     uart.println("UART string support works!")
