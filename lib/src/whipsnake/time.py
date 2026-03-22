@@ -14,6 +14,7 @@
 # For precise timing, use hardware timers directly.
 
 from whipsnake.types import uint8, uint16, inline, asm
+from whipsnake.chips import __CHIP__
 
 @inline
 def delay_ms(ms: uint16):
