@@ -2699,7 +2699,8 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
         }
       }
       if (!resolvedClass.empty() &&
-          inline_functions.contains(resolvedClass + "___init__")) {
+          (inline_functions.contains(resolvedClass + "___init__") ||
+           overloaded_functions.contains(resolvedClass + "___init__"))) {
         std::string qualified_name;
         if (!current_inline_prefix.empty()) {
           qualified_name = current_inline_prefix + varExpr->name;
@@ -2761,7 +2762,8 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
                       if (const auto *rc = dynamic_cast<const CallExpr *>(ret->value.get())) {
                         if (const auto *rv = dynamic_cast<const VariableExpr *>(rc->callee.get())) {
                           std::string resolved = resolve_callee(rv->name);
-                          if (inline_functions.contains(resolved + "___init__"))
+                          if (inline_functions.contains(resolved + "___init__") ||
+                              overloaded_functions.contains(resolved + "___init__"))
                             returns_ctor = true;
                         }
                       }
@@ -2793,7 +2795,8 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
       if (auto calleeVar =
               dynamic_cast<const VariableExpr *>(call->callee.get())) {
         std::string resolvedClass = resolve_callee(calleeVar->name);
-        if (inline_functions.contains(resolvedClass + "___init__")) {
+        if (inline_functions.contains(resolvedClass + "___init__") ||
+            overloaded_functions.contains(resolvedClass + "___init__")) {
           // Resolve the object to compute the flattened member name.
           // Visiting a plain VariableExpr (e.g. "self") is side-effect-free so
           // it is safe to evaluate it here before the RHS.
@@ -2830,7 +2833,8 @@ void IRGenerator::visitAssign(const AssignStmt *stmt) {
         std::string rc;
         if (auto *cv = dynamic_cast<const VariableExpr *>(call->callee.get()))
           rc = resolve_callee(cv->name);
-        if (!rc.empty() && inline_functions.contains(rc + "___init__"))
+        if (!rc.empty() && (inline_functions.contains(rc + "___init__") ||
+                             overloaded_functions.contains(rc + "___init__")))
           is_ctor = true;
       }
       if (!is_ctor) {
@@ -5101,20 +5105,56 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
   }
 
   // Constructor support: Class() -> Class___init__()
-  if (inline_functions.contains(callee + "___init__")) {
+  // Also handles overloaded __init__ (erased from inline_functions, present in overloaded_functions).
+  if (inline_functions.contains(callee + "___init__") ||
+      overloaded_functions.contains(callee + "___init__")) {
     callee += "___init__";
   }
 
   // ── Overload resolution: callee has type-based overloads ─────────────────
   if (overloaded_functions.contains(callee)) {
     // Build suffix from actual arg types (skip self / keyword args).
+    // Handles string literals ("str"), ZCA instances (class name via
+    // instance_classes), str-constant variables, and numeric DataTypes.
+    // Helper: resolve the full internal class key to the short name that
+    // build_overload_suffix() uses (the raw annotation, e.g. "Pin" not
+    // "whipsnake_hal_gpio_Pin").  We match against class_names: a key
+    // "A_B_Foo" matches class name "Foo" when it ends with "_Foo" or == "Foo".
+    auto short_class_name = [&](const std::string &full_key) -> std::string {
+      for (const auto &cn : class_names) {
+        if (full_key == cn) return cn;
+        if (full_key.size() > cn.size() &&
+            full_key[full_key.size() - cn.size() - 1] == '_' &&
+            full_key.compare(full_key.size() - cn.size(), cn.size(), cn) == 0)
+          return cn;
+      }
+      return full_key;  // fallback: return as-is
+    };
+    auto arg_type_suffix = [&](const Expression *arg) -> std::string {
+      if (dynamic_cast<const StringLiteral *>(arg)) return "str";
+      if (const auto *v = dynamic_cast<const VariableExpr *>(arg)) {
+        std::string key = current_inline_prefix + v->name;
+        for (int depth = 0; depth < 20; ++depth) {
+          if (instance_classes.contains(key))
+            return short_class_name(instance_classes.at(key));
+          if (str_constant_variables.contains(key))
+            return "str";
+          auto ait = variable_aliases.find(key);
+          if (ait != variable_aliases.end())
+            key = ait->second;
+          else
+            break;
+        }
+      }
+      return datatype_to_suffix_str(infer_expr_type(arg));
+    };
     std::string suffix;
     bool first = true;
     for (const auto &arg : expr->args) {
       if (dynamic_cast<const KeywordArgExpr *>(arg.get())) continue;
       if (!first) suffix += "_";
       first = false;
-      suffix += datatype_to_suffix_str(infer_expr_type(arg.get()));
+      suffix += arg_type_suffix(arg.get());
     }
     if (suffix.empty()) suffix = "void";
     std::string mangled = callee + "___" + suffix;
@@ -5966,10 +6006,11 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     // Evaluate args in CURRENT context
     std::vector<tacky::Val> argValues;
 
-    // Detect constructor calls (___init__) for zero-cost self binding
+    // Detect constructor calls (___init__) for zero-cost self binding.
+    // Handles both plain "...___init__" and overloaded "...___init____Suffix".
     bool is_constructor =
-        callee.size() > 9 &&
-        callee.substr(callee.size() - 9) == "___init__";
+        (callee.size() > 9 && callee.substr(callee.size() - 9) == "___init__") ||
+        (callee.find("___init____") != std::string::npos);
     size_t param_offset = 0;
 
     // If it was an instance method call, bind 'self' via alias (zero-cost)
