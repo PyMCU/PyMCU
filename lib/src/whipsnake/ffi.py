@@ -39,17 +39,10 @@
 # Note: [tool.whip.ffi] triggers automatic toolchain selection -- whip build
 # switches to the avr-as / avr-ld pipeline when C sources are declared.
 
-from typing import Callable, TypeVar
-
-_F = TypeVar("_F", bound=Callable)
-
-
-def extern(symbol: str) -> Callable[[_F], _F]:
+def extern(symbol: str):
     # @extern("symbol") is recognised syntactically by the compiler in
     # parseFunction(). This stub exists only so IDEs can resolve the import
     # and infer the correct return type of the decorated function.
     # The compiler never executes this code -- it reads the symbol name
     # from the AST directly.
-    def _decorator(f: _F) -> _F:
-        return f
-    return _decorator
+    return lambda f: f
