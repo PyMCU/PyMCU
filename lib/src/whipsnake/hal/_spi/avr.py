@@ -2,8 +2,8 @@
 # Whipsnake Standard Library & HAL Definitions
 # Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
-# This file is part of the Whipsnake Standard Library (whipsnake-stdlib).
-# Licensed under the GNU General Public License v3. See LICENSE for details.
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
 # AVR SPI Master HAL — ATmega328P hardware SPI (Mode 0, MSB-first, fosc/4)

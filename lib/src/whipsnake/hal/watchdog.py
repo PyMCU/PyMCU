@@ -2,9 +2,8 @@
 # Whipsnake Standard Library & HAL Definitions
 # Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
-# This file is part of the Whipsnake Standard Library (whipsnake-stdlib).
-# Licensed under the GNU General Public License v3 or later.
-# See uart.py for full license notice.
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
 from whipsnake.types import uint8, uint16, inline, const

@@ -1,25 +1,9 @@
-/*
- * Whipsnake Compiler (whipc) — AVR Register Allocator
+/\*
+ * Whipsnake Compiler (whipc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
- * Licensed under the GNU General Public License v3. See LICENSE for details.
- *
- * Greedy register allocator for named local variables on AVR.
- *
- * AVR has 32 general-purpose registers (R0-R31). The current codegen reserves:
- *   R16-R17 : ISR context save scratch
- *   R18-R19 : secondary operand pair
- *   R24-R25 : accumulator / return value pair
- *   R28-R29 : Y frame pointer
- *
- * This leaves R4-R15 (12 registers) available as variable storage, eliminating
- * the LDD/STD Y+offset round-trips for the most frequently accessed variables.
- *
- * Strategy:
- *   1. Count uses of each named Variable (not temporaries) across all IR
- *   2. Sort by use-count descending (most-used gets a register first)
- *   3. Assign variables greedily to R4..R15 (8-bit) or R4:R5..R14:R15 (16-bit)
- *   4. Return the assignment map — codegen uses it in load/store operations
+ * SPDX-License-Identifier: MIT
+ * Licensed under the MIT License. See LICENSE for details.
  */
 
 #ifndef AVR_REGISTER_ALLOCATOR_H

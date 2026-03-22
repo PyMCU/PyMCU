@@ -1,11 +1,9 @@
-/*
- * Whipsnake Compiler (whipc) — AVR Linear Scan Register Allocator (Temporaries)
+/\*
+ * Whipsnake Compiler (whipc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
- * Licensed under the GNU General Public License v3. See LICENSE for details.
- *
- * Assigns R16/R17 to short-lived temporaries that do NOT span function calls,
- * eliminating STD Y+N / LDD Y+N traffic for those values.
+ * SPDX-License-Identifier: MIT
+ * Licensed under the MIT License. See LICENSE for details.
  */
 
 #ifndef AVRLINEARSCAN_H
