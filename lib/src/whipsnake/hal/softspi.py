@@ -14,10 +14,7 @@ from whipsnake.chips import __CHIP__
 # Mode 0 (CPOL=0, CPHA=0), MSB-first.
 # All pin names are compile-time constants (const[str]).
 # At construction, each pin is resolved to a port pointer + bit index and stored
-# as self._*_port / self._*_bit (or self._miso_pin_reg / self._miso_bit for MISO).
-# transfer() calls softspi_transfer_zca() with these pre-resolved values so
-# every byte is transferred with pure SBI/CBI/SBIS/SBIC instructions and no
-# string dispatch at runtime.
+# so that transfer() emits only direct register writes with no string dispatch.
 # self._cs is kept as a const[str] so `if self._cs != ""` guards are DCE'd.
 # noinspection PyProtectedMember
 class SoftSPI:

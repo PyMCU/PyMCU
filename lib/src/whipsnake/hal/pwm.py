@@ -8,22 +8,15 @@
 #
 # hal/pwm.py -- hardware PWM zero-cost abstraction (ZCA)
 #
-# Supported architectures: AVR (ATmega328P), PIC (16F877A, 16F18877, 18F45K50).
+# Supported architectures: AVR, PIC.
 #
-# ATmega328P timer/pin mapping:
-#   PD6 -> OC0A (Timer0)   PD5 -> OC0B (Timer0)
-#   PB1 -> OC1A (Timer1)   PB2 -> OC1B (Timer1)
-#   PB3 -> OC2A (Timer2)   PD3 -> OC2B (Timer2)
+# PWM(pin, duty) accepts a port-pin name string or a Pin ZCA instance.
+# The timer channel, compare register, and control register pointers are
+# resolved at construction time; set_duty() / start() / stop() each
+# compile to a single register write with no further dispatch.
 #
-# ATmega328P implementation details:
-#   self._ocr       -- compile-time ptr to the Output Compare Register (OCRxN).
-#   self._tccr_b    -- compile-time ptr to TCCRxB (controls the timer clock).
-#   self._start_val -- TCCRxB value that enables the timer with the configured prescaler.
-#   All three are resolved at construction via compile-time match/case and stored
-#   so that set_duty() / start() / stop() each compile to a single register write.
-#
-# PIC implementation:
-#   self.pin -- compile-time const[str] pin name forwarded to arch-specific helpers.
+# duty: 0-255 (0 = 0%, 255 = 100%). Timer is left stopped after init;
+# call start() before the first set_duty().
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, inline
 from whipsnake.hal.gpio import Pin
@@ -32,8 +25,7 @@ from whipsnake.hal.gpio import Pin
 # noinspection PyProtectedMember
 class PWM:
 
-    # Initialise a hardware PWM channel.
-    # pin:  port-pin name string, e.g. "PD6" (ATmega328P OC0A).
+    # Initialise a hardware PWM channel from a port-pin name string.
     # duty: initial duty cycle, 0-255 (0 = 0 %, 255 = 100 %).
     # The timer is left stopped after init; call start() before set_duty().
     @inline
@@ -86,7 +78,7 @@ class PWM:
 
     # Update the duty cycle.
     # duty: 0-255 (0 = 0 %, 255 = 100 %).
-    # ATmega328P: compiles to a single OUT/STS instruction writing OCRxN.
+    # Compiles to a single register write.
     @inline
     def set_duty(self, duty: uint8):
         match __CHIP__.name:
@@ -103,8 +95,7 @@ class PWM:
                 from whipsnake.hal._pwm.pic18f45k50 import pwm_set_duty
                 pwm_set_duty(self.pin, duty)
 
-    # Enable the timer clock (start generating the PWM waveform).
-    # ATmega328P: restores TCCRxB to the prescaler value selected at init.
+    # Enable the timer clock and start generating the PWM waveform.
     # Must be called once before the first set_duty() takes effect.
     @inline
     def start(self):
@@ -122,9 +113,8 @@ class PWM:
                 from whipsnake.hal._pwm.pic18f45k50 import pwm_start
                 pwm_start(self.pin)
 
-    # Disable the timer clock (stop the PWM waveform).
-    # ATmega328P: clears TCCRxB to 0x00; the OCR value is preserved.
-    # A subsequent start() resumes the waveform at the same duty cycle.
+    # Disable the timer clock and stop the PWM waveform.
+    # The duty cycle value is preserved; start() resumes at the same level.
     @inline
     def stop(self):
         match __CHIP__.name:

@@ -73,7 +73,7 @@ class UART:
 
     @inline
     def read_blocking(self) -> uint8:
-        # Blocking read: polls until a byte arrives (RXC0 set), then returns it.
+        # Blocking read: polls until a byte arrives, then returns it.
         # This is identical to read() but named explicitly to distinguish from read_nb().
         match __CHIP__.arch:
             case "avr":
@@ -88,7 +88,7 @@ class UART:
 
     @inline
     def available(self) -> uint8:
-        # Returns 1 if a byte is waiting in the UART receive buffer (RXC bit set), 0 otherwise.
+        # Returns 1 if a byte is waiting in the receive buffer, 0 otherwise.
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_available
@@ -98,7 +98,7 @@ class UART:
     @inline
     def read_nb(self) -> uint8:
         # Non-blocking read: returns the received byte if one is available, else 0.
-        # Checks the RXC0 bit (bit 7 of UCSR0A) without blocking.
+        # Does not block; check available() first to avoid reading stale data.
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read_nb
@@ -108,7 +108,7 @@ class UART:
     @inline
     def read_byte_isr(self) -> uint8:
         # ISR-safe read: reads the byte from the UART data register directly.
-        # Must only be called when RXC0 is set (e.g. from inside @interrupt USART_RX_vect).
+        # Must only be called from inside the USART receive ISR.
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read_byte_isr
@@ -117,8 +117,8 @@ class UART:
 
     @inline
     def enable_rx_interrupt(self):
-        # Enable RXCIE0 in UCSR0B so the USART_RX ISR fires on each received byte.
-        # After calling this, define an @interrupt(0x0024) handler that calls rx_isr().
+        # Enable the USART receive interrupt so the RX ISR fires on each received byte.
+        # After calling this, define an @interrupt handler at the USART_RX vector that calls rx_isr().
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_enable_rx_interrupt
@@ -126,8 +126,8 @@ class UART:
 
     @inline
     def rx_isr(self):
-        # Call from inside the @interrupt(0x0024) USART_RX handler.
-        # Reads UDR0 into the 16-byte ring buffer and advances the head index.
+        # Call from inside the USART_RX @interrupt handler.
+        # Reads the incoming byte into the 16-byte ring buffer and advances the head index.
         # Bytes are dropped silently if the buffer is full.
         match __CHIP__.arch:
             case "avr":

@@ -11,22 +11,22 @@ from whipsnake.chips import __CHIP__
 
 # Sleep / Power Management HAL
 #
-# ATmega328P sleep modes (approximate current at 3V, 25C, 8 MHz):
-#   sleep_idle()           ~6 mA  -- CPU halted, all peripherals running
-#   sleep_adc_noise()      ~1 mA  -- best ADC accuracy; ADC still runs
-#   sleep_power_down()   ~0.1 uA  -- deepest sleep; wake on ext-int/WDT/TWI
-#   sleep_power_save()   ~0.1 uA  -- power-down + Timer2 async still runs (RTC)
-#   sleep_standby()      ~0.1 uA  -- power-down + fast 6-cycle oscillator wake
+# Available sleep modes, from lightest to deepest:
+#   sleep_idle()          -- halts the CPU; all peripherals still running
+#   sleep_adc_noise()     -- reduces digital noise for ADC conversions
+#   sleep_power_down()    -- deepest sleep; wake via external interrupt, WDT, or TWI
+#   sleep_power_save()    -- power-down with async timer still running (useful for RTC)
+#   sleep_standby()       -- power-down with fast oscillator wake
 #
-# Each function sets the sleep mode, executes SLEEP, then clears SE on wake.
-# Global interrupts (SEI) must be enabled before calling sleep functions, or
-# the MCU will sleep forever with no way to wake.
+# Each function enters the selected sleep mode, then clears the sleep-enable
+# flag on wake. Global interrupts must be enabled before calling sleep
+# functions; without a wake source the MCU will remain asleep indefinitely.
 #
 # Example (interrupt-driven blink):
 #   from whipsnake.hal.power import sleep_power_down
 #   asm("sei")
 #   while True:
-#       sleep_power_down()    # wakes on INT0
+#       sleep_power_down()    # wakes on external interrupt
 #       led.toggle()
 
 # noinspection PyProtectedMember

@@ -11,7 +11,7 @@ from whipsnake.chips import __CHIP__
 
 
 # I2C - Hardware TWI master, zero-cost abstraction (all methods @inline)
-# Default: 100 kHz, SDA=PC4, SCL=PC5 (Arduino Uno A4/A5)
+# Default clock is 100 kHz; SDA and SCL pins are defined by the target chip.
 # Status constants for match patterns: I2C.START, I2C.SLA_ACK, I2C.SLA_NACK
 # High-level: i2c.ping(addr) returns 1 if device present, 0 if not
 # noinspection PyProtectedMember

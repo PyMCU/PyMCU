@@ -8,19 +8,14 @@
 #
 # hal/adc.py -- hardware ADC zero-cost abstraction (ZCA)
 #
-# Supported architectures: AVR (ATmega328P), PIC (16F877A, 16F18877, 18F45K50).
+# Supported architectures: AVR, PIC.
 #
-# ATmega328P channel mapping (AVcc reference, prescaler 128 = 125 kHz at 16 MHz):
-#   "PC0" = A0   "PC1" = A1   "PC2" = A2
-#   "PC3" = A3   "PC4" = A4   "PC5" = A5
+# AnalogPin(channel) accepts a port-pin name string (e.g. "PC0").
+# AnalogPin(pin) also accepts a Pin ZCA instance; pin.name is extracted at
+# compile time via the alias chain with no runtime cost.
 #
-# ATmega328P implementation detail:
-#   self._admux -- compile-time ADMUX register value encoding reference + channel.
-#                  Resolved once at construction; all read calls use it directly
-#                  with no further string dispatch.
-#
-# PIC implementation:
-#   self.channel -- compile-time const[str] channel name forwarded to arch helpers.
+# Channel-to-register mapping, reference selection, and conversion clock
+# are resolved at construction time; subsequent reads require no string dispatch.
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, inline
 from whipsnake.hal.gpio import Pin
@@ -29,10 +24,9 @@ from whipsnake.hal.gpio import Pin
 # noinspection PyProtectedMember
 class AnalogPin:
 
-    # Initialise an ADC channel from a port-pin name string, e.g. "PC0".
-    # On ATmega328P: resolves the channel to an ADMUX value at compile time,
-    # writes ADMUX and enables the ADC peripheral with prescaler 128 (125 kHz
-    # at 16 MHz, AVcc reference).  Subsequent reads use self._admux directly.
+    # Initialise an ADC channel from a port-pin name string.
+    # The channel is resolved to a hardware register value at compile time.
+    # Subsequent reads use the stored value directly with no string dispatch.
     @inline
     def __init__(self, channel: str):
         match __CHIP__.name:
@@ -108,9 +102,9 @@ class AnalogPin:
                 from whipsnake.hal._adc.atmega328p import adc_read
                 return adc_read()
 
-    # Trigger a conversion with ADC Interrupt Enable (ADIE = 1), then return.
-    # The ADC-complete ISR fires at vector byte 0x002A / word 0x0015 on ATmega328P.
-    # Pair with an @interrupt(0x002A) handler that calls read_result().
+    # Trigger a conversion with the ADC interrupt enabled, then return immediately.
+    # The ADC-complete ISR fires when conversion finishes.
+    # Pair with an @interrupt handler at the ADC-complete vector that calls read_result().
     @inline
     def start_conversion(self):
         match __CHIP__.name:
@@ -120,7 +114,7 @@ class AnalogPin:
 
     # Read the raw 10-bit result without triggering a new conversion.
     # Returns: uint16 in range 0-1023.
-    # Call from the ADC-complete ISR or after polling the ADIF flag.
+    # Call from the ADC-complete ISR or after the conversion-complete flag is set.
     @inline
     def read_result(self) -> uint16:
         match __CHIP__.name:

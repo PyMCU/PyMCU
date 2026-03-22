@@ -13,17 +13,15 @@ from whipsnake.chips import __CHIP__
 # noinspection PyProtectedMember
 class Watchdog:
     # Zero-cost Watchdog Timer HAL.
-    # Generates a system reset if firmware does not call feed() within timeout.
-    #
-    # ATmega328P timeouts (WDP prescaler, ~3V/25C):
-    #   16ms, 32ms, 64ms, 125ms, 250ms, 500ms, 1s, 2s, 4s, 8s
+    # Generates a system reset if firmware does not call feed() within the configured timeout.
+    # Available timeout values depend on the target chip's watchdog prescaler options.
     #
     # Usage:
     #   wdt = Watchdog(timeout_ms=500)
     #   wdt.enable()
     #   while True:
     #       do_work()
-    #       wdt.feed()    # must call within 500ms or MCU resets
+    #       wdt.feed()    # must call within timeout_ms or the MCU resets
 
     @inline
     def __init__(self, timeout_ms: const[uint16] = 500):

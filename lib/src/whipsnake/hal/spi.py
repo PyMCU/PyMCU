@@ -11,7 +11,7 @@ from whipsnake.chips import __CHIP__
 
 
 # SPI -- Hardware SPI master, zero-cost abstraction (all methods @inline).
-# Default: Mode 0, MSB-first, fosc/4, MOSI=PB3, MISO=PB4, SCK=PB5, SS=PB2.
+# Default: Mode 0, MSB-first, fosc/4. Hardware pins are defined by the target chip.
 # Optional cs parameter: custom chip-select pin name (e.g. "PB0").
 # When cs is non-empty, the CS port pointer and bit are resolved once at
 # construction time and stored as self._cs_port / self._cs_bit so that

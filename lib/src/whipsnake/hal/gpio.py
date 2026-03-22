@@ -1,3 +1,21 @@
+# -----------------------------------------------------------------------------
+# Whipsnake Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+#
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
+# -----------------------------------------------------------------------------
+#
+# hal/gpio.py -- general-purpose I/O zero-cost abstraction (ZCA)
+#
+# Pin(name, mode) configures a digital I/O pin by name.
+# All methods are @inline; chip dispatch is folded at compile time.
+#
+# Mode constants:   Pin.IN, Pin.OUT, Pin.OPEN_DRAIN
+# Pull constants:   Pin.PULL_UP, Pin.PULL_DOWN
+# Drive constants:  Pin.DRIVE_0, Pin.DRIVE_1
+# IRQ triggers:     Pin.IRQ_FALLING, Pin.IRQ_RISING, Pin.IRQ_LOW_LEVEL, Pin.IRQ_HIGH_LEVEL
+
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, const, inline
 

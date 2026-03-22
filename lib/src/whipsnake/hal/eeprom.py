@@ -13,10 +13,9 @@ from whipsnake.chips import __CHIP__
 # noinspection PyProtectedMember
 class EEPROM:
     # Zero-cost EEPROM HAL.
-    # Supports blocking byte-level read/write to internal EEPROM.
-    #
-    # ATmega328P: 1024 bytes, addresses 0x000-0x3FF
-    # Write latency: ~3.4 ms (hardware-timed, polled)
+    # Supports blocking byte-level read/write to on-chip EEPROM.
+    # Write operations poll until the hardware signals completion.
+    # Address range and capacity depend on the target chip.
     #
     # Usage:
     #   ee = EEPROM()

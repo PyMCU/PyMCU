@@ -1,3 +1,11 @@
+# -----------------------------------------------------------------------------
+# Whipsnake Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+#
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
+# -----------------------------------------------------------------------------
+
 from whipsnake.chips import __CHIP__
 from whipsnake.types import uint8, uint16, const, inline
 
@@ -6,15 +14,11 @@ from whipsnake.types import uint8, uint16, const, inline
 # The compiler folds both the chip dispatch and the timer-number dispatch at
 # compile time, emitting only the instructions for the selected timer.
 #
-# ATmega328P:
-#   Timer(0, prescaler)  -- 8-bit;  prescalers: 1/8/64/256
-#                           OVF vector 0x0010; ~977 Hz OVF at 64x, 16 MHz
-#   Timer(1, prescaler)  -- 16-bit; prescalers: 1/8/64/256/1024
-#                           OVF vector 0x000d; ~0.48 Hz OVF at 1024x, 16 MHz
-#   Timer(2, prescaler)  -- 8-bit async; prescalers: 1/8/32/64/128/256/1024
-#                           OVF vector 0x0009; ~61 Hz OVF at 1024x, 16 MHz
-#
+# AVR supports multiple numbered hardware timers (n=0, 1, 2).
 # PIC chips only support n=0 (Timer0).
+# Available prescaler values, resolution, and overflow rates depend on the
+# target chip and the selected timer.
+# CTC mode (compare-match interrupt) is configured via set_compare().
 
 # noinspection PyProtectedMember
 class Timer:
