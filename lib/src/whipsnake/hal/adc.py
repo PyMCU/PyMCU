@@ -35,11 +35,13 @@ class AnalogPin:
         val: uint16 = adc.read()    # 0-1023
     """
 
-    # Initialise an ADC channel from a port-pin name string.
-    # The channel is resolved to a hardware register value at compile time.
-    # Subsequent reads use the stored value directly with no string dispatch.
     @inline
     def __init__(self, channel: str):
+        """Initialize an ADC channel from a port-pin name string.
+
+        The channel is resolved to a hardware register value at compile time.
+        Subsequent reads use the stored value directly with no string dispatch.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_channel_admux, adc_init
@@ -60,14 +62,14 @@ class AnalogPin:
                 self.channel = channel
                 adc_init(channel)
 
-    # Initialise an ADC channel from a Pin ZCA instance.
-    # Extracts pin.name at compile time via the ZCA alias chain -- no runtime cost.
-    # Useful when the same port pin is first set up as a GPIO Pin and then used
-    # as an analog input, e.g.:
-    #   sensor_pin = Pin("PC0", Pin.IN)
-    #   adc = AnalogPin(sensor_pin)
     @inline
     def __init__(self, pin: Pin):
+        """Initialize an ADC channel from a Pin ZCA instance.
+
+        Extracts pin.name at compile time via the ZCA alias chain -- no runtime cost.
+        Useful when the same port pin is first set up as a GPIO Pin and then used
+        as an analog input.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_channel_admux, adc_init
@@ -86,10 +88,13 @@ class AnalogPin:
                 self.channel = pin.name
                 adc_init(pin.name)
 
-    # Trigger an ADC conversion (non-blocking).
-    # Poll the ADSC bit or use start_conversion() with an interrupt for completion.
     @inline
     def start(self):
+        """Trigger an ADC conversion (non-blocking).
+
+        Poll the conversion-complete flag or pair with start_conversion() and
+        an interrupt handler to be notified on completion.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_start
@@ -104,39 +109,47 @@ class AnalogPin:
                 from whipsnake.hal._adc.pic18f45k50 import adc_start
                 adc_start(self.channel)
 
-    # Trigger a conversion, block until complete, and return the raw 10-bit result.
-    # Returns: uint16 in range 0-1023.
     @inline
     def read(self) -> uint16:
+        """Trigger a conversion, block until complete, and return the raw 10-bit result.
+
+        Returns a uint16 in the range 0-1023.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_read
                 return adc_read()
 
-    # Trigger a conversion with the ADC interrupt enabled, then return immediately.
-    # The ADC-complete ISR fires when conversion finishes.
-    # Pair with an @interrupt handler at the ADC-complete vector that calls read_result().
     @inline
     def start_conversion(self):
+        """Trigger a conversion with the ADC interrupt enabled, then return immediately.
+
+        The ADC-complete ISR fires when conversion finishes. Pair with an
+        @interrupt handler at the ADC-complete vector that calls read_result().
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_start_int
                 adc_start_int()
 
-    # Read the raw 10-bit result without triggering a new conversion.
-    # Returns: uint16 in range 0-1023.
-    # Call from the ADC-complete ISR or after the conversion-complete flag is set.
     @inline
     def read_result(self) -> uint16:
+        """Read the raw 10-bit result without triggering a new conversion.
+
+        Returns a uint16 in the range 0-1023. Call from the ADC-complete ISR
+        or after the conversion-complete flag is set.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_read_result
                 return adc_read_result()
 
-    # Trigger a conversion, block until complete, and return the result scaled to 16-bit.
-    # Returns: uint16 in range 0-65535 (10-bit ADC value multiplied by 64).
     @inline
     def read_u16(self) -> uint16:
+        """Trigger a conversion, block until complete, and return the result scaled to 16-bit.
+
+        Returns a uint16 in the range 0-65535 (10-bit ADC value multiplied by 64).
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_read_u16

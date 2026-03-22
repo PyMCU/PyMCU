@@ -31,7 +31,7 @@ class SPI:
 
     @inline
     def __init__(self, cs: const[str] = ""):
-        """Initialise the SPI peripheral.
+        """Initialize the SPI peripheral.
 
         cs: optional port-pin name for a custom chip-select line.
             When provided it is configured as an output idling high.
@@ -92,11 +92,12 @@ class SPI:
                 from whipsnake.hal._spi.avr import spi_transfer
                 spi_transfer(data)
 
-    # Context manager support: `with spi:` auto-selects/deselects the device.
     @inline
     def __enter__(self):
+        """Assert the chip-select line (context manager entry)."""
         self.select()
 
     @inline
     def __exit__(self):
+        """Deassert the chip-select line (context manager exit)."""
         self.deselect()

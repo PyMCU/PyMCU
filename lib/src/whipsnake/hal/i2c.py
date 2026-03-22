@@ -35,7 +35,7 @@ class I2C:
 
     @inline
     def __init__(self):
-        """Initialise the I2C peripheral."""
+        """Initialize the I2C peripheral."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_init
@@ -109,9 +109,11 @@ class I2C:
 
     @inline
     def write_to(self, addr: uint8, data: uint8) -> uint8:
-        # Send START, address byte (write), one data byte, then STOP.
-        # addr: 7-bit I2C address; data: byte to send.
-        # Returns 1 on success (ACK), 0 if address NACK.
+        """Send START, address byte (write), one data byte, then STOP.
+
+        addr: 7-bit I2C address; data: byte to send.
+        Returns 1 on success (ACK), 0 if address NACK.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_write_to
@@ -121,8 +123,10 @@ class I2C:
 
     @inline
     def read_from(self, addr: uint8) -> uint8:
-        # Send START, address byte (read), read one byte with NACK, then STOP.
-        # addr: 7-bit I2C address. Returns the byte read, or 0 if NACK.
+        """Send START, address byte (read), read one byte with NACK, then STOP.
+
+        addr: 7-bit I2C address. Returns the byte read, or 0 if NACK.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_read_from
@@ -130,11 +134,12 @@ class I2C:
             case _:
                 return 0
 
-    # Context manager support: `with i2c:` auto-sends START/STOP
     @inline
     def __enter__(self):
+        """Send a START condition (context manager entry)."""
         self.start()
 
     @inline
     def __exit__(self):
+        """Send a STOP condition (context manager exit)."""
         self.stop()

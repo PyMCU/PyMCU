@@ -28,7 +28,7 @@ class EEPROM:
 
     @inline
     def __init__(self):
-        """Initialise the EEPROM peripheral."""
+        """Initialize the EEPROM peripheral."""
         pass
 
     @inline

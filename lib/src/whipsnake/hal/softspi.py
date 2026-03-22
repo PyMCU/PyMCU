@@ -97,11 +97,12 @@ class SoftSPI:
         if self._cs != "":
             self._cs_port[self._cs_bit] = 1
 
-    # Context manager: `with spi:` auto-selects/deselects the device.
     @inline
     def __enter__(self):
+        """Assert the chip-select line (context manager entry)."""
         self.select()
 
     @inline
     def __exit__(self):
+        """Deassert the chip-select line (context manager exit)."""
         self.deselect()

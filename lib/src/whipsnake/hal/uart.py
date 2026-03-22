@@ -25,7 +25,7 @@ class UART:
 
     @inline
     def __init__(self, baud: const[uint16] = 9600):
-        """Initialise the UART peripheral at the given baud rate."""
+        """Initialize the UART peripheral at the given baud rate."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_init

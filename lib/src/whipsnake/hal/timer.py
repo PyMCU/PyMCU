@@ -36,7 +36,7 @@ class Timer:
 
     @inline
     def __init__(self, n: const[uint8], prescaler: uint8):
-        """Initialise a hardware timer.
+        """Initialize a hardware timer.
 
         n:         compile-time timer number (e.g. 0, 1, 2).
         prescaler: clock prescaler value; valid values depend on the chip.

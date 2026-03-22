@@ -38,11 +38,13 @@ class PWM:
         pwm.set_duty(128)    # 50% duty cycle
     """
 
-    # Initialise a hardware PWM channel from a port-pin name string.
-    # duty: initial duty cycle, 0-255 (0 = 0 %, 255 = 100 %).
-    # The timer is left stopped after init; call start() before set_duty().
     @inline
     def __init__(self, pin: str, duty: uint8):
+        """Initialize a hardware PWM channel from a port-pin name string.
+
+        duty: initial duty cycle, 0-255 (0 = 0%, 255 = 100%).
+        The timer is left stopped after init; call start() before set_duty().
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
@@ -63,12 +65,14 @@ class PWM:
                 self.pin = pin
                 pwm_init(pin, duty)
 
-    # Initialise a hardware PWM channel from a Pin ZCA instance.
-    # Extracts pin.name at compile time via the ZCA alias chain -- no runtime cost.
-    # duty: initial duty cycle, 0-255 (0 = 0 %, 255 = 100 %).
-    # The timer is left stopped after init; call start() before set_duty().
     @inline
     def __init__(self, pin: Pin, duty: uint8):
+        """Initialize a hardware PWM channel from a Pin ZCA instance.
+
+        Extracts pin.name at compile time via the ZCA alias chain -- no runtime cost.
+        duty: initial duty cycle, 0-255 (0 = 0%, 255 = 100%).
+        The timer is left stopped after init; call start() before set_duty().
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
@@ -89,11 +93,12 @@ class PWM:
                 self.pin = pin.name
                 pwm_init(pin.name, duty)
 
-    # Update the duty cycle.
-    # duty: 0-255 (0 = 0 %, 255 = 100 %).
-    # Compiles to a single register write.
     @inline
     def set_duty(self, duty: uint8):
+        """Update the duty cycle. duty: 0-255 (0 = 0%, 255 = 100%).
+
+        Compiles to a single register write.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 # Direct OCR write -- single STS instruction.
@@ -108,10 +113,12 @@ class PWM:
                 from whipsnake.hal._pwm.pic18f45k50 import pwm_set_duty
                 pwm_set_duty(self.pin, duty)
 
-    # Enable the timer clock and start generating the PWM waveform.
-    # Must be called once before the first set_duty() takes effect.
     @inline
     def start(self):
+        """Enable the timer clock and start generating the PWM waveform.
+
+        Must be called once before the first set_duty() takes effect.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 # Restore prescaler value to re-enable the timer.
@@ -126,10 +133,12 @@ class PWM:
                 from whipsnake.hal._pwm.pic18f45k50 import pwm_start
                 pwm_start(self.pin)
 
-    # Disable the timer clock and stop the PWM waveform.
-    # The duty cycle value is preserved; start() resumes at the same level.
     @inline
     def stop(self):
+        """Disable the timer clock and stop the PWM waveform.
+
+        The duty cycle value is preserved; start() resumes at the same level.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 # Clear TCCRxB to stop the timer clock.

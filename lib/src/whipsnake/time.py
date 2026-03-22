@@ -18,6 +18,7 @@ from whipsnake.chips import __CHIP__
 
 @inline
 def delay_ms(ms: uint16):
+    """Delay for approximately the given number of milliseconds."""
     match __CHIP__.arch:
         case "pic14":
             _delay_ms_pic14(ms)
@@ -34,6 +35,7 @@ def delay_ms(ms: uint16):
 
 @inline
 def _delay_ms_pic14(ms: uint8):
+    """Software millisecond delay loop for PIC14 architecture."""
     # PIC14: Tcy = 4 clocks. DECFSZ+GOTO = 3 Tcy/iter.
     # 255 iters × 3 = 765 Tcy ≈ 0.765ms at 4MHz (Tcy=1us)
     # Outer while loop adds ~7 Tcy overhead per ms iteration.
@@ -48,6 +50,7 @@ def _delay_ms_pic14(ms: uint8):
 
 @inline
 def _delay_ms_pic14e(ms: uint8):
+    """Software millisecond delay loop for PIC14E architecture."""
     # PIC14E: Same instruction timing as PIC14, often higher Fosc.
     # At 32MHz internal: Tcy = 125ns, 1ms = 8000 Tcy.
     # Need nested loop: outer 10 × inner 255 × 3 = 7650 Tcy ≈ 0.96ms
@@ -67,6 +70,7 @@ def _delay_ms_pic14e(ms: uint8):
 
 @inline
 def _delay_ms_pic18(ms: uint8):
+    """Software millisecond delay loop for PIC18 architecture."""
     # PIC18: Tcy = 4 clocks, DECFSZ+BRA = 3 Tcy/iter (BRA = 2 on taken).
     # Typically 48MHz: Tcy = 83.3ns, 1ms = 12000 Tcy.
     # Nested: 16 × 255 × 3 = 12240 Tcy ≈ 1.02ms
@@ -85,6 +89,7 @@ def _delay_ms_pic18(ms: uint8):
         i = i + 1
 
 def _delay_1ms_avr():
+    """AVR 1ms delay subroutine (non-inline; called once per ms by _delay_ms_avr)."""
     # Non-inline: labels appear exactly once in the assembled output.
     # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ≈ 1ms at 16MHz.
     asm("    PUSH R24")
@@ -102,6 +107,7 @@ def _delay_1ms_avr():
 
 @inline
 def _delay_ms_avr(ms: uint16):
+    """Software millisecond delay loop for AVR architecture."""
     # Calls the non-inline 1ms helper once per ms so labels are not duplicated
     # across multiple delay_ms() call sites.
     # uint16 counter supports up to 65535ms (~65 seconds).
@@ -112,6 +118,7 @@ def _delay_ms_avr(ms: uint16):
 
 @inline
 def _delay_ms_riscv(ms: uint8):
+    """Software millisecond delay loop for RISC-V architecture."""
     # RISC-V: ADDI+BNE = ~3-4 cycles/iter depending on pipeline.
     # CH32V003 at 48MHz: 1ms = 48000 cycles.
     # Nested: 63 × 255 × 3 = 48195 ≈ 1ms
@@ -129,6 +136,7 @@ def _delay_ms_riscv(ms: uint8):
 
 @inline
 def _delay_ms_pic12(ms: uint8):
+    """Software millisecond delay loop for PIC12 architecture."""
     # PIC12 baseline: Same Tcy as PIC14, very limited RAM.
     # DECFSZ+GOTO = 3 Tcy/iter. At 4MHz: 1ms = 1000 Tcy.
     i: uint8 = 0
@@ -142,6 +150,7 @@ def _delay_ms_pic12(ms: uint8):
 
 @inline
 def delay_us(us: uint8):
+    """Delay for approximately the given number of microseconds."""
     match __CHIP__.arch:
         case "pic14":
             _delay_us_pic14(us)
@@ -158,7 +167,8 @@ def delay_us(us: uint8):
 
 @inline
 def _delay_us_pic14(us: uint8):
-    # PIC14 at 4MHz: Tcy=1us. 1us ≈ 1 NOP.
+    """Software microsecond delay loop for PIC14 architecture."""
+    # PIC14 at 4MHz: Tcy=1us. 1us ~= 1 NOP.
     # Loop overhead is ~7 Tcy so each iteration ≈ 8us at 4MHz.
     # For approximate us-level delays.
     i: uint8 = 0
@@ -168,6 +178,7 @@ def _delay_us_pic14(us: uint8):
 
 @inline
 def _delay_us_pic14e(us: uint8):
+    """Software microsecond delay loop for PIC14E architecture."""
     i: uint8 = 0
     while i < us:
         asm("    NOP")
@@ -176,6 +187,7 @@ def _delay_us_pic14e(us: uint8):
 
 @inline
 def _delay_us_pic18(us: uint8):
+    """Software microsecond delay loop for PIC18 architecture."""
     i: uint8 = 0
     while i < us:
         asm("    NOP")
@@ -184,7 +196,8 @@ def _delay_us_pic18(us: uint8):
 
 @inline
 def _delay_us_avr(us: uint8):
-    # AVR at 16MHz: 1us = 16 cycles. Loop overhead ~4 → 12 NOPs needed.
+    """Software microsecond delay loop for AVR architecture."""
+    # AVR at 16MHz: 1us = 16 cycles. Loop overhead ~4, so 12 NOPs needed.
     i: uint8 = 0
     while i < us:
         asm("    NOP")
@@ -203,6 +216,7 @@ def _delay_us_avr(us: uint8):
 
 @inline
 def _delay_us_riscv(us: uint8):
+    """Software microsecond delay loop for RISC-V architecture."""
     i: uint8 = 0
     while i < us:
         asm("    NOP")
@@ -213,6 +227,7 @@ def _delay_us_riscv(us: uint8):
 
 @inline
 def _delay_us_pic12(us: uint8):
+    """Software microsecond delay loop for PIC12 architecture."""
     i: uint8 = 0
     while i < us:
         asm("    NOP")
