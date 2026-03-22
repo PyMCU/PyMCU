@@ -30,7 +30,7 @@ class WhipsnakeRunConfiguration(
     name: String
 ) : RunConfigurationBase<RunnerSettings>(project, factory, name) {
 
-    /** The pymcu sub-command to execute. */
+    /** The whip sub-command to execute. */
     var command: String = "build"
 
     // -------------------------------------------------------------------------
@@ -81,7 +81,7 @@ class WhipsnakeRunConfiguration(
 
     private inner class WhipsnakeRunConfigurationEditor : SettingsEditor<WhipsnakeRunConfiguration>() {
 
-        private val commandCombo = ComboBox(arrayOf("build", "flash", "clean"))
+        private val commandCombo = ComboBox(arrayOf("build", "flash", "clean", "new", "version"))
 
         override fun resetEditorFrom(config: WhipsnakeRunConfiguration) {
             commandCombo.selectedItem = config.command
