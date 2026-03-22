@@ -1,18 +1,18 @@
 # Migrating from MicroPython
 
-The `pymcu-micropython` compat package provides `machine`, `utime`, and `micropython` module
+The `whisnake-micropython` compat package provides `machine`, `utime`, and `micropython` module
 names so most MicroPython firmware targeting Arduino Uno ports with minimal edits.
 
 ## Step 1: Install the compat package
 
 ```bash
-pip install pymcu-micropython
+pip install whisnake-micropython
 ```
 
 Add to `pyproject.toml`:
 
 ```toml
-[tool.pymcu]
+[tool.whip]
 stdlib = ["micropython"]
 target = "atmega328p"
 ```
@@ -29,7 +29,7 @@ MicroPython's top-level execution; wrap your top-level code in `def main():`).
 count = 0
 data = bytearray(8)
 
-# PyMCU
+# Whisnake
 count: uint16 = 0
 data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 ```
@@ -42,7 +42,7 @@ data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 # MicroPython
 btn.irq(trigger=Pin.IRQ_FALLING, handler=on_btn)
 
-# PyMCU — use @interrupt decorator
+# Whisnake — use @interrupt decorator
 @interrupt(0x0002)   # INT0 vector
 def on_btn():
     global count
@@ -60,7 +60,7 @@ btn.irq(Pin.IRQ_FALLING)   # sets up EICRA/EIMSK; handler is @interrupt above
 tim = Timer(0, freq=1)
 tim.callback(on_timer)
 
-# PyMCU
+# Whisnake
 @interrupt(0x0020)   # Timer0 OVF
 def on_timer():
     global tick
@@ -78,8 +78,8 @@ t.start()
 # MicroPython
 machine.mem8[0x25] = 0xFF
 
-# PyMCU
-from pymcu.types import ptr, uint8
+# Whisnake
+from whisnake.types import ptr, uint8
 PORTB: ptr[uint8] = ptr(0x25)
 PORTB.value = 0xFF
 ```
@@ -90,7 +90,7 @@ PORTB.value = 0xFF
 # MicroPython
 BAUD = micropython.const(9600)
 
-# PyMCU — micropython.const() is a no-op; just use the value or const[T]
+# Whisnake — micropython.const() is a no-op; just use the value or const[T]
 BAUD: const[uint16] = 9600
 ```
 
@@ -100,7 +100,7 @@ BAUD: const[uint16] = 9600
 # MicroPython
 temp = adc.read() * 3.3 / 4096 * 100
 
-# PyMCU
+# Whisnake
 temp: uint16 = adc.read() * 330 // 4096
 ```
 
@@ -120,7 +120,7 @@ while True:
     sleep_ms(500)
 ```
 
-### Blink (PyMCU + pymcu-micropython)
+### Blink (Whisnake + whisnake-micropython)
 
 ```python
 from machine import Pin       # identical

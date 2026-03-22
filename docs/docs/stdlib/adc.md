@@ -1,7 +1,7 @@
-# ADC — `pymcu.hal.adc`
+# ADC — `whisnake.hal.adc`
 
 ```python
-from pymcu.hal.adc import AnalogPin
+from whisnake.hal.adc import AnalogPin
 ```
 
 ## `AnalogPin(channel: str)`
@@ -21,8 +21,8 @@ from `ADCL` and `ADCH`.
 ## Example
 
 ```python
-from pymcu.hal.adc import AnalogPin
-from pymcu.types import ptr, uint8, uint16
+from whisnake.hal.adc import AnalogPin
+from whisnake.types import ptr, uint8, uint16
 
 ADCSRA: ptr[uint8] = ptr(0x7A)
 ADCL:   ptr[uint8] = ptr(0x78)

@@ -1,4 +1,4 @@
-site_name: PyMCU
+site_name: Whisnake
 site_description: Python-to-MCU compiler for bare-metal microcontrollers
 site_url: https://pymcu.dev
 repo_url: https://github.com/pymcu/pymcu

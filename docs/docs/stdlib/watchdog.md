@@ -1,7 +1,7 @@
-# Watchdog — `pymcu.hal.watchdog`
+# Watchdog — `whisnake.hal.watchdog`
 
 ```python
-from pymcu.hal.watchdog import Watchdog
+from whisnake.hal.watchdog import Watchdog
 ```
 
 Hardware watchdog timer that resets the MCU if the firmware stops calling `feed()` within the
@@ -38,9 +38,9 @@ time, so no runtime table lookup is needed.
 ## Usage
 
 ```python
-from pymcu.hal.watchdog import Watchdog
-from pymcu.hal.uart import UART
-from pymcu.types import uint8
+from whisnake.hal.watchdog import Watchdog
+from whisnake.hal.uart import UART
+from whisnake.types import uint8
 
 def main():
     uart = UART(9600)

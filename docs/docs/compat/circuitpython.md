@@ -1,20 +1,20 @@
 # CircuitPython Flavor
 
-The `pymcu-circuitpython` package lets you write CircuitPython-style firmware that compiles
+The `whisnake-circuitpython` package lets you write CircuitPython-style firmware that compiles
 directly to bare-metal AVR machine code -- no interpreter, no heap, no runtime overhead.
 
 ## Quick Start
 
 ```bash
-pip install pymcu-circuitpython
+pip install whisnake-circuitpython
 ```
 
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["pymcu-compiler", "pymcu-circuitpython"]
+dependencies = ["whipsnake", "whisnake-circuitpython"]
 
-[tool.pymcu]
+[tool.whip]
 stdlib  = ["circuitpython"]
 board   = "arduino_uno"
 ```
@@ -34,7 +34,7 @@ def main():
 ```
 
 ```bash
-pymcu build   # produces dist/firmware.hex
+whip build   # produces dist/firmware.hex
 ```
 
 ---
@@ -82,7 +82,7 @@ if btn.value:
 
 ```python
 import analogio, board
-from pymcu.types import uint16
+from whisnake.types import uint16
 
 adc = analogio.AnalogIn(board.A0)
 val: uint16 = adc.value   # 0-65535 (10-bit ADC scaled x64)
@@ -92,7 +92,7 @@ val: uint16 = adc.value   # 0-65535 (10-bit ADC scaled x64)
 
 ```python
 import busio, board
-from pymcu.types import uint8
+from whisnake.types import uint8
 
 uart = busio.UART(board.TX, board.RX, baudrate=9600)
 uart.write(b"hello\n")
@@ -147,7 +147,7 @@ time.sleep(1)        # 1 second (integer only)
 # CircuitPython
 count = 0
 
-# PyMCU
+# Whisnake
 count: uint16 = 0
 ```
 
@@ -155,7 +155,7 @@ count: uint16 = 0
 
 ```python
 time.sleep(0.5)      # CircuitPython
-time.sleep_ms(500)   # PyMCU
+time.sleep_ms(500)   # Whisnake
 ```
 
 ### Replace float arithmetic with integer scaling
@@ -164,7 +164,7 @@ time.sleep_ms(500)   # PyMCU
 # CircuitPython
 temp_c = raw * 3.3 / 1024 * 100
 
-# PyMCU -- multiply first, divide last
+# Whisnake -- multiply first, divide last
 temp_c: uint16 = raw * 330 // 1024
 ```
 
@@ -177,7 +177,7 @@ try:
 except RuntimeError:
     val = 0
 
-# PyMCU
+# Whisnake
 val: uint16 = sensor.read()   # returns 0xFFFF on error
 if val == 0xFFFF:
     val = 0
@@ -189,7 +189,7 @@ if val == 0xFFFF:
 # CircuitPython (top-level)
 led = digitalio.DigitalInOut(board.LED)
 
-# PyMCU
+# Whisnake
 def main():
     led = digitalio.DigitalInOut(board.LED)
 ```
@@ -198,7 +198,7 @@ def main():
 
 ## Differences from Real CircuitPython
 
-| Feature | CircuitPython | PyMCU flavor |
+| Feature | CircuitPython | Whisnake flavor |
 |---------|---------------|--------------|
 | `time.sleep(s)` | Float seconds | Use `sleep_ms()` |
 | `float` | Supported | Not yet (Beta: `fixed16`) |

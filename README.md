@@ -1,13 +1,13 @@
-# PyMCU: Python-to-MCU Compiler
+# Whisnake: Python-to-MCU Compiler
 
-PyMCU is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega328P/Arduino Uno), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
+Whisnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega328P/Arduino Uno), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
 
 ## Installation
 
-PyMCU is best installed using `pipx` to keep it isolated from your system Python:
+Whisnake is best installed using `pipx` to keep it isolated from your system Python:
 
 ```bash
-pipx install pymcu-compiler
+pipx install whipsnake
 ```
 
 Ensure `pipx` is installed and its bin directory is in your PATH.
@@ -19,7 +19,7 @@ Ensure `pipx` is installed and its bin directory is in your PATH.
 The `pymcu` driver includes a scaffolding tool to set up a new project with the correct structure and configuration.
 
 ```bash
-pymcu new my_project
+whip new my_project
 ```
 
 This interactive command will guide you through:
@@ -32,7 +32,7 @@ This interactive command will guide you through:
 Navigate to your project directory and run:
 
 ```bash
-pymcu build
+whip build
 ```
 
 This will compile your Python code in `src/` (or the root) and generate a `.hex` file in the `dist/` directory.
@@ -42,7 +42,7 @@ This will compile your Python code in `src/` (or the root) and generate a `.hex`
 To flash the generated firmware to your device:
 
 ```bash
-pymcu flash
+whip flash
 ```
 
 This uses the programmer configured in your `pyproject.toml` (defaulting to `pk2cmd` for PICKit 2).
@@ -61,8 +61,8 @@ pymcu clean
 - [Driver CLI](docs/docs/driver.md) - Command-line interface reference
 - [Language Reference](docs/docs/language-reference.md) - Complete syntax and type system documentation
 - [Language Roadmap](LANGUAGE_ROADMAP.md) - Feature status and development roadmap
-- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to PyMCU
-- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to PyMCU
+- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to Whisnake
+- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to Whisnake
 
 ## License
 

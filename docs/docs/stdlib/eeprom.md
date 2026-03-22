@@ -1,7 +1,7 @@
-# EEPROM — `pymcu.hal.eeprom`
+# EEPROM — `whisnake.hal.eeprom`
 
 ```python
-from pymcu.hal.eeprom import EEPROM
+from whisnake.hal.eeprom import EEPROM
 ```
 
 Non-volatile byte storage using the internal EEPROM. No heap allocation — the `EEPROM` class is a
@@ -31,8 +31,8 @@ Creates an EEPROM handle. No registers are written at construction time.
 ## Usage
 
 ```python
-from pymcu.hal.eeprom import EEPROM
-from pymcu.types import uint8, uint16
+from whisnake.hal.eeprom import EEPROM
+from whisnake.types import uint8, uint16
 
 def main():
     ee = EEPROM()

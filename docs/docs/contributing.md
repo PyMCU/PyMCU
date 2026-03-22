@@ -1,21 +1,21 @@
 # Contributing
 
-Contributions to PyMCU are welcome. Please read this guide before opening a PR.
+Contributions to Whisnake are welcome. Please read this guide before opening a PR.
 
 ## Repository layout
 
 ```
 pymcu/
-  src/compiler/           # C++ compiler (pymcuc)
+  src/compiler/           # C++ compiler (whipc)
     frontend/             # Lexer, Parser, AST
     ir/                   # IRGenerator, Optimizer, Tacky IR
     backend/targets/avr/  # AVR codegen, peephole, register allocator
-  lib/src/pymcu/          # Python stdlib (compiled into firmware)
+  lib/src/whisnake/          # Python stdlib (compiled into firmware)
     hal/                  # GPIO, UART, ADC, Timer, PWM, SPI, I2C
     drivers/              # DHT11 and other device drivers
     boards/               # Board pin name constants
     chips/                # Chip configuration and __CHIP__
-  src/driver/             # Python CLI driver (pymcu build/flash/new)
+  src/driver/             # Python CLI driver (whip build/flash/new)
   tests/integration/      # .NET / AVR8Sharp integration tests
   examples/avr/           # Firmware examples (each with a full test suite)
   docs/                   # This documentation site
@@ -25,13 +25,13 @@ pymcu/
 
 ```bash
 cmake -B build -S src/compiler -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)
+cmake --build build --target whipc -j$(sysctl -n hw.ncpu)
 ```
 
 ## Running integration tests
 
 ```bash
-dotnet test tests/integration/PyMCU.IntegrationTests.csproj
+dotnet test tests/integration/Whisnake.IntegrationTests.csproj
 ```
 
 All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
@@ -39,14 +39,14 @@ compiler or HAL feature.
 
 ## Adding a stdlib module
 
-1. Add the implementation in `lib/src/pymcu/hal/` (or `drivers/`).
+1. Add the implementation in `lib/src/whisnake/hal/` (or `drivers/`).
 2. Use `@inline` for all public methods (zero-cost abstraction rule).
 3. Use `match __CHIP__.arch:` for architecture dispatch.
 4. No non-ASCII characters in source (compiler lexer is ASCII-only).
 5. No multiline docstrings with code examples — use `# comments` instead.
 6. After editing stdlib, rsync to the local virtualenv:
    ```bash
-   rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/
+   rsync lib/src/whisnake/ .venv/lib/python3.X/site-packages/whisnake/
    ```
 
 ## HAL coding rules
@@ -58,7 +58,7 @@ compiler or HAL feature.
 
 ## Commit format
 
-PyMCU uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit must follow:
+Whisnake uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit must follow:
 
 ```
 <type>(<scope>): <short description>

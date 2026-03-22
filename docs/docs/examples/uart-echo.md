@@ -7,8 +7,8 @@ Sends a startup banner then echoes every received byte back on UART0.
 ## Source
 
 ```python
-from pymcu.types import uint8
-from pymcu.hal.uart import UART
+from whisnake.types import uint8
+from whisnake.hal.uart import UART
 
 def main():
     uart = UART(9600)
@@ -34,8 +34,8 @@ def main():
 
 ```bash
 cd examples/avr/uart-echo
-pymcu build
-pymcu flash --port /dev/cu.usbmodem*
+whip build
+whip flash --port /dev/cu.usbmodem*
 ```
 
 Then open a serial monitor at 9600 baud.

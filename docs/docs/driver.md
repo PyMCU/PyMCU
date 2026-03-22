@@ -1,16 +1,16 @@
-# PyMCU Driver Documentation
+# Whisnake Driver Documentation
 
-The `pymcu` driver is the command-line interface (CLI) for managing PyMCU projects. It handles project creation, dependency management interaction, building, and flashing firmware.
+The `pymcu` driver is the command-line interface (CLI) for managing Whisnake projects. It handles project creation, dependency management interaction, building, and flashing firmware.
 
 ## Commands
 
-### `pymcu new <project_name>`
+### `whip new <project_name>`
 
-Creates a new PyMCU project with the specified name.
+Creates a new Whisnake project with the specified name.
 
 **Usage:**
 ```bash
-pymcu new my_blinking_led
+whip new my_blinking_led
 ```
 
 **Features:**
@@ -23,38 +23,38 @@ pymcu new my_blinking_led
     - `.gitignore` for version control.
 
 **Configuration:**
-The generated `pyproject.toml` includes a `[tool.pymcu]` section:
+The generated `pyproject.toml` includes a `[tool.whip]` section:
 
 **For PIC microcontrollers:**
 ```toml
-[tool.pymcu]
+[tool.whip]
 chip = "pic16f84a"
 frequency = 4000000
 
-[tool.pymcu.config]
+[tool.whip.config]
 # Configuration bits can be added here
 # FOSC = "HS"
 
-[tool.pymcu.toolchain]
+[tool.whip.toolchain]
 name = "gputils" # Auto-detected toolchain
 
-[tool.pymcu.programmer]
+[tool.whip.programmer]
 name = "pickit2" # Default programmer
 ```
 
 **For AVR (Arduino Uno):**
 ```toml
-[tool.pymcu]
+[tool.whip]
 chip = "atmega328p"
 frequency = 16000000
 
-[tool.pymcu.programmer]
+[tool.whip.programmer]
 name = "avrdude"
 protocol = "arduino"
 baudrate = 115200
 ```
 
-### `pymcu build`
+### `whip build`
 
 Compiles the project's source code into a Intel HEX file.
 
@@ -67,28 +67,28 @@ Compiles the project's source code into a Intel HEX file.
 - A valid `pyproject.toml` in the project root.
 - All dependencies installed (e.g., via `uv sync` or `pip install -r requirements.txt`).
 
-### `pymcu flash`
+### `whip flash`
 
 Flashes the built firmware to the target device using the configured programmer.
 
 **Usage:**
 ```bash
-pymcu flash                              # Use default programmer and port
-pymcu flash --port /dev/cu.usbmodem*     # Specify port (AVR/Arduino)
-pymcu flash --port /dev/ttyUSB0          # Linux serial port
+whip flash                              # Use default programmer and port
+whip flash --port /dev/cu.usbmodem*     # Specify port (AVR/Arduino)
+whip flash --port /dev/ttyUSB0          # Linux serial port
 ```
 
 **Requirements:**
 - A successful build (`dist/firmware.hex` must exist).
 - A connected programmer (e.g., PICKit 2 for PIC, USB-serial adapter for AVR).
-- The correct programmer configured in `pyproject.toml` under `[tool.pymcu.programmer]`.
+- The correct programmer configured in `pyproject.toml` under `[tool.whip.programmer]`.
 
 **Supported Programmers:**
 
 **AVR (Arduino Uno, ATmega328P):**
 - `avrdude` - Uses the `avrdude` tool with Arduino bootloader
   ```toml
-  [tool.pymcu.programmer]
+  [tool.whip.programmer]
   name = "avrdude"
   protocol = "arduino"
   baudrate = 115200
@@ -97,7 +97,7 @@ pymcu flash --port /dev/ttyUSB0          # Linux serial port
 **PIC14/PIC14E:**
 - `pickit2` (via `pk2cmd`) - Automatically downloaded if not present
   ```toml
-  [tool.pymcu.programmer]
+  [tool.whip.programmer]
   name = "pickit2"
   ```
 
@@ -107,7 +107,7 @@ Removes the `dist/` directory and cleans up build artifacts.
 
 ## Toolchain Management
 
-PyMCU attempts to auto-detect and configure the appropriate toolchain (compiler/assembler backend) for the selected chip:
+Whisnake attempts to auto-detect and configure the appropriate toolchain (compiler/assembler backend) for the selected chip:
 
 - **AVR**: Uses the built-in AVR backend (no external assembler required)
 - **PIC14/PIC14E**: Uses `gputils` for assembly (auto-detected)
@@ -130,4 +130,4 @@ PyMCU attempts to auto-detect and configure the appropriate toolchain (compiler/
   - Windows: `COM3`, `COM4`, etc.
 
 ### PIC
-- **"Programmer not found"**: Run `pymcu flash` and follow the prompts to install the required tools (e.g., `pk2cmd`).
+- **"Programmer not found"**: Run `whip flash` and follow the prompts to install the required tools (e.g., `pk2cmd`).

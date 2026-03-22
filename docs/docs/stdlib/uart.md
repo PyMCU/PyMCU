@@ -1,7 +1,7 @@
-# UART — `pymcu.hal.uart`
+# UART — `whisnake.hal.uart`
 
 ```python
-from pymcu.hal.uart import UART
+from whisnake.hal.uart import UART
 ```
 
 ## `UART(baud=9600)`
@@ -29,8 +29,8 @@ Initializes the hardware UART peripheral. On AVR, uses USART0.
 ## Examples
 
 ```python
-from pymcu.hal.uart import UART
-from pymcu.types import uint8
+from whisnake.hal.uart import UART
+from whisnake.types import uint8
 
 uart = UART(9600)
 
@@ -52,8 +52,8 @@ uart.print_byte(val)   # sends "42\n"
 ## UART echo loop
 
 ```python
-from pymcu.hal.uart import UART
-from pymcu.types import uint8
+from whisnake.hal.uart import UART
+from whisnake.types import uint8
 
 def main():
     uart = UART(9600)

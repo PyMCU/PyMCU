@@ -1,7 +1,7 @@
-# PWM — `pymcu.hal.pwm`
+# PWM — `whisnake.hal.pwm`
 
 ```python
-from pymcu.hal.pwm import PWM
+from whisnake.hal.pwm import PWM
 ```
 
 ## `PWM(pin: str, duty: uint8)`
@@ -31,9 +31,9 @@ associated Timer/Counter channels are:
 ## Example
 
 ```python
-from pymcu.hal.pwm import PWM
-from pymcu.time import delay_ms
-from pymcu.types import uint8
+from whisnake.hal.pwm import PWM
+from whisnake.time import delay_ms
+from whisnake.types import uint8
 
 def main():
     pwm = PWM("PD6", duty=0)    # OC0A

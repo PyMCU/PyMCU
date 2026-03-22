@@ -15,10 +15,10 @@ exponential moving average (EMA) filter, and conditional verbose/compact UART ou
 ## Source (annotated)
 
 ```python
-from pymcu.hal.gpio import Pin
-from pymcu.hal.uart import UART
-from pymcu.hal.timer import Timer0
-from pymcu.types import uint8, uint16, ptr
+from whisnake.hal.gpio import Pin
+from whisnake.hal.uart import UART
+from whisnake.hal.timer import Timer0
+from whisnake.types import uint8, uint16, ptr
 
 TIMSK0: ptr[uint8] = ptr(0x6E)
 ADCSRA: ptr[uint8] = ptr(0x7A)
@@ -89,6 +89,6 @@ This is equivalent to `alpha = 1/16 = 0.0625`, using only integer shifts — no 
 
 ```bash
 cd examples/avr/sensor-dashboard
-pymcu build
-pymcu flash --port /dev/cu.usbmodem*
+whip build
+whip flash --port /dev/cu.usbmodem*
 ```
