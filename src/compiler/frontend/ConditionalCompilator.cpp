@@ -217,6 +217,26 @@ bool ConditionalCompilator::process_statement(
         }
 
         // Check if this case pattern matches the target
+        if (const auto intlit =
+                dynamic_cast<const IntegerLiteral*>(branch.pattern.get())) {
+          if (std::to_string(intlit->value) == target_val) {
+            if (const auto block =
+                    dynamic_cast<const Block*>(branch.body.get())) {
+              for (const auto& inner : block->statements) {
+                if (const auto imp =
+                        dynamic_cast<const ImportStmt*>(inner.get())) {
+                  prog.imports.push_back(std::make_unique<ImportStmt>(
+                      imp->module_name, imp->symbols, imp->relative_level));
+                } else {
+                  auto& mut_inner =
+                      const_cast<std::unique_ptr<Statement>&>(inner);
+                  new_stmts.push_back(std::move(mut_inner));
+                }
+              }
+            }
+            return true;
+          }
+        }
         if (const auto str =
                 dynamic_cast<const StringLiteral*>(branch.pattern.get())) {
           if (str->value == target_val) {
@@ -267,6 +287,8 @@ bool ConditionalCompilator::evaluate_condition(const Expression* expr) {
       auto get_val = [&](const Expression* e) -> std::string {
         if (const auto var = dynamic_cast<const VariableExpr*>(e)) {
           if (var->name == "__CHIP__") return config.chip;
+          if (var->name == "__FREQ__" || var->name == "F_CPU")
+            return std::to_string(config.frequency);
           throw std::runtime_error("Unknown var");
         }
         if (const auto mem = dynamic_cast<const MemberAccessExpr*>(e)) {
@@ -282,6 +304,9 @@ bool ConditionalCompilator::evaluate_condition(const Expression* expr) {
         }
         if (const auto str = dynamic_cast<const StringLiteral*>(e)) {
           return str->value;
+        }
+        if (const auto intlit = dynamic_cast<const IntegerLiteral*>(e)) {
+          return std::to_string(intlit->value);
         }
         throw std::runtime_error("Not a constant");
       };
@@ -335,6 +360,8 @@ std::string ConditionalCompilator::evaluate_match_target(
     const Expression* expr) {
   if (const auto var = dynamic_cast<const VariableExpr*>(expr)) {
     if (var->name == "__CHIP__") return config.chip;
+    if (var->name == "__FREQ__" || var->name == "F_CPU")
+      return std::to_string(config.frequency);
   }
   if (const auto mem = dynamic_cast<const MemberAccessExpr*>(expr)) {
     if (const auto obj =

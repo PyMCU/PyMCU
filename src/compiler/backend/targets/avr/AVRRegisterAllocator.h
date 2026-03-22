@@ -1,4 +1,4 @@
-/\*
+/*
  * Whipsnake Compiler (whipc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
