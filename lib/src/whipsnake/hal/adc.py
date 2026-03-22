@@ -23,6 +23,17 @@ from whipsnake.hal.gpio import Pin
 
 # noinspection PyProtectedMember
 class AnalogPin:
+    """Hardware ADC channel, zero-cost abstraction (all methods @inline).
+
+    Accepts a port-pin name string or a Pin ZCA instance. The channel-to-
+    register mapping is resolved at construction time; subsequent reads use
+    the stored value directly with no string dispatch.
+
+    Usage::
+
+        adc = AnalogPin("PC0")
+        val: uint16 = adc.read()    # 0-1023
+    """
 
     # Initialise an ADC channel from a port-pin name string.
     # The channel is resolved to a hardware register value at compile time.

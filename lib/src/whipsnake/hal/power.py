@@ -32,6 +32,11 @@ from whipsnake.chips import __CHIP__
 # noinspection PyProtectedMember
 @inline
 def sleep_idle():
+    """Enter idle sleep mode.
+
+    Halts the CPU while leaving all peripherals running. Lowest power
+    saving of the available sleep modes; wake on any interrupt.
+    """
     match __CHIP__.name:
         case "atmega328p":
             from whipsnake.hal._power.atmega328p import sleep_idle as _sleep_idle
@@ -40,6 +45,11 @@ def sleep_idle():
 # noinspection PyProtectedMember
 @inline
 def sleep_adc_noise():
+    """Enter ADC noise-reduction sleep mode.
+
+    Stops the CPU and most digital logic to reduce switching noise during
+    ADC conversions. Wake on ADC-complete interrupt or external interrupt.
+    """
     match __CHIP__.name:
         case "atmega328p":
             from whipsnake.hal._power.atmega328p import sleep_adc_noise as _sleep_adc_noise
@@ -48,6 +58,12 @@ def sleep_adc_noise():
 # noinspection PyProtectedMember
 @inline
 def sleep_power_down():
+    """Enter power-down sleep mode (deepest sleep).
+
+    Stops all clocks except the watchdog oscillator. Wake sources are
+    limited to an external interrupt, watchdog timeout, or TWI address match.
+    Global interrupts must be enabled or the MCU will not wake.
+    """
     match __CHIP__.name:
         case "atmega328p":
             from whipsnake.hal._power.atmega328p import sleep_power_down as _sleep_power_down
@@ -57,6 +73,11 @@ def sleep_power_down():
 # noinspection PyProtectedMember
 @inline
 def sleep_power_save():
+    """Enter power-save sleep mode.
+
+    Like power-down but keeps the asynchronous timer running, useful for
+    maintaining a real-time clock during deep sleep.
+    """
     match __CHIP__.name:
         case "atmega328p":
             from whipsnake.hal._power.atmega328p import sleep_power_save as _sleep_power_save
@@ -66,6 +87,10 @@ def sleep_power_save():
 # noinspection PyProtectedMember
 @inline
 def sleep_standby():
+    """Enter standby sleep mode.
+
+    Like power-down but keeps the oscillator running for a faster wake-up.
+    """
     match __CHIP__.name:
         case "atmega328p":
             from whipsnake.hal._power.atmega328p import sleep_standby as _sleep_standby

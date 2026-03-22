@@ -12,22 +12,32 @@ from whipsnake.chips import __CHIP__
 
 # noinspection PyProtectedMember
 class EEPROM:
-    # Zero-cost EEPROM HAL.
-    # Supports blocking byte-level read/write to on-chip EEPROM.
-    # Write operations poll until the hardware signals completion.
-    # Address range and capacity depend on the target chip.
-    #
-    # Usage:
-    #   ee = EEPROM()
-    #   ee.write(0x10, 0xAB)
-    #   val: uint8 = ee.read(0x10)
+    """On-chip EEPROM, zero-cost abstraction (all methods @inline).
+
+    Provides blocking byte-level read and write access to the
+    microcontroller's internal EEPROM. Write operations poll until the
+    hardware signals completion. Address range and capacity depend on the
+    target chip.
+
+    Usage::
+
+        ee = EEPROM()
+        ee.write(0x10, 0xAB)
+        val: uint8 = ee.read(0x10)
+    """
 
     @inline
     def __init__(self):
+        """Initialise the EEPROM peripheral."""
         pass
 
     @inline
     def write(self, addr: uint16, value: uint8):
+        """Write one byte to EEPROM at the given address.
+
+        Blocks until any previous write completes before starting the new
+        write, then waits for the new write to finish.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._eeprom.atmega328p import eeprom_write
@@ -35,6 +45,11 @@ class EEPROM:
 
     @inline
     def read(self, addr: uint16) -> uint8:
+        """Read one byte from EEPROM at the given address.
+
+        Blocks until any in-progress write completes, then returns the
+        stored byte.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._eeprom.atmega328p import eeprom_read

@@ -10,8 +10,22 @@ from whipsnake.types import uint8, uint16, inline, const
 from whipsnake.chips import __CHIP__
 
 class UART:
+    """Hardware UART, zero-cost abstraction (all methods @inline).
+
+    Provides byte-level and string transmit/receive over the hardware
+    UART peripheral. Supports both polling and interrupt-driven receive
+    with a 16-byte ring buffer.
+
+    Usage::
+
+        uart = UART(9600)
+        uart.write(0x41)         # send 'A'
+        b: uint8 = uart.read()   # blocking receive
+    """
+
     @inline
     def __init__(self, baud: const[uint16] = 9600):
+        """Initialise the UART peripheral at the given baud rate."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_init
@@ -25,6 +39,7 @@ class UART:
 
     @inline
     def write(self, data: uint8):
+        """Transmit one byte, blocking until the transmit buffer is ready."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_write
@@ -38,6 +53,7 @@ class UART:
 
     @inline
     def read(self) -> uint8:
+        """Receive one byte, blocking until data is available."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read
@@ -51,6 +67,7 @@ class UART:
 
     @inline
     def write_str(self, s: const[str]):
+        """Transmit a compile-time constant string byte by byte."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_write_str
@@ -58,11 +75,13 @@ class UART:
 
     @inline
     def println(self, s: const[str]):
+        """Transmit a string followed by a newline character."""
         self.write_str(s)
         self.write(10)  # '\n'
 
     @inline
     def print_byte(self, value: uint8):
+        """Transmit a uint8 value as ASCII decimal digits, followed by a newline."""
         # Print a uint8 value as decimal digits followed by a newline.
         # For float values: use print_fixed(int_part, dec_part) when available.
         match __CHIP__.arch:
@@ -73,8 +92,11 @@ class UART:
 
     @inline
     def read_blocking(self) -> uint8:
-        # Blocking read: polls until a byte arrives, then returns it.
-        # This is identical to read() but named explicitly to distinguish from read_nb().
+        """Receive one byte, blocking until data is available.
+
+        Identical to read() but named explicitly to distinguish it from the
+        non-blocking read_nb().
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read
@@ -88,7 +110,7 @@ class UART:
 
     @inline
     def available(self) -> uint8:
-        # Returns 1 if a byte is waiting in the receive buffer, 0 otherwise.
+        """Return 1 if a byte is waiting in the receive buffer, 0 otherwise."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_available
@@ -97,8 +119,11 @@ class UART:
 
     @inline
     def read_nb(self) -> uint8:
-        # Non-blocking read: returns the received byte if one is available, else 0.
-        # Does not block; check available() first to avoid reading stale data.
+        """Non-blocking receive: return the next byte if available, else 0.
+
+        Does not block. Check available() before calling to avoid reading
+        stale or zero data.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read_nb
@@ -107,8 +132,11 @@ class UART:
 
     @inline
     def read_byte_isr(self) -> uint8:
-        # ISR-safe read: reads the byte from the UART data register directly.
-        # Must only be called from inside the USART receive ISR.
+        """Read one byte from the UART data register directly.
+
+        ISR-safe variant. Must only be called from inside the USART
+        receive interrupt handler.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_read_byte_isr
@@ -117,8 +145,11 @@ class UART:
 
     @inline
     def enable_rx_interrupt(self):
-        # Enable the USART receive interrupt so the RX ISR fires on each received byte.
-        # After calling this, define an @interrupt handler at the USART_RX vector that calls rx_isr().
+        """Enable the USART receive interrupt so the RX ISR fires on each received byte.
+
+        After calling this, define an @interrupt handler at the USART_RX
+        vector that calls rx_isr().
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_enable_rx_interrupt
@@ -126,9 +157,12 @@ class UART:
 
     @inline
     def rx_isr(self):
-        # Call from inside the USART_RX @interrupt handler.
-        # Reads the incoming byte into the 16-byte ring buffer and advances the head index.
-        # Bytes are dropped silently if the buffer is full.
+        """Buffer handler for the USART_RX interrupt.
+
+        Call from inside the USART_RX @interrupt handler. Reads the
+        incoming byte into the 16-byte ring buffer and advances the head
+        index. Bytes are dropped silently if the buffer is full.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_rx_isr
@@ -136,8 +170,10 @@ class UART:
 
     @inline
     def rx_available(self) -> uint8:
-        # Returns 1 if at least one byte is waiting in the ring buffer, 0 otherwise.
-        # Use after enable_rx_interrupt() to check before calling rx_read().
+        """Return 1 if at least one byte is in the ring buffer, 0 otherwise.
+
+        Use after enable_rx_interrupt() to check before calling rx_read().
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_rx_available
@@ -146,8 +182,10 @@ class UART:
 
     @inline
     def rx_read(self) -> uint8:
-        # Read one byte from the ring buffer and advance the tail pointer.
-        # Returns 0 if the buffer is empty. Check rx_available() before calling.
+        """Read one byte from the ring buffer and advance the tail pointer.
+
+        Returns 0 if the buffer is empty. Check rx_available() before calling.
+        """
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._uart.avr import uart_rx_read

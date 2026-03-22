@@ -22,9 +22,25 @@ from whipsnake.types import uint8, uint16, const, inline
 
 # noinspection PyProtectedMember
 class Timer:
+    """Hardware timer, zero-cost abstraction (all methods @inline).
+
+    ``n`` is a compile-time constant that selects the hardware timer.
+    The compiler folds both the chip dispatch and the timer-number
+    dispatch at compile time, emitting only the instructions for the
+    selected timer.
+
+    AVR supports multiple numbered timers (n=0, 1, 2); PIC supports
+    only n=0. Available prescaler values, resolution, and overflow
+    frequencies depend on the target chip and selected timer.
+    """
 
     @inline
     def __init__(self, n: const[uint8], prescaler: uint8):
+        """Initialise a hardware timer.
+
+        n:         compile-time timer number (e.g. 0, 1, 2).
+        prescaler: clock prescaler value; valid values depend on the chip.
+        """
         self._n = n
         match __CHIP__.name:
             case "atmega328p":
@@ -56,6 +72,7 @@ class Timer:
 
     @inline
     def start(self):
+        """Start the timer by connecting its clock source."""
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -86,6 +103,7 @@ class Timer:
 
     @inline
     def stop(self):
+        """Stop the timer by disconnecting its clock source."""
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -116,6 +134,7 @@ class Timer:
 
     @inline
     def clear(self):
+        """Reset the timer counter register to zero."""
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -144,12 +163,14 @@ class Timer:
                 from whipsnake.hal._timer.pic18f45k50 import timer0_clear
                 timer0_clear()
 
-    # Sets the OCR (Output Compare Register) and enables CTC mode.
-    # CTC vectors (ATmega328P): Timer0_COMPA=0x001C, Timer1_COMPA=0x0016,
-    #   Timer2_COMPA=0x000E.
-    # Call start() first to configure the prescaler, then set_compare().
     @inline
     def set_compare(self, value: uint16):
+        """Set the compare-match value and enable CTC mode.
+
+        The timer resets to zero when its counter reaches this value,
+        generating a compare-match interrupt at that instant.
+        Call start() first, then set_compare() to arm the interrupt.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:
@@ -165,6 +186,11 @@ class Timer:
 
     @inline
     def overflow(self) -> uint8:
+        """Return 1 if the timer overflow flag is set, 0 otherwise.
+
+        The overflow flag is set when the counter wraps from its maximum
+        value back to zero. Reading this flag does not clear it.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 match self._n:

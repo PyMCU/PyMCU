@@ -24,6 +24,19 @@ from whipsnake.hal.gpio import Pin
 
 # noinspection PyProtectedMember
 class PWM:
+    """Hardware PWM channel, zero-cost abstraction (all methods @inline).
+
+    Accepts a port-pin name string or a Pin ZCA instance. Timer channel,
+    compare register, and control register pointers are resolved at
+    construction time; set_duty() / start() / stop() each compile to a
+    single register write.
+
+    The timer is left stopped after init; call start() before set_duty()::
+
+        pwm = PWM("PD6", 0)
+        pwm.start()
+        pwm.set_duty(128)    # 50% duty cycle
+    """
 
     # Initialise a hardware PWM channel from a port-pin name string.
     # duty: initial duty cycle, 0-255 (0 = 0 %, 255 = 100 %).

@@ -10,12 +10,20 @@ from whipsnake.types import uint8, inline
 from whipsnake.chips import __CHIP__
 
 
-# I2C - Hardware TWI master, zero-cost abstraction (all methods @inline)
-# Default clock is 100 kHz; SDA and SCL pins are defined by the target chip.
-# Status constants for match patterns: I2C.START, I2C.SLA_ACK, I2C.SLA_NACK
-# High-level: i2c.ping(addr) returns 1 if device present, 0 if not
 # noinspection PyProtectedMember
 class I2C:
+    """Hardware I2C (TWI) master, zero-cost abstraction (all methods @inline).
+
+    Operates at 100 kHz by default; SDA and SCL pins are defined by the
+    target chip. Provides both low-level primitives (start, stop, write,
+    read_ack, read_nack) and high-level helpers (ping, write_to, read_from).
+
+    Status code constants (use as dotted-name match patterns)::
+
+        I2C.START, I2C.SLA_ACK, I2C.SLA_NACK, I2C.DATA_ACK, I2C.SLA_R_ACK
+
+    Context manager support: ``with i2c:`` auto-sends START/STOP.
+    """
 
     # TWI status codes - use as dotted-name match patterns so IDEs treat them
     # as value patterns rather than capture patterns.
@@ -27,6 +35,7 @@ class I2C:
 
     @inline
     def __init__(self):
+        """Initialise the I2C peripheral."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_init
@@ -34,6 +43,7 @@ class I2C:
 
     @inline
     def ping(self, addr: uint8) -> uint8:
+        """Return 1 if a device responds at the given 7-bit address, 0 otherwise."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_ping
@@ -43,6 +53,7 @@ class I2C:
 
     @inline
     def start(self) -> uint8:
+        """Send a START condition. Returns the TWI status byte."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_start
@@ -52,6 +63,7 @@ class I2C:
 
     @inline
     def stop(self):
+        """Send a STOP condition and release the bus."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_stop
@@ -59,6 +71,7 @@ class I2C:
 
     @inline
     def end(self):
+        """Send a STOP condition. Alias for stop()."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_stop
@@ -66,6 +79,7 @@ class I2C:
 
     @inline
     def write(self, data: uint8) -> uint8:
+        """Send one byte. Returns the TWI status byte (ACK/NACK)."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_write
@@ -75,6 +89,7 @@ class I2C:
 
     @inline
     def read_ack(self) -> uint8:
+        """Receive one byte and send ACK (more bytes to follow)."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_read_ack
@@ -84,6 +99,7 @@ class I2C:
 
     @inline
     def read_nack(self) -> uint8:
+        """Receive one byte and send NACK (last byte in transfer)."""
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._i2c.avr import i2c_read_nack

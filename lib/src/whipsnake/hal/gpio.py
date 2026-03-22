@@ -22,6 +22,8 @@ from whipsnake.types import uint8, uint16, const, inline
 
 # noinspection PyProtectedMember
 class Pin:
+    """Digital I/O pin, zero-cost abstraction."""
+
     IN  = 1
     OUT = 0
     OPEN_DRAIN = 2
@@ -39,6 +41,15 @@ class Pin:
 
     @inline
     def __init__(self, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
+        """Configure a digital I/O pin.
+
+        name:  port-pin name string (e.g. ``"PB5"``).
+        mode:  ``Pin.IN``, ``Pin.OUT``, or ``Pin.OPEN_DRAIN``.
+        pull:  optional pull resistor -- ``Pin.PULL_UP`` or ``Pin.PULL_DOWN``.
+        value: optional initial output value (0 or 1).
+        drive: optional drive-strength selector (chip-dependent).
+        alt:   optional alternate-function selector (chip-dependent).
+        """
         self.name = name
         match __CHIP__.name:
             case "pic16f18877":
@@ -123,6 +134,7 @@ class Pin:
 
     @inline
     def high(self):
+        """Drive the pin to the high logic level."""
         match __CHIP__.name:
             case "pic16f18877":
                 from whipsnake.hal._gpio.pic16f18877 import pin_high
@@ -144,6 +156,7 @@ class Pin:
 
     @inline
     def low(self):
+        """Drive the pin to the low logic level."""
         match __CHIP__.name:
             case "pic16f18877":
                 from whipsnake.hal._gpio.pic16f18877 import pin_low
@@ -165,14 +178,17 @@ class Pin:
 
     @inline
     def on(self):
+        """Drive the pin high. Alias for high()."""
         self.high()
 
     @inline
     def off(self):
+        """Drive the pin low. Alias for low()."""
         self.low()
 
     @inline
     def toggle(self):
+        """Toggle the pin output state."""
         match __CHIP__.name:
             case "pic16f18877":
                 from whipsnake.hal._gpio.pic16f18877 import pin_toggle
@@ -194,6 +210,12 @@ class Pin:
 
     @inline
     def value(self, x: const = -1) -> uint8:
+        """Read or write the pin logical value.
+
+        Called with no argument: returns 0 or 1 representing the current
+        pin state (input or output).
+        Called with ``x=0`` or ``x=1``: sets the output to that value.
+        """
         if x == -1:
             match __CHIP__.name:
                 case "atmega328p":
@@ -235,6 +257,11 @@ class Pin:
 
     @inline
     def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
+        """Reconfigure pin properties after construction.
+
+        All parameters are optional; pass only the ones you want to change.
+        Same semantics as the constructor parameters.
+        """
         if mode != -1:
             match __CHIP__.name:
                 case "pic16f18877":
@@ -318,6 +345,10 @@ class Pin:
 
     @inline
     def pull(self, pull_mode: const):
+        """Set the internal pull resistor for this pin.
+
+        pull_mode: ``Pin.PULL_UP``, ``Pin.PULL_DOWN``, or ``0`` to disable.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 if pull_mode == 2:
@@ -356,11 +387,19 @@ class Pin:
 
     @inline
     def drive(self, strength: uint8):
+        """Set the output drive strength. Support depends on the target chip."""
         if __CHIP__.name == "atmega328p":
             raise NotImplementedError("Drive strength control not supported on ATmega328P")
 
     @inline
     def irq(self, trigger: const = 3, handler: const = 0):
+        """Configure an interrupt on this pin.
+
+        trigger: ``Pin.IRQ_FALLING``, ``Pin.IRQ_RISING``,
+                 ``Pin.IRQ_LOW_LEVEL``, or ``Pin.IRQ_HIGH_LEVEL``.
+        handler: compile-time function reference; when provided the
+                 function is automatically registered as the ISR.
+        """
         # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
         # handler: compile-time function reference. When provided, compile_isr()
         # inside pin_irq_setup automatically registers the function as an ISR at
@@ -386,6 +425,11 @@ class Pin:
 
     @inline
     def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
+        """Measure the duration of a pulse on this pin.
+
+        Waits for the pin to reach ``state``, then measures how long it
+        stays there. Returns the pulse width in microseconds, or 0 on timeout.
+        """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._gpio.atmega328p import pin_pulse_in
@@ -395,6 +439,11 @@ class Pin:
 
     @inline
     def mode(self, m: const = -1) -> uint8:
+        """Get or set the pin direction.
+
+        Called with no argument: returns the current mode constant.
+        Called with ``m=Pin.IN`` or ``m=Pin.OUT``: changes the direction.
+        """
         if m != -1:
             match __CHIP__.name:
                 case "pic16f18877":
