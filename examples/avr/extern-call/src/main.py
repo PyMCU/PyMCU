@@ -16,7 +16,7 @@
 
 from whisnake.types import uint8, inline
 from whisnake.hal.uart import UART
-from pymcu.ffi import extern
+from whisnake.ffi import extern
 
 
 # Declare C functions -- bodies are stubs (compiler ignores them).

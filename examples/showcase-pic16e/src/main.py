@@ -15,7 +15,7 @@
 #   inline asm(), delay_ms/delay_us, user-defined functions, module constants
 #
 from whisnake.hal.gpio import Pin
-from pymcu.time import delay_ms, delay_us
+from whisnake.time import delay_ms, delay_us
 from whisnake.types import uint8, uint16, const, asm, inline, interrupt
 
 # ---------------------------------------------------------------------------

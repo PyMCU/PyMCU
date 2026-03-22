@@ -10,7 +10,7 @@
 # how pymcu maps to raw hardware on constrained devices (68B RAM).
 #
 from whisnake.chips.pic16f84a import PORTB, TRISB
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 from whisnake.types import uint8
 
 SPEED = 80  # milliseconds between steps

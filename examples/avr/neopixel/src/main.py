@@ -12,8 +12,8 @@
 #
 from whisnake.types import uint8, asm
 from whisnake.hal.uart import UART
-from pymcu.time import delay_ms
-from pymcu.drivers.neopixel import NeoPixel
+from whisnake.time import delay_ms
+from whisnake.drivers.neopixel import NeoPixel
 
 
 def main():

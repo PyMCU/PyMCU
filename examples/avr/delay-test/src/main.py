@@ -9,7 +9,7 @@
 #   'B' (0x42) -- after delay_ms(3000)   ~3 seconds (16-bit: 3000 > 255)
 #
 from whisnake.hal.uart import UART
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 def main():
     uart = UART(9600)

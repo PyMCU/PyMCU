@@ -11,7 +11,7 @@
 from whisnake.types import uint8
 from whisnake.hal.uart import UART
 from whisnake.hal.i2c import I2C
-from pymcu.drivers.ssd1306 import SSD1306
+from whisnake.drivers.ssd1306 import SSD1306
 
 
 def main():

@@ -15,7 +15,7 @@
 from whisnake.types import uint8
 from whisnake.hal.uart import UART
 from whisnake.hal.gpio import Pin
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 
 def main():

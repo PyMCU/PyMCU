@@ -5,7 +5,7 @@
 #   - Built-in LED on PB5 (Arduino digital pin 13)
 #
 from whisnake.hal.gpio import Pin
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 def main():
     led = Pin("PB5", Pin.OUT)

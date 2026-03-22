@@ -27,7 +27,7 @@
 
 from whisnake.types import uint8, uint16, inline
 from whisnake.hal.uart import UART
-from pymcu.ffi import extern
+from whisnake.ffi import extern
 
 
 # --- Arduino utility functions (c_src/arduino_utils.c) ---

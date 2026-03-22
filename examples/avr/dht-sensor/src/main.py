@@ -17,7 +17,7 @@
 #   OK:    "H:XX T:XX\n"
 #   Error: "ERR\n"
 from whisnake.types import uint8, uint16
-from pymcu.boards.arduino_uno import D2, LED_BUILTIN
+from whisnake.boards.arduino_uno import D2, LED_BUILTIN
 from whisnake.hal.gpio import Pin
 from whisnake.hal.uart import UART
 import time

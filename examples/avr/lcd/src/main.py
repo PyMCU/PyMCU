@@ -11,7 +11,7 @@
 #
 from whisnake.types import uint8
 from whisnake.hal.uart import UART
-from pymcu.drivers.lcd import LCD
+from whisnake.drivers.lcd import LCD
 
 
 def main():

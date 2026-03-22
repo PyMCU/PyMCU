@@ -12,8 +12,8 @@
 from whisnake.types import uint8
 from whisnake.hal.uart import UART
 from whisnake.hal.spi import SPI
-from pymcu.drivers.max7219 import MAX7219
-from pymcu.time import delay_ms
+from whisnake.drivers.max7219 import MAX7219
+from whisnake.time import delay_ms
 
 
 def main():

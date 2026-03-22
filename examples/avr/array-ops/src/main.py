@@ -3,7 +3,7 @@
 # Output on UART: "ARRAY\n" banner, then S:HH (sum), M:HH (min)
 from whisnake.types import uint8
 from whisnake.hal.uart import UART
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 def nibble_hex_hi(val: uint8) -> uint8:
     n: uint8 = (val >> 4) & 0x0F

@@ -2,7 +2,7 @@
 # Tests: overflow wrapping, all binary ops, 4-arg calls, deeply nested
 from whisnake.types import uint8, uint16
 from whisnake.hal.uart import UART
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 def clamp_add(a: uint8, b: uint8, lo: uint8, hi: uint8) -> uint8:
     result: uint8 = a + b

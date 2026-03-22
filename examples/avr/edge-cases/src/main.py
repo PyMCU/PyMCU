@@ -3,7 +3,7 @@
 # Output on UART: "EDGE\n" banner, then A:HH, B:H, C:HH, T/F, D:H
 from whisnake.types import uint8, uint16
 from whisnake.hal.uart import UART
-from pymcu.time import delay_ms
+from whisnake.time import delay_ms
 
 def nibble_hex(n: uint8) -> uint8:
     if n < 10:

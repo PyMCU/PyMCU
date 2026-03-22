@@ -14,8 +14,8 @@
 from whisnake.types import uint8, uint16
 from whisnake.hal.uart import UART
 from whisnake.hal.i2c import I2C
-from pymcu.drivers.bmp280 import BMP280
-from pymcu.time import delay_ms
+from whisnake.drivers.bmp280 import BMP280
+from whisnake.time import delay_ms
 
 
 def nibble_hi(v: uint8) -> uint8:
