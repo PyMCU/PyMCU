@@ -24,7 +24,7 @@ class ClassesIntegrationTest : public ::testing::Test {
 
   bool compile() {
     std::string command =
-        std::string(PYMCUC_PATH) + " temp_test.py -o temp_test.asm";
+        std::string(WHIPC_PATH) + " temp_test.py -o temp_test.asm";
     int result = std::system(command.c_str());
     return result == 0;
   }

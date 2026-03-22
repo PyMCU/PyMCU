@@ -46,11 +46,11 @@ TEST(IntegrationTest, PIC14E) {
   std::cout << "[TEST] Starting Strict PIC14E Integration Test...\n";
 
   // 1. Setup Environment
-  fs::create_directories("test_env/pymcu/chips");
+  fs::create_directories("test_env/whisnake/chips");
 
   // Create Chip Definition (Mocking the real one)
-  write_file("test_env/pymcu/chips/pic16f18877.py", R"(
-from pymcu.types import ptr, uint8, device_info
+  write_file("test_env/whisnake/chips/pic16f18877.py", R"(
+from whisnake.types import ptr, uint8, device_info
 device_info(arch="pic14e", chip="pic16f18877", ram_size=4096, flash_size=16384)
 # Minimal registers for test
 RC6PPS: ptr[uint8] = ptr(0x1F26) # Bank 62
@@ -59,7 +59,7 @@ TRISC: ptr[uint8] = ptr(0x0013)  # Bank 0
 
   // Create User Code
   write_file("test_env/main.py", R"(
-from pymcu.chips.pic16f18877 import *
+from whisnake.chips.pic16f18877 import *
 def main():
     # Access Bank 62 (Requires MOVLB 62)
     RC6PPS.value = 0x10
@@ -68,13 +68,13 @@ def main():
 )");
 
 // 2. Execute Compiler
-#ifdef PYMCUC_PATH
+#ifdef WHIPC_PATH
   std::string cmd =
-      std::string(PYMCUC_PATH) +
+      std::string(WHIPC_PATH) +
       " test_env/main.py -o test_env/output.asm -I test_env --arch pic16f877a";
 #else
   std::string cmd =
-      "./pymcuc test_env/main.py -o test_env/output.asm -I test_env --arch "
+      "./whipc test_env/main.py -o test_env/output.asm -I test_env --arch "
       "pic16f877a";
 #endif
 
