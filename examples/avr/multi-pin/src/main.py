@@ -8,10 +8,10 @@
 #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
 #   Serial terminal at 9600 baud shows current step
 #
-from whisnake.types import uint8
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.types import uint8
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 
 def main():

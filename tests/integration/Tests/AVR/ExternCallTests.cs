@@ -2,7 +2,7 @@ using Avr8Sharp.TestKit.Boards;
 using FluentAssertions;
 using NUnit.Framework;
 
-namespace Whisnake.IntegrationTests.Tests.AVR;
+namespace Whipsnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/extern-call.
@@ -12,7 +12,7 @@ namespace Whisnake.IntegrationTests.Tests.AVR;
 ///   c_add_saturate(4, 6)      -> 10 = 0x0A
 ///
 /// The C functions live in c_src/math_helper.c and are compiled with avr-gcc
-/// then linked with the Whisnake firmware via avr-ld (AvrgasToolchain).
+/// then linked with the Whipsnake firmware via avr-ld (AvrgasToolchain).
 /// </summary>
 [TestFixture]
 public class ExternCallTests

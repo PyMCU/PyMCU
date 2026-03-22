@@ -11,10 +11,10 @@
 # When the counter reaches 1000 it resets to 0 and sends 'R' over UART.
 # Each press sends the counter value as two bytes (big-endian).
 #
-from whisnake.types import uint8, uint16
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.types import uint8, uint16
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 
 def main():

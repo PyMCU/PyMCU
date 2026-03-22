@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whisnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+ * Whipsnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -175,7 +175,7 @@ std::unique_ptr<FunctionDef> Parser::parseFunction() {
     if (decorator.value == "inline") {
       is_inline = true;
     } else if (decorator.value == "extern") {
-      // @extern("symbol_name"): declares a C function callable from Whisnake.
+      // @extern("symbol_name"): declares a C function callable from Whipsnake.
       // The function body is a stub (ignored); the compiler emits CALL symbol.
       is_extern = true;
       consume(TokenType::LParen, "Expected '(' after @extern");
@@ -1409,7 +1409,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
   }
 
   if (match(TokenType::LParen)) {
-    // Empty tuple: ()  — not valid in Whisnake, but handle gracefully
+    // Empty tuple: ()  — not valid in Whipsnake, but handle gracefully
     if (check(TokenType::RParen)) {
       advance();
       return std::make_unique<TupleExpr>(

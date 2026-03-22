@@ -15,8 +15,8 @@
 #   "P:XX\n"   -- pow(2,8) = 256, low byte = 0x00 -- use pow(3,4)=81=0x51 instead
 #   "W:XX\n"   -- 2**10 = 1024, low byte = 0x00 -- use 2**6=64=0x40 instead
 #
-from whisnake.types import uint8, uint16
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, uint16
+from whipsnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

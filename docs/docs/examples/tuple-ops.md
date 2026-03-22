@@ -5,7 +5,7 @@ Demonstrates tuple literals, multi-return functions, tuple unpacking, and `enume
 ## Multi-return divmod
 
 ```python
-from whisnake.types import uint8
+from whipsnake.types import uint8
 
 def divmod8(a: uint8, b: uint8) -> (uint8, uint8):
     q: uint8 = a // b
@@ -20,7 +20,7 @@ def main():
 ## Enumerate over an array
 
 ```python
-from whisnake.types import uint8
+from whipsnake.types import uint8
 
 def main():
     buf: uint8[4] = [10, 20, 30, 40]

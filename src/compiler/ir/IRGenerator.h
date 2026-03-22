@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whisnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+ * Whipsnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -108,7 +108,7 @@ class IRGenerator {
   // so that super().__init__() and default-ctor inheritance can be resolved.
   std::map<std::string, std::string> class_base_prefixes;
   std::map<std::string, std::string>
-      imported_aliases;  // Tracks Pin/_Pin -> whisnake.hal.gpio
+      imported_aliases;  // Tracks Pin/_Pin -> whipsnake.hal.gpio
   std::map<std::string, std::string>
       alias_to_original;  // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
   std::map<std::string, int>
@@ -175,7 +175,7 @@ class IRGenerator {
   // ir_program.functions after all functions are compiled in generate().
   std::map<std::string, int> pending_isr_registrations;
 
-  // @extern("symbol") registrations: Whisnake function name -> C symbol name.
+  // @extern("symbol") registrations: Whipsnake function name -> C symbol name.
   // Functions in this map have no IR body; call sites emit Call{c_symbol, ...}.
   // The set of C symbol values is exported to tacky::Program::extern_symbols.
   std::map<std::string, std::string> extern_function_map;

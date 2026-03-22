@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -83,7 +83,7 @@ class WhipCompiler:
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """
-        Resolves the Whisnake Standard Library path.
+        Resolves the Whipsnake Standard Library path.
         """
         try:
             # Diagnostic for debugging import failure
@@ -92,14 +92,14 @@ class WhipCompiler:
                 self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
                 self.console.print(f"[debug] sys.path: {sys.path}", style="dim")
 
-            import whisnake
-            if hasattr(whisnake, "__file__") and whisnake.__file__:
-                p = Path(whisnake.__file__).parent / "chips"
+            import whipsnake
+            if hasattr(whipsnake, "__file__") and whipsnake.__file__:
+                p = Path(whipsnake.__file__).parent / "chips"
                 if p.is_dir():
                     # Return the package directory itself
-                    return str(Path(whisnake.__file__).parent)
+                    return str(Path(whipsnake.__file__).parent)
         except ImportError as e:
-            self.console.print(f"[debug] Failed to import whisnake: {e}", style="red")
+            self.console.print(f"[debug] Failed to import whipsnake: {e}", style="red")
         except Exception as e:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""

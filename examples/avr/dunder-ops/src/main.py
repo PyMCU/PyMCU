@@ -12,8 +12,8 @@
 #   "C:01\n"  -- 3 in Vec(3,4) -> True = 1
 #   "G:04\n"  -- Vec(3,4)[1] -> y component = 4
 #
-from whisnake.types import uint8, inline
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, inline
+from whipsnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

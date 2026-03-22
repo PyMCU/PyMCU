@@ -21,8 +21,8 @@
 #   INVERT:  01  FF FE FD FC FB FA F9 F8  0A
 #   SHIFT_L: 02  00 02 04 06 08 0A 0C 0E  0A  (same as DOUBLE for uint8)
 
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 
 # Callback selector constants — use dotted names so match/case treats them

@@ -1,7 +1,7 @@
 [project]
 name = "showcase-pic16e"
 version = "0.1.0"
-dependencies = ["whisnake-stdlib"]
+dependencies = ["whipsnake-stdlib"]
 
 [tool.whip]
 chip = "pic16f18877"

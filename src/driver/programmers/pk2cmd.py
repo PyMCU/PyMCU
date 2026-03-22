@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -91,7 +91,7 @@ class Pk2cmdProgrammer(HardwareProgrammer):
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print(f"[bold cyan]Whisnake Hardware Manager[/bold cyan]")
+        self.console.print(f"[bold cyan]Whipsnake Hardware Manager[/bold cyan]")
         self.console.print(f"Programmer '{name}' ({desc}) is required but not found locally.")
         
         if not Confirm.ask(f"Do you want to download and install it automatically?", default=True):

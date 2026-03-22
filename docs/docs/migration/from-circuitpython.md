@@ -1,12 +1,12 @@
 # Migrating from CircuitPython
 
-The `whisnake-circuitpython` compat package makes CircuitPython migration nearly transparent for
+The `whipsnake-circuitpython` compat package makes CircuitPython migration nearly transparent for
 most firmware. Follow these steps:
 
 ## Step 1: Install the compat package
 
 ```bash
-pip install whisnake-circuitpython
+pip install whipsnake-circuitpython
 ```
 
 Add to `pyproject.toml`:
@@ -23,14 +23,14 @@ Your `code.py` becomes `src/main.py`. The `main()` function is the entry point.
 
 ## Step 3: Add type annotations
 
-Whisnake requires explicit integer widths. Add them to every variable declaration:
+Whipsnake requires explicit integer widths. Add them to every variable declaration:
 
 ```python
 # CircuitPython
 count = 0
 val = sensor.value
 
-# Whisnake
+# Whipsnake
 count: uint16 = 0
 val: uint8 = sensor.value
 ```
@@ -43,7 +43,7 @@ val: uint8 = sensor.value
 # CircuitPython
 time.sleep(0.5)
 
-# Whisnake
+# Whipsnake
 time.sleep_ms(500)
 ```
 
@@ -53,7 +53,7 @@ time.sleep_ms(500)
 # CircuitPython
 temp_c = raw * 3.3 / 1024 * 100
 
-# Whisnake — use integer fixed-point (multiply first, divide last)
+# Whipsnake — use integer fixed-point (multiply first, divide last)
 temp_c: uint16 = raw * 330 // 1024
 ```
 
@@ -66,7 +66,7 @@ try:
 except RuntimeError:
     val = 0
 
-# Whisnake — return error sentinel
+# Whipsnake — return error sentinel
 val: uint16 = sensor.read()   # returns 0xFFFF on error
 if val == 0xFFFF:
     val = 0
@@ -78,7 +78,7 @@ if val == 0xFFFF:
 # CircuitPython
 print(f"temp={temp}")
 
-# Whisnake
+# Whipsnake
 uart.write_str("temp=")
 uart.print_byte(temp)
 ```
@@ -89,7 +89,7 @@ uart.print_byte(temp)
 # CircuitPython
 print("hello")
 
-# Whisnake
+# Whipsnake
 uart.println("hello")       # via UART object
 # or
 uart.write_str("hello\n")   # manual newline
@@ -111,7 +111,7 @@ while True:
     time.sleep(0.5)
 ```
 
-### Blink (Whisnake + whisnake-circuitpython)
+### Blink (Whipsnake + whipsnake-circuitpython)
 
 ```python
 import board, digitalio, time

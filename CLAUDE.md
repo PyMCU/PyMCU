@@ -1,4 +1,4 @@
-# Whisnake — Claude Code Instructions
+# Whipsnake — Claude Code Instructions
 
 This file is auto-loaded by Claude Code. It extends `AGENTS.md` with Claude-specific guidance.
 
@@ -20,7 +20,7 @@ test(avr): add ExternCallTests — basic @extern C interop
 docs: mark @extern as implemented in roadmap and limitations
 ```
 
-Each commit must leave `dotnet test tests/integration/Whisnake.IntegrationTests.csproj` green.
+Each commit must leave `dotnet test tests/integration/Whipsnake.IntegrationTests.csproj` green.
 
 ---
 
@@ -32,7 +32,7 @@ Each commit must leave `dotnet test tests/integration/Whisnake.IntegrationTests.
 - **`e: uint16 = CONST; e += 1` fails** when `e` is tracked in `constant_variables`.
   Use `e = e + 1` until the IRGenerator AugAssign path is fixed.
 - **ASCII-only stdlib** — the compiler lexer rejects non-ASCII. Do not use Unicode in
-  any file under `lib/src/whisnake/`.
+  any file under `lib/src/whipsnake/`.
 - **HAL match rules** — see `AGENTS.md` for dotted-name vs capture-name patterns.
 
 ---
@@ -43,8 +43,8 @@ Each commit must leave `dotnet test tests/integration/Whisnake.IntegrationTests.
 2. Make a plan — identify all files to change (Parser, IRGenerator, AVRCodeGen, HAL, tests).
 3. Implement in small commits (one logical change each).
 4. After each compiler change: `cmake --build build --target whipc -j$(sysctl -n hw.ncpu)`.
-5. After each stdlib change: `rsync lib/src/whisnake/ .venv/lib/python3.X/site-packages/whisnake/`.
-6. Run integration tests: `dotnet test tests/integration/Whisnake.IntegrationTests.csproj`.
+5. After each stdlib change: `rsync lib/src/whipsnake/ .venv/lib/python3.X/site-packages/whipsnake/`.
+6. Run integration tests: `dotnet test tests/integration/Whipsnake.IntegrationTests.csproj`.
 7. Update `LANGUAGE_ROADMAP.md`, `docs/docs/roadmap.md`, and `docs/docs/limitations.md`.
 
 ---

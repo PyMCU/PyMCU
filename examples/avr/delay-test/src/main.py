@@ -8,8 +8,8 @@
 #   'A' (0x41) -- after delay_ms(1000)   ~1 second
 #   'B' (0x42) -- after delay_ms(3000)   ~3 seconds (16-bit: 3000 > 255)
 #
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 def main():
     uart = UART(9600)

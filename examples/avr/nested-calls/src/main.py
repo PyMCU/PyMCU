@@ -26,8 +26,8 @@
 #   Boot:  "HEX ENCODE\n"
 #   Then:  "00\n01\n02\n...\nFF\n" cycling, each byte on its own line
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 
 # Convert a 4-bit nibble (0-15) to its ASCII hex character.

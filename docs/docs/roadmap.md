@@ -72,16 +72,16 @@ Everything below is shipped and covered by integration tests.
 
 | Module | Coverage |
 |--------|----------|
-| `whisnake.hal.gpio` | `Pin` — `high/low/toggle/value/irq/pulse_in` |
-| `whisnake.hal.uart` | `UART` — `write/read/write_str/println/print_byte` |
-| `whisnake.hal.adc` | `AnalogPin` — `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `whisnake.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified |
-| `whisnake.hal.pwm` | `PWM` — `start/stop/set_duty` |
-| `whisnake.hal.spi` | `SPI` — `with spi:` context; `transfer/write` |
-| `whisnake.hal.i2c` | `I2C` — `with i2c:` context; `ping/write/read_*` |
-| `whisnake.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
-| `whisnake.hal.watchdog` | `Watchdog` — `enable/disable/feed` |
-| `whisnake.hal.power` | `sleep_idle/adc_noise/power_down/power_save/standby` |
+| `whipsnake.hal.gpio` | `Pin` — `high/low/toggle/value/irq/pulse_in` |
+| `whipsnake.hal.uart` | `UART` — `write/read/write_str/println/print_byte` |
+| `whipsnake.hal.adc` | `AnalogPin` — `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
+| `whipsnake.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified |
+| `whipsnake.hal.pwm` | `PWM` — `start/stop/set_duty` |
+| `whipsnake.hal.spi` | `SPI` — `with spi:` context; `transfer/write` |
+| `whipsnake.hal.i2c` | `I2C` — `with i2c:` context; `ping/write/read_*` |
+| `whipsnake.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
+| `whipsnake.hal.watchdog` | `Watchdog` — `enable/disable/feed` |
+| `whipsnake.hal.power` | `sleep_idle/adc_noise/power_down/power_save/standby` |
 | `pymcu.drivers.dht11` | `DHT11` — portable temperature/humidity driver |
 | `pymcu.time` | `delay_ms`, `delay_us` |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5`, `LED_BUILTIN` |
@@ -90,8 +90,8 @@ Everything below is shipped and covered by integration tests.
 
 | Package | Activation | Modules |
 |---------|-----------|---------|
-| `whisnake-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
-| `whisnake-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
+| `whipsnake-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
+| `whipsnake-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
 
 ---
 
@@ -241,7 +241,7 @@ Everything below is shipped and covered by integration tests.
 
 ```python
 from pymcu.ffi import extern
-from whisnake.types import uint16
+from whipsnake.types import uint16
 
 @extern("arduino_millis")
 def millis() -> uint16: ...

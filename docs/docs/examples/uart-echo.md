@@ -7,8 +7,8 @@ Sends a startup banner then echoes every received byte back on UART0.
 ## Source
 
 ```python
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 def main():
     uart = UART(9600)

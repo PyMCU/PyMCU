@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whisnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+ * Whipsnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -107,11 +107,11 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
   for (const auto &imp : ast->imports) {
     std::string path;
     try {
-      if (imp->module_name == "whisnake.types" ||
-          imp->module_name == "whisnake.chips") {
+      if (imp->module_name == "whipsnake.types" ||
+          imp->module_name == "whipsnake.chips") {
         // Intrinsic/compiler-provided modules — not real source files
-        // whisnake.types provides type aliases handled by the type system
-        // whisnake.chips provides __CHIP__ which is injected by ConditionalCompilator
+        // whipsnake.types provides type aliases handled by the type system
+        // whipsnake.chips provides __CHIP__ which is injected by ConditionalCompilator
         continue;
       }
 
@@ -119,7 +119,7 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
                             imp->relative_level);
 
       if (ctx->module_cache.contains(path)) {
-        // File already loaded under a different module name (e.g. "whisnake.time"
+        // File already loaded under a different module name (e.g. "whipsnake.time"
         // previously loaded, now imported as "time" or vice-versa).  Register
         // this alias too so that IRGenerator sees both keys and produces
         // inline-function entries under both module prefixes.
@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
   program.add_argument("--arch").default_value(std::string("pic14"));
 
   program.add_argument("--chip")
-      .help("Target chip (e.g., pic16f18877). Locates whisnake/chips/<chip>.py")
+      .help("Target chip (e.g., pic16f18877). Locates whipsnake/chips/<chip>.py")
       .default_value(std::string(""));
 
   program.add_argument("--freq")
@@ -314,7 +314,7 @@ int main(int argc, char *argv[]) {
                              include_paths);
 
     // Pass 2: Global Configuration Bootstrap (PreScan all loaded modules)
-    // Especially important for chip definition modules (whisnake.chips.*)
+    // Especially important for chip definition modules (whipsnake.chips.*)
     PreScanVisitor pre_scanner(device_config);
     pre_scanner.scan(*ast);
     for (auto &[name, mod_ast] : context.named_modules) {

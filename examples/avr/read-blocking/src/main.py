@@ -8,8 +8,8 @@
 #   "RB\n"    -- boot banner
 #   <echoed byte>  -- every received byte echoed back
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 
 def main():

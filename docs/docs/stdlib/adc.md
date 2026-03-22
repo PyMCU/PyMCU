@@ -1,7 +1,7 @@
-# ADC — `whisnake.hal.adc`
+# ADC — `whipsnake.hal.adc`
 
 ```python
-from whisnake.hal.adc import AnalogPin
+from whipsnake.hal.adc import AnalogPin
 ```
 
 ## `AnalogPin(channel: str)`
@@ -21,8 +21,8 @@ from `ADCL` and `ADCH`.
 ## Example
 
 ```python
-from whisnake.hal.adc import AnalogPin
-from whisnake.types import ptr, uint8, uint16
+from whipsnake.hal.adc import AnalogPin
+from whipsnake.types import ptr, uint8, uint16
 
 ADCSRA: ptr[uint8] = ptr(0x7A)
 ADCL:   ptr[uint8] = ptr(0x78)

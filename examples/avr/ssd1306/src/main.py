@@ -8,10 +8,10 @@
 #   "OLED\n"  -- boot banner
 #   "OK\n"    -- init complete
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
-from whisnake.hal.i2c import I2C
-from whisnake.drivers.ssd1306 import SSD1306
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
+from whipsnake.hal.i2c import I2C
+from whipsnake.drivers.ssd1306 import SSD1306
 
 
 def main():

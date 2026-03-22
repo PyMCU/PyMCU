@@ -13,9 +13,9 @@
 #   "RXIRQ\n"      -- boot banner
 #   Each received byte is echoed back via TX.
 #
-from whisnake.types import uint8, interrupt, asm
-from whisnake.hal.uart import UART
-from whisnake.hal._uart.avr import uart_rx_isr
+from whipsnake.types import uint8, interrupt, asm
+from whipsnake.hal.uart import UART
+from whipsnake.hal._uart.avr import uart_rx_isr
 
 
 @interrupt(0x0024)

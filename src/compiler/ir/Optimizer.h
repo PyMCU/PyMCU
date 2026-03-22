@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whisnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+ * Whipsnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
  *
  * SPDX-License-Identifier: MIT
  *

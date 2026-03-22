@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions to Whisnake are welcome. Please read this guide before opening a PR.
+Contributions to Whipsnake are welcome. Please read this guide before opening a PR.
 
 ## Repository layout
 
@@ -10,7 +10,7 @@ pymcu/
     frontend/             # Lexer, Parser, AST
     ir/                   # IRGenerator, Optimizer, Tacky IR
     backend/targets/avr/  # AVR codegen, peephole, register allocator
-  lib/src/whisnake/          # Python stdlib (compiled into firmware)
+  lib/src/whipsnake/          # Python stdlib (compiled into firmware)
     hal/                  # GPIO, UART, ADC, Timer, PWM, SPI, I2C
     drivers/              # DHT11 and other device drivers
     boards/               # Board pin name constants
@@ -31,7 +31,7 @@ cmake --build build --target whipc -j$(sysctl -n hw.ncpu)
 ## Running integration tests
 
 ```bash
-dotnet test tests/integration/Whisnake.IntegrationTests.csproj
+dotnet test tests/integration/Whipsnake.IntegrationTests.csproj
 ```
 
 All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
@@ -39,14 +39,14 @@ compiler or HAL feature.
 
 ## Adding a stdlib module
 
-1. Add the implementation in `lib/src/whisnake/hal/` (or `drivers/`).
+1. Add the implementation in `lib/src/whipsnake/hal/` (or `drivers/`).
 2. Use `@inline` for all public methods (zero-cost abstraction rule).
 3. Use `match __CHIP__.arch:` for architecture dispatch.
 4. No non-ASCII characters in source (compiler lexer is ASCII-only).
 5. No multiline docstrings with code examples — use `# comments` instead.
 6. After editing stdlib, rsync to the local virtualenv:
    ```bash
-   rsync lib/src/whisnake/ .venv/lib/python3.X/site-packages/whisnake/
+   rsync lib/src/whipsnake/ .venv/lib/python3.X/site-packages/whipsnake/
    ```
 
 ## HAL coding rules
@@ -58,7 +58,7 @@ compiler or HAL feature.
 
 ## Commit format
 
-Whisnake uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit must follow:
+Whipsnake uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit must follow:
 
 ```
 <type>(<scope>): <short description>

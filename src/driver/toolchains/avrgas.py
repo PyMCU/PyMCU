@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -173,7 +173,7 @@ SECTIONS
             )
 
         self.console.print(
-            f"[bold cyan]Whisnake Toolchain Manager[/bold cyan]\n"
+            f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]\n"
             f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
             f"This will run:\n"
             f"  brew tap {_BREW_TAP}\n"
@@ -220,7 +220,7 @@ SECTIONS
 
         pkgs = " ".join(_APT_PACKAGES)
         self.console.print(
-            f"[bold cyan]Whisnake Toolchain Manager[/bold cyan]\n"
+            f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]\n"
             f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
             f"This will run: sudo apt-get install -y {pkgs}"
         )

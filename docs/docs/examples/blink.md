@@ -7,8 +7,8 @@ Toggles the built-in LED on Arduino Uno (pin 13 / PB5) at 1 Hz.
 ## Source
 
 ```python
-from whisnake.hal.gpio import Pin
-from whisnake.time import delay_ms
+from whipsnake.hal.gpio import Pin
+from whipsnake.time import delay_ms
 
 def main():
     led = Pin("PB5", Pin.OUT)

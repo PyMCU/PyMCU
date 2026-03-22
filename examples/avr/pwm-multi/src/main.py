@@ -14,10 +14,10 @@
 #   PB1 = Arduino pin 9  (OC1A)
 #   UART TX on PD1 at 9600 baud
 #
-from whisnake.types import uint8
-from whisnake.hal.pwm import PWM
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.types import uint8
+from whipsnake.hal.pwm import PWM
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 
 def main():

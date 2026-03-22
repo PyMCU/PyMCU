@@ -11,8 +11,8 @@
 #   — all logic is in the ISR. This is a common pattern for low-power designs
 #   where the MCU can sleep between button presses.
 #
-from whisnake.hal.gpio import Pin
-from whisnake.types import interrupt
+from whipsnake.hal.gpio import Pin
+from whipsnake.types import interrupt
 
 @interrupt(0x04)
 def on_button_press():

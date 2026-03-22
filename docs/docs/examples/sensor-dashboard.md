@@ -15,10 +15,10 @@ exponential moving average (EMA) filter, and conditional verbose/compact UART ou
 ## Source (annotated)
 
 ```python
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.hal.timer import Timer0
-from whisnake.types import uint8, uint16, ptr
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.hal.timer import Timer0
+from whipsnake.types import uint8, uint16, ptr
 
 TIMSK0: ptr[uint8] = ptr(0x6E)
 ADCSRA: ptr[uint8] = ptr(0x7A)

@@ -14,10 +14,10 @@
 #   "D:XX\n"   -- byte XX sent via SPI (0xA5 = test byte)
 #   "OK\n"     -- CS init succeeded (CS pin idle high after init)
 #
-from whisnake.types import uint8
-from whisnake.hal.spi import SPI
-from whisnake.hal.uart import UART
-from whisnake.hal.gpio import Pin
+from whipsnake.types import uint8
+from whipsnake.hal.spi import SPI
+from whipsnake.hal.uart import UART
+from whipsnake.hal.gpio import Pin
 
 
 def nibble_hi(val: uint8) -> uint8:

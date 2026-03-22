@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace Whisnake.IntegrationTests;
+namespace Whipsnake.IntegrationTests;
 
 /// <summary>
-/// Compiles Whisnake example firmware using the <c>whip build</c> CLI driver
+/// Compiles Whipsnake example firmware using the <c>whip build</c> CLI driver
 /// and returns the resulting Intel HEX content, ready to load into a simulator.
 /// Results are cached in-process so each example is compiled at most once per
 /// test session regardless of how many test fixtures reference it.
@@ -96,6 +96,6 @@ public static class PymcuCompiler
             dir = Directory.GetParent(dir)?.FullName;
         }
         throw new DirectoryNotFoundException(
-            "Cannot locate Whisnake repo root (no 'examples/avr' directory found in any parent).");
+            "Cannot locate Whipsnake repo root (no 'examples/avr' directory found in any parent).");
     }
 }

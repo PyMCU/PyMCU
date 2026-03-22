@@ -1,4 +1,4 @@
-# Whisnake Language Features Roadmap
+# Whipsnake Language Features Roadmap
 
 ---
 
@@ -77,16 +77,16 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Module | Class / Function | Targets | Notes |
 |--------|-----------------|---------|-------|
-| `whisnake.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
-| `whisnake.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
-| `whisnake.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `whisnake.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
-| `whisnake.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
-| `whisnake.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
-| `whisnake.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
-| `whisnake.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
-| `whisnake.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
-| `whisnake.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
+| `whipsnake.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
+| `whipsnake.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
+| `whipsnake.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
+| `whipsnake.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
+| `whipsnake.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
+| `whipsnake.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
+| `whipsnake.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
+| `whipsnake.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
+| `whipsnake.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
+| `whipsnake.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
@@ -95,8 +95,8 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Package | Activation | Coverage |
 |---------|-----------|----------|
-| `whisnake-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
-| `whisnake-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
+| `whipsnake-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
+| `whipsnake-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
 
 ---
 

@@ -15,10 +15,10 @@
 # TIMSK2 bit 0 = TOIE2 (Timer2 Overflow Interrupt Enable)
 # TIMER2_OVF vector: byte 0x0012, word 0x0009
 #
-from whisnake.types import uint8, interrupt, asm
-from whisnake.chips.atmega328p import TCCR2B, TIMSK2, GPIOR0
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, interrupt, asm
+from whipsnake.chips.atmega328p import TCCR2B, TIMSK2, GPIOR0
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
 
 
 @interrupt(0x0012)

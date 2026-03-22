@@ -1,4 +1,4 @@
-from whisnake.chips.pic16f877a import *
+from whipsnake.chips.pic16f877a import *
 
 PWM_PIN_BIT = 2
 

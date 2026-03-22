@@ -1,9 +1,9 @@
 # PyMCU -- edge-cases: bit operations and comparison edge cases
 # Tests: uint8/uint16 shifts, XOR, AND, comparisons
 # Output on UART: "EDGE\n" banner, then A:HH, B:H, C:HH, T/F, D:H
-from whisnake.types import uint8, uint16
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.types import uint8, uint16
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 def nibble_hex(n: uint8) -> uint8:
     if n < 10:

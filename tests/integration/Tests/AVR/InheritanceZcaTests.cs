@@ -2,7 +2,7 @@ using Avr8Sharp.TestKit.Boards;
 using FluentAssertions;
 using NUnit.Framework;
 
-namespace Whisnake.IntegrationTests.Tests.AVR;
+namespace Whipsnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/inheritance-zca.

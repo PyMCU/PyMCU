@@ -5,8 +5,8 @@
 #   - Connect a serial terminal at 9600 8N1
 #   - Everything you type is echoed back
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 
 def main():

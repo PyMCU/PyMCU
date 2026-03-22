@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -47,13 +47,13 @@ console = Console()
 
 def get_available_chips() -> List[str]:
     """
-    Dynamically scans the installed 'whisnake-stdlib' package for chip definitions.
+    Dynamically scans the installed 'whipsnake-stdlib' package for chip definitions.
     Returns a list of chip names (e.g., ['pic16f84a', 'pic16f877a']).
     """
     try:
-        import whisnake
-        if hasattr(whisnake, '__file__') and whisnake.__file__:
-            chips_dir = Path(whisnake.__file__).parent / "chips"
+        import whipsnake
+        if hasattr(whipsnake, '__file__') and whipsnake.__file__:
+            chips_dir = Path(whipsnake.__file__).parent / "chips"
             if chips_dir.is_dir():
                 # List .py files, ignore __init__.py
                 chips = [
@@ -120,7 +120,7 @@ def new(name: str):
             project.add("version", "0.1.0")
 
             deps = tomlkit.array()
-            deps.append("whisnake-stdlib")
+            deps.append("whipsnake-stdlib")
             # Pin the compiler version to the one currently running to ensure reproducibility
             try:
                 from importlib.metadata import version
@@ -148,9 +148,9 @@ def new(name: str):
                 tool_uv.add("index", uv_indices)
 
                 sources = tomlkit.table()
-                whisnake_stdlib_source = tomlkit.inline_table()
-                whisnake_stdlib_source.update({"index": "gitea"})
-                sources.add("whisnake-stdlib", whisnake_stdlib_source)
+                whipsnake_stdlib_source = tomlkit.inline_table()
+                whipsnake_stdlib_source.update({"index": "gitea"})
+                sources.add("whipsnake-stdlib", whipsnake_stdlib_source)
                 tool_uv.add("sources", sources)
 
                 tool = tomlkit.table()
@@ -229,7 +229,7 @@ def new(name: str):
             with open(project_path / "pyproject.toml", "w") as f:
                 f.write(tomlkit.dumps(doc))
 
-            requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\nwhisnake-stdlib\n"
+            requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\nwhipsnake-stdlib\n"
 
             try:
                 from importlib.metadata import version
@@ -288,7 +288,7 @@ dist/
             f.write(gitignore_content)
 
         # Entry point file
-        main_py_content = f"from whisnake.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
+        main_py_content = f"from whipsnake.chips.{chip} import *\n\ndef main():\n    PORTB[RB0] = 1\n"
         entry_dir = project_path / sources_dir if use_src else project_path
         with open(entry_dir / entry_file, "w") as f:
             f.write(main_py_content)

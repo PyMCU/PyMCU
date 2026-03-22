@@ -15,10 +15,10 @@
 #   "PIN IRQ\n"    -- boot banner
 #   count byte     -- raw byte (1, 2, 3...) sent on each button press
 #
-from whisnake.types import uint8
-from whisnake.chips.atmega328p import GPIOR0
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.chips.atmega328p import GPIOR0
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
 
 
 def on_press():

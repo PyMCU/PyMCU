@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -38,7 +38,7 @@ from typing import Dict, Any
 from .base import HardwareProgrammer
 from rich.prompt import Confirm
 
-# Mapping from Whisnake chip names to avrdude abbreviated part names.
+# Mapping from Whipsnake chip names to avrdude abbreviated part names.
 _CHIP_MAP: dict[str, str] = {
     "atmega328p":  "m328p",
     "atmega328":   "m328",
@@ -60,7 +60,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
 
     Binary resolution order:
       1. System PATH (shutil.which) — handles Homebrew, apt, and system installs.
-      2. Locally cached binary in ~/.whisnake/tools/{platform}/avrdude/.
+      2. Locally cached binary in ~/.whipsnake/tools/{platform}/avrdude/.
       3. Download v8.1 from GitHub (user is prompted first).
     """
 
@@ -181,7 +181,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print("[bold cyan]Whisnake Hardware Manager[/bold cyan]")
+        self.console.print("[bold cyan]Whipsnake Hardware Manager[/bold cyan]")
         self.console.print(
             f"Programmer '{name}' ({desc}) is not found in system PATH or local cache."
         )

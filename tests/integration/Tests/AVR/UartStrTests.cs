@@ -3,12 +3,12 @@ using NUnit.Framework;
 using Avr8Sharp.TestKit.Boards;
 using Avr8Sharp.TestKit;
 
-namespace Whisnake.IntegrationTests.Tests.AVR;
+namespace Whipsnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/uart-str.
 /// Tests flash-string-pool (write_str/println) and single-char literals.
-/// Expected startup output: "Hello, Whisnake!\nUART string support works!\nTest\n"
+/// Expected startup output: "Hello, Whipsnake!\nUART string support works!\nTest\n"
 /// </summary>
 [TestFixture]
 public class UartStrTests
@@ -19,11 +19,11 @@ public class UartStrTests
     public void BuildFirmware() => _hex = PymcuCompiler.Build("uart-str");
 
     [Test]
-    public void Boot_SendsHelloWhisnake()
+    public void Boot_SendsHelloWhipsnake()
     {
         var uno = Sim();
-        uno.RunUntilSerial(uno.Serial, "Hello, Whisnake!");
-        uno.Serial.Should().ContainLine("Hello, Whisnake!");
+        uno.RunUntilSerial(uno.Serial, "Hello, Whipsnake!");
+        uno.Serial.Should().ContainLine("Hello, Whipsnake!");
     }
 
     [Test]
@@ -48,7 +48,7 @@ public class UartStrTests
         var uno = Sim();
         // All three messages appear before the echo loop
         uno.RunUntilSerial(uno.Serial, "Test\n", maxMs: 200);
-        uno.Serial.Should().Contain("Hello, Whisnake!");
+        uno.Serial.Should().Contain("Hello, Whipsnake!");
         uno.Serial.Should().Contain("UART string support works!");
         uno.Serial.Should().Contain("Test");
     }

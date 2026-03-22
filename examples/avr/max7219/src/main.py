@@ -9,11 +9,11 @@
 #   "MAX7219\n"  -- boot banner
 #   "OK\n"       -- init complete
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
-from whisnake.hal.spi import SPI
-from whisnake.drivers.max7219 import MAX7219
-from whisnake.time import delay_ms
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
+from whipsnake.hal.spi import SPI
+from whipsnake.drivers.max7219 import MAX7219
+from whipsnake.time import delay_ms
 
 
 def main():

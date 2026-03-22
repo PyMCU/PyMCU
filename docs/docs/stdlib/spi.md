@@ -1,7 +1,7 @@
-# SPI — `whisnake.hal.spi`
+# SPI — `whipsnake.hal.spi`
 
 ```python
-from whisnake.hal.spi import SPI
+from whipsnake.hal.spi import SPI
 ```
 
 SPI support is currently available for AVR (ATmega328P) only.
@@ -46,9 +46,9 @@ This is the preferred pattern — it guarantees `deselect()` is always called ev
 ## Example — 74HC595 shift register
 
 ```python
-from whisnake.hal.spi import SPI
-from whisnake.time import delay_ms
-from whisnake.types import uint8
+from whipsnake.hal.spi import SPI
+from whipsnake.time import delay_ms
+from whipsnake.types import uint8
 
 def main():
     spi = SPI()

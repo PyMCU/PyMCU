@@ -11,8 +11,8 @@
 #   "B:0A\n"  -- total after add(10) = 10
 #   "C:19\n"  -- total after add(15) = 25 = 0x19
 #
-from whisnake.types import uint8, inline
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, inline
+from whipsnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

@@ -2,7 +2,7 @@
 name = "soft-pwm"
 version = "0.1.0"
 dependencies = [
-    "whisnake-stdlib>=0.1.2a5",
+    "whipsnake-stdlib>=0.1.2a5",
     "whipsnake>=0.1.0a27"
 ]
 
@@ -12,7 +12,7 @@ url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
 explicit = true
 
 [tool.uv.sources]
-whisnake-stdlib = {index = "gitea"}
+whipsnake-stdlib = {index = "gitea"}
 whipsnake = {index = "gitea"}
 
 [tool.whip]

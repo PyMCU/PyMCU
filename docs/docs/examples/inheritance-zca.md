@@ -4,9 +4,9 @@ Demonstrates single-level ZCA class inheritance. The derived class extends the b
 additional method. No SRAM is used — everything is inlined.
 
 ```python
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.types import uint8
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.types import uint8
 
 class Sensor:
     @inline

@@ -1,7 +1,7 @@
 # ATmega328P: Blink LED on button press via interrupt
 # Demonstrates: Pin HAL, const parameters, Pin.irq(), @interrupt
-from whisnake.hal.gpio import Pin
-from whisnake.types import interrupt
+from whipsnake.hal.gpio import Pin
+from whipsnake.types import interrupt
 
 
 led = Pin("PB5", Pin.OUT)

@@ -1,12 +1,12 @@
 # Migrating from MicroPython
 
-The `whisnake-micropython` compat package provides `machine`, `utime`, and `micropython` module
+The `whipsnake-micropython` compat package provides `machine`, `utime`, and `micropython` module
 names so most MicroPython firmware targeting Arduino Uno ports with minimal edits.
 
 ## Step 1: Install the compat package
 
 ```bash
-pip install whisnake-micropython
+pip install whipsnake-micropython
 ```
 
 Add to `pyproject.toml`:
@@ -29,7 +29,7 @@ MicroPython's top-level execution; wrap your top-level code in `def main():`).
 count = 0
 data = bytearray(8)
 
-# Whisnake
+# Whipsnake
 count: uint16 = 0
 data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 ```
@@ -42,7 +42,7 @@ data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 # MicroPython
 btn.irq(trigger=Pin.IRQ_FALLING, handler=on_btn)
 
-# Whisnake — use @interrupt decorator
+# Whipsnake — use @interrupt decorator
 @interrupt(0x0002)   # INT0 vector
 def on_btn():
     global count
@@ -60,7 +60,7 @@ btn.irq(Pin.IRQ_FALLING)   # sets up EICRA/EIMSK; handler is @interrupt above
 tim = Timer(0, freq=1)
 tim.callback(on_timer)
 
-# Whisnake
+# Whipsnake
 @interrupt(0x0020)   # Timer0 OVF
 def on_timer():
     global tick
@@ -78,8 +78,8 @@ t.start()
 # MicroPython
 machine.mem8[0x25] = 0xFF
 
-# Whisnake
-from whisnake.types import ptr, uint8
+# Whipsnake
+from whipsnake.types import ptr, uint8
 PORTB: ptr[uint8] = ptr(0x25)
 PORTB.value = 0xFF
 ```
@@ -90,7 +90,7 @@ PORTB.value = 0xFF
 # MicroPython
 BAUD = micropython.const(9600)
 
-# Whisnake — micropython.const() is a no-op; just use the value or const[T]
+# Whipsnake — micropython.const() is a no-op; just use the value or const[T]
 BAUD: const[uint16] = 9600
 ```
 
@@ -100,7 +100,7 @@ BAUD: const[uint16] = 9600
 # MicroPython
 temp = adc.read() * 3.3 / 4096 * 100
 
-# Whisnake
+# Whipsnake
 temp: uint16 = adc.read() * 330 // 4096
 ```
 
@@ -120,7 +120,7 @@ while True:
     sleep_ms(500)
 ```
 
-### Blink (Whisnake + whisnake-micropython)
+### Blink (Whipsnake + whipsnake-micropython)
 
 ```python
 from machine import Pin       # identical

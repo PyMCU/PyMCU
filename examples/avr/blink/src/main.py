@@ -4,8 +4,8 @@
 # Hardware: Arduino Uno or any ATmega328P board
 #   - Built-in LED on PB5 (Arduino digital pin 13)
 #
-from whisnake.hal.gpio import Pin
-from whisnake.time import delay_ms
+from whipsnake.hal.gpio import Pin
+from whipsnake.time import delay_ms
 
 def main():
     led = Pin("PB5", Pin.OUT)

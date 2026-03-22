@@ -11,10 +11,10 @@
 #   MR    (pin 10) -> VCC   (no reset)
 #   Q0-Q7 -> 8 LEDs with resistors
 #
-from whisnake.types import uint8
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
+from whipsnake.types import uint8
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
 
 
 def main():

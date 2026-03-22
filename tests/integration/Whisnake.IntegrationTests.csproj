@@ -5,7 +5,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
-        <RootNamespace>Whisnake.IntegrationTests</RootNamespace>
+        <RootNamespace>Whipsnake.IntegrationTests</RootNamespace>
     </PropertyGroup>
 
     <!-- Avr8Sharp.TestKit is consumed as a NuGet package.

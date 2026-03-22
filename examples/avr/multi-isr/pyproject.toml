@@ -1,7 +1,7 @@
 [project]
 name = "multi-isr"
 version = "0.1.0"
-dependencies = ["whisnake-stdlib"]
+dependencies = ["whipsnake-stdlib"]
 
 [tool.whip]
 chip = "atmega328p"

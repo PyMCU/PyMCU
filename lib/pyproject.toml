@@ -1,7 +1,7 @@
 [project]
-name = "whisnake-stdlib"
+name = "whipsnake-stdlib"
 version = "0.1.0a1"
-description = "Standard Library for the Whisnake compiler"
+description = "Standard Library for the Whipsnake compiler"
 readme = "README.md"
 authors = [
     { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
@@ -10,8 +10,8 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/whisnake"]
-artifacts = ["src/whisnake/**/*.inc"]
+packages = ["src/whipsnake"]
+artifacts = ["src/whipsnake/**/*.inc"]
 
 [build-system]
 requires = ["hatchling"]

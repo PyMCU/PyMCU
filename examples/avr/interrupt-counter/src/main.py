@@ -13,11 +13,11 @@
 #   GPIOR0[0] = 0  →  CBI 0x1E, 0  (atomic bit-clear in main)
 # This avoids register corruption since SBI/CBI touch no CPU registers.
 #
-from whisnake.types import uint8, interrupt
-from whisnake.chips.atmega328p import EICRA, EIMSK, GPIOR0
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.types import asm
+from whipsnake.types import uint8, interrupt
+from whipsnake.chips.atmega328p import EICRA, EIMSK, GPIOR0
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.types import asm
 
 
 @interrupt(0x0002)

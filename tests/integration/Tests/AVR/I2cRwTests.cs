@@ -3,7 +3,7 @@ using NUnit.Framework;
 using Avr8Sharp.TestKit.Boards;
 using AVR8Sharp.Core.Peripherals;
 
-namespace Whisnake.IntegrationTests.Tests.AVR;
+namespace Whipsnake.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/i2c-rw.

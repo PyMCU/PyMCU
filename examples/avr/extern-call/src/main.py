@@ -14,9 +14,9 @@
 #   "A:0A\n"      -- c_add_saturate(4, 6) = 10 = 0x0A
 #   "OK\n"        -- done
 
-from whisnake.types import uint8, inline
-from whisnake.hal.uart import UART
-from whisnake.ffi import extern
+from whipsnake.types import uint8, inline
+from whipsnake.hal.uart import UART
+from whipsnake.ffi import extern
 
 
 # Declare C functions -- bodies are stubs (compiler ignores them).

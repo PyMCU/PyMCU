@@ -10,11 +10,11 @@
 #   LED on PB5 (built-in): toggles every ~1 second
 #   Serial terminal at 9600 baud: sends 'T' on each toggle
 #
-from whisnake.types import uint8, uint16
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.hal.timer import Timer
-from whisnake.chips.atmega328p import TIFR0
+from whipsnake.types import uint8, uint16
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.hal.timer import Timer
+from whipsnake.chips.atmega328p import TIFR0
 
 
 def main():

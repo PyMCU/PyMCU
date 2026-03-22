@@ -1,10 +1,10 @@
-# Whisnake: Python-to-MCU Compiler
+# Whipsnake: Python-to-MCU Compiler
 
-Whisnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega328P/Arduino Uno), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
+Whipsnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega328P/Arduino Uno), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
 
 ## Installation
 
-Whisnake is best installed using `pipx` to keep it isolated from your system Python:
+Whipsnake is best installed using `pipx` to keep it isolated from your system Python:
 
 ```bash
 pipx install whipsnake
@@ -61,8 +61,8 @@ pymcu clean
 - [Driver CLI](docs/docs/driver.md) - Command-line interface reference
 - [Language Reference](docs/docs/language-reference.md) - Complete syntax and type system documentation
 - [Language Roadmap](LANGUAGE_ROADMAP.md) - Feature status and development roadmap
-- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to Whisnake
-- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to Whisnake
+- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to Whipsnake
+- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to Whipsnake
 
 ## License
 

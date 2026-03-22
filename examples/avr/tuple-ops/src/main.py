@@ -17,8 +17,8 @@
 #   "J:03\n"    -- enumerate range(3): sum of indices 0+1+2=3
 #   "Y:03\n"    -- enumerate range(3): sum of values 0+1+2=3
 #
-from whisnake.types import uint8, uint16, inline
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, uint16, inline
+from whipsnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

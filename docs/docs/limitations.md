@@ -1,11 +1,11 @@
-# Whisnake Language Limitations
+# Whipsnake Language Limitations
 
-Whisnake compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
+Whipsnake compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
 code. There is no runtime, no heap, no garbage collector, and no interpreter. Many standard Python
 features are therefore incompatible with this model.
 
 This document lists every known unsupported feature, explains *why* it cannot be compiled, and
-suggests the idiomatic Whisnake alternative where one exists.
+suggests the idiomatic Whipsnake alternative where one exists.
 
 ---
 
@@ -152,8 +152,8 @@ external pin interrupts, atomic flag patterns via `GPIOR0`.
 | `__all__` / `__init__.py` re-exports (at runtime) | No runtime | Place all symbols in the module file directly |
 
 **Supported:** `import foo`, `from foo import Bar`, `from foo import Bar as B` (aliased imports),
-relative imports, multi-module projects, `pymcu` stdlib, `whisnake-circuitpython` and
-`whisnake-micropython` compat packages.
+relative imports, multi-module projects, `pymcu` stdlib, `whipsnake-circuitpython` and
+`whipsnake-micropython` compat packages.
 
 ---
 
@@ -207,6 +207,6 @@ relative imports, multi-module projects, `pymcu` stdlib, `whisnake-circuitpython
 ## Getting Help
 
 If you hit a compile error on a Python construct not covered here, please open an issue at the
-Whisnake repository. Include the source snippet and the compiler error message.
+Whipsnake repository. Include the source snippet and the compiler error message.
 
 For feature requests, see the [roadmap](roadmap.md).

@@ -9,9 +9,9 @@
 #   "LCD\n"   -- boot banner
 #   "OK\n"    -- init complete
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
-from whisnake.drivers.lcd import LCD
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
+from whipsnake.drivers.lcd import LCD
 
 
 def main():

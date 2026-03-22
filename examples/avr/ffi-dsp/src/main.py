@@ -23,9 +23,9 @@
 #   deadband(30,50)    = 0   (30 < 50)
 #   deadband(80,50)    = 30  (80 - 50)
 
-from whisnake.types import uint8, inline
-from whisnake.hal.uart import UART
-from whisnake.ffi import extern
+from whipsnake.types import uint8, inline
+from whipsnake.hal.uart import UART
+from whipsnake.ffi import extern
 
 
 # --- math_utils.c ---

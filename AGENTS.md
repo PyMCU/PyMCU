@@ -1,4 +1,4 @@
-# AI Coding Agent Guidelines for Whisnake
+# AI Coding Agent Guidelines for Whipsnake
 
 This file is loaded automatically by AI coding assistants (Claude Code, OpenAI Codex CLI,
 GitHub Copilot, Cursor, and others). It defines how agents should behave when working on
@@ -8,12 +8,12 @@ this repository.
 
 ## Project Summary
 
-Whisnake is a Python-to-MCU compiler. It takes a statically-typed subset of Python and compiles
+Whipsnake is a Python-to-MCU compiler. It takes a statically-typed subset of Python and compiles
 it to bare-metal firmware for microcontrollers (currently AVR/ATmega328P, PIC, RISC-V, PIO).
 
 Key components:
 - `src/compiler/` — C++ compiler (`whipc`): Lexer, Parser, IRGenerator, AVR codegen
-- `lib/src/whisnake/` — Python stdlib compiled into firmware (HAL, drivers, boards)
+- `lib/src/whipsnake/` — Python stdlib compiled into firmware (HAL, drivers, boards)
 - `src/driver/` — Python CLI driver (`whip build/flash/new`)
 - `tests/integration/` — .NET/AVR8Sharp integration tests (must always pass)
 
@@ -54,7 +54,7 @@ Every commit you create must:
 
 5. **Each commit must leave the test suite green.** Run before committing:
    ```bash
-   dotnet test tests/integration/Whisnake.IntegrationTests.csproj
+   dotnet test tests/integration/Whipsnake.IntegrationTests.csproj
    ```
 
 ---
@@ -71,10 +71,10 @@ Every commit you create must:
 
 ## HAL and stdlib Rules (Critical)
 
-Violations of these rules cause compile errors in the Whisnake compiler itself:
+Violations of these rules cause compile errors in the Whipsnake compiler itself:
 
 - **ASCII only** — no non-ASCII characters (no em dashes, no Unicode) in any `.py` file
-  under `lib/src/whisnake/`. The compiler lexer is ASCII-only.
+  under `lib/src/whipsnake/`. The compiler lexer is ASCII-only.
 - **No multiline docstrings with code examples** — use `# comments` only.
 - **No statements after `match` blocks** — always place the default in `case _:` inside the match.
 - **Dotted names in match/case** (`ClassName.ATTR`) are value patterns; bare names are
@@ -90,10 +90,10 @@ The integration test suite uses AVR8Sharp (cycle-accurate AVR simulator) and .NE
 
 ```bash
 # Run all tests (must stay green — currently 269 passing)
-dotnet test tests/integration/Whisnake.IntegrationTests.csproj
+dotnet test tests/integration/Whipsnake.IntegrationTests.csproj
 
 # After any stdlib change, rsync to the virtualenv first:
-rsync lib/src/whisnake/ .venv/lib/python3.X/site-packages/whisnake/
+rsync lib/src/whipsnake/ .venv/lib/python3.X/site-packages/whipsnake/
 ```
 
 Add a test for every new compiler or HAL feature in `tests/integration/Tests/AVR/`.

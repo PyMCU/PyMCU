@@ -14,9 +14,9 @@
 #   const(), bit-index read/write, augmented assignment, unary/binary ops,
 #   inline asm(), delay_ms/delay_us, user-defined functions, module constants
 #
-from whisnake.hal.gpio import Pin
-from whisnake.time import delay_ms, delay_us
-from whisnake.types import uint8, uint16, const, asm, inline, interrupt
+from whipsnake.hal.gpio import Pin
+from whipsnake.time import delay_ms, delay_us
+from whipsnake.types import uint8, uint16, const, asm, inline, interrupt
 
 # ---------------------------------------------------------------------------
 #  Module-level constants and globals
@@ -46,7 +46,7 @@ def on_button():
 #  User-defined helper: configure ADC for channel AN0
 #  Shows direct register access, bit-index writes, inline asm
 # ---------------------------------------------------------------------------
-from whisnake.chips.pic16f18877 import ANSELA, TRISA, ADCON0, ADPCH, ADCLK, ADREF, ADRESH, ADON, GO, PORTD, TRISD, INTCON, GIE, PEIE
+from whipsnake.chips.pic16f18877 import ANSELA, TRISA, ADCON0, ADPCH, ADCLK, ADREF, ADRESH, ADON, GO, PORTD, TRISD, INTCON, GIE, PEIE
 
 def adc_init():
     ANSELA.value = 0x01             # RA0 analog, rest digital

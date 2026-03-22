@@ -1,7 +1,7 @@
-# Sleep / Power — `whisnake.hal.power`
+# Sleep / Power — `whipsnake.hal.power`
 
 ```python
-from whisnake.hal.power import sleep_power_down
+from whipsnake.hal.power import sleep_power_down
 ```
 
 Sleep-mode helpers that halt the CPU and reduce current consumption.  Each function sets the
@@ -28,9 +28,9 @@ on wake — so returning from the function means the MCU has woken.
 ### Interrupt-driven blink (power-down)
 
 ```python
-from whisnake.hal.gpio import Pin
-from whisnake.hal.power import sleep_power_down
-from whisnake.types import uint8, ptr
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.power import sleep_power_down
+from whipsnake.types import uint8, ptr
 
 EICRA: ptr[uint8] = ptr(0x69)
 EIMSK: ptr[uint8] = ptr(0x3D)
@@ -52,9 +52,9 @@ def main():
 ### ADC noise reduction sleep
 
 ```python
-from whisnake.hal.adc import AnalogPin
-from whisnake.hal.power import sleep_adc_noise
-from whisnake.types import uint16
+from whipsnake.hal.adc import AnalogPin
+from whipsnake.hal.power import sleep_adc_noise
+from whipsnake.types import uint16
 
 sensor = AnalogPin("A0")
 
@@ -67,8 +67,8 @@ def read_quiet() -> uint16:
 ### Watchdog-based periodic wake (ultra-low-power)
 
 ```python
-from whisnake.hal.power import sleep_power_down
-from whisnake.hal.watchdog import Watchdog
+from whipsnake.hal.power import sleep_power_down
+from whipsnake.hal.watchdog import Watchdog
 
 wdt = Watchdog(timeout_ms=1000)
 

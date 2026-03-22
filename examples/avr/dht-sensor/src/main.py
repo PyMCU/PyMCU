@@ -16,10 +16,10 @@
 #   Boot:  "DHT11\n"
 #   OK:    "H:XX T:XX\n"
 #   Error: "ERR\n"
-from whisnake.types import uint8, uint16
-from whisnake.boards.arduino_uno import D2, LED_BUILTIN
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, uint16
+from whipsnake.boards.arduino_uno import D2, LED_BUILTIN
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
 import time
 from dht11 import DHT11
 

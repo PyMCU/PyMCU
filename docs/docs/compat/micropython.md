@@ -1,18 +1,18 @@
 # MicroPython Flavor
 
-The `whisnake-micropython` package provides `machine`, `utime`, and `micropython` module names so
+The `whipsnake-micropython` package provides `machine`, `utime`, and `micropython` module names so
 most MicroPython firmware targeting Arduino Uno / ATmega328P compiles with minimal edits.
 
 ## Quick Start
 
 ```bash
-pip install whisnake-micropython
+pip install whipsnake-micropython
 ```
 
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["whipsnake", "whisnake-micropython"]
+dependencies = ["whipsnake", "whipsnake-micropython"]
 
 [tool.whip]
 stdlib = ["micropython"]
@@ -101,7 +101,7 @@ btn.irq(Pin.IRQ_FALLING)
 
 ```python
 from machine import UART
-from whisnake.types import uint8
+from whipsnake.types import uint8
 
 uart = UART(0, 9600)          # id=0 -> USART0
 uart.write(65)                # send byte
@@ -115,7 +115,7 @@ uart.write_str("hello\n")
 
 ```python
 from machine import ADC, Pin
-from whisnake.types import uint16
+from whipsnake.types import uint16
 
 adc = ADC(Pin("A0"))          # or ADC(Pin("PC0"))
 val: uint16 = adc.read_u16()  # 0-65535 (10-bit scaled x64)
@@ -128,7 +128,7 @@ raw: uint16 = adc.read()      # 0-1023 (10-bit raw)
 
 ```python
 from machine import PWM, Pin
-from whisnake.types import uint16
+from whipsnake.types import uint16
 
 pwm = PWM(Pin("PD6"), freq=1000, duty_u16=32768)
 pwm.duty_u16(49152)   # 75%
@@ -143,7 +143,7 @@ pwm.deinit()
 
 ```python
 from machine import SPI
-from whisnake.types import uint8
+from whipsnake.types import uint8
 
 spi = SPI()
 spi.write(0xAA)
@@ -156,7 +156,7 @@ b: uint8 = spi.read()
 
 ```python
 from machine import I2C
-from whisnake.types import uint8
+from whipsnake.types import uint8
 
 i2c = I2C(freq=100000)
 count: uint8 = i2c.scan()         # returns number of responding devices
@@ -184,7 +184,7 @@ import micropython
 
 BAUD = micropython.const(9600)   # treated as integer literal 9600
 
-@micropython.native              # silently ignored -- Whisnake already emits native code
+@micropython.native              # silently ignored -- Whipsnake already emits native code
 def fast():
     pass
 ```
@@ -199,7 +199,7 @@ def fast():
 # MicroPython (top-level execution)
 led = Pin(13, Pin.OUT)
 
-# Whisnake
+# Whipsnake
 def main():
     led = Pin(13, Pin.OUT)
 ```
@@ -210,7 +210,7 @@ def main():
 # MicroPython
 count = 0
 
-# Whisnake
+# Whipsnake
 count: uint16 = 0
 ```
 
@@ -220,7 +220,7 @@ count: uint16 = 0
 # MicroPython
 btn.irq(trigger=Pin.IRQ_FALLING, handler=on_press)
 
-# Whisnake
+# Whipsnake
 @interrupt(0x0002)    # INT0 vector (ATmega328P, D2)
 def on_press():
     global count
@@ -237,9 +237,9 @@ def main():
 # MicroPython
 tim = Timer(0, freq=1, callback=on_tick)
 
-# Whisnake
-from whisnake.hal.timer import Timer
-from whisnake.types import ptr, uint8
+# Whipsnake
+from whipsnake.hal.timer import Timer
+from whipsnake.types import ptr, uint8
 
 TIMSK0: ptr[uint8] = ptr(0x6E)
 
@@ -260,8 +260,8 @@ def main():
 # MicroPython
 machine.mem8[0x25] = 0xFF
 
-# Whisnake
-from whisnake.types import ptr, uint8
+# Whipsnake
+from whipsnake.types import ptr, uint8
 PORTB: ptr[uint8] = ptr(0x25)
 PORTB.value = 0xFF
 ```
@@ -272,7 +272,7 @@ PORTB.value = 0xFF
 # MicroPython
 buf = bytearray(8)
 
-# Whisnake
+# Whipsnake
 buf: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 ```
 
@@ -282,7 +282,7 @@ buf: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 # MicroPython
 temp = adc.read_u16() * 3.3 / 65536 * 100
 
-# Whisnake
+# Whipsnake
 temp: uint16 = adc.read_u16() * 330 // 65536
 ```
 
@@ -290,7 +290,7 @@ temp: uint16 = adc.read_u16() * 330 // 65536
 
 ## Differences from Real MicroPython
 
-| Feature | MicroPython | Whisnake flavor |
+| Feature | MicroPython | Whipsnake flavor |
 |---------|-------------|--------------|
 | `Pin.irq(handler=)` | Supported | Hardware-only; use `@interrupt` for the handler |
 | `Timer(callback)` | Supported | Use `@interrupt(vector)` |

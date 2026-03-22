@@ -1,7 +1,7 @@
-# Timer — `whisnake.hal.timer`
+# Timer — `whipsnake.hal.timer`
 
 ```python
-from whisnake.hal.timer import Timer0
+from whipsnake.hal.timer import Timer0
 ```
 
 ## `Timer0(prescaler: uint8)`
@@ -29,8 +29,8 @@ Configures Timer/Counter 0 with the given prescaler. On ATmega328P, valid presca
 Use `@interrupt(vector)` to handle overflow interrupts:
 
 ```python
-from whisnake.hal.timer import Timer0
-from whisnake.types import uint8, ptr
+from whipsnake.hal.timer import Timer0
+from whipsnake.types import uint8, ptr
 
 TIMSK0: ptr[uint8] = ptr(0x6E)
 

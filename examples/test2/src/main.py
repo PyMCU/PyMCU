@@ -1,4 +1,4 @@
-from whisnake.chips.pic16f877a import *
+from whipsnake.chips.pic16f877a import *
 
 def main():
     # Configuración de Puertos

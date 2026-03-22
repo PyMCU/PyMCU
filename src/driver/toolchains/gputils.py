@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -112,7 +112,7 @@ class GputilsToolchain(ExternalToolchain):
         name = self.get_name()
         archive_type = info.get("archive_type")
 
-        self.console.print(f"[bold cyan]Whisnake Toolchain Manager[/bold cyan]")
+        self.console.print(f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]")
         self.console.print(f"Tool '{name}' ({desc}) is required but not found.")
         
         if not Confirm.ask(f"Do you want to download and install it automatically from [green]{url}[/green]?", default=True):

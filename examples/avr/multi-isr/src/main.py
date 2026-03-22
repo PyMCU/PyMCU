@@ -21,13 +21,13 @@
 # ATmega328P vector table (byte addresses):
 #   INT0 = 0x0002, TIMER0_OVF = 0x0020
 #
-from whisnake.types import uint8, uint16, interrupt
-from whisnake.chips.atmega328p import PORTB, DDRB
-from whisnake.chips.atmega328p import TCCR0B, TIMSK0
-from whisnake.chips.atmega328p import EICRA, EIMSK
-from whisnake.chips.atmega328p import GPIOR0
-from whisnake.hal.uart import UART
-from whisnake.types import asm
+from whipsnake.types import uint8, uint16, interrupt
+from whipsnake.chips.atmega328p import PORTB, DDRB
+from whipsnake.chips.atmega328p import TCCR0B, TIMSK0
+from whipsnake.chips.atmega328p import EICRA, EIMSK
+from whipsnake.chips.atmega328p import GPIOR0
+from whipsnake.hal.uart import UART
+from whipsnake.types import asm
 
 
 @interrupt(0x0020)

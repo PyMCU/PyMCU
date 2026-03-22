@@ -1,12 +1,12 @@
-# Whisnake Driver Documentation
+# Whipsnake Driver Documentation
 
-The `pymcu` driver is the command-line interface (CLI) for managing Whisnake projects. It handles project creation, dependency management interaction, building, and flashing firmware.
+The `pymcu` driver is the command-line interface (CLI) for managing Whipsnake projects. It handles project creation, dependency management interaction, building, and flashing firmware.
 
 ## Commands
 
 ### `whip new <project_name>`
 
-Creates a new Whisnake project with the specified name.
+Creates a new Whipsnake project with the specified name.
 
 **Usage:**
 ```bash
@@ -107,7 +107,7 @@ Removes the `dist/` directory and cleans up build artifacts.
 
 ## Toolchain Management
 
-Whisnake attempts to auto-detect and configure the appropriate toolchain (compiler/assembler backend) for the selected chip:
+Whipsnake attempts to auto-detect and configure the appropriate toolchain (compiler/assembler backend) for the selected chip:
 
 - **AVR**: Uses the built-in AVR backend (no external assembler required)
 - **PIC14/PIC14E**: Uses `gputils` for assembly (auto-detected)

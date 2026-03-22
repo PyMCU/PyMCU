@@ -13,8 +13,8 @@
 #   "C:07\n"  -- capture: 7 matches wildcard -> bound to v=7
 #   "O:02\n"  -- OR-capture: 2 matches 1|2 as n -> n=2
 #
-from whisnake.types import uint8
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8
+from whipsnake.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

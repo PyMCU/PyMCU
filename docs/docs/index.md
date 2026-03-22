@@ -1,13 +1,13 @@
-# Whisnake
+# Whipsnake
 
-**Whisnake** compiles a statically-typed, allocation-free subset of Python directly to bare-metal
+**Whipsnake** compiles a statically-typed, allocation-free subset of Python directly to bare-metal
 MCU machine code — no runtime, no heap, no interpreter.
 
 Write familiar Python. Flash to an ATmega328P (Arduino Uno) in seconds.
 
 ```python
-from whisnake.hal.gpio import Pin
-from whisnake.time import delay_ms
+from whipsnake.hal.gpio import Pin
+from whipsnake.time import delay_ms
 
 def main():
     led = Pin("PB5", Pin.OUT)
@@ -23,9 +23,9 @@ whip flash   # → avrdude upload to Arduino Uno
 
 ---
 
-## Why Whisnake?
+## Why Whipsnake?
 
-| | Arduino (C++) | MicroPython | CircuitPython | **Whisnake** |
+| | Arduino (C++) | MicroPython | CircuitPython | **Whipsnake** |
 |---|---|---|---|---|
 | Language | C++ | Python | Python | **Python** |
 | Runtime | None | Interpreter | Interpreter | **None** |
@@ -34,7 +34,7 @@ whip flash   # → avrdude upload to Arduino Uno
 | Familiar syntax | Partial | Full | Full | **Full** |
 | Static types | No | No | No | **Yes (required)** |
 
-Whisnake occupies the gap between "write C++" and "run MicroPython": you write Python, but the
+Whipsnake occupies the gap between "write C++" and "run MicroPython": you write Python, but the
 compiler produces tight AVR assembly with zero runtime overhead.
 
 ---
@@ -81,5 +81,5 @@ whip flash --port /dev/cu.usbmodem*
 - [Language Reference](language-reference.md) — complete syntax and type reference
 - [Standard Library](stdlib/index.md) — GPIO, UART, ADC, Timer, SPI, I2C
 - [Examples Gallery](examples/index.md) — 30+ annotated firmware examples
-- [CircuitPython migration](migration/from-circuitpython.md) — port CP code to Whisnake
-- [MicroPython migration](migration/from-micropython.md) — port uPython code to Whisnake
+- [CircuitPython migration](migration/from-circuitpython.md) — port CP code to Whipsnake
+- [MicroPython migration](migration/from-micropython.md) — port uPython code to Whipsnake

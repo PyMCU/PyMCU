@@ -3,7 +3,7 @@ name = "builtin-ops"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "whisnake-stdlib>=0.1.2a5",
+    "whipsnake-stdlib>=0.1.2a5",
     "whipsnake>=0.1.0a27"
 ]
 

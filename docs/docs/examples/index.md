@@ -76,7 +76,7 @@ with `-O2`.
 
 | Example | Flash | Description |
 |---|---|---|
-| `uart-echo-cp` | — | UART echo using `whisnake-circuitpython` |
+| `uart-echo-cp` | — | UART echo using `whipsnake-circuitpython` |
 
 ## MicroPython compat
 

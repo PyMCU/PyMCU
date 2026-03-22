@@ -13,11 +13,11 @@
 #   - LED on PB5 (built-in, pin 13)
 #   - UART TX 9600 baud: sends "CTC\n" on boot, "C\n" on each 1 Hz tick
 #
-from whisnake.types import uint8, interrupt, asm
-from whisnake.chips.atmega328p import GPIOR0
-from whisnake.hal.gpio import Pin
-from whisnake.hal.uart import UART
-from whisnake.hal.timer import Timer
+from whipsnake.types import uint8, interrupt, asm
+from whipsnake.chips.atmega328p import GPIOR0
+from whipsnake.hal.gpio import Pin
+from whipsnake.hal.uart import UART
+from whipsnake.hal.timer import Timer
 
 
 @interrupt(0x0016)

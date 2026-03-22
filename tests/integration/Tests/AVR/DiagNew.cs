@@ -1,7 +1,7 @@
 using Avr8Sharp.TestKit.Boards;
 using NUnit.Framework;
 
-namespace Whisnake.IntegrationTests.Tests.AVR;
+namespace Whipsnake.IntegrationTests.Tests.AVR;
 
 [TestFixture]
 public class DiagNew

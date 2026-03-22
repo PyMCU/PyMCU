@@ -24,8 +24,8 @@
 #   "Q:03\n"    -- divmod(10,3) quotient = 3
 #   "R:01\n"    -- divmod(10,3) remainder = 1
 #
-from whisnake.types import uint8, inline
-from whisnake.hal.uart import UART
+from whipsnake.types import uint8, inline
+from whipsnake.hal.uart import UART
 
 
 def nibble_lo(val: uint8) -> uint8:

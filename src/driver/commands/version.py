@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whisnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
+# Whipsnake CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -38,22 +38,22 @@ console = Console()
 
 def version():
     """
-    Displays the version information for Whisnake and its components.
+    Displays the version information for Whipsnake and its components.
     """
     try:
         from importlib.metadata import version, PackageNotFoundError
     except ImportError:
-        # Fallback for older Python versions if needed, though Whisnake targets 3.10+
+        # Fallback for older Python versions if needed, though Whipsnake targets 3.10+
         console.print("[red]Error: importlib.metadata not available.[/red]")
         return
 
     # Define packages to check
     packages = [
         ("whip-compiler", "Compiler & CLI Driver"),
-        ("whisnake-stdlib", "Standard Library"),
+        ("whipsnake-stdlib", "Standard Library"),
     ]
 
-    table = Table(title="Whisnake Ecosystem Version Info", box=box.ROUNDED)
+    table = Table(title="Whipsnake Ecosystem Version Info", box=box.ROUNDED)
     table.add_column("Package", style="cyan", no_wrap=True)
     table.add_column("Description", style="magenta")
     table.add_column("Version", style="green")
@@ -69,4 +69,4 @@ def version():
     table.add_row("python", "Python Interpreter", sys.version.split()[0])
 
     console.print(table)
-    console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors[/dim]")
+    console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors[/dim]")

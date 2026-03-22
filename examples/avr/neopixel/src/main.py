@@ -10,10 +10,10 @@
 # Global interrupts must be off during transmission for correct timing.
 # This example disables interrupts only during pixel write + show.
 #
-from whisnake.types import uint8, asm
-from whisnake.hal.uart import UART
-from whisnake.time import delay_ms
-from whisnake.drivers.neopixel import NeoPixel
+from whipsnake.types import uint8, asm
+from whipsnake.hal.uart import UART
+from whipsnake.time import delay_ms
+from whipsnake.drivers.neopixel import NeoPixel
 
 
 def main():
