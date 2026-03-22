@@ -1,23 +1,27 @@
 /*
  * -----------------------------------------------------------------------------
- * PyMCU Compiler (pymcuc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ * Whisnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
  *
- * This file is part of the PyMCU Development Ecosystem.
+ * SPDX-License-Identifier: MIT
  *
- * PyMCU is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * PyMCU is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- * You should have received a copy of the GNU General Public License
- * along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
- *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
  * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -103,11 +107,11 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
   for (const auto &imp : ast->imports) {
     std::string path;
     try {
-      if (imp->module_name == "pymcu.types" ||
-          imp->module_name == "pymcu.chips") {
+      if (imp->module_name == "whisnake.types" ||
+          imp->module_name == "whisnake.chips") {
         // Intrinsic/compiler-provided modules — not real source files
-        // pymcu.types provides type aliases handled by the type system
-        // pymcu.chips provides __CHIP__ which is injected by ConditionalCompilator
+        // whisnake.types provides type aliases handled by the type system
+        // whisnake.chips provides __CHIP__ which is injected by ConditionalCompilator
         continue;
       }
 
@@ -115,7 +119,7 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
                             imp->relative_level);
 
       if (ctx->module_cache.contains(path)) {
-        // File already loaded under a different module name (e.g. "pymcu.time"
+        // File already loaded under a different module name (e.g. "whisnake.time"
         // previously loaded, now imported as "time" or vice-versa).  Register
         // this alias too so that IRGenerator sees both keys and produces
         // inline-function entries under both module prefixes.
@@ -160,7 +164,7 @@ void load_imports_recursively(const Program *ast, CompilerContext *ctx,
 }
 
 int main(int argc, char *argv[]) {
-  argparse::ArgumentParser program("pymcuc");
+  argparse::ArgumentParser program("whipc");
 
   program.add_argument("file").help("Input source file");
   program.add_argument("-o", "--output")
@@ -169,7 +173,7 @@ int main(int argc, char *argv[]) {
   program.add_argument("--arch").default_value(std::string("pic14"));
 
   program.add_argument("--chip")
-      .help("Target chip (e.g., pic16f18877). Locates pymcu/chips/<chip>.py")
+      .help("Target chip (e.g., pic16f18877). Locates whisnake/chips/<chip>.py")
       .default_value(std::string(""));
 
   program.add_argument("--freq")
@@ -310,7 +314,7 @@ int main(int argc, char *argv[]) {
                              include_paths);
 
     // Pass 2: Global Configuration Bootstrap (PreScan all loaded modules)
-    // Especially important for chip definition modules (pymcu.chips.*)
+    // Especially important for chip definition modules (whisnake.chips.*)
     PreScanVisitor pre_scanner(device_config);
     pre_scanner.scan(*ast);
     for (auto &[name, mod_ast] : context.named_modules) {
@@ -429,13 +433,13 @@ int main(int argc, char *argv[]) {
       throw std::runtime_error("Cannot open output file: " + output_path);
     }
 
-    std::cout << "[pymcuc] Compiling " << filepath << " -> " << output_path
+    std::cout << "[whipc] Compiling " << filepath << " -> " << output_path
               << " (" << target_arch << " @ " << device_config.frequency
               << "Hz)\n";
 
     backend->compile(ir, asm_file);
 
-    std::cout << "[pymcuc] Success! Output written to " << output_path << "\n";
+    std::cout << "[whipc] Success! Output written to " << output_path << "\n";
   } catch (const CompilerError &e) {
     Diagnostic::report(e, source, filepath);
     return 1;

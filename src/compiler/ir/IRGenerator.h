@@ -1,23 +1,27 @@
 /*
  * -----------------------------------------------------------------------------
- * PyMCU Compiler (pymcuc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ * Whisnake Compiler (whipc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
  *
- * This file is part of the PyMCU Development Ecosystem.
+ * SPDX-License-Identifier: MIT
  *
- * PyMCU is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * PyMCU is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- * You should have received a copy of the GNU General Public License
- * along with PyMCU.  If not, see <https://www.gnu.org/licenses/>.
- *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
  * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -104,7 +108,7 @@ class IRGenerator {
   // so that super().__init__() and default-ctor inheritance can be resolved.
   std::map<std::string, std::string> class_base_prefixes;
   std::map<std::string, std::string>
-      imported_aliases;  // Tracks Pin/_Pin -> pymcu.hal.gpio
+      imported_aliases;  // Tracks Pin/_Pin -> whisnake.hal.gpio
   std::map<std::string, std::string>
       alias_to_original;  // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
   std::map<std::string, int>
@@ -171,7 +175,7 @@ class IRGenerator {
   // ir_program.functions after all functions are compiled in generate().
   std::map<std::string, int> pending_isr_registrations;
 
-  // @extern("symbol") registrations: PyMCU function name -> C symbol name.
+  // @extern("symbol") registrations: Whisnake function name -> C symbol name.
   // Functions in this map have no IR body; call sites emit Call{c_symbol, ...}.
   // The set of C symbol values is exported to tacky::Program::extern_symbols.
   std::map<std::string, std::string> extern_function_map;

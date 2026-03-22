@@ -1,6 +1,6 @@
 /*
- * PyMCU Compiler — AVR Linear Scan Register Allocator (Temporaries)
- * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ * Whisnake Compiler (whipc) — AVR Linear Scan Register Allocator (Temporaries)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the Whisnake Project Authors
  *
  * Licensed under the GNU General Public License v3. See LICENSE for details.
  */
