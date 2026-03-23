@@ -31,11 +31,16 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install pymcu CLI
+      - name: Install Whipsnake CLI
         run: uv sync
 
-      - name: Override pymcu-stdlib with local source
+      - name: Override whipsnake-stdlib with local source
         run: uv pip install lib/
+
+      - name: Install compat stdlib flavors
+        run: |
+          uv pip install external/whipsnake-micropython/
+          uv pip install external/whipsnake-circuitpython/
 
       # - name: Install build tools
       #   run: sudo apt-get install -y build-essential flex bison ninja-build cmake
@@ -44,13 +49,13 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/Ro5bert/avra.git /tmp/avra
           make -C /tmp/avra
-          mkdir -p "$HOME/.pymcu/tools/linux/avra/avra-1.3.0/src"
-          cp /tmp/avra/src/avra "$HOME/.pymcu/tools/linux/avra/avra-1.3.0/src/avra"
+          mkdir -p "$HOME/.whipsnake/tools/linux/avra/avra-1.3.0/src"
+          cp /tmp/avra/src/avra "$HOME/.whipsnake/tools/linux/avra/avra-1.3.0/src/avra"
 
-      - name: Build pymcuc compiler
+      - name: Build whipc compiler
         run: cmake -B build -G Ninja && cmake --build build
 
-      - name: Add pymcuc to PATH
+      - name: Add whipc to PATH
         run: echo "$GITHUB_WORKSPACE/build/bin" >> $GITHUB_PATH
 
       - name: Add private NuGet source
