@@ -13,52 +13,129 @@ from whipsnake.hal.gpio import Pin
 
 # noinspection PyProtectedMember
 class SPI:
-    """Hardware SPI master, zero-cost abstraction (all methods @inline).
+    """Hardware SPI controller or peripheral, zero-cost abstraction.
 
-    Operates in Mode 0 (CPOL=0, CPHA=0), MSB-first, at fosc/4 by default.
-    Hardware MOSI/MISO/SCK pins are defined by the target chip.
+    Mode 0 (CPOL=0, CPHA=0), MSB-first.  The operating role is selected once
+    at construction via the ``mode`` argument and baked in at compile time:
 
-    Optional ``cs`` parameter: port-pin name string for a custom chip-select
-    line. When provided the CS port and bit are resolved once at construction
-    so that select() / deselect() each compile to a single instruction.
-    ``self._cs`` is kept as a ``const[str]`` so the ``cs != ""`` guards are
-    folded at compile time with zero SRAM cost.
+        spi = SPI()                      # controller (default)
+        spi = SPI(SPI.PERIPHERAL)        # peripheral
 
-    Context manager support: ``with spi:`` auto-selects and deselects::
+    Controller-mode constants::
 
-        with spi:
+        SPI.CONTROLLER = 0
+        SPI.PERIPHERAL = 1
+
+    Controller context-manager support::
+
+        with SPI(cs=cs_pin):
             spi.write(0xFF)
+
+    Peripheral use::
+
+        spi = SPI(SPI.PERIPHERAL)
+        while True:
+            rx = spi.exchange(0xAB)   # reply 0xAB, return what controller sent
+
+    All methods are @inline; the ``mode`` check in each one folds away at
+    compile time with no SRAM or code cost for the unused path.
     """
 
-    def __init__(self, cs: Pin = None):
-        """Initialize the SPI peripheral.
+    CONTROLLER = 0
+    PERIPHERAL = 1
 
-        cs: optional Pin instance for a custom chip-select line.
-            When provided it is configured as an output idling high.
+    def __init__(self, mode: uint8 = 0, cs: Pin = None):
+        """Initialize SPI.
+
+        mode: SPI.CONTROLLER (0, default) or SPI.PERIPHERAL (1).
+        cs:   optional chip-select Pin for controller mode (idle high).
+              Ignored in peripheral mode.
         """
         match __CHIP__.arch:
             case "avr":
-                from whipsnake.hal._spi.avr import spi_init
-                spi_init()
-                if cs != None:
-                    # Extract pin name from Pin instance; resolve once at init.
-                    from whipsnake.hal._gpio.atmega328p import select_port, select_ddr, select_bit
-                    _cs_ddr = select_ddr(cs.name)
-                    _cs_ddr[select_bit(cs.name)] = 1
-                    self._cs_port = select_port(cs.name)
-                    self._cs_bit  = select_bit(cs.name)
-                    self._cs_port[self._cs_bit] = 1
-                    self._cs = cs.name
+                match mode:
+                    case 0:
+                        from whipsnake.hal._spi.avr import spi_init
+                        spi_init()
+                        self._mode = "c"
+                        if cs is not None:
+                            from whipsnake.hal._gpio.atmega328p import select_port, select_ddr, select_bit
+                            _cs_ddr = select_ddr(cs.name)
+                            _cs_ddr[select_bit(cs.name)] = 1
+                            self._cs_port = select_port(cs.name)
+                            self._cs_bit  = select_bit(cs.name)
+                            self._cs_port[self._cs_bit] = 1
+                            self._cs = cs.name
+                        else:
+                            self._cs = ""
+                    case 1:
+                        from whipsnake.hal._spi.avr import spi_peripheral_init
+                        spi_peripheral_init()
+                        self._mode = "p"
+                        self._cs = ""
+
+    @inline
+    def transfer(self, data: uint8) -> uint8:
+        """Send one byte and simultaneously receive one byte.
+
+        Controller: drives the clock; returns what the peripheral sent.
+        Peripheral: preloads TX with data, blocks until controller clocks
+                    a full byte, returns what the controller sent.
+        """
+        match __CHIP__.arch:
+            case "avr":
+                if self._mode == "c":
+                    from whipsnake.hal._spi.avr import spi_transfer
+                    return spi_transfer(data)
                 else:
-                    self._cs = ""
+                    from whipsnake.hal._spi.avr import spi_peripheral_exchange
+                    return spi_peripheral_exchange(data)
+            case _:
+                return 0
+
+    @inline
+    def write(self, data: uint8):
+        """Send one byte; the received byte is discarded (controller mode)."""
+        match __CHIP__.arch:
+            case "avr":
+                if self._mode == "c":
+                    from whipsnake.hal._spi.avr import spi_transfer
+                    spi_transfer(data)
+
+    @inline
+    def receive(self) -> uint8:
+        """Peripheral mode: block until controller sends a byte, return it (TX=0x00)."""
+        match __CHIP__.arch:
+            case "avr":
+                from whipsnake.hal._spi.avr import spi_peripheral_receive
+                return spi_peripheral_receive()
+            case _:
+                return 0
+
+    @inline
+    def send(self, data: uint8):
+        """Peripheral mode: preload SPDR for the next controller transfer (non-blocking)."""
+        match __CHIP__.arch:
+            case "avr":
+                from whipsnake.hal._spi.avr import spi_peripheral_send
+                spi_peripheral_send(data)
+
+    @inline
+    def ready(self) -> uint8:
+        """Return 1 if a transfer has completed (SPIF=1), else 0 (both modes)."""
+        match __CHIP__.arch:
+            case "avr":
+                from whipsnake.hal._spi.avr import spi_peripheral_ready
+                return spi_peripheral_ready()
+            case _:
+                return 0
 
     @inline
     def select(self):
-        """Assert the chip-select line (drive it low)."""
+        """Controller mode: assert the chip-select line (drive it low)."""
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
-                    # Drive CS low via stored port/bit -- single CBI instruction.
                     self._cs_port[self._cs_bit] = 0
                 else:
                     from whipsnake.hal._spi.avr import spi_select
@@ -66,38 +143,19 @@ class SPI:
 
     @inline
     def deselect(self):
-        """Deassert the chip-select line (drive it high)."""
+        """Controller mode: deassert the chip-select line (drive it high)."""
         match __CHIP__.arch:
             case "avr":
                 if self._cs != "":
-                    # Drive CS high via stored port/bit -- single SBI instruction.
                     self._cs_port[self._cs_bit] = 1
                 else:
                     from whipsnake.hal._spi.avr import spi_deselect
                     spi_deselect()
 
-    @inline
-    def transfer(self, data: uint8) -> uint8:
-        """Send one byte and simultaneously receive one byte. Returns the received byte."""
-        match __CHIP__.arch:
-            case "avr":
-                from whipsnake.hal._spi.avr import spi_transfer
-                return spi_transfer(data)
-            case _:
-                return 0
-
-    @inline
-    def write(self, data: uint8):
-        """Send one byte; the received byte is discarded."""
-        match __CHIP__.arch:
-            case "avr":
-                from whipsnake.hal._spi.avr import spi_transfer
-                spi_transfer(data)
-
     def __enter__(self):
-        """Assert the chip-select line (context manager entry)."""
+        """Controller mode: assert chip-select (context manager entry)."""
         self.select()
 
     def __exit__(self):
-        """Deassert the chip-select line (context manager exit)."""
+        """Controller mode: deassert chip-select (context manager exit)."""
         self.deselect()

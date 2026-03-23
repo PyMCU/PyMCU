@@ -6,13 +6,15 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# AVR SPI Master HAL — ATmega328P hardware SPI (Mode 0, MSB-first, fosc/4)
+# AVR SPI Controller/Peripheral HAL — ATmega328P hardware SPI
+#
+# Mode 0 (CPOL=0, CPHA=0), MSB-first.
 #
 # ATmega328P SPI pins (Arduino Uno mapping):
-#   MOSI = PB3  (Arduino pin 11) — data to device
-#   MISO = PB4  (Arduino pin 12) — data from device
-#   SCK  = PB5  (Arduino pin 13) — clock
-#   SS   = PB2  (Arduino pin 10) — chip select (active low)
+#   MOSI = PB3  (Arduino pin 11) — Controller: output; Peripheral: input
+#   MISO = PB4  (Arduino pin 12) — Controller: input;  Peripheral: output
+#   SCK  = PB5  (Arduino pin 13) — Controller: output; Peripheral: input
+#   SS   = PB2  (Arduino pin 10) — Controller: output; Peripheral: input
 #
 # Register map (all in IN/OUT range 0x40-0x5F → I/O offset -0x20):
 #   SPCR = 0x4C  — SPI Control Register
@@ -57,3 +59,52 @@ def spi_transfer(data: uint8) -> uint8:
         pass
     result: uint8 = SPDR.value  # IN Rn, 0x2E  — reading clears SPIF
     return result
+
+
+# --- Peripheral (slave) mode -------------------------------------------------
+
+@inline
+def spi_peripheral_init():
+    # MOSI (PB3), SCK (PB5), SS (PB2) -> input; MISO (PB4) -> output.
+    DDRB[4] = 1   # MISO: output (peripheral drives MISO)
+    # MOSI, SCK, SS are inputs by default after reset; no DDRB write needed.
+    # SPCR = 0x40: SPE(6)=1 (enable SPI) | MSTR(4)=0 (peripheral mode)
+    # DORD(5)=0 (MSB first), CPOL(3)=0, CPHA(2)=0 (mode 0), SPR[1:0]=00
+    SPCR.value = 0x40
+
+
+@inline
+def spi_peripheral_ready() -> uint8:
+    """Return 1 if the controller has completed a transfer (SPIF=1), else 0."""
+    result: uint8 = SPSR[7]
+    return result
+
+
+@inline
+def spi_peripheral_exchange(data: uint8) -> uint8:
+    """Preload TX byte, wait for controller transfer, return received byte.
+
+    Places data in SPDR so the controller will clock it out on the next
+    transfer, then waits for SPIF and returns the byte the controller sent.
+    """
+    SPDR.value = data           # preload TX
+    while SPSR[7] == 0:         # wait for SPIF
+        pass
+    result: uint8 = SPDR.value  # read clears SPIF
+    return result
+
+
+@inline
+def spi_peripheral_receive() -> uint8:
+    """Wait for controller transfer (TX=0x00), return received byte."""
+    SPDR.value = 0              # TX placeholder (controller ignores it)
+    while SPSR[7] == 0:         # wait for SPIF
+        pass
+    result: uint8 = SPDR.value  # read clears SPIF
+    return result
+
+
+@inline
+def spi_peripheral_send(data: uint8):
+    """Preload SPDR for the next controller transfer (non-blocking)."""
+    SPDR.value = data

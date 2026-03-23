@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# AVR I2C / TWI Master HAL - ATmega328P hardware TWI (100 kHz default)
+# AVR I2C / TWI Controller/Peripheral HAL - ATmega328P hardware TWI
 #
 # ATmega328P TWI pins (Arduino Uno mapping):
 #   SDA = PC4  (Arduino pin A4) - automatically controlled by TWI hardware
@@ -30,7 +30,7 @@
 #   0x58 - data byte received, NACK returned (last byte)
 # -----------------------------------------------------------------------------
 
-from whipsnake.chips.atmega328p import TWBR, TWSR, TWDR, TWCR
+from whipsnake.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR
 from whipsnake.types import uint8, inline
 
 
@@ -163,3 +163,73 @@ def i2c_read_from(addr: uint8) -> uint8:
             return rx_byte
     TWCR.value = 0x94               # STOP on any failure
     return 0
+
+
+# --- Peripheral (slave) mode -------------------------------------------------
+#
+# TWI peripheral status codes (TWSR & 0xF8):
+#   0x60 - Own SLA+W received, ACK returned   (controller writing to us)
+#   0x80 - Data byte received, ACK returned
+#   0x88 - Data byte received, NACK returned  (last byte, release bus)
+#   0xA0 - STOP or repeated START received
+#   0xA8 - Own SLA+R received, ACK returned   (controller reading from us)
+#   0xB8 - Data byte sent, ACK received       (controller wants more)
+#   0xC0 - Data byte sent, NACK received      (controller done reading)
+#   0xC8 - Last byte sent (TWEA=0), ACK received
+#
+# Typical polling loop:
+#   while True:
+#       if i2c.ready():
+#           status = i2c.status()
+#           if status == I2CPeripheral.ADDR_WRITE:
+#               i2c.acknowledge()
+#           elif status == I2CPeripheral.DATA_RECEIVED:
+#               byte = i2c.read()
+#               i2c.acknowledge()
+#           elif status == I2CPeripheral.STOP_RECEIVED:
+#               i2c.acknowledge()
+
+@inline
+def i2c_peripheral_init(addr: uint8, general_call: uint8):
+    # TWAR: bits 7:1 = 7-bit address; bit 0 = general call enable flag
+    TWAR.value = (addr << 1) | general_call
+    TWCR.value = 0x44   # TWEA(6)=1 | TWEN(2)=1 -- enable TWI with address ACK
+
+
+@inline
+def i2c_peripheral_ready() -> uint8:
+    """Return 1 if TWI has completed an operation (TWINT=1), else 0."""
+    result: uint8 = TWCR[7]
+    return result
+
+
+@inline
+def i2c_peripheral_status() -> uint8:
+    """Return current TWI status code (TWSR & 0xF8)."""
+    result: uint8 = TWSR.value & 0xF8
+    return result
+
+
+@inline
+def i2c_peripheral_acknowledge():
+    """Release TWINT and send ACK -- tell the controller to continue."""
+    TWCR.value = 0xC4   # TWINT(7)|TWEA(6)|TWEN(2)
+
+
+@inline
+def i2c_peripheral_nack():
+    """Release TWINT and send NACK -- signals end of reception to controller."""
+    TWCR.value = 0x84   # TWINT(7)|TWEN(2), TWEA=0
+
+
+@inline
+def i2c_peripheral_read() -> uint8:
+    """Read the byte the controller just sent (from TWDR)."""
+    result: uint8 = TWDR.value
+    return result
+
+
+@inline
+def i2c_peripheral_write(data: uint8):
+    """Load TWDR with data to send to the controller on next clock."""
+    TWDR.value = data
