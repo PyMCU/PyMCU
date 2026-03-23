@@ -38,7 +38,7 @@ class EEPROM:
         write, then waits for the new write to finish.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._eeprom.atmega328p import eeprom_write
                 eeprom_write(addr, value)
 
@@ -50,7 +50,7 @@ class EEPROM:
         stored byte.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._eeprom.atmega328p import eeprom_read
                 return eeprom_read(addr)
 

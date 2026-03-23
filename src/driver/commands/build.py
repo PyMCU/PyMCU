@@ -483,8 +483,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     # Chip flash sizes (bytes) — extend as needed
                     flash_sizes = {
                         "atmega328p": 32768, "atmega328": 32768,
-                        "atmega2560": 262144, "atmega168": 16384,
-                        "atmega88": 8192, "atmega48": 4096,
+                        "atmega168p": 16384, "atmega168": 16384,
+                        "atmega88p": 8192,   "atmega88": 8192,
+                        "atmega48p": 4096,   "atmega48": 4096,
+                        "atmega2560": 262144,
                         "attiny85": 8192, "attiny84": 8192,
                         "attiny2313": 2048,
                     }

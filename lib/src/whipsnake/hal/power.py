@@ -38,7 +38,7 @@ def sleep_idle():
     saving of the available sleep modes; wake on any interrupt.
     """
     match __CHIP__.name:
-        case "atmega328p":
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from whipsnake.hal._power.atmega328p import sleep_idle as _sleep_idle
             _sleep_idle()
 
@@ -51,7 +51,7 @@ def sleep_adc_noise():
     ADC conversions. Wake on ADC-complete interrupt or external interrupt.
     """
     match __CHIP__.name:
-        case "atmega328p":
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from whipsnake.hal._power.atmega328p import sleep_adc_noise as _sleep_adc_noise
             _sleep_adc_noise()
 
@@ -65,7 +65,7 @@ def sleep_power_down():
     Global interrupts must be enabled or the MCU will not wake.
     """
     match __CHIP__.name:
-        case "atmega328p":
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from whipsnake.hal._power.atmega328p import sleep_power_down as _sleep_power_down
             _sleep_power_down()
 
@@ -79,7 +79,7 @@ def sleep_power_save():
     maintaining a real-time clock during deep sleep.
     """
     match __CHIP__.name:
-        case "atmega328p":
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from whipsnake.hal._power.atmega328p import sleep_power_save as _sleep_power_save
             _sleep_power_save()
 
@@ -92,6 +92,6 @@ def sleep_standby():
     Like power-down but keeps the oscillator running for a faster wake-up.
     """
     match __CHIP__.name:
-        case "atmega328p":
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from whipsnake.hal._power.atmega328p import sleep_standby as _sleep_standby
             _sleep_standby()

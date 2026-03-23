@@ -111,7 +111,7 @@ class Pin:
                 if value != -1:
                     from whipsnake.hal._gpio.pic18f45k50 import pin_write
                     pin_write(name, value)
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 if mode == 2:
                     raise NotImplementedError("Open-drain mode not supported on ATmega328P")
                 if alt != -1:
@@ -151,7 +151,7 @@ class Pin:
             case "pic18f45k50":
                 from whipsnake.hal._gpio.pic18f45k50 import pin_high
                 pin_high(self.name)
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 self._port[self._bit] = 1
 
     @inline
@@ -173,7 +173,7 @@ class Pin:
             case "pic18f45k50":
                 from whipsnake.hal._gpio.pic18f45k50 import pin_low
                 pin_low(self.name)
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 self._port[self._bit] = 0
 
     @inline
@@ -205,7 +205,7 @@ class Pin:
             case "pic18f45k50":
                 from whipsnake.hal._gpio.pic18f45k50 import pin_toggle
                 pin_toggle(self.name)
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 self._port[self._bit] = self._port[self._bit] ^ 1
 
     @inline
@@ -218,7 +218,7 @@ class Pin:
         """
         if x == -1:
             match __CHIP__.name:
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     return self._pin[self._bit]
                 case "pic16f18877":
                     from whipsnake.hal._gpio.pic16f18877 import pin_read
@@ -252,7 +252,7 @@ class Pin:
                 case "pic18f45k50":
                     from whipsnake.hal._gpio.pic18f45k50 import pin_write
                     pin_write(self.name, x)
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     self._port[self._bit] = x
 
     @inline
@@ -279,11 +279,11 @@ class Pin:
                 case "pic18f45k50":
                     from whipsnake.hal._gpio.pic18f45k50 import pin_set_mode
                     pin_set_mode(self.name, mode)
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     self._ddr[self._bit] = mode ^ 1
         if pull != -1:
             match __CHIP__.name:
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
                     self._port[self._bit] = pull
@@ -319,7 +319,7 @@ class Pin:
                         pin_pull_off(self.name)
         if value != -1:
             match __CHIP__.name:
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     self._port[self._bit] = value
                 case "pic16f18877":
                     from whipsnake.hal._gpio.pic16f18877 import pin_write
@@ -337,11 +337,11 @@ class Pin:
                     from whipsnake.hal._gpio.pic18f45k50 import pin_write
                     pin_write(self.name, value)
         if drive != 0:
-            if __CHIP__.name == "atmega328p":
-                raise NotImplementedError("Drive strength control not supported on ATmega328P")
+            if __CHIP__.arch == "avr":
+                raise NotImplementedError("Drive strength control not supported on AVR")
         if alt != -1:
-            if __CHIP__.name == "atmega328p":
-                raise NotImplementedError("Alternate functions not supported on ATmega328P")
+            if __CHIP__.arch == "avr":
+                raise NotImplementedError("Alternate functions not supported on AVR")
 
     @inline
     def pull(self, pull_mode: const):
@@ -350,7 +350,7 @@ class Pin:
         pull_mode: ``Pin.PULL_UP``, ``Pin.PULL_DOWN``, or ``0`` to disable.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 if pull_mode == 2:
                     raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
                 self._port[self._bit] = pull_mode
@@ -388,8 +388,8 @@ class Pin:
     @inline
     def drive(self, strength: uint8):
         """Set the output drive strength. Support depends on the target chip."""
-        if __CHIP__.name == "atmega328p":
-            raise NotImplementedError("Drive strength control not supported on ATmega328P")
+        if __CHIP__.arch == "avr":
+            raise NotImplementedError("Drive strength control not supported on AVR")
 
     @inline
     def irq(self, trigger: const = 3, handler: const = 0):
@@ -405,7 +405,7 @@ class Pin:
         # inside pin_irq_setup automatically registers the function as an ISR at
         # the correct vector -- no @interrupt decorator needed on the handler.
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._gpio.atmega328p import pin_irq_setup
                 pin_irq_setup(self.name, trigger, handler)
             case "pic16f877a":
@@ -431,7 +431,7 @@ class Pin:
         stays there. Returns the pulse width in microseconds, or 0 on timeout.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._gpio.atmega328p import pin_pulse_in
                 return pin_pulse_in(self._pin, self._bit, state, timeout_us)
             case _:
@@ -461,5 +461,5 @@ class Pin:
                 case "pic18f45k50":
                     from whipsnake.hal._gpio.pic18f45k50 import pin_set_mode
                     pin_set_mode(self.name, m)
-                case "atmega328p":
+                case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                     self._ddr[self._bit] = m ^ 1

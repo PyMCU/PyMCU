@@ -42,7 +42,7 @@ class Timer:
         """
         self._n = n
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_init
@@ -73,7 +73,7 @@ class Timer:
     def start(self):
         """Start the timer by connecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_start
@@ -104,7 +104,7 @@ class Timer:
     def stop(self):
         """Stop the timer by disconnecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_stop
@@ -135,7 +135,7 @@ class Timer:
     def clear(self):
         """Reset the timer counter register to zero."""
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_clear
@@ -171,7 +171,7 @@ class Timer:
         Call start() first, then set_compare() to arm the interrupt.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_set_compare
@@ -191,7 +191,7 @@ class Timer:
         value back to zero. Reading this flag does not clear it.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._n:
                     case 0:
                         from whipsnake.hal._timer.atmega328p import timer0_overflow

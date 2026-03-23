@@ -40,7 +40,7 @@ class AnalogPin:
         Subsequent reads use the stored value directly with no string dispatch.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_channel_admux, adc_init
                 # Resolve channel to ADMUX value once and store it.
                 # All subsequent reads use self._admux directly -- no string dispatch.
@@ -67,7 +67,7 @@ class AnalogPin:
         an interrupt handler to be notified on completion.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_start
                 adc_start()
             case "pic16f877a":
@@ -87,7 +87,7 @@ class AnalogPin:
         Returns an uint16 in the range 0-1023.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_read
                 return adc_read()
 
@@ -101,7 +101,7 @@ class AnalogPin:
         @interrupt handler at the ADC-complete vector that calls read_result().
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_start_int
                 adc_start_int()
 
@@ -113,7 +113,7 @@ class AnalogPin:
         or after the conversion-complete flag is set.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_read_result
                 return adc_read_result()
 
@@ -126,7 +126,7 @@ class AnalogPin:
         Returns an uint16 in the range 0-65535 (10-bit ADC value multiplied by 64).
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._adc.atmega328p import adc_read_u16
                 return adc_read_u16()
 

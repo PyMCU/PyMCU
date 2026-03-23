@@ -43,7 +43,7 @@ class PWM:
         The timer is left stopped after init; call start() before set_duty().
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from whipsnake.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
                 pwm_init(pin, duty)
                 self._ocr       = pwm_select_ocr(pin)
@@ -69,7 +69,7 @@ class PWM:
         Compiles to a single register write.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 # Direct OCR write -- single STS instruction.
                 self._ocr.value = duty
             case "pic16f877a":
@@ -89,7 +89,7 @@ class PWM:
         Must be called once before the first set_duty() takes effect.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 # Restore prescaler value to re-enable the timer.
                 self._tccr_b.value = self._start_val
             case "pic16f877a":
@@ -109,7 +109,7 @@ class PWM:
         The duty cycle value is preserved; start() resumes at the same level.
         """
         match __CHIP__.name:
-            case "atmega328p":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 # Clear TCCRxB to stop the timer clock.
                 self._tccr_b.value = 0x00
             case "pic16f877a":
