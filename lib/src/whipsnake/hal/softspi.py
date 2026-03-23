@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from whipsnake.types import uint8, inline
+from whipsnake.types import uint8, uint16, inline
 from whipsnake.chips import __CHIP__
 from whipsnake.hal.gpio import Pin
 
@@ -19,17 +19,23 @@ class SoftSPI:
     Pin instances are stored directly; pin.high()/low()/value() each compile
     to a single SBI/CBI/SBIS/SBIC instruction with no runtime dispatch.
 
+    baudrate: target SCK frequency in kHz (default 500 kHz).  The half-period
+    delay is computed as ``500 // baudrate`` microseconds.  When baudrate >= 500
+    the half-period is <= 1 us and delay_us() calls are folded away entirely,
+    giving maximum bit-bang speed.
+
     Context manager support: ``with spi:`` auto-selects and deselects::
 
         with SoftSPI(sck_pin, mosi_pin, miso_pin, cs=cs_pin):
             ...
     """
 
-    def __init__(self, sck: Pin, mosi: Pin, miso: Pin, cs: Pin = None):
+    def __init__(self, sck: Pin, mosi: Pin, miso: Pin, cs: Pin = None, baudrate: uint16 = 500):
         """Configure the bit-bang SPI pins.
 
-        sck, mosi, miso, cs: Pin instances configured by the caller.
-        cs:                   optional chip-select pin, idle high when set.
+        sck, mosi, miso: Pin instances configured by the caller.
+        cs:              optional chip-select pin, idle high when set.
+        baudrate:        target SCK frequency in kHz; default 500 kHz.
         """
         match __CHIP__.arch:
             case "avr":
@@ -40,6 +46,10 @@ class SoftSPI:
                 self._sck  = sck
                 self._mosi = mosi
                 self._miso = miso
+                # Half-period in microseconds: 500 us / baudrate_kHz.
+                # Folds to 0 when baudrate >= 500 kHz; delay_us calls removed by DCE.
+                half_us: uint8 = 500 // baudrate
+                self._half_us = half_us
                 if cs != None:
                     cs.high()  # idle high
                     self._cs_pin = cs
@@ -53,7 +63,7 @@ class SoftSPI:
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._softspi.avr import softspi_transfer
-                return softspi_transfer(self._sck, self._mosi, self._miso, data)
+                return softspi_transfer(self._sck, self._mosi, self._miso, self._half_us, data)
             case _:
                 return 0
 
@@ -63,7 +73,7 @@ class SoftSPI:
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._softspi.avr import softspi_transfer
-                softspi_transfer(self._sck, self._mosi, self._miso, data)
+                softspi_transfer(self._sck, self._mosi, self._miso, self._half_us, data)
 
     @inline
     def select(self):

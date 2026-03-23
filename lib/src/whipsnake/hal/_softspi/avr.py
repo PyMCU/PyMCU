@@ -9,99 +9,46 @@
 # AVR Software SPI (bit-bang) HAL
 #
 # SPI Mode 0 (CPOL=0, CPHA=0), MSB-first.
-# softspi_transfer() takes Pin ZCA instances stored by SoftSPI.
-# pin.high()/low()/value() each compile to a single SBI/CBI/SBIS/SBIC
-# instruction -- identical to the pre-resolved ptr[uint8]+bit approach.
+#
+# softspi_transfer() uses a shift-left loop: data and result are shifted
+# left each iteration so bit 7 is always the active bit, eliminating
+# per-bit mask constants.
+#
+# half_us: half-period in microseconds computed from __FREQ__ and the
+# target baudrate at construction time.  delay_us() is calibrated to
+# __FREQ__, so the SCK frequency tracks the MCU clock automatically.
+# When half_us == 0 (baudrate >= 1 MHz at 16 MHz) the guard folds at
+# compile time and both delay_us calls are eliminated entirely.
 # -----------------------------------------------------------------------------
 
 from whipsnake.types import uint8, inline
 from whipsnake.hal.gpio import Pin
+from whipsnake.time import delay_us
 
 
 @inline
-def softspi_transfer(sck: Pin, mosi: Pin, miso: Pin, data: uint8) -> uint8:
-    # Bit-bang SPI Mode 0, MSB-first.
-    # Each bit: drive MOSI -> strobe SCK high -> sample MISO -> SCK low.
+def softspi_transfer(sck: Pin, mosi: Pin, miso: Pin, half_us: uint8, data: uint8) -> uint8:
+    # SPI Mode 0, MSB-first.
+    # tx is a local copy of data so the caller's variable is not modified.
+    # Shift tx left each iteration so bit 7 is always the active bit;
+    # shift result left to accumulate received bits from MSB to LSB.
+    tx: uint8 = data
     result: uint8 = 0
-
-    # Bit 7 (MSB)
-    if data & 0x80:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x80
-    sck.low()
-
-    # Bit 6
-    if data & 0x40:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x40
-    sck.low()
-
-    # Bit 5
-    if data & 0x20:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x20
-    sck.low()
-
-    # Bit 4
-    if data & 0x10:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x10
-    sck.low()
-
-    # Bit 3
-    if data & 0x08:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x08
-    sck.low()
-
-    # Bit 2
-    if data & 0x04:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x04
-    sck.low()
-
-    # Bit 1
-    if data & 0x02:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x02
-    sck.low()
-
-    # Bit 0 (LSB)
-    if data & 0x01:
-        mosi.high()
-    else:
-        mosi.low()
-    sck.high()
-    if miso.value():
-        result = result | 0x01
-    sck.low()
-
+    i: uint8 = 0
+    while i < 8:
+        if tx & 0x80:
+            mosi.high()
+        else:
+            mosi.low()
+        if half_us > 0:
+            delay_us(half_us)
+        sck.high()
+        result = result << 1
+        if miso.value():
+            result = result | 1
+        if half_us > 0:
+            delay_us(half_us)
+        sck.low()
+        tx = tx << 1
+        i = i + 1
     return result
