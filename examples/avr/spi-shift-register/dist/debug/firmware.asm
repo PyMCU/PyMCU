@@ -3,10 +3,10 @@
 .equ _stack_base = RAMSTART
 .equ inline2__delay_ms_avr_i = _stack_base + 3
 .equ inline2_spi_transfer_result = _stack_base + 5
-.equ tmp_23 = _stack_base + 11
-.equ tmp_25 = _stack_base + 12
-.equ tmp_27 = _stack_base + 13
-.equ tmp_29 = _stack_base + 14
+.equ tmp_23 = _stack_base + 12
+.equ tmp_25 = _stack_base + 13
+.equ tmp_27 = _stack_base + 14
+.equ tmp_29 = _stack_base + 15
 .equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
 .equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
@@ -35,21 +35,24 @@ main:
 	LDI	R28, low(_stack_base)
 	LDI	R29, high(_stack_base)
 ; main.py:32:     spi  = SPI()
-; main.py:37:     pattern: uint8 = 0x01
-; main.py:38:     mode:    uint8 = MODE_RUNNING
-; main.py:42:         with spi:             # select() on enter, deselect() on exit
-; main.py:32:     spi  = SPI()
-	SBI	0x04, 3
-; main.py:33:     uart = UART(9600)
-	SBI	0x04, 5
+; main.py:53:                 pattern = (pattern << 1) | msb
+; main.py:59:                 if pattern == 0x03:    # wrapped around
 ; main.py:34: 
-	SBI	0x04, 2
+	SBI	0x04, 3
 ; main.py:35:     uart.println("SPI 74HC595 DEMO")
+	SBI	0x04, 5
+; main.py:36: 
+	SBI	0x04, 2
+; main.py:37:     pattern: uint8 = 0x01
 	SBI	0x05, 2
-; main.py:39: 
+; main.py:41:         # --- Clock out one byte to 74HC595 ---
 	LDI	R24, 80
 	OUT	0x2C, R24
-; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
+; main.py:60:                     pattern = 0x03
+	LDI	R24, 99
+	MOV	R9, R24
+; main.py:61: 
+; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 ; main.py:33:     uart = UART(9600)
 ; main.py:27: MODE_CHASER  = 1
 ; main.py:31: def main():
@@ -82,14 +85,14 @@ main:
 ; main.py:41:         # --- Clock out one byte to 74HC595 ---
 ; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
-L_36:
+L_40:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_37
+	RJMP	L_41
 L_BR_SKIP_0:
-	RJMP	L_36
-L_37:
+	RJMP	L_40
+L_41:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
@@ -98,46 +101,46 @@ L_37:
 	CLR	R24
 	MOV	R5, R24
 ; main.py:40:     while True:
-L_38:
+L_42:
 ; main.py:42:         with spi:             # select() on enter, deselect() on exit
-; main.py:54: 
-; main.py:57:                 msb = (pattern >> 7) & 1
-; main.py:62:             case _:
-; main.py:44: 
+; main.py:46:         delay_ms(120)
 	CBI	0x05, 2
 ; main.py:43:             spi.write(pattern)    # MOSI: 8 bits, MSB first at fosc/4
-; main.py:55:             case MODE_CHASER:
+	MOV	R24, R9
+	CPI	R24, 99
+	BREQ	L_BR_SKIP_1
+	RJMP	L_50
+L_BR_SKIP_1:
+; main.py:57:                 msb = (pattern >> 7) & 1
 	MOV	R24, R4
 	OUT	0x2E, R24
-; main.py:56:                 # Two adjacent lit bits rotating left
-L_47:
+; main.py:58:                 pattern = (pattern << 1) | msb
+L_52:
 	IN	R24, 0x2D
 	ANDI	R24, 128
-	BREQ	L_BR_SKIP_1
-	RJMP	L_48
-L_BR_SKIP_1:
-	RJMP	L_47
-L_48:
+	BREQ	L_BR_SKIP_2
+	RJMP	L_53
+L_BR_SKIP_2:
+	RJMP	L_52
+L_53:
 	IN	R24, 0x2E
 	STD	Y+5, R24
-; main.py:59:                 if pattern == 0x03:    # wrapped around
-; main.py:66:         # --- Mode change on any incoming UART byte ---
-; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
-; main.py:74:             pattern = 0x01         # reset pattern on mode change
-; main.py:49:         match mode:
+; main.py:61: 
+L_50:
+; main.py:51:                 # Rotate left: Q0→Q1→…→Q7→Q0
 	SBI	0x05, 2
 ; main.py:45:         uart.write(pattern)
 ; main.py:41:         # --- Clock out one byte to 74HC595 ---
 ; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
-L_56:
+L_61:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_2
-	RJMP	L_57
-L_BR_SKIP_2:
-	RJMP	L_56
-L_57:
+	BREQ	L_BR_SKIP_3
+	RJMP	L_62
+L_BR_SKIP_3:
+	RJMP	L_61
+L_62:
 ; main.py:79:                 case MODE_CHASER:
 	MOV	R24, R4
 	STS	0x00C6, R24
@@ -148,16 +151,16 @@ L_57:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_60:
+L_65:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 120
 	CLR	R19
 	CP	R24, R18
 	CPC	R25, R19
-	BRLO	L_BR_SKIP_3
-	RJMP	L_61
-L_BR_SKIP_3:
+	BRLO	L_BR_SKIP_4
+	RJMP	L_66
+L_BR_SKIP_4:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
@@ -165,8 +168,8 @@ L_BR_SKIP_3:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_60
-L_61:
+	RJMP	L_65
+L_66:
 	MOV	R24, R5
 	MOV	R8, R24
 	MOV	R24, R4
@@ -194,9 +197,9 @@ L_61:
 ; main.py:69:         if UCSR0A[7] == 1:         # RXC0: data available
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
-	BRNE	L_BR_SKIP_5
-	RJMP	L_67
-L_BR_SKIP_5:
+	BRNE	L_BR_SKIP_6
+	RJMP	L_72
+L_BR_SKIP_6:
 ; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 	LDS	R24, 0x00C6
 	ANDI	R24, 254
@@ -205,13 +208,13 @@ L_BR_SKIP_5:
 	MOV	R24, R5
 ; main.py:72:             if mode == 3:
 	CPI	R24, 3
-	BREQ	L_BR_SKIP_6
-	RJMP	L_68
-L_BR_SKIP_6:
+	BREQ	L_BR_SKIP_7
+	RJMP	L_73
+L_BR_SKIP_7:
 ; main.py:73:                 mode = MODE_RUNNING
 	CLR	R24
 	MOV	R5, R24
-L_68:
+L_73:
 ; main.py:74:             pattern = 0x01         # reset pattern on mode change
 	LDI	R24, 1
 	MOV	R4, R24
@@ -229,18 +232,18 @@ L_68:
 ; main.py:41:         # --- Clock out one byte to 74HC595 ---
 ; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
-L_76:
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_7
-	RJMP	L_77
-L_BR_SKIP_7:
-	RJMP	L_76
-L_77:
+	BREQ	L_BR_SKIP_8
+	RJMP	L_82
+L_BR_SKIP_8:
+	RJMP	L_81
+L_82:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_69
+	RJMP	L_74
 ; main.py:80:                     uart.println("MODE: CHASER")
 ; main.py:77:                 case MODE_RUNNING:
 ; main.py:78:                     uart.println("MODE: RUNNING")
@@ -250,18 +253,18 @@ L_77:
 ; main.py:41:         # --- Clock out one byte to 74HC595 ---
 ; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
-L_84:
+L_89:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_85
-L_BR_SKIP_8:
-	RJMP	L_84
-L_85:
+	BREQ	L_BR_SKIP_9
+	RJMP	L_90
+L_BR_SKIP_9:
+	RJMP	L_89
+L_90:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_69
+	RJMP	L_74
 ; main.py:82:                     uart.println("MODE: COUNTER")
 ; main.py:77:                 case MODE_RUNNING:
 ; main.py:78:                     uart.println("MODE: RUNNING")
@@ -271,20 +274,20 @@ L_85:
 ; main.py:41:         # --- Clock out one byte to 74HC595 ---
 ; main.py:45:         uart.write(pattern)
 ; main.py:76:             match mode:
-L_92:
+L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
-	RJMP	L_93
-L_BR_SKIP_9:
-	RJMP	L_92
-L_93:
+	BREQ	L_BR_SKIP_10
+	RJMP	L_98
+L_BR_SKIP_10:
+	RJMP	L_97
+L_98:
 ; main.py:79:                 case MODE_CHASER:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_69:
-L_67:
-	RJMP	L_38
+L_74:
+L_72:
+	RJMP	L_42
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

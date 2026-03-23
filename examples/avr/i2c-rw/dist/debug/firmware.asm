@@ -7,7 +7,8 @@
 .equ inline2_i2c_read_from_start_status = _stack_base + 6
 .equ inline2_i2c_write_to_ack_status = _stack_base + 7
 .equ inline2_i2c_write_to_start_status = _stack_base + 8
-.equ tmp_30 = _stack_base + 10
+.equ tmp_31 = _stack_base + 11
+.equ tmp_32 = _stack_base + 12
 .equ whipsnake_hal__uart_avr__rx_buf = _stack_base + 0
 .equ whipsnake_hal__uart_avr__rx_head = _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail = _stack_base + 2
@@ -40,73 +41,71 @@ main:
 	STS	0x00B9, R24
 	LDI	R24, 4
 	STS	0x00BC, R24
+	LDI	R24, 99
+	MOV	R4, R24
 ; main.py:22:     i2c.write_to(0x48, 0xAB)
+	CPI	R24, 99
+	BREQ	L_BR_SKIP_0
+	RJMP	L_34
+L_BR_SKIP_0:
 	LDI	R24, 164
 	STS	0x00BC, R24
-L_32:
+L_36:
 	LDS	R24, 0x00BC
 	ANDI	R24, 128
-	BREQ	L_BR_SKIP_0
-	RJMP	L_33
-L_BR_SKIP_0:
-	RJMP	L_32
-L_33:
+	BREQ	L_BR_SKIP_1
+	RJMP	L_37
+L_BR_SKIP_1:
+	RJMP	L_36
+L_37:
 	LDS	R24, 0x00B9
 	ANDI	R24, 248
 	CPI	R24, 8
-	BREQ	L_BR_SKIP_1
-	RJMP	L_34
-L_BR_SKIP_1:
+	BREQ	L_BR_SKIP_2
+	RJMP	L_38
+L_BR_SKIP_2:
 	LDI	R24, 144
 	STS	0x00BB, R24
 	LDI	R24, 132
 	STS	0x00BC, R24
-L_35:
+L_39:
 	LDS	R24, 0x00BC
 	ANDI	R24, 128
-	BREQ	L_BR_SKIP_2
-	RJMP	L_36
-L_BR_SKIP_2:
-	RJMP	L_35
-L_36:
+	BREQ	L_BR_SKIP_3
+	RJMP	L_40
+L_BR_SKIP_3:
+	RJMP	L_39
+L_40:
 	LDS	R24, 0x00B9
 	ANDI	R24, 248
 	CPI	R24, 24
-	BREQ	L_BR_SKIP_3
-	RJMP	L_37
-L_BR_SKIP_3:
+	BREQ	L_BR_SKIP_4
+	RJMP	L_41
+L_BR_SKIP_4:
 	LDI	R24, 171
 	STS	0x00BB, R24
 	LDI	R24, 132
 	STS	0x00BC, R24
-L_38:
+L_42:
 	LDS	R24, 0x00BC
 	ANDI	R24, 128
-	BREQ	L_BR_SKIP_4
-	RJMP	L_39
-L_BR_SKIP_4:
-	RJMP	L_38
-L_39:
-	LDI	R24, 148
-	STS	0x00BC, R24
-	RJMP	L_31
-L_37:
-L_34:
-	LDI	R24, 148
-	STS	0x00BC, R24
-L_31:
-; main.py:23:     uart.write('I')
-L_42:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
 	RJMP	L_43
 L_BR_SKIP_5:
 	RJMP	L_42
 L_43:
-	LDI	R24, 73
-	STS	0x00C6, R24
-; main.py:24:     uart.write('W')
+	LDI	R24, 148
+	STS	0x00BC, R24
+	RJMP	L_35
+L_41:
+L_38:
+	LDI	R24, 148
+	STS	0x00BC, R24
+L_35:
+	RJMP	L_33
+L_34:
+L_33:
+; main.py:23:     uart.write('I')
 L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -115,9 +114,9 @@ L_46:
 L_BR_SKIP_6:
 	RJMP	L_46
 L_47:
-	LDI	R24, 87
+	LDI	R24, 73
 	STS	0x00C6, R24
-; main.py:25:     uart.write('\n')
+; main.py:24:     uart.write('W')
 L_50:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -126,102 +125,125 @@ L_50:
 L_BR_SKIP_7:
 	RJMP	L_50
 L_51:
-	LDI	R24, 10
+	LDI	R24, 87
 	STS	0x00C6, R24
-	LDI	R24, 164
-	STS	0x00BC, R24
+; main.py:25:     uart.write('\n')
 L_54:
-	LDS	R24, 0x00BC
-	ANDI	R24, 128
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
 	RJMP	L_55
 L_BR_SKIP_8:
 	RJMP	L_54
 L_55:
+	LDI	R24, 10
+	STS	0x00C6, R24
+	MOV	R24, R4
+	CPI	R24, 99
+	BREQ	L_BR_SKIP_9
+	RJMP	L_57
+L_BR_SKIP_9:
+	LDI	R24, 164
+	STS	0x00BC, R24
+L_59:
+	LDS	R24, 0x00BC
+	ANDI	R24, 128
+	BREQ	L_BR_SKIP_10
+	RJMP	L_60
+L_BR_SKIP_10:
+	RJMP	L_59
+L_60:
 	LDS	R24, 0x00B9
 	ANDI	R24, 248
 	CPI	R24, 8
-	BREQ	L_BR_SKIP_9
-	RJMP	L_56
-L_BR_SKIP_9:
+	BREQ	L_BR_SKIP_11
+	RJMP	L_61
+L_BR_SKIP_11:
 	LDI	R24, 145
 	STD	Y+5, R24
 	STS	0x00BB, R24
 	LDI	R24, 132
 	STS	0x00BC, R24
-L_57:
-	LDS	R24, 0x00BC
-	ANDI	R24, 128
-	BREQ	L_BR_SKIP_10
-	RJMP	L_58
-L_BR_SKIP_10:
-	RJMP	L_57
-L_58:
-	LDS	R24, 0x00B9
-	ANDI	R24, 248
-	CPI	R24, 64
-	BREQ	L_BR_SKIP_11
-	RJMP	L_59
-L_BR_SKIP_11:
-	LDI	R24, 132
-	STS	0x00BC, R24
-L_60:
+L_62:
 	LDS	R24, 0x00BC
 	ANDI	R24, 128
 	BREQ	L_BR_SKIP_12
-	RJMP	L_61
+	RJMP	L_63
 L_BR_SKIP_12:
-	RJMP	L_60
-L_61:
+	RJMP	L_62
+L_63:
+	LDS	R24, 0x00B9
+	ANDI	R24, 248
+	CPI	R24, 64
+	BREQ	L_BR_SKIP_13
+	RJMP	L_64
+L_BR_SKIP_13:
+	LDI	R24, 132
+	STS	0x00BC, R24
+L_65:
+	LDS	R24, 0x00BC
+	ANDI	R24, 128
+	BREQ	L_BR_SKIP_14
+	RJMP	L_66
+L_BR_SKIP_14:
+	RJMP	L_65
+L_66:
 	LDS	R24, 0x00BB
 	STD	Y+4, R24
 	LDI	R24, 148
 	STS	0x00BC, R24
 	LDD	R24, Y+4
 	MOV	R16, R24
-	RJMP	L_53
-L_59:
-L_56:
+	RJMP	L_58
+L_64:
+L_61:
 	LDI	R24, 148
 	STS	0x00BC, R24
 	CLR	R24
 	MOV	R16, R24
-L_53:
+L_58:
 	MOV	R24, R16
-	MOV	R4, R24
+	MOV	R17, R24
+	RJMP	L_56
+L_57:
+	CLR	R24
+	MOV	R17, R24
+L_56:
+	MOV	R24, R17
+	MOV	R5, R24
 ; main.py:30:     uart.write('I')
-L_64:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
-	RJMP	L_65
-L_BR_SKIP_13:
-	RJMP	L_64
-L_65:
-	LDI	R24, 73
-	STS	0x00C6, R24
-; main.py:31:     uart.write('R')
-L_68:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_14
-	RJMP	L_69
-L_BR_SKIP_14:
-	RJMP	L_68
 L_69:
-	LDI	R24, 82
-	STS	0x00C6, R24
-; main.py:32:     uart.write('\n')
-L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_15
-	RJMP	L_73
+	RJMP	L_70
 L_BR_SKIP_15:
-	RJMP	L_72
+	RJMP	L_69
+L_70:
+	LDI	R24, 73
+	STS	0x00C6, R24
+; main.py:31:     uart.write('R')
 L_73:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_16
+	RJMP	L_74
+L_BR_SKIP_16:
+	RJMP	L_73
+L_74:
+	LDI	R24, 82
+	STS	0x00C6, R24
+; main.py:32:     uart.write('\n')
+L_77:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_17
+	RJMP	L_78
+L_BR_SKIP_17:
+	RJMP	L_77
+L_78:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:34:     while True:
-L_74:
-	RJMP	L_74
+L_79:
+	RJMP	L_79

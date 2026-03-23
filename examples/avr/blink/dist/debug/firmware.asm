@@ -39,7 +39,7 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
 ; main.py:13:     while True:
-L_31:
+L_35:
 ; main.py:14:         led.high()
 	SBI	0x05, 5
 ; main.py:15:         delay_ms(1000)
@@ -47,7 +47,7 @@ L_31:
 	CLR	R25
 	STD	Y+0, R24
 	STD	Y+1, R25
-L_36:
+L_40:
 	LDD	R24, Y+0
 	LDD	R25, Y+1
 	LDI	R18, 232
@@ -55,7 +55,7 @@ L_36:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_3
-	RJMP	L_37
+	RJMP	L_41
 L_BR_SKIP_3:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+0
@@ -64,8 +64,8 @@ L_BR_SKIP_3:
 	SBCI	R25, 255
 	STD	Y+0, R24
 	STD	Y+1, R25
-	RJMP	L_36
-L_37:
+	RJMP	L_40
+L_41:
 ; main.py:16:         led.low()
 	CBI	0x05, 5
 ; main.py:17:         delay_ms(1000)
@@ -73,7 +73,7 @@ L_37:
 	CLR	R25
 	STD	Y+0, R24
 	STD	Y+1, R25
-L_41:
+L_45:
 	LDD	R24, Y+0
 	LDD	R25, Y+1
 	LDI	R18, 232
@@ -81,7 +81,7 @@ L_41:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_4
-	RJMP	L_42
+	RJMP	L_46
 L_BR_SKIP_4:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+0
@@ -90,6 +90,6 @@ L_BR_SKIP_4:
 	SBCI	R25, 255
 	STD	Y+0, R24
 	STD	Y+1, R25
-	RJMP	L_41
-L_42:
-	RJMP	L_31
+	RJMP	L_45
+L_46:
+	RJMP	L_35

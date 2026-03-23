@@ -35,9 +35,9 @@ main:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:38:         # Button A: advance step on falling edge
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:44:         # Button B: reset to step 0 on falling edge
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -52,9 +52,9 @@ L_BIT_WRITE_DONE_1:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:40:             step += 1
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:46:             step = 0
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -69,9 +69,9 @@ L_BIT_WRITE_DONE_4:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:42:                 step = 0
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:48:         prev_a = cur_a
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_8
@@ -86,9 +86,9 @@ L_BIT_WRITE_DONE_7:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:44:         # Button B: reset to step 0 on falling edge
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:50: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_11
@@ -103,9 +103,9 @@ L_BIT_WRITE_DONE_10:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:46:             step = 0
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:52:         led0.low()
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_14
@@ -120,9 +120,9 @@ L_BIT_WRITE_DONE_13:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:8: #   Button B on PD3 (active low, pull-up) — resets pattern to step 0
-; main.py:18:     led0 = Pin("PB0", Pin.OUT)
-; main.py:28:     uart = UART(9600)
-; main.py:48:         prev_a = cur_a
+; main.py:20:     led2 = Pin("PB2", Pin.OUT)
+; main.py:32:     prev_b: uint8 = 1
+; main.py:54:         led2.low()
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_17
@@ -137,9 +137,9 @@ L_BIT_WRITE_DONE_16:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:12: from whipsnake.hal.gpio import Pin
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
-; main.py:32:     prev_b: uint8 = 1
-; main.py:42:                 step = 0
+; main.py:24: 
+; main.py:36:         cur_b: uint8 = btn_b.value()
+; main.py:48:         prev_a = cur_a
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_20
@@ -155,9 +155,9 @@ L_BIT_WRITE_DONE_19:
 ; main.py:51:         # All LEDs off, then light exactly one based on current step
 ; main.py:52:         led0.low()
 ; main.py:12: from whipsnake.hal.gpio import Pin
-; main.py:22:     led4 = Pin("PB4", Pin.OUT)
-; main.py:32:     prev_b: uint8 = 1
-; main.py:44:         # Button B: reset to step 0 on falling edge
+; main.py:24: 
+; main.py:36:         cur_b: uint8 = btn_b.value()
+; main.py:50: 
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_23
@@ -195,7 +195,7 @@ L_BIT_WRITE_DONE_22:
 	MOV	R7, R24
 	MOV	R8, R24
 ; main.py:34:     while True:
-L_278:
+L_310:
 	SBIS	0x09, 2
 	RJMP	L_BIT_FALSE_24
 	LDI	R24, 1
@@ -218,40 +218,40 @@ L_BIT_DONE_27:
 	MOV	R24, R5
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_28
-	RJMP	L_286
+	RJMP	L_318
 L_BR_SKIP_28:
 	MOV	R24, R7
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_29
-	RJMP	L_286
+	RJMP	L_318
 L_BR_SKIP_29:
 	INC	R4
 	MOV	R24, R4
 ; main.py:41:             if step == 6:
 	CPI	R24, 6
 	BREQ	L_BR_SKIP_30
-	RJMP	L_287
+	RJMP	L_319
 L_BR_SKIP_30:
 ; main.py:42:                 step = 0
 	CLR	R24
 	MOV	R4, R24
-L_287:
-L_286:
+L_319:
+L_318:
 ; main.py:45:         if cur_b == 0 and prev_b == 1:
 	MOV	R24, R6
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_31
-	RJMP	L_288
+	RJMP	L_320
 L_BR_SKIP_31:
 	MOV	R24, R8
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_32
-	RJMP	L_288
+	RJMP	L_320
 L_BR_SKIP_32:
 ; main.py:46:             step = 0
 	CLR	R24
 	MOV	R4, R24
-L_288:
+L_320:
 ; main.py:48:         prev_a = cur_a
 	MOV	R24, R5
 	MOV	R7, R24
@@ -273,69 +273,69 @@ L_288:
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_33
-	RJMP	L_296
+	RJMP	L_328
 L_BR_SKIP_33:
 ; main.py:61:                 led0.high()
 	SBI	0x05, 0
-	RJMP	L_295
-L_296:
+	RJMP	L_327
+L_328:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_34
-	RJMP	L_298
+	RJMP	L_330
 L_BR_SKIP_34:
 ; main.py:63:                 led1.high()
 	SBI	0x05, 1
-	RJMP	L_295
-L_298:
+	RJMP	L_327
+L_330:
 	MOV	R24, R4
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_35
-	RJMP	L_300
+	RJMP	L_332
 L_BR_SKIP_35:
 ; main.py:65:                 led2.high()
 	SBI	0x05, 2
-	RJMP	L_295
-L_300:
+	RJMP	L_327
+L_332:
 	MOV	R24, R4
 	CPI	R24, 3
 	BREQ	L_BR_SKIP_36
-	RJMP	L_302
+	RJMP	L_334
 L_BR_SKIP_36:
 ; main.py:67:                 led3.high()
 	SBI	0x05, 3
-	RJMP	L_295
-L_302:
+	RJMP	L_327
+L_334:
 	MOV	R24, R4
 	CPI	R24, 4
 	BREQ	L_BR_SKIP_37
-	RJMP	L_304
+	RJMP	L_336
 L_BR_SKIP_37:
 ; main.py:69:                 led4.high()
 	SBI	0x05, 4
-	RJMP	L_295
-L_304:
+	RJMP	L_327
+L_336:
 	MOV	R24, R4
 	CPI	R24, 5
 	BREQ	L_BR_SKIP_38
-	RJMP	L_306
+	RJMP	L_338
 L_BR_SKIP_38:
 ; main.py:71:                 led5.high()
 	SBI	0x05, 5
-	RJMP	L_295
-L_306:
-L_295:
+	RJMP	L_327
+L_338:
+L_327:
 ; main.py:73:         uart.write(step)
 ; main.py:41:             if step == 6:
 ; main.py:45:         if cur_b == 0 and prev_b == 1:
-L_310:
+L_342:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_39
-	RJMP	L_311
+	RJMP	L_343
 L_BR_SKIP_39:
-	RJMP	L_310
-L_311:
+	RJMP	L_342
+L_343:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:74:         delay_ms(20)
@@ -345,7 +345,7 @@ L_311:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_314:
+L_346:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 20
@@ -353,7 +353,7 @@ L_314:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_40
-	RJMP	L_315
+	RJMP	L_347
 L_BR_SKIP_40:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
@@ -362,6 +362,6 @@ L_BR_SKIP_40:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_314
-L_315:
-	RJMP	L_278
+	RJMP	L_346
+L_347:
+	RJMP	L_310

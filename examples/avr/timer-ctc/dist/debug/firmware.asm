@@ -110,8 +110,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:29:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: # TIMER1_COMPA vector: byte 0x0016, word 0x000B
-; main.py:18: from whipsnake.hal.gpio import Pin
-; main.py:28: def main():
+; main.py:20: from whipsnake.hal.timer import Timer
+; main.py:32:     # Timer1: prescaler 256 (CS1[2:0]=100 -> TCCR1B bits 0-2 = 0x04)
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -151,7 +151,7 @@ L_BIT_WRITE_DONE_1:
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_3
-	RJMP	L_72
+	RJMP	L_76
 L_BR_SKIP_3:
 ; main.py:42:     while True:
 	LDI	R24, 35
@@ -164,12 +164,12 @@ L_BR_SKIP_3:
 	LDS	R24, 0x006E
 	ORI	R24, 2
 	STS	0x006E, R24
-	RJMP	L_71
-L_72:
+	RJMP	L_75
+L_76:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_4
-	RJMP	L_74
+	RJMP	L_78
 L_BR_SKIP_4:
 	LDI	R24, 35
 	LDI	R25, 244
@@ -181,12 +181,12 @@ L_BR_SKIP_4:
 	LDS	R24, 0x006F
 	ORI	R24, 2
 	STS	0x006F, R24
-	RJMP	L_71
-L_74:
+	RJMP	L_75
+L_78:
 	MOV	R24, R4
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_5
-	RJMP	L_76
+	RJMP	L_80
 L_BR_SKIP_5:
 	LDI	R24, 35
 	STS	0x00B3, R24
@@ -196,9 +196,9 @@ L_BR_SKIP_5:
 	LDS	R24, 0x0070
 	ORI	R24, 2
 	STS	0x0070, R24
-	RJMP	L_71
-L_76:
-L_71:
+	RJMP	L_75
+L_80:
+L_75:
 ; main.py:37:     GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:38:     asm("SEI")
@@ -209,21 +209,21 @@ SEI
 	RCALL	__uart_send_z
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_83:
+L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_84
+	RJMP	L_88
 L_BR_SKIP_6:
-	RJMP	L_83
-L_84:
+	RJMP	L_87
+L_88:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:42:     while True:
-L_85:
+L_89:
 ; main.py:43:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_87
+	RJMP	L_91
 ; main.py:44:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:45:             led.toggle()
@@ -250,31 +250,31 @@ L_BIT_WRITE_DONE_10:
 ; main.py:46:             uart.write('C')
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_91:
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_92
+	RJMP	L_96
 L_BR_SKIP_12:
-	RJMP	L_91
-L_92:
+	RJMP	L_95
+L_96:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:47:             uart.write('\n')
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_95:
+L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_96
+	RJMP	L_100
 L_BR_SKIP_13:
-	RJMP	L_95
-L_96:
+	RJMP	L_99
+L_100:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_87:
-	RJMP	L_85
+L_91:
+	RJMP	L_89
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

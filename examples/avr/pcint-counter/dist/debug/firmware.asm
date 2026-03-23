@@ -168,9 +168,9 @@ main:
 ; main.py:51:                 uart.write((count / 10) + 48)
 ; main.py:52:                 uart.write((count % 10) + 48)
 ; main.py:8: #   - Serial terminal at 9600 baud: prints "COUNT:NN\n" on each press
-; main.py:18: from whipsnake.chips.atmega328p import PCICR, PCMSK0, GPIOR0
-; main.py:28: def main():
-; main.py:38:     asm("SEI")
+; main.py:20: from whipsnake.hal.uart import UART
+; main.py:32:     # Enable PCINT0 for PB0 only: set bit 0 of PCMSK0
+; main.py:44:     while True:
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -217,23 +217,23 @@ SEI
 	RCALL	__uart_send_z
 ; main.py:41: 
 ; main.py:45:         if GPIOR0[0] == 1:
-L_65:
+L_69:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_66
+	RJMP	L_70
 L_BR_SKIP_3:
-	RJMP	L_65
-L_66:
+	RJMP	L_69
+L_70:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	MOV	R4, R24
 ; main.py:44:     while True:
-L_67:
+L_71:
 ; main.py:45:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_69
+	RJMP	L_73
 ; main.py:46:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:48:             if btn.value() == 0:
@@ -247,7 +247,7 @@ L_BIT_DONE_5:
 	MOV	R16, R24
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_6
-	RJMP	L_70
+	RJMP	L_74
 L_BR_SKIP_6:
 	INC	R4
 ; main.py:50:                 uart.write_str("COUNT:")
@@ -263,14 +263,14 @@ L_BR_SKIP_6:
 	STD	Y+3, R24
 ; main.py:41: 
 ; main.py:45:         if GPIOR0[0] == 1:
-L_78:
+L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_79
+	RJMP	L_83
 L_BR_SKIP_7:
-	RJMP	L_78
-L_79:
+	RJMP	L_82
+L_83:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:52:                 uart.write((count % 10) + 48)
@@ -282,32 +282,32 @@ L_79:
 	STD	Y+3, R24
 ; main.py:41: 
 ; main.py:45:         if GPIOR0[0] == 1:
-L_82:
+L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_83
+	RJMP	L_87
 L_BR_SKIP_8:
-	RJMP	L_82
-L_83:
+	RJMP	L_86
+L_87:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:53:                 uart.write('\n')
 ; main.py:41: 
 ; main.py:45:         if GPIOR0[0] == 1:
-L_86:
+L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_87
+	RJMP	L_91
 L_BR_SKIP_9:
-	RJMP	L_86
-L_87:
+	RJMP	L_90
+L_91:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_70:
-L_69:
-	RJMP	L_67
+L_74:
+L_73:
+	RJMP	L_71
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

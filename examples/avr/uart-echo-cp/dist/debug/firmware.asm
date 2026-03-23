@@ -16,8 +16,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:28:     led = DigitalInOut(board.LED)
 ; main.py:8: #
-; main.py:18: # Wiring:
-; main.py:28:     led = DigitalInOut(board.LED)
+; main.py:20: #   Serial: connect USB-to-serial adapter to TX (D1) / RX (D0) at 9600 baud
+; main.py:32:     print("READY")
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -69,34 +69,34 @@ L_BIT_WRITE_DONE_4:
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:34:     while True:
-L_67:
+L_71:
 ; main.py:35:         byte = uart.read()
-L_72:
+L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
 	BREQ	L_BR_SKIP_6
-	RJMP	L_73
+	RJMP	L_77
 L_BR_SKIP_6:
-	RJMP	L_72
-L_73:
+	RJMP	L_76
+L_77:
 	LDS	R24, 0x00C6
 	MOV	R4, R24
 ; main.py:36:         led.value = 1
 	SBI	0x05, 5
 ; main.py:37:         uart.write(byte)
-L_82:
+L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_83
+	RJMP	L_87
 L_BR_SKIP_7:
-	RJMP	L_82
-L_83:
+	RJMP	L_86
+L_87:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:38:         led.value = 0
 	CBI	0x05, 5
-	RJMP	L_67
+	RJMP	L_71
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

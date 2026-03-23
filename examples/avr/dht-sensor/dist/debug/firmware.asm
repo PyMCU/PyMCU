@@ -520,9 +520,8 @@ main:
 ; main.py:35:     led      = Pin(LED_BUILTIN, Pin.OUT)
 ; main.py:51:         time.sleep_ms(2000)
 ; main.py:8: # sensor = DHT11("PD2")   → D2 = "PD2" bound at compile time
-; main.py:18: #   Error: "ERR\n"
-; main.py:28:     if n < 10:
-; main.py:48:             print("H:", sensor.humidity, " T:", sensor.temperature, sep="")
+; main.py:20: from whipsnake.boards.arduino_uno import D2, LED_BUILTIN
+; main.py:32: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_10
@@ -536,9 +535,9 @@ L_BIT_WRITE_DONE_9:
 ; main.py:36:     data_pin = Pin(D2, Pin.IN)   # DHT11 data pin — driver switches direction at runtime
 ; main.py:51:         time.sleep_ms(2000)
 ; main.py:12: #   DHT11 DATA → Arduino D2 (4.7 kΩ pull-up to +5 V)
-; main.py:22: from whipsnake.hal.uart import UART
-; main.py:32: 
-; main.py:42:         sensor.measure()
+; main.py:24: from dht11 import DHT11
+; main.py:36:     data_pin = Pin(D2, Pin.IN)   # DHT11 data pin — driver switches direction at runtime
+; main.py:48:             print("H:", sensor.humidity, " T:", sensor.temperature, sep="")
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_13
@@ -568,7 +567,7 @@ L_BIT_WRITE_DONE_12:
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:41:     while True:
-L_92:
+L_100:
 ; main.py:42:         sensor.measure()
 ; main.py:21: from whipsnake.hal.gpio import Pin
 ; main.py:24: from dht11 import DHT11
@@ -591,7 +590,7 @@ L_BIT_WRITE_DONE_15:
 	CLR	R25
 	STD	Y+17, R24
 	STD	Y+18, R25
-L_100:
+L_108:
 	LDD	R24, Y+17
 	LDD	R25, Y+18
 	LDI	R18, 18
@@ -599,7 +598,7 @@ L_100:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_17
-	RJMP	L_101
+	RJMP	L_109
 L_BR_SKIP_17:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+17
@@ -608,18 +607,18 @@ L_BR_SKIP_17:
 	SBCI	R25, 255
 	STD	Y+17, R24
 	STD	Y+18, R25
-	RJMP	L_100
-L_101:
+	RJMP	L_108
+L_109:
 ; main.py:29:         return n + 48
 	SBI	0x0B, 2
 ; main.py:30:     return n + 55
 	CLR	R24
 	STD	Y+19, R24
-L_105:
+L_113:
 	LDD	R24, Y+19
 	CPI	R24, 30
 	BRLO	L_BR_SKIP_18
-	RJMP	L_106
+	RJMP	L_114
 L_BR_SKIP_18:
     NOP
     NOP
@@ -636,8 +635,8 @@ L_BR_SKIP_18:
 	LDD	R24, Y+19
 	INC	R24
 	STD	Y+19, R24
-	RJMP	L_105
-L_106:
+	RJMP	L_113
+L_114:
 ; main.py:31: 
 	CLR	R24
 	TST	R24
@@ -658,7 +657,7 @@ L_BIT_WRITE_DONE_20:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_22
-	RJMP	L_112
+	RJMP	L_120
 L_BR_SKIP_22:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -668,7 +667,7 @@ L_BR_SKIP_22:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_23
-	RJMP	L_119
+	RJMP	L_127
 L_BR_SKIP_23:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -677,14 +676,14 @@ L_BR_SKIP_23:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_lo_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_119:
-	RJMP	L_111
-L_112:
+L_127:
+	RJMP	L_119
+L_120:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_24
-	RJMP	L_124
+	RJMP	L_132
 L_BR_SKIP_24:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -694,7 +693,7 @@ L_BR_SKIP_24:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_25
-	RJMP	L_131
+	RJMP	L_139
 L_BR_SKIP_25:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -703,14 +702,14 @@ L_BR_SKIP_25:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_lo_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_131:
-	RJMP	L_111
-L_124:
+L_139:
+	RJMP	L_119
+L_132:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_26
-	RJMP	L_111
+	RJMP	L_119
 L_BR_SKIP_26:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -720,7 +719,7 @@ L_BR_SKIP_26:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_27
-	RJMP	L_140
+	RJMP	L_148
 L_BR_SKIP_27:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -729,20 +728,20 @@ L_BR_SKIP_27:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_lo_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_140:
-L_111:
+L_148:
+L_119:
 	LDD	R24, Y+20
 ; main.py:37:     sensor   = DHT11(data_pin)   # ZCA: sensor.pin tracks data_pin.name compile-time
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_28
-	RJMP	L_143
+	RJMP	L_151
 L_BR_SKIP_28:
 ; main.py:38: 
 	LDI	R24, 1
 	STD	Y+24, R24
 ; main.py:39:     print("DHT11")
-	RJMP	L_94
-L_143:
+	RJMP	L_102
+L_151:
 ; main.py:42:         sensor.measure()
 	CLR	R24
 	CLR	R25
@@ -752,7 +751,7 @@ L_143:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_29
-	RJMP	L_147
+	RJMP	L_155
 L_BR_SKIP_29:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -762,7 +761,7 @@ L_BR_SKIP_29:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_30
-	RJMP	L_154
+	RJMP	L_162
 L_BR_SKIP_30:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -771,14 +770,14 @@ L_BR_SKIP_30:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_154:
-	RJMP	L_146
-L_147:
+L_162:
+	RJMP	L_154
+L_155:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_32
-	RJMP	L_168
+	RJMP	L_176
 L_BR_SKIP_32:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -788,7 +787,7 @@ L_BR_SKIP_32:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_33
-	RJMP	L_175
+	RJMP	L_183
 L_BR_SKIP_33:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -797,14 +796,14 @@ L_BR_SKIP_33:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_175:
-	RJMP	L_146
-L_168:
+L_183:
+	RJMP	L_154
+L_176:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_35
-	RJMP	L_146
+	RJMP	L_154
 L_BR_SKIP_35:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -814,7 +813,7 @@ L_BR_SKIP_35:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_36
-	RJMP	L_191
+	RJMP	L_199
 L_BR_SKIP_36:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -823,30 +822,30 @@ L_BR_SKIP_36:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+20, R24
 	STD	Y+21, R25
-L_191:
-L_146:
+L_199:
+L_154:
 	LDD	R24, Y+20
 ; main.py:43: 
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_38
-	RJMP	L_201
+	RJMP	L_209
 L_BR_SKIP_38:
 ; main.py:44:         if sensor.failed:
 	LDI	R24, 1
 	STD	Y+24, R24
 ; main.py:45:             print("ERR")
-	RJMP	L_94
-L_201:
+	RJMP	L_102
+L_209:
 ; main.py:48:             print("H:", sensor.humidity, " T:", sensor.temperature, sep="")
 	CLR	R24
 	STD	Y+16, R24
 	CLR	R24
 	STD	Y+15, R24
-L_203:
+L_211:
 	LDD	R24, Y+15
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_39
-	RJMP	L_204
+	RJMP	L_212
 L_BR_SKIP_39:
 	CLR	R24
 	CLR	R25
@@ -856,7 +855,7 @@ L_BR_SKIP_39:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_40
-	RJMP	L_208
+	RJMP	L_216
 L_BR_SKIP_40:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -866,7 +865,7 @@ L_BR_SKIP_40:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_41
-	RJMP	L_215
+	RJMP	L_223
 L_BR_SKIP_41:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -875,14 +874,14 @@ L_BR_SKIP_41:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_215:
-	RJMP	L_207
-L_208:
+L_223:
+	RJMP	L_215
+L_216:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_43
-	RJMP	L_229
+	RJMP	L_237
 L_BR_SKIP_43:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -892,7 +891,7 @@ L_BR_SKIP_43:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_44
-	RJMP	L_236
+	RJMP	L_244
 L_BR_SKIP_44:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -901,14 +900,14 @@ L_BR_SKIP_44:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_236:
-	RJMP	L_207
-L_229:
+L_244:
+	RJMP	L_215
+L_237:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_46
-	RJMP	L_207
+	RJMP	L_215
 L_BR_SKIP_46:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -918,7 +917,7 @@ L_BR_SKIP_46:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_47
-	RJMP	L_252
+	RJMP	L_260
 L_BR_SKIP_47:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -927,8 +926,8 @@ L_BR_SKIP_47:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_252:
-L_207:
+L_260:
+L_215:
 	LDD	R24, Y+22
 	LDD	R25, Y+23
 	STD	Y+13, R24
@@ -943,20 +942,20 @@ L_207:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_49
-	RJMP	L_262
+	RJMP	L_270
 L_BR_SKIP_49:
 	BRNE	L_BR_SKIP_50
-	RJMP	L_262
+	RJMP	L_270
 L_BR_SKIP_50:
 	LDD	R24, Y+16
 	ORI	R24, 1
 	STD	Y+16, R24
-L_262:
+L_270:
 	LDD	R24, Y+15
 	INC	R24
 	STD	Y+15, R24
-	RJMP	L_203
-L_204:
+	RJMP	L_211
+L_212:
 	LDD	R24, Y+16
 	STD	Y+8, R24
 ; main.py:49:             led.high()
@@ -964,11 +963,11 @@ L_204:
 	STD	Y+16, R24
 	CLR	R24
 	STD	Y+15, R24
-L_264:
+L_272:
 	LDD	R24, Y+15
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_51
-	RJMP	L_265
+	RJMP	L_273
 L_BR_SKIP_51:
 	CLR	R24
 	CLR	R25
@@ -978,7 +977,7 @@ L_BR_SKIP_51:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_52
-	RJMP	L_269
+	RJMP	L_277
 L_BR_SKIP_52:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -988,7 +987,7 @@ L_BR_SKIP_52:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_53
-	RJMP	L_276
+	RJMP	L_284
 L_BR_SKIP_53:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -997,14 +996,14 @@ L_BR_SKIP_53:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_276:
-	RJMP	L_268
-L_269:
+L_284:
+	RJMP	L_276
+L_277:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_55
-	RJMP	L_290
+	RJMP	L_298
 L_BR_SKIP_55:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1014,7 +1013,7 @@ L_BR_SKIP_55:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_56
-	RJMP	L_297
+	RJMP	L_305
 L_BR_SKIP_56:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1023,14 +1022,14 @@ L_BR_SKIP_56:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_297:
-	RJMP	L_268
-L_290:
+L_305:
+	RJMP	L_276
+L_298:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_58
-	RJMP	L_268
+	RJMP	L_276
 L_BR_SKIP_58:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1040,7 +1039,7 @@ L_BR_SKIP_58:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_59
-	RJMP	L_313
+	RJMP	L_321
 L_BR_SKIP_59:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1049,8 +1048,8 @@ L_BR_SKIP_59:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_313:
-L_268:
+L_321:
+L_276:
 	LDD	R24, Y+22
 	LDD	R25, Y+23
 	STD	Y+13, R24
@@ -1065,20 +1064,20 @@ L_268:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_61
-	RJMP	L_323
+	RJMP	L_331
 L_BR_SKIP_61:
 	BRNE	L_BR_SKIP_62
-	RJMP	L_323
+	RJMP	L_331
 L_BR_SKIP_62:
 	LDD	R24, Y+16
 	ORI	R24, 1
 	STD	Y+16, R24
-L_323:
+L_331:
 	LDD	R24, Y+15
 	INC	R24
 	STD	Y+15, R24
-	RJMP	L_264
-L_265:
+	RJMP	L_272
+L_273:
 	LDD	R24, Y+16
 	STD	Y+7, R24
 ; main.py:50: 
@@ -1086,11 +1085,11 @@ L_265:
 	STD	Y+16, R24
 	CLR	R24
 	STD	Y+15, R24
-L_325:
+L_333:
 	LDD	R24, Y+15
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_63
-	RJMP	L_326
+	RJMP	L_334
 L_BR_SKIP_63:
 	CLR	R24
 	CLR	R25
@@ -1100,7 +1099,7 @@ L_BR_SKIP_63:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_64
-	RJMP	L_330
+	RJMP	L_338
 L_BR_SKIP_64:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1110,7 +1109,7 @@ L_BR_SKIP_64:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_65
-	RJMP	L_337
+	RJMP	L_345
 L_BR_SKIP_65:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1119,14 +1118,14 @@ L_BR_SKIP_65:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_337:
-	RJMP	L_329
-L_330:
+L_345:
+	RJMP	L_337
+L_338:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_67
-	RJMP	L_351
+	RJMP	L_359
 L_BR_SKIP_67:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1136,7 +1135,7 @@ L_BR_SKIP_67:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_68
-	RJMP	L_358
+	RJMP	L_366
 L_BR_SKIP_68:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1145,14 +1144,14 @@ L_BR_SKIP_68:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_358:
-	RJMP	L_329
-L_351:
+L_366:
+	RJMP	L_337
+L_359:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_70
-	RJMP	L_329
+	RJMP	L_337
 L_BR_SKIP_70:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1162,7 +1161,7 @@ L_BR_SKIP_70:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_71
-	RJMP	L_374
+	RJMP	L_382
 L_BR_SKIP_71:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1171,8 +1170,8 @@ L_BR_SKIP_71:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_374:
-L_329:
+L_382:
+L_337:
 	LDD	R24, Y+22
 	LDD	R25, Y+23
 	STD	Y+13, R24
@@ -1187,20 +1186,20 @@ L_329:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_73
-	RJMP	L_384
+	RJMP	L_392
 L_BR_SKIP_73:
 	BRNE	L_BR_SKIP_74
-	RJMP	L_384
+	RJMP	L_392
 L_BR_SKIP_74:
 	LDD	R24, Y+16
 	ORI	R24, 1
 	STD	Y+16, R24
-L_384:
+L_392:
 	LDD	R24, Y+15
 	INC	R24
 	STD	Y+15, R24
-	RJMP	L_325
-L_326:
+	RJMP	L_333
+L_334:
 	LDD	R24, Y+16
 	STD	Y+10, R24
 ; main.py:51:         time.sleep_ms(2000)
@@ -1208,11 +1207,11 @@ L_326:
 	STD	Y+16, R24
 	CLR	R24
 	STD	Y+15, R24
-L_386:
+L_394:
 	LDD	R24, Y+15
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_75
-	RJMP	L_387
+	RJMP	L_395
 L_BR_SKIP_75:
 	CLR	R24
 	CLR	R25
@@ -1222,7 +1221,7 @@ L_BR_SKIP_75:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_76
-	RJMP	L_391
+	RJMP	L_399
 L_BR_SKIP_76:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1232,7 +1231,7 @@ L_BR_SKIP_76:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_77
-	RJMP	L_398
+	RJMP	L_406
 L_BR_SKIP_77:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1241,14 +1240,14 @@ L_BR_SKIP_77:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_398:
-	RJMP	L_390
-L_391:
+L_406:
+	RJMP	L_398
+L_399:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_79
-	RJMP	L_412
+	RJMP	L_420
 L_BR_SKIP_79:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1258,7 +1257,7 @@ L_BR_SKIP_79:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_80
-	RJMP	L_419
+	RJMP	L_427
 L_BR_SKIP_80:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1267,14 +1266,14 @@ L_BR_SKIP_80:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_419:
-	RJMP	L_390
-L_412:
+L_427:
+	RJMP	L_398
+L_420:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_82
-	RJMP	L_390
+	RJMP	L_398
 L_BR_SKIP_82:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1284,7 +1283,7 @@ L_BR_SKIP_82:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_83
-	RJMP	L_435
+	RJMP	L_443
 L_BR_SKIP_83:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1293,8 +1292,8 @@ L_BR_SKIP_83:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_435:
-L_390:
+L_443:
+L_398:
 	LDD	R24, Y+22
 	LDD	R25, Y+23
 	STD	Y+13, R24
@@ -1309,31 +1308,31 @@ L_390:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_85
-	RJMP	L_445
+	RJMP	L_453
 L_BR_SKIP_85:
 	BRNE	L_BR_SKIP_86
-	RJMP	L_445
+	RJMP	L_453
 L_BR_SKIP_86:
 	LDD	R24, Y+16
 	ORI	R24, 1
 	STD	Y+16, R24
-L_445:
+L_453:
 	LDD	R24, Y+15
 	INC	R24
 	STD	Y+15, R24
-	RJMP	L_386
-L_387:
+	RJMP	L_394
+L_395:
 	LDD	R24, Y+16
 	STD	Y+9, R24
 	CLR	R24
 	STD	Y+16, R24
 	CLR	R24
 	STD	Y+15, R24
-L_447:
+L_455:
 	LDD	R24, Y+15
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_87
-	RJMP	L_448
+	RJMP	L_456
 L_BR_SKIP_87:
 	CLR	R24
 	CLR	R25
@@ -1343,7 +1342,7 @@ L_BR_SKIP_87:
 	IN	R18, 0x09
 	CP	R24, R18
 	BREQ	L_BR_SKIP_88
-	RJMP	L_452
+	RJMP	L_460
 L_BR_SKIP_88:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1353,7 +1352,7 @@ L_BR_SKIP_88:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_89
-	RJMP	L_459
+	RJMP	L_467
 L_BR_SKIP_89:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1362,14 +1361,14 @@ L_BR_SKIP_89:
 	RCALL	whipsnake_hal__gpio_atmega328p__pind_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_459:
-	RJMP	L_451
-L_452:
+L_467:
+	RJMP	L_459
+L_460:
 	IN	R24, 0x09
 	IN	R18, 0x03
 	CP	R24, R18
 	BREQ	L_BR_SKIP_91
-	RJMP	L_473
+	RJMP	L_481
 L_BR_SKIP_91:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1379,7 +1378,7 @@ L_BR_SKIP_91:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_92
-	RJMP	L_480
+	RJMP	L_488
 L_BR_SKIP_92:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1388,14 +1387,14 @@ L_BR_SKIP_92:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinb_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_480:
-	RJMP	L_451
-L_473:
+L_488:
+	RJMP	L_459
+L_481:
 	IN	R24, 0x09
 	IN	R18, 0x06
 	CP	R24, R18
 	BREQ	L_BR_SKIP_94
-	RJMP	L_451
+	RJMP	L_459
 L_BR_SKIP_94:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1405,7 +1404,7 @@ L_BR_SKIP_94:
 	MOV	R16, R24
 	CPI	R24, 0
 	BRNE	L_BR_SKIP_95
-	RJMP	L_496
+	RJMP	L_504
 L_BR_SKIP_95:
 	LDI	R24, 232
 	LDI	R25, 3
@@ -1414,8 +1413,8 @@ L_BR_SKIP_95:
 	RCALL	whipsnake_hal__gpio_atmega328p__pinc_meas_hi_b2
 	STD	Y+22, R24
 	STD	Y+23, R25
-L_496:
-L_451:
+L_504:
+L_459:
 	LDD	R24, Y+22
 	LDD	R25, Y+23
 	STD	Y+13, R24
@@ -1430,20 +1429,20 @@ L_451:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_97
-	RJMP	L_506
+	RJMP	L_514
 L_BR_SKIP_97:
 	BRNE	L_BR_SKIP_98
-	RJMP	L_506
+	RJMP	L_514
 L_BR_SKIP_98:
 	LDD	R24, Y+16
 	ORI	R24, 1
 	STD	Y+16, R24
-L_506:
+L_514:
 	LDD	R24, Y+15
 	INC	R24
 	STD	Y+15, R24
-	RJMP	L_447
-L_448:
+	RJMP	L_455
+L_456:
 	LDD	R24, Y+16
 	STD	Y+5, R24
 	LDD	R24, Y+8
@@ -1462,24 +1461,24 @@ L_448:
 	LDD	R18, Y+6
 	CP	R24, R18
 	BRNE	L_BR_SKIP_99
-	RJMP	L_507
+	RJMP	L_515
 L_BR_SKIP_99:
 	LDI	R24, 1
 	STD	Y+24, R24
-	RJMP	L_94
-L_507:
+	RJMP	L_102
+L_515:
 	CLR	R24
 	STD	Y+24, R24
 	LDD	R24, Y+8
 	STD	Y+25, R24
 	LDD	R24, Y+10
 	STD	Y+26, R24
-L_94:
+L_102:
 ; main.py:44:         if sensor.failed:
 	LDD	R24, Y+24
 	TST	R24
 	BRNE	L_BR_SKIP_100
-	RJMP	L_509
+	RJMP	L_517
 L_BR_SKIP_100:
 ; main.py:45:             print("ERR")
 	LDI	R30, low(__str_2 * 2)
@@ -1490,8 +1489,8 @@ L_BR_SKIP_100:
 	RCALL	__uart_send_z
 ; main.py:46:             led.low()
 	CBI	0x05, 5
-	RJMP	L_508
-L_509:
+	RJMP	L_516
+L_517:
 ; main.py:48:             print("H:", sensor.humidity, " T:", sensor.temperature, sep="")
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
@@ -1510,7 +1509,7 @@ L_509:
 	RCALL	__uart_send_z
 ; main.py:49:             led.high()
 	SBI	0x05, 5
-L_508:
+L_516:
 ; main.py:51:         time.sleep_ms(2000)
 ; main.py:21: from whipsnake.hal.gpio import Pin
 ; main.py:30:     return n + 55
@@ -1518,7 +1517,7 @@ L_508:
 	CLR	R25
 	STD	Y+11, R24
 	STD	Y+12, R25
-L_514:
+L_522:
 	LDD	R24, Y+11
 	LDD	R25, Y+12
 	LDI	R18, 208
@@ -1526,7 +1525,7 @@ L_514:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_101
-	RJMP	L_515
+	RJMP	L_523
 L_BR_SKIP_101:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+11
@@ -1535,9 +1534,9 @@ L_BR_SKIP_101:
 	SBCI	R25, 255
 	STD	Y+11, R24
 	STD	Y+12, R25
-	RJMP	L_514
-L_515:
-	RJMP	L_92
+	RJMP	L_522
+L_523:
+	RJMP	L_100
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

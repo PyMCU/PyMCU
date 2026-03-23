@@ -121,9 +121,8 @@ main:
 	STS	0x00C1, R24
 ; main.py:21:     btn  = Pin("PD2", Pin.IN)
 ; main.py:12: from whipsnake.hal.gpio import Pin
-; main.py:22:     btn.init(Pin.IN, Pin.PULL_UP)
-; main.py:32:     count: uint8 = 0
-; main.py:42: 
+; main.py:24:     uart.println("SLEEP DEMO")
+; main.py:36:         if GPIOR0[0] == 1:
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -151,14 +150,14 @@ L_BIT_WRITE_DONE_4:
 	LDI	R31, high(__str_0 * 2)
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("DONE")
-L_71:
+L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_72
+	RJMP	L_76
 L_BR_SKIP_6:
-	RJMP	L_71
-L_72:
+	RJMP	L_75
+L_76:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:27:     EICRA.value = 0x02
@@ -174,39 +173,39 @@ sei
 	CLR	R24
 	MOV	R4, R24
 ; main.py:33:     while count < 5:
-L_73:
+L_77:
 	MOV	R24, R4
 	CPI	R24, 5
 	BRLO	L_BR_SKIP_7
-	RJMP	L_74
+	RJMP	L_78
 L_BR_SKIP_7:
 ; main.py:34:         uart.println("SLEEP")
 	LDI	R30, low(__str_1 * 2)
 	LDI	R31, high(__str_1 * 2)
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("DONE")
-L_80:
+L_84:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_81
+	RJMP	L_85
 L_BR_SKIP_8:
-	RJMP	L_80
-L_81:
+	RJMP	L_84
+L_85:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:35:         sleep_idle()
-; main.py:31: 
+; main.py:33:     while count < 5:
 	LDI	R24, 1
 	OUT	0x33, R24
-; main.py:32:     count: uint8 = 0
+; main.py:34:         uart.println("SLEEP")
 sleep
-; main.py:33:     while count < 5:
+; main.py:35:         sleep_idle()
 	CLR	R24
 	OUT	0x33, R24
 ; main.py:36:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_83
+	RJMP	L_87
 ; main.py:37:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 	INC	R4
@@ -215,37 +214,37 @@ sleep
 	LDI	R31, high(__str_2 * 2)
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("DONE")
-L_89:
+L_93:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_90
+	RJMP	L_94
 L_BR_SKIP_9:
-	RJMP	L_89
-L_90:
+	RJMP	L_93
+L_94:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_83:
-	RJMP	L_73
-L_74:
+L_87:
+	RJMP	L_77
+L_78:
 ; main.py:41:     uart.println("DONE")
 	LDI	R30, low(__str_3 * 2)
 	LDI	R31, high(__str_3 * 2)
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("DONE")
-L_96:
+L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_97
+	RJMP	L_101
 L_BR_SKIP_10:
-	RJMP	L_96
-L_97:
+	RJMP	L_100
+L_101:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:43:     while True:
-L_98:
-	RJMP	L_98
+L_102:
+	RJMP	L_102
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

@@ -36,9 +36,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:21:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
 ; main.py:12: # Each press sends the counter value as two bytes (big-endian).
-; main.py:22:     led  = Pin("PB5", Pin.OUT)
-; main.py:32:         if cur == 0 and prev == 1:
-; main.py:42:                 count = 0
+; main.py:24: 
+; main.py:36:             # Send count as big-endian uint16
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -52,8 +51,8 @@ L_BIT_WRITE_DONE_1:
 	SBI	0x0B, 2
 ; main.py:22:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: #   - Serial terminal at 9600 baud
-; main.py:18: 
-; main.py:28:     while True:
+; main.py:20: def main():
+; main.py:32:         if cur == 0 and prev == 1:
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -84,7 +83,7 @@ L_BIT_WRITE_DONE_4:
 	LDI	R24, 1
 	MOV	R7, R24
 ; main.py:28:     while True:
-L_91:
+L_99:
 	SBIS	0x09, 2
 	RJMP	L_BIT_FALSE_6
 	LDI	R24, 1
@@ -97,12 +96,12 @@ L_BIT_DONE_7:
 ; main.py:32:         if cur == 0 and prev == 1:
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_8
-	RJMP	L_96
+	RJMP	L_104
 L_BR_SKIP_8:
 	MOV	R24, R7
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_9
-	RJMP	L_96
+	RJMP	L_104
 L_BR_SKIP_9:
 	MOV	R24, R4
 	MOV	R25, R5
@@ -153,14 +152,14 @@ L_SHIFT_DONE_16:
 	STD	Y+3, R24
 ; main.py:41:             if count == 1000:
 ; main.py:45:         prev = cur
-L_100:
+L_108:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_18
-	RJMP	L_101
+	RJMP	L_109
 L_BR_SKIP_18:
-	RJMP	L_100
-L_101:
+	RJMP	L_108
+L_109:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:38:             uart.write(count & 0xFF)
@@ -169,14 +168,14 @@ L_101:
 	STD	Y+3, R24
 ; main.py:41:             if count == 1000:
 ; main.py:45:         prev = cur
-L_104:
+L_112:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_19
-	RJMP	L_105
+	RJMP	L_113
 L_BR_SKIP_19:
-	RJMP	L_104
-L_105:
+	RJMP	L_112
+L_113:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
 ; main.py:41:             if count == 1000:
@@ -187,7 +186,7 @@ L_105:
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_20
-	RJMP	L_106
+	RJMP	L_114
 L_BR_SKIP_20:
 ; main.py:42:                 count = 0
 	CLR	R24
@@ -197,18 +196,18 @@ L_BR_SKIP_20:
 ; main.py:43:                 uart.write('R')   # 'R' reset
 ; main.py:41:             if count == 1000:
 ; main.py:45:         prev = cur
-L_109:
+L_117:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_21
-	RJMP	L_110
+	RJMP	L_118
 L_BR_SKIP_21:
-	RJMP	L_109
-L_110:
+	RJMP	L_117
+L_118:
 	LDI	R24, 82
 	STS	0x00C6, R24
-L_106:
-L_96:
+L_114:
+L_104:
 ; main.py:45:         prev = cur
 	MOV	R24, R6
 	MOV	R7, R24
@@ -219,7 +218,7 @@ L_96:
 	CLR	R25
 	STD	Y+4, R24
 	STD	Y+5, R25
-L_113:
+L_121:
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	LDI	R18, 10
@@ -227,7 +226,7 @@ L_113:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_22
-	RJMP	L_114
+	RJMP	L_122
 L_BR_SKIP_22:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
@@ -236,6 +235,6 @@ L_BR_SKIP_22:
 	SBCI	R25, 255
 	STD	Y+4, R24
 	STD	Y+5, R25
-	RJMP	L_113
-L_114:
-	RJMP	L_91
+	RJMP	L_121
+L_122:
+	RJMP	L_99

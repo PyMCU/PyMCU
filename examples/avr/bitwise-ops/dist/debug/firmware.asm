@@ -55,9 +55,9 @@ main:
 ; main.py:51:     # Combined: (0xC7 & 0x3F) >> 3 = (0x07) >> 3 = 0
 ; main.py:52:     val = (val & 0x3F) >> 3
 ; main.py:8: #   0xF0=240  (0x0F ^ 0xFF)
-; main.py:18: from whipsnake.time import delay_ms
-; main.py:28:     val = val | 0xF0
-; main.py:48:     val = ~val
+; main.py:20: 
+; main.py:32:     val = val & 0x0F
+; main.py:54: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -76,14 +76,14 @@ L_BIT_WRITE_DONE_1:
 ; main.py:29:     uart.write(val)          # 255
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_61:
+L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_62
+	RJMP	L_66
 L_BR_SKIP_3:
-	RJMP	L_61
-L_62:
+	RJMP	L_65
+L_66:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:32:     val = val & 0x0F
@@ -92,14 +92,14 @@ L_62:
 ; main.py:33:     uart.write(val)          # 15
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_65:
+L_69:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_66
+	RJMP	L_70
 L_BR_SKIP_4:
-	RJMP	L_65
-L_66:
+	RJMP	L_69
+L_70:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:36:     val = val ^ 0xFF
@@ -109,14 +109,14 @@ L_66:
 ; main.py:37:     uart.write(val)          # 240
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_69:
+L_73:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
-	RJMP	L_70
+	RJMP	L_74
 L_BR_SKIP_5:
-	RJMP	L_69
-L_70:
+	RJMP	L_73
+L_74:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:40:     val = val << 1
@@ -125,14 +125,14 @@ L_70:
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_73:
+L_77:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_74
+	RJMP	L_78
 L_BR_SKIP_6:
-	RJMP	L_73
-L_74:
+	RJMP	L_77
+L_78:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:44:     val = val >> 2
@@ -142,14 +142,14 @@ L_74:
 ; main.py:45:     uart.write(val)          # 56
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_77:
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_78
+	RJMP	L_82
 L_BR_SKIP_7:
-	RJMP	L_77
-L_78:
+	RJMP	L_81
+L_82:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:48:     val = ~val
@@ -158,14 +158,14 @@ L_78:
 ; main.py:49:     uart.write(val)          # 199
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_81:
+L_85:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_82
+	RJMP	L_86
 L_BR_SKIP_8:
-	RJMP	L_81
-L_82:
+	RJMP	L_85
+L_86:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:52:     val = (val & 0x3F) >> 3
@@ -178,14 +178,14 @@ L_82:
 ; main.py:53:     uart.write(val)          # 7 → then >>3 gives 0
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_85:
+L_89:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_86
+	RJMP	L_90
 L_BR_SKIP_9:
-	RJMP	L_85
-L_86:
+	RJMP	L_89
+L_90:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:56:     val = 0x01
@@ -199,14 +199,14 @@ L_86:
 ; main.py:59:     uart.write(val)          # 8
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_89:
+L_93:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_90
+	RJMP	L_94
 L_BR_SKIP_10:
-	RJMP	L_89
-L_90:
+	RJMP	L_93
+L_94:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:61:     val = val >> shift       # 0x08 >> 3 = 0x01
@@ -224,31 +224,31 @@ L_SHIFT_DONE_12:
 ; main.py:62:     uart.write(val)          # 1
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_93:
+L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_14
-	RJMP	L_94
+	RJMP	L_98
 L_BR_SKIP_14:
-	RJMP	L_93
-L_94:
+	RJMP	L_97
+L_98:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:64:     uart.write('D')          # done
 ; main.py:41:     uart.write(val)          # 224
 ; main.py:45:     uart.write(val)          # 56
-L_97:
+L_101:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_15
-	RJMP	L_98
+	RJMP	L_102
 L_BR_SKIP_15:
-	RJMP	L_97
-L_98:
+	RJMP	L_101
+L_102:
 	LDI	R24, 68
 	STS	0x00C6, R24
 ; main.py:66:     while True:
-L_99:
+L_103:
 ; main.py:67:         led.toggle()
 	SBIS	0x05, 5
 	RJMP	L_BIT_FALSE_16
@@ -277,7 +277,7 @@ L_BIT_WRITE_DONE_19:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_104:
+L_108:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 244
@@ -285,7 +285,7 @@ L_104:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_21
-	RJMP	L_105
+	RJMP	L_109
 L_BR_SKIP_21:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
@@ -294,6 +294,6 @@ L_BR_SKIP_21:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_104
-L_105:
-	RJMP	L_99
+	RJMP	L_108
+L_109:
+	RJMP	L_103

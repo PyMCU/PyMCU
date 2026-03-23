@@ -36,9 +36,9 @@ main:
 ; main.py:51: 
 ; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
-; main.py:18: 
-; main.py:28: 
-; main.py:38:             if shifted & 1:
+; main.py:20: def main():
+; main.py:32: 
+; main.py:44:             clock.high()
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -53,9 +53,9 @@ L_BIT_WRITE_DONE_1:
 ; main.py:51: 
 ; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
-; main.py:18: 
-; main.py:28: 
-; main.py:40:             else:
+; main.py:20: def main():
+; main.py:32: 
+; main.py:46: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -70,9 +70,9 @@ L_BIT_WRITE_DONE_4:
 ; main.py:51: 
 ; main.py:52:         # Send current pattern over UART for debugging
 ; main.py:8: #   SRCLK (pin 11) -> PB1   shift clock
-; main.py:18: 
-; main.py:28: 
-; main.py:42: 
+; main.py:20: def main():
+; main.py:32: 
+; main.py:48: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_8
@@ -104,17 +104,17 @@ L_BIT_WRITE_DONE_7:
 	LDI	R24, 1
 	MOV	R4, R24
 ; main.py:29:     while True:
-L_121:
+L_133:
 ; main.py:31:         latch.low()
 	CBI	0x05, 2
 	LDI	R24, 7
 	MOV	R5, R24
 ; main.py:35:         while bit < 8:           # counts 7, 6, ..., 0 (wraps at 255 after 0)
-L_124:
+L_136:
 	MOV	R24, R5
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_9
-	RJMP	L_125
+	RJMP	L_137
 L_BR_SKIP_9:
 	MOV	R24, R4
 	MOV	R18, R5
@@ -133,35 +133,35 @@ L_SHIFT_DONE_11:
 	MOV	R16, R24
 	TST	R24
 	BRNE	L_BR_SKIP_13
-	RJMP	L_127
+	RJMP	L_139
 L_BR_SKIP_13:
 ; main.py:39:                 data.high()
 	SBI	0x05, 0
-	RJMP	L_126
-L_127:
+	RJMP	L_138
+L_139:
 ; main.py:41:                 data.low()
 	CBI	0x05, 0
-L_126:
+L_138:
 ; main.py:44:             clock.high()
 	SBI	0x05, 1
 ; main.py:45:             clock.low()
 	CBI	0x05, 1
 	DEC	R5
-	RJMP	L_124
-L_125:
+	RJMP	L_136
+L_137:
 ; main.py:50:         latch.high()
 	SBI	0x05, 2
 ; main.py:53:         uart.write(pattern)
 ; main.py:41:                 data.low()
 ; main.py:45:             clock.low()
-L_135:
+L_147:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_14
-	RJMP	L_136
+	RJMP	L_148
 L_BR_SKIP_14:
-	RJMP	L_135
-L_136:
+	RJMP	L_147
+L_148:
 	MOV	R24, R4
 	STS	0x00C6, R24
 	LSR	R24
@@ -188,7 +188,7 @@ L_136:
 	CLR	R25
 	STD	Y+3, R24
 	STD	Y+4, R25
-L_139:
+L_151:
 	LDD	R24, Y+3
 	LDD	R25, Y+4
 	LDI	R18, 150
@@ -196,7 +196,7 @@ L_139:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_15
-	RJMP	L_140
+	RJMP	L_152
 L_BR_SKIP_15:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+3
@@ -205,6 +205,6 @@ L_BR_SKIP_15:
 	SBCI	R25, 255
 	STD	Y+3, R24
 	STD	Y+4, R25
-	RJMP	L_139
-L_140:
-	RJMP	L_121
+	RJMP	L_151
+L_152:
+	RJMP	L_133

@@ -44,7 +44,6 @@ main:
 	STS	0x00C1, R24
 ; main.py:19:     adc  = AnalogPin("PC0")
 ; main.py:12: from whipsnake.hal.uart import UART
-; main.py:24:         # Trigger conversion (ADSC = ADCSRA bit 6)
 ; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
 	LDI	R24, 64
 	STS	0x007C, R24

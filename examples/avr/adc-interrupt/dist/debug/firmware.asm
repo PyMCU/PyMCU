@@ -128,7 +128,6 @@ main:
 ; main.py:41: 
 ; main.py:47:             uart.write('\n')
 ; main.py:12: #   - ADC0 = PC0 (analog in)
-; main.py:24:     # Must read ADCL first to lock ADCH.
 ; main.py:48:             # Start next conversion
 ; main.py:31:     adc  = AnalogPin("PC0")
 	LDI	R24, 64

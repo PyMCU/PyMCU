@@ -39,9 +39,9 @@ main:
 ; main.py:51:                     led.toggle()
 ; main.py:52:                     delay_ms(100)
 ; main.py:8: #     'B' (66)  — blink LED 5 times
-; main.py:18: from whipsnake.hal.uart import UART
-; main.py:28:     TOGGLE = 84   # 'T'
-; main.py:48:                 uart.println("BLINK x5")
+; main.py:20: 
+; main.py:32: 
+; main.py:54:                 led_on = 0
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -84,14 +84,14 @@ L_BIT_WRITE_DONE_1:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_64:
+L_68:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_65
+	RJMP	L_69
 L_BR_SKIP_3:
-	RJMP	L_64
-L_65:
+	RJMP	L_68
+L_69:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
@@ -107,37 +107,37 @@ L_65:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_71:
+L_75:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_72
+	RJMP	L_76
 L_BR_SKIP_4:
-	RJMP	L_71
-L_72:
+	RJMP	L_75
+L_76:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	MOV	R5, R24
 ; main.py:42:     while True:
-L_73:
+L_77:
 ; main.py:55:                 led.low()
 ; main.py:59:                 led_on = 1
 ; main.py:85:                 # Unknown command: echo it back with '?' prefix
-L_77:
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
 	BREQ	L_BR_SKIP_5
-	RJMP	L_78
+	RJMP	L_82
 L_BR_SKIP_5:
-	RJMP	L_77
-L_78:
+	RJMP	L_81
+L_82:
 	LDS	R24, 0x00C6
 	MOV	R4, R24
 	CPI	R24, 66
 	BREQ	L_BR_SKIP_6
-	RJMP	L_80
+	RJMP	L_84
 L_BR_SKIP_6:
 ; main.py:48:                 uart.println("BLINK x5")
 ; main.py:77:                 uart.write_str("LED=")
@@ -151,25 +151,25 @@ L_BR_SKIP_6:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_86:
+L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_87
+	RJMP	L_91
 L_BR_SKIP_7:
-	RJMP	L_86
-L_87:
+	RJMP	L_90
+L_91:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	MOV	R6, R24
 ; main.py:50:                 while i < 10:
-L_88:
+L_92:
 	MOV	R24, R6
 	CPI	R24, 10
 	BRLO	L_BR_SKIP_8
-	RJMP	L_89
+	RJMP	L_93
 L_BR_SKIP_8:
 ; main.py:51:                     led.toggle()
 	SBIS	0x05, 5
@@ -199,7 +199,7 @@ L_BIT_WRITE_DONE_12:
 	CLR	R25
 	STD	Y+4, R24
 	STD	Y+5, R25
-L_93:
+L_97:
 	LDD	R24, Y+4
 	LDD	R25, Y+5
 	LDI	R18, 100
@@ -207,7 +207,7 @@ L_93:
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_14
-	RJMP	L_94
+	RJMP	L_98
 L_BR_SKIP_14:
 	RCALL	whipsnake_time__delay_1ms_avr
 	LDD	R24, Y+4
@@ -216,22 +216,22 @@ L_BR_SKIP_14:
 	SBCI	R25, 255
 	STD	Y+4, R24
 	STD	Y+5, R25
-	RJMP	L_93
-L_94:
+	RJMP	L_97
+L_98:
 	INC	R6
-	RJMP	L_88
-L_89:
+	RJMP	L_92
+L_93:
 ; main.py:54:                 led_on = 0
 	CLR	R24
 	MOV	R5, R24
 ; main.py:55:                 led.low()
 	CBI	0x05, 5
-	RJMP	L_79
-L_80:
+	RJMP	L_83
+L_84:
 	MOV	R24, R4
 	CPI	R24, 72
 	BREQ	L_BR_SKIP_15
-	RJMP	L_96
+	RJMP	L_100
 L_BR_SKIP_15:
 ; main.py:58:                 led.high()
 	SBI	0x05, 5
@@ -250,23 +250,23 @@ L_BR_SKIP_15:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_103:
+L_107:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_16
-	RJMP	L_104
+	RJMP	L_108
 L_BR_SKIP_16:
-	RJMP	L_103
-L_104:
+	RJMP	L_107
+L_108:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_79
-L_96:
+	RJMP	L_83
+L_100:
 	MOV	R24, R4
 	CPI	R24, 76
 	BREQ	L_BR_SKIP_17
-	RJMP	L_105
+	RJMP	L_109
 L_BR_SKIP_17:
 ; main.py:63:                 led.low()
 	CBI	0x05, 5
@@ -285,23 +285,23 @@ L_BR_SKIP_17:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_112:
+L_116:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_18
-	RJMP	L_113
+	RJMP	L_117
 L_BR_SKIP_18:
-	RJMP	L_112
-L_113:
+	RJMP	L_116
+L_117:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_79
-L_105:
+	RJMP	L_83
+L_109:
 	MOV	R24, R4
 	CPI	R24, 84
 	BREQ	L_BR_SKIP_19
-	RJMP	L_114
+	RJMP	L_118
 L_BR_SKIP_19:
 ; main.py:68:                 led.toggle()
 	SBIS	0x05, 5
@@ -328,7 +328,7 @@ L_BIT_WRITE_DONE_23:
 	MOV	R24, R5
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_25
-	RJMP	L_117
+	RJMP	L_121
 L_BR_SKIP_25:
 ; main.py:70:                     led_on = 0
 	CLR	R24
@@ -345,19 +345,19 @@ L_BR_SKIP_25:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_123:
+L_127:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_26
-	RJMP	L_124
+	RJMP	L_128
 L_BR_SKIP_26:
-	RJMP	L_123
-L_124:
+	RJMP	L_127
+L_128:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_116
-L_117:
+	RJMP	L_120
+L_121:
 ; main.py:73:                     led_on = 1
 	LDI	R24, 1
 	MOV	R5, R24
@@ -373,24 +373,24 @@ L_117:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_130:
+L_134:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_27
-	RJMP	L_131
+	RJMP	L_135
 L_BR_SKIP_27:
-	RJMP	L_130
-L_131:
+	RJMP	L_134
+L_135:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_116:
-	RJMP	L_79
-L_114:
+L_120:
+	RJMP	L_83
+L_118:
 	MOV	R24, R4
 	CPI	R24, 83
 	BREQ	L_BR_SKIP_28
-	RJMP	L_132
+	RJMP	L_136
 L_BR_SKIP_28:
 ; main.py:77:                 uart.write_str("LED=")
 ; main.py:69:                 if led_on == 1:
@@ -405,14 +405,14 @@ L_BR_SKIP_28:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_137:
+L_141:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_29
-	RJMP	L_138
+	RJMP	L_142
 L_BR_SKIP_29:
-	RJMP	L_137
-L_138:
+	RJMP	L_141
+L_142:
 ; main.py:79:                 uart.write('\n')
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -420,23 +420,23 @@ L_138:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_141:
+L_145:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_30
-	RJMP	L_142
+	RJMP	L_146
 L_BR_SKIP_30:
-	RJMP	L_141
-L_142:
+	RJMP	L_145
+L_146:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_79
-L_132:
+	RJMP	L_83
+L_136:
 	MOV	R24, R4
 	CPI	R24, 63
 	BREQ	L_BR_SKIP_31
-	RJMP	L_143
+	RJMP	L_147
 L_BR_SKIP_31:
 ; main.py:82:                 uart.println("B=Blink H=High L=Low T=Toggle S=Status ?=Help")
 ; main.py:77:                 uart.write_str("LED=")
@@ -450,31 +450,31 @@ L_BR_SKIP_31:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_149:
+L_153:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_32
-	RJMP	L_150
+	RJMP	L_154
 L_BR_SKIP_32:
-	RJMP	L_149
-L_150:
+	RJMP	L_153
+L_154:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_79
-L_143:
+	RJMP	L_83
+L_147:
 ; main.py:86:                 uart.write('?')
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_154:
+L_158:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_33
-	RJMP	L_155
+	RJMP	L_159
 L_BR_SKIP_33:
-	RJMP	L_154
-L_155:
+	RJMP	L_158
+L_159:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 63
 	STS	0x00C6, R24
@@ -482,14 +482,14 @@ L_155:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_158:
+L_162:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_34
-	RJMP	L_159
+	RJMP	L_163
 L_BR_SKIP_34:
-	RJMP	L_158
-L_159:
+	RJMP	L_162
+L_163:
 ; main.py:79:                 uart.write('\n')
 	MOV	R24, R4
 	STS	0x00C6, R24
@@ -497,19 +497,19 @@ L_159:
 ; main.py:41: 
 ; main.py:45:         match cmd:
 ; main.py:76:             case CMD.STATUS:
-L_162:
+L_166:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_35
-	RJMP	L_163
+	RJMP	L_167
 L_BR_SKIP_35:
-	RJMP	L_162
-L_163:
+	RJMP	L_166
+L_167:
 ; main.py:79:                 uart.write('\n')
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_79:
-	RJMP	L_73
+L_83:
+	RJMP	L_77
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

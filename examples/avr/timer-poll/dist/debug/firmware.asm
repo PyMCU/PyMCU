@@ -17,8 +17,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:21:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: #
-; main.py:18: 
-; main.py:28:     ticks: uint16 = 0
+; main.py:20: def main():
+; main.py:32:         if TIFR0[0] == 1:
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -58,43 +58,43 @@ L_BIT_WRITE_DONE_1:
 	MOV	R24, R6
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_3
-	RJMP	L_71
+	RJMP	L_75
 L_BR_SKIP_3:
 ; main.py:31:         # Poll Timer0 Overflow Flag (TOV0 = bit 0 of TIFR0, address 0x35)
 	CLR	R24
 	OUT	0x26, R24
-	RJMP	L_70
-L_71:
+	RJMP	L_74
+L_75:
 	MOV	R24, R6
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_4
-	RJMP	L_73
+	RJMP	L_77
 L_BR_SKIP_4:
 	CLR	R24
 	STS	0x0084, R24
 	CLR	R24
 	STS	0x0085, R24
-	RJMP	L_70
-L_73:
+	RJMP	L_74
+L_77:
 	MOV	R24, R6
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_5
-	RJMP	L_75
+	RJMP	L_79
 L_BR_SKIP_5:
 	CLR	R24
 	STS	0x00B2, R24
-	RJMP	L_70
-L_75:
-L_70:
+	RJMP	L_74
+L_79:
+L_74:
 	CLR	R24
 	CLR	R25
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:30:     while True:
-L_77:
+L_81:
 ; main.py:32:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_79
+	RJMP	L_83
 ; main.py:34:             TIFR0[0] = 1
 	SBI	0x15, 0
 	MOV	R24, R4
@@ -109,7 +109,7 @@ L_77:
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_6
-	RJMP	L_80
+	RJMP	L_84
 L_BR_SKIP_6:
 ; main.py:40:                 ticks = 0
 	CLR	R24
@@ -139,28 +139,28 @@ L_BIT_WRITE_SKIP_9:
 L_BIT_WRITE_DONE_10:
 ; main.py:42:                 uart.write('T')
 ; main.py:41:                 led.toggle()
-L_84:
+L_88:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_85
+	RJMP	L_89
 L_BR_SKIP_12:
-	RJMP	L_84
-L_85:
+	RJMP	L_88
+L_89:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
 ; main.py:41:                 led.toggle()
-L_88:
+L_92:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_89
+	RJMP	L_93
 L_BR_SKIP_13:
-	RJMP	L_88
-L_89:
+	RJMP	L_92
+L_93:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_80:
-L_79:
-	RJMP	L_77
+L_84:
+L_83:
+	RJMP	L_81

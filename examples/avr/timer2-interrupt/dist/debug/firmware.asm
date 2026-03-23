@@ -112,9 +112,9 @@ main:
 ; main.py:51:                 led.toggle()
 ; main.py:52:                 uart.write('T')
 ; main.py:8: #   - Serial terminal at 9600 baud: prints "T2\n" on each ~1 s toggle
-; main.py:18: from whipsnake.types import uint8, interrupt, asm
-; main.py:28: 
-; main.py:48:             ovf_count += 1
+; main.py:20: from whipsnake.hal.gpio import Pin
+; main.py:32: 
+; main.py:54:                 uart.write('\n')
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -159,23 +159,23 @@ SEI
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_64:
+L_68:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_65
+	RJMP	L_69
 L_BR_SKIP_3:
-	RJMP	L_64
-L_65:
+	RJMP	L_68
+L_69:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	MOV	R4, R24
 ; main.py:45:     while True:
-L_66:
+L_70:
 ; main.py:46:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_68
+	RJMP	L_72
 ; main.py:47:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 	INC	R4
@@ -183,7 +183,7 @@ L_66:
 ; main.py:49:             if ovf_count == 61:
 	CPI	R24, 61
 	BREQ	L_BR_SKIP_4
-	RJMP	L_69
+	RJMP	L_73
 L_BR_SKIP_4:
 ; main.py:50:                 ovf_count = 0
 	CLR	R24
@@ -212,45 +212,45 @@ L_BIT_WRITE_DONE_8:
 ; main.py:52:                 uart.write('T')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_73:
+L_77:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_74
+	RJMP	L_78
 L_BR_SKIP_10:
-	RJMP	L_73
-L_74:
+	RJMP	L_77
+L_78:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:53:                 uart.write('2')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_77:
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_11
-	RJMP	L_78
+	RJMP	L_82
 L_BR_SKIP_11:
-	RJMP	L_77
-L_78:
+	RJMP	L_81
+L_82:
 	LDI	R24, 50
 	STS	0x00C6, R24
 ; main.py:54:                 uart.write('\n')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_81:
+L_85:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_82
+	RJMP	L_86
 L_BR_SKIP_12:
-	RJMP	L_81
-L_82:
+	RJMP	L_85
+L_86:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_69:
-L_68:
-	RJMP	L_66
+L_73:
+L_72:
+	RJMP	L_70
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

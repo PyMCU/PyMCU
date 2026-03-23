@@ -108,9 +108,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:30:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
 ; main.py:12: #   UART TX at 9600 baud
-; main.py:22: 
-; main.py:32: 
-; main.py:42: 
+; main.py:24: def on_press():
+; main.py:36:     # compile_isr() inside pin_irq_setup automatically places on_press at
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -157,21 +156,21 @@ L_BIT_WRITE_DONE_1:
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("PIN IRQ")
 ; main.py:45:             GPIOR0[0] = 0
-L_91:
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_92
+	RJMP	L_96
 L_BR_SKIP_3:
-	RJMP	L_91
-L_92:
+	RJMP	L_95
+L_96:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:43:     while True:
-L_93:
+L_97:
 ; main.py:44:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_95
+	RJMP	L_99
 ; main.py:45:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:46:             count = count + 1
@@ -179,18 +178,18 @@ L_93:
 ; main.py:47:             uart.write(count)
 ; main.py:41:     uart.println("PIN IRQ")
 ; main.py:45:             GPIOR0[0] = 0
-L_98:
+L_102:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_99
+	RJMP	L_103
 L_BR_SKIP_4:
-	RJMP	L_98
-L_99:
+	RJMP	L_102
+L_103:
 	MOV	R24, R4
 	STS	0x00C6, R24
-L_95:
-	RJMP	L_93
+L_99:
+	RJMP	L_97
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

@@ -114,9 +114,9 @@ L_36:
 ; main.py:51: 
 ; main.py:52: @inline
 ; main.py:8: # Output on UART (9600 baud):
-; main.py:18: 
-; main.py:28:     @inline
-; main.py:48: @inline
+; main.py:20:     @inline
+; main.py:32:     @inline
+; main.py:54:     return val
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -148,14 +148,14 @@ L_BIT_DONE_7:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_79:
+L_83:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_80
+	RJMP	L_84
 L_BR_SKIP_8:
-	RJMP	L_79
-L_80:
+	RJMP	L_83
+L_84:
 ; main.py:79:     led.off()
 	LDI	R24, 65
 	STS	0x00C6, R24
@@ -163,14 +163,14 @@ L_80:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_83:
+L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_84
+	RJMP	L_88
 L_BR_SKIP_9:
-	RJMP	L_83
-L_84:
+	RJMP	L_87
+L_88:
 ; main.py:79:     led.off()
 	LDI	R24, 58
 	STS	0x00C6, R24
@@ -182,14 +182,14 @@ L_84:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_87:
+L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_88
+	RJMP	L_92
 L_BR_SKIP_10:
-	RJMP	L_87
-L_88:
+	RJMP	L_91
+L_92:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -197,14 +197,14 @@ L_88:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_91:
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_11
-	RJMP	L_92
+	RJMP	L_96
 L_BR_SKIP_11:
-	RJMP	L_91
-L_92:
+	RJMP	L_95
+L_96:
 ; main.py:79:     led.off()
 	LDI	R24, 10
 	STS	0x00C6, R24
@@ -215,14 +215,14 @@ L_92:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_96:
+L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_97
+	RJMP	L_101
 L_BR_SKIP_12:
-	RJMP	L_96
-L_97:
+	RJMP	L_100
+L_101:
 ; main.py:79:     led.off()
 	LDI	R24, 66
 	STS	0x00C6, R24
@@ -230,14 +230,14 @@ L_97:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_100:
+L_104:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_101
+	RJMP	L_105
 L_BR_SKIP_13:
-	RJMP	L_100
-L_101:
+	RJMP	L_104
+L_105:
 ; main.py:79:     led.off()
 	LDI	R24, 58
 	STS	0x00C6, R24
@@ -249,14 +249,14 @@ L_101:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_104:
+L_108:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_14
-	RJMP	L_105
+	RJMP	L_109
 L_BR_SKIP_14:
-	RJMP	L_104
-L_105:
+	RJMP	L_108
+L_109:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -268,14 +268,14 @@ L_105:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_108:
+L_112:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_15
-	RJMP	L_109
+	RJMP	L_113
 L_BR_SKIP_15:
-	RJMP	L_108
-L_109:
+	RJMP	L_112
+L_113:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -283,14 +283,14 @@ L_109:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_112:
+L_116:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_16
-	RJMP	L_113
+	RJMP	L_117
 L_BR_SKIP_16:
-	RJMP	L_112
-L_113:
+	RJMP	L_116
+L_117:
 ; main.py:79:     led.off()
 	LDI	R24, 10
 	STS	0x00C6, R24
@@ -307,14 +307,14 @@ L_113:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_117:
+L_121:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_17
-	RJMP	L_118
+	RJMP	L_122
 L_BR_SKIP_17:
-	RJMP	L_117
-L_118:
+	RJMP	L_121
+L_122:
 ; main.py:79:     led.off()
 	LDI	R24, 67
 	STS	0x00C6, R24
@@ -322,14 +322,14 @@ L_118:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_121:
+L_125:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_18
-	RJMP	L_122
+	RJMP	L_126
 L_BR_SKIP_18:
-	RJMP	L_121
-L_122:
+	RJMP	L_125
+L_126:
 ; main.py:79:     led.off()
 	LDI	R24, 58
 	STS	0x00C6, R24
@@ -341,14 +341,14 @@ L_122:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_125:
+L_129:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_19
-	RJMP	L_126
+	RJMP	L_130
 L_BR_SKIP_19:
-	RJMP	L_125
-L_126:
+	RJMP	L_129
+L_130:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -360,14 +360,14 @@ L_126:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_129:
+L_133:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_20
-	RJMP	L_130
+	RJMP	L_134
 L_BR_SKIP_20:
-	RJMP	L_129
-L_130:
+	RJMP	L_133
+L_134:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -379,14 +379,14 @@ L_130:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_133:
+L_137:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_21
-	RJMP	L_134
+	RJMP	L_138
 L_BR_SKIP_21:
-	RJMP	L_133
-L_134:
+	RJMP	L_137
+L_138:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -398,14 +398,14 @@ L_134:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_137:
+L_141:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_22
-	RJMP	L_138
+	RJMP	L_142
 L_BR_SKIP_22:
-	RJMP	L_137
-L_138:
+	RJMP	L_141
+L_142:
 ; main.py:79:     led.off()
 	LDD	R24, Y+3
 	STS	0x00C6, R24
@@ -413,20 +413,20 @@ L_138:
 ; main.py:41:         while i < code:
 ; main.py:45: 
 ; main.py:76:     led = LED("PB5")
-L_141:
+L_145:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_23
-	RJMP	L_142
+	RJMP	L_146
 L_BR_SKIP_23:
-	RJMP	L_141
-L_142:
+	RJMP	L_145
+L_146:
 ; main.py:79:     led.off()
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:106:     while True:
-L_143:
-	RJMP	L_143
+L_147:
+	RJMP	L_147
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

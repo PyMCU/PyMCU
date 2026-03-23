@@ -110,9 +110,8 @@ main:
 	LDI	R29, high(_stack_base)
 ; main.py:30:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: #   - Serial terminal at 9600 baud — receives count byte on each press
-; main.py:18: from whipsnake.hal.gpio import Pin
-; main.py:28: 
-; main.py:48:             uart.write(count)        # Send raw count byte over UART
+; main.py:20: from whipsnake.types import asm
+; main.py:32: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -156,21 +155,21 @@ SEI
 	RCALL	__uart_send_z
 ; main.py:41:     uart.println("INT COUNTER")
 ; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
-L_64:
+L_68:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_65
+	RJMP	L_69
 L_BR_SKIP_3:
-	RJMP	L_64
-L_65:
+	RJMP	L_68
+L_69:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:43:     while True:
-L_66:
+L_70:
 ; main.py:44:         if GPIOR0[0] == 1:           # Check event flag (SBIS 0x1E, 0)
 	SBIS	0x1E, 0
-	RJMP	L_68
+	RJMP	L_72
 ; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
 	CBI	0x1E, 0
 	INC	R4
@@ -198,18 +197,18 @@ L_BIT_WRITE_DONE_7:
 ; main.py:48:             uart.write(count)        # Send raw count byte over UART
 ; main.py:41:     uart.println("INT COUNTER")
 ; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
-L_72:
+L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_73
+	RJMP	L_77
 L_BR_SKIP_9:
-	RJMP	L_72
-L_73:
+	RJMP	L_76
+L_77:
 	MOV	R24, R4
 	STS	0x00C6, R24
-L_68:
-	RJMP	L_66
+L_72:
+	RJMP	L_70
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

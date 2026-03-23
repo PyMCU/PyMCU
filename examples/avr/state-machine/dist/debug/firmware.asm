@@ -17,9 +17,9 @@ main:
 ; main.py:51: 
 ; main.py:52:     # Initial output: RED on
 ; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:18: from whipsnake.types import uint8, uint16
-; main.py:28:     GREEN      = 2
-; main.py:38: 
+; main.py:20: from whipsnake.hal.uart import UART
+; main.py:32: # Timing: overflows at ~4.096 ms each
+; main.py:44: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -34,9 +34,9 @@ L_BIT_WRITE_DONE_1:
 ; main.py:51: 
 ; main.py:52:     # Initial output: RED on
 ; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:18: from whipsnake.types import uint8, uint16
-; main.py:28:     GREEN      = 2
-; main.py:40:     red    = Pin("PB0", Pin.OUT)
+; main.py:20: from whipsnake.hal.uart import UART
+; main.py:32: # Timing: overflows at ~4.096 ms each
+; main.py:46:     TCCR0B[2] = 1    # CS02=1 → prescaler 256
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -51,9 +51,9 @@ L_BIT_WRITE_DONE_4:
 ; main.py:51: 
 ; main.py:52:     # Initial output: RED on
 ; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:18: from whipsnake.types import uint8, uint16
-; main.py:28:     GREEN      = 2
-; main.py:42:     green  = Pin("PB2", Pin.OUT)
+; main.py:20: from whipsnake.hal.uart import UART
+; main.py:32: # Timing: overflows at ~4.096 ms each
+; main.py:48:     state: uint8  = State.RED
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_8
@@ -116,22 +116,22 @@ L_BIT_WRITE_DONE_7:
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
 ; main.py:76: 
-L_129:
+L_141:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_130
+	RJMP	L_142
 L_BR_SKIP_9:
-	RJMP	L_129
-L_130:
+	RJMP	L_141
+L_142:
 ; main.py:79:                         dur    = DUR_GREEN
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:58:     while True:
-L_131:
+L_143:
 ; main.py:60:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_133
+	RJMP	L_145
 ; main.py:61:             TIFR0[0] = 1      # Clear TOV0 by writing 1 (AVR convention)
 	SBI	0x15, 0
 ; main.py:62:             ticks = ticks + 1
@@ -147,7 +147,7 @@ L_131:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_10
-	RJMP	L_134
+	RJMP	L_146
 L_BR_SKIP_10:
 ; main.py:65:                 ticks = 0
 	CLR	R24
@@ -157,7 +157,7 @@ L_BR_SKIP_10:
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_11
-	RJMP	L_136
+	RJMP	L_148
 L_BR_SKIP_11:
 ; main.py:70:                         state  = State.RED_YELLOW
 	LDI	R24, 1
@@ -185,23 +185,23 @@ L_BR_SKIP_11:
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
 ; main.py:76: 
-L_145:
+L_157:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_146
+	RJMP	L_158
 L_BR_SKIP_12:
-	RJMP	L_145
-L_146:
+	RJMP	L_157
+L_158:
 ; main.py:79:                         dur    = DUR_GREEN
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_135
-L_136:
+	RJMP	L_147
+L_148:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_13
-	RJMP	L_147
+	RJMP	L_159
 L_BR_SKIP_13:
 ; main.py:78:                         state  = State.GREEN
 	LDI	R24, 2
@@ -229,23 +229,23 @@ L_BR_SKIP_13:
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
 ; main.py:76: 
-L_156:
+L_168:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_14
-	RJMP	L_157
+	RJMP	L_169
 L_BR_SKIP_14:
-	RJMP	L_156
-L_157:
+	RJMP	L_168
+L_169:
 ; main.py:79:                         dur    = DUR_GREEN
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_135
-L_147:
+	RJMP	L_147
+L_159:
 	MOV	R24, R4
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_15
-	RJMP	L_158
+	RJMP	L_170
 L_BR_SKIP_15:
 ; main.py:86:                         state  = State.YELLOW
 	LDI	R24, 3
@@ -273,19 +273,19 @@ L_BR_SKIP_15:
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
 ; main.py:76: 
-L_167:
+L_179:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_16
-	RJMP	L_168
+	RJMP	L_180
 L_BR_SKIP_16:
-	RJMP	L_167
-L_168:
+	RJMP	L_179
+L_180:
 ; main.py:79:                         dur    = DUR_GREEN
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_135
-L_158:
+	RJMP	L_147
+L_170:
 ; main.py:94:                         state  = State.RED
 	CLR	R24
 	MOV	R4, R24
@@ -312,21 +312,21 @@ L_158:
 ; main.py:41:     yellow = Pin("PB1", Pin.OUT)
 ; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
 ; main.py:76: 
-L_178:
+L_190:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_17
-	RJMP	L_179
+	RJMP	L_191
 L_BR_SKIP_17:
-	RJMP	L_178
-L_179:
+	RJMP	L_190
+L_191:
 ; main.py:79:                         dur    = DUR_GREEN
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_135:
-L_134:
-L_133:
-	RJMP	L_131
+L_147:
+L_146:
+L_145:
+	RJMP	L_143
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
