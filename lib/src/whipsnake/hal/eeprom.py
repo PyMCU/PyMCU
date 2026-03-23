@@ -53,4 +53,5 @@ class EEPROM:
             case "atmega328p":
                 from whipsnake.hal._eeprom.atmega328p import eeprom_read
                 return eeprom_read(addr)
+
         return 0

@@ -17,7 +17,7 @@
 # Channel-to-register mapping, reference selection, and conversion clock
 # are resolved at construction time; subsequent reads require no string dispatch.
 from whipsnake.chips import __CHIP__
-from whipsnake.types import uint8, uint16, inline
+from whipsnake.types import uint16, inline
 
 
 # noinspection PyProtectedMember
@@ -84,12 +84,14 @@ class AnalogPin:
     def read(self) -> uint16:
         """Trigger a conversion, block until complete, and return the raw 10-bit result.
 
-        Returns a uint16 in the range 0-1023.
+        Returns an uint16 in the range 0-1023.
         """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_read
                 return adc_read()
+
+        return 0
 
     @inline
     def start_conversion(self):
@@ -107,7 +109,7 @@ class AnalogPin:
     def read_result(self) -> uint16:
         """Read the raw 10-bit result without triggering a new conversion.
 
-        Returns a uint16 in the range 0-1023. Call from the ADC-complete ISR
+        Returns an uint16 in the range 0-1023. Call from the ADC-complete ISR
         or after the conversion-complete flag is set.
         """
         match __CHIP__.name:
@@ -115,13 +117,17 @@ class AnalogPin:
                 from whipsnake.hal._adc.atmega328p import adc_read_result
                 return adc_read_result()
 
+        return 0
+
     @inline
     def read_u16(self) -> uint16:
         """Trigger a conversion, block until complete, and return the result scaled to 16-bit.
 
-        Returns a uint16 in the range 0-65535 (10-bit ADC value multiplied by 64).
+        Returns an uint16 in the range 0-65535 (10-bit ADC value multiplied by 64).
         """
         match __CHIP__.name:
             case "atmega328p":
                 from whipsnake.hal._adc.atmega328p import adc_read_u16
                 return adc_read_u16()
+
+        return 0

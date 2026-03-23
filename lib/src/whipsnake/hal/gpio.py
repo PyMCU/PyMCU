@@ -127,6 +127,7 @@ class Pin:
                 if pull != -1:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
+                    # noinspection PyTypeChecker
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
