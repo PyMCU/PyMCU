@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from whipsnake.types import uint8, inline, const
+from whipsnake.types import uint8, inline
 from whipsnake.chips import __CHIP__
 from whipsnake.hal.gpio import Pin
 
@@ -15,89 +15,67 @@ from whipsnake.hal.gpio import Pin
 class SoftSPI:
     """Bit-bang SPI master, zero-cost abstraction (all methods @inline).
 
-    Implements Mode 0 (CPOL=0, CPHA=0), MSB-first SPI in software using
-    four compile-time constant pin names (SCK, MOSI, MISO, optional CS).
-
-    At construction each pin is resolved to a port pointer and bit index.
-    All subsequent operations use these stored values directly, emitting
-    only register writes with no string dispatch at runtime.
-
-    ``self._cs`` is a ``const[str]`` so ``cs != ""`` guards are folded at
-    compile time, adding zero overhead when CS is not used.
+    Implements Mode 0 (CPOL=0, CPHA=0), MSB-first SPI in software.
+    Pin instances are stored directly; pin.high()/low()/value() each compile
+    to a single SBI/CBI/SBIS/SBIC instruction with no runtime dispatch.
 
     Context manager support: ``with spi:`` auto-selects and deselects::
 
-        with SoftSPI("PB5", "PB3", "PB4", cs="PB2"):
+        with SoftSPI(sck_pin, mosi_pin, miso_pin, cs=cs_pin):
             ...
     """
 
     def __init__(self, sck: Pin, mosi: Pin, miso: Pin, cs: Pin = None):
-        """Configure the bit-bang SPI pins and resolve port/bit pointers.
+        """Configure the bit-bang SPI pins.
 
-        sck, mosi, miso, cs: Pin instances; pin names extracted at init.
+        sck, mosi, miso, cs: Pin instances configured by the caller.
         cs:                   optional chip-select pin, idle high when set.
         """
         match __CHIP__.arch:
             case "avr":
-                from whipsnake.hal._softspi.avr import softspi_init
-                from whipsnake.hal._gpio.atmega328p import select_port, select_pin, select_ddr, select_bit
-                # Configure pin directions; SCK and MOSI idle low.
-                softspi_init(sck.name, mosi.name, miso.name)
-                # Resolve SCK output port/bit.
-                self._sck_port = select_port(sck.name)
-                self._sck_bit  = select_bit(sck.name)
-                # Resolve MOSI output port/bit.
-                self._mosi_port = select_port(mosi.name)
-                self._mosi_bit  = select_bit(mosi.name)
-                # Resolve MISO input PIN register/bit.
-                self._miso_pin_reg = select_pin(miso.name)
-                self._miso_bit     = select_bit(miso.name)
+                # Idle SCK and MOSI low.
+                sck.low()
+                mosi.low()
+                # Store Pin instances; transfer uses pin.high()/low()/value().
+                self._sck  = sck
+                self._mosi = mosi
+                self._miso = miso
                 if cs != None:
-                    # Extract name from Pin instance; configure as output, idle high.
-                    _cs_ddr = select_ddr(cs.name)
-                    _cs_ddr[select_bit(cs.name)] = 1
-                    self._cs_port = select_port(cs.name)
-                    self._cs_bit  = select_bit(cs.name)
-                    self._cs_port[self._cs_bit] = 1
+                    cs.high()  # idle high
+                    self._cs_pin = cs
                     self._cs = cs.name
                 else:
                     self._cs = ""
 
     @inline
     def transfer(self, data: uint8) -> uint8:
-        """Send one byte MSB-first and simultaneously receive one byte.
-
-        All port/bit values are compile-time constants, so the loop body
-        compiles to direct register writes with no runtime dispatch.
-        """
-        # Send data byte MSB-first; simultaneously receive one byte.
+        """Send one byte MSB-first and simultaneously receive one byte."""
         match __CHIP__.arch:
             case "avr":
-                from whipsnake.hal._softspi.avr import softspi_transfer_zca
-                return softspi_transfer_zca(self._sck_port, self._sck_bit, self._mosi_port, self._mosi_bit, self._miso_pin_reg, self._miso_bit, data)
+                from whipsnake.hal._softspi.avr import softspi_transfer
+                return softspi_transfer(self._sck, self._mosi, self._miso, data)
             case _:
                 return 0
 
     @inline
     def write(self, data: uint8):
         """Send one byte; the received byte is discarded."""
-        # Transmit one byte; received byte is discarded.
         match __CHIP__.arch:
             case "avr":
-                from whipsnake.hal._softspi.avr import softspi_transfer_zca
-                softspi_transfer_zca(self._sck_port, self._sck_bit, self._mosi_port, self._mosi_bit, self._miso_pin_reg, self._miso_bit, data)
+                from whipsnake.hal._softspi.avr import softspi_transfer
+                softspi_transfer(self._sck, self._mosi, self._miso, data)
 
     @inline
     def select(self):
         """Assert the chip-select line low (if cs was configured)."""
         if self._cs != "":
-            self._cs_port[self._cs_bit] = 0
+            self._cs_pin.low()
 
     @inline
     def deselect(self):
         """Deassert the chip-select line high (if cs was configured)."""
         if self._cs != "":
-            self._cs_port[self._cs_bit] = 1
+            self._cs_pin.high()
 
     def __enter__(self):
         """Assert the chip-select line (context manager entry)."""
