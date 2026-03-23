@@ -6,8 +6,9 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from whipsnake.types import uint8, inline, const, ptr
+from whipsnake.types import uint8, inline
 from whipsnake.chips import __CHIP__
+from whipsnake.hal.gpio import Pin
 
 
 # noinspection PyProtectedMember
@@ -29,25 +30,27 @@ class SPI:
             spi.write(0xFF)
     """
 
-    def __init__(self, cs: const[str] = ""):
+    def __init__(self, cs: Pin = None):
         """Initialize the SPI peripheral.
 
-        cs: optional port-pin name for a custom chip-select line.
+        cs: optional Pin instance for a custom chip-select line.
             When provided it is configured as an output idling high.
         """
-        self._cs = cs
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._spi.avr import spi_init
                 spi_init()
-                if cs != "":
-                    # Resolve CS pin once; configure as output and idle high.
+                if cs != None:
+                    # Extract pin name from Pin instance; resolve once at init.
                     from whipsnake.hal._gpio.atmega328p import select_port, select_ddr, select_bit
-                    _cs_ddr = select_ddr(cs)
-                    _cs_ddr[select_bit(cs)] = 1
-                    self._cs_port = select_port(cs)
-                    self._cs_bit  = select_bit(cs)
+                    _cs_ddr = select_ddr(cs.name)
+                    _cs_ddr[select_bit(cs.name)] = 1
+                    self._cs_port = select_port(cs.name)
+                    self._cs_bit  = select_bit(cs.name)
                     self._cs_port[self._cs_bit] = 1
+                    self._cs = cs.name
+                else:
+                    self._cs = ""
 
     @inline
     def select(self):

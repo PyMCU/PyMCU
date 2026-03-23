@@ -21,6 +21,7 @@
 from whipsnake.types import uint8
 from whipsnake.hal.softspi import SoftSPI
 from whipsnake.hal.uart import UART
+from whipsnake.hal.gpio import Pin
 
 
 def nibble_hi(val: uint8) -> uint8:
@@ -39,7 +40,11 @@ def nibble_lo(val: uint8) -> uint8:
 
 def main():
     uart = UART(9600)
-    spi  = SoftSPI(sck="PC0", mosi="PC1", miso="PC2", cs="PC3")
+    sck_pin  = Pin("PC0", Pin.OUT)
+    mosi_pin = Pin("PC1", Pin.OUT)
+    miso_pin = Pin("PC2", Pin.IN)
+    cs_pin   = Pin("PC3", Pin.OUT)
+    spi  = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, cs=cs_pin)
 
     uart.println("SSPI")
 

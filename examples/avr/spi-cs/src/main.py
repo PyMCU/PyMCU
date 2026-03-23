@@ -36,7 +36,8 @@ def nibble_lo(val: uint8) -> uint8:
 
 def main():
     uart = UART(9600)
-    spi = SPI(cs="PB0")
+    cs_pin = Pin("PB0", Pin.OUT)
+    spi = SPI(cs=cs_pin)
 
     uart.println("SCS")
 

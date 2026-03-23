@@ -6,8 +6,9 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from whipsnake.types import uint8, inline, const, ptr
+from whipsnake.types import uint8, inline, const
 from whipsnake.chips import __CHIP__
+from whipsnake.hal.gpio import Pin
 
 
 # noinspection PyProtectedMember
@@ -30,35 +31,37 @@ class SoftSPI:
             ...
     """
 
-    def __init__(self, sck: const[str], mosi: const[str], miso: const[str], cs: const[str] = ""):
+    def __init__(self, sck: Pin, mosi: Pin, miso: Pin, cs: Pin = None):
         """Configure the bit-bang SPI pins and resolve port/bit pointers.
 
-        sck, mosi, miso: compile-time pin name strings.
-        cs:              optional chip-select pin name, idle high when set.
+        sck, mosi, miso, cs: Pin instances; pin names extracted at init.
+        cs:                   optional chip-select pin, idle high when set.
         """
-        self._cs = cs
         match __CHIP__.arch:
             case "avr":
                 from whipsnake.hal._softspi.avr import softspi_init
                 from whipsnake.hal._gpio.atmega328p import select_port, select_pin, select_ddr, select_bit
                 # Configure pin directions; SCK and MOSI idle low.
-                softspi_init(sck, mosi, miso)
+                softspi_init(sck.name, mosi.name, miso.name)
                 # Resolve SCK output port/bit.
-                self._sck_port = select_port(sck)
-                self._sck_bit  = select_bit(sck)
+                self._sck_port = select_port(sck.name)
+                self._sck_bit  = select_bit(sck.name)
                 # Resolve MOSI output port/bit.
-                self._mosi_port = select_port(mosi)
-                self._mosi_bit  = select_bit(mosi)
+                self._mosi_port = select_port(mosi.name)
+                self._mosi_bit  = select_bit(mosi.name)
                 # Resolve MISO input PIN register/bit.
-                self._miso_pin_reg = select_pin(miso)
-                self._miso_bit     = select_bit(miso)
-                if cs != "":
-                    # Resolve CS pin; configure as output and idle high.
-                    _cs_ddr = select_ddr(cs)
-                    _cs_ddr[select_bit(cs)] = 1
-                    self._cs_port = select_port(cs)
-                    self._cs_bit  = select_bit(cs)
+                self._miso_pin_reg = select_pin(miso.name)
+                self._miso_bit     = select_bit(miso.name)
+                if cs != None:
+                    # Extract name from Pin instance; configure as output, idle high.
+                    _cs_ddr = select_ddr(cs.name)
+                    _cs_ddr[select_bit(cs.name)] = 1
+                    self._cs_port = select_port(cs.name)
+                    self._cs_bit  = select_bit(cs.name)
                     self._cs_port[self._cs_bit] = 1
+                    self._cs = cs.name
+                else:
+                    self._cs = ""
 
     @inline
     def transfer(self, data: uint8) -> uint8:
