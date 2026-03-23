@@ -33,8 +33,10 @@
 
 #include "ConditionalCompilator.h"
 
+#include <functional>
 #include <iostream>
 #include <optional>
+#include <vector>
 
 ConditionalCompilator::ConditionalCompilator(DeviceConfig config)
     : config(std::move(config)) {}
@@ -241,6 +243,52 @@ bool ConditionalCompilator::process_statement(
                 dynamic_cast<const StringLiteral*>(branch.pattern.get())) {
           if (str->value == target_val) {
             // This case matches — emit its body
+            if (const auto block =
+                    dynamic_cast<const Block*>(branch.body.get())) {
+              for (const auto& inner : block->statements) {
+                if (const auto imp =
+                        dynamic_cast<const ImportStmt*>(inner.get())) {
+                  prog.imports.push_back(std::make_unique<ImportStmt>(
+                      imp->module_name, imp->symbols, imp->relative_level));
+                } else {
+                  auto& mut_inner =
+                      const_cast<std::unique_ptr<Statement>&>(inner);
+                  new_stmts.push_back(std::move(mut_inner));
+                }
+              }
+            }
+            return true;
+          }
+        }
+        // Handle OR patterns: case "atmega328p" | "atmega168p":
+        if (const auto bin =
+                dynamic_cast<const BinaryExpr*>(branch.pattern.get())) {
+          // Flatten a left-associative BitOr tree into a list of alternatives.
+          std::vector<std::string> alts;
+          std::function<void(const Expression*)> flatten =
+              [&](const Expression* e) {
+                if (const auto b = dynamic_cast<const BinaryExpr*>(e)) {
+                  if (b->op == BinaryOp::BitOr) {
+                    flatten(b->left.get());
+                    flatten(b->right.get());
+                    return;
+                  }
+                }
+                if (const auto s = dynamic_cast<const StringLiteral*>(e))
+                  alts.push_back(s->value);
+                else if (const auto il =
+                             dynamic_cast<const IntegerLiteral*>(e))
+                  alts.push_back(std::to_string(il->value));
+              };
+          flatten(bin);
+          bool any_alt = false;
+          for (const auto& alt : alts) {
+            if (alt == target_val) {
+              any_alt = true;
+              break;
+            }
+          }
+          if (any_alt) {
             if (const auto block =
                     dynamic_cast<const Block*>(branch.body.get())) {
               for (const auto& inner : block->statements) {
