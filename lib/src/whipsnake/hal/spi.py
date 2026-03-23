@@ -58,7 +58,12 @@ class SPI:
                         from whipsnake.hal._spi.avr import spi_init
                         spi_init()
                         self._mode = "c"
-                        if cs is not None:
+                        if cs is None:
+                            self._cs = ""
+                        else:
+                            # else-branch visited last in codegen, so self._cs = cs.name
+                            # is the final value in str_constant_variables and
+                            # if self._cs != "": folds to True in select()/deselect().
                             from whipsnake.hal._gpio.atmega328p import select_port, select_ddr, select_bit
                             _cs_ddr = select_ddr(cs.name)
                             _cs_ddr[select_bit(cs.name)] = 1
@@ -66,8 +71,6 @@ class SPI:
                             self._cs_bit  = select_bit(cs.name)
                             self._cs_port[self._cs_bit] = 1
                             self._cs = cs.name
-                        else:
-                            self._cs = ""
                     case 1:
                         from whipsnake.hal._spi.avr import spi_peripheral_init
                         spi_peripheral_init()

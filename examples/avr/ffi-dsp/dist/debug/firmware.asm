@@ -17,7 +17,7 @@
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
-.org 0x0000
+.org 0x0
 .global main
 	RJMP	main
 nibble_hi:
@@ -99,7 +99,7 @@ main:
 ; main.py:73:     uart.write(tag)
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 ; main.py:79: 
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -118,7 +118,7 @@ L_36:
 	LDI	R24, 200
 	LDI	R22, 10
 	LDI	R20, 100
-	RCALL	c_clamp8
+	CALL	c_clamp8
 	MOV	R6, R24
 ; main.py:86:     print_hex(uart, 'C', r1)
 ; main.py:73:     uart.write(tag)
@@ -154,7 +154,7 @@ L_45:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R6
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -173,7 +173,7 @@ L_49:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R6
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -207,7 +207,7 @@ L_57:
 	CLR	R24
 	LDI	R22, 200
 	LDI	R20, 128
-	RCALL	c_lerp8
+	CALL	c_lerp8
 	MOV	R7, R24
 ; main.py:90:     print_hex(uart, 'L', r2)
 ; main.py:73:     uart.write(tag)
@@ -243,7 +243,7 @@ L_66:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R7
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -262,7 +262,7 @@ L_70:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R7
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -295,7 +295,7 @@ L_78:
 	STS	0x00C6, R24
 	LDI	R24, 128
 	LDI	R22, 200
-	RCALL	c_scale8
+	CALL	c_scale8
 	MOV	R8, R24
 ; main.py:94:     print_hex(uart, 'K', r3)
 ; main.py:73:     uart.write(tag)
@@ -331,7 +331,7 @@ L_87:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R8
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -350,7 +350,7 @@ L_91:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R8
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -384,7 +384,7 @@ L_99:
 	LDI	R24, 50
 	LDI	R22, 200
 	LDI	R20, 64
-	RCALL	c_smooth8
+	CALL	c_smooth8
 	MOV	R9, R24
 ; main.py:98:     print_hex(uart, 'E', r4)
 ; main.py:73:     uart.write(tag)
@@ -420,7 +420,7 @@ L_108:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R9
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -439,7 +439,7 @@ L_112:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R9
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -472,7 +472,7 @@ L_120:
 	STS	0x00C6, R24
 	LDI	R24, 30
 	LDI	R22, 50
-	RCALL	c_deadband8
+	CALL	c_deadband8
 	MOV	R10, R24
 ; main.py:102:     print_hex(uart, 'D', r5)
 ; main.py:73:     uart.write(tag)
@@ -508,7 +508,7 @@ L_129:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R10
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -527,7 +527,7 @@ L_133:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R10
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -560,7 +560,7 @@ L_141:
 	STS	0x00C6, R24
 	LDI	R24, 80
 	LDI	R22, 50
-	RCALL	c_deadband8
+	CALL	c_deadband8
 	MOV	R11, R24
 ; main.py:106:     print_hex(uart, 'B', r6)
 ; main.py:73:     uart.write(tag)
@@ -596,7 +596,7 @@ L_150:
 ; main.py:75:     uart.write(nibble_hi(val))
 	MOV	R24, R11
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -615,7 +615,7 @@ L_154:
 ; main.py:76:     uart.write(nibble_lo(val))
 	MOV	R24, R11
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 
@@ -653,7 +653,7 @@ L_162:
 ; main.py:73:     uart.write(tag)
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 ; main.py:79: 
 ; main.py:41: @extern("c_scale8")
 ; main.py:45: 

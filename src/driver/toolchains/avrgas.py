@@ -282,15 +282,27 @@ SECTIONS
 
         Key differences:
           .equ LABEL = VALUE   →  .equ LABEL, VALUE
+          .org WORD_ADDR       →  .org BYTE_ADDR  (multiply by 2: AVRA is word-addressed)
           high(EXPR)           →  hi8(EXPR)
           low(EXPR)            →  lo8(EXPR)
           .db BYTES            →  .byte BYTES
           .global main         →  .global main   (added if missing)
+          RCALL                →  CALL  (avoids R_AVR_13_PCREL overflow in FFI builds)
+          RJMP                 →  kept as RJMP  (vector table slots must stay 4 bytes)
         """
         import re as _re
         lines = src.splitlines(keepends=True)
         out: list[str] = []
         has_global_main = False
+
+        def _org_to_bytes(m: "_re.Match[str]") -> str:
+            """Convert AVRA word-addressed .org to GNU AS byte-addressed .org."""
+            val_str = m.group(1).strip()
+            try:
+                word_addr = int(val_str, 0)
+            except ValueError:
+                return m.group(0)  # leave symbolic .org unchanged
+            return f".org {hex(word_addr * 2)}"
 
         prev_was_byte = False
         for line in lines:
@@ -300,12 +312,27 @@ SECTIONS
                 lambda m: m.group(1) + ", ",
                 line,
             )
+            # .org WORD_ADDR  →  .org BYTE_ADDR  (AVRA word → GNU AS byte)
+            line = _re.sub(r"^\s*\.org\s+(\S+)", _org_to_bytes, line)
             # high(...)  →  hi8(...)  |  low(...)  →  lo8(...)
             line = _re.sub(r"\bhigh\(", "hi8(", line)
             line = _re.sub(r"\blow\(", "lo8(", line)
             # AVRA labels are word-addressed; GNU AS labels are byte-addressed.
             # "label * 2" (word→byte conversion) must be removed for GNU AS.
             line = _re.sub(r"\b(hi8|lo8)\((\w+)\s*\*\s*2\)", r"\1(\2)", line)
+            # RCALL  →  CALL
+            # avr-ld may generate R_AVR_13_PCREL relocations for RCALL that
+            # overflow when calling external C symbols in FFI builds.
+            # Upgrade RCALL unconditionally to the 2-word CALL so the linker
+            # never truncates a relocation.
+            #
+            # RJMP is intentionally NOT converted to JMP: the vector table
+            # uses RJMP+NOP (4 bytes per slot) and the .org spacing is also
+            # 4 bytes; converting to JMP (4 bytes) + NOP would make each used
+            # slot 6 bytes and the next .org would move backwards.  RJMP range
+            # is ±2047 words which is sufficient for all targets within a
+            # single assembly file.
+            line = _re.sub(r"\bRCALL\b", "CALL", line)
             # .db ...  →  .byte ...
             line = _re.sub(r"^\s*\.db\b", ".byte", line)
 
@@ -354,6 +381,7 @@ SECTIONS
         if not avr_as:
             raise RuntimeError("avr-as not found on PATH")
 
+        # Translate AVRA-specific syntax to GNU AS before assembling
         # Translate AVRA-specific syntax to GNU AS before assembling
         src = asm_file.read_text()
         translated = self._avra_to_gnuas(src)

@@ -40,20 +40,24 @@ def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
     Factory method to return the appropriate toolchain for a given chip.
     Currently supports:
     - Gputils (PIC10/12/14/16/17/18)
-    - Avra (AVR)
+    - AvrgasToolchain (AVR, avr-as + avr-ld + avr-objcopy)
 
     Raises:
         ValueError: If no toolchain supports the given chip.
     """
-    # List of available toolchains
+    # List of available toolchains in preference order.
+    # AvrgasToolchain is preferred over AvraToolchain for AVR: avr-as ships
+    # with binutils-avr (standard distro package) and does not require
+    # building AVRA from source.
     toolchains = [
         GputilsToolchain,
-        AvraToolchain
+        AvrgasToolchain,
+        AvraToolchain,
     ]
 
     for toolchain_cls in toolchains:
         if toolchain_cls.supports(chip):
-            return toolchain_cls(console)
+            return toolchain_cls(console, chip) if toolchain_cls is AvrgasToolchain else toolchain_cls(console)
 
     raise ValueError(f"No toolchain found supporting chip: {chip}")
 

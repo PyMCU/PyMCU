@@ -427,6 +427,24 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                         if obj.exists():
                             obj.unlink()
 
+                elif toolchain.get_name() == "avr-as":
+                    # ── avr-as pipeline (non-FFI): assemble → link → objcopy ───────────
+                    # Same as FFI but without C compilation.
+                    from ..toolchains.avrgas import AvrgasToolchain as _AvrgasToolchain
+                    gas_tc: _AvrgasToolchain = toolchain  # type: ignore[assignment]
+
+                    firmware_obj = gas_tc.assemble(output_file)
+                    progress.update(build_task, description="Linking...", completed=75)
+                    elf_file = gas_tc.link(firmware_obj, [], output_dir)
+                    progress.update(build_task, description="Generating HEX...", completed=85)
+                    hex_file = gas_tc.elf_to_hex(elf_file)
+
+                    debug_dir = output_dir / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(elf_file), str(debug_dir / elf_file.name))
+                    if firmware_obj.exists():
+                        firmware_obj.unlink()
+
                 else:
                     # ── Standard avra pipeline with linker-relaxation ─────────────────
                     import re as _re
@@ -510,8 +528,9 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     if not debug_dir.exists():
                         debug_dir.mkdir(parents=True)
                     shutil.move(str(elf_path), str(debug_dir / elf_path.name))
-            elif use_ffi and hex_file is not None:
-                # Flash size report for FFI builds
+            elif hex_file is not None:
+                # Flash size report for avr-as builds (FFI or non-FFI).
+                # ELF is already moved to debug/ by the assembly step above.
                 progress.update(build_task, description="Reporting size...")
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:

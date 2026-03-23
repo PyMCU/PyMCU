@@ -14,7 +14,7 @@
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
-.org 0x0000
+.org 0x0
 .global main
 	RJMP	main
 nibble_hi:
@@ -92,13 +92,13 @@ main:
 ; main.py:54:     print("EXTERN")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 	LDI	R24, 3
 	LDI	R22, 10
-	RCALL	c_mul8
+	CALL	c_mul8
 	MOV	R5, R24
 ; main.py:58:     print_hex(uart, 'M', m)
 ; main.py:46:     uart.write(prefix)
@@ -130,7 +130,7 @@ L_38:
 ; main.py:48:     uart.write(nibble_hi(val))
 	MOV	R24, R5
 	MOV	R8, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -147,7 +147,7 @@ L_42:
 ; main.py:49:     uart.write(nibble_lo(val))
 	MOV	R24, R5
 	MOV	R10, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -176,7 +176,7 @@ L_50:
 	STS	0x00C6, R24
 	LDI	R24, 200
 	LDI	R22, 100
-	RCALL	c_add_saturate
+	CALL	c_add_saturate
 	MOV	R6, R24
 ; main.py:62:     print_hex(uart, 'S', s)
 ; main.py:46:     uart.write(prefix)
@@ -208,7 +208,7 @@ L_59:
 ; main.py:48:     uart.write(nibble_hi(val))
 	MOV	R24, R6
 	MOV	R8, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -225,7 +225,7 @@ L_63:
 ; main.py:49:     uart.write(nibble_lo(val))
 	MOV	R24, R6
 	MOV	R10, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -254,7 +254,7 @@ L_71:
 	STS	0x00C6, R24
 	LDI	R24, 4
 	LDI	R22, 6
-	RCALL	c_add_saturate
+	CALL	c_add_saturate
 	MOV	R4, R24
 ; main.py:66:     print_hex(uart, 'A', a)
 ; main.py:46:     uart.write(prefix)
@@ -286,7 +286,7 @@ L_80:
 ; main.py:48:     uart.write(nibble_hi(val))
 	MOV	R24, R4
 	MOV	R8, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -303,7 +303,7 @@ L_84:
 ; main.py:49:     uart.write(nibble_lo(val))
 	MOV	R24, R4
 	MOV	R10, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+3, R24
 ; main.py:41:         return n + 48
 ; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
@@ -333,10 +333,10 @@ L_92:
 ; main.py:68:     print("OK")
 	LDI	R30, lo8(__str_2)
 	LDI	R31, hi8(__str_2)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 ; main.py:70:     while True:
 L_93:
 	RJMP	L_93

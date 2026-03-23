@@ -19,7 +19,7 @@
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
 
-.org 0x0000
+.org 0x0
 .global main
 	RJMP	main
 nibble_hi:
@@ -101,7 +101,7 @@ main:
 ; main.py:73:     print_u8(uart, tag, lo)
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 ; main.py:79: 
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -122,7 +122,7 @@ L_36:
 	LDI	R22, 255
 	LDI	R23, 3
 	LDI	R20, 255
-	RCALL	arduino_map
+	CALL	arduino_map
 	MOV	R14, R24
 	MOV	R15, R25
 ; main.py:82:     print_u16_lo(uart, 'M', m1)
@@ -163,7 +163,7 @@ L_46:
 	LDD	R24, Y+3
 	MOV	R4, R24
 	LDD	R24, Y+3
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -183,7 +183,7 @@ L_50:
 	LDD	R24, Y+3
 	MOV	R5, R24
 	LDD	R24, Y+3
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -219,7 +219,7 @@ L_58:
 	LDI	R22, 255
 	LDI	R23, 3
 	LDI	R20, 255
-	RCALL	arduino_map
+	CALL	arduino_map
 	STD	Y+12, R24
 	STD	Y+13, R25
 ; main.py:86:     print_u16_lo(uart, 'F', m2)
@@ -261,7 +261,7 @@ L_68:
 	LDD	R24, Y+3
 	MOV	R4, R24
 	LDD	R24, Y+3
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -281,7 +281,7 @@ L_72:
 	LDD	R24, Y+3
 	MOV	R5, R24
 	LDD	R24, Y+3
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -316,7 +316,7 @@ L_80:
 	LDI	R22, 255
 	LDI	R23, 3
 	LDI	R20, 255
-	RCALL	arduino_map
+	CALL	arduino_map
 	STD	Y+14, R24
 	STD	Y+15, R25
 ; main.py:90:     print_u16_lo(uart, 'Z', m3)
@@ -358,7 +358,7 @@ L_90:
 	LDD	R24, Y+3
 	MOV	R4, R24
 	LDD	R24, Y+3
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -378,7 +378,7 @@ L_94:
 	LDD	R24, Y+3
 	MOV	R5, R24
 	LDD	R24, Y+3
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -413,7 +413,7 @@ L_102:
 	LDI	R25, 1
 	LDI	R22, 10
 	LDI	R20, 200
-	RCALL	arduino_constrain
+	CALL	arduino_constrain
 	MOV	R10, R24
 	MOV	R11, R25
 ; main.py:94:     print_u16_lo(uart, 'H', c1)
@@ -454,7 +454,7 @@ L_112:
 	LDD	R24, Y+3
 	MOV	R4, R24
 	LDD	R24, Y+3
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -474,7 +474,7 @@ L_116:
 	LDD	R24, Y+3
 	MOV	R5, R24
 	LDD	R24, Y+3
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -508,7 +508,7 @@ L_124:
 	LDI	R24, 5
 	LDI	R22, 10
 	LDI	R20, 200
-	RCALL	arduino_constrain
+	CALL	arduino_constrain
 	MOV	R12, R24
 	MOV	R13, R25
 ; main.py:98:     print_u16_lo(uart, 'L', c2)
@@ -549,7 +549,7 @@ L_134:
 	LDD	R24, Y+3
 	MOV	R4, R24
 	LDD	R24, Y+3
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -569,7 +569,7 @@ L_138:
 	LDD	R24, Y+3
 	MOV	R5, R24
 	LDD	R24, Y+3
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -602,7 +602,7 @@ L_146:
 	STS	0x00C6, R24
 	CLR	R24
 	LDI	R25, 2
-	RCALL	adc_to_pwm
+	CALL	adc_to_pwm
 	MOV	R6, R24
 ; main.py:102:     print_u8(uart, 'P', p1)
 ; main.py:64:     uart.write(tag)
@@ -638,7 +638,7 @@ L_155:
 ; main.py:66:     uart.write(nibble_hi(val))
 	MOV	R24, R6
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+4, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -657,7 +657,7 @@ L_159:
 ; main.py:67:     uart.write(nibble_lo(val))
 	MOV	R24, R6
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+4, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -690,7 +690,7 @@ L_167:
 	STS	0x00C6, R24
 	LDI	R24, 255
 	LDI	R25, 3
-	RCALL	adc_to_pwm
+	CALL	adc_to_pwm
 	MOV	R7, R24
 ; main.py:106:     print_u8(uart, 'T', p2)
 ; main.py:64:     uart.write(tag)
@@ -726,7 +726,7 @@ L_176:
 ; main.py:66:     uart.write(nibble_hi(val))
 	MOV	R24, R7
 	MOV	R4, R24
-	RCALL	nibble_hi
+	CALL	nibble_hi
 	STD	Y+4, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -745,7 +745,7 @@ L_180:
 ; main.py:67:     uart.write(nibble_lo(val))
 	MOV	R24, R7
 	MOV	R5, R24
-	RCALL	nibble_lo
+	CALL	nibble_lo
 	STD	Y+4, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
@@ -783,7 +783,7 @@ L_188:
 ; main.py:73:     print_u8(uart, tag, lo)
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
-	RCALL	__uart_send_z
+	CALL	__uart_send_z
 ; main.py:79: 
 ; main.py:41:     pass
 ; main.py:45:     pass

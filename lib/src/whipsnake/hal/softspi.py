@@ -10,14 +10,20 @@
 #
 # Mode 0 (CPOL=0, CPHA=0), MSB-first.
 #
-# transfer() uses the shift-left trick: tx and result are shifted left each
-# iteration so bit 7 is always the active bit, eliminating per-bit mask
-# constants.
+# Controller mode:
+#   transfer() uses the shift-left trick: tx and result are shifted left each
+#   iteration so bit 7 is always the active bit, eliminating per-bit mask
+#   constants.
 #
-# half_us: half-period in microseconds; computed from the baudrate (kHz)
-# parameter at construction time as 500 // baudrate.  When half_us == 0
-# (baudrate > 500 kHz) the guards fold at compile time and both delay_us
-# calls are eliminated entirely.
+#   half_us: half-period in microseconds; computed from the baudrate (kHz)
+#   parameter at construction time as 500 // baudrate.  When half_us == 0
+#   (baudrate > 500 kHz) the guards fold at compile time and both delay_us
+#   calls are eliminated entirely.
+#
+# Peripheral mode:
+#   exchange() follows SCK driven by the controller.  Data is set up on MISO
+#   before each rising edge and sampled from MOSI on the rising edge (Mode 0).
+#   No delay_us needed -- the controller sets the pace.
 # -----------------------------------------------------------------------------
 
 from whipsnake.types import uint8, uint16, inline
@@ -27,98 +33,198 @@ from whipsnake.time import delay_us
 
 # noinspection PyProtectedMember
 class SoftSPI:
-    """Bit-bang SPI master, zero-cost abstraction (all methods @inline).
+    """Bit-bang SPI controller or peripheral, zero-cost abstraction.
 
     Implements Mode 0 (CPOL=0, CPHA=0), MSB-first SPI in software using
     only Pin ZCA methods -- architecture-independent.
 
-    Pin instances are stored directly; pin.high()/low()/value() each compile
-    to a single SBI/CBI/SBIS/SBIC instruction with no runtime dispatch.
+    The operating role is selected at construction via the ``mode`` argument
+    and baked in at compile time (the unused code path is dead-eliminated):
 
-    baudrate: target SCK frequency in kHz (default 500 kHz).  The half-period
-    delay is computed as ``500 // baudrate`` microseconds.  When baudrate > 500
-    the result rounds to 0 and both delay_us calls are eliminated entirely.
+        spi = SoftSPI(sck, mosi, miso)                          # controller
+        spi = SoftSPI(sck, mosi, miso, mode=SoftSPI.PERIPHERAL) # peripheral
 
-    Context manager support: ``with spi:`` auto-selects and deselects::
+    Role constants::
 
-        with SoftSPI(sck_pin, mosi_pin, miso_pin, cs=cs_pin):
-            ...
+        SoftSPI.CONTROLLER = 0
+        SoftSPI.PERIPHERAL = 1
+
+    Controller usage::
+
+        spi = SoftSPI(sck_pin, mosi_pin, miso_pin, cs=cs_pin, baudrate=500)
+        with spi:
+            rx = spi.transfer(0xA5)
+
+    Peripheral usage::
+
+        spi = SoftSPI(sck_pin, mosi_pin, miso_pin, mode=SoftSPI.PERIPHERAL)
+        while True:
+            if spi.cs_asserted():
+                rx = spi.exchange(0xAB)  # reply 0xAB, return controller byte
     """
 
-    def __init__(self, sck: Pin, mosi: Pin, miso: Pin, cs: Pin = None, baudrate: uint16 = 500):
+    CONTROLLER = 0
+    PERIPHERAL = 1
+
+    def __init__(self, sck: Pin, mosi: Pin, miso: Pin, mode: uint8 = 0, cs: Pin = None, baudrate: uint16 = 500):
         """Configure the bit-bang SPI pins.
 
         sck, mosi, miso: Pin instances configured by the caller.
-        cs:              optional chip-select pin, idle high when set.
-        baudrate:        target SCK frequency in kHz; default 500 kHz.
+        mode:            SoftSPI.CONTROLLER (0, default) or SoftSPI.PERIPHERAL (1).
+        cs:              optional chip-select Pin.
+                         Controller: idle high, driven low during transfers.
+                         Peripheral: monitored via cs_asserted(); ignored otherwise.
+        baudrate:        target SCK frequency in kHz (controller mode only; default 500 kHz).
         """
-        # Idle SCK and MOSI low.
-        sck.low()
-        mosi.low()
-        # Store Pin instances; transfer uses pin.high()/low()/value().
         self._sck  = sck
         self._mosi = mosi
         self._miso = miso
-        # Half-period in microseconds: 500 us / baudrate_kHz.
-        # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
-        half_us: uint8 = 500 // baudrate
-        self._half_us = half_us
-        if cs is not None:
-            cs.high()  # idle high
-            self._cs_pin = cs
-            self._cs = cs.name
-        else:
-            self._cs = ""
+        match mode:
+            case 0:
+                # Controller: SCK and MOSI idle low; CS idle high.
+                sck.low()
+                mosi.low()
+                self._mode = "c"
+                # Half-period in microseconds: 500 us / baudrate_kHz.
+                # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
+                half_us: uint8 = 500 // baudrate
+                self._half_us = half_us
+                if cs is None:
+                    self._cs = ""
+                else:
+                    # cs.high() idles the chip-select line high.
+                    # The else-branch is visited last in codegen, so self._cs = cs.name
+                    # is the final assignment tracked in str_constant_variables -- which
+                    # lets `if self._cs != "":` fold to True in select()/deselect().
+                    cs.high()
+                    self._cs_pin = cs
+                    self._cs = cs.name
+            case 1:
+                # Peripheral: MISO is our output, SCK and MOSI are inputs.
+                miso.low()
+                self._mode = "p"
+                self._half_us = 0
+                if cs is None:
+                    self._cs = ""
+                else:
+                    # cs.high() enables the internal pull-up so the CS line does not
+                    # float before the controller drives it.
+                    # else-branch visited last in codegen -> self._cs = cs.name
+                    # is the final tracked value, so cs_asserted() folds correctly.
+                    cs.high()
+                    self._cs_pin = cs
+                    self._cs = cs.name
 
     @inline
     def transfer(self, data: uint8) -> uint8:
-        """Send one byte MSB-first and simultaneously receive one byte.
+        """Controller mode: send one byte MSB-first and simultaneously receive one byte.
 
         Uses the shift-left trick: tx and result are shifted left each
         iteration so bit 7 is always the active bit.
         """
-        tx: uint8 = data
-        result: uint8 = 0
-        i: uint8 = 0
-        while i < 8:
-            if tx & 0x80:
-                self._mosi.high()
-            else:
-                self._mosi.low()
-            if self._half_us > 0:
-                delay_us(self._half_us)
-            self._sck.high()
-            result = result << 1
-            if self._miso.value():
-                result = result | 1
-            if self._half_us > 0:
-                delay_us(self._half_us)
-            self._sck.low()
-            tx = tx << 1
-            i = i + 1
-        return result
+        if self._mode == "c":
+            tx: uint8 = data
+            result: uint8 = 0
+            i: uint8 = 0
+            while i < 8:
+                if tx & 0x80:
+                    self._mosi.high()
+                else:
+                    self._mosi.low()
+                if self._half_us > 0:
+                    delay_us(self._half_us)
+                self._sck.high()
+                result = result << 1
+                if self._miso.value():
+                    result = result | 1
+                if self._half_us > 0:
+                    delay_us(self._half_us)
+                self._sck.low()
+                tx = tx << 1
+                i = i + 1
+            return result
+        return 0
 
     @inline
     def write(self, data: uint8):
-        """Send one byte; the received byte is discarded."""
-        self.transfer(data)
+        """Controller mode: send one byte; the received byte is discarded."""
+        if self._mode == "c":
+            self.transfer(data)
+
+    @inline
+    def exchange(self, data: uint8) -> uint8:
+        """Peripheral mode: drive MISO with data while controller clocks 8 bits.
+
+        Implements SPI Mode 0 (CPOL=0, CPHA=0): MISO is set up before each
+        rising SCK edge and MOSI is sampled on the rising edge.  The controller
+        drives the clock -- no delay_us is used.
+
+        Returns the byte received from the controller.
+        """
+        if self._mode == "p":
+            tx: uint8 = data
+            result: uint8 = 0
+            i: uint8 = 0
+            while i < 8:
+                # Drive MISO with current MSB before rising edge.
+                if tx & 0x80:
+                    self._miso.high()
+                else:
+                    self._miso.low()
+                # Wait for SCK rising edge.
+                sck_val: uint8 = self._sck.value()
+                while sck_val == 0:
+                    sck_val = self._sck.value()
+                # Sample MOSI on rising edge.
+                result = result << 1
+                if self._mosi.value():
+                    result = result | 1
+                # Wait for SCK falling edge.
+                sck_val = self._sck.value()
+                while sck_val == 1:
+                    sck_val = self._sck.value()
+                tx = tx << 1
+                i = i + 1
+            return result
+        return 0
+
+    @inline
+    def receive(self) -> uint8:
+        """Peripheral mode: receive one byte from the controller (TX = 0x00)."""
+        if self._mode == "p":
+            return self.exchange(0)
+        return 0
+
+    @inline
+    def cs_asserted(self) -> uint8:
+        """Return 1 if the CS line is asserted (low), else 0.
+
+        Peripheral mode only.  Returns 0 if no cs pin was configured.
+        """
+        if self._mode == "p":
+            if self._cs != "":
+                if self._cs_pin.value() == 0:
+                    return 1
+        return 0
 
     @inline
     def select(self):
-        """Assert the chip-select line low (if cs was configured)."""
-        if self._cs != "":
-            self._cs_pin.low()
+        """Controller mode: assert the chip-select line low."""
+        if self._mode == "c":
+            if self._cs != "":
+                self._cs_pin.low()
 
     @inline
     def deselect(self):
-        """Deassert the chip-select line high (if cs was configured)."""
-        if self._cs != "":
-            self._cs_pin.high()
+        """Controller mode: deassert the chip-select line high."""
+        if self._mode == "c":
+            if self._cs != "":
+                self._cs_pin.high()
 
     def __enter__(self):
-        """Assert the chip-select line (context manager entry)."""
+        """Controller mode: assert chip-select (context manager entry)."""
         self.select()
 
     def __exit__(self):
-        """Deassert the chip-select line (context manager exit)."""
+        """Controller mode: deassert chip-select (context manager exit)."""
         self.deselect()
