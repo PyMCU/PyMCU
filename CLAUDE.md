@@ -26,11 +26,6 @@ Each commit must leave `dotnet test tests/integration/Whipsnake.IntegrationTests
 
 ## Known Compiler Gotchas
 
-- **`+=` in unrolled loops fails** — `for x in [1,2,3]: acc += x` produces wrong code.
-  Use `acc = acc + x`. This applies to: `for x in list`, `for x in b"..."`,
-  `for x, y in zip(...)`, `for x in reversed(...)`, `for i, x in enumerate(list)`.
-- **`e: uint16 = CONST; e += 1` fails** when `e` is tracked in `constant_variables`.
-  Use `e = e + 1` until the IRGenerator AugAssign path is fixed.
 - **ASCII-only stdlib** — the compiler lexer rejects non-ASCII. Do not use Unicode in
   any file under `lib/src/whipsnake/`.
 - **HAL match rules** — see `AGENTS.md` for dotted-name vs capture-name patterns.
