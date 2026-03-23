@@ -10,6 +10,8 @@ def select_port(name: str) -> ptr[uint8]:
             return PORTC
         case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
             return PORTD
+        case _:
+            raise NotImplementedError('Unsupported Pin')
 
 @inline
 def select_ddr(name: str) -> ptr[uint8]:
@@ -20,6 +22,8 @@ def select_ddr(name: str) -> ptr[uint8]:
             return DDRC
         case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
             return DDRD
+        case _:
+            raise NotImplementedError('Unsupported Pin')
 
 @inline
 def select_pin(name: str) -> ptr[uint8]:
@@ -30,6 +34,8 @@ def select_pin(name: str) -> ptr[uint8]:
             return PINC
         case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
             return PIND
+        case _:
+            raise NotImplementedError('Unsupported Pin')
 
 @inline
 def select_bit(name: str) -> uint8:
@@ -50,6 +56,8 @@ def select_bit(name: str) -> uint8:
             return 6
         case 'PD7':
             return 7
+        case _:
+            raise NotImplementedError('Unsupported Pin')
 
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
