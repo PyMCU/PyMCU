@@ -23,6 +23,8 @@ from whipsnake.types import uint8, inline
 # Best practice: clear SE after waking to prevent accidental re-entry.
 #
 # SMCR I/O address = 0x33. SBI/CBI range is 0x00-0x1F so we use OUT.
+from whipsnake.types import asm
+
 
 @inline
 def sleep_idle():

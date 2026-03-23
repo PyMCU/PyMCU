@@ -31,6 +31,8 @@ from whipsnake.types import uint8, uint16, inline, const
 # Solution: preload the final value into a register BEFORE step 3, then:
 #   STS WDTCSR, r_enable  (step 3: 2 cycles)
 #   STS WDTCSR, r_final   (step 4: 2 cycles)  -- 2 cycles after step 3 = OK
+from whipsnake.types import asm
+
 
 @inline
 def wdt_enable(wdp: const[uint8]):
