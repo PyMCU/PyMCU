@@ -23,6 +23,24 @@ jobs:
         with:
           submodules: recursive
 
+      # ── Optional: connect to private Headscale network ────────────────────────
+      # Set HEADSCALE_URL (var) and HEADSCALE_AUTH_KEY (secret) to enable.
+      # This gives CI access to resources on your private lab (NuGet feeds,
+      # artifact registries, etc.) that are not reachable from the public internet.
+      #
+      # Note: Tailscale runs on the runner host, not inside the container.
+      # To route container traffic through Tailscale, add "--network host" to
+      # container.options above.
+      - name: Connect to Headscale (optional)
+        if: vars.HEADSCALE_URL != ''
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up \
+            --authkey="${{ secrets.HEADSCALE_AUTH_KEY }}" \
+            --login-server="${{ vars.HEADSCALE_URL }}" \
+            --hostname="whipsnake-ci-${{ github.run_id }}" \
+            --accept-routes
+
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:

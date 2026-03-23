@@ -49,7 +49,7 @@ Auto-install is supported on macOS (Homebrew) and Linux (apt).
 On Windows, WinAVR or the Arduino IDE toolchain directory must be on PATH.
 """
 
-import os
+import platform
 import re
 import shutil
 import subprocess
@@ -63,12 +63,14 @@ from rich.prompt import Confirm
 from .base import ExternalToolchain
 
 
-# Homebrew formula / tap for AVR GNU toolchain
-_BREW_TAP = "osx-cross/avr"
-_BREW_FORMULA = "avr-gcc"
-
-# apt packages for Debian/Ubuntu
-_APT_PACKAGES = ["gcc-avr", "binutils-avr"]
+# Pre-built avr-gcc toolchain by Zak Kemble (MIT-compatible, self-contained)
+# https://github.com/ZakKemble/avr-gcc-build/releases
+_TOOLCHAIN_VERSION = "14.1.0"
+_RELEASE_TAG = "v14.1.0-1"
+_BASE_URL = (
+    "https://github.com/ZakKemble/avr-gcc-build/releases/download"
+    f"/{_RELEASE_TAG}"
+)
 
 # Required binaries (avr-g++ is optional: needed only when .cpp sources are present)
 _REQUIRED_BINS = ["avr-as", "avr-ld", "avr-objcopy", "avr-gcc"]
@@ -78,9 +80,37 @@ _CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".C"}
 class AvrgasToolchain(ExternalToolchain):
     """
     GNU AS + avr-ld + avr-objcopy toolchain for AVR targets.
-    Used automatically when [tool.whip.ffi] sources are declared, enabling
-    C-interop via @extern().
+    Downloads a self-contained pre-built avr-gcc toolchain into
+    ~/.whipsnake/tools/ so no system package installation is required.
+
+    Pre-built releases are sourced from Zak Kemble's avr-gcc-build project:
+    https://github.com/ZakKemble/avr-gcc-build
     """
+
+    # Platform -> download metadata for ZakKemble pre-built avr-gcc releases.
+    # Key: "{sys.platform}-{machine}" where machine is normalised to x86_64/arm64.
+    METADATA: dict[str, dict] = {
+        "darwin-arm64": {
+            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-arm64-macos.tar.bz2",
+            "archive_type": "tar.bz2",
+            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-arm64-macos/bin",
+        },
+        "darwin-x86_64": {
+            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-macos.tar.bz2",
+            "archive_type": "tar.bz2",
+            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-macos/bin",
+        },
+        "linux-x86_64": {
+            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux.tar.bz2",
+            "archive_type": "tar.bz2",
+            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux/bin",
+        },
+        "win32-x86_64": {
+            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows.zip",
+            "archive_type": "zip",
+            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows/bin",
+        },
+    }
 
     # Shared linker script template: places .text at 0x0000, .data at SRAM start.
     # Sufficient for ATmega328P; extended linker scripts are user-providable via
@@ -127,149 +157,142 @@ SECTIONS
     def get_name(self) -> str:
         return "avr-as"
 
+    # ------------------------------------------------------------------
+    # Platform detection and binary resolution
+    # ------------------------------------------------------------------
+
+    def _platform_key(self) -> str:
+        """Return a platform key like 'darwin-arm64' or 'linux-x86_64'."""
+        machine = platform.machine().lower()
+        # Normalise common aliases
+        if machine in ("amd64", "x86_64"):
+            arch = "x86_64"
+        elif machine in ("arm64", "aarch64"):
+            arch = "arm64"
+        else:
+            arch = machine
+
+        plat = sys.platform if not sys.platform.startswith("linux") else "linux"
+        return f"{plat}-{arch}"
+
+    def _platform_info(self) -> dict:
+        """Return download metadata for the current platform, or raise."""
+        key = self._platform_key()
+        if key not in self.METADATA:
+            raise RuntimeError(
+                f"No pre-built avr-gcc {_TOOLCHAIN_VERSION} for platform: {key}.\n"
+                f"Install avr-gcc manually and ensure it is on PATH."
+            )
+        return self.METADATA[key]
+
+    def _cached_bin_dir(self) -> Optional[Path]:
+        """
+        Return the bin/ directory of the locally cached toolchain, or None if
+        the cache does not exist yet.
+        """
+        try:
+            info = self._platform_info()
+        except RuntimeError:
+            return None
+        d = self._get_tool_dir() / info["bin_dir"]
+        return d if d.is_dir() else None
+
+    def _find_bin(self, name: str) -> str:
+        """
+        Resolve a binary path, checking the local cache first then PATH.
+        Raises RuntimeError if the binary cannot be found.
+        """
+        exe = (name + ".exe") if sys.platform == "win32" else name
+        # 1. Local cache
+        cached = self._cached_bin_dir()
+        if cached is not None:
+            candidate = cached / exe
+            if candidate.exists():
+                return str(candidate)
+        # 2. System PATH
+        found = shutil.which(name)
+        if found:
+            return found
+        raise RuntimeError(
+            f"{name} not found in local cache or on PATH.\n"
+            f"Run 'whip build' to trigger automatic installation."
+        )
+
+    # ------------------------------------------------------------------
+    # Toolchain availability check
+    # ------------------------------------------------------------------
+
     def is_cached(self) -> bool:
-        """Returns True if avr-as, avr-ld, avr-objcopy, and avr-gcc are on PATH."""
+        """
+        Returns True if all required binaries are available either in the
+        local ~/.whipsnake/tools/ cache or on the system PATH.
+        """
+        cached = self._cached_bin_dir()
+        if cached is not None:
+            exe_suffix = ".exe" if sys.platform == "win32" else ""
+            if all((cached / (b + exe_suffix)).exists() for b in _REQUIRED_BINS):
+                return True
         return all(shutil.which(b) is not None for b in _REQUIRED_BINS)
 
     # ------------------------------------------------------------------
-    # Auto-install
+    # Auto-install: download pre-built release to local cache
     # ------------------------------------------------------------------
 
     def install(self) -> None:
         """
-        Auto-install GNU AVR binutils + gcc using the system package manager.
-
-        macOS:  brew tap osx-cross/avr && brew install avr-gcc
-        Linux:  sudo apt-get install -y gcc-avr binutils-avr
-        Windows: instructions only (manual install required).
+        Download a pre-built avr-gcc toolchain into ~/.whipsnake/tools/ so
+        no system package manager is required.  The release is fetched from:
+        https://github.com/ZakKemble/avr-gcc-build/releases
         """
-        if sys.platform == "darwin":
-            self._install_macos()
-        elif sys.platform.startswith("linux"):
-            self._install_linux()
-        else:
-            self._install_windows_instructions()
-
-        # Refresh PATH from Homebrew prefix so shutil.which() picks up new bins
-        self._refresh_path()
-
-        # Final check
-        missing = [b for b in _REQUIRED_BINS if shutil.which(b) is None]
-        if missing:
+        try:
+            info = self._platform_info()
+        except RuntimeError as exc:
             raise RuntimeError(
-                f"Installation appeared to succeed but these tools are still missing: "
-                f"{', '.join(missing)}.\n"
-                f"Make sure your shell's PATH includes the install location and retry."
-            )
-        self.console.print("[bold green]avr-gcc toolchain installed successfully.[/bold green]")
+                f"Cannot auto-install: {exc}\n"
+                f"Download manually from "
+                f"https://github.com/ZakKemble/avr-gcc-build/releases"
+            ) from exc
 
-    def _install_macos(self) -> None:
-        brew = shutil.which("brew")
-        if brew is None:
-            raise RuntimeError(
-                "Homebrew is required to auto-install avr-gcc on macOS.\n"
-                "Install Homebrew from https://brew.sh/ then retry, or install\n"
-                "avr-gcc manually and ensure it is on your PATH."
-            )
+        url = info["url"]
+        archive_type = info["archive_type"]
 
+        self.console.print("[bold cyan]Whipsnake Toolchain Manager[/bold cyan]")
         self.console.print(
-            f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]\n"
-            f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
-            f"This will run:\n"
-            f"  brew tap {_BREW_TAP}\n"
-            f"  brew install {_BREW_FORMULA}"
+            f"The AVR GNU toolchain (avr-as, avr-ld, avr-objcopy, avr-gcc "
+            f"v{_TOOLCHAIN_VERSION}) is required but was not found.\n"
+            f"A pre-built release will be downloaded from:\n"
+            f"  [green]{url}[/green]"
         )
-        if not Confirm.ask("Install now via Homebrew?", default=True):
+        if not Confirm.ask("Download and install to local cache?", default=True):
             raise RuntimeError("avr-gcc installation aborted by user.")
 
-        self.console.print(f"[dim]Running: brew tap {_BREW_TAP}[/dim]")
-        try:
-            subprocess.run(
-                [brew, "tap", _BREW_TAP],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError as e:
-            err = e.stderr.decode() if e.stderr else str(e)
-            # tap may already exist; that's fine
-            if "already tapped" not in err.lower():
-                self.console.print(f"[yellow]brew tap warning:[/yellow] {err}")
+        tool_dir = self._get_tool_dir()
+        tool_dir.mkdir(parents=True, exist_ok=True)
 
-        self.console.print(f"[dim]Running: brew install {_BREW_FORMULA}[/dim]")
-        try:
-            result = subprocess.run(
-                [brew, "install", _BREW_FORMULA],
-                capture_output=False,  # show output to user
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"brew install {_BREW_FORMULA} exited with code {result.returncode}."
-                )
-        except Exception as e:
-            raise RuntimeError(f"brew install failed: {e}")
+        filename = url.split("/")[-1]
+        download_path = tool_dir / filename
 
-    def _install_linux(self) -> None:
-        apt = shutil.which("apt-get")
-        if apt is None:
-            raise RuntimeError(
-                "apt-get not found. Install avr-gcc manually:\n"
-                "  sudo apt install gcc-avr binutils-avr    # Debian/Ubuntu\n"
-                "  sudo dnf install avr-gcc avr-binutils    # Fedora/RHEL\n"
-                "  sudo pacman -S avr-gcc avr-binutils      # Arch"
-            )
+        self._download_file(url, download_path, f"Downloading avr-gcc {_TOOLCHAIN_VERSION}...")
+        self.console.print("[green]Download complete.[/green]")
 
-        pkgs = " ".join(_APT_PACKAGES)
+        self._extract_archive(download_path, tool_dir, archive_type)
+
+        # Ensure all binaries are executable on Unix
+        if sys.platform != "win32":
+            bin_dir = tool_dir / info["bin_dir"]
+            if bin_dir.is_dir():
+                for entry in bin_dir.iterdir():
+                    if entry.is_file():
+                        entry.chmod(entry.stat().st_mode | 0o111)
+
+        # Remove downloaded archive to save space
+        if download_path.exists():
+            download_path.unlink()
+
         self.console.print(
-            f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]\n"
-            f"avr-gcc (GNU AVR toolchain) is required for C interop builds.\n"
-            f"This will run: sudo apt-get install -y {pkgs}"
+            f"[bold green]avr-gcc {_TOOLCHAIN_VERSION} installed to "
+            f"{tool_dir}[/bold green]"
         )
-        if not Confirm.ask("Install now via apt-get?", default=True):
-            raise RuntimeError("avr-gcc installation aborted by user.")
-
-        try:
-            subprocess.run(
-                ["sudo", apt, "install", "-y"] + _APT_PACKAGES,
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"apt-get install failed: {e}")
-
-    def _install_windows_instructions(self) -> None:
-        self.console.print(
-            "[bold red]avr-gcc not found.[/bold red]\n"
-            "Auto-install is not supported on Windows.\n\n"
-            "Install options:\n"
-            "  [bold]WinAVR:[/bold]        https://winavr.sourceforge.net\n"
-            "  [bold]Arduino toolchain:[/bold]  Add <arduino>/hardware/tools/avr/bin to PATH\n"
-            "  [bold]Scoop:[/bold]         scoop install avr-gcc"
-        )
-        raise RuntimeError(
-            "avr-gcc not found on Windows. Install it manually and ensure it is on PATH."
-        )
-
-    def _refresh_path(self) -> None:
-        """
-        On macOS, add Homebrew's bin directory to os.environ["PATH"] so that
-        shutil.which() can locate tools installed in this session.
-        """
-        if sys.platform != "darwin":
-            return
-        brew = shutil.which("brew")
-        if not brew:
-            return
-        try:
-            result = subprocess.run(
-                [brew, "--prefix"],
-                capture_output=True, text=True, check=True,
-            )
-            brew_prefix = result.stdout.strip()
-            brew_bin = os.path.join(brew_prefix, "bin")
-            current_path = os.environ.get("PATH", "")
-            if brew_bin not in current_path.split(os.pathsep):
-                os.environ["PATH"] = brew_bin + os.pathsep + current_path
-        except Exception:
-            pass  # best-effort; if brew --prefix fails, skip
 
     # ------------------------------------------------------------------
     # AVRA → GNU AS syntax translation
@@ -377,9 +400,7 @@ SECTIONS
         Returns the path to the object file.
         """
         obj_out = asm_file.with_suffix(".o")
-        avr_as = shutil.which("avr-as")
-        if not avr_as:
-            raise RuntimeError("avr-as not found on PATH")
+        avr_as = self._find_bin("avr-as")
 
         # Translate AVRA-specific syntax to GNU AS before assembling
         # Translate AVRA-specific syntax to GNU AS before assembling
@@ -419,24 +440,13 @@ SECTIONS
 
         Returns a list of .o paths.
         """
-        avr_gcc = shutil.which("avr-gcc")
-        if not avr_gcc:
-            raise RuntimeError(
-                "avr-gcc not found on PATH. "
-                "Install it to use C/C++ interop (see AGENTS.md)."
-            )
+        avr_gcc = self._find_bin("avr-gcc")
 
         objects: list[Path] = []
         for src in c_files:
             is_cpp = src.suffix in _CPP_EXTENSIONS
             if is_cpp:
-                compiler = shutil.which("avr-g++")
-                if not compiler:
-                    raise RuntimeError(
-                        f"avr-g++ not found on PATH but {src.name} is a C++ source.\n"
-                        "Install avr-g++ (it ships alongside avr-gcc in the same package) "
-                        "or rename the file to .c to compile as C."
-                    )
+                compiler = self._find_bin("avr-g++")
                 # Disable C++ runtime features that don't belong on a bare-metal AVR:
                 # -fno-exceptions: no try/catch overhead or exception tables
                 # -fno-rtti:       no dynamic_cast / typeid; saves flash and SRAM
@@ -475,8 +485,9 @@ SECTIONS
         Return the path to libgcc.a for the target MCU, or None if unavailable.
         C code using division/modulo needs GCC runtime helpers (__divmodhi4, etc.).
         """
-        avr_gcc = shutil.which("avr-gcc")
-        if not avr_gcc:
+        try:
+            avr_gcc = self._find_bin("avr-gcc")
+        except RuntimeError:
             return None
         try:
             result = subprocess.run(
@@ -503,9 +514,7 @@ SECTIONS
         helpers (__divmodhi4, __mulhi3, etc.) resolve correctly.
         Returns the ELF file path.
         """
-        avr_ld = shutil.which("avr-ld")
-        if not avr_ld:
-            raise RuntimeError("avr-ld not found on PATH")
+        avr_ld = self._find_bin("avr-ld")
 
         elf_out = output_dir / "firmware.elf"
 
@@ -539,9 +548,7 @@ SECTIONS
 
     def elf_to_hex(self, elf_file: Path) -> Path:
         """Convert firmware.elf -> firmware.hex using avr-objcopy."""
-        avr_objcopy = shutil.which("avr-objcopy")
-        if not avr_objcopy:
-            raise RuntimeError("avr-objcopy not found on PATH")
+        avr_objcopy = self._find_bin("avr-objcopy")
 
         hex_out = elf_file.with_suffix(".hex")
         cmd = [
