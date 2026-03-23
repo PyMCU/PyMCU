@@ -1,6 +1,6 @@
 [submodule "external/whipsnake-micropython"]
 	path = external/whipsnake-micropython
-	url = git@github.com:WhipCompiler/whipsnake-micropython.git
+	url = https://github.com/WhipCompiler/whipsnake-micropython.git
 [submodule "external/whipsnake-circuitpython"]
 	path = external/whipsnake-circuitpython
-	url = git@github.com:WhipCompiler/whipsnake-circuitpython.git
+	url = https://github.com/WhipCompiler/whipsnake-circuitpython.git
