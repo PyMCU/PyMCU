@@ -63,7 +63,7 @@ class SoftSPI:
         # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
         half_us: uint8 = 500 // baudrate
         self._half_us = half_us
-        if cs != None:
+        if cs is not None:
             cs.high()  # idle high
             self._cs_pin = cs
             self._cs = cs.name
