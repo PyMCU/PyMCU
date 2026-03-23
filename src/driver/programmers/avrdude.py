@@ -53,8 +53,13 @@ _CHIP_MAP: dict[str, str] = {
     "attiny85":    "t85",
     "attiny45":    "t45",
     "attiny25":    "t25",
+    "attiny84":    "t84",
+    "attiny44":    "t44",
+    "attiny24":    "t24",
     "attiny13":    "t13",
     "attiny13a":   "t13a",
+    "attiny2313":  "t2313",
+    "attiny4313":  "t4313",
 }
 
 

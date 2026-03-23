@@ -487,8 +487,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                         "atmega88p": 8192,   "atmega88": 8192,
                         "atmega48p": 4096,   "atmega48": 4096,
                         "atmega2560": 262144,
-                        "attiny85": 8192, "attiny84": 8192,
-                        "attiny2313": 2048,
+                        "attiny85": 8192,  "attiny45": 4096,  "attiny25": 2048,
+                        "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
+                        "attiny13": 1024,  "attiny13a": 1024,
+                        "attiny2313": 2048, "attiny4313": 4096,
                     }
                     flash_total = flash_sizes.get(chip.lower(), 0)
                     if flash_total:
@@ -517,8 +519,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                         "atmega328p": 32768, "atmega328": 32768,
                         "atmega2560": 262144, "atmega168": 16384,
                         "atmega88": 8192, "atmega48": 4096,
-                        "attiny85": 8192, "attiny84": 8192,
-                        "attiny2313": 2048,
+                        "attiny85": 8192,  "attiny45": 4096,  "attiny25": 2048,
+                        "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
+                        "attiny13": 1024,  "attiny13a": 1024,
+                        "attiny2313": 2048, "attiny4313": 4096,
                     }
                     flash_total = flash_sizes.get(chip.lower(), 0)
                     if flash_total:
