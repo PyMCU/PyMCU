@@ -1,6 +1,6 @@
 # Whipsnake: Python-to-MCU Compiler
 
-Whipsnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega328P/Arduino Uno), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
+Whipsnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega48/88/168/328 family, ATtiny25/45/85, ATtiny24/44/84, ATtiny2313/4313, ATtiny13/13a), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
 
 ## Installation
 
@@ -16,7 +16,7 @@ Ensure `pipx` is installed and its bin directory is in your PATH.
 
 ### Creating a New Project
 
-The `pymcu` driver includes a scaffolding tool to set up a new project with the correct structure and configuration.
+The `whip` CLI includes a scaffolding tool to set up a new project with the correct structure and configuration.
 
 ```bash
 whip new my_project
@@ -45,14 +45,14 @@ To flash the generated firmware to your device:
 whip flash
 ```
 
-This uses the programmer configured in your `pyproject.toml` (defaulting to `pk2cmd` for PICKit 2).
+This uses the programmer configured in your `pyproject.toml` (uses avrdude for AVR targets).
 
 ### Cleaning Artifacts
 
 To remove build artifacts:
 
 ```bash
-pymcu clean
+whip clean
 ```
 
 ## Documentation
