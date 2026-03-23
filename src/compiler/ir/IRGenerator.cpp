@@ -1829,6 +1829,12 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
 
   tacky::Val target_val = visitExpression(stmt->target.get());
 
+  // When the target is a compile-time constant and a case body has already been
+  // emitted, the wildcard (and any remaining cases) must be skipped; otherwise
+  // `visitBlock` would execute their IR-generation code (e.g. raise statements)
+  // even though control will never reach them at runtime.
+  bool ct_already_matched = false;
+
   // Optimization: If target is complex, store it in a temp to avoid
   // re-evaluation? visitExpression usually returns a Variable, Constant, or
   // Temporary. So it is safe to reuse `target_val` without re-evaluation side
@@ -1981,8 +1987,11 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
           // Statically false: skip body
           emit(tacky::Jump{next_case_label});
           skip_body = true;
+        } else {
+          // Statically true → fall through to body, no condition jump needed.
+          // Record that we matched so the wildcard (case _:) is not visited.
+          ct_already_matched = true;
         }
-        // else: statically true → fall through to body, no condition jump needed
       } else if (alts.size() == 1) {
         // Single pattern, not compile-time constant: use existing JumpIfZero path
         tacky::Temporary cmp_res = make_temp();
@@ -2023,23 +2032,27 @@ void IRGenerator::visitMatch(const MatchStmt *stmt) {
       }
     } else {
       // Wildcard Case (_) or bare-name capture (always matches)
-      // PEP 634: bind capture BEFORE evaluating guard so guard can reference it.
-      if (!branch.capture_name.empty()) {
-        std::string qname = current_function.empty()
-                                ? branch.capture_name
-                                : current_function + "." + branch.capture_name;
-        DataType dt = DataType::UINT8;
-        if (const auto *v = std::get_if<tacky::Variable>(&target_val)) dt = v->type;
-        else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
-        emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
-        variable_types[qname] = dt;
+      // Skip entirely when a compile-time match was already found: the body is
+      // dead code and visitBlock would throw for `raise` statements.
+      if (!ct_already_matched) {
+        // PEP 634: bind capture BEFORE evaluating guard so guard can reference it.
+        if (!branch.capture_name.empty()) {
+          std::string qname = current_function.empty()
+                                  ? branch.capture_name
+                                  : current_function + "." + branch.capture_name;
+          DataType dt = DataType::UINT8;
+          if (const auto *v = std::get_if<tacky::Variable>(&target_val)) dt = v->type;
+          else if (const auto *t = std::get_if<tacky::Temporary>(&target_val)) dt = t->type;
+          emit(tacky::Copy{target_val, tacky::Variable{qname, dt}});
+          variable_types[qname] = dt;
+        }
+        if (branch.guard) {
+          tacky::Val g = visitExpression(branch.guard.get());
+          emit(tacky::JumpIfZero{g, next_case_label});
+        }
+        visitBlock(dynamic_cast<const Block *>(branch.body.get()));
+        emit(tacky::Jump{end_label});
       }
-      if (branch.guard) {
-        tacky::Val g = visitExpression(branch.guard.get());
-        emit(tacky::JumpIfZero{g, next_case_label});
-      }
-      visitBlock(dynamic_cast<const Block *>(branch.body.get()));
-      emit(tacky::Jump{end_label});
     }
 
     emit(tacky::Label{next_case_label});
