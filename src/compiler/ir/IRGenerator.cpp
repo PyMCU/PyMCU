@@ -5704,11 +5704,20 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
       emit(tacky::InlineAsm{str->value});
       return std::monostate{};
     }
+    // Accept f-strings whose parts are all compile-time constants.
+    // visitFStringExpr throws with a clear message if any part is runtime.
+    if (auto *fstr = dynamic_cast<const FStringExpr *>(expr->args[0].get())) {
+      tacky::Val resolved = visitFStringExpr(fstr);
+      if (const auto *c = std::get_if<tacky::Constant>(&resolved)) {
+        if (string_id_to_str.contains(c->value)) {
+          emit(tacky::InlineAsm{string_id_to_str.at(c->value)});
+          return std::monostate{};
+        }
+      }
+      throw std::runtime_error("asm() f-string did not resolve to a string constant");
+    }
     // Check if it's a constant variable holding a string
     if (auto *var = dynamic_cast<const VariableExpr *>(expr->args[0].get())) {
-      std::string resolved = current_inline_prefix + var->name;
-      // Look up in string_literal_ids reverse mapping is not available,
-      // so we require a literal string argument
       throw std::runtime_error(
           "asm() argument must be a string literal, got variable '" +
           var->name + "'");
