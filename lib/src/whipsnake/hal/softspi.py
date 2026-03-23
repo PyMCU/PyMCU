@@ -10,9 +10,9 @@
 #
 # Mode 0 (CPOL=0, CPHA=0), MSB-first.
 #
-# _softspi_transfer() uses the shift-left trick: tx and result are shifted
-# left each iteration so bit 7 is always the active bit, eliminating
-# per-bit mask constants.
+# transfer() uses the shift-left trick: tx and result are shifted left each
+# iteration so bit 7 is always the active bit, eliminating per-bit mask
+# constants.
 #
 # half_us: half-period in microseconds; computed from the baudrate (kHz)
 # parameter at construction time as 500 // baudrate.  When half_us == 0
@@ -21,40 +21,8 @@
 # -----------------------------------------------------------------------------
 
 from whipsnake.types import uint8, uint16, inline
-from whipsnake.chips import __CHIP__
 from whipsnake.hal.gpio import Pin
 from whipsnake.time import delay_us
-
-
-@inline
-def _softspi_transfer(sck: Pin, mosi: Pin, miso: Pin, half_us: uint8, data: uint8) -> uint8:
-    """Bit-bang SPI Mode 0, MSB-first transfer.  Architecture-independent.
-
-    Uses only Pin ZCA methods (high/low/value) and delay_us -- no registers.
-    tx is a local copy of data so the caller's variable is not modified.
-    Shift tx left each iteration so bit 7 is always the active bit;
-    shift result left to accumulate received bits from MSB to LSB.
-    """
-    tx: uint8 = data
-    result: uint8 = 0
-    i: uint8 = 0
-    while i < 8:
-        if tx & 0x80:
-            mosi.high()
-        else:
-            mosi.low()
-        if half_us > 0:
-            delay_us(half_us)
-        sck.high()
-        result = result << 1
-        if miso.value():
-            result = result | 1
-        if half_us > 0:
-            delay_us(half_us)
-        sck.low()
-        tx = tx << 1
-        i = i + 1
-    return result
 
 
 # noinspection PyProtectedMember
@@ -84,41 +52,56 @@ class SoftSPI:
         cs:              optional chip-select pin, idle high when set.
         baudrate:        target SCK frequency in kHz; default 500 kHz.
         """
-        match __CHIP__.arch:
-            case "avr":
-                # Idle SCK and MOSI low.
-                sck.low()
-                mosi.low()
-                # Store Pin instances; transfer uses pin.high()/low()/value().
-                self._sck  = sck
-                self._mosi = mosi
-                self._miso = miso
-                # Half-period in microseconds: 500 us / baudrate_kHz.
-                # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
-                half_us: uint8 = 500 // baudrate
-                self._half_us = half_us
-                if cs != None:
-                    cs.high()  # idle high
-                    self._cs_pin = cs
-                    self._cs = cs.name
-                else:
-                    self._cs = ""
+        # Idle SCK and MOSI low.
+        sck.low()
+        mosi.low()
+        # Store Pin instances; transfer uses pin.high()/low()/value().
+        self._sck  = sck
+        self._mosi = mosi
+        self._miso = miso
+        # Half-period in microseconds: 500 us / baudrate_kHz.
+        # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
+        half_us: uint8 = 500 // baudrate
+        self._half_us = half_us
+        if cs != None:
+            cs.high()  # idle high
+            self._cs_pin = cs
+            self._cs = cs.name
+        else:
+            self._cs = ""
 
     @inline
     def transfer(self, data: uint8) -> uint8:
-        """Send one byte MSB-first and simultaneously receive one byte."""
-        match __CHIP__.arch:
-            case "avr":
-                return _softspi_transfer(self._sck, self._mosi, self._miso, self._half_us, data)
-            case _:
-                return 0
+        """Send one byte MSB-first and simultaneously receive one byte.
+
+        Uses the shift-left trick: tx and result are shifted left each
+        iteration so bit 7 is always the active bit.
+        """
+        tx: uint8 = data
+        result: uint8 = 0
+        i: uint8 = 0
+        while i < 8:
+            if tx & 0x80:
+                self._mosi.high()
+            else:
+                self._mosi.low()
+            if self._half_us > 0:
+                delay_us(self._half_us)
+            self._sck.high()
+            result = result << 1
+            if self._miso.value():
+                result = result | 1
+            if self._half_us > 0:
+                delay_us(self._half_us)
+            self._sck.low()
+            tx = tx << 1
+            i = i + 1
+        return result
 
     @inline
     def write(self, data: uint8):
         """Send one byte; the received byte is discarded."""
-        match __CHIP__.arch:
-            case "avr":
-                _softspi_transfer(self._sck, self._mosi, self._miso, self._half_us, data)
+        self.transfer(data)
 
     @inline
     def select(self):
