@@ -1,0 +1,22 @@
+[project]
+name = "ffi-crc8"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
+]
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"
+
+# FFI: compile crc8.c with avr-gcc and link into the firmware.
+# crc8.c wraps _crc_ibutton_update() from avr-libc <util/crc16.h>,
+# the same CRC-8 function used by the Arduino OneWire library.
+[tool.pymcu.ffi]
+sources = ["c_src/crc8.c"]
+include_dirs = ["c_src"]
+cflags = ["-std=c11", "-Os"]
