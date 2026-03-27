@@ -38,7 +38,7 @@ jobs:
           sudo tailscale up \
             --authkey="${{ secrets.HEADSCALE_AUTH_KEY }}" \
             --login-server="${{ vars.HEADSCALE_URL }}" \
-            --hostname="whipsnake-ci-${{ github.run_id }}" \
+            --hostname="pymcu-ci-${{ github.run_id }}" \
             --accept-routes
 
       - name: Set up .NET 10
@@ -49,16 +49,16 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install Whipsnake CLI
+      - name: Install PyMCU CLI
         run: uv sync
 
-      - name: Override whipsnake-stdlib with local source
+      - name: Override pymcu-stdlib with local source
         run: uv pip install lib/
 
       - name: Install compat stdlib flavors
         run: |
-          uv pip install external/whipsnake-micropython/
-          uv pip install external/whipsnake-circuitpython/
+          uv pip install external/pymcu-micropython/
+          uv pip install external/pymcu-circuitpython/
 
       # - name: Install build tools
       #   run: sudo apt-get install -y build-essential flex bison ninja-build cmake
@@ -66,10 +66,10 @@ jobs:
       - name: Install AVR toolchain (avr-as + avr-ld + avr-objcopy + avr-gcc)
         run: sudo apt-get install -y --no-install-recommends binutils-avr gcc-avr
 
-      - name: Build whipc compiler
+      - name: Build pymcuc compiler
         run: cmake -B build -G Ninja && cmake --build build
 
-      - name: Add whipc to PATH
+      - name: Add pymcuc to PATH
         run: echo "$GITHUB_WORKSPACE/build/bin" >> $GITHUB_PATH
 
       - name: Add private NuGet source
@@ -82,11 +82,11 @@ jobs:
             --store-password-in-clear-text
 
       - name: Restore integration test packages
-        run: dotnet restore tests/integration/Whipsnake.IntegrationTests.csproj --nologo
+        run: dotnet restore tests/integration/PyMCU.IntegrationTests.csproj --nologo
 
       - name: Run integration tests
         run: |
-          dotnet test tests/integration/Whipsnake.IntegrationTests.csproj \
+          dotnet test tests/integration/PyMCU.IntegrationTests.csproj \
             --no-restore \
             --logger "console;verbosity=normal" \
             --blame-hang-timeout 120s \

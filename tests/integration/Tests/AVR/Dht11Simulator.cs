@@ -1,7 +1,7 @@
 using AVR8Sharp.Core.Peripherals;
 using Avr8Sharp.TestKit.Boards;
 
-namespace Whipsnake.IntegrationTests.Tests.AVR;
+namespace PyMCU.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Simulates a DHT11 sensor on a single GPIO pin.

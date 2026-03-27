@@ -2,7 +2,7 @@ using Avr8Sharp.TestKit.Boards;
 using FluentAssertions;
 using NUnit.Framework;
 
-namespace Whipsnake.IntegrationTests.Tests.AVR;
+namespace PyMCU.IntegrationTests.Tests.AVR;
 
 [TestFixture]
 public class ArrayOpsTests

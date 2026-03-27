@@ -7,19 +7,22 @@ using namespace tacky;
 TEST(OptimizerAdvancedTest, CopyPropagation) {
     Function func;
     func.name = "test";
-    // x = 1
+    // x = param   (non-constant source -- tests pure copy propagation)
     // t1 = x
     // return t1
-    func.body.push_back(Copy{Constant{1}, Variable{"x"}});
+    // propagate_copies also folds constants through variables, so using a
+    // constant source (x = 1) would propagate all the way to return 1.
+    // A variable source keeps the test focused on copy-chain substitution.
+    func.body.push_back(Copy{Variable{"param"}, Variable{"x"}});
     func.body.push_back(Copy{Variable{"x"}, Temporary{"t1"}});
     func.body.push_back(Return{Temporary{"t1"}});
 
     Optimizer::propagate_copies(func);
 
     // After propagation:
-    // x = 1
+    // x = param
     // t1 = x
-    // return x
+    // return x    (t1 was a single-definition copy of x, substituted)
     ASSERT_EQ(func.body.size(), 3);
     auto ret = std::get_if<Return>(&func.body[2]);
     ASSERT_NE(ret, nullptr);

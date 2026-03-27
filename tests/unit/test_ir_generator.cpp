@@ -214,7 +214,10 @@ TEST(IRGeneratorTest, BreakStatement) {
 }
 
 TEST(IRGeneratorTest, MatchStatement) {
-    Lexer lexer("def main():\n    match 1:\n        case 1:\n            return "
+    // Use a function parameter as the subject so the match is a runtime
+    // dispatch (not const-folded).  match 1: case 1: would fold entirely
+    // at compile time and emit no comparison instructions.
+    Lexer lexer("def main(x):\n    match x:\n        case 1:\n            return "
         "1\n        case _:\n            return 0");
     auto tokens = lexer.tokenize();
     Parser parser(tokens);

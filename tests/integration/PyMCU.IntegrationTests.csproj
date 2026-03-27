@@ -5,8 +5,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
-        <RootNamespace>Whipsnake.IntegrationTests</RootNamespace>
-        <AssemblyName>Whipsnake.IntegrationTests</AssemblyName>
+        <RootNamespace>PyMCU.IntegrationTests</RootNamespace>
+        <AssemblyName>PyMCU.IntegrationTests</AssemblyName>
     </PropertyGroup>
 
     <!-- Avr8Sharp.TestKit is consumed as a NuGet package.

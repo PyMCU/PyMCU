@@ -3,7 +3,7 @@ using NUnit.Framework;
 using Avr8Sharp.TestKit.Boards;
 using Avr8Sharp.TestKit;
 
-namespace Whipsnake.IntegrationTests.Tests.AVR;
+namespace PyMCU.IntegrationTests.Tests.AVR;
 
 /// <summary>
 /// Integration tests for examples/avr/watchdog.
