@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_27, _stack_base + 6
-.equ tmp_28, _stack_base + 7
+.equ tmp_24, _stack_base + 6
+.equ tmp_25, _stack_base + 7
 
 .org 0x0
 .global main
@@ -54,46 +54,18 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 4
 	OUT	0x25, R24
 ; main.py:26:     timer.clear()
-	MOV	R24, R6
-	CPI	R24, 0
-	BREQ	L_BR_SKIP_3
-	RJMP	L_78
-L_BR_SKIP_3:
-; main.py:32:         if TIFR0[0] == 1:
+; main.py:34:             TIFR0[0] = 1
 	CLR	R24
 	OUT	0x26, R24
-	RJMP	L_77
-L_78:
-	MOV	R24, R6
-	CPI	R24, 1
-	BREQ	L_BR_SKIP_4
-	RJMP	L_80
-L_BR_SKIP_4:
-	CLR	R24
-	STS	0x0084, R24
-	CLR	R24
-	STS	0x0085, R24
-	RJMP	L_77
-L_80:
-	MOV	R24, R6
-	CPI	R24, 2
-	BREQ	L_BR_SKIP_5
-	RJMP	L_82
-L_BR_SKIP_5:
-	CLR	R24
-	STS	0x00B2, R24
-	RJMP	L_77
-L_82:
-L_77:
 	CLR	R24
 	CLR	R25
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:30:     while True:
-L_84:
+L_83:
 ; main.py:32:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_86
+	RJMP	L_85
 ; main.py:34:             TIFR0[0] = 1
 	SBI	0x15, 0
 	MOV	R24, R4
@@ -107,9 +79,9 @@ L_84:
 	CLR	R19
 	CP	R24, R18
 	CPC	R25, R19
-	BREQ	L_BR_SKIP_6
-	RJMP	L_87
-L_BR_SKIP_6:
+	BREQ	L_BR_SKIP_3
+	RJMP	L_86
+L_BR_SKIP_3:
 ; main.py:40:                 ticks = 0
 	CLR	R24
 	CLR	R25
@@ -117,49 +89,49 @@ L_BR_SKIP_6:
 	MOV	R5, R25
 ; main.py:41:                 led.toggle()
 	SBIS	0x05, 5
-	RJMP	L_BIT_FALSE_7
+	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_8
-L_BIT_FALSE_7:
+	RJMP	L_BIT_DONE_5
+L_BIT_FALSE_4:
 	CLR	R24
-L_BIT_DONE_8:
+L_BIT_DONE_5:
 	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
 	MOV	R17, R24
 	TST	R24
-	BRNE	L_BR_SKIP_11
-	RJMP	L_BIT_WRITE_SKIP_9
-L_BR_SKIP_11:
+	BRNE	L_BR_SKIP_8
+	RJMP	L_BIT_WRITE_SKIP_6
+L_BR_SKIP_8:
 	SBI	0x05, 5
-	RJMP	L_BIT_WRITE_DONE_10
-L_BIT_WRITE_SKIP_9:
+	RJMP	L_BIT_WRITE_DONE_7
+L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
-L_BIT_WRITE_DONE_10:
+L_BIT_WRITE_DONE_7:
 ; main.py:42:                 uart.write('T')
 ; main.py:41:                 led.toggle()
-L_91:
+L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_92
-L_BR_SKIP_12:
+	BREQ	L_BR_SKIP_9
 	RJMP	L_91
-L_92:
+L_BR_SKIP_9:
+	RJMP	L_90
+L_91:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
 ; main.py:41:                 led.toggle()
-L_95:
+L_94:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
-	RJMP	L_96
-L_BR_SKIP_13:
+	BREQ	L_BR_SKIP_10
 	RJMP	L_95
-L_96:
+L_BR_SKIP_10:
+	RJMP	L_94
+L_95:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_87:
 L_86:
-	RJMP	L_84
+L_85:
+	RJMP	L_83

@@ -145,21 +145,21 @@ L_BIT_WRITE_DONE_7:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_161:
+L_162:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_162
+	RJMP	L_163
 L_BR_SKIP_9:
-	RJMP	L_161
-L_162:
+	RJMP	L_162
+L_163:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:90:     while True:
-L_163:
+L_164:
 ; main.py:91:         if timer.overflow():
-; main.py:36: DUR_RY     = 244   # 1 second
+; main.py:38: DUR_YELLOW = 244   # 1 second
 	SBIS	0x15, 0
 	RJMP	L_BIT_FALSE_10
 	LDI	R24, 1
@@ -171,7 +171,7 @@ L_BIT_DONE_11:
 	MOV	R17, R24
 	TST	R24
 	BRNE	L_BR_SKIP_12
-	RJMP	L_165
+	RJMP	L_166
 L_BR_SKIP_12:
 ; main.py:92:             TIFR0[0] = 1
 	SBI	0x15, 0
@@ -188,7 +188,7 @@ L_BR_SKIP_12:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_13
-	RJMP	L_172
+	RJMP	L_173
 L_BR_SKIP_13:
 ; main.py:96:                 ticks = 0
 	CLR	R24
@@ -198,7 +198,7 @@ L_BR_SKIP_13:
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_14
-	RJMP	L_174
+	RJMP	L_175
 L_BR_SKIP_14:
 ; main.py:100:                         state = State.RED_YELLOW
 	LDI	R24, 1
@@ -228,23 +228,23 @@ L_BR_SKIP_14:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_189:
+L_190:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_15
-	RJMP	L_190
+	RJMP	L_191
 L_BR_SKIP_15:
-	RJMP	L_189
-L_190:
+	RJMP	L_190
+L_191:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_173
-L_174:
+	RJMP	L_174
+L_175:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_16
-	RJMP	L_191
+	RJMP	L_192
 L_BR_SKIP_16:
 ; main.py:106:                         state = State.GREEN
 	LDI	R24, 2
@@ -274,23 +274,23 @@ L_BR_SKIP_16:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_206:
+L_207:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_17
-	RJMP	L_207
+	RJMP	L_208
 L_BR_SKIP_17:
-	RJMP	L_206
-L_207:
+	RJMP	L_207
+L_208:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_173
-L_191:
+	RJMP	L_174
+L_192:
 	MOV	R24, R4
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_18
-	RJMP	L_208
+	RJMP	L_209
 L_BR_SKIP_18:
 ; main.py:112:                         state = State.YELLOW
 	LDI	R24, 3
@@ -320,19 +320,19 @@ L_BR_SKIP_18:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_223:
+L_224:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_19
-	RJMP	L_224
+	RJMP	L_225
 L_BR_SKIP_19:
-	RJMP	L_223
-L_224:
+	RJMP	L_224
+L_225:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_173
-L_208:
+	RJMP	L_174
+L_209:
 ; main.py:118:                         state = State.RED
 	CLR	R24
 	MOV	R4, R24
@@ -361,21 +361,21 @@ L_208:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_240:
+L_241:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_20
-	RJMP	L_241
+	RJMP	L_242
 L_BR_SKIP_20:
-	RJMP	L_240
-L_241:
+	RJMP	L_241
+L_242:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
+L_174:
 L_173:
-L_172:
-L_165:
-	RJMP	L_163
+L_166:
+	RJMP	L_164
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

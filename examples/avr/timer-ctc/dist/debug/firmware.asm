@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_33, _stack_base + 4
-.equ tmp_34, _stack_base + 5
+.equ tmp_26, _stack_base + 4
+.equ tmp_27, _stack_base + 5
 
 .org 0x0
 .global main
@@ -147,29 +147,6 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 4
 	STS	0x0081, R24
 ; main.py:35:     t.set_compare(62499)
-	MOV	R24, R4
-	CPI	R24, 0
-	BREQ	L_BR_SKIP_3
-	RJMP	L_79
-L_BR_SKIP_3:
-; main.py:43:         if GPIOR0[0] == 1:
-	LDI	R24, 35
-	OUT	0x27, R24
-; main.py:44:             GPIOR0[0] = 0
-	IN	R24, 0x24
-	ORI	R24, 2
-	OUT	0x24, R24
-; main.py:45:             led.toggle()
-	LDS	R24, 0x006E
-	ORI	R24, 2
-	STS	0x006E, R24
-	RJMP	L_78
-L_79:
-	MOV	R24, R4
-	CPI	R24, 1
-	BREQ	L_BR_SKIP_4
-	RJMP	L_81
-L_BR_SKIP_4:
 	LDI	R24, 35
 	LDI	R25, 244
 	STS	0x0088, R24
@@ -180,24 +157,6 @@ L_BR_SKIP_4:
 	LDS	R24, 0x006F
 	ORI	R24, 2
 	STS	0x006F, R24
-	RJMP	L_78
-L_81:
-	MOV	R24, R4
-	CPI	R24, 2
-	BREQ	L_BR_SKIP_5
-	RJMP	L_83
-L_BR_SKIP_5:
-	LDI	R24, 35
-	STS	0x00B3, R24
-	LDS	R24, 0x00B0
-	ORI	R24, 2
-	STS	0x00B0, R24
-	LDS	R24, 0x0070
-	ORI	R24, 2
-	STS	0x0070, R24
-	RJMP	L_78
-L_83:
-L_78:
 ; main.py:37:     GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:38:     asm("SEI")
@@ -208,72 +167,72 @@ SEI
 	CALL	__uart_send_z
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_90:
+L_88:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_6
-	RJMP	L_91
-L_BR_SKIP_6:
-	RJMP	L_90
-L_91:
+	BREQ	L_BR_SKIP_3
+	RJMP	L_89
+L_BR_SKIP_3:
+	RJMP	L_88
+L_89:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:42:     while True:
-L_92:
+L_90:
 ; main.py:43:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_94
+	RJMP	L_92
 ; main.py:44:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:45:             led.toggle()
 	SBIS	0x05, 5
-	RJMP	L_BIT_FALSE_7
+	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_8
-L_BIT_FALSE_7:
+	RJMP	L_BIT_DONE_5
+L_BIT_FALSE_4:
 	CLR	R24
-L_BIT_DONE_8:
+L_BIT_DONE_5:
 	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
 	MOV	R17, R24
 	TST	R24
-	BRNE	L_BR_SKIP_11
-	RJMP	L_BIT_WRITE_SKIP_9
-L_BR_SKIP_11:
+	BRNE	L_BR_SKIP_8
+	RJMP	L_BIT_WRITE_SKIP_6
+L_BR_SKIP_8:
 	SBI	0x05, 5
-	RJMP	L_BIT_WRITE_DONE_10
-L_BIT_WRITE_SKIP_9:
+	RJMP	L_BIT_WRITE_DONE_7
+L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
-L_BIT_WRITE_DONE_10:
+L_BIT_WRITE_DONE_7:
 ; main.py:46:             uart.write('C')
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_98:
+L_96:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_99
-L_BR_SKIP_12:
-	RJMP	L_98
-L_99:
+	BREQ	L_BR_SKIP_9
+	RJMP	L_97
+L_BR_SKIP_9:
+	RJMP	L_96
+L_97:
 	LDI	R24, 67
 	STS	0x00C6, R24
 ; main.py:47:             uart.write('\n')
 ; main.py:41: 
 ; main.py:45:             led.toggle()
-L_102:
+L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
-	RJMP	L_103
-L_BR_SKIP_13:
-	RJMP	L_102
-L_103:
+	BREQ	L_BR_SKIP_10
+	RJMP	L_101
+L_BR_SKIP_10:
+	RJMP	L_100
+L_101:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_94:
-	RJMP	L_92
+L_92:
+	RJMP	L_90
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
