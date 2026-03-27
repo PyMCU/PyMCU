@@ -91,7 +91,7 @@ timer0_ovf_isr:
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:31:     GPIOR0[0] = 1
+; main.py:20:     GPIOR0[0] = 1
 	SBI	0x1E, 0
 ; ISR epilogue — restore context
 	POP	R16
@@ -102,12 +102,11 @@ timer0_ovf_isr:
 	RETI
 duty_value:
 	MOV	R4, R24
-; main.py:37:     if phase == 0:
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_0
 	RJMP	L_22
 L_BR_SKIP_0:
-; main.py:38:         return 0
+; main.py:27:         case 0: return 0
 	CLR	R24
 	RET
 L_22:
@@ -116,7 +115,7 @@ L_22:
 	BREQ	L_BR_SKIP_1
 	RJMP	L_23
 L_BR_SKIP_1:
-; main.py:40:         return 25
+; main.py:28:         case 1: return 25
 	LDI	R24, 25
 	RET
 L_23:
@@ -125,7 +124,7 @@ L_23:
 	BREQ	L_BR_SKIP_2
 	RJMP	L_24
 L_BR_SKIP_2:
-; main.py:42:         return 50
+; main.py:29:         case 2: return 50
 	LDI	R24, 50
 	RET
 L_24:
@@ -134,7 +133,7 @@ L_24:
 	BREQ	L_BR_SKIP_3
 	RJMP	L_25
 L_BR_SKIP_3:
-; main.py:44:         return 75
+; main.py:30:         case 3: return 75
 	LDI	R24, 75
 	RET
 L_25:
@@ -143,7 +142,7 @@ L_25:
 	BREQ	L_BR_SKIP_4
 	RJMP	L_26
 L_BR_SKIP_4:
-; main.py:46:         return 100
+; main.py:31:         case 4: return 100
 	LDI	R24, 100
 	RET
 L_26:
@@ -152,7 +151,7 @@ L_26:
 	BREQ	L_BR_SKIP_5
 	RJMP	L_27
 L_BR_SKIP_5:
-; main.py:48:         return 75
+; main.py:32:         case 5: return 75
 	LDI	R24, 75
 	RET
 L_27:
@@ -161,11 +160,11 @@ L_27:
 	BREQ	L_BR_SKIP_6
 	RJMP	L_28
 L_BR_SKIP_6:
-; main.py:50:         return 50
+; main.py:33:         case 6: return 50
 	LDI	R24, 50
 	RET
 L_28:
-; main.py:52:         return 25
+; main.py:34:         case _: return 25
 	LDI	R24, 25
 	RET
 main:
@@ -175,62 +174,84 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:56:     DDRB[5] = 1
+; main.py:38:     led   = Pin("PB5", Pin.OUT)
+; main.py:51:     while True:
+; main.py:52:         if GPIOR0[0] == 1:
+; main.py:8: # Hardware: Arduino Uno
+; main.py:20:     GPIOR0[0] = 1
+; main.py:32:         case 5: return 75
+; main.py:54: 
+	LDI	R24, 1
+	TST	R24
+	BRNE	L_BR_SKIP_9
+	RJMP	L_BIT_WRITE_SKIP_7
+L_BR_SKIP_9:
 	SBI	0x04, 5
-; main.py:59:     TCCR0B.value = 5
+	RJMP	L_BIT_WRITE_DONE_8
+L_BIT_WRITE_SKIP_7:
+	CBI	0x04, 5
+L_BIT_WRITE_DONE_8:
+; main.py:39:     uart  = UART(9600)
+; main.py:27:         case 0: return 0
+; main.py:31:         case 4: return 100
+; main.py:47:     duty:       uint8 = 0
+	SBI	0x0A, 1
+; main.py:48:     step_count: uint8 = 0
+	CBI	0x0A, 0
+; main.py:51:     while True:
+; main.py:52:         if GPIOR0[0] == 1:
+	LDI	R24, 103
+	STS	0x00C4, R24
+; main.py:53:             GPIOR0[0] = 0
+	CLR	R24
+	STS	0x00C5, R24
+; main.py:68:                 if phase >= 8:
+	LDI	R24, 6
+	STS	0x00C2, R24
+; main.py:70:                 duty = duty_value(phase)
+	LDI	R24, 24
+	STS	0x00C1, R24
+; main.py:40:     timer = Timer(0, 1024)
+; main.py:48:     step_count: uint8 = 0
+; main.py:49:     phase:      uint8 = 0
+	CLR	R24
+	MOV	R9, R24
+; main.py:52:         if GPIOR0[0] == 1:
+; main.py:53:             GPIOR0[0] = 0
+; main.py:63: 
+; main.py:11: #
+	CLR	R24
+	OUT	0x24, R24
+; main.py:12: from pymcu.types import uint8
+; main.py:21: 
 	LDI	R24, 5
 	OUT	0x25, R24
-; main.py:60:     TIMSK0[0] = 1
+; main.py:41:     timer.irq(timer0_ovf_isr)
 	LDS	R24, 0x006E
 	ORI	R24, 1
 	STS	0x006E, R24
-; main.py:61:     GPIOR0[0] = 0
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:43:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:63:     uart = UART(9600)
-; main.py:27: 
-; main.py:31:     GPIOR0[0] = 1
-; main.py:47:     elif phase == 5:
-	SBI	0x0A, 1
-; main.py:48:         return 75
-	CBI	0x0A, 0
-; main.py:51:     else:
-; main.py:52:         return 25
-	LDI	R24, 103
-	STS	0x00C4, R24
-; main.py:53: 
-	CLR	R24
-	STS	0x00C5, R24
-; main.py:68:     counter:    uint8 = 0
-	LDI	R24, 6
-	STS	0x00C2, R24
-; main.py:70:     step_count: uint8 = 0
-	LDI	R24, 24
-	STS	0x00C1, R24
-; main.py:64:     uart.println("SOFT PWM")
-; main.py:77:             counter = counter + 1
-; main.py:78:             if counter >= 100:
-; main.py:69:     duty:       uint8 = 0
-; main.py:73:     while True:
+; main.py:44:     uart.println("SOFT PWM")
+; main.py:69:                     phase = 0
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:79:                 counter = 0
-; main.py:41:     elif phase == 2:
-; main.py:45:     elif phase == 4:
-; main.py:76: 
-L_41:
+; main.py:41:     timer.irq(timer0_ovf_isr)
+; main.py:45: 
+L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_7
-	RJMP	L_42
-L_BR_SKIP_7:
-	RJMP	L_41
-L_42:
-; main.py:79:                 counter = 0
+	BREQ	L_BR_SKIP_10
+	RJMP	L_98
+L_BR_SKIP_10:
+	RJMP	L_97
+L_98:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:66:     asm("SEI")
-SEI
 	CLR	R24
 	MOV	R6, R24
 	CLR	R24
@@ -239,100 +260,96 @@ SEI
 	MOV	R7, R24
 	CLR	R24
 	MOV	R5, R24
-; main.py:73:     while True:
-L_43:
-; main.py:74:         if GPIOR0[0] == 1:
+; main.py:51:     while True:
+L_99:
+; main.py:52:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_45
-; main.py:75:             GPIOR0[0] = 0
+	RJMP	L_101
+; main.py:53:             GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:77:             counter = counter + 1
+; main.py:55:             counter = counter + 1
 	INC	R6
 	MOV	R24, R6
-; main.py:78:             if counter >= 100:
+; main.py:56:             if counter >= 100:
 	CPI	R24, 100
-	BRSH	L_BR_SKIP_8
-	RJMP	L_46
-L_BR_SKIP_8:
-; main.py:79:                 counter = 0
+	BRSH	L_BR_SKIP_11
+	RJMP	L_102
+L_BR_SKIP_11:
+; main.py:57:                 counter = 0
 	CLR	R24
 	MOV	R6, R24
-L_46:
-; main.py:81:             if counter < duty:
+L_102:
+; main.py:59:             if counter < duty:
 	MOV	R24, R6
 	MOV	R18, R8
 	CP	R24, R18
-	BRLO	L_BR_SKIP_9
-	RJMP	L_48
-L_BR_SKIP_9:
-; main.py:82:                 PORTB[5] = 1
+	BRLO	L_BR_SKIP_12
+	RJMP	L_104
+L_BR_SKIP_12:
+; main.py:60:                 led.hi8()
 	SBI	0x05, 5
-	RJMP	L_47
-L_48:
-; main.py:84:                 PORTB[5] = 0
+	RJMP	L_103
+L_104:
+; main.py:62:                 led.lo8()
 	CBI	0x05, 5
-L_47:
-; main.py:86:             step_count = step_count + 1
+L_103:
+; main.py:64:             step_count = step_count + 1
 	INC	R7
 	MOV	R24, R7
-; main.py:87:             if step_count >= 100:
+; main.py:65:             if step_count >= 100:
 	CPI	R24, 100
-	BRSH	L_BR_SKIP_10
-	RJMP	L_49
-L_BR_SKIP_10:
-; main.py:88:                 step_count = 0
+	BRSH	L_BR_SKIP_13
+	RJMP	L_107
+L_BR_SKIP_13:
+; main.py:66:                 step_count = 0
 	CLR	R24
 	MOV	R7, R24
-; main.py:89:                 phase = phase + 1
+; main.py:67:                 phase = phase + 1
 	INC	R5
 	MOV	R24, R5
-; main.py:90:                 if phase >= 8:
+; main.py:68:                 if phase >= 8:
 	CPI	R24, 8
-	BRSH	L_BR_SKIP_11
-	RJMP	L_50
-L_BR_SKIP_11:
-; main.py:91:                     phase = 0
+	BRSH	L_BR_SKIP_14
+	RJMP	L_108
+L_BR_SKIP_14:
+; main.py:69:                     phase = 0
 	CLR	R24
 	MOV	R5, R24
-L_50:
-; main.py:92:                 duty = duty_value(phase)
+L_108:
+; main.py:70:                 duty = duty_value(phase)
 	MOV	R24, R5
 	MOV	R4, R24
 	CALL	duty_value
 	MOV	R8, R24
-; main.py:93:                 uart.write(duty)
-; main.py:41:     elif phase == 2:
-; main.py:45:     elif phase == 4:
-; main.py:76: 
-L_53:
+; main.py:71:                 uart.write(duty)
+; main.py:41:     timer.irq(timer0_ovf_isr)
+; main.py:45: 
+L_111:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_54
-L_BR_SKIP_12:
-	RJMP	L_53
-L_54:
-; main.py:79:                 counter = 0
+	BREQ	L_BR_SKIP_15
+	RJMP	L_112
+L_BR_SKIP_15:
+	RJMP	L_111
+L_112:
 	MOV	R24, R8
 	STS	0x00C6, R24
-; main.py:94:                 uart.write('\n')
-; main.py:41:     elif phase == 2:
-; main.py:45:     elif phase == 4:
-; main.py:76: 
-L_57:
+; main.py:72:                 uart.write('\n')
+; main.py:41:     timer.irq(timer0_ovf_isr)
+; main.py:45: 
+L_115:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
-	RJMP	L_58
-L_BR_SKIP_13:
-	RJMP	L_57
-L_58:
-; main.py:79:                 counter = 0
+	BREQ	L_BR_SKIP_16
+	RJMP	L_116
+L_BR_SKIP_16:
+	RJMP	L_115
+L_116:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_49:
-L_45:
-	RJMP	L_43
+L_107:
+L_101:
+	RJMP	L_99
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
