@@ -1,12 +1,12 @@
-# whipsnake-stdlib
+# pymcu-stdlib
 
-This package contains the standard library and HAL definitions for **Whipsnake**, a Python-to-microcontroller toolchain that compiles a statically-typed subset of Python directly to bare-metal machine code.
+This package contains the standard library and HAL definitions for **PyMCU**, a Python-to-microcontroller toolchain that compiles a statically-typed subset of Python directly to bare-metal machine code.
 
-These files provide hardware register mappings, HAL abstractions, and phantom types that allow Python IDEs (PyCharm, VS Code, etc.) to provide autocompletion and type checking for microcontroller code, while being compiled by the `whipc` compiler.
+These files provide hardware register mappings, HAL abstractions, and phantom types that allow Python IDEs (PyCharm, VS Code, etc.) to provide autocompletion and type checking for microcontroller code, while being compiled by the `pymcuc` compiler.
 
 ## Purpose
 
-Microcontroller code written for Whipsnake uses specialized types and access patterns that are not native to standard Python. This package bridges that gap by:
+Microcontroller code written for PyMCU uses specialized types and access patterns that are not native to standard Python. This package bridges that gap by:
 
 1. **Defining Hardware Registers**: Mapping register names (e.g., `PORTB`, `DDRB`) to their physical memory addresses for each supported chip.
 2. **Providing Type Safety**: Using phantom types like `uint8`, `uint16`, and `ptr[T]` to ensure correct data sizing at compile time.
@@ -25,13 +25,13 @@ Microcontroller code written for Whipsnake uses specialized types and access pat
 ## Installation
 
 ```bash
-uv pip install whipsnake
+uv pip install pymcu
 ```
 
 Or with pipx for CLI use:
 
 ```bash
-pipx install whipsnake
+pipx install pymcu
 ```
 
 ## Usage
@@ -39,9 +39,9 @@ pipx install whipsnake
 Import chip registers and HAL modules in your firmware source:
 
 ```python
-from whipsnake.chips.atmega328p import PORTB, DDRB
-from whipsnake.types import uint8
-from whipsnake.hal.gpio import Pin
+from pymcu.chips.atmega328p import PORTB, DDRB
+from pymcu.types import uint8
+from pymcu.hal.gpio import Pin
 
 led = Pin("PB5", Pin.OUT)
 
@@ -52,9 +52,9 @@ while True:
 For ATtiny targets:
 
 ```python
-from whipsnake.chips.attiny85 import PORTB, DDRB
-from whipsnake.types import uint8
-from whipsnake.hal.gpio import Pin
+from pymcu.chips.attiny85 import PORTB, DDRB
+from pymcu.types import uint8
+from pymcu.hal.gpio import Pin
 
 led = Pin("PB0", Pin.OUT)
 
@@ -62,12 +62,12 @@ while True:
     led.toggle()
 ```
 
-> **Note**: These files are stubs. Running them directly with a standard Python interpreter will raise `RuntimeError` if you attempt to access hardware registers — they lack the physical hardware interface and must be compiled with the `whipc` toolchain to run on a microcontroller.
+> **Note**: These files are stubs. Running them directly with a standard Python interpreter will raise `RuntimeError` if you attempt to access hardware registers — they lack the physical hardware interface and must be compiled with the `pymcuc` toolchain to run on a microcontroller.
 
 ## Structure
 
 ```
-lib/src/whipsnake/
+lib/src/pymcu/
   chips/          -- chip-specific register definitions
     atmega328p.py
     attiny85.py

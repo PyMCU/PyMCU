@@ -1,7 +1,7 @@
 [project]
-name = "whipsnake-stdlib"
+name = "pymcu-stdlib"
 version = "0.1.0a1"
-description = "Standard Library for the Whipsnake compiler"
+description = "Standard Library for the PyMCU compiler"
 readme = "README.md"
 authors = [
     { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
@@ -11,8 +11,8 @@ license = { text = "MIT" }
 dependencies = []
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/whipsnake"]
-artifacts = ["src/whipsnake/**/*.inc"]
+packages = ["src/pymcu"]
+artifacts = ["src/pymcu/**/*.inc"]
 
 [build-system]
 requires = ["hatchling"]
