@@ -1,6 +1,5 @@
 # ATmega328P: Hardware SPI → 74HC595 shift register — running light
 # Tests: SPI HAL (spi_init, spi_select/deselect, spi_transfer),
-#        SPDR.value full-byte write (OUT 0x2E — correct, unlike UDR0[0] which uses ORI)
 #        uint8 rotate pattern, match/case animation modes, UART debug output
 #
 # Hardware: Arduino Uno + 74HC595
@@ -64,10 +63,10 @@ def main():
                 pattern += 1
 
         # --- Mode change on any incoming UART byte ---
-        # (Non-blocking: check UCSR0A RXC flag without blocking read)
-        from pymcu.chips.atmega328p import UCSR0A, UDR0
+        # (Non-blocking: poll RXC flag; read clears the flag and consumes the byte)
+        from pymcu.chips.atmega328p import UCSR0A
         if UCSR0A[7] == 1:         # RXC0: data available
-            UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
+            uart.read()            # consume byte and clear RXC flag
             mode += 1
             if mode == 3:
                 mode = MODE_RUNNING
