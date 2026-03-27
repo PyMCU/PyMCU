@@ -15,17 +15,17 @@
 .equ tmp_21, _stack_base + 37
 .equ tmp_23, _stack_base + 35
 .equ tmp_24, _stack_base + 36
-.equ tmp_47, _stack_base + 22
-.equ tmp_49, _stack_base + 23
-.equ tmp_50, _stack_base + 24
-.equ tmp_52, _stack_base + 25
-.equ tmp_53, _stack_base + 26
-.equ tmp_54, _stack_base + 27
-.equ tmp_56, _stack_base + 28
-.equ tmp_58, _stack_base + 29
-.equ tmp_61, _stack_base + 30
-.equ tmp_64, _stack_base + 31
-.equ tmp_66, _stack_base + 32
+.equ tmp_46, _stack_base + 22
+.equ tmp_48, _stack_base + 23
+.equ tmp_49, _stack_base + 24
+.equ tmp_51, _stack_base + 25
+.equ tmp_52, _stack_base + 26
+.equ tmp_53, _stack_base + 27
+.equ tmp_55, _stack_base + 28
+.equ tmp_57, _stack_base + 29
+.equ tmp_60, _stack_base + 30
+.equ tmp_63, _stack_base + 31
+.equ tmp_65, _stack_base + 32
 .equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
@@ -34,7 +34,7 @@
 .global main
 	RJMP	main
 nibble_hi:
-	MOV	R10, R24
+	MOV	R9, R24
 	LSR	R24
 	LSR	R24
 	LSR	R24
@@ -59,7 +59,7 @@ L_21:
 	MOV	R16, R24
 	RET
 nibble_lo:
-	MOV	R11, R24
+	MOV	R10, R24
 	ANDI	R24, 15
 	MOV	R7, R24
 ; main.py:38:     if n < 10:
@@ -174,7 +174,7 @@ L_BIT_WRITE_SKIP_11:
 	CBI	0x07, 3
 L_BIT_WRITE_DONE_12:
 ; main.py:49:     spi = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, mode=SoftSPI.PERIPHERAL, cs=cs_pin)
-	MOV	R24, R9
+	MOV	R24, R11
 	STD	Y+3, R24
 	MOV	R24, R12
 	STD	Y+4, R24
@@ -187,15 +187,7 @@ L_BIT_WRITE_DONE_12:
 	MOV	R5, R24
 	CLR	R24
 	MOV	R15, R24
-	MOV	R24, R9
-	CPI	R24, 255
-	BREQ	L_BR_SKIP_14
-	RJMP	L_176
-L_BR_SKIP_14:
-	RJMP	L_175
-L_176:
 	SBI	0x08, 3
-L_175:
 ; main.py:51:     uart.println("SSPIP")
 ; main.py:69:     while True:
 	LDI	R30, lo8(__str_0)
@@ -206,30 +198,30 @@ L_175:
 L_183:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_15
+	BREQ	L_BR_SKIP_14
 	RJMP	L_184
-L_BR_SKIP_15:
+L_BR_SKIP_14:
 	RJMP	L_183
 L_184:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	MOV	R24, R5
 	CPI	R24, 112
-	BREQ	L_BR_SKIP_16
+	BREQ	L_BR_SKIP_15
 	RJMP	L_186
-L_BR_SKIP_16:
+L_BR_SKIP_15:
 	SBIS	0x06, 3
-	RJMP	L_BIT_FALSE_17
+	RJMP	L_BIT_FALSE_16
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_18
-L_BIT_FALSE_17:
+	RJMP	L_BIT_DONE_17
+L_BIT_FALSE_16:
 	CLR	R24
-L_BIT_DONE_18:
+L_BIT_DONE_17:
 	MOV	R16, R24
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_19
+	BREQ	L_BR_SKIP_18
 	RJMP	L_188
-L_BR_SKIP_19:
+L_BR_SKIP_18:
 	LDI	R24, 1
 	MOV	R16, R24
 	RJMP	L_185
@@ -244,27 +236,27 @@ L_185:
 L_192:
 	MOV	R24, R8
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_20
+	BREQ	L_BR_SKIP_19
 	RJMP	L_193
-L_BR_SKIP_20:
+L_BR_SKIP_19:
 ; main.py:56:         cs_state = spi.cs_asserted()
 	MOV	R24, R5
 	CPI	R24, 112
-	BREQ	L_BR_SKIP_21
+	BREQ	L_BR_SKIP_20
 	RJMP	L_195
-L_BR_SKIP_21:
+L_BR_SKIP_20:
 	SBIS	0x06, 3
-	RJMP	L_BIT_FALSE_22
+	RJMP	L_BIT_FALSE_21
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_23
-L_BIT_FALSE_22:
+	RJMP	L_BIT_DONE_22
+L_BIT_FALSE_21:
 	CLR	R24
-L_BIT_DONE_23:
+L_BIT_DONE_22:
 	MOV	R16, R24
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_24
+	BREQ	L_BR_SKIP_23
 	RJMP	L_197
-L_BR_SKIP_24:
+L_BR_SKIP_23:
 	LDI	R24, 1
 	MOV	R16, R24
 	RJMP	L_194
@@ -279,9 +271,9 @@ L_194:
 L_193:
 	MOV	R24, R5
 	CPI	R24, 112
-	BREQ	L_BR_SKIP_25
+	BREQ	L_BR_SKIP_24
 	RJMP	L_202
-L_BR_SKIP_25:
+L_BR_SKIP_24:
 	LDI	R24, 171
 	STD	Y+10, R24
 	CLR	R24
@@ -291,43 +283,43 @@ L_BR_SKIP_25:
 L_203:
 	LDD	R24, Y+7
 	CPI	R24, 8
-	BRLO	L_BR_SKIP_26
+	BRLO	L_BR_SKIP_25
 	RJMP	L_204
-L_BR_SKIP_26:
+L_BR_SKIP_25:
 	LDD	R24, Y+10
 	ANDI	R24, 128
 	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_27
+	BRNE	L_BR_SKIP_26
 	RJMP	L_206
-L_BR_SKIP_27:
+L_BR_SKIP_26:
 	SBI	0x08, 2
 	RJMP	L_205
 L_206:
 	CBI	0x08, 2
 L_205:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_28
+	RJMP	L_BIT_FALSE_27
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_29
-L_BIT_FALSE_28:
+	RJMP	L_BIT_DONE_28
+L_BIT_FALSE_27:
 	CLR	R24
-L_BIT_DONE_29:
+L_BIT_DONE_28:
 	MOV	R16, R24
 	STD	Y+9, R24
 L_212:
 	LDD	R24, Y+9
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_30
+	BREQ	L_BR_SKIP_29
 	RJMP	L_213
-L_BR_SKIP_30:
+L_BR_SKIP_29:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_31
+	RJMP	L_BIT_FALSE_30
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_32
-L_BIT_FALSE_31:
+	RJMP	L_BIT_DONE_31
+L_BIT_FALSE_30:
 	CLR	R24
-L_BIT_DONE_32:
+L_BIT_DONE_31:
 	MOV	R16, R24
 	STD	Y+9, R24
 	RJMP	L_212
@@ -336,43 +328,43 @@ L_213:
 	LSL	R24
 	STD	Y+8, R24
 	SBIS	0x06, 1
-	RJMP	L_BIT_FALSE_33
+	RJMP	L_BIT_FALSE_32
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_34
-L_BIT_FALSE_33:
+	RJMP	L_BIT_DONE_33
+L_BIT_FALSE_32:
 	CLR	R24
-L_BIT_DONE_34:
+L_BIT_DONE_33:
 	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_35
+	BRNE	L_BR_SKIP_34
 	RJMP	L_217
-L_BR_SKIP_35:
+L_BR_SKIP_34:
 	LDD	R24, Y+8
 	ORI	R24, 1
 	STD	Y+8, R24
 L_217:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_36
+	RJMP	L_BIT_FALSE_35
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_37
-L_BIT_FALSE_36:
+	RJMP	L_BIT_DONE_36
+L_BIT_FALSE_35:
 	CLR	R24
-L_BIT_DONE_37:
+L_BIT_DONE_36:
 	MOV	R16, R24
 	STD	Y+9, R24
 L_224:
 	LDD	R24, Y+9
 	CPI	R24, 1
-	BREQ	L_BR_SKIP_38
+	BREQ	L_BR_SKIP_37
 	RJMP	L_225
-L_BR_SKIP_38:
+L_BR_SKIP_37:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_39
+	RJMP	L_BIT_FALSE_38
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_40
-L_BIT_FALSE_39:
+	RJMP	L_BIT_DONE_39
+L_BIT_FALSE_38:
 	CLR	R24
-L_BIT_DONE_40:
+L_BIT_DONE_39:
 	MOV	R16, R24
 	STD	Y+9, R24
 	RJMP	L_224
@@ -400,9 +392,9 @@ L_201:
 L_231:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_41
+	BREQ	L_BR_SKIP_40
 	RJMP	L_232
-L_BR_SKIP_41:
+L_BR_SKIP_40:
 	RJMP	L_231
 L_232:
 	LDI	R24, 82
@@ -413,16 +405,16 @@ L_232:
 L_235:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_42
+	BREQ	L_BR_SKIP_41
 	RJMP	L_236
-L_BR_SKIP_42:
+L_BR_SKIP_41:
 	RJMP	L_235
 L_236:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:63:     uart.write(nibble_hi(rx))
 	MOV	R24, R4
-	MOV	R10, R24
+	MOV	R9, R24
 	CALL	nibble_hi
 	STD	Y+11, R24
 ; main.py:41: 
@@ -430,16 +422,16 @@ L_236:
 L_239:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_43
+	BREQ	L_BR_SKIP_42
 	RJMP	L_240
-L_BR_SKIP_43:
+L_BR_SKIP_42:
 	RJMP	L_239
 L_240:
 	LDD	R24, Y+11
 	STS	0x00C6, R24
 ; main.py:64:     uart.write(nibble_lo(rx))
 	MOV	R24, R4
-	MOV	R11, R24
+	MOV	R10, R24
 	CALL	nibble_lo
 	STD	Y+11, R24
 ; main.py:41: 
@@ -447,9 +439,9 @@ L_240:
 L_243:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_44
+	BREQ	L_BR_SKIP_43
 	RJMP	L_244
-L_BR_SKIP_44:
+L_BR_SKIP_43:
 	RJMP	L_243
 L_244:
 	LDD	R24, Y+11
@@ -460,9 +452,9 @@ L_244:
 L_247:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_45
+	BREQ	L_BR_SKIP_44
 	RJMP	L_248
-L_BR_SKIP_45:
+L_BR_SKIP_44:
 	RJMP	L_247
 L_248:
 	LDI	R24, 10
@@ -477,9 +469,9 @@ L_248:
 L_254:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_46
+	BREQ	L_BR_SKIP_45
 	RJMP	L_255
-L_BR_SKIP_46:
+L_BR_SKIP_45:
 	RJMP	L_254
 L_255:
 	LDI	R24, 10

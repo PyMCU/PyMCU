@@ -10,7 +10,7 @@
 .equ tmp_21, _stack_base + 17
 .equ tmp_23, _stack_base + 15
 .equ tmp_24, _stack_base + 16
-.equ tmp_31, _stack_base + 12
+.equ tmp_30, _stack_base + 12
 .equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
@@ -19,7 +19,7 @@
 .global main
 	RJMP	main
 nibble_hi:
-	MOV	R9, R24
+	MOV	R8, R24
 	LSR	R24
 	LSR	R24
 	LSR	R24
@@ -44,7 +44,7 @@ L_21:
 	MOV	R16, R24
 	RET
 nibble_lo:
-	MOV	R10, R24
+	MOV	R9, R24
 	ANDI	R24, 15
 	MOV	R6, R24
 ; main.py:32:     if n < 10:
@@ -106,7 +106,7 @@ L_BIT_WRITE_SKIP_2:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_3:
 ; main.py:40:     spi = SPI(cs=cs_pin)
-	MOV	R24, R7
+	MOV	R24, R10
 	STD	Y+4, R24
 ; main.py:53:     uart.write('\n')
 ; main.py:34:     return n + 55
@@ -121,14 +121,7 @@ L_BIT_WRITE_DONE_3:
 	LDI	R24, 80
 	OUT	0x2C, R24
 	LDI	R24, 99
-	MOV	R8, R24
-	MOV	R24, R7
-	CPI	R24, 255
-	BREQ	L_BR_SKIP_5
-	RJMP	L_70
-L_BR_SKIP_5:
-	RJMP	L_69
-L_70:
+	MOV	R7, R24
 ; main.py:20: from whipsnake.hal.gpio import Pin
 	MOV	R24, R16
 	STD	Y+3, R24
@@ -137,7 +130,6 @@ L_70:
 ; main.py:8: # Hardware: Arduino Uno
 ; main.py:44:     test_byte: uint8 = 0xA5
 	SBI	0x05, 0
-L_69:
 ; main.py:42:     uart.println("SCS")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
@@ -147,9 +139,9 @@ L_69:
 L_111:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_6
+	BREQ	L_BR_SKIP_5
 	RJMP	L_112
-L_BR_SKIP_6:
+L_BR_SKIP_5:
 	RJMP	L_111
 L_112:
 	LDI	R24, 10
@@ -160,11 +152,11 @@ L_112:
 	CBI	0x05, 0
 ; main.py:46:     with spi:
 ; main.py:47:         spi.write(test_byte)
-	MOV	R24, R8
+	MOV	R24, R7
 	CPI	R24, 99
-	BREQ	L_BR_SKIP_7
+	BREQ	L_BR_SKIP_6
 	RJMP	L_119
-L_BR_SKIP_7:
+L_BR_SKIP_6:
 ; main.py:57:     while True:
 	MOV	R24, R4
 	OUT	0x2E, R24
@@ -172,9 +164,9 @@ L_BR_SKIP_7:
 L_121:
 	IN	R24, 0x2D
 	ANDI	R24, 128
-	BREQ	L_BR_SKIP_8
+	BREQ	L_BR_SKIP_7
 	RJMP	L_122
-L_BR_SKIP_8:
+L_BR_SKIP_7:
 	RJMP	L_121
 L_122:
 	IN	R24, 0x2E
@@ -188,9 +180,9 @@ L_119:
 L_130:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
+	BREQ	L_BR_SKIP_8
 	RJMP	L_131
-L_BR_SKIP_9:
+L_BR_SKIP_8:
 	RJMP	L_130
 L_131:
 	LDI	R24, 68
@@ -201,16 +193,16 @@ L_131:
 L_134:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_10
+	BREQ	L_BR_SKIP_9
 	RJMP	L_135
-L_BR_SKIP_10:
+L_BR_SKIP_9:
 	RJMP	L_134
 L_135:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:51:     uart.write(nibble_hi(test_byte))
 	MOV	R24, R4
-	MOV	R9, R24
+	MOV	R8, R24
 	CALL	nibble_hi
 	STD	Y+5, R24
 ; main.py:41: 
@@ -218,16 +210,16 @@ L_135:
 L_138:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_11
+	BREQ	L_BR_SKIP_10
 	RJMP	L_139
-L_BR_SKIP_11:
+L_BR_SKIP_10:
 	RJMP	L_138
 L_139:
 	LDD	R24, Y+5
 	STS	0x00C6, R24
 ; main.py:52:     uart.write(nibble_lo(test_byte))
 	MOV	R24, R4
-	MOV	R10, R24
+	MOV	R9, R24
 	CALL	nibble_lo
 	STD	Y+5, R24
 ; main.py:41: 
@@ -235,9 +227,9 @@ L_139:
 L_142:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
+	BREQ	L_BR_SKIP_11
 	RJMP	L_143
-L_BR_SKIP_12:
+L_BR_SKIP_11:
 	RJMP	L_142
 L_143:
 	LDD	R24, Y+5
@@ -248,9 +240,9 @@ L_143:
 L_146:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
+	BREQ	L_BR_SKIP_12
 	RJMP	L_147
-L_BR_SKIP_13:
+L_BR_SKIP_12:
 	RJMP	L_146
 L_147:
 	LDI	R24, 10
@@ -264,9 +256,9 @@ L_147:
 L_153:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_14
+	BREQ	L_BR_SKIP_13
 	RJMP	L_154
-L_BR_SKIP_14:
+L_BR_SKIP_13:
 	RJMP	L_153
 L_154:
 	LDI	R24, 10

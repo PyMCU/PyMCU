@@ -53,7 +53,7 @@ main:
 	LDI	R24, 99
 	MOV	R9, R24
 ; main.py:61: 
-; main.py:62:             case _:
+; main.py:70:             UDR0[0] = 0            # dummy read to clear RXC (clears UART receive FIFO)
 ; main.py:33:     uart = UART(9600)
 ; main.py:27: MODE_CHASER  = 1
 ; main.py:31: def main():

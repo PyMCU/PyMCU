@@ -29,6 +29,11 @@ Each commit must leave `dotnet test tests/integration/Whipsnake.IntegrationTests
 - **ASCII-only stdlib** — the compiler lexer rejects non-ASCII. Do not use Unicode in
   any file under `lib/src/whipsnake/`.
 - **HAL match rules** — see `AGENTS.md` for dotted-name vs capture-name patterns.
+- **No workarounds for compiler bugs** — If a language feature generates wrong code,
+  fix the root cause in the C++ compiler (Parser, IRGenerator, Optimizer, AVRCodeGen).
+  Do NOT write Python source code that exploits broken codegen to produce the right output.
+  Workarounds are invisible to users, break when the bug is fixed, and make the stdlib
+  harder to read and reason about.
 
 ---
 

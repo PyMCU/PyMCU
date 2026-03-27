@@ -39,6 +39,7 @@
 #include <set>
 #include <stdexcept>
 #include <typeinfo>
+#include <unordered_set>
 
 #include "../common/Utils.h"  // Not available consistently
 
@@ -1757,6 +1758,27 @@ void IRGenerator::visitIf(const IfStmt *stmt) {
   // opt_result >= 1: Optimized (runtime jump emitted or statically true)
   // — fall through to visit then_branch normally
 
+  // ── str_constant_variables branch-merge setup ─────────────────────────────
+  // When the condition is runtime, both the then-branch and the else/elif
+  // branches are visited sequentially for IR emission.  Without save/restore
+  // the else-branch would silently overwrite the if-branch's entries in
+  // str_constant_variables, leaving only the else-branch's view of string
+  // constants.  To fix this:
+  //   1. Snapshot before any branch.
+  //   2. Restore the snapshot before each subsequent branch.
+  //   3. After all branches, keep only entries that every branch agreed on
+  //      (same key, same value).  If there is no else-branch, any change made
+  //      in the then-branch is discarded because we cannot know at compile time
+  //      whether the branch was taken.
+  //
+  // Compile-time-foldable conditions (opt_result == 0 + Constant path above, or
+  // opt_result == -1) return early or set skip_then, so they never reach this
+  // save/restore logic and are unaffected.
+  auto snap_before = str_constant_variables;
+  // Per-branch post-visit snapshots (one per branch that is actually visited).
+  std::vector<std::unordered_map<std::string, std::string>> branch_snaps;
+  bool has_else = stmt->else_branch != nullptr;
+
   if (!skip_then) {
     visitStatement(stmt->then_branch.get());
 
@@ -1764,6 +1786,10 @@ void IRGenerator::visitIf(const IfStmt *stmt) {
     if (!stmt->elif_branches.empty() || stmt->else_branch) {
       emit(tacky::Jump{end_label});
     }
+
+    branch_snaps.push_back(str_constant_variables);
+    // Restore so the next branch starts from the pre-if state.
+    str_constant_variables = snap_before;
   }
 
   // 2. Elif Branches
@@ -1802,6 +1828,9 @@ void IRGenerator::visitIf(const IfStmt *stmt) {
       if (!is_last_elif || stmt->else_branch) {
         emit(tacky::Jump{end_label});
       }
+
+      branch_snaps.push_back(str_constant_variables);
+      str_constant_variables = snap_before;
     }
   }
 
@@ -1809,9 +1838,45 @@ void IRGenerator::visitIf(const IfStmt *stmt) {
   if (stmt->else_branch) {
     emit(tacky::Label{next_label});
     visitStatement(stmt->else_branch.get());
+    branch_snaps.push_back(str_constant_variables);
+    str_constant_variables = snap_before;
   }
 
   emit(tacky::Label{end_label});
+
+  // ── Merge str_constant_variables from all visited branches ─────────────────
+  // Only promote a key's new value when:
+  //   a) it is present with the same value in every branch snapshot, AND
+  //   b) all execution paths are covered (has_else == true, meaning there is no
+  //      implicit "skip all branches" path that leaves the variable unchanged).
+  // All other changed keys remain at their snap_before value (or absent).
+  if (!branch_snaps.empty()) {
+    // Collect keys that differ from snap_before in at least one branch.
+    std::unordered_set<std::string> changed_keys;
+    for (const auto &snap : branch_snaps) {
+      for (const auto &[k, v] : snap) {
+        auto it = snap_before.find(k);
+        if (it == snap_before.end() || it->second != v)
+          changed_keys.insert(k);
+      }
+    }
+
+    for (const auto &key : changed_keys) {
+      bool all_agree = true;
+      std::string agreed_val;
+      bool first = true;
+      for (const auto &snap : branch_snaps) {
+        auto it = snap.find(key);
+        if (it == snap.end()) { all_agree = false; break; }
+        if (first) { agreed_val = it->second; first = false; }
+        else if (it->second != agreed_val) { all_agree = false; break; }
+      }
+      if (all_agree && !first && has_else) {
+        str_constant_variables[key] = agreed_val;
+      }
+      // Otherwise snap_before is already the current state (restored above).
+    }
+  }
 }
 
 void IRGenerator::visitMatch(const MatchStmt *stmt) {
@@ -4341,6 +4406,20 @@ tacky::Val IRGenerator::visitBinary(const BinaryExpr *expr) {
         return tacky::Constant{
             (bop == tacky::BinaryOp::Equal) ? (c1->value == c2->value ? 1 : 0)
                                             : (c1->value != c2->value ? 1 : 0)};
+
+    // CT fold: if the RHS is None (-1) and the LHS is a known class instance
+    // (tracked in instance_classes via get_val_class), the object is definitely
+    // not None.  This makes `cs is not None` / `cs is None` compile-time
+    // foldable for ZCA Pin and other class parameters — enabling the visitIf
+    // branch-merge logic to correctly track str_constant_variables when only
+    // one branch is reachable.
+    if (const auto *c2 = std::get_if<tacky::Constant>(&rhs)) {
+      if (c2->value == -1 && !get_val_class(lhs).empty()) {
+        // lhs is a class instance — it is never None
+        return tacky::Constant{(bop == tacky::BinaryOp::Equal) ? 0 : 1};
+      }
+    }
+
     tacky::Temporary dst = make_temp(DataType::UINT8);
     emit(tacky::Binary{bop, lhs, rhs, dst});
     return dst;

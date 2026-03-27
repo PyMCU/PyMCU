@@ -89,31 +89,26 @@ class SoftSPI:
                 # Folds to 0 when baudrate > 500 kHz; delay_us calls removed by DCE.
                 half_us: uint8 = 500 // baudrate
                 self._half_us = half_us
-                if cs is None:
-                    self._cs = ""
-                else:
+                if cs is not None:
                     # cs.high() idles the chip-select line high.
-                    # The else-branch is visited last in codegen, so self._cs = cs.name
-                    # is the final assignment tracked in str_constant_variables -- which
-                    # lets `if self._cs != "":` fold to True in select()/deselect().
                     cs.high()
                     self._cs_pin = cs
                     self._cs = cs.name
+                else:
+                    self._cs = ""
             case 1:
                 # Peripheral: MISO is our output, SCK and MOSI are inputs.
                 miso.low()
                 self._mode = "p"
                 self._half_us = 0
-                if cs is None:
-                    self._cs = ""
-                else:
+                if cs is not None:
                     # cs.high() enables the internal pull-up so the CS line does not
                     # float before the controller drives it.
-                    # else-branch visited last in codegen -> self._cs = cs.name
-                    # is the final tracked value, so cs_asserted() folds correctly.
                     cs.high()
                     self._cs_pin = cs
                     self._cs = cs.name
+                else:
+                    self._cs = ""
 
     @inline
     def transfer(self, data: uint8) -> uint8:

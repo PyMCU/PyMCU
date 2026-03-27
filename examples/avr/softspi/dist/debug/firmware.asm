@@ -16,8 +16,8 @@
 .equ tmp_21, _stack_base + 28
 .equ tmp_23, _stack_base + 26
 .equ tmp_24, _stack_base + 27
-.equ tmp_49, _stack_base + 22
-.equ tmp_53, _stack_base + 23
+.equ tmp_48, _stack_base + 22
+.equ tmp_52, _stack_base + 23
 .equ whipsnake_hal__uart_avr__rx_buf, _stack_base + 0
 .equ whipsnake_hal__uart_avr__rx_head, _stack_base + 1
 .equ whipsnake_hal__uart_avr__rx_tail, _stack_base + 2
@@ -26,7 +26,7 @@
 .global main
 	RJMP	main
 nibble_hi:
-	MOV	R10, R24
+	MOV	R9, R24
 	LSR	R24
 	LSR	R24
 	LSR	R24
@@ -51,7 +51,7 @@ L_21:
 	MOV	R16, R24
 	RET
 nibble_lo:
-	MOV	R11, R24
+	MOV	R10, R24
 	ANDI	R24, 15
 	MOV	R8, R24
 ; main.py:36:     if n < 10:
@@ -164,7 +164,7 @@ L_BIT_WRITE_SKIP_11:
 	CBI	0x07, 3
 L_BIT_WRITE_DONE_12:
 ; main.py:47:     spi  = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, cs=cs_pin)
-	MOV	R24, R9
+	MOV	R24, R11
 	STD	Y+3, R24
 	MOV	R24, R12
 	STD	Y+5, R24
@@ -179,15 +179,7 @@ L_BIT_WRITE_DONE_12:
 	LDI	R24, 1
 	STD	Y+4, R24
 	MOV	R5, R24
-	MOV	R24, R9
-	CPI	R24, 255
-	BREQ	L_BR_SKIP_14
-	RJMP	L_176
-L_BR_SKIP_14:
-	RJMP	L_175
-L_176:
 	SBI	0x08, 3
-L_175:
 ; main.py:49:     uart.println("SSPI")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
@@ -197,9 +189,9 @@ L_175:
 L_184:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_15
+	BREQ	L_BR_SKIP_14
 	RJMP	L_185
-L_BR_SKIP_15:
+L_BR_SKIP_14:
 	RJMP	L_184
 L_185:
 	LDI	R24, 10
@@ -209,22 +201,22 @@ L_185:
 ; main.py:53:     with spi:
 	MOV	R24, R6
 	CPI	R24, 99
-	BREQ	L_BR_SKIP_16
+	BREQ	L_BR_SKIP_15
 	RJMP	L_188
-L_BR_SKIP_16:
+L_BR_SKIP_15:
 	CBI	0x08, 3
 L_188:
 ; main.py:54:         spi.write(test_byte)
 	MOV	R24, R6
 	CPI	R24, 99
-	BREQ	L_BR_SKIP_17
+	BREQ	L_BR_SKIP_16
 	RJMP	L_192
-L_BR_SKIP_17:
+L_BR_SKIP_16:
 	MOV	R24, R6
 	CPI	R24, 99
-	BREQ	L_BR_SKIP_18
+	BREQ	L_BR_SKIP_17
 	RJMP	L_194
-L_BR_SKIP_18:
+L_BR_SKIP_17:
 	MOV	R24, R4
 	STD	Y+11, R24
 	CLR	R24
@@ -234,16 +226,16 @@ L_BR_SKIP_18:
 L_195:
 	LDD	R24, Y+9
 	CPI	R24, 8
-	BRLO	L_BR_SKIP_19
+	BRLO	L_BR_SKIP_18
 	RJMP	L_196
-L_BR_SKIP_19:
+L_BR_SKIP_18:
 	LDD	R24, Y+11
 	ANDI	R24, 128
 	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_20
+	BRNE	L_BR_SKIP_19
 	RJMP	L_198
-L_BR_SKIP_20:
+L_BR_SKIP_19:
 	SBI	0x08, 1
 	RJMP	L_197
 L_198:
@@ -251,21 +243,21 @@ L_198:
 L_197:
 	MOV	R24, R5
 	CPI	R24, 0
-	BRSH	L_BR_SKIP_21
+	BRSH	L_BR_SKIP_20
+	RJMP	L_201
+L_BR_SKIP_20:
+	BRNE	L_BR_SKIP_21
 	RJMP	L_201
 L_BR_SKIP_21:
-	BRNE	L_BR_SKIP_22
-	RJMP	L_201
-L_BR_SKIP_22:
 	CLR	R24
 	STD	Y+12, R24
 L_204:
 	LDD	R24, Y+12
 	MOV	R18, R5
 	CP	R24, R18
-	BRLO	L_BR_SKIP_23
+	BRLO	L_BR_SKIP_22
 	RJMP	L_205
-L_BR_SKIP_23:
+L_BR_SKIP_22:
     NOP
     NOP
     NOP
@@ -289,38 +281,38 @@ L_201:
 	LSL	R24
 	STD	Y+10, R24
 	SBIS	0x06, 2
-	RJMP	L_BIT_FALSE_24
+	RJMP	L_BIT_FALSE_23
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_25
-L_BIT_FALSE_24:
+	RJMP	L_BIT_DONE_24
+L_BIT_FALSE_23:
 	CLR	R24
-L_BIT_DONE_25:
+L_BIT_DONE_24:
 	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_26
+	BRNE	L_BR_SKIP_25
 	RJMP	L_207
-L_BR_SKIP_26:
+L_BR_SKIP_25:
 	LDD	R24, Y+10
 	ORI	R24, 1
 	STD	Y+10, R24
 L_207:
 	MOV	R24, R5
 	CPI	R24, 0
-	BRSH	L_BR_SKIP_27
+	BRSH	L_BR_SKIP_26
+	RJMP	L_211
+L_BR_SKIP_26:
+	BRNE	L_BR_SKIP_27
 	RJMP	L_211
 L_BR_SKIP_27:
-	BRNE	L_BR_SKIP_28
-	RJMP	L_211
-L_BR_SKIP_28:
 	CLR	R24
 	STD	Y+12, R24
 L_214:
 	LDD	R24, Y+12
 	MOV	R18, R5
 	CP	R24, R18
-	BRLO	L_BR_SKIP_29
+	BRLO	L_BR_SKIP_28
 	RJMP	L_215
-L_BR_SKIP_29:
+L_BR_SKIP_28:
     NOP
     NOP
     NOP
@@ -354,9 +346,9 @@ L_193:
 L_192:
 	MOV	R24, R6
 	CPI	R24, 99
-	BREQ	L_BR_SKIP_30
+	BREQ	L_BR_SKIP_29
 	RJMP	L_219
-L_BR_SKIP_30:
+L_BR_SKIP_29:
 	SBI	0x08, 3
 L_219:
 ; main.py:56:     uart.write('D')
@@ -365,9 +357,9 @@ L_219:
 L_224:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_31
+	BREQ	L_BR_SKIP_30
 	RJMP	L_225
-L_BR_SKIP_31:
+L_BR_SKIP_30:
 	RJMP	L_224
 L_225:
 	LDI	R24, 68
@@ -378,16 +370,16 @@ L_225:
 L_228:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_32
+	BREQ	L_BR_SKIP_31
 	RJMP	L_229
-L_BR_SKIP_32:
+L_BR_SKIP_31:
 	RJMP	L_228
 L_229:
 	LDI	R24, 58
 	STS	0x00C6, R24
 ; main.py:58:     uart.write(nibble_hi(test_byte))
 	MOV	R24, R4
-	MOV	R10, R24
+	MOV	R9, R24
 	CALL	nibble_hi
 	STD	Y+8, R24
 ; main.py:41: def main():
@@ -395,16 +387,16 @@ L_229:
 L_232:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_33
+	BREQ	L_BR_SKIP_32
 	RJMP	L_233
-L_BR_SKIP_33:
+L_BR_SKIP_32:
 	RJMP	L_232
 L_233:
 	LDD	R24, Y+8
 	STS	0x00C6, R24
 ; main.py:59:     uart.write(nibble_lo(test_byte))
 	MOV	R24, R4
-	MOV	R11, R24
+	MOV	R10, R24
 	CALL	nibble_lo
 	STD	Y+8, R24
 ; main.py:41: def main():
@@ -412,9 +404,9 @@ L_233:
 L_236:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_34
+	BREQ	L_BR_SKIP_33
 	RJMP	L_237
-L_BR_SKIP_34:
+L_BR_SKIP_33:
 	RJMP	L_236
 L_237:
 	LDD	R24, Y+8
@@ -425,9 +417,9 @@ L_237:
 L_240:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_35
+	BREQ	L_BR_SKIP_34
 	RJMP	L_241
-L_BR_SKIP_35:
+L_BR_SKIP_34:
 	RJMP	L_240
 L_241:
 	LDI	R24, 10
@@ -441,9 +433,9 @@ L_241:
 L_247:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_36
+	BREQ	L_BR_SKIP_35
 	RJMP	L_248
-L_BR_SKIP_36:
+L_BR_SKIP_35:
 	RJMP	L_247
 L_248:
 	LDI	R24, 10
