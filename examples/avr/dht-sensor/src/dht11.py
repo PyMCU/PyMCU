@@ -1,7 +1,7 @@
-from whipsnake.types import uint8, uint16, inline
-from whipsnake.hal.gpio import Pin
+from pymcu.types import uint8, uint16, inline
+from pymcu.hal.gpio import Pin
 # Asumimos que tu módulo time se llama así:
-from whipsnake.time import delay_ms, delay_us
+from pymcu.time import delay_ms, delay_us
 
 
 class DHT11:

@@ -9,9 +9,9 @@
 # direct register manipulation instead of the Pin HAL to show
 # how pymcu maps to raw hardware on constrained devices (68B RAM).
 #
-from whipsnake.chips.pic16f84a import PORTB, TRISB
-from whipsnake.time import delay_ms
-from whipsnake.types import uint8
+from pymcu.chips.pic16f84a import PORTB, TRISB
+from pymcu.time import delay_ms
+from pymcu.types import uint8
 
 SPEED = 80  # milliseconds between steps
 

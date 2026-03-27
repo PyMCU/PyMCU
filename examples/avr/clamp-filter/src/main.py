@@ -25,8 +25,8 @@
 # Hardware: Arduino Uno
 #   UART TX/RX on PD1/PD0 at 9600 baud
 #
-from whipsnake.types import uint8
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8
+from pymcu.hal.uart import UART
 
 
 # Clamp val to [lo, hi]. Tests 3-argument calling convention.

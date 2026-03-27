@@ -3,11 +3,11 @@ name = "extern-call"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "whipsnake-stdlib>=0.1.2a5",
-    "whipsnake>=0.1.0a27"
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
 ]
 
-[tool.whip]
+[tool.pymcu]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"
@@ -15,7 +15,7 @@ entry = "main.py"
 
 # C interop: build c_src/math_helper.c with avr-gcc and link via avr-ld.
 # Enables @extern("symbol") calls from PyMCU firmware.
-[tool.whip.ffi]
+[tool.pymcu.ffi]
 sources = ["c_src/math_helper.c"]
 include_dirs = ["c_src"]
 cflags = ["-std=c11", "-Os"]

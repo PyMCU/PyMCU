@@ -1,4 +1,4 @@
-from whipsnake.chips.pic16f877a import *
+from pymcu.chips.pic16f877a import *
 
 STATUS_LED = 0  # RB0
 BAUD_RATE_CONST = 25

@@ -1,9 +1,9 @@
 [project]
 name = "uart-echo"
 version = "0.1.0"
-dependencies = ["whipsnake-stdlib"]
+dependencies = ["pymcu-stdlib"]
 
-[tool.whip]
+[tool.pymcu]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"

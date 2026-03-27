@@ -13,10 +13,10 @@
 #     '?' (63)  — print help
 #     any other — echo back with '?' prefix
 #
-from whipsnake.types import uint8
-from whipsnake.hal.gpio import Pin
-from whipsnake.hal.uart import UART
-from whipsnake.time import delay_ms
+from pymcu.types import uint8
+from pymcu.hal.gpio import Pin
+from pymcu.hal.uart import UART
+from pymcu.time import delay_ms
 
 
 # Command byte constants — wrap in a class so match/case sees dotted names

@@ -5,8 +5,8 @@
 #   - Connect a serial terminal at 9600 8N1
 #   - Everything you type is echoed back
 #
-from whipsnake.types import uint8
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8
+from pymcu.hal.uart import UART
 
 
 def main():

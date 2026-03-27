@@ -4,9 +4,9 @@
 # Writes a known pattern to EEPROM addresses 0-3 and reads them back.
 # Prints "EEPROM OK" if all values match, "EEPROM FAIL" otherwise.
 #
-from whipsnake.types import uint8, uint16
-from whipsnake.hal.uart import UART
-from whipsnake.hal.eeprom import EEPROM
+from pymcu.types import uint8, uint16
+from pymcu.hal.uart import UART
+from pymcu.hal.eeprom import EEPROM
 
 def main():
     uart = UART(9600)

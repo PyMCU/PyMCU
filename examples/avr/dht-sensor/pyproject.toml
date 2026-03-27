@@ -3,11 +3,11 @@ name = "dht-sensor"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "whipsnake-stdlib>=0.1.2a5",
-    "whipsnake>=0.1.0a27"
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
 ]
 
-[tool.whip]
+[tool.pymcu]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"

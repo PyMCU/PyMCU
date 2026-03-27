@@ -8,10 +8,10 @@
 #   "OLED\n"  -- boot banner
 #   "OK\n"    -- init complete
 #
-from whipsnake.types import uint8
-from whipsnake.hal.uart import UART
-from whipsnake.hal.i2c import I2C
-from whipsnake.drivers.ssd1306 import SSD1306
+from pymcu.types import uint8
+from pymcu.hal.uart import UART
+from pymcu.hal.i2c import I2C
+from pymcu.drivers.ssd1306 import SSD1306
 
 
 def main():

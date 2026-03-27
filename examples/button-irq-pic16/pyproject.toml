@@ -1,13 +1,13 @@
 [project]
 name = "button-irq-pic16"
 version = "0.1.0"
-dependencies = ["whipsnake-stdlib"]
+dependencies = ["pymcu-stdlib"]
 
-[tool.whip]
+[tool.pymcu]
 chip = "pic16f18877"
 frequency = 8000000
 sources = "src"
 entry = "main.py"
 
-[tool.whip.config]
+[tool.pymcu.config]
 # Internal oscillator at 8 MHz

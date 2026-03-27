@@ -25,9 +25,9 @@
 #   constrain(5, 10, 200) = 10   (5 < 10)
 #   adc_to_pwm(512)       = 512*255/1023 = 127
 
-from whipsnake.types import uint8, uint16, inline
-from whipsnake.hal.uart import UART
-from whipsnake.ffi import extern
+from pymcu.types import uint8, uint16, inline
+from pymcu.hal.uart import UART
+from pymcu.ffi import extern
 
 
 # --- Arduino utility functions (c_src/arduino_utils.c) ---

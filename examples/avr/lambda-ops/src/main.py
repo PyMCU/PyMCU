@@ -10,8 +10,8 @@
 #   "T:09\n"  -- triple(3) = 3*3 = 9
 #   "R:5C\n"  -- raw string r"\" has one char: backslash = 0x5C
 #
-from whipsnake.types import uint8, inline
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8, inline
+from pymcu.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

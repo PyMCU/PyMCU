@@ -14,10 +14,10 @@
 #
 # PCINT0 vector: byte 0x0006, word 0x0003
 #
-from whipsnake.types import uint8, interrupt, asm
-from whipsnake.chips.atmega328p import PCICR, PCMSK0, GPIOR0
-from whipsnake.hal.gpio import Pin
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8, interrupt, asm
+from pymcu.chips.atmega328p import PCICR, PCMSK0, GPIOR0
+from pymcu.hal.gpio import Pin
+from pymcu.hal.uart import UART
 
 
 @interrupt(0x0006)

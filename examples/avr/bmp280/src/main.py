@@ -11,11 +11,11 @@
 #   "T:XXXX\n"   -- raw temperature MSB+LSB (hex high byte then low byte)
 #   "P:XXXX\n"   -- raw pressure MSB+LSB
 #
-from whipsnake.types import uint8, uint16
-from whipsnake.hal.uart import UART
-from whipsnake.hal.i2c import I2C
-from whipsnake.drivers.bmp280 import BMP280
-from whipsnake.time import delay_ms
+from pymcu.types import uint8, uint16
+from pymcu.hal.uart import UART
+from pymcu.hal.i2c import I2C
+from pymcu.drivers.bmp280 import BMP280
+from pymcu.time import delay_ms
 
 
 def nibble_hi(v: uint8) -> uint8:

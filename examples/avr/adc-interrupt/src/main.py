@@ -12,10 +12,10 @@
 #   - ADC0 = PC0 (analog in)
 #   - UART TX 9600 baud
 #
-from whipsnake.types import uint8, uint16, interrupt, asm
-from whipsnake.chips.atmega328p import GPIOR0, GPIOR1, ADCL, ADCH, ADCSRA
-from whipsnake.hal.uart import UART
-from whipsnake.hal.adc import AnalogPin
+from pymcu.types import uint8, uint16, interrupt, asm
+from pymcu.chips.atmega328p import GPIOR0, GPIOR1, ADCL, ADCH, ADCSRA
+from pymcu.hal.uart import UART
+from pymcu.hal.adc import AnalogPin
 
 
 @interrupt(0x002A)

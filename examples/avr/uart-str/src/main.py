@@ -4,15 +4,15 @@
 # Hardware: Any ATmega328P board
 #   - Connect a serial terminal at 9600 8N1
 #
-from whipsnake.types import uint8
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8
+from pymcu.hal.uart import UART
 
 
 def main():
     uart = UART(9600)
 
     # Test write_str (compile-time string expansion)
-    uart.write_str("Hello, Whipsnake!\n")
+    uart.write_str("Hello, PyMCU!\n")
 
     # Test println (write_str + newline)
     uart.println("UART string support works!")

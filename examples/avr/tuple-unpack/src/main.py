@@ -11,8 +11,8 @@
 #   "L:05\n"  -- last of (1,2,3,4,5) = 5
 #   "W:01\n"  -- multi-item with: entered = 1
 #
-from whipsnake.types import uint8, inline
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8, inline
+from pymcu.hal.uart import UART
 
 
 def nibble_hi(val: uint8) -> uint8:

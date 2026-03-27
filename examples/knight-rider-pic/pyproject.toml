@@ -1,13 +1,13 @@
 [project]
 name = "knight-rider-pic"
 version = "0.1.0"
-dependencies = ["whipsnake-stdlib"]
+dependencies = ["pymcu-stdlib"]
 
-[tool.whip]
+[tool.pymcu]
 chip = "pic16f84a"
 frequency = 4000000
 sources = "src"
 entry = "main.py"
 
-[tool.whip.config]
+[tool.pymcu.config]
 FOSC = "HS"

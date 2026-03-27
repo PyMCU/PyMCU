@@ -7,11 +7,11 @@
 #
 # ADC result is 10-bit; we read only ADCL (low 8 bits) for a simple 8-bit value.
 #
-from whipsnake.types import uint8
-from whipsnake.hal.adc import AnalogPin
-from whipsnake.hal.uart import UART
-from whipsnake.chips.atmega328p import ADCSRA, ADCL
-from whipsnake.time import delay_ms
+from pymcu.types import uint8
+from pymcu.hal.adc import AnalogPin
+from pymcu.hal.uart import UART
+from pymcu.chips.atmega328p import ADCSRA, ADCL
+from pymcu.time import delay_ms
 
 
 def main():

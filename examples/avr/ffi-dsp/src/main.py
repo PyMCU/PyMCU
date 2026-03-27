@@ -1,6 +1,6 @@
 # PyMCU -- ffi-dsp: C interop with two C source files
 #
-# Demonstrates a more complex @extern / [tool.whip.ffi] setup:
+# Demonstrates a more complex @extern / [tool.pymcu.ffi] setup:
 #   - Two C files compiled with avr-gcc (math_utils.c, filter.c)
 #   - Six @extern function declarations
 #   - Functions with 2 and 3 arguments
@@ -23,9 +23,9 @@
 #   deadband(30,50)    = 0   (30 < 50)
 #   deadband(80,50)    = 30  (80 - 50)
 
-from whipsnake.types import uint8, inline
-from whipsnake.hal.uart import UART
-from whipsnake.ffi import extern
+from pymcu.types import uint8, inline
+from pymcu.hal.uart import UART
+from pymcu.ffi import extern
 
 
 # --- math_utils.c ---

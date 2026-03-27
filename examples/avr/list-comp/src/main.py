@@ -12,8 +12,8 @@
 #   "L:HH\n"         -- result of comprehension-over-list   (11+21+31=63 = 0x3F)
 #   "F:HH\n"         -- result of for-in-list sum           (1+3+5+7=16 = 0x10)
 #
-from whipsnake.types import uint8
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8
+from pymcu.hal.uart import UART
 
 def nibble_hex_hi(val: uint8) -> uint8:
     n: uint8 = (val >> 4) & 0x0F

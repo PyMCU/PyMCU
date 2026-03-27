@@ -12,9 +12,9 @@
 #   0x68 / 0x69  — MPU-6050 IMU / DS3231 RTC
 #   0x76 / 0x77  — BMP280 / BME280 pressure sensor
 #
-from whipsnake.types import uint8
-from whipsnake.hal.i2c import I2C
-from whipsnake.hal.uart import UART
+from pymcu.types import uint8
+from pymcu.hal.i2c import I2C
+from pymcu.hal.uart import UART
 
 
 def main():

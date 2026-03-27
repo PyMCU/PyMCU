@@ -1,5 +1,5 @@
 # main.py
-from whipsnake.chips.pic16f18877 import *
+from pymcu.chips.pic16f18877 import *
 # IMPORTS DE MÓDULOS (La nueva funcionalidad)
 import uart
 import nco

@@ -3,12 +3,12 @@ name = "uart-echo-cp"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "whipsnake-stdlib>=0.1.2a5",
-    "whipsnake>=0.1.0a27",
-    "whipsnake-circuitpython>=0.1.0",
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27",
+    "pymcu-circuitpython>=0.1.0",
 ]
 
-[tool.whip]
+[tool.pymcu]
 board     = "arduino_uno"
 frequency = 16000000
 sources   = "src"

@@ -3,11 +3,11 @@ name = "ffi-dsp"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "whipsnake-stdlib>=0.1.2a5",
-    "whipsnake>=0.1.0a27"
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
 ]
 
-[tool.whip]
+[tool.pymcu]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"
@@ -15,7 +15,7 @@ entry = "main.py"
 
 # C interop: two C source files linked together with the firmware.
 # Demonstrates multi-file FFI builds with avr-gcc + avr-ld.
-[tool.whip.ffi]
+[tool.pymcu.ffi]
 sources = [
     "c_src/math_utils.c",
     "c_src/filter.c",

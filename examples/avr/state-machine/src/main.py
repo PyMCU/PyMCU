@@ -15,10 +15,10 @@
 # State sequence (UK-style):
 #   RED (3 s) → RED+YEL (1 s) → GREEN (3 s) → YELLOW (1 s) → RED …
 #
-from whipsnake.types import uint8, uint16
-from whipsnake.hal.gpio import Pin
-from whipsnake.hal.uart import UART
-from whipsnake.chips.atmega328p import TIFR0, TCCR0B
+from pymcu.types import uint8, uint16
+from pymcu.hal.gpio import Pin
+from pymcu.hal.uart import UART
+from pymcu.chips.atmega328p import TIFR0, TCCR0B
 
 
 # FSM state identifiers — use as dotted names in match: case State.RED

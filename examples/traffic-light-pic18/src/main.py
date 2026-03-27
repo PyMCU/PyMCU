@@ -12,8 +12,8 @@
 #   Each transition requires a button press on RB4.
 #   This demonstrates real-time input polling with multiple outputs.
 #
-from whipsnake.hal.gpio import Pin
-from whipsnake.types import uint8
+from pymcu.hal.gpio import Pin
+from pymcu.types import uint8
 
 # Traffic light states
 STATE_GREEN  = 0

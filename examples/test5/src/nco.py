@@ -1,5 +1,5 @@
 # nco.py
-from whipsnake.chips.pic16f18877 import *
+from pymcu.chips.pic16f18877 import *
 
 def init(inc_val: int):
     # NCO1CON está en Banco 11

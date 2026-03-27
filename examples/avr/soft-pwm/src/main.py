@@ -19,11 +19,11 @@
 #   LED: PB5 (Arduino pin 13, built-in)
 #   UART TX on PD1 at 9600 baud
 #
-from whipsnake.types import uint8, interrupt
-from whipsnake.chips.atmega328p import PORTB, DDRB, GPIOR0
-from whipsnake.chips.atmega328p import TCCR0B, TIMSK0
-from whipsnake.hal.uart import UART
-from whipsnake.types import asm
+from pymcu.types import uint8, interrupt
+from pymcu.chips.atmega328p import PORTB, DDRB, GPIOR0
+from pymcu.chips.atmega328p import TCCR0B, TIMSK0
+from pymcu.hal.uart import UART
+from pymcu.types import asm
 
 
 @interrupt(0x0020)  # TIMER0_OVF word addr 0x10

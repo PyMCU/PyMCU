@@ -1,4 +1,4 @@
-from whipsnake.hal.uart import UART
+from pymcu.hal.uart import UART
 
 def main():
     uart = UART(9600)

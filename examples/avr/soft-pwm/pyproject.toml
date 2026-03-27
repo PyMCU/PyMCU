@@ -2,8 +2,8 @@
 name = "soft-pwm"
 version = "0.1.0"
 dependencies = [
-    "whipsnake-stdlib>=0.1.2a5",
-    "whipsnake>=0.1.0a27"
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
 ]
 
 [[tool.uv.index]]
@@ -12,10 +12,10 @@ url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
 explicit = true
 
 [tool.uv.sources]
-whipsnake-stdlib = {index = "gitea"}
-whipsnake = {index = "gitea"}
+pymcu-stdlib = {index = "gitea"}
+pymcu = {index = "gitea"}
 
-[tool.whip]
+[tool.pymcu]
 chip = "atmega328p"
 frequency = 16000000
 sources = "src"
