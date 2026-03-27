@@ -44,58 +44,56 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:25:     timer = Timer(0, 256)
-; main.py:42:                 uart.write('T')
-; main.py:43:                 uart.write('\n')
 	CLR	R24
 	MOV	R6, R24
-; main.py:10: #   LED on PB5 (built-in): toggles every ~1 second
+; main.py:11: #   Serial terminal at 9600 baud: sends 'T' on each toggle
 	CLR	R24
 	OUT	0x24, R24
-; main.py:11: #   Serial terminal at 9600 baud: sends 'T' on each toggle
-; main.py:18: 
+; main.py:12: #
+; main.py:19: 
 	LDI	R24, 4
 	OUT	0x25, R24
 ; main.py:26:     timer.clear()
 	MOV	R24, R6
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_3
-	RJMP	L_75
+	RJMP	L_78
 L_BR_SKIP_3:
-; main.py:31:         # Poll Timer0 Overflow Flag (TOV0 = bit 0 of TIFR0, address 0x35)
+; main.py:32:         if TIFR0[0] == 1:
 	CLR	R24
 	OUT	0x26, R24
-	RJMP	L_74
-L_75:
+	RJMP	L_77
+L_78:
 	MOV	R24, R6
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_4
-	RJMP	L_77
+	RJMP	L_80
 L_BR_SKIP_4:
 	CLR	R24
 	STS	0x0084, R24
 	CLR	R24
 	STS	0x0085, R24
-	RJMP	L_74
-L_77:
+	RJMP	L_77
+L_80:
 	MOV	R24, R6
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_5
-	RJMP	L_79
+	RJMP	L_82
 L_BR_SKIP_5:
 	CLR	R24
 	STS	0x00B2, R24
-	RJMP	L_74
-L_79:
-L_74:
+	RJMP	L_77
+L_82:
+L_77:
 	CLR	R24
 	CLR	R25
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:30:     while True:
-L_81:
+L_84:
 ; main.py:32:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_83
+	RJMP	L_86
 ; main.py:34:             TIFR0[0] = 1
 	SBI	0x15, 0
 	MOV	R24, R4
@@ -110,7 +108,7 @@ L_81:
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_6
-	RJMP	L_84
+	RJMP	L_87
 L_BR_SKIP_6:
 ; main.py:40:                 ticks = 0
 	CLR	R24
@@ -140,28 +138,28 @@ L_BIT_WRITE_SKIP_9:
 L_BIT_WRITE_DONE_10:
 ; main.py:42:                 uart.write('T')
 ; main.py:41:                 led.toggle()
-L_88:
+L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_89
+	RJMP	L_92
 L_BR_SKIP_12:
-	RJMP	L_88
-L_89:
+	RJMP	L_91
+L_92:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
 ; main.py:41:                 led.toggle()
-L_92:
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_93
+	RJMP	L_96
 L_BR_SKIP_13:
-	RJMP	L_92
-L_93:
+	RJMP	L_95
+L_96:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_84:
-L_83:
-	RJMP	L_81
+L_87:
+L_86:
+	RJMP	L_84

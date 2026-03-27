@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_25, _stack_base + 3
-.equ tmp_26, _stack_base + 4
+.equ tmp_25, _stack_base + 4
+.equ tmp_26, _stack_base + 5
 
 .org 0x0
 .global main
@@ -47,7 +47,7 @@
 	RETI
 	NOP
 .org 0x34
-	RJMP	timer1_ovf_isr
+	RJMP	on_overflow
 	NOP
 .org 0x38
 	RETI
@@ -86,7 +86,7 @@
 	RETI
 	NOP
 
-timer1_ovf_isr:
+on_overflow:
 ; ISR prologue — save context
 	PUSH	R16
 	PUSH	R17
@@ -111,8 +111,8 @@ main:
 	LDI	R29, hi8(_stack_base)
 ; main.py:29:     led  = Pin("PB5", Pin.OUT)
 ; main.py:8: #
-; main.py:20: 
-; main.py:32:     # Timer1: prescaler 256 — CS1[2:0] = 100 → TCCR1B = 0x04
+; main.py:20: from pymcu.hal.timer import Timer
+; main.py:32:     # Timer1 at prescaler 256; irq() enables TOIE1 + SEI, registers on_overflow
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -126,7 +126,6 @@ L_BIT_WRITE_DONE_1:
 ; main.py:30:     uart = UART(9600)
 ; main.py:27: 
 ; main.py:31: 
-; main.py:47:             uart.write('\n')
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -137,40 +136,48 @@ L_BIT_WRITE_DONE_1:
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:33:     TCCR1B.value = 0x04
+; main.py:34:     timer = Timer(1, 256)
+	LDI	R24, 1
+	MOV	R4, R24
+	CLR	R24
+	STS	0x0080, R24
+	CLR	R24
+	STS	0x0081, R24
 	LDI	R24, 4
 	STS	0x0081, R24
-; main.py:35:     TIMSK1.value = 0x01
-	LDI	R24, 1
+; main.py:35:     timer.irq(on_overflow)
+	LDS	R24, 0x006F
+	ORI	R24, 1
 	STS	0x006F, R24
-; main.py:37:     GPIOR0[0] = 0    # Clear flag
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:37:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:38:     asm("SEI")       # Enable global interrupts
-SEI
-; main.py:40:     uart.println("TIMER1 IRQ BLINK")
+; main.py:38:     uart.println("TIMER1 IRQ BLINK")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_68:
+; main.py:41:         if GPIOR0[0] == 1:
+; main.py:45:             uart.write('\n')
+L_88:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_69
+	RJMP	L_89
 L_BR_SKIP_3:
-	RJMP	L_68
-L_69:
+	RJMP	L_88
+L_89:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:42:     while True:
-L_70:
-; main.py:43:         if GPIOR0[0] == 1:
+; main.py:40:     while True:
+L_90:
+; main.py:41:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_72
-; main.py:44:             GPIOR0[0] = 0
+	RJMP	L_92
+; main.py:42:             GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:45:             led.toggle()
+; main.py:43:             led.toggle()
 	SBIS	0x05, 5
 	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
@@ -191,34 +198,34 @@ L_BR_SKIP_8:
 L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_7:
-; main.py:46:             uart.write('T')
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_76:
+; main.py:44:             uart.write('T')
+; main.py:41:         if GPIOR0[0] == 1:
+; main.py:45:             uart.write('\n')
+L_96:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_77
+	RJMP	L_97
 L_BR_SKIP_9:
-	RJMP	L_76
-L_77:
+	RJMP	L_96
+L_97:
 	LDI	R24, 84
 	STS	0x00C6, R24
-; main.py:47:             uart.write('\n')
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_80:
+; main.py:45:             uart.write('\n')
+; main.py:41:         if GPIOR0[0] == 1:
+; main.py:45:             uart.write('\n')
+L_100:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_81
+	RJMP	L_101
 L_BR_SKIP_10:
-	RJMP	L_80
-L_81:
+	RJMP	L_100
+L_101:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_72:
-	RJMP	L_70
+L_92:
+	RJMP	L_90
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

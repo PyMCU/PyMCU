@@ -1,7 +1,8 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, TCNT0, TIMSK0, TIFR0, OCR0A
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, TCNT1L, TCNT1H, TIMSK1, TIFR1, OCR1A
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, TCNT2, TIMSK2, TIFR2, OCR2A
-from pymcu.types import uint8, uint16, inline
+from pymcu.chips.atmega328p import SREG
+from pymcu.types import uint8, uint16, inline, compile_isr, const
 
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----
 
@@ -161,3 +162,27 @@ def timer2_start_ctc():
 @inline
 def timer2_stop_ctc():
     TIMSK2[1] = 0
+
+# ---- timer_irq_setup: register a handler at the OVF vector via compile_isr ----
+# compile_isr takes the BYTE address of the vector table entry (same as @interrupt).
+# Timer0 OVF vector: byte 0x0020 (word 0x0010)
+# Timer1 OVF vector: byte 0x001A (word 0x000D)
+# Timer2 OVF vector: byte 0x0012 (word 0x0009)
+
+@inline
+def timer0_irq_setup(handler: const):
+    TIMSK0[0] = 1
+    SREG[7] = 1
+    compile_isr(handler, 0x0020)
+
+@inline
+def timer1_irq_setup(handler: const):
+    TIMSK1[0] = 1
+    SREG[7] = 1
+    compile_isr(handler, 0x001A)
+
+@inline
+def timer2_irq_setup(handler: const):
+    TIMSK2[0] = 1
+    SREG[7] = 1
+    compile_isr(handler, 0x0012)

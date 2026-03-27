@@ -10,6 +10,9 @@ from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, const, inline
 
 # ---- Unified Timer ZCA ----
+# IRQ mode constants (Timer.IRQ_OVF, Timer.IRQ_COMPA) select the interrupt
+# source for Timer.irq(). IRQ_OVF fires on counter overflow; IRQ_COMPA fires
+# on a compare-match with OCRnA (requires set_compare() to have been called).
 # Timer(n, prescaler) -- n is a compile-time constant; all methods @inline.
 # The compiler folds both the chip dispatch and the timer-number dispatch at
 # compile time, emitting only the instructions for the selected timer.
@@ -21,7 +24,7 @@ from pymcu.types import uint8, uint16, const, inline
 # CTC mode (compare-match interrupt) is configured via set_compare().
 
 # noinspection PyProtectedMember
-class Timer:
+class Timer:  # noqa
     """Hardware timer, zero-cost abstraction (all methods @inline).
 
     ``n`` is a compile-time constant that selects the hardware timer.
@@ -34,6 +37,9 @@ class Timer:
     frequencies depend on the target chip and selected timer.
     """
 
+    IRQ_OVF   = 1
+    IRQ_COMPA = 2
+
     def __init__(self, n: const[uint8], prescaler: uint8):
         """Initialize a hardware timer.
 
@@ -41,6 +47,14 @@ class Timer:
         prescaler: clock prescaler value; valid values depend on the chip.
         """
         self._n = n
+        # Store timer identity as a string so irq() can CT-fold on it
+        # (string members are compile-time constants; numeric SRAM members are not).
+        if n == 0:
+            self._id = "t0"
+        elif n == 1:
+            self._id = "t1"
+        elif n == 2:
+            self._id = "t2"
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match n:
@@ -203,3 +217,28 @@ class Timer:
                         from pymcu.hal._timer.atmega328p import timer2_overflow
                         return timer2_overflow()
         return 0
+
+    @inline
+    def irq(self, handler: const, mode: const = 1):
+        """Register an interrupt handler for this timer.
+
+        handler: compile-time function reference; automatically registered
+                 at the timer overflow vector -- no @interrupt decorator needed.
+        mode:    ``Timer.IRQ_OVF`` (default) for overflow interrupt.
+
+        Enables the relevant interrupt mask bit and global interrupts (SEI).
+        """
+        # Use self._id (string member = CT constant) for compile_isr dispatch,
+        # not self._n (numeric SRAM) which cannot CT-fold the vector placement.
+        match __CHIP__.name:
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.atmega328p import timer0_irq_setup
+                        timer0_irq_setup(handler)
+                    case "t1":
+                        from pymcu.hal._timer.atmega328p import timer1_irq_setup
+                        timer1_irq_setup(handler)
+                    case "t2":
+                        from pymcu.hal._timer.atmega328p import timer2_irq_setup
+                        timer2_irq_setup(handler)

@@ -1,27 +1,27 @@
-# ATmega328P: Timer1 overflow interrupt — ~1 Hz LED blink
-# Tests: @interrupt on TIMER1_OVF vector (0x001A), TCCR1B/TIMSK1 setup,
-#        GPIOR0 atomic flag pattern, SEI, led.toggle() driven by ISR
+# ATmega328P: Timer1 overflow interrupt -- ~1 Hz LED blink using Timer.irq()
+#
+# Demonstrates:
+#   - Timer(n, prescaler): zero-cost timer ZCA, prescaler folded at compile time
+#   - Timer.irq(handler): registers handler at the OVF vector via compile_isr;
+#     no @interrupt decorator or manual TIMSK/SEI writes needed
+#   - GPIOR0 atomic flag pattern: ISR sets bit, main loop clears and acts
 #
 # Hardware: Arduino Uno
-#   - LED on PB5 (Arduino pin 13, built-in) — blinks every ~1 second
-#   - Serial terminal at 9600 baud — prints 'T\n' on each toggle
+#   - LED on PB5 (Arduino pin 13, built-in) -- blinks every ~1 second
+#   - Serial terminal at 9600 baud -- prints 'T\n' on each toggle
 #
 # Timer1 (16-bit) at prescaler 256, F_CPU = 16 MHz:
-#   overflow period = 65536 * 256 / 16_000_000 ≈ 1.049 s
+#   overflow period = 65536 * 256 / 16_000_000 ~= 1.049 s
 #
-# TCCR1B prescaler bits CS1[2:0] = 0b100 (bit 2 only) → prescaler 256
-# TIMSK1 bit 0 = TOIE1 (Timer1 Overflow Interrupt Enable)
-# TIMER1_OVF vector = 0x001A (13 * 2 = 26 = 0x1A)
-#
-from pymcu.types import uint8, interrupt, asm
-from pymcu.chips.atmega328p import TCCR1B, TIMSK1, GPIOR0
+from pymcu.types import uint8
+from pymcu.chips.atmega328p import GPIOR0
 from pymcu.hal.gpio import Pin
 from pymcu.hal.uart import UART
+from pymcu.hal.timer import Timer
 
 
-@interrupt(0x001A)
-def timer1_ovf_isr():
-    # One overflow ≈ 1.049 s; set flag for main loop to act on
+def on_overflow():
+    # Minimal ISR: set atomic flag using SBI (no register corruption)
     GPIOR0[0] = 1
 
 
@@ -29,14 +29,12 @@ def main():
     led  = Pin("PB5", Pin.OUT)
     uart = UART(9600)
 
-    # Timer1: prescaler 256 — CS1[2:0] = 100 → TCCR1B = 0x04
-    TCCR1B.value = 0x04
-    # Enable Timer1 overflow interrupt
-    TIMSK1.value = 0x01
+    # Timer1 at prescaler 256; irq() enables TOIE1 + SEI, registers on_overflow
+    # at the Timer1 OVF vector automatically -- no @interrupt decorator needed.
+    timer = Timer(1, 256)
+    timer.irq(on_overflow)
 
-    GPIOR0[0] = 0    # Clear flag
-    asm("SEI")       # Enable global interrupts
-
+    GPIOR0[0] = 0
     uart.println("TIMER1 IRQ BLINK")
 
     while True:
