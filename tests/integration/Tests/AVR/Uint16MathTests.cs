@@ -15,7 +15,7 @@ public class Uint16MathTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("uint16-math");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("uint16-math");
 
     [Test]
     public void AllTests_Pass()

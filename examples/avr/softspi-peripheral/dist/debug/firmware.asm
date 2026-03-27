@@ -9,75 +9,29 @@
 .equ inline1_exchange_result, _stack_base + 8
 .equ inline1_exchange_sck_val, _stack_base + 9
 .equ inline1_exchange_tx, _stack_base + 10
-.equ inline1_write_data, _stack_base + 11
+.equ inline1_write_hex_hi, _stack_base + 11
+.equ inline1_write_hex_lo, _stack_base + 12
+.equ inline2_write_data, _stack_base + 13
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_18, _stack_base + 35
-.equ tmp_20, _stack_base + 36
-.equ tmp_21, _stack_base + 37
-.equ tmp_23, _stack_base + 35
-.equ tmp_24, _stack_base + 36
-.equ tmp_46, _stack_base + 22
-.equ tmp_48, _stack_base + 23
-.equ tmp_49, _stack_base + 24
-.equ tmp_51, _stack_base + 25
-.equ tmp_52, _stack_base + 26
-.equ tmp_53, _stack_base + 27
-.equ tmp_55, _stack_base + 28
-.equ tmp_57, _stack_base + 29
-.equ tmp_60, _stack_base + 30
-.equ tmp_63, _stack_base + 31
-.equ tmp_65, _stack_base + 32
+.equ tmp_39, _stack_base + 22
+.equ tmp_41, _stack_base + 23
+.equ tmp_42, _stack_base + 24
+.equ tmp_44, _stack_base + 25
+.equ tmp_45, _stack_base + 26
+.equ tmp_46, _stack_base + 27
+.equ tmp_48, _stack_base + 28
+.equ tmp_50, _stack_base + 29
+.equ tmp_53, _stack_base + 30
+.equ tmp_56, _stack_base + 31
+.equ tmp_58, _stack_base + 32
+.equ tmp_63, _stack_base + 33
+.equ tmp_68, _stack_base + 34
+.equ tmp_73, _stack_base + 35
 
 .org 0x0
 .global main
-	RJMP	main
-nibble_hi:
-	MOV	R9, R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	MOV	R16, R24
-	ANDI	R24, 15
-	MOV	R6, R24
-; main.py:31:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_0
-	RJMP	L_21
-L_BR_SKIP_0:
-; main.py:32:         return n + 48
-	MOV	R24, R6
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_21:
-; main.py:33:     return n + 55
-	MOV	R24, R6
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
-nibble_lo:
-	MOV	R10, R24
-	ANDI	R24, 15
-	MOV	R7, R24
-; main.py:38:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_1
-	RJMP	L_22
-L_BR_SKIP_1:
-; main.py:39:         return n + 48
-	MOV	R24, R7
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_22:
-; main.py:40:     return n + 55
-	MOV	R24, R7
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
 main:
 	LDI	R16, hi8(0x08FF)
 	OUT	0x3E, R16
@@ -85,235 +39,246 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:44:     uart = UART(9600)
+; main.py:31:     uart = UART(9600)
 ; main.py:27: 
-; main.py:31:     if n < 10:
-; main.py:47:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:31:     uart = UART(9600)
+; main.py:47: 
 	SBI	0x0A, 1
-; main.py:48:     cs_pin   = Pin("PC3", Pin.IN)
+; main.py:48:     uart.write('R')
 	CBI	0x0A, 0
-; main.py:51:     uart.println("SSPIP")
+; main.py:51:     uart.write('\n')
 ; main.py:52: 
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:     # Wait for CS to be asserted (driven low by the controller).
+; main.py:53:     uart.println("OK")
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68: 
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70:         pass
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-; main.py:51:     uart.println("SSPIP")
+; main.py:32:     sck_pin  = Pin("PC0", Pin.IN)
+; main.py:51:     uart.write('\n')
 ; main.py:52: 
 ; main.py:10: #   MOSI = PC1 (A1)  -- data input   (driven by external controller)
 ; main.py:22: #
-; main.py:34: 
-; main.py:44:     uart = UART(9600)
+; main.py:34:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:44: 
 	CLR	R24
 	TST	R24
-	BRNE	L_BR_SKIP_4
-	RJMP	L_BIT_WRITE_SKIP_2
-L_BR_SKIP_4:
+	BRNE	L_BR_SKIP_2
+	RJMP	L_BIT_WRITE_SKIP_0
+L_BR_SKIP_2:
 	SBI	0x07, 0
-	RJMP	L_BIT_WRITE_DONE_3
-L_BIT_WRITE_SKIP_2:
+	RJMP	L_BIT_WRITE_DONE_1
+L_BIT_WRITE_SKIP_0:
 	CBI	0x07, 0
-L_BIT_WRITE_DONE_3:
-; main.py:46:     mosi_pin = Pin("PC1", Pin.IN)
-; main.py:51:     uart.println("SSPIP")
+L_BIT_WRITE_DONE_1:
+; main.py:33:     mosi_pin = Pin("PC1", Pin.IN)
+; main.py:51:     uart.write('\n')
 ; main.py:52: 
 ; main.py:10: #   MOSI = PC1 (A1)  -- data input   (driven by external controller)
 ; main.py:22: #
-; main.py:34: 
-; main.py:46:     mosi_pin = Pin("PC1", Pin.IN)
+; main.py:34:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:46:     rx: uint8 = spi.exchange(0xAB)
 	CLR	R24
 	TST	R24
-	BRNE	L_BR_SKIP_7
-	RJMP	L_BIT_WRITE_SKIP_5
-L_BR_SKIP_7:
+	BRNE	L_BR_SKIP_5
+	RJMP	L_BIT_WRITE_SKIP_3
+L_BR_SKIP_5:
 	SBI	0x07, 1
-	RJMP	L_BIT_WRITE_DONE_6
-L_BIT_WRITE_SKIP_5:
+	RJMP	L_BIT_WRITE_DONE_4
+L_BIT_WRITE_SKIP_3:
 	CBI	0x07, 1
-L_BIT_WRITE_DONE_6:
-; main.py:47:     miso_pin = Pin("PC2", Pin.OUT)
-; main.py:51:     uart.println("SSPIP")
+L_BIT_WRITE_DONE_4:
+; main.py:34:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:51:     uart.write('\n')
 ; main.py:52: 
 ; main.py:10: #   MOSI = PC1 (A1)  -- data input   (driven by external controller)
 ; main.py:22: #
-; main.py:34: 
-; main.py:48:     cs_pin   = Pin("PC3", Pin.IN)
+; main.py:34:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:48:     uart.write('R')
 	LDI	R24, 1
 	TST	R24
-	BRNE	L_BR_SKIP_10
-	RJMP	L_BIT_WRITE_SKIP_8
-L_BR_SKIP_10:
+	BRNE	L_BR_SKIP_8
+	RJMP	L_BIT_WRITE_SKIP_6
+L_BR_SKIP_8:
 	SBI	0x07, 2
-	RJMP	L_BIT_WRITE_DONE_9
-L_BIT_WRITE_SKIP_8:
+	RJMP	L_BIT_WRITE_DONE_7
+L_BIT_WRITE_SKIP_6:
 	CBI	0x07, 2
-L_BIT_WRITE_DONE_9:
-; main.py:48:     cs_pin   = Pin("PC3", Pin.IN)
-; main.py:51:     uart.println("SSPIP")
+L_BIT_WRITE_DONE_7:
+; main.py:35:     cs_pin   = Pin("PC3", Pin.IN)
+; main.py:51:     uart.write('\n')
 ; main.py:52: 
 ; main.py:10: #   MOSI = PC1 (A1)  -- data input   (driven by external controller)
 ; main.py:22: #
-; main.py:34: 
-; main.py:50: 
+; main.py:34:     miso_pin = Pin("PC2", Pin.OUT)
+; main.py:50:     uart.write_hex(rx)
 	CLR	R24
 	TST	R24
-	BRNE	L_BR_SKIP_13
-	RJMP	L_BIT_WRITE_SKIP_11
-L_BR_SKIP_13:
+	BRNE	L_BR_SKIP_11
+	RJMP	L_BIT_WRITE_SKIP_9
+L_BR_SKIP_11:
 	SBI	0x07, 3
-	RJMP	L_BIT_WRITE_DONE_12
-L_BIT_WRITE_SKIP_11:
+	RJMP	L_BIT_WRITE_DONE_10
+L_BIT_WRITE_SKIP_9:
 	CBI	0x07, 3
-L_BIT_WRITE_DONE_12:
-; main.py:49:     spi = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, mode=SoftSPI.PERIPHERAL, cs=cs_pin)
-	MOV	R24, R11
+L_BIT_WRITE_DONE_10:
+; main.py:36:     spi = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, mode=SoftSPI.PERIPHERAL, cs=cs_pin)
+	MOV	R24, R7
 	STD	Y+3, R24
-	MOV	R24, R12
+	MOV	R24, R8
 	STD	Y+4, R24
-	MOV	R24, R13
+	MOV	R24, R9
 	STD	Y+5, R24
-	MOV	R24, R14
+	MOV	R24, R10
 	STD	Y+6, R24
 	CBI	0x08, 2
 	LDI	R24, 112
-	MOV	R5, R24
+	MOV	R4, R24
 	CLR	R24
-	MOV	R15, R24
+	MOV	R11, R24
 	SBI	0x08, 3
-; main.py:51:     uart.println("SSPIP")
-; main.py:69:     while True:
+; main.py:38:     uart.println("SSPIP")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_183:
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_181:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_14
-	RJMP	L_184
-L_BR_SKIP_14:
-	RJMP	L_183
-L_184:
+	BREQ	L_BR_SKIP_12
+	RJMP	L_182
+L_BR_SKIP_12:
+	RJMP	L_181
+L_182:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	MOV	R24, R5
+	MOV	R24, R4
 	CPI	R24, 112
-	BREQ	L_BR_SKIP_15
+	BREQ	L_BR_SKIP_13
+	RJMP	L_184
+L_BR_SKIP_13:
+	SBIS	0x06, 3
+	RJMP	L_BIT_FALSE_14
+	LDI	R24, 1
+	RJMP	L_BIT_DONE_15
+L_BIT_FALSE_14:
+	CLR	R24
+L_BIT_DONE_15:
+	MOV	R16, R24
+	CPI	R24, 0
+	BREQ	L_BR_SKIP_16
 	RJMP	L_186
-L_BR_SKIP_15:
-	SBIS	0x06, 3
-	RJMP	L_BIT_FALSE_16
-	LDI	R24, 1
-	RJMP	L_BIT_DONE_17
-L_BIT_FALSE_16:
-	CLR	R24
-L_BIT_DONE_17:
-	MOV	R16, R24
-	CPI	R24, 0
-	BREQ	L_BR_SKIP_18
-	RJMP	L_188
-L_BR_SKIP_18:
+L_BR_SKIP_16:
 	LDI	R24, 1
 	MOV	R16, R24
-	RJMP	L_185
-L_188:
+	RJMP	L_183
 L_186:
+L_184:
 	CLR	R24
 	MOV	R16, R24
-L_185:
+L_183:
 	MOV	R24, R16
-	MOV	R8, R24
-; main.py:55:     while cs_state == 0:
-L_192:
-	MOV	R24, R8
+	MOV	R5, R24
+; main.py:42:     while cs_state == 0:
+L_190:
+	MOV	R24, R5
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_19
+	BREQ	L_BR_SKIP_17
+	RJMP	L_191
+L_BR_SKIP_17:
+; main.py:43:         cs_state = spi.cs_asserted()
+	MOV	R24, R4
+	CPI	R24, 112
+	BREQ	L_BR_SKIP_18
 	RJMP	L_193
-L_BR_SKIP_19:
-; main.py:56:         cs_state = spi.cs_asserted()
-	MOV	R24, R5
-	CPI	R24, 112
-	BREQ	L_BR_SKIP_20
-	RJMP	L_195
-L_BR_SKIP_20:
+L_BR_SKIP_18:
 	SBIS	0x06, 3
-	RJMP	L_BIT_FALSE_21
+	RJMP	L_BIT_FALSE_19
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_22
-L_BIT_FALSE_21:
+	RJMP	L_BIT_DONE_20
+L_BIT_FALSE_19:
 	CLR	R24
-L_BIT_DONE_22:
+L_BIT_DONE_20:
 	MOV	R16, R24
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_23
-	RJMP	L_197
-L_BR_SKIP_23:
+	BREQ	L_BR_SKIP_21
+	RJMP	L_195
+L_BR_SKIP_21:
 	LDI	R24, 1
 	MOV	R16, R24
-	RJMP	L_194
-L_197:
+	RJMP	L_192
 L_195:
+L_193:
 	CLR	R24
 	MOV	R16, R24
-L_194:
+L_192:
 	MOV	R24, R16
-	MOV	R8, R24
-	RJMP	L_192
-L_193:
-	MOV	R24, R5
+	MOV	R5, R24
+	RJMP	L_190
+L_191:
+	MOV	R24, R4
 	CPI	R24, 112
-	BREQ	L_BR_SKIP_24
-	RJMP	L_202
-L_BR_SKIP_24:
+	BREQ	L_BR_SKIP_22
+	RJMP	L_200
+L_BR_SKIP_22:
 	LDI	R24, 171
 	STD	Y+10, R24
 	CLR	R24
 	STD	Y+8, R24
 	CLR	R24
 	STD	Y+7, R24
-L_203:
+L_201:
 	LDD	R24, Y+7
 	CPI	R24, 8
-	BRLO	L_BR_SKIP_25
-	RJMP	L_204
-L_BR_SKIP_25:
+	BRLO	L_BR_SKIP_23
+	RJMP	L_202
+L_BR_SKIP_23:
 	LDD	R24, Y+10
 	ANDI	R24, 128
 	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_26
-	RJMP	L_206
-L_BR_SKIP_26:
+	BRNE	L_BR_SKIP_24
+	RJMP	L_204
+L_BR_SKIP_24:
 	SBI	0x08, 2
-	RJMP	L_205
-L_206:
+	RJMP	L_203
+L_204:
 	CBI	0x08, 2
-L_205:
+L_203:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_27
+	RJMP	L_BIT_FALSE_25
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_28
-L_BIT_FALSE_27:
+	RJMP	L_BIT_DONE_26
+L_BIT_FALSE_25:
 	CLR	R24
-L_BIT_DONE_28:
+L_BIT_DONE_26:
 	MOV	R16, R24
 	STD	Y+9, R24
-L_212:
+L_210:
 	LDD	R24, Y+9
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_29
-	RJMP	L_213
-L_BR_SKIP_29:
+	BREQ	L_BR_SKIP_27
+	RJMP	L_211
+L_BR_SKIP_27:
 	SBIS	0x06, 0
+	RJMP	L_BIT_FALSE_28
+	LDI	R24, 1
+	RJMP	L_BIT_DONE_29
+L_BIT_FALSE_28:
+	CLR	R24
+L_BIT_DONE_29:
+	MOV	R16, R24
+	STD	Y+9, R24
+	RJMP	L_210
+L_211:
+	LDD	R24, Y+8
+	LSL	R24
+	STD	Y+8, R24
+	SBIS	0x06, 1
 	RJMP	L_BIT_FALSE_30
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_31
@@ -321,151 +286,164 @@ L_BIT_FALSE_30:
 	CLR	R24
 L_BIT_DONE_31:
 	MOV	R16, R24
-	STD	Y+9, R24
-	RJMP	L_212
-L_213:
-	LDD	R24, Y+8
-	LSL	R24
-	STD	Y+8, R24
-	SBIS	0x06, 1
-	RJMP	L_BIT_FALSE_32
-	LDI	R24, 1
-	RJMP	L_BIT_DONE_33
-L_BIT_FALSE_32:
-	CLR	R24
-L_BIT_DONE_33:
-	MOV	R16, R24
 	TST	R24
-	BRNE	L_BR_SKIP_34
-	RJMP	L_217
-L_BR_SKIP_34:
+	BRNE	L_BR_SKIP_32
+	RJMP	L_215
+L_BR_SKIP_32:
 	LDD	R24, Y+8
 	ORI	R24, 1
 	STD	Y+8, R24
-L_217:
+L_215:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_35
+	RJMP	L_BIT_FALSE_33
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_36
-L_BIT_FALSE_35:
+	RJMP	L_BIT_DONE_34
+L_BIT_FALSE_33:
 	CLR	R24
-L_BIT_DONE_36:
+L_BIT_DONE_34:
 	MOV	R16, R24
 	STD	Y+9, R24
-L_224:
+L_222:
 	LDD	R24, Y+9
 	CPI	R24, 1
-	BREQ	L_BR_SKIP_37
-	RJMP	L_225
-L_BR_SKIP_37:
+	BREQ	L_BR_SKIP_35
+	RJMP	L_223
+L_BR_SKIP_35:
 	SBIS	0x06, 0
-	RJMP	L_BIT_FALSE_38
+	RJMP	L_BIT_FALSE_36
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_39
-L_BIT_FALSE_38:
+	RJMP	L_BIT_DONE_37
+L_BIT_FALSE_36:
 	CLR	R24
-L_BIT_DONE_39:
+L_BIT_DONE_37:
 	MOV	R16, R24
 	STD	Y+9, R24
-	RJMP	L_224
-L_225:
+	RJMP	L_222
+L_223:
 	LDD	R24, Y+10
 	LSL	R24
 	STD	Y+10, R24
 	LDD	R24, Y+7
 	INC	R24
 	STD	Y+7, R24
-	RJMP	L_203
-L_204:
-	LDD	R24, Y+8
-	MOV	R16, R24
 	RJMP	L_201
 L_202:
+	LDD	R24, Y+8
+	MOV	R16, R24
+	RJMP	L_199
+L_200:
 	CLR	R24
 	MOV	R16, R24
-L_201:
+L_199:
 	MOV	R24, R16
-	MOV	R4, R24
-; main.py:61:     uart.write('R')
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_231:
+	MOV	R6, R24
+; main.py:48:     uart.write('R')
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_229:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_40
-	RJMP	L_232
-L_BR_SKIP_40:
-	RJMP	L_231
-L_232:
+	BREQ	L_BR_SKIP_38
+	RJMP	L_230
+L_BR_SKIP_38:
+	RJMP	L_229
+L_230:
 	LDI	R24, 82
 	STS	0x00C6, R24
-; main.py:62:     uart.write(':')
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_235:
+; main.py:49:     uart.write(':')
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_233:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_39
+	RJMP	L_234
+L_BR_SKIP_39:
+	RJMP	L_233
+L_234:
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:50:     uart.write_hex(rx)
+	MOV	R24, R6
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+11, R24
+	MOV	R24, R6
+	ANDI	R24, 15
+	STD	Y+12, R24
+	LDD	R24, Y+11
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_40
+	RJMP	L_237
+L_BR_SKIP_40:
+	LDD	R24, Y+11
+	SUBI	R24, 208
+	STD	Y+13, R24
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_240:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_41
-	RJMP	L_236
+	RJMP	L_241
 L_BR_SKIP_41:
-	RJMP	L_235
-L_236:
-	LDI	R24, 58
+	RJMP	L_240
+L_241:
+	LDD	R24, Y+13
 	STS	0x00C6, R24
-; main.py:63:     uart.write(nibble_hi(rx))
-	MOV	R24, R4
-	MOV	R9, R24
-	CALL	nibble_hi
-	STD	Y+11, R24
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_239:
+	RJMP	L_236
+L_237:
+	LDD	R24, Y+11
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+13, R24
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_244:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_42
-	RJMP	L_240
+	RJMP	L_245
 L_BR_SKIP_42:
-	RJMP	L_239
-L_240:
-	LDD	R24, Y+11
-	STS	0x00C6, R24
-; main.py:64:     uart.write(nibble_lo(rx))
-	MOV	R24, R4
-	MOV	R10, R24
-	CALL	nibble_lo
-	STD	Y+11, R24
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_243:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_43
 	RJMP	L_244
-L_BR_SKIP_43:
-	RJMP	L_243
-L_244:
-	LDD	R24, Y+11
+L_245:
+	LDD	R24, Y+13
 	STS	0x00C6, R24
-; main.py:65:     uart.write('\n')
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
-L_247:
+L_236:
+	LDD	R24, Y+12
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_43
+	RJMP	L_247
+L_BR_SKIP_43:
+	LDD	R24, Y+12
+	SUBI	R24, 208
+	STD	Y+13, R24
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_250:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_44
-	RJMP	L_248
+	RJMP	L_251
 L_BR_SKIP_44:
-	RJMP	L_247
-L_248:
-	LDI	R24, 10
+	RJMP	L_250
+L_251:
+	LDD	R24, Y+13
 	STS	0x00C6, R24
-; main.py:67:     uart.println("OK")
-; main.py:69:     while True:
-	LDI	R30, lo8(__str_1)
-	LDI	R31, hi8(__str_1)
-	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:     sck_pin  = Pin("PC0", Pin.IN)
+	RJMP	L_246
+L_247:
+	LDD	R24, Y+12
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+13, R24
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
 L_254:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -474,11 +452,41 @@ L_254:
 L_BR_SKIP_45:
 	RJMP	L_254
 L_255:
+	LDD	R24, Y+13
+	STS	0x00C6, R24
+L_246:
+; main.py:51:     uart.write('\n')
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_258:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_46
+	RJMP	L_259
+L_BR_SKIP_46:
+	RJMP	L_258
+L_259:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:69:     while True:
-L_256:
-	RJMP	L_256
+; main.py:53:     uart.println("OK")
+	LDI	R30, lo8(__str_1)
+	LDI	R31, hi8(__str_1)
+	CALL	__uart_send_z
+; main.py:41:     cs_state: uint8 = spi.cs_asserted()
+; main.py:45:     # Exchange one byte: reply 0xAB, receive the controller's byte.
+L_265:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_47
+	RJMP	L_266
+L_BR_SKIP_47:
+	RJMP	L_265
+L_266:
+	LDI	R24, 10
+	STS	0x00C6, R24
+; main.py:55:     while True:
+L_267:
+	RJMP	L_267
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

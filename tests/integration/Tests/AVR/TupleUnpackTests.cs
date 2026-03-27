@@ -16,7 +16,7 @@ public class TupleUnpackTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("tuple-unpack");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("tuple-unpack");
 
     private ArduinoUnoSimulation Boot()
     {

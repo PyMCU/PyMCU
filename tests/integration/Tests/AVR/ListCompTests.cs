@@ -14,7 +14,7 @@ public class ListCompTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("list-comp");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("list-comp");
 
     private ArduinoUnoSimulation Boot()
     {

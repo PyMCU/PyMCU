@@ -10,7 +10,7 @@ public class StressMathTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("stress-math");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("stress-math");
 
     private ArduinoUnoSimulation Boot()
     {

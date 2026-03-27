@@ -20,7 +20,7 @@ public class BuiltinOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("builtin-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("builtin-ops");
 
     private ArduinoUnoSimulation Boot()
     {

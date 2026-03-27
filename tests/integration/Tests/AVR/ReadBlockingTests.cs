@@ -16,7 +16,7 @@ public class ReadBlockingTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("read-blocking");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("read-blocking");
 
     [Test]
     public void Boot_SendsBanner()

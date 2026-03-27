@@ -18,7 +18,7 @@ public class NestedCallsTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("nested-calls");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("nested-calls");
 
     [Test]
     public void Boot_SendsBanner()

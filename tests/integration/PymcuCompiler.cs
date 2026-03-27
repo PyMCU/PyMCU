@@ -4,9 +4,9 @@ using System.Diagnostics;
 namespace PyMCU.IntegrationTests;
 
 /// <summary>
-/// Compiles PyMCU example firmware using the <c>pymcu build</c> CLI driver
-/// and returns the resulting Intel HEX content, ready to load into a simulator.
-/// Results are cached in-process so each example is compiled at most once per
+/// Compiles PyMCU firmware using the <c>pymcu build</c> CLI driver and returns
+/// the resulting Intel HEX content, ready to load into a simulator.
+/// Results are cached in-process so each program is compiled at most once per
 /// test session regardless of how many test fixtures reference it.
 /// </summary>
 public static class PymcuCompiler
@@ -16,20 +16,23 @@ public static class PymcuCompiler
     private static readonly ConcurrentDictionary<string, string> Cache = new();
 
     /// <summary>
-    /// Compiles the AVR example at <c>examples/avr/{name}</c> and returns the
-    /// Intel HEX content of the built firmware.
+    /// Compiles the showcase example at <c>examples/avr/{name}</c>.
     /// </summary>
     /// <param name="name">Example directory name, e.g. <c>"blink"</c>.</param>
-    /// <exception cref="InvalidOperationException">If the build fails.</exception>
     public static string Build(string name)
-        => Cache.GetOrAdd(name, Compile);
+        => Cache.GetOrAdd("ex:" + name, _ => Compile(Path.Combine(RepoRoot, "examples", "avr", name), name));
+
+    /// <summary>
+    /// Compiles the compiler test fixture at <c>tests/integration/fixtures/avr/{name}</c>.
+    /// </summary>
+    /// <param name="name">Fixture directory name, e.g. <c>"bitwise-ops"</c>.</param>
+    public static string BuildFixture(string name)
+        => Cache.GetOrAdd("fx:" + name, _ => Compile(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "avr", name), name));
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
-    private static string Compile(string name)
+    private static string Compile(string exampleDir, string name)
     {
-        var exampleDir = Path.Combine(RepoRoot, "examples", "avr", name);
-
         Console.WriteLine($"[PymcuCompiler] RepoRoot    : {RepoRoot}");
         Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
         Console.WriteLine($"[PymcuCompiler] ExampleDir  : {exampleDir} (exists={Directory.Exists(exampleDir)})");

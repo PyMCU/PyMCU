@@ -17,7 +17,7 @@ public class MatrixMathTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("matrix-math");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("matrix-math");
 
     [Test]
     public void Boot_SendsMatrixBanner()

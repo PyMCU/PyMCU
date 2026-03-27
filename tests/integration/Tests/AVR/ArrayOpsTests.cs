@@ -10,7 +10,7 @@ public class ArrayOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("array-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("array-ops");
 
     private ArduinoUnoSimulation Boot()
     {

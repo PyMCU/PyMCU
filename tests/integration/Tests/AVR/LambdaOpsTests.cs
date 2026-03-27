@@ -16,7 +16,7 @@ public class LambdaOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("lambda-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("lambda-ops");
 
     private ArduinoUnoSimulation Boot()
     {

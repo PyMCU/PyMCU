@@ -18,19 +18,6 @@ from pymcu.drivers.bmp280 import BMP280
 from pymcu.time import delay_ms
 
 
-def nibble_hi(v: uint8) -> uint8:
-    n: uint8 = (v >> 4) & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-
-def nibble_lo(v: uint8) -> uint8:
-    n: uint8 = v & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
 
 def main():
     uart = UART(9600)
@@ -55,10 +42,8 @@ def main():
 
     uart.write('T')
     uart.write(':')
-    uart.write(nibble_hi(temp_hi))
-    uart.write(nibble_lo(temp_hi))
-    uart.write(nibble_hi(temp_lo))
-    uart.write(nibble_lo(temp_lo))
+    uart.write_hex(temp_hi)
+    uart.write_hex(temp_lo)
     uart.write('\n')
 
     # Print raw pressure
@@ -67,10 +52,8 @@ def main():
 
     uart.write('P')
     uart.write(':')
-    uart.write(nibble_hi(press_hi))
-    uart.write(nibble_lo(press_hi))
-    uart.write(nibble_hi(press_lo))
-    uart.write(nibble_lo(press_lo))
+    uart.write_hex(press_hi)
+    uart.write_hex(press_lo)
     uart.write('\n')
 
     while True:

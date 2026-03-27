@@ -1102,8 +1102,8 @@ L_252:
 ; main.py:79:     uart.write(nibble_hi(result))
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:112:     uart.write(':')
-; main.py:116: 
+; main.py:126:     uart.write('R')
+; main.py:130:     uart.write('\n')
 ; main.py:121:     uart.write('Q')
 	LDS	R24, 0x00C0
 	ANDI	R24, 128
@@ -1121,7 +1121,7 @@ L_255:
 L_254:
 	MOV	R24, R16
 	MOV	R17, R24
-; main.py:117:     # -- divmod(10, 3) => quotient=3, remainder=1 --
+; main.py:131: 
 	MOV	R10, R24
 ; main.py:149:     uart.write('V')
 ; main.py:41:         return n + 48

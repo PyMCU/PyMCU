@@ -15,7 +15,7 @@ public class DunderOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("dunder-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("dunder-ops");
 
     private ArduinoUnoSimulation Boot()
     {

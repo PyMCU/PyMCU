@@ -14,7 +14,7 @@ public class NestedListCompTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("nested-listcomp");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("nested-listcomp");
 
     private ArduinoUnoSimulation Boot()
     {

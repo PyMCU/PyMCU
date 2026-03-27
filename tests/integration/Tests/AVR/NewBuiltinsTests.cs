@@ -19,7 +19,7 @@ public class NewBuiltinsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("new-builtins");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("new-builtins");
 
     private ArduinoUnoSimulation Boot()
     {

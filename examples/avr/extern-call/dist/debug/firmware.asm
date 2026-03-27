@@ -4,64 +4,24 @@
 
 .equ RAMSTART, 0x0100
 .equ _stack_base, RAMSTART
-.equ inline2_write_data, _stack_base + 3
+.equ inline2_write_hex_hi, _stack_base + 3
+.equ inline2_write_hex_lo, _stack_base + 4
+.equ inline3_write_data, _stack_base + 5
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_18, _stack_base + 11
-.equ tmp_20, _stack_base + 12
-.equ tmp_21, _stack_base + 13
-.equ tmp_23, _stack_base + 11
-.equ tmp_24, _stack_base + 12
+.equ tmp_21, _stack_base + 9
+.equ tmp_26, _stack_base + 10
+.equ tmp_31, _stack_base + 11
+.equ tmp_38, _stack_base + 12
+.equ tmp_43, _stack_base + 13
+.equ tmp_48, _stack_base + 14
+.equ tmp_55, _stack_base + 15
+.equ tmp_60, _stack_base + 16
+.equ tmp_65, _stack_base + 17
 
 .org 0x0
 .global main
-	RJMP	main
-nibble_hi:
-	MOV	R8, R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	MOV	R16, R24
-	ANDI	R24, 15
-	MOV	R7, R24
-; main.py:34:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_0
-	RJMP	L_21
-L_BR_SKIP_0:
-; main.py:35:         return n + 48
-	MOV	R24, R7
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_21:
-; main.py:36:     return n + 55
-	MOV	R24, R7
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
-nibble_lo:
-	MOV	R10, R24
-	ANDI	R24, 15
-	MOV	R9, R24
-; main.py:40:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_1
-	RJMP	L_22
-L_BR_SKIP_1:
-; main.py:41:         return n + 48
-	MOV	R24, R9
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_22:
-; main.py:42:     return n + 55
-	MOV	R24, R9
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
 main:
 	LDI	R16, hi8(0x08FF)
 	OUT	0x3E, R16
@@ -69,27 +29,25 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:53:     uart = UART(9600)
+; main.py:40:     uart = UART(9600)
 ; main.py:27: @extern("c_add_saturate")
 ; main.py:31: 
-; main.py:47:     uart.write(':')
+; main.py:47:     # c_add_saturate(200, 100) == 255 (clamped) == 0xFF
 	SBI	0x0A, 1
-; main.py:48:     uart.write(nibble_hi(val))
+; main.py:48:     s: uint8 = c_add_saturate(200, 100)
 	CBI	0x0A, 0
-; main.py:51: 
-; main.py:52: def main():
+; main.py:51:     # c_add_saturate(4, 6) == 10 == 0x0A
+; main.py:52:     a: uint8 = c_add_saturate(4, 6)
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:     uart = UART(9600)
+; main.py:53:     print_hex(uart, 'A', a)
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68:     print("OK")
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70:     while True:
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:54:     print("EXTERN")
+; main.py:41:     print("EXTERN")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
@@ -100,246 +58,420 @@ main:
 	LDI	R22, 10
 	CALL	c_mul8
 	MOV	R5, R24
-; main.py:58:     print_hex(uart, 'M', m)
-; main.py:46:     uart.write(prefix)
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_33:
+; main.py:45:     print_hex(uart, 'M', m)
+; main.py:34:     uart.write(prefix)
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_31:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_2
-	RJMP	L_34
-L_BR_SKIP_2:
-	RJMP	L_33
-L_34:
+	BREQ	L_BR_SKIP_0
+	RJMP	L_32
+L_BR_SKIP_0:
+	RJMP	L_31
+L_32:
 	LDI	R24, 77
 	STS	0x00C6, R24
-; main.py:47:     uart.write(':')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_37:
+; main.py:35:     uart.write(':')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_35:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_1
+	RJMP	L_36
+L_BR_SKIP_1:
+	RJMP	L_35
+L_36:
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:36:     uart.write_hex(val)
+	MOV	R24, R5
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+3, R24
+	MOV	R24, R5
+	ANDI	R24, 15
+	STD	Y+4, R24
+	LDD	R24, Y+3
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_2
+	RJMP	L_39
+L_BR_SKIP_2:
+	LDD	R24, Y+3
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_38
+	RJMP	L_43
 L_BR_SKIP_3:
-	RJMP	L_37
-L_38:
-	LDI	R24, 58
+	RJMP	L_42
+L_43:
+	LDD	R24, Y+5
 	STS	0x00C6, R24
-; main.py:48:     uart.write(nibble_hi(val))
-	MOV	R24, R5
-	MOV	R8, R24
-	CALL	nibble_hi
-	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_41:
+	RJMP	L_38
+L_39:
+	LDD	R24, Y+3
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_42
+	RJMP	L_47
 L_BR_SKIP_4:
-	RJMP	L_41
-L_42:
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:49:     uart.write(nibble_lo(val))
-	MOV	R24, R5
-	MOV	R10, R24
-	CALL	nibble_lo
-	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_45:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_5
 	RJMP	L_46
-L_BR_SKIP_5:
-	RJMP	L_45
-L_46:
-	LDD	R24, Y+3
+L_47:
+	LDD	R24, Y+5
 	STS	0x00C6, R24
-; main.py:50:     uart.write('\n')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_49:
+L_38:
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_5
+	RJMP	L_49
+L_BR_SKIP_5:
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_52:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_50
+	RJMP	L_53
 L_BR_SKIP_6:
-	RJMP	L_49
-L_50:
+	RJMP	L_52
+L_53:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+	RJMP	L_48
+L_49:
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_56:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_7
+	RJMP	L_57
+L_BR_SKIP_7:
+	RJMP	L_56
+L_57:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+L_48:
+; main.py:37:     uart.write('\n')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_60:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_8
+	RJMP	L_61
+L_BR_SKIP_8:
+	RJMP	L_60
+L_61:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 200
 	LDI	R22, 100
 	CALL	c_add_saturate
 	MOV	R6, R24
-; main.py:62:     print_hex(uart, 'S', s)
-; main.py:46:     uart.write(prefix)
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_54:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_7
-	RJMP	L_55
-L_BR_SKIP_7:
-	RJMP	L_54
-L_55:
-	LDI	R24, 83
-	STS	0x00C6, R24
-; main.py:47:     uart.write(':')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_58:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_59
-L_BR_SKIP_8:
-	RJMP	L_58
-L_59:
-	LDI	R24, 58
-	STS	0x00C6, R24
-; main.py:48:     uart.write(nibble_hi(val))
-	MOV	R24, R6
-	MOV	R8, R24
-	CALL	nibble_hi
-	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_62:
+; main.py:49:     print_hex(uart, 'S', s)
+; main.py:34:     uart.write(prefix)
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_63
+	RJMP	L_66
 L_BR_SKIP_9:
-	RJMP	L_62
-L_63:
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:49:     uart.write(nibble_lo(val))
-	MOV	R24, R6
-	MOV	R10, R24
-	CALL	nibble_lo
-	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
+	RJMP	L_65
 L_66:
+	LDI	R24, 83
+	STS	0x00C6, R24
+; main.py:35:     uart.write(':')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_69:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_67
+	RJMP	L_70
 L_BR_SKIP_10:
-	RJMP	L_66
-L_67:
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:50:     uart.write('\n')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
+	RJMP	L_69
 L_70:
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:36:     uart.write_hex(val)
+	MOV	R24, R6
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+3, R24
+	MOV	R24, R6
+	ANDI	R24, 15
+	STD	Y+4, R24
+	LDD	R24, Y+3
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_11
+	RJMP	L_73
+L_BR_SKIP_11:
+	LDD	R24, Y+3
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_76:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_11
-	RJMP	L_71
-L_BR_SKIP_11:
-	RJMP	L_70
-L_71:
+	BREQ	L_BR_SKIP_12
+	RJMP	L_77
+L_BR_SKIP_12:
+	RJMP	L_76
+L_77:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+	RJMP	L_72
+L_73:
+	LDD	R24, Y+3
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_80:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_13
+	RJMP	L_81
+L_BR_SKIP_13:
+	RJMP	L_80
+L_81:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+L_72:
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_14
+	RJMP	L_83
+L_BR_SKIP_14:
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_86:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_15
+	RJMP	L_87
+L_BR_SKIP_15:
+	RJMP	L_86
+L_87:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+	RJMP	L_82
+L_83:
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_90:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_16
+	RJMP	L_91
+L_BR_SKIP_16:
+	RJMP	L_90
+L_91:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+L_82:
+; main.py:37:     uart.write('\n')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_94:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_17
+	RJMP	L_95
+L_BR_SKIP_17:
+	RJMP	L_94
+L_95:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 4
 	LDI	R22, 6
 	CALL	c_add_saturate
 	MOV	R4, R24
-; main.py:66:     print_hex(uart, 'A', a)
-; main.py:46:     uart.write(prefix)
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_75:
+; main.py:53:     print_hex(uart, 'A', a)
+; main.py:34:     uart.write(prefix)
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_76
-L_BR_SKIP_12:
-	RJMP	L_75
-L_76:
+	BREQ	L_BR_SKIP_18
+	RJMP	L_100
+L_BR_SKIP_18:
+	RJMP	L_99
+L_100:
 	LDI	R24, 65
 	STS	0x00C6, R24
-; main.py:47:     uart.write(':')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_79:
+; main.py:35:     uart.write(':')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_103:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_13
-	RJMP	L_80
-L_BR_SKIP_13:
-	RJMP	L_79
-L_80:
+	BREQ	L_BR_SKIP_19
+	RJMP	L_104
+L_BR_SKIP_19:
+	RJMP	L_103
+L_104:
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:48:     uart.write(nibble_hi(val))
+; main.py:36:     uart.write_hex(val)
 	MOV	R24, R4
-	MOV	R8, R24
-	CALL	nibble_hi
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
 	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_83:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_14
-	RJMP	L_84
-L_BR_SKIP_14:
-	RJMP	L_83
-L_84:
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:49:     uart.write(nibble_lo(val))
 	MOV	R24, R4
-	MOV	R10, R24
-	CALL	nibble_lo
-	STD	Y+3, R24
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_87:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_15
-	RJMP	L_88
-L_BR_SKIP_15:
-	RJMP	L_87
-L_88:
+	ANDI	R24, 15
+	STD	Y+4, R24
 	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:50:     uart.write('\n')
-; main.py:41:         return n + 48
-; main.py:45: def print_hex(uart: UART, prefix: uint8, val: uint8):
-L_91:
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_20
+	RJMP	L_107
+L_BR_SKIP_20:
+	LDD	R24, Y+3
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_110:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_16
-	RJMP	L_92
-L_BR_SKIP_16:
-	RJMP	L_91
-L_92:
+	BREQ	L_BR_SKIP_21
+	RJMP	L_111
+L_BR_SKIP_21:
+	RJMP	L_110
+L_111:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+	RJMP	L_106
+L_107:
+	LDD	R24, Y+3
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_114:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_22
+	RJMP	L_115
+L_BR_SKIP_22:
+	RJMP	L_114
+L_115:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+L_106:
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_23
+	RJMP	L_117
+L_BR_SKIP_23:
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_120:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_24
+	RJMP	L_121
+L_BR_SKIP_24:
+	RJMP	L_120
+L_121:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+	RJMP	L_116
+L_117:
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+5, R24
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_124:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_25
+	RJMP	L_125
+L_BR_SKIP_25:
+	RJMP	L_124
+L_125:
+	LDD	R24, Y+5
+	STS	0x00C6, R24
+L_116:
+; main.py:37:     uart.write('\n')
+; main.py:41:     print("EXTERN")
+; main.py:45:     print_hex(uart, 'M', m)
+L_128:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_26
+	RJMP	L_129
+L_BR_SKIP_26:
+	RJMP	L_128
+L_129:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:68:     print("OK")
+; main.py:55:     print("OK")
 	LDI	R30, lo8(__str_2)
 	LDI	R31, hi8(__str_2)
 	CALL	__uart_send_z
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-; main.py:70:     while True:
-L_93:
-	RJMP	L_93
+; main.py:57:     while True:
+L_130:
+	RJMP	L_130
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

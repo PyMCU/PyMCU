@@ -18,7 +18,7 @@ public class TupleOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("tuple-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("tuple-ops");
 
     private ArduinoUnoSimulation Boot()
     {

@@ -15,7 +15,7 @@
 #
 # Output:
 #   "SSPI\n"    -- boot banner
-#   "D:XX\n"    -- byte sent via SoftSPI (0xA5 = test byte)
+#   "D:A5\n"    -- byte sent via SoftSPI (0xA5 = test byte)
 #   "OK\n"      -- transfer completed
 #
 from pymcu.types import uint8
@@ -24,27 +24,13 @@ from pymcu.hal.uart import UART
 from pymcu.hal.gpio import Pin
 
 
-def nibble_hi(val: uint8) -> uint8:
-    n: uint8 = (val >> 4) & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-
-def nibble_lo(val: uint8) -> uint8:
-    n: uint8 = val & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-
 def main():
     uart = UART(9600)
     sck_pin  = Pin("PC0", Pin.OUT)
     mosi_pin = Pin("PC1", Pin.OUT)
     miso_pin = Pin("PC2", Pin.IN)
     cs_pin   = Pin("PC3", Pin.OUT)
-    spi  = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, cs=cs_pin)
+    spi = SoftSPI(sck=sck_pin, mosi=mosi_pin, miso=miso_pin, cs=cs_pin)
 
     uart.println("SSPI")
 
@@ -55,8 +41,7 @@ def main():
 
     uart.write('D')
     uart.write(':')
-    uart.write(nibble_hi(test_byte))
-    uart.write(nibble_lo(test_byte))
+    uart.write_hex(test_byte)
     uart.write('\n')
 
     uart.println("OK")

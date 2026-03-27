@@ -10,7 +10,7 @@ public class EdgeCasesTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("edge-cases");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("edge-cases");
 
     private ArduinoUnoSimulation Boot()
     {

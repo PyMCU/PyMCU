@@ -17,7 +17,7 @@ public class MatchAdvancedTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("match-advanced");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("match-advanced");
 
     private ArduinoUnoSimulation Boot()
     {

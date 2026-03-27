@@ -27,7 +27,7 @@ def main():
     EICRA.value = 0x02
     EIMSK.value = 0x01   # enable INT0
     GPIOR0[0] = 0
-    asm("sei")
+    asm("SEI")
 
     count: uint8 = 0
     while count < 5:

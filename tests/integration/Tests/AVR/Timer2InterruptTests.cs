@@ -17,7 +17,7 @@ public class Timer2InterruptTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("timer2-interrupt");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("timer2-interrupt");
 
     [Test]
     public void Boot_SendsBanner()

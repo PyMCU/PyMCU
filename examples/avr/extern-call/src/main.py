@@ -29,24 +29,11 @@ def c_add_saturate(a: uint8, b: uint8) -> uint8:
     pass
 
 
-def nibble_hi(val: uint8) -> uint8:
-    n: uint8 = (val >> 4) & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-def nibble_lo(val: uint8) -> uint8:
-    n: uint8 = val & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
 @inline
 def print_hex(uart: UART, prefix: uint8, val: uint8):
     uart.write(prefix)
     uart.write(':')
-    uart.write(nibble_hi(val))
-    uart.write(nibble_lo(val))
+    uart.write_hex(val)
     uart.write('\n')
 
 def main():

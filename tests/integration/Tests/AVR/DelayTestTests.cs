@@ -24,7 +24,7 @@ public class DelayTestTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("delay-test");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("delay-test");
 
     // ── Ready sentinel ─────────────────────────────────────────────────────────
 

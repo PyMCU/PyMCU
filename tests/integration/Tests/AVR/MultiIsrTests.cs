@@ -19,7 +19,7 @@ public class MultiIsrTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("multi-isr");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("multi-isr");
 
     [Test]
     public void Boot_SendsBanner()

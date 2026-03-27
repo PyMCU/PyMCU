@@ -2,64 +2,25 @@
 .equ RAMSTART, 0x0100
 .equ _stack_base, RAMSTART
 .equ inline1_write_data, _stack_base + 3
+.equ inline1_write_hex_hi, _stack_base + 4
+.equ inline1_write_hex_lo, _stack_base + 5
+.equ inline2_write_data, _stack_base + 6
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_18, _stack_base + 16
-.equ tmp_20, _stack_base + 17
-.equ tmp_21, _stack_base + 18
-.equ tmp_23, _stack_base + 16
-.equ tmp_24, _stack_base + 17
-.equ tmp_33, _stack_base + 13
+.equ tmp_26, _stack_base + 14
+.equ tmp_35, _stack_base + 15
+.equ tmp_40, _stack_base + 16
+.equ tmp_45, _stack_base + 17
+.equ tmp_55, _stack_base + 18
+.equ tmp_60, _stack_base + 19
+.equ tmp_65, _stack_base + 20
+.equ tmp_68, _stack_base + 21
+.equ tmp_73, _stack_base + 22
+.equ tmp_78, _stack_base + 23
 
 .org 0x0
 .global main
-	RJMP	main
-nibble_hex_hi:
-	MOV	R8, R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	MOV	R16, R24
-	ANDI	R24, 15
-	MOV	R7, R24
-; main.py:59:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_0
-	RJMP	L_21
-L_BR_SKIP_0:
-; main.py:60:         return n + 48
-	MOV	R24, R7
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_21:
-; main.py:61:     return n + 55
-	MOV	R24, R7
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
-nibble_hex_lo:
-	MOV	R10, R24
-	ANDI	R24, 15
-	MOV	R9, R24
-; main.py:65:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_1
-	RJMP	L_22
-L_BR_SKIP_1:
-; main.py:66:         return n + 48
-	MOV	R24, R9
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_22:
-; main.py:67:     return n + 55
-	MOV	R24, R9
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
 main:
 	LDI	R16, hi8(0x08FF)
 	OUT	0x3E, R16
@@ -67,7 +28,7 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:71:     uart = UART(9600)
+; main.py:58:     uart = UART(9600)
 ; main.py:27: 
 ; main.py:31: 
 ; main.py:47: # Function overloading: same name, different param types
@@ -81,36 +42,36 @@ main:
 ; main.py:53: def encode(val: uint16) -> uint16:
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68: 
+; main.py:68:     uart.write('A')
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70: def main():
+; main.py:70:     uart.write(48 + r)  # '0' + r (expect '1')
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:73:     uart.println("IZ")
-; main.py:77:     led.on()
-; main.py:78:     r: uint8 = led.read()
-; main.py:69: 
-; main.py:73:     uart.println("IZ")
+; main.py:60:     uart.println("IZ")
+; main.py:77:     uart.write_hex(b)
+; main.py:78:     uart.write('\n')
+; main.py:69:     uart.write(':')
+; main.py:73:     # -- Test function overloading: encode(uint8) --
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:79:     led.off()
+; main.py:79: 
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_35:
+; main.py:76:     uart.write(':')
+L_33:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_2
-	RJMP	L_36
-L_BR_SKIP_2:
-	RJMP	L_35
-L_36:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_0
+	RJMP	L_34
+L_BR_SKIP_0:
+	RJMP	L_33
+L_34:
+; main.py:79: 
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:76:     led = LED("PB5")
+; main.py:63:     led = LED("PB5")
 ; main.py:22:         self._pin = Pin(pin_name, Pin.OUT)
 ; main.py:51: 
 ; main.py:52: @inline
@@ -120,314 +81,518 @@ L_36:
 ; main.py:54:     return val
 	LDI	R24, 1
 	TST	R24
-	BRNE	L_BR_SKIP_5
-	RJMP	L_BIT_WRITE_SKIP_3
-L_BR_SKIP_5:
+	BRNE	L_BR_SKIP_3
+	RJMP	L_BIT_WRITE_SKIP_1
+L_BR_SKIP_3:
 	SBI	0x04, 5
-	RJMP	L_BIT_WRITE_DONE_4
-L_BIT_WRITE_SKIP_3:
+	RJMP	L_BIT_WRITE_DONE_2
+L_BIT_WRITE_SKIP_1:
 	CBI	0x04, 5
-L_BIT_WRITE_DONE_4:
-	MOV	R12, R24
-; main.py:77:     led.on()
+L_BIT_WRITE_DONE_2:
+	MOV	R8, R24
+; main.py:64:     led.on()
 ; main.py:26:         self._pin.hi8()
 	SBI	0x05, 5
 ; main.py:34:         return self._pin.value()
 	SBIS	0x03, 5
-	RJMP	L_BIT_FALSE_6
+	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_7
-L_BIT_FALSE_6:
+	RJMP	L_BIT_DONE_5
+L_BIT_FALSE_4:
 	CLR	R24
-L_BIT_DONE_7:
+L_BIT_DONE_5:
 	MOV	R16, R24
-	MOV	R11, R24
-; main.py:79:     led.off()
+	MOV	R7, R24
+; main.py:66:     led.off()
 ; main.py:30:         self._pin.lo8()
 	CBI	0x05, 5
-; main.py:81:     uart.write('A')
+; main.py:68:     uart.write('A')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_83:
+; main.py:76:     uart.write(':')
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_84
-L_BR_SKIP_8:
-	RJMP	L_83
-L_84:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_6
+	RJMP	L_82
+L_BR_SKIP_6:
+	RJMP	L_81
+L_82:
+; main.py:79: 
 	LDI	R24, 65
 	STS	0x00C6, R24
-; main.py:82:     uart.write(':')
+; main.py:69:     uart.write(':')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_87:
+; main.py:76:     uart.write(':')
+L_85:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
-	RJMP	L_88
-L_BR_SKIP_9:
-	RJMP	L_87
-L_88:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_7
+	RJMP	L_86
+L_BR_SKIP_7:
+	RJMP	L_85
+L_86:
+; main.py:79: 
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:83:     uart.write(48 + r)  # '0' + r (expect '1')
+; main.py:70:     uart.write(48 + r)  # '0' + r (expect '1')
 	LDI	R24, 48
-	MOV	R18, R11
+	MOV	R18, R7
 	ADD	R24, R18
 	STD	Y+3, R24
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_91:
+; main.py:76:     uart.write(':')
+L_89:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_10
-	RJMP	L_92
-L_BR_SKIP_10:
-	RJMP	L_91
-L_92:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_8
+	RJMP	L_90
+L_BR_SKIP_8:
+	RJMP	L_89
+L_90:
+; main.py:79: 
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:84:     uart.write('\n')
+; main.py:71:     uart.write('\n')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_95:
+; main.py:76:     uart.write(':')
+L_93:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_11
-	RJMP	L_96
-L_BR_SKIP_11:
-	RJMP	L_95
-L_96:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_9
+	RJMP	L_94
+L_BR_SKIP_9:
+	RJMP	L_93
+L_94:
+; main.py:79: 
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:50:     return val
 	LDI	R24, 171
 	MOV	R4, R24
-; main.py:88:     uart.write('B')
+; main.py:75:     uart.write('B')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_100:
+; main.py:76:     uart.write(':')
+L_98:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_101
-L_BR_SKIP_12:
-	RJMP	L_100
-L_101:
-; main.py:79:     led.off()
+	BREQ	L_BR_SKIP_10
+	RJMP	L_99
+L_BR_SKIP_10:
+	RJMP	L_98
+L_99:
+; main.py:79: 
 	LDI	R24, 66
 	STS	0x00C6, R24
-; main.py:89:     uart.write(':')
+; main.py:76:     uart.write(':')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_104:
+; main.py:76:     uart.write(':')
+L_102:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_11
+	RJMP	L_103
+L_BR_SKIP_11:
+	RJMP	L_102
+L_103:
+; main.py:79: 
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:77:     uart.write_hex(b)
+; main.py:83:     lo: uint8 = w & 0xFF
+	MOV	R24, R4
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+4, R24
+	MOV	R24, R4
+	ANDI	R24, 15
+	STD	Y+5, R24
+; main.py:86:     uart.write_hex(hi)
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_12
+	RJMP	L_106
+L_BR_SKIP_12:
+; main.py:87:     uart.write_hex(lo)
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_109:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_13
-	RJMP	L_105
+	RJMP	L_110
 L_BR_SKIP_13:
-	RJMP	L_104
-L_105:
-; main.py:79:     led.off()
-	LDI	R24, 58
+	RJMP	L_109
+L_110:
+; main.py:79: 
+	LDD	R24, Y+6
 	STS	0x00C6, R24
-; main.py:90:     uart.write(nibble_hex_hi(b))
-	MOV	R24, R4
-	MOV	R8, R24
-	CALL	nibble_hex_hi
-	STD	Y+3, R24
+	RJMP	L_105
+L_106:
+; main.py:89: 
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_108:
+; main.py:76:     uart.write(':')
+L_113:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_14
-	RJMP	L_109
+	RJMP	L_114
 L_BR_SKIP_14:
-	RJMP	L_108
-L_109:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:91:     uart.write(nibble_hex_lo(b))
-	MOV	R24, R4
-	MOV	R10, R24
-	CALL	nibble_hex_lo
-	STD	Y+3, R24
-; main.py:41:         while i < code:
-; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_112:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_15
 	RJMP	L_113
-L_BR_SKIP_15:
-	RJMP	L_112
-L_113:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
+L_114:
+; main.py:79: 
+	LDD	R24, Y+6
 	STS	0x00C6, R24
-; main.py:92:     uart.write('\n')
+L_105:
+; main.py:90:     while True:
+	LDD	R24, Y+5
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_15
+	RJMP	L_116
+L_BR_SKIP_15:
+; main.py:91:         pass
+	LDD	R24, Y+5
+	SUBI	R24, 208
+	STD	Y+6, R24
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_116:
+; main.py:76:     uart.write(':')
+L_119:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_16
-	RJMP	L_117
+	RJMP	L_120
 L_BR_SKIP_16:
-	RJMP	L_116
-L_117:
-; main.py:79:     led.off()
+	RJMP	L_119
+L_120:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_115
+L_116:
+	LDD	R24, Y+5
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_123:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_17
+	RJMP	L_124
+L_BR_SKIP_17:
+	RJMP	L_123
+L_124:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_115:
+; main.py:78:     uart.write('\n')
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_127:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_18
+	RJMP	L_128
+L_BR_SKIP_18:
+	RJMP	L_127
+L_128:
+; main.py:79: 
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:50:     return val
 	LDI	R24, 52
 	LDI	R25, 18
-	MOV	R13, R24
-	MOV	R14, R25
+	MOV	R9, R24
+	MOV	R10, R25
 	LDI	R24, 18
 	MOV	R5, R24
 	LDI	R24, 52
 	MOV	R6, R24
-; main.py:98:     uart.write('C')
+; main.py:84:     uart.write('C')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_121:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_17
-	RJMP	L_122
-L_BR_SKIP_17:
-	RJMP	L_121
-L_122:
-; main.py:79:     led.off()
-	LDI	R24, 67
-	STS	0x00C6, R24
-; main.py:99:     uart.write(':')
-; main.py:41:         while i < code:
-; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_125:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_18
-	RJMP	L_126
-L_BR_SKIP_18:
-	RJMP	L_125
-L_126:
-; main.py:79:     led.off()
-	LDI	R24, 58
-	STS	0x00C6, R24
-; main.py:100:     uart.write(nibble_hex_hi(hi))
-	MOV	R24, R5
-	MOV	R8, R24
-	CALL	nibble_hex_hi
-	STD	Y+3, R24
-; main.py:41:         while i < code:
-; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_129:
+; main.py:76:     uart.write(':')
+L_132:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_19
-	RJMP	L_130
+	RJMP	L_133
 L_BR_SKIP_19:
-	RJMP	L_129
-L_130:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
+	RJMP	L_132
+L_133:
+; main.py:79: 
+	LDI	R24, 67
 	STS	0x00C6, R24
-; main.py:101:     uart.write(nibble_hex_lo(hi))
-	MOV	R24, R5
-	MOV	R10, R24
-	CALL	nibble_hex_lo
-	STD	Y+3, R24
+; main.py:85:     uart.write(':')
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_133:
+; main.py:76:     uart.write(':')
+L_136:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_20
-	RJMP	L_134
-L_BR_SKIP_20:
-	RJMP	L_133
-L_134:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
-	STS	0x00C6, R24
-; main.py:102:     uart.write(nibble_hex_hi(lo))
-	MOV	R24, R6
-	MOV	R8, R24
-	CALL	nibble_hex_hi
-	STD	Y+3, R24
-; main.py:41:         while i < code:
-; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_137:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_21
-	RJMP	L_138
-L_BR_SKIP_21:
 	RJMP	L_137
-L_138:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
+L_BR_SKIP_20:
+	RJMP	L_136
+L_137:
+; main.py:79: 
+	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:103:     uart.write(nibble_hex_lo(lo))
-	MOV	R24, R6
-	MOV	R10, R24
-	CALL	nibble_hex_lo
-	STD	Y+3, R24
+; main.py:86:     uart.write_hex(hi)
+; main.py:83:     lo: uint8 = w & 0xFF
+	MOV	R24, R5
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+4, R24
+	MOV	R24, R5
+	ANDI	R24, 15
+	STD	Y+5, R24
+; main.py:86:     uart.write_hex(hi)
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_21
+	RJMP	L_140
+L_BR_SKIP_21:
+; main.py:87:     uart.write_hex(lo)
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+6, R24
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_141:
+; main.py:76:     uart.write(':')
+L_143:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_22
-	RJMP	L_142
+	RJMP	L_144
 L_BR_SKIP_22:
-	RJMP	L_141
-L_142:
-; main.py:79:     led.off()
-	LDD	R24, Y+3
+	RJMP	L_143
+L_144:
+; main.py:79: 
+	LDD	R24, Y+6
 	STS	0x00C6, R24
-; main.py:104:     uart.write('\n')
+	RJMP	L_139
+L_140:
+; main.py:89: 
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
 ; main.py:41:         while i < code:
 ; main.py:45: 
-; main.py:76:     led = LED("PB5")
-L_145:
+; main.py:76:     uart.write(':')
+L_147:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_23
-	RJMP	L_146
+	RJMP	L_148
 L_BR_SKIP_23:
-	RJMP	L_145
-L_146:
-; main.py:79:     led.off()
+	RJMP	L_147
+L_148:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_139:
+; main.py:90:     while True:
+	LDD	R24, Y+5
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_24
+	RJMP	L_150
+L_BR_SKIP_24:
+; main.py:91:         pass
+	LDD	R24, Y+5
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_153:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_25
+	RJMP	L_154
+L_BR_SKIP_25:
+	RJMP	L_153
+L_154:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_149
+L_150:
+	LDD	R24, Y+5
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_157:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_26
+	RJMP	L_158
+L_BR_SKIP_26:
+	RJMP	L_157
+L_158:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_149:
+; main.py:87:     uart.write_hex(lo)
+; main.py:83:     lo: uint8 = w & 0xFF
+	MOV	R24, R6
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+4, R24
+	MOV	R24, R6
+	ANDI	R24, 15
+	STD	Y+5, R24
+; main.py:86:     uart.write_hex(hi)
+	LDD	R24, Y+4
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_27
+	RJMP	L_161
+L_BR_SKIP_27:
+; main.py:87:     uart.write_hex(lo)
+	LDD	R24, Y+4
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_164:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_28
+	RJMP	L_165
+L_BR_SKIP_28:
+	RJMP	L_164
+L_165:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_160
+L_161:
+; main.py:89: 
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_168:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_29
+	RJMP	L_169
+L_BR_SKIP_29:
+	RJMP	L_168
+L_169:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_160:
+; main.py:90:     while True:
+	LDD	R24, Y+5
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_30
+	RJMP	L_171
+L_BR_SKIP_30:
+; main.py:91:         pass
+	LDD	R24, Y+5
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_174:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_31
+	RJMP	L_175
+L_BR_SKIP_31:
+	RJMP	L_174
+L_175:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_170
+L_171:
+	LDD	R24, Y+5
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_178:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_32
+	RJMP	L_179
+L_BR_SKIP_32:
+	RJMP	L_178
+L_179:
+; main.py:79: 
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_170:
+; main.py:88:     uart.write('\n')
+; main.py:41:         while i < code:
+; main.py:45: 
+; main.py:76:     uart.write(':')
+L_182:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_33
+	RJMP	L_183
+L_BR_SKIP_33:
+	RJMP	L_182
+L_183:
+; main.py:79: 
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:106:     while True:
-L_147:
-	RJMP	L_147
+; main.py:90:     while True:
+L_184:
+	RJMP	L_184
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

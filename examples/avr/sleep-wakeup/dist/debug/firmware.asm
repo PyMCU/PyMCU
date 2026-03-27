@@ -169,8 +169,8 @@ L_76:
 	OUT	0x1D, R24
 ; main.py:29:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:30:     asm("sei")
-sei
+; main.py:30:     asm("SEI")
+SEI
 	CLR	R24
 	MOV	R4, R24
 ; main.py:33:     while count < 5:

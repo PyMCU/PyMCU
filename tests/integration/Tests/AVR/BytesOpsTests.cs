@@ -14,7 +14,7 @@ public class BytesOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("bytes-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("bytes-ops");
 
     private ArduinoUnoSimulation Boot()
     {

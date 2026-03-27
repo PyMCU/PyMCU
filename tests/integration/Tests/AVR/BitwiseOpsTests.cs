@@ -17,7 +17,7 @@ public class BitwiseOpsTests
     private static readonly byte[] ExpectedBytes = [255, 15, 240, 224, 56, 199, 0, 8, 1, 68];
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("bitwise-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("bitwise-ops");
 
     [Test]
     public void Output_ExactByteSequence()

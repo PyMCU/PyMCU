@@ -26,19 +26,6 @@ from pymcu.hal.uart import UART
 from pymcu.hal.gpio import Pin
 
 
-def nibble_hi(val: uint8) -> uint8:
-    n: uint8 = (val >> 4) & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-
-def nibble_lo(val: uint8) -> uint8:
-    n: uint8 = val & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
 
 def main():
     uart = UART(9600)
@@ -60,8 +47,7 @@ def main():
 
     uart.write('R')
     uart.write(':')
-    uart.write(nibble_hi(rx))
-    uart.write(nibble_lo(rx))
+    uart.write_hex(rx)
     uart.write('\n')
 
     uart.println("OK")

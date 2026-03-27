@@ -16,7 +16,7 @@ public class NonlocalTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("nonlocal");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("nonlocal");
 
     private ArduinoUnoSimulation Boot()
     {

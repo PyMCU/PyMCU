@@ -18,7 +18,7 @@ public class CallbacksTests
     private string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("callbacks");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("callbacks");
 
     [Test]
     public void Boot_SendsCallbacksBanner()

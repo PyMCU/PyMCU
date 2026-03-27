@@ -54,19 +54,6 @@ def encode(val: uint16) -> uint16:
     return val
 
 
-def nibble_hex_hi(val: uint8) -> uint8:
-    n: uint8 = (val >> 4) & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-def nibble_hex_lo(val: uint8) -> uint8:
-    n: uint8 = val & 0x0F
-    if n < 10:
-        return n + 48
-    return n + 55
-
-
 def main():
     uart = UART(9600)
 
@@ -87,8 +74,7 @@ def main():
     b: uint8 = encode(0xAB)
     uart.write('B')
     uart.write(':')
-    uart.write(nibble_hex_hi(b))
-    uart.write(nibble_hex_lo(b))
+    uart.write_hex(b)
     uart.write('\n')
 
     # -- Test function overloading: encode(uint16) --
@@ -97,10 +83,8 @@ def main():
     lo: uint8 = w & 0xFF
     uart.write('C')
     uart.write(':')
-    uart.write(nibble_hex_hi(hi))
-    uart.write(nibble_hex_lo(hi))
-    uart.write(nibble_hex_hi(lo))
-    uart.write(nibble_hex_lo(lo))
+    uart.write_hex(hi)
+    uart.write_hex(lo)
     uart.write('\n')
 
     while True:

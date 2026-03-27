@@ -6,67 +6,39 @@
 .equ RAMSTART, 0x0100
 .equ _stack_base, RAMSTART
 .equ inline1_print_u16_lo_lo, _stack_base + 3
-.equ inline2_write_data, _stack_base + 4
-.equ inline3_write_data, _stack_base + 5
-.equ main_m2, _stack_base + 12
-.equ main_m3, _stack_base + 14
+.equ inline2_write_hex_hi, _stack_base + 4
+.equ inline2_write_hex_lo, _stack_base + 5
+.equ inline3_write_data, _stack_base + 6
+.equ inline3_write_hex_hi, _stack_base + 7
+.equ inline3_write_hex_lo, _stack_base + 8
+.equ inline4_write_data, _stack_base + 9
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_18, _stack_base + 22
-.equ tmp_20, _stack_base + 23
-.equ tmp_21, _stack_base + 24
-.equ tmp_23, _stack_base + 22
-.equ tmp_24, _stack_base + 23
+.equ tmp_100, _stack_base + 22
+.equ tmp_105, _stack_base + 23
+.equ tmp_112, _stack_base + 24
+.equ tmp_117, _stack_base + 25
+.equ tmp_122, _stack_base + 26
+.equ tmp_129, _stack_base + 27
+.equ tmp_134, _stack_base + 28
+.equ tmp_139, _stack_base + 29
+.equ tmp_23, _stack_base + 30
+.equ tmp_28, _stack_base + 31
+.equ tmp_33, _stack_base + 32
+.equ tmp_41, _stack_base + 33
+.equ tmp_46, _stack_base + 34
+.equ tmp_51, _stack_base + 35
+.equ tmp_59, _stack_base + 36
+.equ tmp_64, _stack_base + 37
+.equ tmp_69, _stack_base + 38
+.equ tmp_77, _stack_base + 39
+.equ tmp_82, _stack_base + 40
+.equ tmp_87, _stack_base + 41
+.equ tmp_95, _stack_base + 42
 
 .org 0x0
 .global main
-	RJMP	main
-nibble_hi:
-	MOV	R4, R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	LSR	R24
-	MOV	R16, R24
-	ANDI	R24, 15
-	MOV	R8, R24
-; main.py:52:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_0
-	RJMP	L_21
-L_BR_SKIP_0:
-; main.py:53:         return n + 48
-	MOV	R24, R8
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_21:
-; main.py:54:     return n + 55
-	MOV	R24, R8
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
-nibble_lo:
-	MOV	R5, R24
-	ANDI	R24, 15
-	MOV	R9, R24
-; main.py:58:     if n < 10:
-	CPI	R24, 10
-	BRLO	L_BR_SKIP_1
-	RJMP	L_22
-L_BR_SKIP_1:
-; main.py:59:         return n + 48
-	MOV	R24, R9
-	SUBI	R24, 208
-	MOV	R16, R24
-	RET
-L_22:
-; main.py:60:     return n + 55
-	MOV	R24, R9
-	SUBI	R24, 201
-	MOV	R16, R24
-	RET
 main:
 	LDI	R16, hi8(0x08FF)
 	OUT	0x3E, R16
@@ -74,47 +46,47 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:77:     uart = UART(9600)
+; main.py:62:     uart = UART(9600)
 ; main.py:27: 
 ; main.py:31: 
 ; main.py:47: 
 	SBI	0x0A, 1
-; main.py:48: # --- UART helpers ---
+; main.py:48: @inline
 	CBI	0x0A, 0
-; main.py:51:     n: uint8 = (val >> 4) & 0x0F
-; main.py:52:     if n < 10:
+; main.py:51:     uart.write(':')
+; main.py:52:     uart.write_hex(val)
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:         return n + 48
+; main.py:53:     uart.write('\n')
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68:     uart.write('\n')
+; main.py:68: 
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70: @inline
+; main.py:70:     m2: uint16 = arduino_map(1023, 1023, 255)
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:78:     uart.println("ARDUINO")
-; main.py:77:     uart = UART(9600)
-; main.py:78:     uart.println("ARDUINO")
-; main.py:69: 
-; main.py:73:     print_u8(uart, tag, lo)
+; main.py:63:     uart.println("ARDUINO")
+; main.py:77:     # arduino_constrain(300, 10, 200) = 200 = 0xC8  (upper clamp)
+; main.py:78:     c1: uint16 = arduino_constrain(300, 10, 200)
+; main.py:69:     # arduino_map(1023, 1023, 255) = 255 = 0xFF
+; main.py:73:     # arduino_map(0, 1023, 255) = 0 = 0x00
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:79: 
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_35:
+; main.py:76: 
+L_33:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_2
-	RJMP	L_36
-L_BR_SKIP_2:
-	RJMP	L_35
-L_36:
-; main.py:79: 
+	BREQ	L_BR_SKIP_0
+	RJMP	L_34
+L_BR_SKIP_0:
+	RJMP	L_33
+L_34:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
@@ -123,95 +95,162 @@ L_36:
 	LDI	R23, 3
 	LDI	R20, 255
 	CALL	arduino_map
-	MOV	R14, R24
-	MOV	R15, R25
-; main.py:82:     print_u16_lo(uart, 'M', m1)
+	MOV	R10, R24
+	MOV	R11, R25
+; main.py:67:     print_u16_lo(uart, 'M', m1)
 	ANDI	R24, 255
 	STD	Y+3, R24
-; main.py:73:     print_u8(uart, tag, lo)
-; main.py:64:     uart.write(tag)
+; main.py:58:     print_u8(uart, tag, lo)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_41:
+; main.py:76: 
+L_39:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_3
-	RJMP	L_42
-L_BR_SKIP_3:
-	RJMP	L_41
-L_42:
-; main.py:79: 
+	BREQ	L_BR_SKIP_1
+	RJMP	L_40
+L_BR_SKIP_1:
+	RJMP	L_39
+L_40:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 77
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_45:
+; main.py:76: 
+L_43:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_2
+	RJMP	L_44
+L_BR_SKIP_2:
+	RJMP	L_43
+L_44:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
+	LDD	R24, Y+3
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+7, R24
+	LDD	R24, Y+3
+	ANDI	R24, 15
+	STD	Y+8, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
+	LDD	R24, Y+7
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_3
+	RJMP	L_47
+L_BR_SKIP_3:
+; main.py:87:     print_u8(uart, 'P', p1)
+	LDD	R24, Y+7
+	SUBI	R24, 208
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_50:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_46
+	RJMP	L_51
 L_BR_SKIP_4:
-	RJMP	L_45
-L_46:
-; main.py:79: 
-	LDI	R24, 58
+	RJMP	L_50
+L_51:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
-	LDD	R24, Y+3
-	MOV	R4, R24
-	LDD	R24, Y+3
-	CALL	nibble_hi
-	STD	Y+5, R24
+	RJMP	L_46
+L_47:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+7
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_49:
+; main.py:76: 
+L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
-	RJMP	L_50
+	RJMP	L_55
 L_BR_SKIP_5:
-	RJMP	L_49
-L_50:
-; main.py:79: 
-	LDD	R24, Y+5
-	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	LDD	R24, Y+3
-	MOV	R5, R24
-	LDD	R24, Y+3
-	CALL	nibble_lo
-	STD	Y+5, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_53:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_6
 	RJMP	L_54
-L_BR_SKIP_6:
-	RJMP	L_53
-L_54:
-; main.py:79: 
-	LDD	R24, Y+5
+L_55:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+L_46:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+8
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_6
+	RJMP	L_57
+L_BR_SKIP_6:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+8
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_57:
+; main.py:76: 
+L_60:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_58
+	RJMP	L_61
 L_BR_SKIP_7:
-	RJMP	L_57
-L_58:
-; main.py:79: 
+	RJMP	L_60
+L_61:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+	RJMP	L_56
+L_57:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+8
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_64:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_8
+	RJMP	L_65
+L_BR_SKIP_8:
+	RJMP	L_64
+L_65:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_56:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_68:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_9
+	RJMP	L_69
+L_BR_SKIP_9:
+	RJMP	L_68
+L_69:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 255
@@ -220,114 +259,68 @@ L_58:
 	LDI	R23, 3
 	LDI	R20, 255
 	CALL	arduino_map
-	STD	Y+12, R24
-	STD	Y+13, R25
-; main.py:86:     print_u16_lo(uart, 'F', m2)
-	LDD	R24, Y+12
+	MOV	R12, R24
+	MOV	R13, R25
+; main.py:71:     print_u16_lo(uart, 'F', m2)
 	ANDI	R24, 255
 	STD	Y+3, R24
-; main.py:73:     print_u8(uart, tag, lo)
-; main.py:64:     uart.write(tag)
+; main.py:58:     print_u8(uart, tag, lo)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_63:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_64
-L_BR_SKIP_8:
-	RJMP	L_63
-L_64:
-; main.py:79: 
-	LDI	R24, 70
-	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_67:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
-	RJMP	L_68
-L_BR_SKIP_9:
-	RJMP	L_67
-L_68:
-; main.py:79: 
-	LDI	R24, 58
-	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
-	LDD	R24, Y+3
-	MOV	R4, R24
-	LDD	R24, Y+3
-	CALL	nibble_hi
-	STD	Y+5, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_71:
+; main.py:76: 
+L_74:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_72
+	RJMP	L_75
 L_BR_SKIP_10:
-	RJMP	L_71
-L_72:
-; main.py:79: 
-	LDD	R24, Y+5
+	RJMP	L_74
+L_75:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 70
 	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	LDD	R24, Y+3
-	MOV	R5, R24
-	LDD	R24, Y+3
-	CALL	nibble_lo
-	STD	Y+5, R24
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_75:
+; main.py:76: 
+L_78:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_11
-	RJMP	L_76
-L_BR_SKIP_11:
-	RJMP	L_75
-L_76:
-; main.py:79: 
-	LDD	R24, Y+5
-	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_79:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_80
-L_BR_SKIP_12:
 	RJMP	L_79
-L_80:
-; main.py:79: 
-	LDI	R24, 10
+L_BR_SKIP_11:
+	RJMP	L_78
+L_79:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 58
 	STS	0x00C6, R24
-	CLR	R24
-	LDI	R22, 255
-	LDI	R23, 3
-	LDI	R20, 255
-	CALL	arduino_map
-	STD	Y+14, R24
-	STD	Y+15, R25
-; main.py:90:     print_u16_lo(uart, 'Z', m3)
-	LDD	R24, Y+14
-	ANDI	R24, 255
-	STD	Y+3, R24
-; main.py:73:     print_u8(uart, tag, lo)
-; main.py:64:     uart.write(tag)
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
+	LDD	R24, Y+3
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+7, R24
+	LDD	R24, Y+3
+	ANDI	R24, 15
+	STD	Y+8, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
+	LDD	R24, Y+7
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_12
+	RJMP	L_82
+L_BR_SKIP_12:
+; main.py:87:     print_u8(uart, 'P', p1)
+	LDD	R24, Y+7
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
+; main.py:76: 
 L_85:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -336,13 +329,20 @@ L_85:
 L_BR_SKIP_13:
 	RJMP	L_85
 L_86:
-; main.py:79: 
-	LDI	R24, 90
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+	RJMP	L_81
+L_82:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+7
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
+; main.py:76: 
 L_89:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
@@ -351,62 +351,233 @@ L_89:
 L_BR_SKIP_14:
 	RJMP	L_89
 L_90:
-; main.py:79: 
-	LDI	R24, 58
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
-	LDD	R24, Y+3
-	MOV	R4, R24
-	LDD	R24, Y+3
-	CALL	nibble_hi
-	STD	Y+5, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_93:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_15
-	RJMP	L_94
+L_81:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+8
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_15
+	RJMP	L_92
 L_BR_SKIP_15:
-	RJMP	L_93
-L_94:
-; main.py:79: 
-	LDD	R24, Y+5
-	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	LDD	R24, Y+3
-	MOV	R5, R24
-	LDD	R24, Y+3
-	CALL	nibble_lo
-	STD	Y+5, R24
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+8
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_97:
+; main.py:76: 
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_16
-	RJMP	L_98
+	RJMP	L_96
 L_BR_SKIP_16:
-	RJMP	L_97
-L_98:
-; main.py:79: 
-	LDD	R24, Y+5
+	RJMP	L_95
+L_96:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+	RJMP	L_91
+L_92:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+8
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_101:
+; main.py:76: 
+L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_17
-	RJMP	L_102
+	RJMP	L_100
 L_BR_SKIP_17:
-	RJMP	L_101
-L_102:
-; main.py:79: 
+	RJMP	L_99
+L_100:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_91:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_103:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_18
+	RJMP	L_104
+L_BR_SKIP_18:
+	RJMP	L_103
+L_104:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 10
+	STS	0x00C6, R24
+	CLR	R24
+	LDI	R22, 255
+	LDI	R23, 3
+	LDI	R20, 255
+	CALL	arduino_map
+	MOV	R14, R24
+	MOV	R15, R25
+; main.py:75:     print_u16_lo(uart, 'Z', m3)
+	ANDI	R24, 255
+	STD	Y+3, R24
+; main.py:58:     print_u8(uart, tag, lo)
+; main.py:50:     uart.write(tag)
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_109:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_19
+	RJMP	L_110
+L_BR_SKIP_19:
+	RJMP	L_109
+L_110:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 90
+	STS	0x00C6, R24
+; main.py:51:     uart.write(':')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_113:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_20
+	RJMP	L_114
+L_BR_SKIP_20:
+	RJMP	L_113
+L_114:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDI	R24, 58
+	STS	0x00C6, R24
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
+	LDD	R24, Y+3
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+7, R24
+	LDD	R24, Y+3
+	ANDI	R24, 15
+	STD	Y+8, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
+	LDD	R24, Y+7
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_21
+	RJMP	L_117
+L_BR_SKIP_21:
+; main.py:87:     print_u8(uart, 'P', p1)
+	LDD	R24, Y+7
+	SUBI	R24, 208
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_120:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_22
+	RJMP	L_121
+L_BR_SKIP_22:
+	RJMP	L_120
+L_121:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+	RJMP	L_116
+L_117:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+7
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_124:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_23
+	RJMP	L_125
+L_BR_SKIP_23:
+	RJMP	L_124
+L_125:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_116:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+8
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_24
+	RJMP	L_127
+L_BR_SKIP_24:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+8
+	SUBI	R24, 208
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_130:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_25
+	RJMP	L_131
+L_BR_SKIP_25:
+	RJMP	L_130
+L_131:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+	RJMP	L_126
+L_127:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+8
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_134:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_26
+	RJMP	L_135
+L_BR_SKIP_26:
+	RJMP	L_134
+L_135:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_126:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_138:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_27
+	RJMP	L_139
+L_BR_SKIP_27:
+	RJMP	L_138
+L_139:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 44
@@ -414,394 +585,666 @@ L_102:
 	LDI	R22, 10
 	LDI	R20, 200
 	CALL	arduino_constrain
-	MOV	R10, R24
-	MOV	R11, R25
-; main.py:94:     print_u16_lo(uart, 'H', c1)
+	MOV	R6, R24
+	MOV	R7, R25
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	ANDI	R24, 255
 	STD	Y+3, R24
-; main.py:73:     print_u8(uart, tag, lo)
-; main.py:64:     uart.write(tag)
+; main.py:58:     print_u8(uart, tag, lo)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_107:
+; main.py:76: 
+L_144:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_18
-	RJMP	L_108
-L_BR_SKIP_18:
-	RJMP	L_107
-L_108:
-; main.py:79: 
+	BREQ	L_BR_SKIP_28
+	RJMP	L_145
+L_BR_SKIP_28:
+	RJMP	L_144
+L_145:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 72
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_111:
+; main.py:76: 
+L_148:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_19
-	RJMP	L_112
-L_BR_SKIP_19:
-	RJMP	L_111
-L_112:
-; main.py:79: 
+	BREQ	L_BR_SKIP_29
+	RJMP	L_149
+L_BR_SKIP_29:
+	RJMP	L_148
+L_149:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
 	LDD	R24, Y+3
-	MOV	R4, R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+7, R24
 	LDD	R24, Y+3
-	CALL	nibble_hi
-	STD	Y+5, R24
+	ANDI	R24, 15
+	STD	Y+8, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
+	LDD	R24, Y+7
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_30
+	RJMP	L_152
+L_BR_SKIP_30:
+; main.py:87:     print_u8(uart, 'P', p1)
+	LDD	R24, Y+7
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_115:
+; main.py:76: 
+L_155:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_20
-	RJMP	L_116
-L_BR_SKIP_20:
-	RJMP	L_115
-L_116:
-; main.py:79: 
-	LDD	R24, Y+5
+	BREQ	L_BR_SKIP_31
+	RJMP	L_156
+L_BR_SKIP_31:
+	RJMP	L_155
+L_156:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	LDD	R24, Y+3
-	MOV	R5, R24
-	LDD	R24, Y+3
-	CALL	nibble_lo
-	STD	Y+5, R24
+	RJMP	L_151
+L_152:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+7
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_119:
+; main.py:76: 
+L_159:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_21
-	RJMP	L_120
-L_BR_SKIP_21:
-	RJMP	L_119
-L_120:
-; main.py:79: 
-	LDD	R24, Y+5
+	BREQ	L_BR_SKIP_32
+	RJMP	L_160
+L_BR_SKIP_32:
+	RJMP	L_159
+L_160:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+L_151:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+8
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_33
+	RJMP	L_162
+L_BR_SKIP_33:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+8
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_123:
+; main.py:76: 
+L_165:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_22
-	RJMP	L_124
-L_BR_SKIP_22:
-	RJMP	L_123
-L_124:
-; main.py:79: 
+	BREQ	L_BR_SKIP_34
+	RJMP	L_166
+L_BR_SKIP_34:
+	RJMP	L_165
+L_166:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+	RJMP	L_161
+L_162:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+8
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_169:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_35
+	RJMP	L_170
+L_BR_SKIP_35:
+	RJMP	L_169
+L_170:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_161:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_173:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_36
+	RJMP	L_174
+L_BR_SKIP_36:
+	RJMP	L_173
+L_174:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 5
 	LDI	R22, 10
 	LDI	R20, 200
 	CALL	arduino_constrain
-	MOV	R12, R24
-	MOV	R13, R25
-; main.py:98:     print_u16_lo(uart, 'L', c2)
+	MOV	R8, R24
+	MOV	R9, R25
+; main.py:83:     print_u16_lo(uart, 'L', c2)
 	ANDI	R24, 255
 	STD	Y+3, R24
-; main.py:73:     print_u8(uart, tag, lo)
-; main.py:64:     uart.write(tag)
+; main.py:58:     print_u8(uart, tag, lo)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_129:
+; main.py:76: 
+L_179:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_23
-	RJMP	L_130
-L_BR_SKIP_23:
-	RJMP	L_129
-L_130:
-; main.py:79: 
+	BREQ	L_BR_SKIP_37
+	RJMP	L_180
+L_BR_SKIP_37:
+	RJMP	L_179
+L_180:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 76
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_133:
+; main.py:76: 
+L_183:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_24
-	RJMP	L_134
-L_BR_SKIP_24:
-	RJMP	L_133
-L_134:
-; main.py:79: 
+	BREQ	L_BR_SKIP_38
+	RJMP	L_184
+L_BR_SKIP_38:
+	RJMP	L_183
+L_184:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
 	LDD	R24, Y+3
-	MOV	R4, R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
+	STD	Y+7, R24
 	LDD	R24, Y+3
-	CALL	nibble_hi
-	STD	Y+5, R24
+	ANDI	R24, 15
+	STD	Y+8, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
+	LDD	R24, Y+7
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_39
+	RJMP	L_187
+L_BR_SKIP_39:
+; main.py:87:     print_u8(uart, 'P', p1)
+	LDD	R24, Y+7
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_137:
+; main.py:76: 
+L_190:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_25
-	RJMP	L_138
-L_BR_SKIP_25:
-	RJMP	L_137
-L_138:
-; main.py:79: 
-	LDD	R24, Y+5
+	BREQ	L_BR_SKIP_40
+	RJMP	L_191
+L_BR_SKIP_40:
+	RJMP	L_190
+L_191:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	LDD	R24, Y+3
-	MOV	R5, R24
-	LDD	R24, Y+3
-	CALL	nibble_lo
-	STD	Y+5, R24
+	RJMP	L_186
+L_187:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+7
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_141:
+; main.py:76: 
+L_194:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_26
-	RJMP	L_142
-L_BR_SKIP_26:
-	RJMP	L_141
-L_142:
-; main.py:79: 
-	LDD	R24, Y+5
+	BREQ	L_BR_SKIP_41
+	RJMP	L_195
+L_BR_SKIP_41:
+	RJMP	L_194
+L_195:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
 	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+L_186:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+8
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_42
+	RJMP	L_197
+L_BR_SKIP_42:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+8
+	SUBI	R24, 208
+	STD	Y+9, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_145:
+; main.py:76: 
+L_200:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_27
-	RJMP	L_146
-L_BR_SKIP_27:
-	RJMP	L_145
-L_146:
-; main.py:79: 
+	BREQ	L_BR_SKIP_43
+	RJMP	L_201
+L_BR_SKIP_43:
+	RJMP	L_200
+L_201:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+	RJMP	L_196
+L_197:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+8
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+9, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_204:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_44
+	RJMP	L_205
+L_BR_SKIP_44:
+	RJMP	L_204
+L_205:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+9
+	STS	0x00C6, R24
+L_196:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_208:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_45
+	RJMP	L_209
+L_BR_SKIP_45:
+	RJMP	L_208
+L_209:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	LDI	R25, 2
 	CALL	adc_to_pwm
-	MOV	R6, R24
-; main.py:102:     print_u8(uart, 'P', p1)
-; main.py:64:     uart.write(tag)
+	MOV	R4, R24
+; main.py:87:     print_u8(uart, 'P', p1)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_150:
+; main.py:76: 
+L_213:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_28
-	RJMP	L_151
-L_BR_SKIP_28:
-	RJMP	L_150
-L_151:
-; main.py:79: 
+	BREQ	L_BR_SKIP_46
+	RJMP	L_214
+L_BR_SKIP_46:
+	RJMP	L_213
+L_214:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 80
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_154:
+; main.py:76: 
+L_217:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_29
-	RJMP	L_155
-L_BR_SKIP_29:
-	RJMP	L_154
-L_155:
-; main.py:79: 
+	BREQ	L_BR_SKIP_47
+	RJMP	L_218
+L_BR_SKIP_47:
+	RJMP	L_217
+L_218:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
-	MOV	R24, R6
-	MOV	R4, R24
-	CALL	nibble_hi
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
+	MOV	R24, R4
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
 	STD	Y+4, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_158:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_30
-	RJMP	L_159
-L_BR_SKIP_30:
-	RJMP	L_158
-L_159:
-; main.py:79: 
+	MOV	R24, R4
+	ANDI	R24, 15
+	STD	Y+5, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
 	LDD	R24, Y+4
-	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	MOV	R24, R6
-	MOV	R5, R24
-	CALL	nibble_lo
-	STD	Y+4, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_162:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_31
-	RJMP	L_163
-L_BR_SKIP_31:
-	RJMP	L_162
-L_163:
-; main.py:79: 
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_48
+	RJMP	L_221
+L_BR_SKIP_48:
+; main.py:87:     print_u8(uart, 'P', p1)
 	LDD	R24, Y+4
-	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+	SUBI	R24, 208
+	STD	Y+6, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_166:
+; main.py:76: 
+L_224:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_32
-	RJMP	L_167
-L_BR_SKIP_32:
-	RJMP	L_166
-L_167:
-; main.py:79: 
+	BREQ	L_BR_SKIP_49
+	RJMP	L_225
+L_BR_SKIP_49:
+	RJMP	L_224
+L_225:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_220
+L_221:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_228:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_50
+	RJMP	L_229
+L_BR_SKIP_50:
+	RJMP	L_228
+L_229:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_220:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+5
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_51
+	RJMP	L_231
+L_BR_SKIP_51:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+5
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_234:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_52
+	RJMP	L_235
+L_BR_SKIP_52:
+	RJMP	L_234
+L_235:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_230
+L_231:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+5
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_238:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_53
+	RJMP	L_239
+L_BR_SKIP_53:
+	RJMP	L_238
+L_239:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_230:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_242:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_54
+	RJMP	L_243
+L_BR_SKIP_54:
+	RJMP	L_242
+L_243:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
 	LDI	R24, 255
 	LDI	R25, 3
 	CALL	adc_to_pwm
-	MOV	R7, R24
-; main.py:106:     print_u8(uart, 'T', p2)
-; main.py:64:     uart.write(tag)
+	MOV	R5, R24
+; main.py:91:     print_u8(uart, 'T', p2)
+; main.py:50:     uart.write(tag)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_171:
+; main.py:76: 
+L_247:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_33
-	RJMP	L_172
-L_BR_SKIP_33:
-	RJMP	L_171
-L_172:
-; main.py:79: 
+	BREQ	L_BR_SKIP_55
+	RJMP	L_248
+L_BR_SKIP_55:
+	RJMP	L_247
+L_248:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 84
 	STS	0x00C6, R24
-; main.py:65:     uart.write(':')
+; main.py:51:     uart.write(':')
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_175:
+; main.py:76: 
+L_251:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_34
-	RJMP	L_176
-L_BR_SKIP_34:
-	RJMP	L_175
-L_176:
-; main.py:79: 
+	BREQ	L_BR_SKIP_56
+	RJMP	L_252
+L_BR_SKIP_56:
+	RJMP	L_251
+L_252:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 58
 	STS	0x00C6, R24
-; main.py:66:     uart.write(nibble_hi(val))
-	MOV	R24, R7
-	MOV	R4, R24
-	CALL	nibble_hi
+; main.py:52:     uart.write_hex(val)
+; main.py:83:     print_u16_lo(uart, 'L', c2)
+	MOV	R24, R5
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	LSR	R24
+	MOV	R16, R24
+	ANDI	R24, 15
 	STD	Y+4, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_179:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_35
-	RJMP	L_180
-L_BR_SKIP_35:
-	RJMP	L_179
-L_180:
-; main.py:79: 
+	MOV	R24, R5
+	ANDI	R24, 15
+	STD	Y+5, R24
+; main.py:86:     p1: uint8 = adc_to_pwm(512)
 	LDD	R24, Y+4
-	STS	0x00C6, R24
-; main.py:67:     uart.write(nibble_lo(val))
-	MOV	R24, R7
-	MOV	R5, R24
-	CALL	nibble_lo
-	STD	Y+4, R24
-; main.py:41:     pass
-; main.py:45:     pass
-; main.py:76: def main():
-L_183:
-	LDS	R24, 0x00C0
-	ANDI	R24, 32
-	BREQ	L_BR_SKIP_36
-	RJMP	L_184
-L_BR_SKIP_36:
-	RJMP	L_183
-L_184:
-; main.py:79: 
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_57
+	RJMP	L_255
+L_BR_SKIP_57:
+; main.py:87:     print_u8(uart, 'P', p1)
 	LDD	R24, Y+4
-	STS	0x00C6, R24
-; main.py:68:     uart.write('\n')
+	SUBI	R24, 208
+	STD	Y+6, R24
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_187:
+; main.py:76: 
+L_258:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_37
-	RJMP	L_188
-L_BR_SKIP_37:
-	RJMP	L_187
-L_188:
-; main.py:79: 
+	BREQ	L_BR_SKIP_58
+	RJMP	L_259
+L_BR_SKIP_58:
+	RJMP	L_258
+L_259:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_254
+L_255:
+; main.py:89:     # adc_to_pwm(1023) = 255 = 0xFF
+	LDD	R24, Y+4
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_262:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_59
+	RJMP	L_263
+L_BR_SKIP_59:
+	RJMP	L_262
+L_263:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_254:
+; main.py:90:     p2: uint8 = adc_to_pwm(1023)
+	LDD	R24, Y+5
+	CPI	R24, 10
+	BRLO	L_BR_SKIP_60
+	RJMP	L_265
+L_BR_SKIP_60:
+; main.py:91:     print_u8(uart, 'T', p2)
+	LDD	R24, Y+5
+	SUBI	R24, 208
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_268:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_61
+	RJMP	L_269
+L_BR_SKIP_61:
+	RJMP	L_268
+L_269:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+	RJMP	L_264
+L_265:
+; main.py:93:     uart.println("OK")
+	LDD	R24, Y+5
+	SUBI	R24, 10
+	MOV	R16, R24
+	SUBI	R24, 191
+	STD	Y+6, R24
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_272:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_62
+	RJMP	L_273
+L_BR_SKIP_62:
+	RJMP	L_272
+L_273:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
+	LDD	R24, Y+6
+	STS	0x00C6, R24
+L_264:
+; main.py:53:     uart.write('\n')
+; main.py:41:     pass
+; main.py:45:     pass
+; main.py:76: 
+L_276:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_63
+	RJMP	L_277
+L_BR_SKIP_63:
+	RJMP	L_276
+L_277:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:108:     uart.println("OK")
-; main.py:77:     uart = UART(9600)
-; main.py:78:     uart.println("ARDUINO")
-; main.py:69: 
-; main.py:73:     print_u8(uart, tag, lo)
+; main.py:93:     uart.println("OK")
+; main.py:77:     # arduino_constrain(300, 10, 200) = 200 = 0xC8  (upper clamp)
+; main.py:78:     c1: uint16 = arduino_constrain(300, 10, 200)
+; main.py:69:     # arduino_map(1023, 1023, 255) = 255 = 0xFF
+; main.py:73:     # arduino_map(0, 1023, 255) = 0 = 0x00
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-; main.py:79: 
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 ; main.py:41:     pass
 ; main.py:45:     pass
-; main.py:76: def main():
-L_194:
+; main.py:76: 
+L_283:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_38
-	RJMP	L_195
-L_BR_SKIP_38:
-	RJMP	L_194
-L_195:
-; main.py:79: 
+	BREQ	L_BR_SKIP_64
+	RJMP	L_284
+L_BR_SKIP_64:
+	RJMP	L_283
+L_284:
+; main.py:79:     print_u16_lo(uart, 'H', c1)
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:110:     while True:
-L_196:
-	RJMP	L_196
+; main.py:95:     while True:
+L_285:
+	RJMP	L_285
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:

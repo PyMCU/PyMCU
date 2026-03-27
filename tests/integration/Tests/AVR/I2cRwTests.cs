@@ -17,7 +17,7 @@ public class I2cRwTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("i2c-rw");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("i2c-rw");
 
     private ArduinoUnoSimulation Sim()
     {

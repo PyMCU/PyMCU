@@ -72,7 +72,7 @@ public class DiagNew
     [Test]
     public void MultiIsr_Diag()
     {
-        var hex = PymcuCompiler.Build("multi-isr");
+        var hex = PymcuCompiler.BuildFixture("multi-isr");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
         uno.RunUntilSerial(uno.Serial, "MULTI ISR\n", maxMs: 500);
@@ -128,7 +128,7 @@ public class DiagNew
     [Test]
     public void NestedCalls_Diag()
     {
-        var hex = PymcuCompiler.Build("nested-calls");
+        var hex = PymcuCompiler.BuildFixture("nested-calls");
         var uno = new ArduinoUnoSimulation();
         uno.WithHex(hex);
         uno.RunUntilSerial(uno.Serial, "HEX ENCODE\n", maxMs: 500);

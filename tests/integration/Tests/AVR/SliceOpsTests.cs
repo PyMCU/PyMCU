@@ -15,7 +15,7 @@ public class SliceOpsTests
     private static string _hex = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("slice-ops");
+    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("slice-ops");
 
     private ArduinoUnoSimulation Boot()
     {
