@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from typing import Generic, TypeVar
+from typing import Callable, Generic, TypeVar
 from typing import TypeAlias
 
 T = TypeVar("T")
@@ -73,10 +73,10 @@ def interrupt(f, vector: int = 0):
     return f
 
 
-def compile_isr(handler, vector: int = 0):
+def compile_isr(handler: Callable, vector: int = 0):
     # Compiler intrinsic: marks `handler` as an ISR at `vector` without
     # requiring an @interrupt decorator on the function definition.
-    # Called from Pin.irq() / pin_irq_setup() at compile time.
+    # Called from Pin.irq() / timer.irq() / spi.irq() / i2c.irq() at compile time.
     pass
 
 

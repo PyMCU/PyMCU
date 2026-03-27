@@ -30,8 +30,8 @@
 #   0x58 - data byte received, NACK returned (last byte)
 # -----------------------------------------------------------------------------
 
-from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR
-from pymcu.types import uint8, inline
+from pymcu.chips.atmega328p import TWBR, TWSR, TWAR, TWDR, TWCR, SREG
+from pymcu.types import uint8, inline, compile_isr, Callable
 
 
 @inline
@@ -233,3 +233,13 @@ def i2c_peripheral_read() -> uint8:
 def i2c_peripheral_write(data: uint8):
     """Load TWDR with data to send to the controller on next clock."""
     TWDR.value = data
+
+
+# --- Interrupt-driven setup --------------------------------------------------
+# TWI vector: byte address 0x0030 (word 0x0018, .org 0x60 in vector table)
+
+@inline
+def i2c_irq_setup(handler: Callable):
+    TWCR[0] = 1                  # TWIE: enable TWI interrupt (SBI, safe on TWINT)
+    SREG[7] = 1                  # SEI: enable global interrupts
+    compile_isr(handler, 0x0030) # TWI vector byte address

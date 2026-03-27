@@ -24,8 +24,8 @@
 # Note: SPDR.value = data correctly emits OUT 0x2E, Rn (full byte, not BitWrite).
 # -----------------------------------------------------------------------------
 
-from pymcu.chips.atmega328p import DDRB, PORTB, SPCR, SPSR, SPDR
-from pymcu.types import uint8, inline
+from pymcu.chips.atmega328p import DDRB, PORTB, SPCR, SPSR, SPDR, SREG
+from pymcu.types import uint8, inline, compile_isr, Callable
 
 
 @inline
@@ -108,3 +108,13 @@ def spi_peripheral_receive() -> uint8:
 def spi_peripheral_send(data: uint8):
     """Preload SPDR for the next controller transfer (non-blocking)."""
     SPDR.value = data
+
+
+# --- Interrupt-driven setup --------------------------------------------------
+# SPI STC vector: byte address 0x0022 (word 0x0011, .org 0x44 in vector table)
+
+@inline
+def spi_irq_setup(handler: Callable):
+    SPCR[7] = 1                  # SPIE: enable SPI interrupt
+    SREG[7] = 1                  # SEI: enable global interrupts
+    compile_isr(handler, 0x0022) # SPI STC vector byte address

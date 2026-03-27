@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, inline, Callable
 from pymcu.chips import __CHIP__
 from pymcu.hal.gpio import Pin
 
@@ -129,6 +129,23 @@ class SPI:
                 return spi_peripheral_ready()
             case _:
                 return 0
+
+    @inline
+    def irq(self, handler: Callable):
+        """Register an interrupt handler for SPI transfer-complete (STC) events.
+
+        handler: compile-time function reference; automatically registered
+                 at the SPI STC vector -- no @interrupt decorator needed.
+                 The handler MUST read SPDR to clear SPIF and get the byte.
+
+        Enables SPIE and global interrupts (SEI).
+        Most useful in PERIPHERAL mode where each byte from the controller
+        triggers the ISR; works in CONTROLLER mode too.
+        """
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._spi.avr import spi_irq_setup
+                spi_irq_setup(handler)
 
     @inline
     def select(self):

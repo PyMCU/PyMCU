@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, const, inline
+from pymcu.types import uint8, uint16, const, inline, Callable
 
 # ---- Unified Timer ZCA ----
 # IRQ mode constants (Timer.IRQ_OVF, Timer.IRQ_COMPA) select the interrupt
@@ -219,7 +219,7 @@ class Timer:  # noqa
         return 0
 
     @inline
-    def irq(self, handler: const, mode: const = 1):
+    def irq(self, handler: Callable, mode: const = 1):
         """Register an interrupt handler for this timer.
 
         handler: compile-time function reference; automatically registered

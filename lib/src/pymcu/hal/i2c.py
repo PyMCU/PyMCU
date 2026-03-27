@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, inline, Callable
 from pymcu.chips import __CHIP__
 
 
@@ -262,6 +262,24 @@ class I2C:
             case _:
                 return 0
         return 0
+
+    @inline
+    def irq(self, handler: Callable):
+        """Register an interrupt handler for TWI (I2C) bus events.
+
+        handler: compile-time function reference; automatically registered
+                 at the TWI vector -- no @interrupt decorator needed.
+                 The handler must read TWSR for the event type and must
+                 clear TWINT in TWCR to re-arm the interrupt.
+
+        Enables TWIE and global interrupts (SEI).
+        Most useful in PERIPHERAL mode -- fires on every TWI event
+        (address match, data byte received/sent, STOP condition).
+        """
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.hal._i2c.avr import i2c_irq_setup
+                i2c_irq_setup(handler)
 
     # ---- Context manager (controller) ---------------------------------------
 
