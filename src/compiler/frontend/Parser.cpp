@@ -691,9 +691,17 @@ std::unique_ptr<Statement> Parser::parseMatchStatement() {
     }
 
     consume(TokenType::Colon, "Expected ':'");
-    consume(TokenType::Newline, "Expected newline");
 
-    auto body = parseBlock();
+    std::unique_ptr<Block> body;
+    if (check(TokenType::Newline)) {
+      advance();  // consume newline before indented block
+      body = parseBlock();
+    } else {
+      // Inline case body: `case 0: return x` -- single statement on same line
+      body = std::make_unique<Block>();
+      body->statements.push_back(parseStatement());
+      if (check(TokenType::Newline)) advance();
+    }
     branches.push_back({std::move(pattern), std::move(guard), capture_name, std::move(body)});
   }
 
