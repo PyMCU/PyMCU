@@ -7,7 +7,7 @@ from pymcu.types import uint8, uint16, inline, compile_isr, Callable
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----
 
 @inline
-def timer0_init(prescaler: uint8):
+def timer0_init(prescaler: uint16):
     TCCR0A.value = 0x00
     if prescaler == 1:
         TCCR0B.value = 0x01
@@ -57,7 +57,7 @@ def timer0_stop_ctc():
 # OVF vector: 0x000d (word addr); ~0.5 Hz at 16 MHz, prescaler 1024, 16-bit wrap
 
 @inline
-def timer1_init(prescaler: uint8):
+def timer1_init(prescaler: uint16):
     TCCR1A.value = 0x00
     TCCR1B.value = 0x00
     if prescaler == 1:
@@ -111,7 +111,7 @@ def timer1_stop_ctc():
 # OVF vector: 0x0009 (word addr)
 
 @inline
-def timer2_init(prescaler: uint8):
+def timer2_init(prescaler: uint16):
     TCCR2A.value = 0x00
     TCCR2B.value = 0x00
     if prescaler == 1:
