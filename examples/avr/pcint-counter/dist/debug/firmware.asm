@@ -149,7 +149,7 @@ pcint0_isr:
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:25:     GPIOR0[0] = 1
+; main.py:18:     GPIOR0[0] = 1
 	SBI	0x1E, 0
 ; ISR epilogue — restore context
 	POP	R16
@@ -165,13 +165,10 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:29:     btn  = Pin("PB0", Pin.IN, pull=Pin.PULL_UP)
-; main.py:51:                 uart.write((count / 10) + 48)
-; main.py:52:                 uart.write((count % 10) + 48)
-; main.py:8: #   - Serial terminal at 9600 baud: prints "COUNT:NN\n" on each press
-; main.py:20: from pymcu.hal.uart import UART
-; main.py:32:     # Enable PCINT0 for PB0 only: set bit 0 of PCMSK0
-; main.py:44:     while True:
+; main.py:22:     btn  = Pin("PB0", Pin.IN, pull=Pin.PULL_UP)
+; main.py:8: # and SEI automatically. The ISR sets a GPIOR0 flag; main reads PB0 to
+; main.py:20: 
+; main.py:32:         if GPIOR0[0] == 1:
 	CLR	R24
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -183,61 +180,55 @@ L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_1:
 	SBI	0x05, 0
-; main.py:30:     uart = UART(9600)
-; main.py:27: 
-; main.py:31: 
-; main.py:47:             # Only count falling edges (button pressed = low)
+; main.py:23:     uart = UART(9600)
+; main.py:27:     uart.println("PCINT COUNTER")
+; main.py:31:     while True:
 	SBI	0x0A, 1
-; main.py:48:             if btn.value() == 0:
 	CBI	0x0A, 0
-; main.py:51:                 uart.write((count / 10) + 48)
-; main.py:52:                 uart.write((count % 10) + 48)
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:                 uart.write('\n')
 	CLR	R24
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:33:     PCMSK0.value = 0x01
-	LDI	R24, 1
-	STS	0x006B, R24
-; main.py:35:     PCICR[0] = 1
+; main.py:24:     btn.irq(3, pcint0_isr)
 	LDS	R24, 0x0068
 	ORI	R24, 1
 	STS	0x0068, R24
-; main.py:37:     GPIOR0[0] = 0
+	LDS	R24, 0x006B
+	ORI	R24, 1
+	STS	0x006B, R24
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:26:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:38:     asm("SEI")
-SEI
-; main.py:40:     uart.println("PCINT COUNTER")
+; main.py:27:     uart.println("PCINT COUNTER")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:         if GPIOR0[0] == 1:
-L_69:
+L_91:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_70
+	RJMP	L_92
 L_BR_SKIP_3:
-	RJMP	L_69
-L_70:
+	RJMP	L_91
+L_92:
 	LDI	R24, 10
 	STS	0x00C6, R24
 	CLR	R24
 	MOV	R4, R24
-; main.py:44:     while True:
-L_71:
-; main.py:45:         if GPIOR0[0] == 1:
+; main.py:31:     while True:
+L_93:
+; main.py:32:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_73
-; main.py:46:             GPIOR0[0] = 0
+	RJMP	L_95
+; main.py:33:             GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:48:             if btn.value() == 0:
+; main.py:35:             if btn.value() == 0:
 	SBIS	0x03, 0
 	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
@@ -248,67 +239,61 @@ L_BIT_DONE_5:
 	MOV	R16, R24
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_6
-	RJMP	L_74
+	RJMP	L_96
 L_BR_SKIP_6:
 	INC	R4
-; main.py:50:                 uart.write_str("COUNT:")
+; main.py:37:                 uart.write_str("COUNT:")
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-; main.py:51:                 uart.write((count / 10) + 48)
+; main.py:38:                 uart.write((count / 10) + 48)
 	MOV	R24, R4
 	LDI	R18, 10
 	CALL	__div8
 	MOV	R16, R24
 	SUBI	R24, 208
 	STD	Y+3, R24
-; main.py:41: 
-; main.py:45:         if GPIOR0[0] == 1:
-L_82:
+L_104:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_83
+	RJMP	L_105
 L_BR_SKIP_7:
-	RJMP	L_82
-L_83:
+	RJMP	L_104
+L_105:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:52:                 uart.write((count % 10) + 48)
+; main.py:39:                 uart.write((count % 10) + 48)
 	MOV	R24, R4
 	LDI	R18, 10
 	CALL	__mod8
 	MOV	R16, R24
 	SUBI	R24, 208
 	STD	Y+3, R24
-; main.py:41: 
-; main.py:45:         if GPIOR0[0] == 1:
-L_86:
+L_108:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_87
+	RJMP	L_109
 L_BR_SKIP_8:
-	RJMP	L_86
-L_87:
+	RJMP	L_108
+L_109:
 	LDD	R24, Y+3
 	STS	0x00C6, R24
-; main.py:53:                 uart.write('\n')
-; main.py:41: 
-; main.py:45:         if GPIOR0[0] == 1:
-L_90:
+; main.py:40:                 uart.write('\n')
+L_112:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_91
+	RJMP	L_113
 L_BR_SKIP_9:
-	RJMP	L_90
-L_91:
+	RJMP	L_112
+L_113:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_74:
-L_73:
-	RJMP	L_71
+L_96:
+L_95:
+	RJMP	L_93
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
