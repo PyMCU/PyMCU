@@ -1,6 +1,6 @@
-# Contributing to Whipsnake
+# Contributing to PyMCU
 
-Thank you for your interest in contributing to Whipsnake! We welcome bug reports, feature requests,
+Thank you for your interest in contributing to PyMCU! We welcome bug reports, feature requests,
 and pull requests.
 
 ---
@@ -9,8 +9,8 @@ and pull requests.
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/begeistert/whipsnake.git
-   cd whipsnake
+   git clone https://github.com/begeistert/pymcu.git
+   cd pymcu
    ```
 
 2. **Install Python dependencies:**
@@ -21,12 +21,12 @@ and pull requests.
 3. **Build the compiler:**
    ```bash
    cmake -B build -S src/compiler -DCMAKE_BUILD_TYPE=Release
-   cmake --build build --target whipc -j$(sysctl -n hw.ncpu)
+   cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)
    ```
 
 4. **Run integration tests:**
    ```bash
-   dotnet test tests/integration/Whipsnake.IntegrationTests.csproj
+   dotnet test tests/integration/PyMCU.IntegrationTests.csproj
    ```
 
 All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
@@ -38,16 +38,16 @@ compiler feature before merging.
 
 ```
 pymcu/
-  src/compiler/           # C++ compiler (whipc)
+  src/compiler/           # C++ compiler (pymcuc)
     frontend/             # Lexer, Parser, AST
     ir/                   # IRGenerator, Optimizer, Tacky IR
     backend/targets/avr/  # AVR codegen, peephole, register allocator
-  lib/src/whipsnake/          # Python stdlib (compiled into firmware)
+  lib/src/pymcu/          # Python stdlib (compiled into firmware)
     hal/                  # GPIO, UART, ADC, Timer, PWM, SPI, I2C
     drivers/              # DHT11 and other device drivers
     boards/               # Board pin name constants
     chips/                # Chip configuration and __CHIP__
-  src/driver/             # Python CLI driver (whip build/flash/new)
+  src/driver/             # Python CLI driver (pymcu build/flash/new)
   tests/integration/      # .NET / AVR8Sharp integration tests
   examples/avr/           # Firmware examples (each with a full test suite)
   docs/                   # MkDocs documentation site
@@ -57,7 +57,7 @@ pymcu/
 
 ## Commit Guidelines
 
-Whipsnake uses the **Conventional Commits** specification. Every commit must follow this format:
+PyMCU uses the **Conventional Commits** specification. Every commit must follow this format:
 
 ```
 <type>(<scope>): <short description>
@@ -88,8 +88,8 @@ Whipsnake uses the **Conventional Commits** specification. Every commit must fol
 | `ir` | IR generator, optimizer, or Tacky IR |
 | `parser` | Lexer / Parser / AST |
 | `hal` | Any HAL module (`gpio`, `uart`, `spi`, ...) |
-| `driver` | Python CLI driver (`whip build/flash/new`) |
-| `stdlib` | Any module under `lib/src/whipsnake/` |
+| `driver` | Python CLI driver (`pymcu build/flash/new`) |
+| `stdlib` | Any module under `lib/src/pymcu/` |
 | `drivers` | Device drivers (`dht11`, `neopixel`, `lcd`, ...) |
 | `test` | Integration or unit test files |
 | `docs` | Documentation site or Markdown files |
@@ -135,14 +135,14 @@ docs: add @extern / C interop to roadmap and limitations
 
 ## Adding a stdlib Module
 
-1. Add the implementation in `lib/src/whipsnake/hal/` (or `drivers/`).
+1. Add the implementation in `lib/src/pymcu/hal/` (or `drivers/`).
 2. Use `@inline` for all public methods (zero-cost abstraction rule).
 3. Use `match __CHIP__.arch:` for architecture dispatch.
 4. No non-ASCII characters in source (compiler lexer is ASCII-only).
 5. No multiline docstrings with code examples — use `# comments` instead.
 6. After editing stdlib, rsync to the local virtualenv:
    ```bash
-   rsync lib/src/whipsnake/ .venv/lib/python3.X/site-packages/whipsnake/
+   rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/
    ```
 
 ## HAL Coding Rules
@@ -159,7 +159,7 @@ docs: add @extern / C interop to roadmap and limitations
 
 1. Fork the repository and create your branch from `main`.
 2. Each commit on the branch must follow the Conventional Commits format above.
-3. All integration tests must pass: `dotnet test tests/integration/Whipsnake.IntegrationTests.csproj`.
+3. All integration tests must pass: `dotnet test tests/integration/PyMCU.IntegrationTests.csproj`.
 4. Add a new test for any new compiler or HAL feature.
 5. If the PR adds a feature, update `LANGUAGE_ROADMAP.md` and `docs/docs/roadmap.md`.
 6. If the PR changes supported/unsupported features, update `docs/docs/limitations.md`.

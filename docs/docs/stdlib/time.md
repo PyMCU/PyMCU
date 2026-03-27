@@ -1,7 +1,7 @@
 # Time / Delays — `pymcu.time`
 
 ```python
-from whipsnake.time import delay_ms, delay_us
+from pymcu.time import delay_ms, delay_us
 ```
 
 Busy-wait delay functions. No hardware timer is consumed — the delay loops are calibrated to the
@@ -25,8 +25,8 @@ Busy-waits for approximately `us` microseconds.
 ## Example
 
 ```python
-from whipsnake.time import delay_ms, delay_us
-from whipsnake.hal.gpio import Pin
+from pymcu.time import delay_ms, delay_us
+from pymcu.hal.gpio import Pin
 
 def main():
     led = Pin("PB5", Pin.OUT)

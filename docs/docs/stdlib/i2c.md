@@ -1,7 +1,7 @@
-# I2C — `whipsnake.hal.i2c`
+# I2C — `pymcu.hal.i2c`
 
 ```python
-from whipsnake.hal.i2c import I2C
+from pymcu.hal.i2c import I2C
 ```
 
 I2C (TWI) support is currently available for AVR (ATmega328P) only.
@@ -47,9 +47,9 @@ with i2c:
 ## Example — I2C bus scanner
 
 ```python
-from whipsnake.hal.i2c import I2C
-from whipsnake.hal.uart import UART
-from whipsnake.types import uint8
+from pymcu.hal.i2c import I2C
+from pymcu.hal.uart import UART
+from pymcu.types import uint8
 
 def main():
     i2c = I2C()
@@ -67,8 +67,8 @@ def main():
 ## Example — read register via `with`
 
 ```python
-from whipsnake.hal.i2c import I2C
-from whipsnake.types import uint8
+from pymcu.hal.i2c import I2C
+from pymcu.types import uint8
 
 def read_reg(i2c: I2C, dev_addr: uint8, reg: uint8) -> uint8:
     with i2c:

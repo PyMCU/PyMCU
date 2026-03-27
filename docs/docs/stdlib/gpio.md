@@ -1,7 +1,7 @@
-# GPIO — `whipsnake.hal.gpio`
+# GPIO — `pymcu.hal.gpio`
 
 ```python
-from whipsnake.hal.gpio import Pin
+from pymcu.hal.gpio import Pin
 ```
 
 ## `Pin(name, mode, pull=-1, value=-1)`
@@ -47,8 +47,8 @@ Creates a GPIO pin. All parameters except `name` and `mode` are optional.
 ## Examples
 
 ```python
-from whipsnake.hal.gpio import Pin
-from whipsnake.types import uint8
+from pymcu.hal.gpio import Pin
+from pymcu.types import uint8
 
 # Output pin
 led = Pin("PB5", Pin.OUT)

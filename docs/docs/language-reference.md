@@ -1,6 +1,6 @@
-# Whipsnake Language Reference
+# PyMCU Language Reference
 
-Whipsnake compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
+PyMCU compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
 code. No runtime, no heap, no garbage collector. This document is the canonical reference for every
 language feature the compiler accepts.
 
@@ -96,7 +96,7 @@ Maps directly to a memory-mapped register address. Dereferencing with `.value` r
 the full register. Subscript access `reg[n]` reads or writes individual bits.
 
 ```python
-from whipsnake.types import ptr, uint8
+from pymcu.types import ptr, uint8
 
 PORTB: ptr[uint8] = ptr(0x25)   # ATmega328P PORTB DATA address
 PORTB.value = 0xFF               # write whole register
@@ -544,7 +544,7 @@ from foo.sub import helper
 - **Relative imports** (`from . import foo`) are supported.
 - **`__init__.py`** re-exports work at compile time.
 - **Third-party PyPI packages** are not supported — only `pymcu` stdlib and compat packages
-  (`whipsnake-circuitpython`, `whipsnake-micropython`).
+  (`pymcu-circuitpython`, `pymcu-micropython`).
 - **Circular imports** are not supported.
 - **`import X as Y`** — fully supported.
 
@@ -579,7 +579,7 @@ delay_ms(interval)     # runtime variable is OK
 Creates a typed pointer to a memory-mapped address. Used for direct register access.
 
 ```python
-from whipsnake.types import ptr, uint8
+from pymcu.types import ptr, uint8
 
 SREG: ptr[uint8] = ptr(0x5F)    # Status register (ATmega328P)
 SREG[7] = 1                      # sei — enable global interrupts
@@ -591,7 +591,7 @@ saved: uint8 = SREG.value        # read whole register
 Compile-time constant marker. The compiler enforces that the value is statically known.
 
 ```python
-from whipsnake.types import const, uint8
+from pymcu.types import const, uint8
 
 BAUD: const[uint16] = 9600
 TABLE_SIZE: const[uint8] = 16
@@ -617,10 +617,10 @@ match __CHIP__.arch:
 
 ## 10. Standard Library Overview
 
-### `whipsnake.hal.gpio` — GPIO
+### `pymcu.hal.gpio` — GPIO
 
 ```python
-from whipsnake.hal.gpio import Pin
+from pymcu.hal.gpio import Pin
 
 led = Pin("PB5", Pin.OUT)       # output pin
 btn = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)   # input with pull-up
@@ -638,10 +638,10 @@ w: uint16 = led.pulse_in(1, timeout_us=1000)   # measure pulse width
 **Pull constants:** `Pin.PULL_UP`, `Pin.PULL_DOWN`
 **IRQ constants:** `Pin.IRQ_FALLING`, `Pin.IRQ_RISING`, `Pin.IRQ_LOW_LEVEL`, `Pin.IRQ_HIGH_LEVEL`
 
-### `whipsnake.hal.uart` — UART
+### `pymcu.hal.uart` — UART
 
 ```python
-from whipsnake.hal.uart import UART
+from pymcu.hal.uart import UART
 
 uart = UART(9600)
 uart.write(65)                  # send byte
@@ -651,20 +651,20 @@ uart.println("done")            # write_str + newline
 uart.print_byte(42)             # print decimal uint8 + newline
 ```
 
-### `whipsnake.hal.adc` — ADC
+### `pymcu.hal.adc` — ADC
 
 ```python
-from whipsnake.hal.adc import AnalogPin
+from pymcu.hal.adc import AnalogPin
 
 adc = AnalogPin("A0")
 adc.start()
 # poll ADCSRA[6] (ADSC) to wait for conversion, then read ADCL/ADCH
 ```
 
-### `whipsnake.hal.timer` — Timer
+### `pymcu.hal.timer` — Timer
 
 ```python
-from whipsnake.hal.timer import Timer
+from pymcu.hal.timer import Timer
 
 # n is a compile-time constant — the compiler emits only the code for the selected timer
 t0 = Timer(0, 64)     # Timer0 (8-bit), prescaler 64 — AVR + PIC
@@ -686,10 +686,10 @@ def on_tick():
     ticks += 1
 ```
 
-### `whipsnake.hal.pwm` — PWM
+### `pymcu.hal.pwm` — PWM
 
 ```python
-from whipsnake.hal.pwm import PWM
+from pymcu.hal.pwm import PWM
 
 pwm = PWM("PD6", duty=128)   # OC0A, 50% duty cycle
 pwm.start()
@@ -697,10 +697,10 @@ pwm.set_duty(200)
 pwm.stop()
 ```
 
-### `whipsnake.hal.spi` — SPI (AVR)
+### `pymcu.hal.spi` — SPI (AVR)
 
 ```python
-from whipsnake.hal.spi import SPI
+from pymcu.hal.spi import SPI
 
 spi = SPI()
 with spi:
@@ -708,10 +708,10 @@ with spi:
     spi.write(0x55)
 ```
 
-### `whipsnake.hal.i2c` — I2C / TWI (AVR)
+### `pymcu.hal.i2c` — I2C / TWI (AVR)
 
 ```python
-from whipsnake.hal.i2c import I2C
+from pymcu.hal.i2c import I2C
 
 i2c = I2C()
 if i2c.ping(0x68):           # check if device responds
@@ -723,7 +723,7 @@ if i2c.ping(0x68):           # check if device responds
 ### `pymcu.time` — Delays
 
 ```python
-from whipsnake.time import delay_ms, delay_us
+from pymcu.time import delay_ms, delay_us
 
 delay_ms(1000)     # 1 second
 delay_us(100)      # 100 µs
@@ -739,10 +739,10 @@ result: uint16 = sensor.read()    # high byte = humidity, low byte = temp
 # result == 0xFFFF means read error
 ```
 
-### `whipsnake.hal.eeprom` — Non-volatile storage
+### `pymcu.hal.eeprom` — Non-volatile storage
 
 ```python
-from whipsnake.hal.eeprom import EEPROM
+from pymcu.hal.eeprom import EEPROM
 
 ee = EEPROM()
 ee.write(0x00, 42)         # persist a byte (~3.4 ms write latency)
@@ -751,10 +751,10 @@ val: uint8 = ee.read(0x00) # read it back (instant)
 
 ATmega328P: 1024 bytes at addresses `0x000`–`0x3FF`, ~100 k write endurance per cell.
 
-### `whipsnake.hal.watchdog` — Watchdog timer
+### `pymcu.hal.watchdog` — Watchdog timer
 
 ```python
-from whipsnake.hal.watchdog import Watchdog
+from pymcu.hal.watchdog import Watchdog
 
 wdt = Watchdog(timeout_ms=500)   # compile-time constant only
 wdt.enable()
@@ -767,10 +767,10 @@ while True:
 `disable()` stops the watchdog. See the [Watchdog reference](stdlib/watchdog.md) for the full
 timeout table.
 
-### `whipsnake.hal.power` — Sleep modes
+### `pymcu.hal.power` — Sleep modes
 
 ```python
-from whipsnake.hal.power import sleep_idle, sleep_power_down
+from pymcu.hal.power import sleep_idle, sleep_power_down
 
 # Deepest sleep — ~0.1 µA; wake on external interrupt
 asm("sei")
@@ -798,15 +798,15 @@ led = Pin(LED_BUILTIN, Pin.OUT)    # PB5
 
 ---
 
-## 11. Comparison: Whipsnake vs Python vs MicroPython vs CircuitPython
+## 11. Comparison: PyMCU vs Python vs MicroPython vs CircuitPython
 
-| Concept | Python 3 | MicroPython | CircuitPython | Whipsnake |
+| Concept | Python 3 | MicroPython | CircuitPython | PyMCU |
 |---|---|---|---|---|
 | Integer type | `int` (arbitrary precision) | `int` (30-bit on most ports) | `int` (30-bit) | `uint8/16/32`, `int8/16/32` — annotation required |
 | Float | `float` (64-bit IEEE) | `float` (32-bit) | `float` (32-bit) | Not yet (planned T3) |
 | Heap / GC | ✅ `malloc` + GC | ✅ small heap + GC | ✅ small heap + GC | No heap at all |
 | GPIO | `RPi.GPIO` or similar | `machine.Pin(13, OUT)` | `digitalio.DigitalInOut(board.D13)` | `Pin("PB5", Pin.OUT)` |
-| GPIO via compat | — | `from machine import Pin` | `import digitalio` | `whipsnake-micropython` / `whipsnake-circuitpython` |
+| GPIO via compat | — | `from machine import Pin` | `import digitalio` | `pymcu-micropython` / `pymcu-circuitpython` |
 | UART | `pyserial` | `machine.UART(1, 9600)` | `busio.UART(TX, RX, baudrate=9600)` | `UART(9600)` |
 | ADC | — | `machine.ADC(Pin(26))` | `analogio.AnalogIn(board.A0)` | `AnalogPin("A0")` |
 | Delay | `time.sleep(s)` | `utime.sleep_ms(n)` | `time.sleep(s)` | `delay_ms(n)` |
@@ -829,19 +829,19 @@ led = Pin(LED_BUILTIN, Pin.OUT)    # PB5
 
 ## 12. Migration Guide
 
-### CircuitPython → Whipsnake
+### CircuitPython → PyMCU
 
-Install the `whipsnake-circuitpython` compat package and add to `pyproject.toml`:
+Install the `pymcu-circuitpython` compat package and add to `pyproject.toml`:
 
 ```toml
-[tool.whip]
+[tool.pymcu]
 stdlib = ["circuitpython"]
 ```
 
 Then most CircuitPython code compiles unchanged:
 
 ```python
-# CircuitPython code — works as-is with whipsnake-circuitpython
+# CircuitPython code — works as-is with pymcu-circuitpython
 import board
 import digitalio
 import time
@@ -862,17 +862,17 @@ while True:
 - `try / except`: use return codes + `match / case`.
 - `f"..."` format strings: use `uart.write_str()` + `uart.print_byte()`.
 
-### MicroPython → Whipsnake
+### MicroPython → PyMCU
 
-Install the `whipsnake-micropython` compat package:
+Install the `pymcu-micropython` compat package:
 
 ```toml
-[tool.whip]
+[tool.pymcu]
 stdlib = ["micropython"]
 ```
 
 ```python
-# MicroPython code — works with whipsnake-micropython
+# MicroPython code — works with pymcu-micropython
 from machine import Pin, UART
 from utime import sleep_ms
 
@@ -893,7 +893,7 @@ while True:
 - `Timer` callbacks are not supported — use `@interrupt` on the timer overflow vector.
 - `read_u16()` on ADC returns a 16-bit value (0-1023 scaled to 0-65535).
 
-### Plain Python → Whipsnake
+### Plain Python → PyMCU
 
 The biggest changes when porting generic Python:
 
@@ -909,6 +909,6 @@ The biggest changes when porting generic Python:
 
 ## Getting Help
 
-- Open an issue at the Whipsnake repository with your source snippet and compiler error.
+- Open an issue at the PyMCU repository with your source snippet and compiler error.
 - Check `docs/LIMITATIONS.md` for a full list of unsupported features.
 - Check `LANGUAGE_ROADMAP.md` for planned features and their implementation status.

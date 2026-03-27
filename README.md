@@ -1,13 +1,13 @@
-# Whipsnake: Python-to-MCU Compiler
+# PyMCU: Python-to-MCU Compiler
 
-Whipsnake is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega48/88/168/328 family, ATtiny25/45/85, ATtiny24/44/84, ATtiny2313/4313, ATtiny13/13a), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
+PyMCU is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega48/88/168/328 family, ATtiny25/45/85, ATtiny24/44/84, ATtiny2313/4313, ATtiny13/13a), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
 
 ## Installation
 
-Whipsnake is best installed using `pipx` to keep it isolated from your system Python:
+PyMCU is best installed using `pipx` to keep it isolated from your system Python:
 
 ```bash
-pipx install whipsnake
+pipx install pymcu
 ```
 
 Ensure `pipx` is installed and its bin directory is in your PATH.
@@ -16,10 +16,10 @@ Ensure `pipx` is installed and its bin directory is in your PATH.
 
 ### Creating a New Project
 
-The `whip` CLI includes a scaffolding tool to set up a new project with the correct structure and configuration.
+The `pymcu` CLI includes a scaffolding tool to set up a new project with the correct structure and configuration.
 
 ```bash
-whip new my_project
+pymcu new my_project
 ```
 
 This interactive command will guide you through:
@@ -32,7 +32,7 @@ This interactive command will guide you through:
 Navigate to your project directory and run:
 
 ```bash
-whip build
+pymcu build
 ```
 
 This will compile your Python code in `src/` (or the root) and generate a `.hex` file in the `dist/` directory.
@@ -42,7 +42,7 @@ This will compile your Python code in `src/` (or the root) and generate a `.hex`
 To flash the generated firmware to your device:
 
 ```bash
-whip flash
+pymcu flash
 ```
 
 This uses the programmer configured in your `pyproject.toml` (uses avrdude for AVR targets).
@@ -52,7 +52,7 @@ This uses the programmer configured in your `pyproject.toml` (uses avrdude for A
 To remove build artifacts:
 
 ```bash
-whip clean
+pymcu clean
 ```
 
 ## Documentation
@@ -61,9 +61,14 @@ whip clean
 - [Driver CLI](docs/docs/driver.md) - Command-line interface reference
 - [Language Reference](docs/docs/language-reference.md) - Complete syntax and type system documentation
 - [Language Roadmap](LANGUAGE_ROADMAP.md) - Feature status and development roadmap
-- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to Whipsnake
-- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to Whipsnake
+- [CircuitPython Migration](docs/docs/migration/from-circuitpython.md) - Port CircuitPython code to PyMCU
+- [Contributing](CONTRIBUTING.md) - Guidelines for contributing to PyMCU
 
 ## License
 
 [MIT License](LICENSE)
+
+## Credits
+
+Special thanks to Richard Wardlow, creator of the original [pyMCU](https://github.com/rwardlow/pyMCU) project (2012).
+See [CREDITS.md](CREDITS.md) for the full acknowledgement.

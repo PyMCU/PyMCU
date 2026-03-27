@@ -25,8 +25,8 @@ The return value packs both readings into a 16-bit integer:
 
 ```python
 from pymcu.drivers.dht11 import DHT11
-from whipsnake.hal.uart import UART
-from whipsnake.types import uint8, uint16
+from pymcu.hal.uart import UART
+from pymcu.types import uint8, uint16
 
 def main():
     sensor = DHT11("PD4")

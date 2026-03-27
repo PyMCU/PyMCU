@@ -1,4 +1,4 @@
-# Whipsnake — Claude Code Instructions
+# PyMCU — Claude Code Instructions
 
 This file is auto-loaded by Claude Code. It extends `AGENTS.md` with Claude-specific guidance.
 
@@ -20,14 +20,14 @@ test(avr): add ExternCallTests — basic @extern C interop
 docs: mark @extern as implemented in roadmap and limitations
 ```
 
-Each commit must leave `dotnet test tests/integration/Whipsnake.IntegrationTests.csproj` green.
+Each commit must leave `dotnet test tests/integration/PyMCU.IntegrationTests.csproj` green.
 
 ---
 
 ## Known Compiler Gotchas
 
 - **ASCII-only stdlib** — the compiler lexer rejects non-ASCII. Do not use Unicode in
-  any file under `lib/src/whipsnake/`.
+  any file under `lib/src/pymcu/`.
 - **HAL match rules** — see `AGENTS.md` for dotted-name vs capture-name patterns.
 - **No workarounds for compiler bugs** — If a language feature generates wrong code,
   fix the root cause in the C++ compiler (Parser, IRGenerator, Optimizer, AVRCodeGen).
@@ -42,9 +42,9 @@ Each commit must leave `dotnet test tests/integration/Whipsnake.IntegrationTests
 1. Read the relevant compiler files before touching them.
 2. Make a plan — identify all files to change (Parser, IRGenerator, AVRCodeGen, HAL, tests).
 3. Implement in small commits (one logical change each).
-4. After each compiler change: `cmake --build build --target whipc -j$(sysctl -n hw.ncpu)`.
-5. After each stdlib change: `rsync lib/src/whipsnake/ .venv/lib/python3.X/site-packages/whipsnake/`.
-6. Run integration tests: `dotnet test tests/integration/Whipsnake.IntegrationTests.csproj`.
+4. After each compiler change: `cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)`.
+5. After each stdlib change: `rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/`.
+6. Run integration tests: `dotnet test tests/integration/PyMCU.IntegrationTests.csproj`.
 7. Update `LANGUAGE_ROADMAP.md`, `docs/docs/roadmap.md`, and `docs/docs/limitations.md`.
 
 ---

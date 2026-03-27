@@ -1,13 +1,13 @@
-# Whipsnake
+# PyMCU
 
-**Whipsnake** compiles a statically-typed, allocation-free subset of Python directly to bare-metal
+**PyMCU** compiles a statically-typed, allocation-free subset of Python directly to bare-metal
 MCU machine code — no runtime, no heap, no interpreter.
 
 Write familiar Python. Flash to an ATmega328P (Arduino Uno) in seconds.
 
 ```python
-from whipsnake.hal.gpio import Pin
-from whipsnake.time import delay_ms
+from pymcu.hal.gpio import Pin
+from pymcu.time import delay_ms
 
 def main():
     led = Pin("PB5", Pin.OUT)
@@ -17,15 +17,15 @@ def main():
 ```
 
 ```bash
-whip build   # → dist/firmware.hex  (124 bytes flash, 0 bytes SRAM)
-whip flash   # → avrdude upload to Arduino Uno
+pymcu build   # → dist/firmware.hex  (124 bytes flash, 0 bytes SRAM)
+pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
 ---
 
-## Why Whipsnake?
+## Why PyMCU?
 
-| | Arduino (C++) | MicroPython | CircuitPython | **Whipsnake** |
+| | Arduino (C++) | MicroPython | CircuitPython | **PyMCU** |
 |---|---|---|---|---|
 | Language | C++ | Python | Python | **Python** |
 | Runtime | None | Interpreter | Interpreter | **None** |
@@ -34,7 +34,7 @@ whip flash   # → avrdude upload to Arduino Uno
 | Familiar syntax | Partial | Full | Full | **Full** |
 | Static types | No | No | No | **Yes (required)** |
 
-Whipsnake occupies the gap between "write C++" and "run MicroPython": you write Python, but the
+PyMCU occupies the gap between "write C++" and "run MicroPython": you write Python, but the
 compiler produces tight AVR assembly with zero runtime overhead.
 
 ---
@@ -44,21 +44,21 @@ compiler produces tight AVR assembly with zero runtime overhead.
 ### Installation
 
 ```bash
-pipx install whipsnake
+pipx install pymcu
 ```
 
 ### Create a project
 
 ```bash
-whip new my_project
+pymcu new my_project
 cd my_project
 ```
 
 ### Build and flash
 
 ```bash
-whip build
-whip flash --port /dev/cu.usbmodem*
+pymcu build
+pymcu flash --port /dev/cu.usbmodem*
 ```
 
 ---
@@ -81,5 +81,5 @@ whip flash --port /dev/cu.usbmodem*
 - [Language Reference](language-reference.md) — complete syntax and type reference
 - [Standard Library](stdlib/index.md) — GPIO, UART, ADC, Timer, SPI, I2C
 - [Examples Gallery](examples/index.md) — 30+ annotated firmware examples
-- [CircuitPython migration](migration/from-circuitpython.md) — port CP code to Whipsnake
-- [MicroPython migration](migration/from-micropython.md) — port uPython code to Whipsnake
+- [CircuitPython migration](migration/from-circuitpython.md) — port CP code to PyMCU
+- [MicroPython migration](migration/from-micropython.md) — port uPython code to PyMCU

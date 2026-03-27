@@ -1,11 +1,11 @@
-# Whipsnake Language Limitations
+# PyMCU Language Limitations
 
-Whipsnake compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
+PyMCU compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
 code. There is no runtime, no heap, no garbage collector, and no interpreter. Many standard Python
 features are therefore incompatible with this model.
 
 This document lists every known unsupported feature, explains *why* it cannot be compiled, and
-suggests the idiomatic Whipsnake alternative where one exists.
+suggests the idiomatic PyMCU alternative where one exists.
 
 ---
 
@@ -152,8 +152,8 @@ external pin interrupts, atomic flag patterns via `GPIOR0`.
 | `__all__` / `__init__.py` re-exports (at runtime) | No runtime | Place all symbols in the module file directly |
 
 **Supported:** `import foo`, `from foo import Bar`, `from foo import Bar as B` (aliased imports),
-relative imports, multi-module projects, `pymcu` stdlib, `whipsnake-circuitpython` and
-`whipsnake-micropython` compat packages.
+relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` and
+`pymcu-micropython` compat packages.
 
 ---
 
@@ -198,7 +198,7 @@ relative imports, multi-module projects, `pymcu` stdlib, `whipsnake-circuitpytho
   the ISR and accessed atomically (disable interrupts or use `GPIOR0` flag pattern).
 - **String literals are in flash:** Read-only; can only be sent to UART via the flash string pool.
   They cannot be compared, indexed, or modified at runtime.
-- **C/C++ interop:** Supported via `@extern` and `[tool.whip.ffi]` in `pyproject.toml`.
+- **C/C++ interop:** Supported via `@extern` and `[tool.pymcu.ffi]` in `pyproject.toml`.
   C sources use `avr-gcc`; C++ sources (`.cpp`/`.cc`/`.cxx`) use `avr-g++` with
   `-fno-exceptions -fno-rtti`, enabling use of Arduino libraries.
 
@@ -207,6 +207,6 @@ relative imports, multi-module projects, `pymcu` stdlib, `whipsnake-circuitpytho
 ## Getting Help
 
 If you hit a compile error on a Python construct not covered here, please open an issue at the
-Whipsnake repository. Include the source snippet and the compiler error message.
+PyMCU repository. Include the source snippet and the compiler error message.
 
 For feature requests, see the [roadmap](roadmap.md).

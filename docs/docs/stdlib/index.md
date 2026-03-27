@@ -1,6 +1,6 @@
 # Standard Library Overview
 
-Whipsnake ships a platform-abstracted stdlib that compiles to zero-overhead assembly on each
+PyMCU ships a platform-abstracted stdlib that compiles to zero-overhead assembly on each
 supported architecture. Every module uses `@inline` ZCA wrappers — there is no runtime library
 linked into your firmware.
 
@@ -8,17 +8,17 @@ linked into your firmware.
 
 | Module | Import | Purpose |
 |---|---|---|
-| `whipsnake.hal.gpio` | `from whipsnake.hal.gpio import Pin` | Digital I/O |
-| `whipsnake.hal.uart` | `from whipsnake.hal.uart import UART` | Serial communication |
-| `whipsnake.hal.adc` | `from whipsnake.hal.adc import AnalogPin` | Analog-to-digital conversion |
-| `whipsnake.hal.timer` | `from whipsnake.hal.timer import Timer0` | Hardware timer |
-| `whipsnake.hal.pwm` | `from whipsnake.hal.pwm import PWM` | PWM output |
-| `whipsnake.hal.spi` | `from whipsnake.hal.spi import SPI` | SPI bus |
-| `whipsnake.hal.i2c` | `from whipsnake.hal.i2c import I2C` | I2C / TWI bus |
-| `pymcu.time` | `from whipsnake.time import delay_ms` | Busy-wait delays |
+| `pymcu.hal.gpio` | `from pymcu.hal.gpio import Pin` | Digital I/O |
+| `pymcu.hal.uart` | `from pymcu.hal.uart import UART` | Serial communication |
+| `pymcu.hal.adc` | `from pymcu.hal.adc import AnalogPin` | Analog-to-digital conversion |
+| `pymcu.hal.timer` | `from pymcu.hal.timer import Timer0` | Hardware timer |
+| `pymcu.hal.pwm` | `from pymcu.hal.pwm import PWM` | PWM output |
+| `pymcu.hal.spi` | `from pymcu.hal.spi import SPI` | SPI bus |
+| `pymcu.hal.i2c` | `from pymcu.hal.i2c import I2C` | I2C / TWI bus |
+| `pymcu.time` | `from pymcu.time import delay_ms` | Busy-wait delays |
 | `pymcu.drivers.dht11` | `from pymcu.drivers.dht11 import DHT11` | DHT11 sensor |
 | `pymcu.boards.arduino_uno` | `from pymcu.boards.arduino_uno import D13` | Arduino Uno pin names |
-| `pymcu.types` | `from whipsnake.types import uint8, ptr` | Type aliases |
+| `pymcu.types` | `from pymcu.types import uint8, ptr` | Type aliases |
 
 ## Architecture Support Matrix
 

@@ -1,4 +1,4 @@
-# Whipsnake Language Features Roadmap
+# PyMCU Language Features Roadmap
 
 ---
 
@@ -77,16 +77,16 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Module | Class / Function | Targets | Notes |
 |--------|-----------------|---------|-------|
-| `whipsnake.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
-| `whipsnake.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
-| `whipsnake.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `whipsnake.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
-| `whipsnake.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
-| `whipsnake.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
-| `whipsnake.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
-| `whipsnake.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
-| `whipsnake.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
-| `whipsnake.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
+| `pymcu.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
+| `pymcu.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
+| `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
+| `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
+| `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
+| `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
+| `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
+| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
+| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
+| `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
@@ -95,8 +95,8 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Package | Activation | Coverage |
 |---------|-----------|----------|
-| `whipsnake-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
-| `whipsnake-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
+| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
+| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
 
 ---
 
@@ -238,12 +238,12 @@ Everything in this section is shipped and tested in the current alpha build.
 ### C/C++ Interop
 
 All C interop features are implemented. The build pipeline uses `avr-as` + `avr-ld`
-instead of `avra` whenever `[tool.whip.ffi]` is present in `pyproject.toml`.
+instead of `avra` whenever `[tool.pymcu.ffi]` is present in `pyproject.toml`.
 
 | Feature | Notes |
 |---------|-------|
 | `@extern("symbol")` decorator | Declares and calls external C/C++ symbols with AVR ABI |
-| `[tool.whip.ffi]` build config | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
+| `[tool.pymcu.ffi]` build config | `sources`, `include_dirs`, `cflags` in `pyproject.toml` |
 | `pymcu.ffi` stdlib module | Re-exports `extern`; no runtime code |
 | C compilation (`avr-gcc`) | Compiles `.c` sources listed in `ffi.sources` |
 | C++ compilation (`avr-g++`) | Compiles `.cpp` / `.cc` / `.cxx` sources; `-fno-exceptions -fno-rtti -std=c++17` |
@@ -259,7 +259,7 @@ t: uint16 = millis()
 
 ```toml
 # pyproject.toml — supports both C and C++ sources
-[tool.whip.ffi]
+[tool.pymcu.ffi]
 sources      = ["src/c/sensor.c", "src/cpp/ArduinoLib.cpp"]
 include_dirs = ["src/include"]
 cflags       = ["-O2"]
@@ -267,7 +267,7 @@ cflags       = ["-O2"]
 
 Build pipeline:
 ```
-.py → whipc → firmware.asm
+.py → pymcuc → firmware.asm
 firmware.asm   → avr-as  → firmware.o
 sensor.c       → avr-gcc → sensor.o
 ArduinoLib.cpp → avr-g++ → ArduinoLib.o
@@ -317,7 +317,7 @@ These are the highest-value features not yet implemented, in priority order.
 | PIC18 codegen | ~2 weeks | Extend backend for PIC18Fxxxx family |
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
 | RP2040 PIO backend | ~1 week | Programmable I/O state machine output |
-| Over-the-air (OTA) support | ~1 week | Bootloader + whip flash over UART |
+| Over-the-air (OTA) support | ~1 week | Bootloader + pymcu flash over UART |
 | LLVM IR backend | ~4 weeks | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
 | ARM Cortex-M0/M4 backend | ~3 weeks | STM32, nRF52; via LLVM or direct codegen |
 
