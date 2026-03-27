@@ -4,6 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
+.equ tmp_34, _stack_base + 12
+.equ tmp_36, _stack_base + 13
 
 .org 0x0
 .global main
@@ -14,13 +16,17 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:40:     red    = Pin("PB0", Pin.OUT)
-; main.py:51: 
-; main.py:52:     # Initial output: RED on
-; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:20: from pymcu.hal.uart import UART
-; main.py:32: # Timing: overflows at ~4.096 ms each
-; main.py:44: 
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:49:         self._red    = Pin(red_pin,    Pin.OUT)
+; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
+; main.py:52: 
+; main.py:115:                         uart.println("YELLOW")
+; main.py:117:                     case _:
+; main.py:119:                         dur   = DUR_RED
+; main.py:8: #   Serial terminal at 9600 baud -- prints state name on each transition
+; main.py:20: #
+; main.py:32:     YELLOW     = 3
+; main.py:44:     Assigning light.state drives the correct LEDs via the property setter.
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -31,13 +37,17 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_1:
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:51: 
-; main.py:52:     # Initial output: RED on
-; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:20: from pymcu.hal.uart import UART
-; main.py:32: # Timing: overflows at ~4.096 ms each
-; main.py:46:     TCCR0B[2] = 1    # CS02=1 → prescaler 256
+	MOV	R10, R24
+; main.py:50:         self._yellow = Pin(yellow_pin, Pin.OUT)
+; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
+; main.py:52: 
+; main.py:115:                         uart.println("YELLOW")
+; main.py:117:                     case _:
+; main.py:119:                         dur   = DUR_RED
+; main.py:8: #   Serial terminal at 9600 baud -- prints state name on each transition
+; main.py:20: #
+; main.py:32:     YELLOW     = 3
+; main.py:46:     """
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_5
@@ -48,13 +58,17 @@ L_BR_SKIP_5:
 L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 1
 L_BIT_WRITE_DONE_4:
-; main.py:42:     green  = Pin("PB2", Pin.OUT)
-; main.py:51: 
-; main.py:52:     # Initial output: RED on
-; main.py:8: #   Green  LED on PB2 (with resistor)
-; main.py:20: from pymcu.hal.uart import UART
-; main.py:32: # Timing: overflows at ~4.096 ms each
-; main.py:48:     state: uint8  = State.RED
+	MOV	R11, R24
+; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
+; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
+; main.py:52: 
+; main.py:115:                         uart.println("YELLOW")
+; main.py:117:                     case _:
+; main.py:119:                         dur   = DUR_RED
+; main.py:8: #   Serial terminal at 9600 baud -- prints state name on each transition
+; main.py:20: #
+; main.py:32:     YELLOW     = 3
+; main.py:48:     def __init__(self, red_pin: str, yellow_pin: str, green_pin: str):
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_8
@@ -65,29 +79,41 @@ L_BR_SKIP_8:
 L_BIT_WRITE_SKIP_6:
 	CBI	0x04, 2
 L_BIT_WRITE_DONE_7:
-; main.py:43:     uart   = UART(9600)
-; main.py:27:     RED_YELLOW = 1
-; main.py:31: 
+	MOV	R9, R24
+; main.py:80:     uart  = UART(9600)
+; main.py:27: 
+; main.py:31:     GREEN      = 2
 ; main.py:47: 
 	SBI	0x0A, 1
-; main.py:48:     state: uint8  = State.RED
+; main.py:48:     def __init__(self, red_pin: str, yellow_pin: str, green_pin: str):
 	CBI	0x0A, 0
-; main.py:51: 
-; main.py:52:     # Initial output: RED on
+; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
+; main.py:52: 
 	LDI	R24, 103
 	STS	0x00C4, R24
-; main.py:53:     red.hi8()
+; main.py:53:     @property
 	CLR	R24
 	STS	0x00C5, R24
-; main.py:68:                 match state:
+; main.py:68:             case State.GREEN:
 	LDI	R24, 6
 	STS	0x00C2, R24
-; main.py:70:                         state  = State.RED_YELLOW
+; main.py:70:                 self._yellow.lo8()
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:46:     TCCR0B[2] = 1    # CS02=1 → prescaler 256
-	IN	R24, 0x25
-	ORI	R24, 4
+; main.py:81:     timer = Timer(0, 256)
+; main.py:48:     def __init__(self, red_pin: str, yellow_pin: str, green_pin: str):
+; main.py:49:         self._red    = Pin(red_pin,    Pin.OUT)
+	CLR	R24
+	MOV	R12, R24
+; main.py:52: 
+; main.py:53:     @property
+; main.py:63:                 self._green.lo8()
+; main.py:11: #   1 overflow = 256 * 256 / 16_000_000 = 4.096 ms
+	CLR	R24
+	OUT	0x24, R24
+; main.py:12: #   244 overflows = 1 second
+; main.py:19: # FSM dispatch uses the local state variable (main owns the logical state).
+	LDI	R24, 4
 	OUT	0x25, R24
 	CLR	R24
 	MOV	R4, R24
@@ -99,235 +125,257 @@ L_BIT_WRITE_DONE_7:
 	LDI	R25, 2
 	MOV	R5, R24
 	MOV	R6, R25
-; main.py:53:     red.hi8()
+; main.py:87:     light.state = State.RED
+; main.py:61:                 self._red.hi8()
 	SBI	0x05, 0
-; main.py:54:     yellow.lo8()
+; main.py:62:                 self._yellow.lo8()
 	CBI	0x05, 1
-; main.py:55:     green.lo8()
+; main.py:63:                 self._green.lo8()
 	CBI	0x05, 2
-; main.py:56:     uart.println("RED")
-; main.py:77:                     case State.RED_YELLOW:
-; main.py:78:                         state  = State.GREEN
-; main.py:69:                     case State.RED:
-; main.py:73:                         yellow.hi8()
+; main.py:88:     uart.println("RED")
+; main.py:77: 
+; main.py:78: def main():
+; main.py:69:                 self._red.lo8()
+; main.py:73:                 self._red.lo8()
+; main.py:115:                         uart.println("YELLOW")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:79:                         dur    = DUR_GREEN
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:41: class TrafficLight:
+; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_141:
+L_161:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_142
+	RJMP	L_162
 L_BR_SKIP_9:
-	RJMP	L_141
-L_142:
-; main.py:79:                         dur    = DUR_GREEN
+	RJMP	L_161
+L_162:
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:58:     while True:
-L_143:
-; main.py:60:         if TIFR0[0] == 1:
+; main.py:90:     while True:
+L_163:
+; main.py:91:         if timer.overflow():
+; main.py:36: DUR_RY     = 244   # 1 second
 	SBIS	0x15, 0
-	RJMP	L_145
-; main.py:61:             TIFR0[0] = 1      # Clear TOV0 by writing 1 (AVR convention)
+	RJMP	L_BIT_FALSE_10
+	LDI	R24, 1
+	RJMP	L_BIT_DONE_11
+L_BIT_FALSE_10:
+	CLR	R24
+L_BIT_DONE_11:
+	MOV	R16, R24
+	MOV	R17, R24
+	TST	R24
+	BRNE	L_BR_SKIP_12
+	RJMP	L_165
+L_BR_SKIP_12:
+; main.py:92:             TIFR0[0] = 1
 	SBI	0x15, 0
-; main.py:62:             ticks = ticks + 1
+; main.py:93:             ticks = ticks + 1
 	MOV	R24, R7
 	MOV	R25, R8
 	SUBI	R24, 255
 	SBCI	R25, 255
 	MOV	R7, R24
 	MOV	R8, R25
-; main.py:64:             if ticks >= dur:
+; main.py:95:             if ticks >= dur:
 	MOV	R18, R5
 	MOV	R19, R6
 	CP	R24, R18
 	CPC	R25, R19
-	BRSH	L_BR_SKIP_10
-	RJMP	L_146
-L_BR_SKIP_10:
-; main.py:65:                 ticks = 0
+	BRSH	L_BR_SKIP_13
+	RJMP	L_172
+L_BR_SKIP_13:
+; main.py:96:                 ticks = 0
 	CLR	R24
 	CLR	R25
 	MOV	R7, R24
 	MOV	R8, R25
 	MOV	R24, R4
 	CPI	R24, 0
-	BREQ	L_BR_SKIP_11
-	RJMP	L_148
-L_BR_SKIP_11:
-; main.py:70:                         state  = State.RED_YELLOW
+	BREQ	L_BR_SKIP_14
+	RJMP	L_174
+L_BR_SKIP_14:
+; main.py:100:                         state = State.RED_YELLOW
 	LDI	R24, 1
 	MOV	R4, R24
-; main.py:71:                         dur    = DUR_RY
+; main.py:101:                         dur   = DUR_RY
 	LDI	R24, 244
 	CLR	R25
 	MOV	R5, R24
 	MOV	R6, R25
-; main.py:72:                         red.hi8()
+; main.py:102:                         light.state = State.RED_YELLOW
+; main.py:65:                 self._red.hi8()
 	SBI	0x05, 0
-; main.py:73:                         yellow.hi8()
+; main.py:66:                 self._yellow.hi8()
 	SBI	0x05, 1
-; main.py:74:                         green.lo8()
+; main.py:67:                 self._green.lo8()
 	CBI	0x05, 2
-; main.py:75:                         uart.println("RED+YEL")
-; main.py:77:                     case State.RED_YELLOW:
-; main.py:78:                         state  = State.GREEN
-; main.py:69:                     case State.RED:
-; main.py:73:                         yellow.hi8()
+; main.py:103:                         uart.println("RED+YEL")
+; main.py:77: 
+; main.py:78: def main():
+; main.py:69:                 self._red.lo8()
+; main.py:73:                 self._red.lo8()
+; main.py:115:                         uart.println("YELLOW")
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-; main.py:79:                         dur    = DUR_GREEN
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:41: class TrafficLight:
+; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_157:
+L_189:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_12
-	RJMP	L_158
-L_BR_SKIP_12:
-	RJMP	L_157
-L_158:
-; main.py:79:                         dur    = DUR_GREEN
+	BREQ	L_BR_SKIP_15
+	RJMP	L_190
+L_BR_SKIP_15:
+	RJMP	L_189
+L_190:
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_147
-L_148:
+	RJMP	L_173
+L_174:
 	MOV	R24, R4
 	CPI	R24, 1
-	BREQ	L_BR_SKIP_13
-	RJMP	L_159
-L_BR_SKIP_13:
-; main.py:78:                         state  = State.GREEN
+	BREQ	L_BR_SKIP_16
+	RJMP	L_191
+L_BR_SKIP_16:
+; main.py:106:                         state = State.GREEN
 	LDI	R24, 2
 	MOV	R4, R24
-; main.py:79:                         dur    = DUR_GREEN
+; main.py:107:                         dur   = DUR_GREEN
 	LDI	R24, 220
 	LDI	R25, 2
 	MOV	R5, R24
 	MOV	R6, R25
-; main.py:80:                         red.lo8()
+; main.py:108:                         light.state = State.GREEN
+; main.py:69:                 self._red.lo8()
 	CBI	0x05, 0
-; main.py:81:                         yellow.lo8()
+; main.py:70:                 self._yellow.lo8()
 	CBI	0x05, 1
-; main.py:82:                         green.hi8()
+; main.py:71:                 self._green.hi8()
 	SBI	0x05, 2
-; main.py:83:                         uart.println("GREEN")
-; main.py:77:                     case State.RED_YELLOW:
-; main.py:78:                         state  = State.GREEN
-; main.py:69:                     case State.RED:
-; main.py:73:                         yellow.hi8()
+; main.py:109:                         uart.println("GREEN")
+; main.py:77: 
+; main.py:78: def main():
+; main.py:69:                 self._red.lo8()
+; main.py:73:                 self._red.lo8()
+; main.py:115:                         uart.println("YELLOW")
 	LDI	R30, lo8(__str_2)
 	LDI	R31, hi8(__str_2)
 	CALL	__uart_send_z
-; main.py:79:                         dur    = DUR_GREEN
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:41: class TrafficLight:
+; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_168:
+L_206:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_14
-	RJMP	L_169
-L_BR_SKIP_14:
-	RJMP	L_168
-L_169:
-; main.py:79:                         dur    = DUR_GREEN
+	BREQ	L_BR_SKIP_17
+	RJMP	L_207
+L_BR_SKIP_17:
+	RJMP	L_206
+L_207:
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_147
-L_159:
+	RJMP	L_173
+L_191:
 	MOV	R24, R4
 	CPI	R24, 2
-	BREQ	L_BR_SKIP_15
-	RJMP	L_170
-L_BR_SKIP_15:
-; main.py:86:                         state  = State.YELLOW
+	BREQ	L_BR_SKIP_18
+	RJMP	L_208
+L_BR_SKIP_18:
+; main.py:112:                         state = State.YELLOW
 	LDI	R24, 3
 	MOV	R4, R24
-; main.py:87:                         dur    = DUR_YELLOW
+; main.py:113:                         dur   = DUR_YELLOW
 	LDI	R24, 244
 	CLR	R25
 	MOV	R5, R24
 	MOV	R6, R25
-; main.py:88:                         red.lo8()
+; main.py:114:                         light.state = State.YELLOW
+; main.py:73:                 self._red.lo8()
 	CBI	0x05, 0
-; main.py:89:                         yellow.hi8()
+; main.py:74:                 self._yellow.hi8()
 	SBI	0x05, 1
-; main.py:90:                         green.lo8()
+; main.py:75:                 self._green.lo8()
 	CBI	0x05, 2
-; main.py:91:                         uart.println("YELLOW")
-; main.py:77:                     case State.RED_YELLOW:
-; main.py:78:                         state  = State.GREEN
-; main.py:69:                     case State.RED:
-; main.py:73:                         yellow.hi8()
+; main.py:115:                         uart.println("YELLOW")
+; main.py:77: 
+; main.py:78: def main():
+; main.py:69:                 self._red.lo8()
+; main.py:73:                 self._red.lo8()
+; main.py:115:                         uart.println("YELLOW")
 	LDI	R30, lo8(__str_3)
 	LDI	R31, hi8(__str_3)
 	CALL	__uart_send_z
-; main.py:79:                         dur    = DUR_GREEN
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:41: class TrafficLight:
+; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_179:
+L_223:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_16
-	RJMP	L_180
-L_BR_SKIP_16:
-	RJMP	L_179
-L_180:
-; main.py:79:                         dur    = DUR_GREEN
+	BREQ	L_BR_SKIP_19
+	RJMP	L_224
+L_BR_SKIP_19:
+	RJMP	L_223
+L_224:
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_147
-L_170:
-; main.py:94:                         state  = State.RED
+	RJMP	L_173
+L_208:
+; main.py:118:                         state = State.RED
 	CLR	R24
 	MOV	R4, R24
-; main.py:95:                         dur    = DUR_RED
+; main.py:119:                         dur   = DUR_RED
 	LDI	R24, 220
 	LDI	R25, 2
 	MOV	R5, R24
 	MOV	R6, R25
-; main.py:96:                         red.hi8()
+; main.py:120:                         light.state = State.RED
+; main.py:61:                 self._red.hi8()
 	SBI	0x05, 0
-; main.py:97:                         yellow.lo8()
+; main.py:62:                 self._yellow.lo8()
 	CBI	0x05, 1
-; main.py:98:                         green.lo8()
+; main.py:63:                 self._green.lo8()
 	CBI	0x05, 2
-; main.py:99:                         uart.println("RED")
-; main.py:77:                     case State.RED_YELLOW:
-; main.py:78:                         state  = State.GREEN
-; main.py:69:                     case State.RED:
-; main.py:73:                         yellow.hi8()
+; main.py:121:                         uart.println("RED")
+; main.py:77: 
+; main.py:78: def main():
+; main.py:69:                 self._red.lo8()
+; main.py:73:                 self._red.lo8()
+; main.py:115:                         uart.println("YELLOW")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:79:                         dur    = DUR_GREEN
-; main.py:41:     yellow = Pin("PB1", Pin.OUT)
-; main.py:45:     # Timer0 prescaler 256: CS0[2:0] = 100 → TCCR0B bit 2 only
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
+; main.py:41: class TrafficLight:
+; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_190:
+L_240:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_17
-	RJMP	L_191
-L_BR_SKIP_17:
-	RJMP	L_190
-L_191:
-; main.py:79:                         dur    = DUR_GREEN
+	BREQ	L_BR_SKIP_20
+	RJMP	L_241
+L_BR_SKIP_20:
+	RJMP	L_240
+L_241:
+; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_147:
-L_146:
-L_145:
-	RJMP	L_143
+L_173:
+L_172:
+L_165:
+	RJMP	L_163
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
