@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -47,8 +47,8 @@ namespace fs = std::filesystem;
 std::string TargetLoader::resolve_chip_module(
     const std::string &chip_name,
     const std::vector<std::string> &include_paths) {
-  // Convert chip name to path: pic16f18877 → whipsnake/chips/pic16f18877.py
-  fs::path rel_path = fs::path("whipsnake") / "chips" / (chip_name + ".py");
+  // Convert chip name to path: pic16f18877 → pymcu/chips/pic16f18877.py
+  fs::path rel_path = fs::path("pymcu") / "chips" / (chip_name + ".py");
 
   for (const auto &base : include_paths) {
     fs::path candidate = fs::path(base) / rel_path;
@@ -75,7 +75,7 @@ TargetLoader::Result TargetLoader::bootstrap(
     const std::string &chip_name,
     const std::vector<std::string> &include_paths) {
   Result result;
-  result.module_name = "whipsnake.chips." + chip_name;
+  result.module_name = "pymcu.chips." + chip_name;
 
   // Step 1: Resolve filesystem path
   result.file_path = resolve_chip_module(chip_name, include_paths);

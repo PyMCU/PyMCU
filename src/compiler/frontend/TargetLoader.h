@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -47,7 +47,7 @@
 // TargetLoader: Phase 0 of the compilation pipeline.
 //
 // Resolves a chip name (e.g., "pic16f18877") to its definition file
-// (whipsnake/chips/pic16f18877.py), parses it, and extracts metadata via the
+// (pymcu/chips/pic16f18877.py), parses it, and extracts metadata via the
 // device_info() hook. This populates the DeviceConfig BEFORE any user code
 // is parsed, ensuring __CHIP__ is available for Dead Code Elimination in
 // library modules like gpio.py.
@@ -63,7 +63,7 @@ class TargetLoader {
  public:
   struct Result {
     DeviceConfig config;
-    // The chip module's dot-qualified name (e.g., "whipsnake.chips.pic16f18877")
+    // The chip module's dot-qualified name (e.g., "pymcu.chips.pic16f18877")
     std::string module_name;
     // The resolved filesystem path to the chip definition file
     std::string file_path;
@@ -74,7 +74,7 @@ class TargetLoader {
   };
 
   // Resolve the chip definition file within the include paths.
-  // Searches for whipsnake/chips/{chip_name}.py in each -I directory.
+  // Searches for pymcu/chips/{chip_name}.py in each -I directory.
   // Returns the absolute path, or throws if not found.
   static std::string resolve_chip_module(
       const std::string &chip_name,

@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *

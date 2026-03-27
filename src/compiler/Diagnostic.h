@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -56,7 +56,7 @@ class Diagnostic {
   /// Format: file:line:column: severity: ErrorType: message
   static void report(const CompilerError &err, const std::string_view source,
                      std::string_view filename) {
-    // Machine-readable line (matched by $whipc problem matcher)
+    // Machine-readable line (matched by $pymcuc problem matcher)
     std::cerr << std::format("{}:{}:{}: {}: {}: {}\n", filename, err.line,
                              std::max(err.column, 1), severity_for(err.type_name),
                              err.type_name, err.what());

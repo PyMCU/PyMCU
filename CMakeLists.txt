@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.1)
-project(whipsnake VERSION 0.1.0)
+project(pymcu VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -90,18 +90,18 @@ add_library(core STATIC
 target_link_libraries(core PUBLIC common)
 target_include_directories(core PUBLIC src/compiler)
 
-add_executable(whipc
+add_executable(pymcuc
         src/compiler/main.cpp
         src/compiler/Diagnostic.h
 )
-target_link_libraries(whipc PRIVATE core argparse::argparse)
+target_link_libraries(pymcuc PRIVATE core argparse::argparse)
 
-set_target_properties(whipc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set_target_properties(pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-set_target_properties(whipc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set_target_properties(pymcuc PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(SKBUILD)
-    install(TARGETS whipc RUNTIME DESTINATION .)
+    install(TARGETS pymcuc RUNTIME DESTINATION .)
 endif()
 
 # Testing Configuration
@@ -128,8 +128,8 @@ target_link_libraries(tests PRIVATE
         core
         GTest::gtest_main
 )
-add_dependencies(tests whipc)
-target_compile_definitions(tests PRIVATE WHIPC_PATH="${CMAKE_BINARY_DIR}/bin/whipc")
+add_dependencies(tests pymcuc)
+target_compile_definitions(tests PRIVATE PYMCUC_PATH="${CMAKE_BINARY_DIR}/bin/pymcuc")
 
 include(GoogleTest)
 gtest_discover_tests(tests)

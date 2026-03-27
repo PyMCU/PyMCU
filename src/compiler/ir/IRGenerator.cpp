@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -165,9 +165,9 @@ tacky::Program IRGenerator::generate(
     constant_variables["__FREQUENCY__"] = static_cast<int>(config.frequency);
   }
 
-  // Register intrinsic names from whipsnake.types imports
+  // Register intrinsic names from pymcu.types imports
   for (const auto &imp : main_ast.imports) {
-    if (imp->module_name == "whipsnake.types") {
+    if (imp->module_name == "pymcu.types") {
       intrinsic_names.insert("ptr");
       intrinsic_names.insert("const");
       intrinsic_names.insert("device_info");
@@ -194,7 +194,7 @@ tacky::Program IRGenerator::generate(
   }
   for (const auto &[mod_name, mod_ast] : imported_modules) {
     for (const auto &imp : mod_ast->imports) {
-      if (imp->module_name == "whipsnake.types") {
+      if (imp->module_name == "pymcu.types") {
         intrinsic_names.insert("ptr");
         intrinsic_names.insert("const");
         intrinsic_names.insert("device_info");
@@ -218,7 +218,7 @@ tacky::Program IRGenerator::generate(
   // 1. Scan all module symbols first (two-pass approach)
   // This ensures all globals/functions are registered before any function
   // body is visited, preventing ordering issues with cross-module references
-  // (e.g., nco.py referencing chip registers from whipsnake.chips.pic16f18877).
+  // (e.g., nco.py referencing chip registers from pymcu.chips.pic16f18877).
   for (const auto &[mod_name, mod_ast] : imported_modules) {
     modules[mod_name] = ModuleScope{};
     current_module_prefix = mod_name + "_";
@@ -273,8 +273,8 @@ tacky::Program IRGenerator::generate(
   }
 
   // 1.7. Resolve class re-exports through __init__.py chains.
-  // When module A (e.g. whipsnake.hal) re-exports class C from module B
-  // (e.g. whipsnake.hal.gpio), create aliases for all C's methods so that
+  // When module A (e.g. pymcu.hal) re-exports class C from module B
+  // (e.g. pymcu.hal.gpio), create aliases for all C's methods so that
   // resolve_callee("C") → "A_prefix_C_method" finds the inline functions.
   for (const auto &[mod_name, mod_ast] : imported_modules) {
     std::string dst_prefix = mod_name;
@@ -1262,7 +1262,7 @@ void IRGenerator::visitStatement(const Statement *stmt) {
   if (auto *imp = dynamic_cast<const ImportStmt *>(stmt)) {
     // Inside inline bodies, register import aliases so resolve_callee
     // can find module-prefixed functions (e.g., pin_set_mode →
-    // whipsnake_hal__gpio_atmega328p_pin_set_mode)
+    // pymcu_hal__gpio_atmega328p_pin_set_mode)
     if (inline_depth > 0) {
       for (const auto &sym : imp->symbols) {
         const std::string &key =
@@ -5210,7 +5210,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     // instance_classes), str-constant variables, and numeric DataTypes.
     // Helper: resolve the full internal class key to the short name that
     // build_overload_suffix() uses (the raw annotation, e.g. "Pin" not
-    // "whipsnake_hal_gpio_Pin").  We match against class_names: a key
+    // "pymcu_hal_gpio_Pin").  We match against class_names: a key
     // "A_B_Foo" matches class name "Foo" when it ends with "_Foo" or == "Foo".
     auto short_class_name = [&](const std::string &full_key) -> std::string {
       for (const auto &cn : class_names) {
@@ -5273,23 +5273,23 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     }
   }
 
-  // Normalise time intrinsics: sleep_ms / time_sleep_ms / whipsnake_time_sleep_ms
+  // Normalise time intrinsics: sleep_ms / time_sleep_ms / pymcu_time_sleep_ms
   // → the actual delay_ms inline function (arch-specific tight loop).
-  // The module may be loaded as "whipsnake.time" or "time" depending on how it is
+  // The module may be loaded as "pymcu.time" or "time" depending on how it is
   // imported, so we search inline_functions by suffix rather than hard-coding a
   // prefix.  This lets users write `import time; time.sleep_ms(ms)` or
   // `from time import sleep_ms; sleep_ms(ms)` without any extra import.
   {
     bool is_sleep_ms = (callee == "sleep_ms"   || callee == "time_sleep_ms" ||
-                        callee == "whipsnake_time_sleep_ms");
+                        callee == "pymcu_time_sleep_ms");
     bool is_sleep_us = (callee == "sleep_us"   || callee == "time_sleep_us" ||
-                        callee == "whipsnake_time_sleep_us");
+                        callee == "pymcu_time_sleep_us");
     if (is_sleep_ms || is_sleep_us) {
       const std::string target_suffix = is_sleep_ms ? "delay_ms" : "delay_us";
       // Prefer exact match first (fast path).
-      std::string candidate = "whipsnake_time_" + target_suffix;
+      std::string candidate = "pymcu_time_" + target_suffix;
       if (!inline_functions.contains(candidate)) {
-        // Fall back to suffix search (module loaded as "time" vs "whipsnake.time").
+        // Fall back to suffix search (module loaded as "time" vs "pymcu.time").
         candidate = "";
         for (const auto &[fn_name, _] : inline_functions) {
           if (fn_name.size() > target_suffix.size() &&
@@ -5879,7 +5879,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
 
     // Resolve the arch-specific decimal writer function name.
     // uart_write_decimal_u8 is compiled from the UART HAL module with a module
-    // prefix (e.g., "whipsnake_hal__uart_avr_uart_write_decimal_u8"). We need the
+    // prefix (e.g., "pymcu_hal__uart_avr_uart_write_decimal_u8"). We need the
     // exact IR name so that Dead Function Elimination keeps the function and
     // the AVR codegen can emit a valid label reference.
     // Search function_return_types for a function whose name ends with the suffix.
@@ -5952,10 +5952,10 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     return tacky::MemoryAddress{address, DataType::UINT8};
   }
 
-  // ptr used without importing from whipsnake.types
+  // ptr used without importing from pymcu.types
   if (callee == "ptr" && !intrinsic_names.contains("ptr")) {
     std::cerr << "[Warning] 'ptr' is not recognized as an intrinsic. "
-              << "Did you forget to import from whipsnake.types?\n";
+              << "Did you forget to import from pymcu.types?\n";
     return tacky::Constant{0};
   }
 

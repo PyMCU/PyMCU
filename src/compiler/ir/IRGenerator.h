@@ -1,7 +1,7 @@
 /*
  * -----------------------------------------------------------------------------
- * Whipsnake Compiler (whipc)
- * Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
@@ -108,7 +108,7 @@ class IRGenerator {
   // so that super().__init__() and default-ctor inheritance can be resolved.
   std::map<std::string, std::string> class_base_prefixes;
   std::map<std::string, std::string>
-      imported_aliases;  // Tracks Pin/_Pin -> whipsnake.hal.gpio
+      imported_aliases;  // Tracks Pin/_Pin -> pymcu.hal.gpio
   std::map<std::string, std::string>
       alias_to_original;  // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
   std::map<std::string, int>
