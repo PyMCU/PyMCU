@@ -79,6 +79,20 @@ class UART:
         self.write(10)  # '\n'
 
     @inline
+    def write_hex(self, byte: uint8):
+        """Transmit a byte as two uppercase hex digits (e.g. 0x2F -> "2F")."""
+        hi: uint8 = (byte >> 4) & 0x0F
+        lo: uint8 = byte & 0x0F
+        if hi < 10:
+            self.write(hi + 48)
+        else:
+            self.write(hi - 10 + 65)
+        if lo < 10:
+            self.write(lo + 48)
+        else:
+            self.write(lo - 10 + 65)
+
+    @inline
     def print_byte(self, value: uint8):
         """Transmit a uint8 value as ASCII decimal digits, followed by a newline."""
         # Print a uint8 value as decimal digits followed by a newline.
