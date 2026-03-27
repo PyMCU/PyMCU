@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -49,11 +49,11 @@ def version():
 
     # Define packages to check
     packages = [
-        ("whip-compiler", "Compiler & CLI Driver"),
-        ("whipsnake-stdlib", "Standard Library"),
+        ("pymcuc", "Compiler & CLI Driver"),
+        ("pymcu-stdlib", "Standard Library"),
     ]
 
-    table = Table(title="Whipsnake Ecosystem Version Info", box=box.ROUNDED)
+    table = Table(title="PyMCU Ecosystem Version Info", box=box.ROUNDED)
     table.add_column("Package", style="cyan", no_wrap=True)
     table.add_column("Description", style="magenta")
     table.add_column("Version", style="green")
@@ -69,4 +69,4 @@ def version():
     table.add_row("python", "Python Interpreter", sys.version.split()[0])
 
     console.print(table)
-    console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors[/dim]")
+    console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors[/dim]")

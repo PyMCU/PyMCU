@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -49,7 +49,7 @@ def flash(
     port: Optional[str] = typer.Option(
         None, "--port", "-P",
         help="Serial port for flashing (e.g. /dev/cu.usbmodem14101). "
-             "Overrides [tool.whip.flash].port in pyproject.toml.",
+             "Overrides [tool.pymcu.flash].port in pyproject.toml.",
     ),
 ):
     """
@@ -57,13 +57,13 @@ def flash(
 
     Port resolution order:
       1. --port / -P CLI argument
-      2. port = "..." in [tool.whip.flash] of pyproject.toml
+      2. port = "..." in [tool.pymcu.flash] of pyproject.toml
       3. Auto-detection (first matching USB-serial device)
       4. Error with configuration instructions
     """
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
-        console.print("[red]No pyproject.toml found. Are you in a whip project?[/red]")
+        console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
         raise typer.Exit(code=1)
 
     try:
@@ -71,7 +71,7 @@ def flash(
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
-        whip_config = config.get("tool", {}).get("whip", {})
+        whip_config = config.get("tool", {}).get("pymcu", {})
 
         _BOARD_CHIP_MAP = {
             "arduino_uno":   "atmega328p",
@@ -84,7 +84,7 @@ def flash(
         )
         if not chip:
             console.print(
-                "[red]No 'chip' or 'board' specified in [tool.whip] of pyproject.toml.[/red]"
+                "[red]No 'chip' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
             )
             raise typer.Exit(code=1)
 
@@ -101,7 +101,7 @@ def flash(
         hex_file = Path("dist") / "firmware.hex"
         if not hex_file.exists():
             console.print("[red]Firmware file 'dist/firmware.hex' not found.[/red]")
-            console.print("Please run [bold]whip build[/bold] first.")
+            console.print("Please run [bold]pymcu build[/bold] first.")
             raise typer.Exit(code=1)
 
         # 3. Get programmer

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -69,7 +69,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
 
     Binary resolution order:
       1. System PATH (shutil.which) — handles Homebrew, apt, and system installs.
-      2. Locally cached binary in ~/.whipsnake/tools/{platform}/avrdude/.
+      2. Locally cached binary in ~/.pymcu/tools/{platform}/avrdude/.
       3. Download v8.1 from GitHub (user is prompted first).
     """
 
@@ -155,7 +155,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
         cached = self._find_cached_binary()
         if cached:
             return cached
-        raise RuntimeError("avrdude binary not found. Run 'whip flash' again to install it.")
+        raise RuntimeError("avrdude binary not found. Run 'pymcu flash' again to install it.")
 
     def is_cached(self) -> bool:
         if self.find_system_avrdude() is not None:
@@ -250,7 +250,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
             raise RuntimeError(
                 "No serial port specified and auto-detection found none.\n"
                 "Pass --port /dev/cu.usbmodemXXXX on the command line, or add:\n\n"
-                "  [tool.whip.flash]\n"
+                "  [tool.pymcu.flash]\n"
                 '  port = "/dev/cu.usbmodemXXXX"\n\n'
                 "to your pyproject.toml."
             )

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #

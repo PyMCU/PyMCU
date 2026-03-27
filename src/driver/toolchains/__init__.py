@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -72,6 +72,6 @@ def get_ffi_toolchain_for_chip(chip: str, console: Console) -> AvrgasToolchain:
     """
     if not AvrgasToolchain.supports(chip):
         raise ValueError(
-            f"C interop ([tool.whip.ffi]) is not supported for chip: {chip}"
+            f"C interop ([tool.pymcu.ffi]) is not supported for chip: {chip}"
         )
     return AvrgasToolchain(console, chip)

@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -50,12 +50,12 @@ from rich.progress import (
 class CacheableTool(ABC):
     """
     Abstract base class for any tool that needs to be downloaded, verified,
-    and cached in the ~/.whipsnake/tools directory.
+    and cached in the ~/.pymcu/tools directory.
     """
 
     def __init__(self, console: Console):
         self.console = console
-        self.base_dir = Path.home() / ".whipsnake" / "tools" / sys.platform
+        self.base_dir = Path.home() / ".pymcu" / "tools" / sys.platform
         
         if not self.base_dir.exists():
             self.base_dir.mkdir(parents=True, exist_ok=True)

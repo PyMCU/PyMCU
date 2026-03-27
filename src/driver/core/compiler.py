@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -37,7 +37,7 @@ from rich.console import Console
 
 class WhipCompiler:
     """
-    Wrapper for the core C++ build tool (whipc).
+    Wrapper for the core C++ build tool (pymcuc).
     Handles path resolution, stdlib detection, and binary invocation.
     """
     
@@ -59,9 +59,9 @@ class WhipCompiler:
         # We'll search relative to src/driver (parent of this file's dir)
         base_path = self._get_start_path() 
         
-        candidates = ["whipc"]
+        candidates = ["pymcuc"]
         if sys.platform == "win32":
-            candidates.insert(0, "whipc.exe")
+            candidates.insert(0, "pymcuc.exe")
 
         # 1. Check adjacent (standard wheel layout)
         for name in candidates:
@@ -79,27 +79,27 @@ class WhipCompiler:
                 p = project_root / d / name
                 if p.exists(): return p
             
-        return Path("whipc") # Fallback to PATH
+        return Path("pymcuc") # Fallback to PATH
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """
-        Resolves the Whipsnake Standard Library path.
+        Resolves the PyMCU Standard Library path.
         """
         try:
             # Diagnostic for debugging import failure
-            is_verbose = verbose or os.environ.get("WHIP_VERBOSE") == "1"
+            is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
             if is_verbose:
                 self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
                 self.console.print(f"[debug] sys.path: {sys.path}", style="dim")
 
-            import whipsnake
-            if hasattr(whipsnake, "__file__") and whipsnake.__file__:
-                p = Path(whipsnake.__file__).parent / "chips"
+            import pymcu
+            if hasattr(pymcu, "__file__") and pymcu.__file__:
+                p = Path(pymcu.__file__).parent / "chips"
                 if p.is_dir():
                     # Return the package directory itself
-                    return str(Path(whipsnake.__file__).parent)
+                    return str(Path(pymcu.__file__).parent)
         except ImportError as e:
-            self.console.print(f"[debug] Failed to import whipsnake: {e}", style="red")
+            self.console.print(f"[debug] Failed to import pymcu: {e}", style="red")
         except Exception as e:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""

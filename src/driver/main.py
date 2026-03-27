@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -50,7 +50,7 @@ def _ensure_venv():
     
     is_verbose = "--verbose" in sys.argv or "-v" in sys.argv
     if is_verbose:
-        os.environ["WHIP_VERBOSE"] = "1"
+        os.environ["PYMCU_VERBOSE"] = "1"
 
     if venv_path.exists() and venv_path.is_dir():
         # Check if we are already using this venv
@@ -65,14 +65,14 @@ def _ensure_venv():
             if current_prefix != target_prefix:
                  # Determine executable path based on platform
                 if sys.platform == "win32":
-                    local_exe = venv_path / "Scripts" / "whip.exe"
+                    local_exe = venv_path / "Scripts/pymcu.exe"
                 else:
-                    local_exe = venv_path / "bin" / "whip"
+                    local_exe = venv_path / "bin" / "pymcu"
                 
                 if is_verbose:
                     console.print(f"[debug] Checking local executable: {local_exe}", style="dim")
                 
-                # If the local whip executable exists, switch to it
+                # If the local pymcu executable exists, switch to it
                 if local_exe.exists():
                     if is_verbose:
                         console.print(f"[debug] Switching to local venv: {local_exe}", style="dim")
@@ -95,7 +95,7 @@ from .commands.clean import clean
 from .commands.flash import flash
 from .commands.version import version
 
-app = typer.Typer(help="whip: Python-to-MCU compiler driver")
+app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
 def version_callback(value: bool):
     if value:
@@ -108,7 +108,7 @@ def main(
     version_flag: Optional[bool] = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show the version and exit")
 ):
     if verbose:
-        os.environ["WHIP_VERBOSE"] = "1"
+        os.environ["PYMCU_VERBOSE"] = "1"
 
 app.command()(new)
 app.command()(build)

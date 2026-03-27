@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Whipsnake CLI Driver
-# Copyright (C) 2026 Ivan Montiel Cardona and the Whipsnake Project Authors
+# PyMCU CLI Driver
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: MIT
 #
@@ -42,7 +42,7 @@ This toolchain replaces avra for projects that require C/C++ interop via
   Link:       avr-ld -T <linker-script> firmware.o [c_objs...] -o firmware.elf
   HEX:        avr-objcopy -O ihex firmware.elf firmware.hex
 
-Both .c and .cpp/.cc/.cxx sources are supported in [tool.whip.ffi] sources.
+Both .c and .cpp/.cc/.cxx sources are supported in [tool.pymcu.ffi] sources.
 This enables use of Arduino libraries and other C++ AVR libraries.
 
 Auto-install is supported on macOS (Homebrew) and Linux (apt).
@@ -81,7 +81,7 @@ class AvrgasToolchain(ExternalToolchain):
     """
     GNU AS + avr-ld + avr-objcopy toolchain for AVR targets.
     Downloads a self-contained pre-built avr-gcc toolchain into
-    ~/.whipsnake/tools/ so no system package installation is required.
+    ~/.pymcu/tools/ so no system package installation is required.
 
     Pre-built releases are sourced from Zak Kemble's avr-gcc-build project:
     https://github.com/ZakKemble/avr-gcc-build
@@ -114,7 +114,7 @@ class AvrgasToolchain(ExternalToolchain):
 
     # Shared linker script template: places .text at 0x0000, .data at SRAM start.
     # Sufficient for ATmega328P; extended linker scripts are user-providable via
-    # [tool.whip.ffi] linker_script = "path/to/custom.ld".
+    # [tool.pymcu.ffi] linker_script = "path/to/custom.ld".
     _DEFAULT_LD_SCRIPT = """\
 OUTPUT_FORMAT("elf32-avr","elf32-avr","elf32-avr")
 OUTPUT_ARCH(avr:5)
@@ -215,7 +215,7 @@ SECTIONS
             return found
         raise RuntimeError(
             f"{name} not found in local cache or on PATH.\n"
-            f"Run 'whip build' to trigger automatic installation."
+            f"Run 'pymcu build' to trigger automatic installation."
         )
 
     # ------------------------------------------------------------------
@@ -225,7 +225,7 @@ SECTIONS
     def is_cached(self) -> bool:
         """
         Returns True if all required binaries are available either in the
-        local ~/.whipsnake/tools/ cache or on the system PATH.
+        local ~/.pymcu/tools/ cache or on the system PATH.
         """
         cached = self._cached_bin_dir()
         if cached is not None:
@@ -240,7 +240,7 @@ SECTIONS
 
     def install(self) -> None:
         """
-        Download a pre-built avr-gcc toolchain into ~/.whipsnake/tools/ so
+        Download a pre-built avr-gcc toolchain into ~/.pymcu/tools/ so
         no system package manager is required.  The release is fetched from:
         https://github.com/ZakKemble/avr-gcc-build/releases
         """
@@ -520,7 +520,7 @@ SECTIONS
 
         # Write default linker script if none provided
         if linker_script is None:
-            ld_script_path = output_dir / "_whip.ld"
+            ld_script_path = output_dir / "_pymcu.ld"
             ld_script_path.write_text(self._DEFAULT_LD_SCRIPT)
             linker_script = ld_script_path
 
