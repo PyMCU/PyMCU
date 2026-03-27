@@ -17,6 +17,8 @@ def timer0_init(prescaler: uint16):
         TCCR0B.value = 0x03
     elif prescaler == 256:
         TCCR0B.value = 0x04
+    elif prescaler == 1024:
+        TCCR0B.value = 0x05
 
 @inline
 def timer0_start():
