@@ -1,5 +1,5 @@
-from pymcu.types import uint8, uint16, inline
-from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH
+from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH, SREG
 
 
 @inline
@@ -52,6 +52,16 @@ def adc_read_result() -> uint16:
     hi: uint8 = ADCH.value
     result: uint16 = lo + hi * 256
     return result
+
+
+# Register an ISR at the ADC Complete vector (byte 0x002A / word 0x0015).
+# Enables ADIE (ADC interrupt enable) and global interrupts (SEI).
+# The handler MUST read ADCL before ADCH to latch the result.
+@inline
+def adc_irq_setup(handler: Callable):
+    ADCSRA[3] = 1        # ADIE: ADC interrupt enable
+    SREG[7] = 1          # SEI: global interrupt enable
+    compile_isr(handler, 0x002A)   # ADC Complete vector byte address
 
 
 # Start conversion, poll ADSC until clear, return raw 10-bit result (0-1023).

@@ -17,7 +17,7 @@
 # Channel-to-register mapping, reference selection, and conversion clock
 # are resolved at construction time; subsequent reads require no string dispatch.
 from pymcu.chips import __CHIP__
-from pymcu.types import uint16, inline
+from pymcu.types import uint16, inline, Callable
 
 
 # noinspection PyProtectedMember
@@ -118,6 +118,23 @@ class AnalogPin:
                 return adc_read_result()
 
         return 0
+
+    @inline
+    def irq(self, handler: Callable):
+        """Register an interrupt handler for ADC conversion-complete events.
+
+        handler: compile-time function reference; automatically registered
+                 at the ADC Complete vector -- no @interrupt decorator needed.
+                 The handler MUST read ADCL before ADCH to latch the 10-bit
+                 result (or call adc.read_result() which does this correctly).
+
+        Enables ADIE and global interrupts (SEI). Pair with start_conversion()
+        or start() to trigger conversions; the ISR fires when each completes.
+        """
+        match __CHIP__.name:
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+                from pymcu.hal._adc.atmega328p import adc_irq_setup
+                adc_irq_setup(handler)
 
     @inline
     def read_u16(self) -> uint16:
