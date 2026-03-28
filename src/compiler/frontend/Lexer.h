@@ -57,6 +57,7 @@ class Lexer {
   std::vector<int> indent_stack;
   std::vector<Token> token_queue;
   bool at_line_start = true;
+  int paren_depth = 0;  // Tracks open (, [, { for implicit line continuation
 
   [[nodiscard]] char peek() const;
 

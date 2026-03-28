@@ -374,12 +374,16 @@ Token Lexer::scan_token() {
 
   switch (c) {
     case '(':
+      paren_depth++;
       return {TokenType::LParen, "(", line, column};
     case ')':
+      if (paren_depth > 0) paren_depth--;
       return {TokenType::RParen, ")", line, column};
     case '[':
+      paren_depth++;
       return {TokenType::LBracket, "[", line, column};
     case ']':
+      if (paren_depth > 0) paren_depth--;
       return {TokenType::RBracket, "]", line, column};
     case ':':
       if (match('=')) return {TokenType::Walrus, ":=", line, column};
@@ -501,8 +505,16 @@ std::vector<Token> Lexer::tokenize() {
     if (pos >= src.size()) break;
 
     if (at_line_start) {
-      handle_indentation();
-      if (!token_queue.empty()) continue;
+      // Inside open brackets: implicit line continuation — suppress indent/dedent.
+      if (paren_depth > 0) {
+        // Skip indentation processing; just consume whitespace.
+        at_line_start = false;
+        while (pos < src.size() && src[pos] == ' ') pos++;
+        if (!token_queue.empty()) token_queue.clear();
+      } else {
+        handle_indentation();
+        if (!token_queue.empty()) continue;
+      }
     }
 
     Token token = scan_token();
@@ -510,6 +522,8 @@ std::vector<Token> Lexer::tokenize() {
     if (token.type == TokenType::EndOfFile) break;
 
     if (token.type == TokenType::Newline) {
+      // Inside open brackets: suppress newlines (implicit line continuation).
+      if (paren_depth > 0) continue;
       if (!tokens.empty() && tokens.back().type == TokenType::Newline) {
         continue;
       }

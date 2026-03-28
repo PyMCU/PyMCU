@@ -3,7 +3,7 @@
 # Demonstrates:
 #   - SoftSPI(sck, mosi, miso, cs=cs): configure pins at init
 #   - SoftSPI.write(byte): send one byte (received byte discarded)
-#   - spi.select() / spi.deselect(): explicit CS assert/deassert
+#   - with spi: auto-assert/deassert CS pin via context manager
 #   - CS pin is idle high; pulled low during transfer
 #
 # Hardware: Arduino Uno
@@ -26,15 +26,17 @@ from pymcu.hal.gpio import Pin
 
 def main():
     uart = UART(9600)
-    spi = SoftSPI(Pin("PC0", Pin.OUT), Pin("PC1", Pin.OUT), Pin("PC2", Pin.IN), cs=Pin("PC3", Pin.OUT))
+    spi = SoftSPI(sck=Pin("PC0", Pin.OUT), 
+                 mosi=Pin("PC1", Pin.OUT), 
+                 miso=Pin("PC2", Pin.IN),
+                 cs=Pin("PC3", Pin.OUT))
 
     uart.println("SSPI")
 
     test_byte: uint8 = 0xA5
 
-    spi.select()
-    spi.write(test_byte)
-    spi.deselect()
+    with spi:
+        spi.write(test_byte)
 
     uart.write_str("D:")
     uart.write_hex(test_byte)
