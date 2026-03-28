@@ -1,16 +1,16 @@
 # ATmega328P: ADC single-channel continuous read
-# Tests: AnalogPin HAL, direct register polling (ADCSRA), ADCL read, uint8 variable
 #
 # Hardware: Arduino Uno or ATmega328P board
 #   - Potentiometer (or any analog source) on PC0 (A0)
 #   - Serial terminal at 9600 baud to observe raw 8-bit result
 #
-# ADC result is 10-bit; we read only ADCL (low 8 bits) for a simple 8-bit value.
+# adc.read() triggers a conversion, polls ADSC until clear, and returns
+# the raw 10-bit result (0-1023). Right-shifting by 2 scales it to 8 bits
+# (0-255) for single-byte UART output.
 #
-from pymcu.types import uint8
+from pymcu.types import uint8, uint16
 from pymcu.hal.adc import AnalogPin
 from pymcu.hal.uart import UART
-from pymcu.chips.atmega328p import ADCSRA, ADCL
 from pymcu.time import delay_ms
 
 
@@ -21,15 +21,7 @@ def main():
     uart.println("ADC")
 
     while True:
-        # Trigger conversion (ADSC = ADCSRA bit 6)
-        adc.start()
-
-        # Wait for conversion complete: ADSC clears to 0 when done
-        while ADCSRA[6] == 1:
-            pass
-
-        # Read low byte of 10-bit result (coarse 8-bit resolution)
-        result: uint8 = ADCL[0]
+        raw:    uint16 = adc.read()
+        result: uint8  = raw >> 2   # 10-bit -> 8-bit
         uart.write(result)
-
         delay_ms(100)

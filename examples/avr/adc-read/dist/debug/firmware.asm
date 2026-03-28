@@ -2,9 +2,14 @@
 .equ RAMSTART, 0x0100
 .equ _stack_base, RAMSTART
 .equ inline2__delay_ms_avr_i, _stack_base + 3
+.equ inline2_adc_read_hi, _stack_base + 5
+.equ inline2_adc_read_lo, _stack_base + 6
+.equ inline2_adc_read_result, _stack_base + 7
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
+.equ tmp_20, _stack_base + 12
+.equ tmp_23, _stack_base + 14
 
 .org 0x0
 .global main
@@ -31,8 +36,7 @@ main:
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
 ; main.py:18:     uart = UART(9600)
-; main.py:27:         # Wait for conversion complete: ADSC clears to 0 when done
-; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
+; main.py:27:         delay_ms(100)
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
@@ -44,11 +48,9 @@ main:
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:19:     adc  = AnalogPin("PC0")
-; main.py:12: from pymcu.hal.uart import UART
-; main.py:31:         # Read low byte of 10-bit result (coarse 8-bit resolution)
+; main.py:12: from pymcu.hal.adc import AnalogPin
 	LDI	R24, 64
 	STS	0x007C, R24
-; main.py:32:         result: uint8 = ADCL[0]
 	LDI	R24, 135
 	STS	0x007A, R24
 ; main.py:21:     uart.println("ADC")
@@ -67,11 +69,9 @@ L_45:
 	STS	0x00C6, R24
 ; main.py:23:     while True:
 L_46:
-; main.py:25:         adc.start()
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
-; main.py:28:         while ADCSRA[6] == 1:
 L_50:
 	LDS	R24, 0x007A
 	ANDI	R24, 64
@@ -81,28 +81,49 @@ L_BR_SKIP_1:
 	RJMP	L_50
 L_51:
 	LDS	R24, 0x0078
-	ANDI	R24, 1
-	LDI	R18, 1
-	BREQ	L_BR_SKIP_3
-	RJMP	L_SKIP_2
-L_BR_SKIP_3:
+	STD	Y+6, R24
+	LDS	R24, 0x0079
+	LDD	R25, Y+6
 	CLR	R18
-L_SKIP_2:
-	MOV	R4, R18
-; main.py:33:         uart.write(result)
+	LDI	R19, 1
+	MUL	R24, R18
+	MOV	R24, R0
+	CLR	R1
+	CLR	R25
+	STD	Y+14, R24
+	STD	Y+15, R25
+	LDD	R24, Y+6
+	LDD	R25, Y+7
+	LDD	R18, Y+14
+	LDD	R19, Y+15
+	ADD	R24, R18
+	ADC	R25, R19
+	STD	Y+7, R24
+	STD	Y+8, R25
+	LDD	R24, Y+7
+	LDD	R25, Y+8
+	STD	Y+12, R24
+	STD	Y+13, R25
+	LDD	R24, Y+12
+	LDD	R25, Y+13
+	MOV	R4, R24
+	MOV	R5, R25
+	LSR	R24
+	LSR	R24
+	MOV	R6, R24
+; main.py:26:         uart.write(result)
 L_54:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_4
+	BREQ	L_BR_SKIP_2
 	RJMP	L_55
-L_BR_SKIP_4:
+L_BR_SKIP_2:
 	RJMP	L_54
 L_55:
-	MOV	R24, R4
+	MOV	R24, R6
 	STS	0x00C6, R24
-; main.py:35:         delay_ms(100)
+; main.py:27:         delay_ms(100)
 ; main.py:21:     uart.println("ADC")
-; main.py:30: 
 	CLR	R24
 	CLR	R25
 	STD	Y+3, R24
@@ -114,9 +135,9 @@ L_58:
 	CLR	R19
 	CP	R24, R18
 	CPC	R25, R19
-	BRLO	L_BR_SKIP_5
+	BRLO	L_BR_SKIP_3
 	RJMP	L_59
-L_BR_SKIP_5:
+L_BR_SKIP_3:
 	CALL	pymcu_time__delay_1ms_avr
 	LDD	R24, Y+3
 	LDD	R25, Y+4
