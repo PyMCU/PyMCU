@@ -47,6 +47,7 @@ lib/**/htmlcov/
 
 # Poetry / packaging outputs that often appear in Python subprojects
 lib/**/.venv/
+examples/**/.venv/
 lib/**/dist/
 lib/**/build/
 lib/**/*.egg-info/
