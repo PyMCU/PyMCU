@@ -1177,8 +1177,13 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
   while (true) {
     if (match(TokenType::LParen)) {
       std::vector<std::unique_ptr<Expression>> args;
+      // Skip newlines after '(' — Python allows multi-line calls inside parens.
+      while (check(TokenType::Newline)) advance();
       if (!check(TokenType::RParen)) {
         do {
+          // Skip newlines after each ',' (implicit line continuation inside parens).
+          while (check(TokenType::Newline)) advance();
+          if (check(TokenType::RParen)) break;  // trailing comma
           if (check(TokenType::Identifier) &&
               (pos + 1 < tokens.size() &&
                tokens[pos + 1].type == TokenType::Equal)) {
@@ -1194,6 +1199,7 @@ std::unique_ptr<Expression> Parser::parsePostfix() {
             args.push_back(parseExpression());
           }
         } while (match(TokenType::Comma));
+        while (check(TokenType::Newline)) advance();
       }
       consume(TokenType::RParen, "Expected ')'");
       expr = std::make_unique<CallExpr>(std::move(expr), std::move(args));

@@ -6143,13 +6143,31 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     std::vector<const StringLiteral *> raw_str_args;
     for (const auto &arg : expr->args) {
       if (auto *kw = dynamic_cast<const KeywordArgExpr *>(arg.get())) {
+        // Save/restore pending_constructor_target so that a ZCA constructor
+        // used as a keyword argument cannot steal the outer constructor's
+        // pending target (e.g. SoftSPI(sck=Pin(...), ...) must not let
+        // Pin() consume the "spi" target reserved for SoftSPI).
+        std::string saved_outer_pct = pending_constructor_target;
+        pending_constructor_target.clear();
         kwArgValues[kw->key] = visitExpression(kw->value.get());
         if (auto *s = dynamic_cast<const StringLiteral *>(kw->value.get()))
           raw_kw_str_args[kw->key] = s->value;
+        // Restore only if the inner expression did not itself need a target
+        // (i.e. it was not itself a constructor consuming pending_constructor_target).
+        if (pending_constructor_target.empty())
+          pending_constructor_target = saved_outer_pct;
       } else {
         raw_str_args.push_back(
             dynamic_cast<const StringLiteral *>(arg.get()));
+        // Save/restore pending_constructor_target so that a ZCA constructor
+        // used as a positional argument cannot steal the outer constructor's
+        // pending target (e.g. SoftSPI(Pin("PC0", ...), ...) must not let
+        // the first Pin() consume the "spi" target reserved for SoftSPI).
+        std::string saved_outer_pct = pending_constructor_target;
+        pending_constructor_target.clear();
         argValues.push_back(visitExpression(arg.get()));
+        if (pending_constructor_target.empty())
+          pending_constructor_target = saved_outer_pct;
       }
     }
 
@@ -6171,14 +6189,31 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     }
 
     // Zero-cost constructor: bind 'self' to the target instance variable
-    if (is_constructor && !pending_constructor_target.empty()) {
+    std::optional<std::string> ctor_subexpr_synth;
+    if (is_constructor) {
       std::string self_name = new_prefix + "self";
-      variable_aliases[self_name] = pending_constructor_target;
-      // Track instance type so nested method calls on self resolve correctly
-      std::string class_prefix =
-          callee.substr(0, callee.size() - 9);  // Strip "___init__"
+      // Derive class prefix: strip "___init__" (9 chars) or "___init____Suffix"
+      size_t init_pos = callee.find("___init____");
+      std::string class_prefix = (init_pos != std::string::npos)
+          ? callee.substr(0, init_pos)
+          : callee.substr(0, callee.size() - 9);  // Strip "___init__"
+      std::string target;
+      if (!pending_constructor_target.empty()) {
+        target = pending_constructor_target;
+        pending_constructor_target.clear();
+      } else {
+        // Constructor used as a subexpression with no assignment target
+        // (e.g. SoftSPI(Pin("PC0", Pin.OUT), ...)).  Synthesize a temp
+        // variable name so the ZCA's fields are reachable through the alias
+        // chain when this instance is later passed to another @inline function.
+        std::string base = current_function.empty() ? "main" : current_function;
+        target = base + ".__c" + std::to_string(++ctor_anon_id_);
+        ctor_subexpr_synth = target;
+      }
+      variable_aliases[self_name] = target;
       instance_classes[self_name] = class_prefix;
-      pending_constructor_target.clear();
+      instance_classes[target] = class_prefix;
+      virtual_instances.insert(target);
     }
 
     inline_stack.push_back({exit_label, result, tuple_result_names, callee});
@@ -6434,6 +6469,7 @@ tacky::Val IRGenerator::visitCall(const CallExpr *expr) {
     inline_depth--;
 
     if (result) return *result;
+    if (ctor_subexpr_synth) return tacky::Variable{*ctor_subexpr_synth};
     return std::monostate{};
   }
 

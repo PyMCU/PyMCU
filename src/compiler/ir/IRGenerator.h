@@ -81,6 +81,7 @@ class IRGenerator {
   std::string current_function;
   std::set<std::string> current_function_globals;
   int inline_depth = 0;
+  int ctor_anon_id_ = 0;  // Counter for synthetic ZCA constructor-as-arg targets
   std::string current_inline_prefix;
   std::string current_module_prefix;
 
