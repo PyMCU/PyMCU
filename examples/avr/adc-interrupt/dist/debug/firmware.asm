@@ -91,10 +91,10 @@ adc_isr:
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:25:     GPIOR1.value = ADCL.value
+; main.py:23:     GPIOR1.value = ADCL.value
 	LDS	R24, 0x0078
 	OUT	0x2A, R24
-; main.py:26:     GPIOR0[1] = 1
+; main.py:24:     GPIOR0[1] = 1
 	SBI	0x1E, 1
 ; ISR epilogue — restore context
 	POP	R16
@@ -110,12 +110,10 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:30:     uart = UART(9600)
-; main.py:27: 
-; main.py:31:     adc  = AnalogPin("PC0")
-; main.py:47:             uart.write('\n')
+; main.py:28:     uart = UART(9600)
+; main.py:27: def main():
+; main.py:31: 
 	SBI	0x0A, 1
-; main.py:48:             # Start next conversion
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
@@ -125,95 +123,98 @@ main:
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:31:     adc  = AnalogPin("PC0")
-; main.py:41: 
-; main.py:47:             uart.write('\n')
-; main.py:12: #   - ADC0 = PC0 (analog in)
-; main.py:48:             # Start next conversion
-; main.py:31:     adc  = AnalogPin("PC0")
+; main.py:29:     adc  = AnalogPin("PC0")
+; main.py:41:             GPIOR0[1] = 0
+; main.py:12: #   - ADC0 = PC0 (analog input)
+; main.py:31: 
 	LDI	R24, 64
 	STS	0x007C, R24
-; main.py:32: 
+; main.py:32:     GPIOR0[1] = 0
 	LDI	R24, 135
 	STS	0x007A, R24
-; main.py:33:     GPIOR0[1] = 0
+; main.py:30:     adc.irq(adc_isr)
+	LDS	R24, 0x007A
+	ORI	R24, 8
+	STS	0x007A, R24
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:32:     GPIOR0[1] = 0
 	CBI	0x1E, 1
-; main.py:34:     GPIOR1.value = 0
+; main.py:33:     GPIOR1.value = 0
 	CLR	R24
 	OUT	0x2A, R24
-; main.py:35:     asm("SEI")
-SEI
-; main.py:37:     uart.println("ADC IRQ")
+; main.py:34:     uart.println("ADC IRQ")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:             result: uint8 = GPIOR1.value
-L_44:
+; main.py:41:             GPIOR0[1] = 0
+; main.py:45:             # Start next conversion
+L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_45
+	RJMP	L_47
 L_BR_SKIP_0:
-	RJMP	L_44
-L_45:
+	RJMP	L_46
+L_47:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:40:     adc.start_conversion()
-; main.py:44:             GPIOR0[1] = 0
+; main.py:37:     adc.start_conversion()
+; main.py:44:             uart.write('\n')
 	LDS	R24, 0x007A
 	ORI	R24, 8
 	STS	0x007A, R24
-; main.py:45:             result: uint8 = GPIOR1.value
+; main.py:45:             # Start next conversion
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
-; main.py:42:     while True:
-L_48:
-; main.py:43:         if GPIOR0[1] == 1:
+; main.py:39:     while True:
+L_50:
+; main.py:40:         if GPIOR0[1] == 1:
 	SBIS	0x1E, 1
-	RJMP	L_50
-; main.py:44:             GPIOR0[1] = 0
+	RJMP	L_52
+; main.py:41:             GPIOR0[1] = 0
 	CBI	0x1E, 1
 	IN	R24, 0x2A
 	MOV	R4, R24
-; main.py:46:             uart.write(result)
-; main.py:41: 
-; main.py:45:             result: uint8 = GPIOR1.value
-L_53:
+; main.py:43:             uart.write(result)
+; main.py:41:             GPIOR0[1] = 0
+; main.py:45:             # Start next conversion
+L_55:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_1
-	RJMP	L_54
+	RJMP	L_56
 L_BR_SKIP_1:
-	RJMP	L_53
-L_54:
+	RJMP	L_55
+L_56:
 	MOV	R24, R4
 	STS	0x00C6, R24
-; main.py:47:             uart.write('\n')
-; main.py:41: 
-; main.py:45:             result: uint8 = GPIOR1.value
-L_57:
+; main.py:44:             uart.write('\n')
+; main.py:41:             GPIOR0[1] = 0
+; main.py:45:             # Start next conversion
+L_59:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_2
-	RJMP	L_58
+	RJMP	L_60
 L_BR_SKIP_2:
-	RJMP	L_57
-L_58:
+	RJMP	L_59
+L_60:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:49:             adc.start_conversion()
-; main.py:44:             GPIOR0[1] = 0
+; main.py:46:             adc.start_conversion()
+; main.py:44:             uart.write('\n')
 	LDS	R24, 0x007A
 	ORI	R24, 8
 	STS	0x007A, R24
-; main.py:45:             result: uint8 = GPIOR1.value
+; main.py:45:             # Start next conversion
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
-L_50:
-	RJMP	L_48
+L_52:
+	RJMP	L_50
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
