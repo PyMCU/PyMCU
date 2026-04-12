@@ -1,6 +1,6 @@
 [build-system]
-requires = ["scikit-build-core>=0.10.0", "cmake>=4.1", "ninja"]
-build-backend = "scikit_build_core.build"
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "pymcu"
@@ -30,20 +30,16 @@ pymcu-stdlib = {index = "gitea"}
 [project.scripts]
 pymcu = "driver.main:run_cli"
 
-[tool.scikit-build]
-cmake.source-dir = "."
-wheel.packages = ["src/driver"]
-wheel.install-dir = "driver"
-cmake.build-type = "Release"
+[tool.hatch.build.targets.wheel]
+packages = ["src/driver"]
+# Include the native binary as a non-Python artifact
+artifacts = ["src/driver/pymcuc", "src/driver/pymcuc.exe"]
 
-[tool.scikit-build.cmake.define]
-SKBUILD = "ON"
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
-[tool.scikit-build.sdist]
-include = [
-    "src",              # Incluye common, compiler y driver
-    "CMakeLists.txt"
-]
+[tool.hatch.build.targets.sdist]
+include = ["src/", "hatch_build.py"]
 
 [tool.cibuildwheel]
 build-frontend = "build"
