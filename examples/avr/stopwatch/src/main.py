@@ -13,17 +13,9 @@
 #   GPIOR0[1] = INT0 Start/Stop flag
 #   GPIOR0[2] = INT1 Reset flag
 #
-# Tests:
-#   - Three @interrupt decorators in the same program
-#   - INT0 + INT1 + TIMER0_OVF coexistence
-#   - GPIOR0 with 3 separate bit flags ([0], [1], [2])
-#   - uint16 seconds elapsed time
-#   - uint8 running flag (start/stop toggle)
-#   - Complex main-loop state machine
-#
 # Hardware: Arduino Uno
-#   Start/Stop button: PD2 (Arduino pin 2), active low
-#   Reset button:      PD3 (Arduino pin 3), active low
+#   Start/Stop button: PD2 (Arduino pin 2), active low, pull-up
+#   Reset button:      PD3 (Arduino pin 3), active low, pull-up
 #   LED:               PB5 (Arduino pin 13, built-in) - on while running
 #   UART TX on PD1 at 9600 baud
 #
@@ -32,25 +24,22 @@
 #   On each second increment while running: raw byte = seconds mod 256, '\n'
 #   On reset: sends 0, '\n'
 #
-from pymcu.types import uint8, uint16, interrupt
+from pymcu.types import uint8, uint16
 from pymcu.chips.atmega328p import PORTB, DDRB, GPIOR0
 from pymcu.chips.atmega328p import TCCR0B, TIMSK0
-from pymcu.chips.atmega328p import EICRA, EIMSK
+from pymcu.hal.gpio import Pin
+from pymcu.hal.timer import Timer
 from pymcu.hal.uart import UART
-from pymcu.types import asm
 
 
-@interrupt(0x0020)  # TIMER0_OVF word addr 0x10
 def timer0_ovf_isr():
     GPIOR0[0] = 1
 
 
-@interrupt(0x0002)  # INT0 word addr 0x01
 def int0_isr():
     GPIOR0[1] = 1
 
 
-@interrupt(0x0004)  # INT1 word addr 0x02
 def int1_isr():
     GPIOR0[2] = 1
 
@@ -58,26 +47,25 @@ def int1_isr():
 def main():
     DDRB[5] = 1
 
-    # Timer0: normal mode, prescaler 1024
-    TCCR0B.value = 5
-    TIMSK0[0] = 1
+    # Timer0: normal mode, prescaler 1024 — OVF every 65536/16MHz*1024 ~= 4.096ms
+    # Using Timer directly for the OVF interrupt registration
+    timer = Timer(0, 1024)
+    timer.irq(timer0_ovf_isr)          # registers at TIMER0_OVF vector + SEI
 
-    # INT0: falling edge (ISC01=1, ISC00=0 for INT0, bits 1:0 = 0b10)
-    # INT1: falling edge (ISC11=1, ISC10=0 for INT1, bits 3:2 = 0b10)
-    # EICRA bits: [ISC11|ISC10|ISC01|ISC00] = 0b00101000 | 0b00000010 = 0b00101010 = 0x0A
-    EICRA.value = 10
-    # Enable INT0 (bit 0) and INT1 (bit 1) in EIMSK
-    EIMSK.value = 3
+    # INT0 (PD2): start/stop on falling edge
+    # INT1 (PD3): reset on falling edge
+    btn_start = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
+    btn_reset  = Pin("PD3", Pin.IN, pull=Pin.PULL_UP)
 
-    # Buttons start high (pull-up via external resistor / internal)
     GPIOR0[0] = 0
     GPIOR0[1] = 0
     GPIOR0[2] = 0
 
+    btn_start.irq(Pin.IRQ_FALLING, int0_isr)
+    btn_reset.irq(Pin.IRQ_FALLING, int1_isr)
+
     uart = UART(9600)
     uart.println("STOPWATCH")
-
-    asm("SEI")
 
     ticks:   uint8  = 0
     seconds: uint16 = 0

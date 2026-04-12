@@ -1,33 +1,31 @@
 # ATmega328P: Sleep / Power Management demo
-# Tests: sleep_idle(), sleep_power_down() from pymcu.hal.power
 #
-# Behavior: prints "SLEEP" before sleeping in idle mode, wakes on INT0 (PD2 button),
-#           prints "WAKE" after each wake. Counts 5 wakes then prints "DONE".
+# Demonstrates:
+#   - sleep_idle() from pymcu.hal.power
+#   - Pin.irq(): sets up INT0 wake source, enables interrupt mask and SEI automatically
+#   - GPIOR0 atomic flag: ISR sets bit on wake, main clears and acts
 #
 # Hardware: button on PD2 (INT0, pull-up), UART at 9600 baud
 #
-from pymcu.types import uint8, interrupt, asm
-from pymcu.chips.atmega328p import EICRA, EIMSK, GPIOR0
+from pymcu.types import uint8
+from pymcu.chips.atmega328p import GPIOR0
 from pymcu.hal.uart import UART
 from pymcu.hal.gpio import Pin
 from pymcu.hal.power import sleep_idle
 
-@interrupt(0x0002)   # INT0 vector (word addr 1)
+
 def int0_isr():
     GPIOR0[0] = 1    # set wakeup flag
 
+
 def main():
     uart = UART(9600)
-    btn  = Pin("PD2", Pin.IN)
-    btn.init(Pin.IN, Pin.PULL_UP)
+    btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
 
     uart.println("SLEEP DEMO")
 
-    # Configure INT0: falling edge (EICRA ISC01=1, ISC00=0)
-    EICRA.value = 0x02
-    EIMSK.value = 0x01   # enable INT0
     GPIOR0[0] = 0
-    asm("SEI")
+    btn.irq(Pin.IRQ_FALLING, int0_isr)   # configures INT0 + enables SEI
 
     count: uint8 = 0
     while count < 5:

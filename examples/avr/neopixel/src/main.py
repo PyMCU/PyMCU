@@ -10,7 +10,8 @@
 # Global interrupts must be off during transmission for correct timing.
 # This example disables interrupts only during pixel write + show.
 #
-from pymcu.types import uint8, asm
+from pymcu.types import uint8
+from pymcu.hal.irq import disable_interrupts, enable_interrupts
 from pymcu.hal.uart import UART
 from pymcu.time import delay_ms
 from pymcu.drivers.neopixel import NeoPixel
@@ -25,22 +26,19 @@ def main():
     phase: uint8 = 0
 
     while True:
-        asm("CLI")
+        disable_interrupts()   # timing-critical: no ISR during pixel write
 
         if phase == 0:
-            # Red
-            strip.set_pixel(255, 0, 0)
+            strip.set_pixel(255, 0, 0)   # Red
             strip.show()
         elif phase == 1:
-            # Green
-            strip.set_pixel(0, 255, 0)
+            strip.set_pixel(0, 255, 0)   # Green
             strip.show()
         elif phase == 2:
-            # Blue
-            strip.set_pixel(0, 0, 255)
+            strip.set_pixel(0, 0, 255)   # Blue
             strip.show()
 
-        asm("SEI")
+        enable_interrupts()
 
         uart.write(phase)
         uart.write('\n')
