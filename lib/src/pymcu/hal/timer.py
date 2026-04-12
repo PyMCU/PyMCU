@@ -223,8 +223,9 @@ class Timer:  # noqa
         """Register an interrupt handler for this timer.
 
         handler: compile-time function reference; automatically registered
-                 at the timer overflow vector -- no @interrupt decorator needed.
-        mode:    ``Timer.IRQ_OVF`` (default) for overflow interrupt.
+                 at the correct vector -- no @interrupt decorator needed.
+        mode:    ``Timer.IRQ_OVF`` (default) for overflow interrupt,
+                 ``Timer.IRQ_COMPA`` for compare-match A interrupt (CTC mode).
 
         Enables the relevant interrupt mask bit and global interrupts (SEI).
         """
@@ -234,11 +235,23 @@ class Timer:  # noqa
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 match self._id:
                     case "t0":
-                        from pymcu.hal._timer.atmega328p import timer0_irq_setup
-                        timer0_irq_setup(handler)
+                        if mode == 2:  # IRQ_COMPA
+                            from pymcu.hal._timer.atmega328p import timer0_irq_compa_setup
+                            timer0_irq_compa_setup(handler)
+                        else:
+                            from pymcu.hal._timer.atmega328p import timer0_irq_setup
+                            timer0_irq_setup(handler)
                     case "t1":
-                        from pymcu.hal._timer.atmega328p import timer1_irq_setup
-                        timer1_irq_setup(handler)
+                        if mode == 2:  # IRQ_COMPA
+                            from pymcu.hal._timer.atmega328p import timer1_irq_compa_setup
+                            timer1_irq_compa_setup(handler)
+                        else:
+                            from pymcu.hal._timer.atmega328p import timer1_irq_setup
+                            timer1_irq_setup(handler)
                     case "t2":
-                        from pymcu.hal._timer.atmega328p import timer2_irq_setup
-                        timer2_irq_setup(handler)
+                        if mode == 2:  # IRQ_COMPA
+                            from pymcu.hal._timer.atmega328p import timer2_irq_compa_setup
+                            timer2_irq_compa_setup(handler)
+                        else:
+                            from pymcu.hal._timer.atmega328p import timer2_irq_setup
+                            timer2_irq_setup(handler)

@@ -188,3 +188,26 @@ def timer2_irq_setup(handler: Callable):
     TIMSK2[0] = 1
     SREG[7] = 1
     compile_isr(handler, 0x0012)
+
+# ---- timer_irq_compa_setup: register a handler at the COMPA vector via compile_isr ----
+# Timer0 COMPA vector: byte 0x001C (word 0x000E)
+# Timer1 COMPA vector: byte 0x0016 (word 0x000B)
+# Timer2 COMPA vector: byte 0x000E (word 0x0007)
+
+@inline
+def timer0_irq_compa_setup(handler: Callable):
+    TIMSK0[1] = 1        # OCIE0A
+    SREG[7] = 1          # SEI
+    compile_isr(handler, 0x001C)
+
+@inline
+def timer1_irq_compa_setup(handler: Callable):
+    TIMSK1[1] = 1        # OCIE1A
+    SREG[7] = 1          # SEI
+    compile_isr(handler, 0x0016)
+
+@inline
+def timer2_irq_compa_setup(handler: Callable):
+    TIMSK2[1] = 1        # OCIE2A
+    SREG[7] = 1          # SEI
+    compile_isr(handler, 0x000E)
