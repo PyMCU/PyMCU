@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, uint16, inline, const
+from pymcu.types import uint8, uint16, inline, const, compile_isr, Callable
 from pymcu.chips import __CHIP__
 
 class UART:
@@ -157,6 +157,31 @@ class UART:
         return 0
 
     @inline
+    def irq(self, handler: Callable):
+        """Register an interrupt handler at the USART_RX vector.
+
+        handler: top-level function to call on each received byte.
+                 Typically calls uart.rx_isr() to fill the ring buffer,
+                 but can contain any custom receive logic.
+
+        Enables RXCIE0 and global interrupts (SEI) automatically.
+        No @interrupt decorator or asm("SEI") needed.
+
+        Example (ring-buffer mode)::
+
+            def on_rx():
+                uart.rx_isr()
+
+            uart.irq(on_rx)
+        """
+        match __CHIP__.arch:
+            case "avr":
+                from pymcu.chips.atmega328p import UCSR0B, SREG
+                UCSR0B[7] = 1          # RXCIE0
+                SREG[7] = 1            # SEI
+                compile_isr(handler, 0x0024)
+
+    @inline
     def enable_rx_interrupt(self):
         """Enable the USART receive interrupt so the RX ISR fires on each received byte.
 
@@ -204,3 +229,27 @@ class UART:
                 from pymcu.hal._uart.avr import uart_rx_read
                 return uart_rx_read()
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Module-level ring-buffer ISR helper
+# ---------------------------------------------------------------------------
+# Use this function as the handler for uart.irq() when you want the built-in
+# 16-byte ring buffer. Define it as a top-level function in your module:
+#
+#   from pymcu.hal.uart import UART, uart_rx_isr
+#
+#   def on_rx():
+#       uart_rx_isr()
+#
+#   def main():
+#       uart = UART(9600)
+#       uart.irq(on_rx)
+
+@inline
+def uart_rx_isr():
+    """Ring-buffer filler. Call from within a uart.irq() handler."""
+    match __CHIP__.arch:
+        case "avr":
+            from pymcu.hal._uart.avr import uart_rx_isr as _impl
+            _impl()

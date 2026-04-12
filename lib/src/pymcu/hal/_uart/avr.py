@@ -29,8 +29,8 @@
 #   115200 → 8     (3.54% error)
 # -----------------------------------------------------------------------------
 
-from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD
-from pymcu.types import uint8, uint16, inline, const
+from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
+from pymcu.types import uint8, uint16, inline, const, compile_isr, Callable
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 # _rx_buf: circular storage; _rx_head: write index (ISR advances);
@@ -179,3 +179,13 @@ def uart_rx_read() -> uint8:
     data: uint8 = _rx_buf[_rx_tail]
     _rx_tail = (_rx_tail + 1) & 0x0F
     return data
+
+
+@inline
+def uart_rx_irq_setup():
+    # Enable RXCIE0 (UCSR0B bit 7) + SEI and register uart_rx_isr at the
+    # USART_RX vector (byte 0x0024, word 0x0012).
+    # After this call, received bytes are automatically stored in the ring buffer.
+    UCSR0B[7] = 1        # RXCIE0: enable USART RX complete interrupt
+    SREG[7] = 1          # SEI: enable global interrupts
+    compile_isr(uart_rx_isr, 0x0024)
