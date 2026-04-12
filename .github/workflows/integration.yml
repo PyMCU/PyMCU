@@ -67,7 +67,9 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends binutils-avr gcc-avr
 
       - name: Build pymcuc compiler
-        run: cmake -B build -G Ninja && cmake --build build
+        run: |
+          dotnet publish src/compiler/PyMCU.csproj \
+            -c Release -o build/bin --nologo
 
       - name: Add pymcuc to PATH
         run: echo "$GITHUB_WORKSPACE/build/bin" >> $GITHUB_PATH
