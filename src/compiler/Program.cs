@@ -1,0 +1,486 @@
+/*
+ * -----------------------------------------------------------------------------
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ * -----------------------------------------------------------------------------
+ * SAFETY WARNING / HIGH RISK ACTIVITIES:
+ * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+ * ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+ * NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+ * TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
+ * -----------------------------------------------------------------------------
+ */
+
+using PyMCU.Backend;
+using PyMCU.Common;
+using PyMCU.Frontend;
+using PyMCU.IR;
+using PyMCU.IR.IRGenerator;
+
+namespace PyMCU;
+
+public sealed record CompilerOptions(
+    string FilePath,
+    string OutputPath,
+    string Arch,
+    string Chip,
+    ulong Frequency,
+    List<string> Configs,
+    List<string> Includes,
+    int ResetVector,
+    int InterruptVector
+);
+
+public class CompilerContext
+{
+    public Dictionary<string, ProgramNode> ModuleCache { get; } = new();
+    public List<ProgramNode> LinearImports { get; } = new();
+    public Dictionary<string, ProgramNode> NamedModules { get; } = new();
+    public HashSet<string> LoadingModules { get; } = new();
+    public DeviceConfig Config { get; set; } = new();
+    public Dictionary<string, List<string>> ModuleSourceLines { get; } = new();
+}
+
+public static class Program
+{
+    public static int Main(string[] args)
+    {
+        try
+        {
+            var options = ParseArgs(args);
+
+            var deviceConfig = new DeviceConfig
+            {
+                Frequency = options.Frequency,
+                ResetVector = options.ResetVector,
+                InterruptVector = options.InterruptVector
+            };
+
+            if (!string.IsNullOrEmpty(options.Arch))
+            {
+                deviceConfig.TargetChip = options.Arch;
+            }
+
+            foreach (var item in options.Configs)
+            {
+                var eqPos = item.IndexOf('=');
+                if (eqPos == -1) continue;
+                var key = item[..eqPos];
+                var val = item[(eqPos + 1)..];
+                deviceConfig.Fuses[key] = val;
+            }
+
+            var sourceLines = new List<string>();
+            string source;
+            try
+            {
+                source = File.ReadAllText(options.FilePath);
+                using var reader = new StringReader(source);
+                string? line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    sourceLines.Add(line);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Fatal Error: {ex.Message}");
+                return 1;
+            }
+
+            var includePaths = new List<string>(options.Includes) { "." };
+            var parentDir = Path.GetDirectoryName(options.FilePath);
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                includePaths.Add(parentDir);
+            }
+
+            var context = new CompilerContext();
+
+            // =====================================================================
+            // Phase 0: Target Bootstrap
+            // =====================================================================
+            if (!string.IsNullOrEmpty(options.Chip))
+            {
+                try
+                {
+                    var target = TargetLoader.Bootstrap(options.Chip, includePaths);
+
+                    deviceConfig.Chip = target.Config.Chip;
+                    deviceConfig.DetectedChip = target.Config.DetectedChip;
+                    deviceConfig.Arch = target.Config.Arch;
+                    if (target.Config.RamSize > 0) deviceConfig.RamSize = target.Config.RamSize;
+                    if (target.Config.FlashSize > 0) deviceConfig.FlashSize = target.Config.FlashSize;
+                    if (target.Config.EepromSize > 0) deviceConfig.EepromSize = target.Config.EepromSize;
+
+                    if (string.IsNullOrEmpty(deviceConfig.TargetChip))
+                    {
+                        deviceConfig.TargetChip = options.Chip;
+                    }
+
+                    context.ModuleSourceLines[target.ModuleName] = target.SourceLines;
+                    context.ModuleCache[target.FilePath] = target.Ast;
+                    context.NamedModules[target.ModuleName] = target.Ast;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[Warning] Chip bootstrap failed: {ex.Message}");
+                }
+            }
+
+            try
+            {
+                var lexer = new Lexer(source);
+                var tokens = lexer.Tokenize();
+
+                var parser = new Parser(tokens);
+                var ast = parser.ParseProgram();
+
+                // Pass 1: Recursive Import Loading
+                LoadImportsRecursively(ast, context, options.FilePath, includePaths);
+
+                // Pass 2: Global Configuration Bootstrap
+                var preScanner = new PreScanVisitor(deviceConfig);
+                preScanner.Scan(ast);
+                foreach (var modAst in context.NamedModules.Values)
+                {
+                    preScanner.Scan(modAst);
+                }
+
+                context.Config = deviceConfig;
+
+                if (string.IsNullOrEmpty(context.Config.Chip)) context.Config.Chip = options.Arch;
+                if (string.IsNullOrEmpty(context.Config.Arch)) context.Config.Arch = options.Arch;
+
+                // Pass 3: Global Conditional Compilation
+                var conditional = new ConditionalCompilator(context.Config);
+                conditional.Process(ast);
+                var ccProcessed = new HashSet<ProgramNode> { ast };
+
+                foreach (var modAst in context.NamedModules.Values)
+                {
+                    if (ccProcessed.Add(modAst))
+                    {
+                        conditional.Process(modAst);
+                    }
+                }
+
+                // Pass 4: Final Recursive Load
+                LoadImportsRecursively(ast, context, options.FilePath, includePaths);
+                foreach (var modAst in context.NamedModules.Values.ToList()) // ToList() to allow modifications
+                {
+                    LoadImportsRecursively(modAst, context, options.FilePath, includePaths);
+                }
+
+                // Pass 4b/5: Iteratively run CC + load until stable
+                bool anyNew = true;
+                while (anyNew)
+                {
+                    anyNew = false;
+                    foreach (var modAst in context.NamedModules.Values.ToList())
+                    {
+                        if (ccProcessed.Add(modAst))
+                        {
+                            conditional.Process(modAst);
+                            anyNew = true;
+                        }
+                    }
+
+                    int before = context.NamedModules.Count;
+                    LoadImportsRecursively(ast, context, options.FilePath, includePaths);
+                    foreach (var modAst in context.NamedModules.Values.ToList())
+                    {
+                        LoadImportsRecursively(modAst, context, options.FilePath, includePaths);
+                    }
+
+                    if (context.NamedModules.Count > before) anyNew = true;
+                }
+
+                // IR Generation
+                var irGen = new IRGenerator();
+                var ir = irGen.Generate(ast, context.NamedModules, deviceConfig, sourceLines,
+                    context.ModuleSourceLines);
+
+                ir = Optimizer.Optimize(ir);
+
+                // Propagate device_info
+                if (!string.IsNullOrEmpty(context.Config.Chip)) deviceConfig.Chip = context.Config.Chip;
+                if (!string.IsNullOrEmpty(context.Config.Arch)) deviceConfig.Arch = context.Config.Arch;
+                if (!string.IsNullOrEmpty(context.Config.TargetChip))
+                    deviceConfig.TargetChip = context.Config.TargetChip;
+                if (context.Config.RamSize > 0) deviceConfig.RamSize = context.Config.RamSize;
+
+                string targetArch = deviceConfig.Arch;
+                if (string.IsNullOrEmpty(targetArch))
+                {
+                    targetArch = deviceConfig.Chip;
+                    if (string.IsNullOrEmpty(targetArch)) targetArch = options.Arch;
+                }
+
+                if (string.IsNullOrEmpty(deviceConfig.Chip)) deviceConfig.Chip = options.Arch;
+                if (string.IsNullOrEmpty(deviceConfig.Arch)) deviceConfig.Arch = options.Arch;
+                if (string.IsNullOrEmpty(deviceConfig.TargetChip)) deviceConfig.TargetChip = deviceConfig.Chip;
+
+                var backend = CodeGenFactory.Create(targetArch, deviceConfig);
+
+                var outputParent = Path.GetDirectoryName(options.OutputPath);
+                if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
+                {
+                    Directory.CreateDirectory(outputParent);
+                }
+
+                Console.WriteLine(
+                    $"[pymcuc] Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
+
+                using (var asmFile = new StreamWriter(options.OutputPath))
+                {
+                    backend.Compile(ir, asmFile);
+                }
+
+                Console.WriteLine($"[pymcuc] Success! Output written to {options.OutputPath}");
+            }
+            catch (CompilerError e)
+            {
+                Diagnostic.Report(e, source, options.FilePath);
+                return 1;
+            }
+            catch (Exception e)
+            {
+                Diagnostic.ReportInternal(e.Message, options.FilePath);
+                return 1;
+            }
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.Message);
+            return 1;
+        }
+    }
+
+    private static string ResolveModule(string moduleName, List<string> includePaths, string currentFilePath,
+        int relativeLevel)
+    {
+        string pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
+
+        if (relativeLevel > 0)
+        {
+            string searchDir = Path.GetDirectoryName(currentFilePath) ?? string.Empty;
+
+            for (int i = 1; i < relativeLevel; i++)
+            {
+                searchDir = Path.GetDirectoryName(searchDir) ?? string.Empty;
+            }
+
+            string fullPath = Path.Combine(searchDir, pathRel + ".py");
+            if (File.Exists(fullPath)) return fullPath;
+
+            fullPath = Path.Combine(searchDir, pathRel, "__init__.py");
+            if (File.Exists(fullPath)) return fullPath;
+
+            throw new Exception($"Relative import not found: {fullPath}");
+        }
+
+        foreach (var baseDir in includePaths)
+        {
+            string fullPath = Path.Combine(baseDir, pathRel + ".py");
+            if (File.Exists(fullPath)) return fullPath;
+
+            fullPath = Path.Combine(baseDir, pathRel, "__init__.py");
+            if (File.Exists(fullPath)) return fullPath;
+        }
+
+        throw new Exception($"Module not found: {moduleName}");
+    }
+
+    private static void LoadImportsRecursively(ProgramNode ast, CompilerContext ctx, string currentPath,
+        List<string> includes)
+    {
+        foreach (var imp in ast.Imports)
+        {
+            string path = string.Empty;
+            try
+            {
+                if (imp.ModuleName == "pymcu.types" || imp.ModuleName == "pymcu.chips")
+                {
+                    continue;
+                }
+
+                path = ResolveModule(imp.ModuleName, includes, currentPath, imp.RelativeLevel);
+
+                if (ctx.ModuleCache.TryGetValue(path, out var cachedAst))
+                {
+                    ctx.NamedModules[imp.ModuleName] = cachedAst;
+                    continue;
+                }
+
+                if (ctx.LoadingModules.Contains(path)) continue;
+
+                Console.WriteLine($"Loading module: {path}");
+                ctx.LoadingModules.Add(path);
+
+                string src = File.ReadAllText(path);
+                var lines = new List<string>();
+                using (var reader = new StringReader(src))
+                {
+                    string? line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        lines.Add(line);
+                    }
+                }
+
+                ctx.ModuleSourceLines[imp.ModuleName] = lines;
+
+                var lexer = new Lexer(src);
+                var parser = new Parser(lexer.Tokenize());
+                var modAst = parser.ParseProgram();
+
+                ctx.ModuleCache[path] = modAst;
+                ctx.NamedModules[imp.ModuleName] = modAst;
+
+                LoadImportsRecursively(modAst, ctx, path, includes);
+
+                ctx.LoadingModules.Remove(path);
+            }
+            catch (Exception e)
+            {
+                if (!string.IsNullOrEmpty(path)) ctx.LoadingModules.Remove(path);
+                Console.Error.WriteLine($"Error importing '{imp.ModuleName}': {e.Message}");
+                throw new CompilerError("ImportError", "Failed to import module", imp.Line, 0);
+            }
+        }
+    }
+
+    private static CompilerOptions ParseArgs(ReadOnlySpan<string> args)
+    {
+        string? file = null;
+        string output = "";
+        string arch = "pic14";
+        string chip = "";
+        ulong freq = 4000000;
+        var configs = new List<string>();
+        var includes = new List<string>();
+        int resetVector = -1;
+        int interruptVector = -1;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+
+            if (arg == "-o" || arg == "--output")
+            {
+                if (++i < args.Length) output = args[i];
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "--arch")
+            {
+                if (++i < args.Length) arch = args[i];
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "--chip")
+            {
+                if (++i < args.Length) chip = args[i];
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "--freq")
+            {
+                if (++i < args.Length)
+                {
+                    if (!ulong.TryParse(args[i], out freq))
+                        throw new ArgumentException($"Invalid frequency value: {args[i]}");
+                }
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "-C" || arg == "--config")
+            {
+                if (++i < args.Length) configs.Add(args[i]);
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "-I" || arg == "--include")
+            {
+                if (++i < args.Length) includes.Add(args[i]);
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "--reset-vector")
+            {
+                if (++i < args.Length)
+                {
+                    if (!int.TryParse(args[i], out resetVector))
+                        throw new ArgumentException($"Invalid reset vector value: {args[i]}");
+                }
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "--interrupt-vector")
+            {
+                if (++i < args.Length)
+                {
+                    if (!int.TryParse(args[i], out interruptVector))
+                        throw new ArgumentException($"Invalid interrupt vector value: {args[i]}");
+                }
+                else throw new ArgumentException($"Missing argument for {arg}");
+            }
+            else if (arg == "-h" || arg == "--help")
+            {
+                PrintHelp();
+                Environment.Exit(0);
+            }
+            else if (!arg.StartsWith("-") && file == null)
+            {
+                file = arg;
+            }
+            else
+            {
+                throw new ArgumentException($"Unknown argument: {arg}");
+            }
+        }
+
+        if (file == null)
+        {
+            throw new ArgumentException("Input source file is required.");
+        }
+
+        if (string.IsNullOrEmpty(output))
+        {
+            output = Path.ChangeExtension(file, ".asm");
+        }
+
+        return new CompilerOptions(file, output, arch, chip, freq, configs, includes, resetVector, interruptVector);
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine("Usage: pymcuc [options] file");
+        Console.WriteLine("Options:");
+        Console.WriteLine("  -o, --output <file>         Output ASM file");
+        Console.WriteLine("  --arch <arch>               Target architecture (default: pic14)");
+        Console.WriteLine(
+            "  --chip <chip>               Target chip (e.g., pic16f18877). Locates pymcu/chips/<chip>.py");
+        Console.WriteLine("  --freq <freq>               Clock frequency in Hz (default: 4000000)");
+        Console.WriteLine("  -C, --config <KEY=VALUE>    Configuration bits (KEY=VALUE)");
+        Console.WriteLine("  -I, --include <dir>         Add directory to search path for imports");
+        Console.WriteLine("  --reset-vector <addr>       Reset vector address (e.g., 0x2000 for bootloader)");
+        Console.WriteLine("  --interrupt-vector <addr>   Interrupt vector address (e.g., 0x2008 for bootloader)");
+    }
+}
