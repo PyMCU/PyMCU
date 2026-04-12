@@ -2,36 +2,31 @@ name: Unit Tests
 
 on:
   push:
-    branches: [ "main", "develop", "feature/**" ]
+    branches: [ "main", "develop", "feature/**", "dotnet" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  build:
+  unit:
     runs-on: ubuntu-latest
-    name: Unit Tests
-    container:
-      image: ${{ vars.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
-      options: --user root
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+    name: Unit Tests (.NET)
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Check Tools Version
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - name: Restore packages
+        run: dotnet restore tests/unit/PyMCU.Tests.csproj --nologo
+
+      - name: Run unit tests
         run: |
-          cmake --version
-          gpasm --version
-          gcc --version
-
-      - name: Configure CMake
-        run: cmake -B build -G Ninja
-
-      - name: Build Compiler
-        run: cmake --build build
-
-      - name: Run Unit Tests
-        run: ctest --test-dir build --output-on-failure
+          dotnet test tests/unit/PyMCU.Tests.csproj \
+            --no-restore \
+            --logger "console;verbosity=normal" \
+            --collect:"XPlat Code Coverage" \
+            --nologo
