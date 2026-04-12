@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using PyMCU.Common;
 using Xunit;
-using PyMCU.Compiler;
 using PyMCU.Frontend;
 
 namespace PyMCU.UnitTests;

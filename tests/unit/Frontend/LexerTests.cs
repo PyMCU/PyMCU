@@ -1,6 +1,5 @@
 using System;
 using Xunit;
-using PyMCU.Compiler;
 using System.Linq;
 using PyMCU.Common;
 using PyMCU.Frontend;

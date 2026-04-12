@@ -28,14 +28,14 @@ public class DiagNew
             TestContext.WriteLine($"  [0x{w:X4}] = 0x{uno.Cpu.ProgramMemory[w]:X4}");
 
         uno.RunUntilSerial(uno.Serial, "SOFT PWM\n", maxMs: 500);
-        TestContext.WriteLine($"Banner done. SP=0x{uno.Cpu.SP:X4} Cycles={uno.Cpu.Cycles}");
+        TestContext.WriteLine($"Banner done. SP=0x{uno.Cpu.Sp:X4} Cycles={uno.Cpu.Cycles}");
 
         while (uno.Cpu.Cycles < 262100) uno.RunInstructions(1);
 
         for (int i = 0; i < 1_000_000 && uno.Cpu.Cycles < 262175; i++)
         {
-            var spBefore = uno.Cpu.SP;
-            var pcBefore = uno.Cpu.PC;
+            var spBefore = uno.Cpu.Sp;
+            var pcBefore = uno.Cpu.Pc;
             try { uno.RunInstructions(1); }
             catch (IndexOutOfRangeException)
             {
