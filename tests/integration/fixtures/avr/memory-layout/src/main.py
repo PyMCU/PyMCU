@@ -10,10 +10,11 @@
 #   ICR1   = 0x86  (ptr[uint16]: ICR1L=0x86, ICR1H=0x87, little-endian)
 #   OCR1A  = 0x88  (ptr[uint16]: OCR1AL=0x88, OCR1AH=0x89, little-endian)
 #
-# workaround: multi-line imports with parentheses not supported by the parser
-from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A
-from pymcu.chips.atmega328p import TCCR1A, TCCR1B
-from pymcu.chips.atmega328p import ICR1, OCR1A
+from pymcu.chips.atmega328p import (
+    TCCR0A, TCCR0B, OCR0A,
+    TCCR1A, TCCR1B,
+    ICR1, OCR1A,
+)
 from pymcu.types import asm
 
 
