@@ -1,0 +1,21 @@
+[project]
+name = "ffi-abi"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pymcu-stdlib>=0.1.2a5",
+    "pymcu>=0.1.0a27"
+]
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"
+
+# ABI probe: C functions that echo individual arguments back to the caller.
+# Compiled with avr-gcc and linked via avr-ld to verify the PyMCU -> C calling convention.
+[tool.pymcu.ffi]
+sources = ["c_src/abi_probe.c"]
+include_dirs = ["c_src"]
+cflags = ["-std=c11", "-Os"]
