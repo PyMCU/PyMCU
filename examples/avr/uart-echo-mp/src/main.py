@@ -1,17 +1,11 @@
 # UART Echo -- MicroPython style on Arduino Uno
 #
 # Demonstrates:
+#   machine.Pin  -- digital I/O with Arduino Uno integer pin numbers
 #   machine.UART -- read/write single bytes, println
-#   utime        -- sleep_ms() with no hardware timer dependency
-#   pymcu.hal    -- native Pin for LED (D13 = PB5 built-in LED)
 #
-# The MicroPython machine.UART and utime APIs map 1:1 to the native HAL
-# with zero runtime overhead via @inline.
-#
-# Note: machine.Pin is not used here because integer pin-ID DCE is a
-# known open issue (int -> string constant propagation across inline
-# boundaries). Use pymcu.hal.gpio.Pin with port strings directly.
-# See: https://github.com/PyMCU-Org/pymcu/issues (track as mp-pin-int)
+# machine.Pin(13, Pin.OUT) resolves pin 13 to "PB5" at compile time via
+# match/case DCE inside the pymcu-micropython compat layer.
 #
 # Wiring:
 #   LED:    built-in on D13 (no external wiring needed)
@@ -19,22 +13,18 @@
 #
 # Expected behaviour:
 #   Startup: sends "READY\n"
-#   Loop: echoes every received byte; LED blinks on each byte
+#   Loop: echoes every received byte; LED pulses HIGH during each byte
 
-from machine import UART
-from utime import sleep_ms
-from pymcu.hal.gpio import Pin
+from machine import Pin, UART
 from pymcu.types import uint8
 
 
 def main():
-    led  = Pin("PB5", Pin.OUT)
+    led  = Pin(13, Pin.OUT)
     uart = UART(0, 9600)
-
     uart.println("READY")
-
     while True:
         b: uint8 = uart.read()
-        led.high()
+        led.on()
         uart.write(b)
-        led.low()
+        led.off()
