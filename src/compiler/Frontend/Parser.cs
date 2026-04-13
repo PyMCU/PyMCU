@@ -549,8 +549,16 @@ public class Parser
         }
         else
         {
+            // PEP 328: symbol list may be wrapped in parentheses, allowing
+            // multi-line imports.  The lexer already suppresses newlines while
+            // parenDepth > 0, so no special newline handling is needed here.
+            bool parenthesised = Match(TokenType.LParen);
+
             do
             {
+                // A trailing comma before ')' is legal; stop when we see ')'.
+                if (parenthesised && Check(TokenType.RParen)) break;
+
                 var sym = Consume(TokenType.Identifier, "Expected symbol name");
                 symbols.Add(sym.Value);
                 if (Match(TokenType.As))
@@ -559,6 +567,9 @@ public class Parser
                     symAliases[sym.Value] = alias.Value;
                 }
             } while (Match(TokenType.Comma));
+
+            if (parenthesised)
+                Consume(TokenType.RParen, "Expected ')' to close parenthesised import list");
         }
 
         ConsumeStatementEnd();
