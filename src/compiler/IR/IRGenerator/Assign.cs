@@ -772,6 +772,19 @@ public partial class IRGenerator
             Val rhs = VisitExpression(stmt.Value);
             if (rhs is MemoryAddress addr) rhs = addr with { Type = type };
             Emit(new Copy(rhs, new Variable(qualified2, type)));
+
+            // Propagate string constant from rhs to the declared variable so that
+            // downstream match/case DCE (e.g. select_port) can fold it.
+            // Handles:  pin_name: str = _arduino_pin_name(13)
+            if (stmt.Annotation == "str" && !strConstantVariables.ContainsKey(qualified2))
+            {
+                string? sv = rhs is Temporary tRhs ? ResolveStrConstant(tRhs.Name)
+                           : rhs is Variable  vRhs ? ResolveStrConstant(vRhs.Name)
+                           : null;
+                if (sv == null && rhs is Constant cRhs && stringIdToStr.TryGetValue(cRhs.Value, out var cs))
+                    sv = cs;
+                if (sv != null) strConstantVariables[qualified2] = sv;
+            }
         }
     }
 

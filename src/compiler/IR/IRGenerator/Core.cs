@@ -248,9 +248,16 @@ public partial class IRGenerator
                 foreach (var sym in imp.Symbols)
                 {
                     string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
-                    importedAliases[key] = imp.ModuleName;
-                    if (imp.Aliases.ContainsKey(sym))
-                        aliasToOriginal[key] = sym;
+                    // Don't overwrite aliases established by the main file — sub-module
+                    // imports use the same flat dictionary and would otherwise shadow the
+                    // user's own `from machine import Pin` with a stdlib-internal
+                    // `from pymcu.hal.gpio import Pin` that lives in e.g. hal/__init__.py.
+                    if (!importedAliases.ContainsKey(key))
+                    {
+                        importedAliases[key] = imp.ModuleName;
+                        if (imp.Aliases.ContainsKey(sym))
+                            aliasToOriginal[key] = sym;
+                    }
                 }
             }
         }

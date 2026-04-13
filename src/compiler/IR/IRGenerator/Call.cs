@@ -1076,6 +1076,32 @@ public partial class IRGenerator
                     continue;
                 }
 
+                if (argValues[i] is Temporary tArg)
+                {
+                    // A Temporary can carry a compile-time string or numeric constant
+                    // when it is the result of a DCE'd @inline function (e.g.,
+                    // _arduino_pin_name(13) → "PB5").  Without this block the value
+                    // would fall through to the runtime Copy, losing the constant.
+                    string? tStr = ResolveStrConstant(tArg.Name);
+                    if (tStr == null && constantVariables.TryGetValue(tArg.Name, out int tId))
+                        stringIdToStr.TryGetValue(tId, out tStr);
+                    if (tStr != null)
+                    {
+                        strConstantVariables[paramName] = tStr;
+                        constantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        continue;
+                    }
+                    if (constantVariables.TryGetValue(tArg.Name, out int tNum))
+                    {
+                        constantVariables[paramName] = tNum;
+                        strConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        continue;
+                    }
+                    // Non-constant Temporary: fall through to runtime Copy
+                }
+
                 if (IsConstType(func.Params[paramIdx].Type))
                 {
                     if (func.Params[paramIdx].Type == "const[str]")

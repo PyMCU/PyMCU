@@ -508,7 +508,6 @@ public partial class IRGenerator
                             break;
                         }
                 }
-
                 bool skipBody = false;
                 if (allAltsConst)
                 {

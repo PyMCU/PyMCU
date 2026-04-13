@@ -372,14 +372,24 @@ public partial class IRGenerator
                 if (val is Constant c)
                 {
                     constantVariables[ctx.ResultTemp.Name] = c.Value;
+                    // If the constant is a string ID, also register it as a string constant
+                    // so downstream code can resolve it via ResolveStrConstant.
+                    if (stringIdToStr.TryGetValue(c.Value, out string? sv))
+                        strConstantVariables[ctx.ResultTemp.Name] = sv;
                 }
                 else if (val is Variable v)
                 {
                     variableAliases[ctx.ResultTemp.Name] = v.Name;
+                    // Carry string-constant metadata through the alias
+                    if (strConstantVariables.TryGetValue(v.Name, out string? vsv))
+                        strConstantVariables[ctx.ResultTemp.Name] = vsv;
                 }
                 else if (val is Temporary t)
                 {
                     variableAliases[ctx.ResultTemp.Name] = t.Name;
+                    // Carry string-constant metadata through the alias
+                    if (strConstantVariables.TryGetValue(t.Name, out string? tsv))
+                        strConstantVariables[ctx.ResultTemp.Name] = tsv;
                 }
             }
 
