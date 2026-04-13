@@ -35,9 +35,9 @@ import subprocess
 from pathlib import Path
 from rich.console import Console
 
-class WhipCompiler:
+class PyMCUCompiler:
     """
-    Wrapper for the .NET AOT compiler (pymcuc).
+    Wrapper for the core C++ build tool (pymcuc).
     Handles path resolution, stdlib detection, and binary invocation.
     """
     
@@ -51,14 +51,14 @@ class WhipCompiler:
         return Path(__file__).parent.parent 
 
     def get_compiler_path(self) -> Path:
-        # Search order:
-        #   1. Adjacent to this package (standard wheel layout: driver/pymcuc)
-        #   2. build/bin/pymcuc  — canonical output of `just build` / `dotnet publish -o build/bin/`
-        #   3. src/compiler/bin/**/pymcuc  — `dotnet build` output (any TFM version)
-        #   4. PATH fallback
-
-        base_path = self._get_start_path()  # src/driver/
-
+        # Standard lookup logic
+        # compiler.py is in src/driver/core/
+        # toolchain.py was in src/driver/
+        # Compiler usually sits near the package root or in bin/
+        
+        # We'll search relative to src/driver (parent of this file's dir)
+        base_path = self._get_start_path() 
+        
         candidates = ["pymcuc"]
         if sys.platform == "win32":
             candidates.insert(0, "pymcuc.exe")
@@ -67,28 +67,19 @@ class WhipCompiler:
         for name in candidates:
             local_compiler = base_path / name
             if local_compiler.exists(): return local_compiler
-
+            
+            # Check in bin/ subdirectory
             bin_compiler = base_path / "bin" / name
             if bin_compiler.exists(): return bin_compiler
 
-        # 2. Canonical publish output: dotnet publish -o build/bin/ (Justfile & CI)
-        project_root = base_path.parent.parent
-        for name in candidates:
-            p = project_root / "build" / "bin" / name
-            if p.exists():
-                return p
-
-        # 3. Glob fallback: handles `dotnet build` without publish (version-agnostic).
-        #    Matches bin/Debug/net10.0/pymcuc, bin/Release/net11.0/pymcuc, etc.
-        #    Picks the most recently modified binary so newest build wins.
-        dotnet_bin = project_root / "src" / "compiler" / "bin"
-        for name in candidates:
-            matches = list(dotnet_bin.glob(f"**/{name}"))
-            if matches:
-                matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                return matches[0]
-
-        return Path("pymcuc")  # Fallback to PATH
+        # 2. Development environment fallbacks (build/bin)
+        project_root = base_path.parent.parent # If base is src/driver -> project is src/../
+        for d in ["build/bin", "cmake-build-debug/bin", "cmake-build-release/bin"]:
+             for name in candidates:
+                p = project_root / d / name
+                if p.exists(): return p
+            
+        return Path("pymcuc") # Fallback to PATH
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """

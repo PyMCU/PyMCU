@@ -38,7 +38,7 @@ from typing import Dict, Any
 from .base import HardwareProgrammer
 from rich.prompt import Confirm
 
-# Mapping from Whipsnake chip names to avrdude abbreviated part names.
+# Mapping from PyMCU chip names to avrdude abbreviated part names.
 _CHIP_MAP: dict[str, str] = {
     "atmega328p":  "m328p",
     "atmega328":   "m328",
@@ -190,7 +190,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print("[bold cyan]Whipsnake Hardware Manager[/bold cyan]")
+        self.console.print("[bold cyan]PyMCU Hardware Manager[/bold cyan]")
         self.console.print(
             f"Programmer '{name}' ({desc}) is not found in system PATH or local cache."
         )

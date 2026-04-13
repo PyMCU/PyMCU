@@ -174,31 +174,31 @@ def new(name: str):
                     doc.add("tool", tomlkit.table())
                 doc["tool"].add("poetry", tool_poetry)
 
-            # Whip specific config
-            whip_tool = tomlkit.table()
-            whip_tool.add("chip", chip)
-            whip_tool.add("frequency", freq)
-            whip_tool.add("sources", sources_dir)
-            whip_tool.add("entry", entry_file)
+            # PyMCU specific config
+            pymcu_tool = tomlkit.table()
+            pymcu_tool.add("chip", chip)
+            pymcu_tool.add("frequency", freq)
+            pymcu_tool.add("sources", sources_dir)
+            pymcu_tool.add("entry", entry_file)
 
-            whip_config = tomlkit.table()
-            whip_config.add(tomlkit.comment("FOSC = \"HS\""))
-            whip_tool.add("config", whip_config)
+            pymcu_config = tomlkit.table()
+            pymcu_config.add(tomlkit.comment("FOSC = \"HS\""))
+            pymcu_tool.add("config", pymcu_config)
 
             # Auto-detected toolchain
-            whip_toolchain = tomlkit.table()
-            whip_toolchain.add("name", toolchain_name)
-            whip_tool.add("toolchain", whip_toolchain)
+            pymcu_toolchain = tomlkit.table()
+            pymcu_toolchain.add("name", toolchain_name)
+            pymcu_tool.add("toolchain", pymcu_toolchain)
 
             # Programmer configuration
-            whip_programmer = tomlkit.table()
-            whip_programmer.add("name", "pickit2")
-            whip_tool.add("programmer", whip_programmer)
+            pymcu_programmer = tomlkit.table()
+            pymcu_programmer.add("name", "pickit2")
+            pymcu_tool.add("programmer", pymcu_programmer)
 
             if "tool" not in doc:
                 doc.add("tool", tomlkit.table())
 
-            doc["tool"].add("pymcu", whip_tool)
+            doc["tool"].add("pymcu", pymcu_tool)
 
             with open(project_path / "pyproject.toml", "w") as f:
                 f.write(tomlkit.dumps(doc))
@@ -208,22 +208,22 @@ def new(name: str):
             # and a requirements.txt for dependencies
             doc = tomlkit.document()
             tool = tomlkit.table()
-            whip_tool = tomlkit.table()
-            whip_tool.add("chip", chip)
-            whip_tool.add("frequency", freq)
-            whip_tool.add("sources", sources_dir)
-            whip_tool.add("entry", entry_file)
-            whip_tool.add("config", tomlkit.table())
+            pymcu_tool = tomlkit.table()
+            pymcu_tool.add("chip", chip)
+            pymcu_tool.add("frequency", freq)
+            pymcu_tool.add("sources", sources_dir)
+            pymcu_tool.add("entry", entry_file)
+            pymcu_tool.add("config", tomlkit.table())
 
-            whip_toolchain = tomlkit.table()
-            whip_toolchain.add("name", toolchain_name)
-            whip_tool.add("toolchain", whip_toolchain)
+            pymcu_toolchain = tomlkit.table()
+            pymcu_toolchain.add("name", toolchain_name)
+            pymcu_tool.add("toolchain", pymcu_toolchain)
 
-            whip_programmer = tomlkit.table()
-            whip_programmer.add("name", "pickit2")
-            whip_tool.add("programmer", whip_programmer)
+            pymcu_programmer = tomlkit.table()
+            pymcu_programmer.add("name", "pickit2")
+            pymcu_tool.add("programmer", pymcu_programmer)
 
-            tool.add("pymcu", whip_tool)
+            tool.add("pymcu", pymcu_tool)
             doc.add("tool", tool)
 
             with open(project_path / "pyproject.toml", "w") as f:

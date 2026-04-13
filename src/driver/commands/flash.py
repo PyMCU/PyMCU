@@ -71,7 +71,7 @@ def flash(
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
-        whip_config = config.get("tool", {}).get("pymcu", {})
+        pymcu_config = config.get("tool", {}).get("pymcu", {})
 
         _BOARD_CHIP_MAP = {
             "arduino_uno":   "atmega328p",
@@ -79,8 +79,8 @@ def flash(
             "arduino_mega":  "atmega2560",
             "arduino_micro": "atmega32u4",
         }
-        chip = whip_config.get("chip") or _BOARD_CHIP_MAP.get(
-            str(whip_config.get("board", "")).replace("-", "_"), ""
+        chip = pymcu_config.get("chip") or _BOARD_CHIP_MAP.get(
+            str(pymcu_config.get("board", "")).replace("-", "_"), ""
         )
         if not chip:
             console.print(
@@ -88,7 +88,7 @@ def flash(
             )
             raise typer.Exit(code=1)
 
-        flash_config = whip_config.get("flash", {})
+        flash_config = pymcu_config.get("flash", {})
         programmer_name = flash_config.get("programmer") or _default_programmer(chip)
         cfg_port = flash_config.get("port")
         cfg_baud = flash_config.get("baud")

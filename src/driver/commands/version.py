@@ -38,12 +38,12 @@ console = Console()
 
 def version():
     """
-    Displays the version information for Whipsnake and its components.
+    Displays the version information for PyMCU and its components.
     """
     try:
         from importlib.metadata import version, PackageNotFoundError
     except ImportError:
-        # Fallback for older Python versions if needed, though Whipsnake targets 3.10+
+        # Fallback for older Python versions if needed, though PyMCU targets 3.10+
         console.print("[red]Error: importlib.metadata not available.[/red]")
         return
 

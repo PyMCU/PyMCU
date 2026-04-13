@@ -91,7 +91,7 @@ class Pk2cmdProgrammer(HardwareProgrammer):
         desc = self.METADATA["description"]
         name = self.get_name()
 
-        self.console.print(f"[bold cyan]Whipsnake Hardware Manager[/bold cyan]")
+        self.console.print(f"[bold cyan]PyMCU Hardware Manager[/bold cyan]")
         self.console.print(f"Programmer '{name}' ({desc}) is required but not found locally.")
         
         if not Confirm.ask(f"Do you want to download and install it automatically?", default=True):

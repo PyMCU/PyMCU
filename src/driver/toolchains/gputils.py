@@ -112,7 +112,7 @@ class GputilsToolchain(ExternalToolchain):
         name = self.get_name()
         archive_type = info.get("archive_type")
 
-        self.console.print(f"[bold cyan]Whipsnake Toolchain Manager[/bold cyan]")
+        self.console.print(f"[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
         self.console.print(f"Tool '{name}' ({desc}) is required but not found.")
         
         if not Confirm.ask(f"Do you want to download and install it automatically from [green]{url}[/green]?", default=True):

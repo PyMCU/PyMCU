@@ -6,10 +6,10 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# Whipsnake Foreign Function Interface
+# PyMCU Foreign Function Interface
 #
 # Provides the @extern decorator for declaring C functions callable from
-# Whipsnake firmware. The decorator is handled entirely by the compiler; this
+# PyMCU firmware. The decorator is handled entirely by the compiler; this
 # module exists so that IDEs and type-checkers can resolve the import without
 # errors.
 #
