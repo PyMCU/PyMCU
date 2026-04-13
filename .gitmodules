@@ -1,6 +1,6 @@
 [submodule "external/pymcu-micropython"]
 	path = external/pymcu-micropython
-	url = https://github.com/WhipCompiler/pymcu-micropython.git
+	url = https://github.com/PyMCU/pymcu-micropython.git
 [submodule "external/pymcu-circuitpython"]
 	path = external/pymcu-circuitpython
-	url = https://github.com/WhipCompiler/pymcu-circuitpython.git
+	url = https://github.com/PyMCU/pymcu-circuitpython.git
