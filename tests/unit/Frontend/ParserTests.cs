@@ -81,3 +81,131 @@ public class ParserTests
         Assert.Throws<SyntaxError>(() => Parse("def a():" + (char)10 + "    def b():" + (char)10 + "        return 1"));
     }
 }
+
+/// <summary>
+/// Tests for the PEP 328 parenthesised multi-line import syntax:
+///   from module import (
+///       SymA,
+///       SymB,
+///   )
+///
+/// The lexer suppresses newlines while parenDepth > 0, so these all collapse
+/// to the same token stream as the single-line form from the parser's perspective.
+/// </summary>
+public class ParserImportTests
+{
+    private static ProgramNode Parse(string source)
+    {
+        var lexer = new Lexer(source);
+        var tokens = lexer.Tokenize();
+        var parser = new Parser(tokens);
+        return parser.ParseProgram();
+    }
+
+    // ---- single-line baseline -----------------------------------------------
+
+    [Fact]
+    public void SingleLine_TwoSymbols_Parsed()
+    {
+        var prog = Parse("from mod import A, B\n");
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal("mod", imp.ModuleName);
+        Assert.Equal(new[] { "A", "B" }, imp.Symbols);
+    }
+
+    [Fact]
+    public void SingleLine_WithAlias_Parsed()
+    {
+        var prog = Parse("from mod import Foo as F\n");
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal("Foo", imp.Symbols[0]);
+        Assert.Equal("F", imp.Aliases["Foo"]);
+    }
+
+    // ---- parenthesised multi-line -------------------------------------------
+
+    [Fact]
+    public void Parenthesised_TwoSymbols_OnSeparateLines()
+    {
+        // from mod import (
+        //     A,
+        //     B
+        // )
+        var src = "from mod import (\n    A,\n    B\n)\n";
+        var prog = Parse(src);
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal("mod", imp.ModuleName);
+        Assert.Equal(new[] { "A", "B" }, imp.Symbols);
+    }
+
+    [Fact]
+    public void Parenthesised_ThreeSymbols_TrailingComma()
+    {
+        // from mod import (
+        //     A,
+        //     B,
+        //     C,     <- trailing comma is legal Python
+        // )
+        var src = "from mod import (\n    A,\n    B,\n    C,\n)\n";
+        var prog = Parse(src);
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal(new[] { "A", "B", "C" }, imp.Symbols);
+    }
+
+    [Fact]
+    public void Parenthesised_SingleSymbol_NoTrailingComma()
+    {
+        var src = "from mod import (\n    A\n)\n";
+        var prog = Parse(src);
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal(new[] { "A" }, imp.Symbols);
+    }
+
+    [Fact]
+    public void Parenthesised_WithAliases_Parsed()
+    {
+        // from mod import (
+        //     Foo as F,
+        //     Bar as B,
+        // )
+        var src = "from mod import (\n    Foo as F,\n    Bar as B,\n)\n";
+        var prog = Parse(src);
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal(new[] { "Foo", "Bar" }, imp.Symbols);
+        Assert.Equal("F", imp.Aliases["Foo"]);
+        Assert.Equal("B", imp.Aliases["Bar"]);
+    }
+
+    [Fact]
+    public void Parenthesised_DottedModule_Parsed()
+    {
+        // from pymcu.chips.atmega328p import (
+        //     TCCR0A, TCCR0B, OCR0A,
+        //     TCCR1A, TCCR1B,
+        //     ICR1, OCR1A,
+        // )
+        var src = "from pymcu.chips.atmega328p import (\n    TCCR0A, TCCR0B, OCR0A,\n    TCCR1A, TCCR1B,\n    ICR1, OCR1A,\n)\n";
+        var prog = Parse(src);
+        var imp = Assert.Single(prog.Imports);
+        Assert.Equal("pymcu.chips.atmega328p", imp.ModuleName);
+        Assert.Equal(new[] { "TCCR0A", "TCCR0B", "OCR0A", "TCCR1A", "TCCR1B", "ICR1", "OCR1A" }, imp.Symbols);
+    }
+
+    [Fact]
+    public void Parenthesised_FollowedByFunctionDef_BothParsed()
+    {
+        // Ensures the parser correctly resumes after the closing ')' and newline.
+        var src = "from mod import (\n    A,\n    B,\n)\ndef main():\n    pass\n";
+        var prog = Parse(src);
+        Assert.Single(prog.Imports);
+        Assert.Single(prog.Functions);
+        Assert.Equal("main", prog.Functions[0].Name);
+    }
+
+    [Fact]
+    public void Parenthesised_MissingCloseParen_ThrowsSyntaxError()
+    {
+        var src = "from mod import (\n    A,\n    B\n";
+        Assert.ThrowsAny<Exception>(() => Parse(src));
+    }
+}
