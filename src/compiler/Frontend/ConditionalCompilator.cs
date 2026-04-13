@@ -117,11 +117,21 @@ public class ConditionalCompilator
         }
     }
 
+    private static ImportStmt CloneImport(ImportStmt src)
+    {
+        var clone = new ImportStmt(src.ModuleName, new List<string>(src.Symbols), src.RelativeLevel)
+        {
+            ModuleAlias = src.ModuleAlias,
+            Aliases = new Dictionary<string, string>(src.Aliases),
+        };
+        return clone;
+    }
+
     private bool ProcessStatement(Statement stmt, ProgramNode prog, List<Statement> newStmts)
     {
         if (stmt is ImportStmt imp)
         {
-            prog.Imports.Add(new ImportStmt(imp.ModuleName, new List<string>(imp.Symbols), imp.RelativeLevel));
+            prog.Imports.Add(CloneImport(imp));
             return true; // Stripped
         }
 
@@ -148,8 +158,7 @@ public class ConditionalCompilator
                                 {
                                     if (inner is ImportStmt innerImp)
                                     {
-                                        prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                            new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
+                                        prog.Imports.Add(CloneImport(innerImp));
                                     }
                                     else
                                     {
@@ -253,8 +262,7 @@ public class ConditionalCompilator
                                 {
                                     if (inner is ImportStmt innerImp)
                                     {
-                                        prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                            new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
+                                        prog.Imports.Add(CloneImport(innerImp));
                                     }
                                     else
                                     {
@@ -277,8 +285,7 @@ public class ConditionalCompilator
                                 {
                                     if (inner is ImportStmt innerImp)
                                     {
-                                        prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                            new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
+                                        prog.Imports.Add(CloneImport(innerImp));
                                     }
                                     else
                                     {
@@ -327,8 +334,7 @@ public class ConditionalCompilator
                                 {
                                     if (inner is ImportStmt innerImp)
                                     {
-                                        prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                            new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
+                                        prog.Imports.Add(CloneImport(innerImp));
                                     }
                                     else
                                     {
