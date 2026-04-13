@@ -10,82 +10,57 @@
 	RJMP	main
 .org 0x4
 	RETI
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RJMP	adc_isr
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 adc_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -96,7 +71,7 @@ adc_isr:
 	OUT	0x2A, R24
 ; main.py:24:     GPIOR0[1] = 1
 	SBI	0x1E, 1
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -117,7 +92,7 @@ main:
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -142,7 +117,7 @@ main:
 ; main.py:32:     GPIOR0[1] = 0
 	CBI	0x1E, 1
 ; main.py:33:     GPIOR1.value = 0
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x2A, R24
 ; main.py:34:     uart.println("ADC IRQ")
 	LDI	R30, lo8(__str_0)
@@ -150,14 +125,14 @@ main:
 	CALL	__uart_send_z
 ; main.py:41:             GPIOR0[1] = 0
 ; main.py:45:             # Start next conversion
-L_46:
+L_43:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_47
+	RJMP	L_44
 L_BR_SKIP_0:
-	RJMP	L_46
-L_47:
+	RJMP	L_43
+L_44:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:37:     adc.start_conversion()
@@ -170,38 +145,39 @@ L_47:
 	ORI	R24, 64
 	STS	0x007A, R24
 ; main.py:39:     while True:
-L_50:
+L_47:
 ; main.py:40:         if GPIOR0[1] == 1:
 	SBIS	0x1E, 1
-	RJMP	L_52
+	RJMP	L_49
 ; main.py:41:             GPIOR0[1] = 0
 	CBI	0x1E, 1
+; main.py:42:             result: uint8 = GPIOR1.value
 	IN	R24, 0x2A
 	MOV	R4, R24
 ; main.py:43:             uart.write(result)
 ; main.py:41:             GPIOR0[1] = 0
 ; main.py:45:             # Start next conversion
-L_55:
+L_52:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_1
-	RJMP	L_56
+	RJMP	L_53
 L_BR_SKIP_1:
-	RJMP	L_55
-L_56:
+	RJMP	L_52
+L_53:
 	MOV	R24, R4
 	STS	0x00C6, R24
 ; main.py:44:             uart.write('\n')
 ; main.py:41:             GPIOR0[1] = 0
 ; main.py:45:             # Start next conversion
-L_59:
+L_56:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_2
-	RJMP	L_60
+	RJMP	L_57
 L_BR_SKIP_2:
-	RJMP	L_59
-L_60:
+	RJMP	L_56
+L_57:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:46:             adc.start_conversion()
@@ -213,8 +189,9 @@ L_60:
 	LDS	R24, 0x007A
 	ORI	R24, 64
 	STS	0x007A, R24
-L_52:
-	RJMP	L_50
+L_49:
+	RJMP	L_47
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -232,5 +209,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 65, 68, 67, 32, 73, 82, 81, 0
+	.byte 65, 68, 67, 32, 73, 82, 81, 0
 .balign 2
+	.balign 2

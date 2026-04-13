@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_34, _stack_base + 12
-.equ tmp_36, _stack_base + 13
+.equ tmp_36, _stack_base + 12
+.equ tmp_34, _stack_base + 13
 
 .org 0x0
 .global main
@@ -37,7 +37,7 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 0
 L_BIT_WRITE_DONE_1:
-	MOV	R10, R24
+	MOV	R9, R24
 ; main.py:50:         self._yellow = Pin(yellow_pin, Pin.OUT)
 ; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
 ; main.py:52: 
@@ -58,7 +58,7 @@ L_BR_SKIP_5:
 L_BIT_WRITE_SKIP_3:
 	CBI	0x04, 1
 L_BIT_WRITE_DONE_4:
-	MOV	R11, R24
+	MOV	R10, R24
 ; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
 ; main.py:51:         self._green  = Pin(green_pin,  Pin.OUT)
 ; main.py:52: 
@@ -79,7 +79,7 @@ L_BR_SKIP_8:
 L_BIT_WRITE_SKIP_6:
 	CBI	0x04, 2
 L_BIT_WRITE_DONE_7:
-	MOV	R9, R24
+	MOV	R11, R24
 ; main.py:80:     uart  = UART(9600)
 ; main.py:27: 
 ; main.py:31:     GREEN      = 2
@@ -92,7 +92,7 @@ L_BIT_WRITE_DONE_7:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53:     @property
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 ; main.py:68:             case State.GREEN:
 	LDI	R24, 6
@@ -103,24 +103,25 @@ L_BIT_WRITE_DONE_7:
 ; main.py:81:     timer = Timer(0, 256)
 ; main.py:48:     def __init__(self, red_pin: str, yellow_pin: str, green_pin: str):
 ; main.py:49:         self._red    = Pin(red_pin,    Pin.OUT)
-	CLR	R24
+	LDI	R24, 0
 	MOV	R12, R24
 ; main.py:52: 
 ; main.py:53:     @property
 ; main.py:63:                 self._green.lo8()
 ; main.py:11: #   1 overflow = 256 * 256 / 16_000_000 = 4.096 ms
-	CLR	R24
 	OUT	0x24, R24
 ; main.py:12: #   244 overflows = 1 second
 ; main.py:19: # FSM dispatch uses the local state variable (main owns the logical state).
 	LDI	R24, 4
 	OUT	0x25, R24
-	CLR	R24
+; main.py:83:     state: uint8  = State.RED
+	LDI	R24, 0
 	MOV	R4, R24
-	CLR	R24
-	CLR	R25
+; main.py:84:     ticks: uint16 = 0
+	LDI	R25, 0
 	MOV	R7, R24
 	MOV	R8, R25
+; main.py:85:     dur:   uint16 = DUR_RED
 	LDI	R24, 220
 	LDI	R25, 2
 	MOV	R5, R24
@@ -145,19 +146,19 @@ L_BIT_WRITE_DONE_7:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_162:
+L_158:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_163
+	RJMP	L_159
 L_BR_SKIP_9:
-	RJMP	L_162
-L_163:
+	RJMP	L_158
+L_159:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:90:     while True:
-L_164:
+L_160:
 ; main.py:91:         if timer.overflow():
 ; main.py:38: DUR_YELLOW = 244   # 1 second
 	SBIS	0x15, 0
@@ -165,13 +166,18 @@ L_164:
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_11
 L_BIT_FALSE_10:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_11:
 	MOV	R16, R24
 	MOV	R17, R24
+	RJMP	L_163
+	LDI	R24, 0
+	MOV	R17, R24
+L_163:
+	MOV	R24, R17
 	TST	R24
 	BRNE	L_BR_SKIP_12
-	RJMP	L_166
+	RJMP	L_162
 L_BR_SKIP_12:
 ; main.py:92:             TIFR0[0] = 1
 	SBI	0x15, 0
@@ -188,24 +194,24 @@ L_BR_SKIP_12:
 	CP	R24, R18
 	CPC	R25, R19
 	BRSH	L_BR_SKIP_13
-	RJMP	L_173
+	RJMP	L_169
 L_BR_SKIP_13:
 ; main.py:96:                 ticks = 0
-	CLR	R24
-	CLR	R25
+	LDI	R24, 0
+	LDI	R25, 0
 	MOV	R7, R24
 	MOV	R8, R25
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_14
-	RJMP	L_175
+	RJMP	L_171
 L_BR_SKIP_14:
 ; main.py:100:                         state = State.RED_YELLOW
 	LDI	R24, 1
 	MOV	R4, R24
 ; main.py:101:                         dur   = DUR_RY
 	LDI	R24, 244
-	CLR	R25
+	LDI	R25, 0
 	MOV	R5, R24
 	MOV	R6, R25
 ; main.py:102:                         light.state = State.RED_YELLOW
@@ -228,23 +234,23 @@ L_BR_SKIP_14:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_190:
+L_186:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_15
-	RJMP	L_191
+	RJMP	L_187
 L_BR_SKIP_15:
-	RJMP	L_190
-L_191:
+	RJMP	L_186
+L_187:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_174
-L_175:
+	RJMP	L_170
+L_171:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_16
-	RJMP	L_192
+	RJMP	L_188
 L_BR_SKIP_16:
 ; main.py:106:                         state = State.GREEN
 	LDI	R24, 2
@@ -274,30 +280,30 @@ L_BR_SKIP_16:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_207:
+L_203:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_17
-	RJMP	L_208
+	RJMP	L_204
 L_BR_SKIP_17:
-	RJMP	L_207
-L_208:
+	RJMP	L_203
+L_204:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_174
-L_192:
+	RJMP	L_170
+L_188:
 	MOV	R24, R4
 	CPI	R24, 2
 	BREQ	L_BR_SKIP_18
-	RJMP	L_209
+	RJMP	L_205
 L_BR_SKIP_18:
 ; main.py:112:                         state = State.YELLOW
 	LDI	R24, 3
 	MOV	R4, R24
 ; main.py:113:                         dur   = DUR_YELLOW
 	LDI	R24, 244
-	CLR	R25
+	LDI	R25, 0
 	MOV	R5, R24
 	MOV	R6, R25
 ; main.py:114:                         light.state = State.YELLOW
@@ -320,21 +326,21 @@ L_BR_SKIP_18:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_224:
+L_220:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_19
-	RJMP	L_225
+	RJMP	L_221
 L_BR_SKIP_19:
-	RJMP	L_224
-L_225:
+	RJMP	L_220
+L_221:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_174
-L_209:
+	RJMP	L_170
+L_205:
 ; main.py:118:                         state = State.RED
-	CLR	R24
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:119:                         dur   = DUR_RED
 	LDI	R24, 220
@@ -361,21 +367,22 @@ L_209:
 ; main.py:41: class TrafficLight:
 ; main.py:45:     The FSM state is owned by the caller -- TrafficLight only controls pins.
 ; main.py:76: 
-L_241:
+L_237:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_20
-	RJMP	L_242
+	RJMP	L_238
 L_BR_SKIP_20:
-	RJMP	L_241
-L_242:
+	RJMP	L_237
+L_238:
 ; main.py:79:     light = TrafficLight("PB0", "PB1", "PB2")
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_174:
-L_173:
-L_166:
-	RJMP	L_164
+L_170:
+L_169:
+L_162:
+	RJMP	L_160
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -392,15 +399,19 @@ __usendz_wait:
 __usendz_done:
 	RET
 
-__str_2:
-.byte 71, 82, 69, 69, 78, 0
-.balign 2
 __str_0:
-.byte 82, 69, 68, 0
+	.byte 82, 69, 68, 0
 .balign 2
+	.balign 2
 __str_1:
-.byte 82, 69, 68, 43, 89, 69, 76, 0
+	.byte 82, 69, 68, 43, 89, 69, 76, 0
 .balign 2
+	.balign 2
+__str_2:
+	.byte 71, 82, 69, 69, 78, 0
+.balign 2
+	.balign 2
 __str_3:
-.byte 89, 69, 76, 76, 79, 87, 0
+	.byte 89, 69, 76, 76, 79, 87, 0
 .balign 2
+	.balign 2

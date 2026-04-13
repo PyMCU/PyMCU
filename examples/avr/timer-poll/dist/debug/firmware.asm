@@ -37,17 +37,16 @@ L_BIT_WRITE_DONE_1:
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
 ; main.py:25:     timer = Timer(0, 256)
-	CLR	R24
+	LDI	R24, 0
 	MOV	R6, R24
 ; main.py:11: #   Serial terminal at 9600 baud: sends 'T' on each toggle
-	CLR	R24
 	OUT	0x24, R24
 ; main.py:12: #
 ; main.py:19: 
@@ -55,19 +54,20 @@ L_BIT_WRITE_DONE_1:
 	OUT	0x25, R24
 ; main.py:26:     timer.clear()
 ; main.py:34:             TIFR0[0] = 1
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x26, R24
-	CLR	R24
-	CLR	R25
+; main.py:28:     ticks: uint16 = 0
+	LDI	R25, 0
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:30:     while True:
-L_83:
+L_79:
 ; main.py:32:         if TIFR0[0] == 1:
 	SBIS	0x15, 0
-	RJMP	L_85
+	RJMP	L_81
 ; main.py:34:             TIFR0[0] = 1
 	SBI	0x15, 0
+; main.py:36:             ticks += 1
 	MOV	R24, R4
 	MOV	R25, R5
 	SUBI	R24, 255
@@ -76,15 +76,15 @@ L_83:
 	MOV	R5, R25
 ; main.py:39:             if ticks == 244:
 	LDI	R18, 244
-	CLR	R19
+	LDI	R19, 0
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_3
-	RJMP	L_86
+	RJMP	L_82
 L_BR_SKIP_3:
 ; main.py:40:                 ticks = 0
-	CLR	R24
-	CLR	R25
+	LDI	R24, 0
+	LDI	R25, 0
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:41:                 led.toggle()
@@ -93,7 +93,7 @@ L_BR_SKIP_3:
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_5
 L_BIT_FALSE_4:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_5:
 	MOV	R16, R24
 	LDI	R18, 1
@@ -110,28 +110,29 @@ L_BIT_WRITE_SKIP_6:
 L_BIT_WRITE_DONE_7:
 ; main.py:42:                 uart.write('T')
 ; main.py:41:                 led.toggle()
-L_90:
+L_86:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_91
+	RJMP	L_87
 L_BR_SKIP_9:
-	RJMP	L_90
-L_91:
+	RJMP	L_86
+L_87:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:43:                 uart.write('\n')
 ; main.py:41:                 led.toggle()
-L_94:
+L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_95
+	RJMP	L_91
 L_BR_SKIP_10:
-	RJMP	L_94
-L_95:
+	RJMP	L_90
+L_91:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_86:
-L_85:
-	RJMP	L_83
+L_82:
+L_81:
+	RJMP	L_79
+	RET

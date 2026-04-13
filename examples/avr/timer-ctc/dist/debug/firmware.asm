@@ -12,90 +12,65 @@
 	RJMP	main
 .org 0x4
 	RETI
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RJMP	timer1_compa_isr
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 timer1_compa_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:25:     GPIOR0[0] = 1
+; main.py:22:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -109,10 +84,10 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:29:     led  = Pin("PB5", Pin.OUT)
-; main.py:8: # TIMER1_COMPA vector: byte 0x0016, word 0x000B
-; main.py:20: from pymcu.hal.timer import Timer
-; main.py:32:     # Timer1: prescaler 256 (CS1[2:0]=100 -> TCCR1B bits 0-2 = 0x04)
+; main.py:26:     led  = Pin("PB5", Pin.OUT)
+; main.py:8: # No @interrupt decorator or manual TIMSK/SEI writes needed.
+; main.py:20: 
+; main.py:32: 
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -123,30 +98,28 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
-; main.py:30:     uart = UART(9600)
-; main.py:27: 
-; main.py:31: 
-; main.py:47:             uart.write('\n')
+; main.py:27:     uart = UART(9600)
+; main.py:27:     uart = UART(9600)
+; main.py:31:     t.irq(timer1_compa_isr, Timer.IRQ_COMPA)   # places ISR at TIMER1_COMPA vector
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:34:     t = Timer(1, 256)
+; main.py:29:     t = Timer(1, 256)
 	LDI	R24, 1
 	MOV	R4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x0080, R24
-	CLR	R24
 	STS	0x0081, R24
 	LDI	R24, 4
 	STS	0x0081, R24
-; main.py:35:     t.set_compare(62499)
+; main.py:30:     t.set_compare(62499)
 	LDI	R24, 35
 	LDI	R25, 244
 	STS	0x0088, R24
@@ -157,40 +130,44 @@ L_BIT_WRITE_DONE_1:
 	LDS	R24, 0x006F
 	ORI	R24, 2
 	STS	0x006F, R24
-; main.py:37:     GPIOR0[0] = 0
+; main.py:31:     t.irq(timer1_compa_isr, Timer.IRQ_COMPA)   # places ISR at TIMER1_COMPA vector
+	LDS	R24, 0x006F
+	ORI	R24, 2
+	STS	0x006F, R24
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:33:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:38:     asm("SEI")
-SEI
-; main.py:40:     uart.println("CTC")
+; main.py:35:     uart.println("CTC")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_88:
+; main.py:41:             uart.write('C')
+L_93:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_89
+	RJMP	L_94
 L_BR_SKIP_3:
-	RJMP	L_88
-L_89:
+	RJMP	L_93
+L_94:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:42:     while True:
-L_90:
-; main.py:43:         if GPIOR0[0] == 1:
+; main.py:37:     while True:
+L_95:
+; main.py:38:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_92
-; main.py:44:             GPIOR0[0] = 0
+	RJMP	L_97
+; main.py:39:             GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:45:             led.toggle()
+; main.py:40:             led.toggle()
 	SBIS	0x05, 5
 	RJMP	L_BIT_FALSE_4
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_5
 L_BIT_FALSE_4:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_5:
 	MOV	R16, R24
 	LDI	R18, 1
@@ -205,34 +182,33 @@ L_BR_SKIP_8:
 L_BIT_WRITE_SKIP_6:
 	CBI	0x05, 5
 L_BIT_WRITE_DONE_7:
-; main.py:46:             uart.write('C')
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_96:
+; main.py:41:             uart.write('C')
+; main.py:41:             uart.write('C')
+L_101:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_97
+	RJMP	L_102
 L_BR_SKIP_9:
-	RJMP	L_96
-L_97:
+	RJMP	L_101
+L_102:
 	LDI	R24, 67
 	STS	0x00C6, R24
-; main.py:47:             uart.write('\n')
-; main.py:41: 
-; main.py:45:             led.toggle()
-L_100:
+; main.py:42:             uart.write('\n')
+; main.py:41:             uart.write('C')
+L_105:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_101
+	RJMP	L_106
 L_BR_SKIP_10:
-	RJMP	L_100
-L_101:
+	RJMP	L_105
+L_106:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_92:
-	RJMP	L_90
+L_97:
+	RJMP	L_95
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -250,5 +226,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 67, 84, 67, 0
+	.byte 67, 84, 67, 0
 .balign 2
+	.balign 2

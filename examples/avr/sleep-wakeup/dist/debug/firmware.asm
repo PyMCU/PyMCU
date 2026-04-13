@@ -10,90 +10,65 @@
 	RJMP	main
 .org 0x4
 	RJMP	int0_isr
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 int0_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:17:     GPIOR0[0] = 1    # set wakeup flag
+; main.py:18:     GPIOR0[0] = 1    # set wakeup flag
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -107,24 +82,24 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:20:     uart = UART(9600)
-; main.py:27:     EICRA.value = 0x02
-; main.py:31: 
+; main.py:22:     uart = UART(9600)
+; main.py:27:     GPIOR0[0] = 0
+; main.py:31:     while count < 5:
 	SBI	0x0A, 1
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:21:     btn  = Pin("PD2", Pin.IN)
-; main.py:12: from pymcu.hal.gpio import Pin
-; main.py:24:     uart.println("SLEEP DEMO")
-; main.py:36:         if GPIOR0[0] == 1:
-	CLR	R24
+; main.py:23:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
+; main.py:12: from pymcu.hal.uart import UART
+; main.py:24: 
+; main.py:36:             count += 1
+	LDI	R24, 0
 	TST	R24
 	BRNE	L_BR_SKIP_2
 	RJMP	L_BIT_WRITE_SKIP_0
@@ -134,118 +109,114 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x0A, 2
 L_BIT_WRITE_DONE_1:
-; main.py:22:     btn.init(Pin.IN, Pin.PULL_UP)
-	CLR	R24
-	TST	R24
-	BRNE	L_BR_SKIP_5
-	RJMP	L_BIT_WRITE_SKIP_3
-L_BR_SKIP_5:
-	SBI	0x0A, 2
-	RJMP	L_BIT_WRITE_DONE_4
-L_BIT_WRITE_SKIP_3:
-	CBI	0x0A, 2
-L_BIT_WRITE_DONE_4:
 	SBI	0x0B, 2
-; main.py:24:     uart.println("SLEEP DEMO")
+; main.py:25:     uart.println("SLEEP DEMO")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41:     uart.println("DONE")
-L_75:
+; main.py:41:     while True:
+L_66:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_6
-	RJMP	L_76
-L_BR_SKIP_6:
-	RJMP	L_75
-L_76:
+	BREQ	L_BR_SKIP_3
+	RJMP	L_67
+L_BR_SKIP_3:
+	RJMP	L_66
+L_67:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:27:     EICRA.value = 0x02
-	LDI	R24, 2
-	STS	0x0069, R24
-; main.py:28:     EIMSK.value = 0x01   # enable INT0
-	LDI	R24, 1
-	OUT	0x1D, R24
-; main.py:29:     GPIOR0[0] = 0
+; main.py:27:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:30:     asm("SEI")
-SEI
-	CLR	R24
+; main.py:28:     btn.irq(Pin.IRQ_FALLING, int0_isr)   # configures INT0 + enables SEI
+	LDS	R24, 0x0069
+	ANDI	R24, 254
+	STS	0x0069, R24
+	LDS	R24, 0x0069
+	ORI	R24, 2
+	STS	0x0069, R24
+	SBI	0x1D, 0
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:30:     count: uint8 = 0
+	LDI	R24, 0
 	MOV	R4, R24
-; main.py:33:     while count < 5:
-L_77:
+; main.py:31:     while count < 5:
+L_74:
 	MOV	R24, R4
 	CPI	R24, 5
-	BRLO	L_BR_SKIP_7
-	RJMP	L_78
-L_BR_SKIP_7:
-; main.py:34:         uart.println("SLEEP")
+	BRLO	L_BR_SKIP_4
+	RJMP	L_75
+L_BR_SKIP_4:
+; main.py:32:         uart.println("SLEEP")
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-; main.py:41:     uart.println("DONE")
-L_84:
+; main.py:41:     while True:
+L_81:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_8
-	RJMP	L_85
-L_BR_SKIP_8:
-	RJMP	L_84
-L_85:
+	BREQ	L_BR_SKIP_5
+	RJMP	L_82
+L_BR_SKIP_5:
+	RJMP	L_81
+L_82:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:35:         sleep_idle()
-; main.py:33:     while count < 5:
+; main.py:33:         sleep_idle()
+; main.py:33:         sleep_idle()
 	LDI	R24, 1
 	OUT	0x33, R24
-; main.py:34:         uart.println("SLEEP")
+; main.py:34:         if GPIOR0[0] == 1:
 sleep
-; main.py:35:         sleep_idle()
-	CLR	R24
+; main.py:35:             GPIOR0[0] = 0
+	LDI	R24, 0
 	OUT	0x33, R24
-; main.py:36:         if GPIOR0[0] == 1:
+; main.py:34:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_87
-; main.py:37:             GPIOR0[0] = 0
+	RJMP	L_84
+; main.py:35:             GPIOR0[0] = 0
 	CBI	0x1E, 0
+; main.py:36:             count += 1
 	INC	R4
-; main.py:39:             uart.println("WAKE")
+	MOV	R24, R4
+; main.py:37:             uart.println("WAKE")
 	LDI	R30, lo8(__str_2)
 	LDI	R31, hi8(__str_2)
 	CALL	__uart_send_z
-; main.py:41:     uart.println("DONE")
-L_93:
+; main.py:41:     while True:
+L_90:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
-	RJMP	L_94
-L_BR_SKIP_9:
-	RJMP	L_93
-L_94:
+	BREQ	L_BR_SKIP_6
+	RJMP	L_91
+L_BR_SKIP_6:
+	RJMP	L_90
+L_91:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_87:
-	RJMP	L_77
-L_78:
-; main.py:41:     uart.println("DONE")
+L_84:
+	RJMP	L_74
+L_75:
+; main.py:39:     uart.println("DONE")
 	LDI	R30, lo8(__str_3)
 	LDI	R31, hi8(__str_3)
 	CALL	__uart_send_z
-; main.py:41:     uart.println("DONE")
-L_100:
+; main.py:41:     while True:
+L_97:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_10
-	RJMP	L_101
-L_BR_SKIP_10:
-	RJMP	L_100
-L_101:
+	BREQ	L_BR_SKIP_7
+	RJMP	L_98
+L_BR_SKIP_7:
+	RJMP	L_97
+L_98:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:43:     while True:
-L_102:
-	RJMP	L_102
+; main.py:41:     while True:
+L_99:
+	RJMP	L_99
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -262,15 +233,19 @@ __usendz_wait:
 __usendz_done:
 	RET
 
-__str_3:
-.byte 68, 79, 78, 69, 0
-.balign 2
-__str_1:
-.byte 83, 76, 69, 69, 80, 0
-.balign 2
 __str_0:
-.byte 83, 76, 69, 69, 80, 32, 68, 69, 77, 79, 0
+	.byte 83, 76, 69, 69, 80, 32, 68, 69, 77, 79, 0
 .balign 2
+	.balign 2
+__str_1:
+	.byte 83, 76, 69, 69, 80, 0
+.balign 2
+	.balign 2
 __str_2:
-.byte 87, 65, 75, 69, 0
+	.byte 87, 65, 75, 69, 0
 .balign 2
+	.balign 2
+__str_3:
+	.byte 68, 79, 78, 69, 0
+.balign 2
+	.balign 2

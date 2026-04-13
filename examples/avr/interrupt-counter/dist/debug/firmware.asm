@@ -4,98 +4,73 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_25, _stack_base + 4
-.equ tmp_26, _stack_base + 5
+.equ tmp_30, _stack_base + 4
+.equ tmp_31, _stack_base + 5
 
 .org 0x0
 .global main
 	RJMP	main
 .org 0x4
 	RJMP	int0_isr
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 int0_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
 	IN	R16, 0x3F
 	PUSH	R16
-; main.py:26:     GPIOR0[0] = 1
+; main.py:21:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -109,10 +84,10 @@ main:
 	OUT	0x3D, R16
 	LDI	R28, lo8(_stack_base)
 	LDI	R29, hi8(_stack_base)
-; main.py:30:     led  = Pin("PB5", Pin.OUT)
-; main.py:8: #   - Serial terminal at 9600 baud — receives count byte on each press
-; main.py:20: from pymcu.types import asm
-; main.py:32: 
+; main.py:25:     led  = Pin("PB5", Pin.OUT)
+; main.py:8: # Hardware: Arduino Uno
+; main.py:20:     # Minimal ISR: set event flag with SBI (atomic, no registers corrupted)
+; main.py:32:     count: uint8 = 0
 	LDI	R24, 1
 	TST	R24
 	BRNE	L_BR_SKIP_2
@@ -123,93 +98,109 @@ L_BR_SKIP_2:
 L_BIT_WRITE_SKIP_0:
 	CBI	0x04, 5
 L_BIT_WRITE_DONE_1:
-; main.py:31:     uart = UART(9600)
-; main.py:27: 
-; main.py:31:     uart = UART(9600)
-; main.py:47:             led.toggle()
+; main.py:26:     btn  = Pin("PD2", Pin.IN, pull=Pin.PULL_UP)
+; main.py:12: #
+; main.py:24: def main():
+; main.py:36:         if GPIOR0[0] == 1:           # SBIS 0x1E, 0
+	LDI	R24, 0
+	TST	R24
+	BRNE	L_BR_SKIP_5
+	RJMP	L_BIT_WRITE_SKIP_3
+L_BR_SKIP_5:
+	SBI	0x0A, 2
+	RJMP	L_BIT_WRITE_DONE_4
+L_BIT_WRITE_SKIP_3:
+	CBI	0x0A, 2
+L_BIT_WRITE_DONE_4:
+	SBI	0x0B, 2
+; main.py:27:     uart = UART(9600)
+; main.py:27:     uart = UART(9600)
+; main.py:31: 
 	SBI	0x0A, 1
-; main.py:48:             uart.write(count)        # Send raw count byte over UART
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
 	LDI	R24, 24
 	STS	0x00C1, R24
-; main.py:34:     EICRA.value = 0x02   # ISC01=1, ISC00=0  (bits 1:0 of EICRA)
-	LDI	R24, 2
-	STS	0x0069, R24
-; main.py:35:     EIMSK.value = 0x01   # INT0EN=1 (bit 0 of EIMSK)
-	LDI	R24, 1
-	OUT	0x1D, R24
-; main.py:36:     GPIOR0[0] = 0         # Clear flag before enabling interrupts
+; main.py:29:     GPIOR0[0] = 0
 	CBI	0x1E, 0
-; main.py:38:     asm("SEI")            # Enable global interrupts (I-flag in SREG)
-SEI
-	CLR	R24
+; main.py:30:     btn.irq(Pin.IRQ_FALLING, int0_isr)   # configures INT0 + enables SEI
+	LDS	R24, 0x0069
+	ANDI	R24, 254
+	STS	0x0069, R24
+	LDS	R24, 0x0069
+	ORI	R24, 2
+	STS	0x0069, R24
+	SBI	0x1D, 0
+	IN	R24, 0x3F
+	ORI	R24, 128
+	OUT	0x3F, R24
+; main.py:32:     count: uint8 = 0
+	LDI	R24, 0
 	MOV	R4, R24
-; main.py:41:     uart.println("INT COUNTER")
+; main.py:33:     uart.println("INT COUNTER")
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-; main.py:41:     uart.println("INT COUNTER")
-; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
-L_68:
+L_107:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_3
-	RJMP	L_69
-L_BR_SKIP_3:
-	RJMP	L_68
-L_69:
+	BREQ	L_BR_SKIP_6
+	RJMP	L_108
+L_BR_SKIP_6:
+	RJMP	L_107
+L_108:
 	LDI	R24, 10
 	STS	0x00C6, R24
-; main.py:43:     while True:
-L_70:
-; main.py:44:         if GPIOR0[0] == 1:           # Check event flag (SBIS 0x1E, 0)
+; main.py:35:     while True:
+L_109:
+; main.py:36:         if GPIOR0[0] == 1:           # SBIS 0x1E, 0
 	SBIS	0x1E, 0
-	RJMP	L_72
-; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
+	RJMP	L_111
+; main.py:37:             GPIOR0[0] = 0            # CBI 0x1E, 0
 	CBI	0x1E, 0
+; main.py:38:             count += 1
 	INC	R4
-; main.py:47:             led.toggle()
+	MOV	R24, R4
+; main.py:39:             led.toggle()
 	SBIS	0x05, 5
-	RJMP	L_BIT_FALSE_4
+	RJMP	L_BIT_FALSE_7
 	LDI	R24, 1
-	RJMP	L_BIT_DONE_5
-L_BIT_FALSE_4:
-	CLR	R24
-L_BIT_DONE_5:
+	RJMP	L_BIT_DONE_8
+L_BIT_FALSE_7:
+	LDI	R24, 0
+L_BIT_DONE_8:
 	MOV	R16, R24
 	LDI	R18, 1
 	EOR	R24, R18
 	MOV	R17, R24
 	TST	R24
-	BRNE	L_BR_SKIP_8
-	RJMP	L_BIT_WRITE_SKIP_6
-L_BR_SKIP_8:
+	BRNE	L_BR_SKIP_11
+	RJMP	L_BIT_WRITE_SKIP_9
+L_BR_SKIP_11:
 	SBI	0x05, 5
-	RJMP	L_BIT_WRITE_DONE_7
-L_BIT_WRITE_SKIP_6:
+	RJMP	L_BIT_WRITE_DONE_10
+L_BIT_WRITE_SKIP_9:
 	CBI	0x05, 5
-L_BIT_WRITE_DONE_7:
-; main.py:48:             uart.write(count)        # Send raw count byte over UART
-; main.py:41:     uart.println("INT COUNTER")
-; main.py:45:             GPIOR0[0] = 0            # Clear flag (CBI 0x1E, 0)
-L_76:
+L_BIT_WRITE_DONE_10:
+; main.py:40:             uart.write(count)        # send raw count byte over UART
+L_115:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
-	BREQ	L_BR_SKIP_9
-	RJMP	L_77
-L_BR_SKIP_9:
-	RJMP	L_76
-L_77:
+	BREQ	L_BR_SKIP_12
+	RJMP	L_116
+L_BR_SKIP_12:
+	RJMP	L_115
+L_116:
 	MOV	R24, R4
 	STS	0x00C6, R24
-L_72:
-	RJMP	L_70
+L_111:
+	RJMP	L_109
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -227,5 +218,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 73, 78, 84, 32, 67, 79, 85, 78, 84, 69, 82, 0
+	.byte 73, 78, 84, 32, 67, 79, 85, 78, 84, 69, 82, 0
 .balign 2
+	.balign 2

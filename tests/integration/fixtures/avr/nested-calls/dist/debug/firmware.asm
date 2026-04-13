@@ -4,14 +4,14 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
+.equ tmp_27, _stack_base + 4
+.equ tmp_28, _stack_base + 5
+.equ tmp_30, _stack_base + 8
 .equ tmp_18, _stack_base + 23
 .equ tmp_19, _stack_base + 24
-.equ tmp_20, _stack_base + 19
-.equ tmp_21, _stack_base + 20
-.equ tmp_23, _stack_base + 21
-.equ tmp_27, _stack_base + 10
-.equ tmp_28, _stack_base + 11
-.equ tmp_30, _stack_base + 12
+.equ tmp_20, _stack_base + 15
+.equ tmp_21, _stack_base + 16
+.equ tmp_23, _stack_base + 19
 
 .org 0x0
 .global main
@@ -28,15 +28,19 @@ L_BR_SKIP_0:
 	SUBI	R24, 208
 	MOV	R16, R24
 	RET
+	RJMP	L_21
 L_22:
 ; main.py:38:         return n + 55        # 'A'-'F' = 65-70
 	MOV	R24, R5
 	SUBI	R24, 201
 	MOV	R16, R24
 	RET
+L_21:
+	RET
 encode_byte:
 	MOV	R13, R24
 	MOV	R6, R22
+; main.py:44:     hi: uint8 = nibble_to_hex((b >> 4) & 0x0F)
 	MOV	R24, R6
 	LSR	R24
 	LSR	R24
@@ -47,17 +51,19 @@ encode_byte:
 	MOV	R17, R24
 	MOV	R5, R24
 	CALL	nibble_to_hex
-	MOV	R8, R24
+	MOV	R7, R24
+; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
 	MOV	R24, R6
 	ANDI	R24, 15
 	MOV	R16, R24
 	MOV	R5, R24
 	CALL	nibble_to_hex
-	MOV	R9, R24
-	MOV	R24, R8
-	MOV	R18, R9
+	MOV	R8, R24
+; main.py:46:     chk: uint8 = hi ^ lo
+	MOV	R24, R7
+	MOV	R18, R8
 	EOR	R24, R18
-	MOV	R7, R24
+	MOV	R9, R24
 ; main.py:47:     return chk
 	RET
 main:
@@ -79,7 +85,7 @@ main:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53: 
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -91,20 +97,22 @@ main:
 	CALL	__uart_send_z
 ; main.py:41: # Encode one byte as two hex chars sent via UART.
 ; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
-L_35:
+L_32:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_1
-	RJMP	L_36
+	RJMP	L_33
 L_BR_SKIP_1:
-	RJMP	L_35
-L_36:
+	RJMP	L_32
+L_33:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	CLR	R24
+; main.py:54:     val: uint8 = 0
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:55:     while True:
-L_37:
+L_34:
+; main.py:56:         hi: uint8 = nibble_to_hex((val >> 4) & 0x0F)
 	MOV	R24, R4
 	LSR	R24
 	LSR	R24
@@ -115,73 +123,78 @@ L_37:
 	MOV	R17, R24
 	MOV	R5, R24
 	CALL	nibble_to_hex
-	MOV	R11, R24
+	MOV	R10, R24
+; main.py:57:         lo: uint8 = nibble_to_hex(val & 0x0F)
 	MOV	R24, R4
 	ANDI	R24, 15
 	MOV	R16, R24
 	MOV	R5, R24
 	CALL	nibble_to_hex
-	MOV	R12, R24
+	MOV	R11, R24
+; main.py:58:         chk: uint8 = encode_byte(val, val)   # also tests 2-arg call
 	MOV	R24, R4
 	MOV	R13, R24
 	MOV	R6, R24
 	MOV	R22, R4
 	CALL	encode_byte
-	MOV	R10, R24
+	MOV	R12, R24
 ; main.py:59:         uart.write(hi)
 ; main.py:41: # Encode one byte as two hex chars sent via UART.
 ; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
-L_41:
+L_38:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_2
-	RJMP	L_42
+	RJMP	L_39
 L_BR_SKIP_2:
-	RJMP	L_41
-L_42:
-	MOV	R24, R11
+	RJMP	L_38
+L_39:
+	MOV	R24, R10
 	STS	0x00C6, R24
 ; main.py:60:         uart.write(lo)
 ; main.py:41: # Encode one byte as two hex chars sent via UART.
 ; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
-L_45:
+L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_46
+	RJMP	L_43
 L_BR_SKIP_3:
-	RJMP	L_45
-L_46:
-	MOV	R24, R12
+	RJMP	L_42
+L_43:
+	MOV	R24, R11
 	STS	0x00C6, R24
 ; main.py:61:         uart.write(chk)    # send checksum byte (hi ^ lo)
 ; main.py:41: # Encode one byte as two hex chars sent via UART.
 ; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
-L_49:
+L_46:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_50
+	RJMP	L_47
 L_BR_SKIP_4:
-	RJMP	L_49
-L_50:
-	MOV	R24, R10
+	RJMP	L_46
+L_47:
+	MOV	R24, R12
 	STS	0x00C6, R24
 ; main.py:62:         uart.write('\n')
 ; main.py:41: # Encode one byte as two hex chars sent via UART.
 ; main.py:45:     lo: uint8 = nibble_to_hex(b & 0x0F)
-L_53:
+L_50:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
-	RJMP	L_54
+	RJMP	L_51
 L_BR_SKIP_5:
-	RJMP	L_53
-L_54:
+	RJMP	L_50
+L_51:
 	LDI	R24, 10
 	STS	0x00C6, R24
+; main.py:63:         val += 1
 	INC	R4
-	RJMP	L_37
+	MOV	R24, R4
+	RJMP	L_34
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -199,5 +212,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 72, 69, 88, 32, 69, 78, 67, 79, 68, 69, 0
+	.byte 72, 69, 88, 32, 69, 78, 67, 79, 68, 69, 0
 .balign 2
+	.balign 2

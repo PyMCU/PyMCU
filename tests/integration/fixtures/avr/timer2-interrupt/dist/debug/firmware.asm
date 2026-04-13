@@ -12,82 +12,57 @@
 	RJMP	main
 .org 0x4
 	RETI
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RJMP	timer2_ovf_isr
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 timer2_ovf_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -95,7 +70,7 @@ timer2_ovf_isr:
 	PUSH	R16
 ; main.py:26:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -138,7 +113,7 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53:                 uart.write('2')
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -160,34 +135,36 @@ SEI
 	CALL	__uart_send_z
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_68:
+L_65:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_69
+	RJMP	L_66
 L_BR_SKIP_3:
-	RJMP	L_68
-L_69:
+	RJMP	L_65
+L_66:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	CLR	R24
+; main.py:43:     ovf_count: uint8 = 0
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:45:     while True:
-L_70:
+L_67:
 ; main.py:46:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_72
+	RJMP	L_69
 ; main.py:47:             GPIOR0[0] = 0
 	CBI	0x1E, 0
+; main.py:48:             ovf_count += 1
 	INC	R4
 	MOV	R24, R4
 ; main.py:49:             if ovf_count == 61:
 	CPI	R24, 61
 	BREQ	L_BR_SKIP_4
-	RJMP	L_73
+	RJMP	L_70
 L_BR_SKIP_4:
 ; main.py:50:                 ovf_count = 0
-	CLR	R24
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:51:                 led.toggle()
 	SBIS	0x05, 5
@@ -195,7 +172,7 @@ L_BR_SKIP_4:
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_6
 L_BIT_FALSE_5:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_6:
 	MOV	R16, R24
 	LDI	R18, 1
@@ -213,45 +190,46 @@ L_BIT_WRITE_DONE_8:
 ; main.py:52:                 uart.write('T')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_77:
+L_74:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_78
+	RJMP	L_75
 L_BR_SKIP_10:
-	RJMP	L_77
-L_78:
+	RJMP	L_74
+L_75:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:53:                 uart.write('2')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_81:
+L_78:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_11
-	RJMP	L_82
+	RJMP	L_79
 L_BR_SKIP_11:
-	RJMP	L_81
-L_82:
+	RJMP	L_78
+L_79:
 	LDI	R24, 50
 	STS	0x00C6, R24
 ; main.py:54:                 uart.write('\n')
 ; main.py:41:     uart.println("TIMER2 IRQ BLINK")
 ; main.py:45:     while True:
-L_85:
+L_82:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_12
-	RJMP	L_86
+	RJMP	L_83
 L_BR_SKIP_12:
-	RJMP	L_85
-L_86:
+	RJMP	L_82
+L_83:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_73:
-L_72:
-	RJMP	L_70
+L_70:
+L_69:
+	RJMP	L_67
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -269,5 +247,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 84, 73, 77, 69, 82, 50, 32, 73, 82, 81, 32, 66, 76, 73, 78, 75, 0
+	.byte 84, 73, 77, 69, 82, 50, 32, 73, 82, 81, 32, 66, 76, 73, 78, 75, 0
 .balign 2
+	.balign 2

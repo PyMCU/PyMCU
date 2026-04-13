@@ -4,7 +4,7 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_21, _stack_base + 10
+.equ tmp_21, _stack_base + 8
 .equ tmp_23, _stack_base + 11
 .equ tmp_24, _stack_base + 12
 .equ tmp_26, _stack_base + 13
@@ -19,6 +19,7 @@
 set_bit:
 	MOV	R6, R24
 	MOV	R5, R22
+; main.py:34:     mask: uint8 = 1 << col
 	LDI	R24, 1
 	MOV	R18, R5
 L_SHIFT_START_0:
@@ -31,6 +32,7 @@ L_BR_SKIP_2:
 	RJMP	L_SHIFT_START_0
 L_SHIFT_DONE_1:
 	MOV	R11, R24
+; main.py:35:     result: uint8 = val | mask
 	MOV	R24, R6
 	MOV	R18, R11
 	OR	R24, R18
@@ -56,7 +58,7 @@ main:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53:         frame[2] = 0
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 ; main.py:68: 
 	LDI	R24, 6
@@ -71,50 +73,44 @@ main:
 	CALL	__uart_send_z
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_33:
+L_30:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_34
+	RJMP	L_31
 L_BR_SKIP_3:
-	RJMP	L_33
-L_34:
+	RJMP	L_30
+L_31:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-	CLR	R24
+	LDI	R24, 0
 	MOV	R7, R24
-	CLR	R24
 	MOV	R8, R24
-	CLR	R24
 	MOV	R9, R24
-	CLR	R24
 	MOV	R10, R24
-	CLR	R24
+; main.py:47:     col: uint8 = 0      # current diagonal offset (0-7)
 	MOV	R4, R24
 ; main.py:49:     while True:
-L_35:
+L_32:
 ; main.py:51:         frame[0] = 0
-	CLR	R24
+	LDI	R24, 0
 	MOV	R7, R24
 ; main.py:52:         frame[1] = 0
-	CLR	R24
 	MOV	R8, R24
 ; main.py:53:         frame[2] = 0
-	CLR	R24
 	MOV	R9, R24
 ; main.py:54:         frame[3] = 0
-	CLR	R24
 	MOV	R10, R24
 ; main.py:57:         frame[0] = set_bit(frame[0], col & 0x07)
 	MOV	R24, R4
 	ANDI	R24, 7
 	MOV	R16, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R6, R24
 	MOV	R24, R16
 	MOV	R5, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R22, R16
 	CALL	set_bit
 	MOV	R7, R24
@@ -124,11 +120,11 @@ L_35:
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R6, R24
 	MOV	R24, R17
 	MOV	R5, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R22, R17
 	CALL	set_bit
 	MOV	R8, R24
@@ -138,11 +134,11 @@ L_35:
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R6, R24
 	MOV	R24, R17
 	MOV	R5, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R22, R17
 	CALL	set_bit
 	MOV	R9, R24
@@ -152,77 +148,77 @@ L_35:
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R17, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R6, R24
 	MOV	R24, R17
 	MOV	R5, R24
-	CLR	R24
+	LDI	R24, 0
 	MOV	R22, R17
 	CALL	set_bit
 	MOV	R10, R24
 ; main.py:63:         uart.write(frame[0])
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_39:
+L_36:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_40
+	RJMP	L_37
 L_BR_SKIP_4:
-	RJMP	L_39
-L_40:
+	RJMP	L_36
+L_37:
 	MOV	R24, R7
 	STS	0x00C6, R24
 ; main.py:64:         uart.write(frame[1])
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_43:
+L_40:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
-	RJMP	L_44
+	RJMP	L_41
 L_BR_SKIP_5:
-	RJMP	L_43
-L_44:
+	RJMP	L_40
+L_41:
 	MOV	R24, R8
 	STS	0x00C6, R24
 ; main.py:65:         uart.write(frame[2])
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_47:
+L_44:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_48
+	RJMP	L_45
 L_BR_SKIP_6:
-	RJMP	L_47
-L_48:
+	RJMP	L_44
+L_45:
 	MOV	R24, R9
 	STS	0x00C6, R24
 ; main.py:66:         uart.write(frame[3])
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_51:
+L_48:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_52
+	RJMP	L_49
 L_BR_SKIP_7:
-	RJMP	L_51
-L_52:
+	RJMP	L_48
+L_49:
 	MOV	R24, R10
 	STS	0x00C6, R24
 ; main.py:67:         uart.write('\n')        # frame separator
 ; main.py:41:     uart.println("MATRIX")
 ; main.py:45:     frame: uint8[4] = [0, 0, 0, 0]
-L_55:
+L_52:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_56
+	RJMP	L_53
 L_BR_SKIP_8:
-	RJMP	L_55
-L_56:
+	RJMP	L_52
+L_53:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:70:         col = (col + 1) & 0x07
@@ -231,7 +227,8 @@ L_56:
 	MOV	R16, R24
 	ANDI	R24, 7
 	MOV	R4, R24
-	RJMP	L_35
+	RJMP	L_32
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -249,5 +246,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 77, 65, 84, 82, 73, 88, 0
+	.byte 77, 65, 84, 82, 73, 88, 0
 .balign 2
+	.balign 2

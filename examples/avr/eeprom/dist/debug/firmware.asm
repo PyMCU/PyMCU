@@ -4,10 +4,10 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_31, _stack_base + 7
-.equ tmp_36, _stack_base + 8
-.equ tmp_41, _stack_base + 9
-.equ tmp_46, _stack_base + 10
+.equ tmp_31, _stack_base + 3
+.equ tmp_36, _stack_base + 5
+.equ tmp_41, _stack_base + 7
+.equ tmp_46, _stack_base + 9
 
 .org 0x0
 .global main
@@ -25,7 +25,7 @@ main:
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -37,28 +37,27 @@ main:
 	LDI	R30, lo8(__str_0)
 	LDI	R31, hi8(__str_0)
 	CALL	__uart_send_z
-L_34:
+L_31:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_35
+	RJMP	L_32
 L_BR_SKIP_0:
-	RJMP	L_34
-L_35:
+	RJMP	L_31
+L_32:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:18:     ee.write(0, 0xA1)
 ; main.py:14: 
-L_38:
+L_35:
 	SBIS	0x1F, 1
-	RJMP	L_39
-	RJMP	L_38
-L_39:
+	RJMP	L_36
+	RJMP	L_35
+L_36:
 ; main.py:17:     # Write pattern
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x21, R24
 ; main.py:18:     ee.write(0, 0xA1)
-	CLR	R24
 	OUT	0x22, R24
 ; main.py:20:     ee.write(2, 0xC3)
 	LDI	R24, 161
@@ -71,16 +70,16 @@ out 0x1f, r16
 sbi 0x1f, 1
 ; main.py:19:     ee.write(1, 0xB2)
 ; main.py:14: 
-L_42:
+L_39:
 	SBIS	0x1F, 1
-	RJMP	L_43
-	RJMP	L_42
-L_43:
+	RJMP	L_40
+	RJMP	L_39
+L_40:
 ; main.py:17:     # Write pattern
 	LDI	R24, 1
 	OUT	0x21, R24
 ; main.py:18:     ee.write(0, 0xA1)
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 ; main.py:20:     ee.write(2, 0xC3)
 	LDI	R24, 178
@@ -93,16 +92,16 @@ out 0x1f, r16
 sbi 0x1f, 1
 ; main.py:20:     ee.write(2, 0xC3)
 ; main.py:14: 
-L_46:
+L_43:
 	SBIS	0x1F, 1
-	RJMP	L_47
-	RJMP	L_46
-L_47:
+	RJMP	L_44
+	RJMP	L_43
+L_44:
 ; main.py:17:     # Write pattern
 	LDI	R24, 2
 	OUT	0x21, R24
 ; main.py:18:     ee.write(0, 0xA1)
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 ; main.py:20:     ee.write(2, 0xC3)
 	LDI	R24, 195
@@ -115,16 +114,16 @@ out 0x1f, r16
 sbi 0x1f, 1
 ; main.py:21:     ee.write(3, 0xD4)
 ; main.py:14: 
-L_50:
+L_47:
 	SBIS	0x1F, 1
-	RJMP	L_51
-	RJMP	L_50
-L_51:
+	RJMP	L_48
+	RJMP	L_47
+L_48:
 ; main.py:17:     # Write pattern
 	LDI	R24, 3
 	OUT	0x21, R24
 ; main.py:18:     ee.write(0, 0xA1)
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 ; main.py:20:     ee.write(2, 0xC3)
 	LDI	R24, 212
@@ -135,125 +134,149 @@ ldi r16, 0x04
 out 0x1f, r16
 ; main.py:26:     c: uint8 = ee.read(2)
 sbi 0x1f, 1
+; main.py:24:     a: uint8 = ee.read(0)
 ; main.py:31:     else:
-L_54:
+L_51:
 	SBIS	0x1F, 1
-	RJMP	L_55
-	RJMP	L_54
-L_55:
+	RJMP	L_52
+	RJMP	L_51
+L_52:
 ; main.py:34:     while True:
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x21, R24
 ; main.py:35:         pass
-	CLR	R24
 	OUT	0x22, R24
 	SBI	0x1F, 0
 	IN	R24, 0x20
 	MOV	R16, R24
+	RJMP	L_49
+	LDI	R24, 0
+	MOV	R16, R24
+L_49:
+	MOV	R24, R16
 	MOV	R4, R24
+; main.py:25:     b: uint8 = ee.read(1)
 ; main.py:31:     else:
-L_58:
+L_55:
 	SBIS	0x1F, 1
-	RJMP	L_59
-	RJMP	L_58
-L_59:
+	RJMP	L_56
+	RJMP	L_55
+L_56:
 ; main.py:34:     while True:
 	LDI	R24, 1
 	OUT	0x21, R24
 ; main.py:35:         pass
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 	SBI	0x1F, 0
 	IN	R24, 0x20
 	MOV	R16, R24
+	RJMP	L_53
+	LDI	R24, 0
+	MOV	R16, R24
+L_53:
+	MOV	R24, R16
 	MOV	R5, R24
+; main.py:26:     c: uint8 = ee.read(2)
 ; main.py:31:     else:
-L_62:
+L_59:
 	SBIS	0x1F, 1
-	RJMP	L_63
-	RJMP	L_62
-L_63:
+	RJMP	L_60
+	RJMP	L_59
+L_60:
 ; main.py:34:     while True:
 	LDI	R24, 2
 	OUT	0x21, R24
 ; main.py:35:         pass
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 	SBI	0x1F, 0
 	IN	R24, 0x20
 	MOV	R16, R24
+	RJMP	L_57
+	LDI	R24, 0
+	MOV	R16, R24
+L_57:
+	MOV	R24, R16
 	MOV	R6, R24
+; main.py:27:     d: uint8 = ee.read(3)
 ; main.py:31:     else:
-L_66:
+L_63:
 	SBIS	0x1F, 1
-	RJMP	L_67
-	RJMP	L_66
-L_67:
+	RJMP	L_64
+	RJMP	L_63
+L_64:
 ; main.py:34:     while True:
 	LDI	R24, 3
 	OUT	0x21, R24
 ; main.py:35:         pass
-	CLR	R24
+	LDI	R24, 0
 	OUT	0x22, R24
 	SBI	0x1F, 0
 	IN	R24, 0x20
 	MOV	R16, R24
+	RJMP	L_61
+	LDI	R24, 0
+	MOV	R16, R24
+L_61:
+	MOV	R24, R16
 	MOV	R7, R24
 ; main.py:29:     if a == 0xA1 and b == 0xB2 and c == 0xC3 and d == 0xD4:
 	MOV	R24, R4
 	CPI	R24, 161
 	BREQ	L_BR_SKIP_1
-	RJMP	L_69
+	RJMP	L_66
 L_BR_SKIP_1:
 	MOV	R24, R5
 	CPI	R24, 178
 	BREQ	L_BR_SKIP_2
-	RJMP	L_69
+	RJMP	L_66
 L_BR_SKIP_2:
 	MOV	R24, R6
 	CPI	R24, 195
 	BREQ	L_BR_SKIP_3
-	RJMP	L_69
+	RJMP	L_66
 L_BR_SKIP_3:
 	MOV	R24, R7
 	CPI	R24, 212
 	BREQ	L_BR_SKIP_4
-	RJMP	L_69
+	RJMP	L_66
 L_BR_SKIP_4:
 ; main.py:30:         uart.println("EEPROM OK")
 	LDI	R30, lo8(__str_1)
 	LDI	R31, hi8(__str_1)
 	CALL	__uart_send_z
-L_75:
+L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_5
-	RJMP	L_76
+	RJMP	L_73
 L_BR_SKIP_5:
-	RJMP	L_75
-L_76:
+	RJMP	L_72
+L_73:
 	LDI	R24, 10
 	STS	0x00C6, R24
-	RJMP	L_68
-L_69:
+	RJMP	L_65
+L_66:
 ; main.py:32:         uart.println("EEPROM FAIL")
 	LDI	R30, lo8(__str_2)
 	LDI	R31, hi8(__str_2)
 	CALL	__uart_send_z
-L_82:
+L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_83
+	RJMP	L_80
 L_BR_SKIP_6:
-	RJMP	L_82
-L_83:
+	RJMP	L_79
+L_80:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_68:
+L_65:
 ; main.py:34:     while True:
-L_84:
-	RJMP	L_84
+L_81:
+	RJMP	L_81
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -270,12 +293,15 @@ __usendz_wait:
 __usendz_done:
 	RET
 
-__str_2:
-.byte 69, 69, 80, 82, 79, 77, 32, 70, 65, 73, 76, 0
-.balign 2
-__str_1:
-.byte 69, 69, 80, 82, 79, 77, 32, 79, 75, 0
-.balign 2
 __str_0:
-.byte 69, 69, 80, 82, 79, 77, 32, 84, 69, 83, 84, 0
+	.byte 69, 69, 80, 82, 79, 77, 32, 84, 69, 83, 84, 0
 .balign 2
+	.balign 2
+__str_1:
+	.byte 69, 69, 80, 82, 79, 77, 32, 79, 75, 0
+.balign 2
+	.balign 2
+__str_2:
+	.byte 69, 69, 80, 82, 79, 77, 32, 70, 65, 73, 76, 0
+.balign 2
+	.balign 2

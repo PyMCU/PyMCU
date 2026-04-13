@@ -10,82 +10,57 @@
 	RJMP	main
 .org 0x4
 	RJMP	on_press
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 on_press:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -93,7 +68,7 @@ on_press:
 	PUSH	R16
 ; main.py:26:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -111,7 +86,7 @@ main:
 ; main.py:12: #   UART TX at 9600 baud
 ; main.py:24: def on_press():
 ; main.py:36:     # compile_isr() inside pin_irq_setup automatically places on_press at
-	CLR	R24
+	LDI	R24, 0
 	TST	R24
 	BRNE	L_BR_SKIP_2
 	RJMP	L_BIT_WRITE_SKIP_0
@@ -130,7 +105,7 @@ L_BIT_WRITE_DONE_1:
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -149,7 +124,8 @@ L_BIT_WRITE_DONE_1:
 	IN	R24, 0x3F
 	ORI	R24, 128
 	OUT	0x3F, R24
-	CLR	R24
+; main.py:40:     count: uint8 = 0
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:41:     uart.println("PIN IRQ")
 	LDI	R30, lo8(__str_0)
@@ -157,40 +133,42 @@ L_BIT_WRITE_DONE_1:
 	CALL	__uart_send_z
 ; main.py:41:     uart.println("PIN IRQ")
 ; main.py:45:             GPIOR0[0] = 0
-L_95:
+L_72:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_96
+	RJMP	L_73
 L_BR_SKIP_3:
-	RJMP	L_95
-L_96:
+	RJMP	L_72
+L_73:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:43:     while True:
-L_97:
+L_74:
 ; main.py:44:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_99
+	RJMP	L_76
 ; main.py:45:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:46:             count = count + 1
 	INC	R4
+	MOV	R24, R4
 ; main.py:47:             uart.write(count)
 ; main.py:41:     uart.println("PIN IRQ")
 ; main.py:45:             GPIOR0[0] = 0
-L_102:
+L_79:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_103
+	RJMP	L_80
 L_BR_SKIP_4:
-	RJMP	L_102
-L_103:
+	RJMP	L_79
+L_80:
 	MOV	R24, R4
 	STS	0x00C6, R24
-L_99:
-	RJMP	L_97
+L_76:
+	RJMP	L_74
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -208,5 +186,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 80, 73, 78, 32, 73, 82, 81, 0
+	.byte 80, 73, 78, 32, 73, 82, 81, 0
 .balign 2
+	.balign 2

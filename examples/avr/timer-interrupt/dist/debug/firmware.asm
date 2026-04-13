@@ -12,82 +12,57 @@
 	RJMP	main
 .org 0x4
 	RETI
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RJMP	on_overflow
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RETI
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 on_overflow:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -95,7 +70,7 @@ on_overflow:
 	PUSH	R16
 ; main.py:25:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -130,7 +105,7 @@ L_BIT_WRITE_DONE_1:
 	CBI	0x0A, 0
 	LDI	R24, 103
 	STS	0x00C4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 	LDI	R24, 6
 	STS	0x00C2, R24
@@ -139,9 +114,8 @@ L_BIT_WRITE_DONE_1:
 ; main.py:34:     timer = Timer(1, 256)
 	LDI	R24, 1
 	MOV	R4, R24
-	CLR	R24
+	LDI	R24, 0
 	STS	0x0080, R24
-	CLR	R24
 	STS	0x0081, R24
 	LDI	R24, 4
 	STS	0x0081, R24
@@ -160,21 +134,21 @@ L_BIT_WRITE_DONE_1:
 	CALL	__uart_send_z
 ; main.py:41:         if GPIOR0[0] == 1:
 ; main.py:45:             uart.write('\n')
-L_88:
+L_87:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_89
-L_BR_SKIP_3:
 	RJMP	L_88
-L_89:
+L_BR_SKIP_3:
+	RJMP	L_87
+L_88:
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:40:     while True:
-L_90:
+L_89:
 ; main.py:41:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_92
+	RJMP	L_91
 ; main.py:42:             GPIOR0[0] = 0
 	CBI	0x1E, 0
 ; main.py:43:             led.toggle()
@@ -183,7 +157,7 @@ L_90:
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_5
 L_BIT_FALSE_4:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_5:
 	MOV	R16, R24
 	LDI	R18, 1
@@ -201,31 +175,32 @@ L_BIT_WRITE_DONE_7:
 ; main.py:44:             uart.write('T')
 ; main.py:41:         if GPIOR0[0] == 1:
 ; main.py:45:             uart.write('\n')
-L_96:
+L_95:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_97
-L_BR_SKIP_9:
 	RJMP	L_96
-L_97:
+L_BR_SKIP_9:
+	RJMP	L_95
+L_96:
 	LDI	R24, 84
 	STS	0x00C6, R24
 ; main.py:45:             uart.write('\n')
 ; main.py:41:         if GPIOR0[0] == 1:
 ; main.py:45:             uart.write('\n')
-L_100:
+L_99:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_101
-L_BR_SKIP_10:
 	RJMP	L_100
-L_101:
+L_BR_SKIP_10:
+	RJMP	L_99
+L_100:
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_92:
-	RJMP	L_90
+L_91:
+	RJMP	L_89
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -243,5 +218,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 84, 73, 77, 69, 82, 49, 32, 73, 82, 81, 32, 66, 76, 73, 78, 75, 0
+	.byte 84, 73, 77, 69, 82, 49, 32, 73, 82, 81, 32, 66, 76, 73, 78, 75, 0
 .balign 2
+	.balign 2

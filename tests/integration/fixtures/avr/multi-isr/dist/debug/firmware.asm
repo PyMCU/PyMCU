@@ -12,82 +12,57 @@
 	RJMP	main
 .org 0x4
 	RJMP	int0_isr
-	NOP
 .org 0x8
 	RETI
-	NOP
 .org 0xc
 	RETI
-	NOP
 .org 0x10
 	RETI
-	NOP
 .org 0x14
 	RETI
-	NOP
 .org 0x18
 	RETI
-	NOP
 .org 0x1c
 	RETI
-	NOP
 .org 0x20
 	RETI
-	NOP
 .org 0x24
 	RETI
-	NOP
 .org 0x28
 	RETI
-	NOP
 .org 0x2c
 	RETI
-	NOP
 .org 0x30
 	RETI
-	NOP
 .org 0x34
 	RETI
-	NOP
 .org 0x38
 	RETI
-	NOP
 .org 0x3c
 	RETI
-	NOP
 .org 0x40
 	RJMP	timer0_ovf_isr
-	NOP
 .org 0x44
 	RETI
-	NOP
 .org 0x48
 	RETI
-	NOP
 .org 0x4c
 	RETI
-	NOP
 .org 0x50
 	RETI
-	NOP
 .org 0x54
 	RETI
-	NOP
 .org 0x58
 	RETI
-	NOP
 .org 0x5c
 	RETI
-	NOP
 .org 0x60
 	RETI
-	NOP
 .org 0x64
 	RETI
-	NOP
 
 timer0_ovf_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -95,7 +70,7 @@ timer0_ovf_isr:
 	PUSH	R16
 ; main.py:35:     GPIOR0[0] = 1
 	SBI	0x1E, 0
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -103,7 +78,7 @@ timer0_ovf_isr:
 	POP	R16
 	RETI
 int0_isr:
-; ISR prologue — save context
+; ISR prologue -- save context
 	PUSH	R16
 	PUSH	R17
 	PUSH	R18
@@ -111,7 +86,7 @@ int0_isr:
 	PUSH	R16
 ; main.py:40:     GPIOR0[1] = 1
 	SBI	0x1E, 1
-; ISR epilogue — restore context
+; ISR epilogue -- restore context
 	POP	R16
 	OUT	0x3F, R16
 	POP	R18
@@ -155,7 +130,7 @@ main:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53:     EICRA.value = 2
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 ; main.py:68:     # 250 overflows ~ 16ms -> not quite. Actually:
 	LDI	R24, 6
@@ -175,32 +150,34 @@ main:
 ; main.py:41: 
 ; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
-L_33:
+L_30:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_0
-	RJMP	L_34
+	RJMP	L_31
 L_BR_SKIP_0:
-	RJMP	L_33
-L_34:
+	RJMP	L_30
+L_31:
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
 	LDI	R24, 10
 	STS	0x00C6, R24
 ; main.py:65:     asm("SEI")
 SEI
-	CLR	R24
-	CLR	R25
+; main.py:70:     tick:      uint16 = 0
+	LDI	R24, 0
+	LDI	R25, 0
 	MOV	R4, R24
 	MOV	R5, R25
-	CLR	R24
+; main.py:71:     int_count: uint8  = 0
 	MOV	R6, R24
 ; main.py:73:     while True:
-L_35:
+L_32:
 ; main.py:74:         if GPIOR0[0] == 1:
 	SBIS	0x1E, 0
-	RJMP	L_37
+	RJMP	L_34
 ; main.py:75:             GPIOR0[0] = 0
 	CBI	0x1E, 0
+; main.py:76:             tick += 1
 	MOV	R24, R4
 	MOV	R25, R5
 	SUBI	R24, 255
@@ -209,15 +186,15 @@ L_35:
 	MOV	R5, R25
 ; main.py:77:             if tick == 61:
 	LDI	R18, 61
-	CLR	R19
+	LDI	R19, 0
 	CP	R24, R18
 	CPC	R25, R19
 	BREQ	L_BR_SKIP_1
-	RJMP	L_38
+	RJMP	L_35
 L_BR_SKIP_1:
 ; main.py:78:                 tick = 0
-	CLR	R24
-	CLR	R25
+	LDI	R24, 0
+	LDI	R25, 0
 	MOV	R4, R24
 	MOV	R5, R25
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
@@ -226,7 +203,7 @@ L_BR_SKIP_1:
 	LDI	R24, 1
 	RJMP	L_BIT_DONE_3
 L_BIT_FALSE_2:
-	CLR	R24
+	LDI	R24, 0
 L_BIT_DONE_3:
 	MOV	R16, R24
 	LDI	R18, 1
@@ -245,14 +222,14 @@ L_BIT_WRITE_DONE_5:
 ; main.py:41: 
 ; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
-L_41:
+L_38:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_42
+	RJMP	L_39
 L_BR_SKIP_7:
-	RJMP	L_41
-L_42:
+	RJMP	L_38
+L_39:
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
 	LDI	R24, 84
 	STS	0x00C6, R24
@@ -260,37 +237,39 @@ L_42:
 ; main.py:41: 
 ; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
-L_45:
+L_42:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_8
-	RJMP	L_46
+	RJMP	L_43
 L_BR_SKIP_8:
-	RJMP	L_45
-L_46:
+	RJMP	L_42
+L_43:
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_38:
-L_37:
+L_35:
+L_34:
 ; main.py:83:         if GPIOR0[1] == 1:
 	SBIS	0x1E, 1
-	RJMP	L_47
+	RJMP	L_44
 ; main.py:84:             GPIOR0[1] = 0
 	CBI	0x1E, 1
+; main.py:85:             int_count += 1
 	INC	R6
+	MOV	R24, R6
 ; main.py:86:             uart.write(int_count)
 ; main.py:41: 
 ; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
-L_50:
+L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_9
-	RJMP	L_51
+	RJMP	L_48
 L_BR_SKIP_9:
-	RJMP	L_50
-L_51:
+	RJMP	L_47
+L_48:
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
 	MOV	R24, R6
 	STS	0x00C6, R24
@@ -298,19 +277,20 @@ L_51:
 ; main.py:41: 
 ; main.py:45:     DDRB[5] = 1
 ; main.py:76:             tick += 1
-L_54:
+L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_10
-	RJMP	L_55
+	RJMP	L_52
 L_BR_SKIP_10:
-	RJMP	L_54
-L_55:
+	RJMP	L_51
+L_52:
 ; main.py:79:                 PORTB[5] = PORTB[5] ^ 1   # toggle LED
 	LDI	R24, 10
 	STS	0x00C6, R24
-L_47:
-	RJMP	L_35
+L_44:
+	RJMP	L_32
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -328,5 +308,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 77, 85, 76, 84, 73, 32, 73, 83, 82, 0
+	.byte 77, 85, 76, 84, 73, 32, 73, 83, 82, 0
 .balign 2
+	.balign 2

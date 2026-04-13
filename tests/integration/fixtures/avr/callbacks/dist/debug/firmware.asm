@@ -4,8 +4,8 @@
 .equ pymcu_hal__uart_avr__rx_buf, _stack_base + 0
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
-.equ tmp_22, _stack_base + 13
-.equ tmp_24, _stack_base + 14
+.equ tmp_22, _stack_base + 11
+.equ tmp_24, _stack_base + 13
 .equ tmp_26, _stack_base + 15
 
 .org 0x0
@@ -13,23 +13,26 @@
 	RJMP	main
 double_value:
 	MOV	R8, R24
+; main.py:39:     result: uint8 = x + x
 	MOV	R18, R8
 	ADD	R24, R18
 	MOV	R10, R24
 ; main.py:40:     return result
 	RET
 invert_value:
-	MOV	R12, R24
+	MOV	R11, R24
+; main.py:44:     result: uint8 = x ^ 0xFF
 	LDI	R18, 255
 	EOR	R24, R18
-	MOV	R11, R24
+	MOV	R12, R24
 ; main.py:45:     return result
 	RET
 shift_left_one:
 	MOV	R9, R24
+; main.py:50:     result: uint8 = x + x
 	MOV	R18, R9
 	ADD	R24, R18
-	MOV	R14, R24
+	MOV	R13, R24
 ; main.py:51:     return result
 	RET
 apply:
@@ -45,6 +48,7 @@ L_BR_SKIP_0:
 	CALL	double_value
 	MOV	R16, R24
 	RET
+	RJMP	L_21
 L_22:
 	MOV	R24, R7
 	CPI	R24, 1
@@ -53,10 +57,11 @@ L_22:
 L_BR_SKIP_1:
 ; main.py:61:             return invert_value(x)
 	MOV	R24, R5
-	MOV	R12, R24
+	MOV	R11, R24
 	CALL	invert_value
 	MOV	R16, R24
 	RET
+	RJMP	L_21
 L_23:
 	MOV	R24, R7
 	CPI	R24, 2
@@ -69,9 +74,12 @@ L_BR_SKIP_2:
 	CALL	shift_left_one
 	MOV	R16, R24
 	RET
+	RJMP	L_21
 L_24:
 ; main.py:65:             return x
 	MOV	R24, R5
+	RET
+L_21:
 	RET
 main:
 	LDI	R16, hi8(0x08FF)
@@ -92,7 +100,7 @@ main:
 	LDI	R24, 103
 	STS	0x00C4, R24
 ; main.py:53: 
-	CLR	R24
+	LDI	R24, 0
 	STS	0x00C5, R24
 ; main.py:68: def main():
 	LDI	R24, 6
@@ -112,45 +120,48 @@ main:
 ; main.py:41: 
 ; main.py:45:     return result
 ; main.py:76: 
-L_38:
+L_35:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_3
-	RJMP	L_39
+	RJMP	L_36
 L_BR_SKIP_3:
-	RJMP	L_38
-L_39:
+	RJMP	L_35
+L_36:
 ; main.py:79:             r: uint8 = apply(cb, i)
 	LDI	R24, 10
 	STS	0x00C6, R24
-	CLR	R24
+; main.py:72:     cb: uint8 = CB.DOUBLE
+	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:74:     while True:
-L_40:
+L_37:
 ; main.py:75:         uart.write(cb)          # header: current callback ID
 ; main.py:41: 
 ; main.py:45:     return result
 ; main.py:76: 
-L_44:
+L_41:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_4
-	RJMP	L_45
+	RJMP	L_42
 L_BR_SKIP_4:
-	RJMP	L_44
-L_45:
+	RJMP	L_41
+L_42:
 ; main.py:79:             r: uint8 = apply(cb, i)
 	MOV	R24, R4
 	STS	0x00C6, R24
-	CLR	R24
+; main.py:77:         i: uint8 = 0
+	LDI	R24, 0
 	MOV	R6, R24
 ; main.py:78:         while i < 8:
-L_46:
+L_43:
 	MOV	R24, R6
 	CPI	R24, 8
 	BRLO	L_BR_SKIP_5
-	RJMP	L_47
+	RJMP	L_44
 L_BR_SKIP_5:
+; main.py:79:             r: uint8 = apply(cb, i)
 	MOV	R24, R4
 	MOV	R7, R24
 	MOV	R24, R6
@@ -158,37 +169,39 @@ L_BR_SKIP_5:
 	MOV	R24, R4
 	MOV	R22, R6
 	CALL	apply
-	MOV	R13, R24
+	MOV	R14, R24
 ; main.py:80:             uart.write(r)
 ; main.py:41: 
 ; main.py:45:     return result
 ; main.py:76: 
-L_50:
+L_47:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_6
-	RJMP	L_51
+	RJMP	L_48
 L_BR_SKIP_6:
-	RJMP	L_50
-L_51:
+	RJMP	L_47
+L_48:
 ; main.py:79:             r: uint8 = apply(cb, i)
-	MOV	R24, R13
+	MOV	R24, R14
 	STS	0x00C6, R24
+; main.py:81:             i += 1
 	INC	R6
-	RJMP	L_46
-L_47:
+	MOV	R24, R6
+	RJMP	L_43
+L_44:
 ; main.py:83:         uart.write('\n')          # newline (0x0A) frame separator
 ; main.py:41: 
 ; main.py:45:     return result
 ; main.py:76: 
-L_54:
+L_51:
 	LDS	R24, 0x00C0
 	ANDI	R24, 32
 	BREQ	L_BR_SKIP_7
-	RJMP	L_55
+	RJMP	L_52
 L_BR_SKIP_7:
-	RJMP	L_54
-L_55:
+	RJMP	L_51
+L_52:
 ; main.py:79:             r: uint8 = apply(cb, i)
 	LDI	R24, 10
 	STS	0x00C6, R24
@@ -196,28 +209,29 @@ L_55:
 	MOV	R24, R4
 	CPI	R24, 0
 	BREQ	L_BR_SKIP_8
-	RJMP	L_57
+	RJMP	L_54
 L_BR_SKIP_8:
 ; main.py:87:             cb = CB.INVERT
 	LDI	R24, 1
 	MOV	R4, R24
-	RJMP	L_56
-L_57:
+	RJMP	L_53
+L_54:
 	MOV	R24, R4
 	CPI	R24, 1
 	BREQ	L_BR_SKIP_9
-	RJMP	L_58
+	RJMP	L_55
 L_BR_SKIP_9:
 ; main.py:89:             cb = CB.SHIFT_L
 	LDI	R24, 2
 	MOV	R4, R24
-	RJMP	L_56
-L_58:
+	RJMP	L_53
+L_55:
 ; main.py:91:             cb = CB.DOUBLE
-	CLR	R24
+	LDI	R24, 0
 	MOV	R4, R24
-L_56:
-	RJMP	L_40
+L_53:
+	RJMP	L_37
+	RET
 
 ; --- Flash String Pool (LPM+Z UART send) ---
 __uart_send_z:
@@ -235,5 +249,6 @@ __usendz_done:
 	RET
 
 __str_0:
-.byte 67, 65, 76, 76, 66, 65, 67, 75, 83, 0
+	.byte 67, 65, 76, 76, 66, 65, 67, 75, 83, 0
 .balign 2
+	.balign 2
