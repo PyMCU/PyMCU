@@ -1,3 +1,19 @@
+/*
+ * -----------------------------------------------------------------------------
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * -----------------------------------------------------------------------------
+ * SAFETY WARNING / HIGH RISK ACTIVITIES:
+ * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+ * ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+ * NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+ * TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
+ * -----------------------------------------------------------------------------
+ */
+
 using PyMCU.Backend.Analysis;
 using PyMCU.Common;
 using PyMCU.IR;
@@ -46,7 +62,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         Variable v => v.Type,
         Temporary t => t.Type,
-        MemoryAddress m => (int)m.Type == 0 || m.Address < 0x0100 ? DataType.UINT8 : m.Type,
+        MemoryAddress m => m.Type.SizeOf() > 1 ? m.Type : DataType.UINT8,
         Constant { Value: > 255 or < -128 } => DataType.UINT16,
         _ => DataType.UINT8,
     };
@@ -248,18 +264,22 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         {
             for (var vec = 1; vec <= 25; vec++)
             {
-                var byteAddr = vec * 4;
-                EmitRaw($".org 0x{byteAddr:X4}");
+                // AVR8Sharp sets cpu.Pc = overflowInterrupt (a byte address on real hardware,
+                // e.g. 0x12 for Timer2 OVF). Since ProgramMemory is word-indexed, cpu.Pc=0x12
+                // executes from byte 0x24 (= 2 × 0x12).
+                // AVRA .org uses WORD addresses, and _avra_to_gnuas() multiplies by 2:
+                //   AVRA .org 0x0012 → avr-as .org 0x0024 (byte).
+                // To place RJMP at byte 0x0024, we need AVRA .org = 0x0012 = vec*2.
+                // This matches overflowInterrupt = vec*2 (the byte address on real hardware).
+                EmitRaw($".org 0x{vec * 2:X4}");
 
                 if (isrMap.TryGetValue(vec * 2, out var isrFunc))
                 {
                     Emit("RJMP", isrFunc.Name);
-                    EmitRaw("\tNOP");
                 }
                 else
                 {
                     Emit("RETI");
-                    EmitRaw("\tNOP");
                 }
             }
 
@@ -525,7 +545,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCopy(Copy cp)
     {
-        var type = GetValType(cp.Src);
+        // When src is a typeless constant, use the destination's declared type
+        // to ensure e.g. `i: uint16 = 0` initialises both bytes.
+        var type = cp.Src is Constant ? GetValType(cp.Dst) : GetValType(cp.Src);
         LoadIntoReg(cp.Src, "R24", type);
         StoreRegInto("R24", cp.Dst, type);
     }
