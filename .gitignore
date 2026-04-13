@@ -36,26 +36,31 @@ src/driver/pymcuc.exe
 .DS_Store
 Thumbs.db
 
-# Python / Poetry (scoped to lib/)
-lib/**/__pycache__/
-lib/**/*.py[cod]
-lib/**/*.pyd
-lib/**/.pytest_cache/
-lib/**/.mypy_cache/
-lib/**/.ruff_cache/
-lib/**/.coverage
-lib/**/coverage.xml
-lib/**/.tox/
-lib/**/.nox/
-lib/**/htmlcov/
+# Python virtual environments and caches
+.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/coverage.xml
+**/.tox/
+**/.nox/
+**/htmlcov/
 
-# Poetry / packaging outputs that often appear in Python subprojects
-lib/**/.venv/
-examples/**/.venv/
-lib/**/dist/
-lib/**/build/
-lib/**/*.egg-info/
-__pycache__
+# Build and packaging outputs
+dist/
+**/dist/
+**/build/
+**/*.egg-info/
+
+# Local NuGet feed (dotnet pack output for dev; not source)
+local-packages/*.nupkg
+
+# Ephemeral test environment
+test_env/
 
 # VS Code Extension
 extensions/vscode-pymcu/out/
@@ -65,5 +70,4 @@ extensions/vscode-pymcu/.vscode-test/
 extensions/vscode-pymcu/.vscode
 
 extensions/jetbrains-pymcu/.gradle/
-
 extensions/jetbrains-pymcu/.intellijPlatform/
