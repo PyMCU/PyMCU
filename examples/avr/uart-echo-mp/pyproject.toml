@@ -1,0 +1,15 @@
+[project]
+name = "uart-echo-mp"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pymcu-stdlib>=0.1.0",
+    "pymcu-micropython>=0.1.0a1",
+]
+
+[tool.pymcu]
+board     = "arduino_uno"
+frequency = 16000000
+sources   = "src"
+entry     = "main.py"
+stdlib    = ["micropython"]
