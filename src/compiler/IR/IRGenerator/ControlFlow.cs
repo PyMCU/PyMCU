@@ -1,3 +1,19 @@
+/*
+ * -----------------------------------------------------------------------------
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * -----------------------------------------------------------------------------
+ * SAFETY WARNING / HIGH RISK ACTIVITIES:
+ * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+ * ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+ * NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+ * TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
+ * -----------------------------------------------------------------------------
+ */
+
 using PyMCU.Frontend;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
 
@@ -82,7 +98,8 @@ public partial class IRGenerator
                     if (!condResult) Emit(new Jump(targetLabel));
                 }
 
-                return condResult ? 1 : -1;
+                // 2 = CT-true (only then branch needed), -1 = CT-false (only else needed)
+                return condResult ? 2 : -1;
             }
 
             switch (binExpr.Op)
@@ -228,6 +245,14 @@ public partial class IRGenerator
         bool skipThen = false;
 
         if (optResult == -1) skipThen = true;
+        else if (optResult == 2)
+        {
+            // CT-true: only visit then branch, skip else entirely (prevents CT
+            // side-effects like compile_isr from the else branch being processed).
+            VisitStatement(stmt.ThenBranch);
+            Emit(new Label(endLabel));
+            return;
+        }
         else if (optResult == 0)
         {
             Val condVal = VisitExpression(stmt.Condition);
@@ -283,6 +308,13 @@ public partial class IRGenerator
             bool skipElif = false;
 
             if (elifOpt == -1) skipElif = true;
+            else if (elifOpt == 2)
+            {
+                // CT-true elif: only visit this block, skip remaining branches.
+                VisitStatement(elifBlock);
+                Emit(new Label(endLabel));
+                return;
+            }
             else if (elifOpt == 0)
             {
                 Val elifVal = VisitExpression(elifCond);
