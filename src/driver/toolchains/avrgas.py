@@ -31,7 +31,7 @@
 
 
 """
-AvrgasToolchain -- AVR GNU AS + avr-ld + avr-objcopy pipeline.
+AvrgasToolchain -- AVR GNU AS + avr-gcc (linker) + avr-objcopy pipeline.
 
 This toolchain replaces avra for projects that require C/C++ interop via
 @extern().  It uses the standard GNU binutils for AVR:
@@ -39,8 +39,11 @@ This toolchain replaces avra for projects that require C/C++ interop via
   Assemble:   avr-as -mmcu=<chip> firmware.asm -o firmware.o
   Compile C:  avr-gcc -mmcu=<chip> -Os -c mylib.c -o mylib.o
   Compile C++: avr-g++ -mmcu=<chip> -Os -fno-exceptions -fno-rtti -c lib.cpp -o lib.o
-  Link:       avr-ld -T <linker-script> firmware.o [c_objs...] -o firmware.elf
+  Link:       avr-gcc -mmcu=<chip> -nostartfiles -T <linker-script> firmware.o [c_objs...] -o firmware.elf
   HEX:        avr-objcopy -O ihex firmware.elf firmware.hex
+
+Using avr-gcc as the linker driver (instead of avr-ld directly) automatically
+selects the correct BFD emulation and libgcc path for any supported chip.
 
 Both .c and .cpp/.cc/.cxx sources are supported in [tool.pymcu.ffi] sources.
 This enables use of Arduino libraries and other C++ AVR libraries.
@@ -73,13 +76,15 @@ _BASE_URL = (
 )
 
 # Required binaries (avr-g++ is optional: needed only when .cpp sources are present)
-_REQUIRED_BINS = ["avr-as", "avr-ld", "avr-objcopy", "avr-gcc"]
+# avr-ld is NOT listed: we invoke avr-gcc as the linker driver, which calls avr-ld
+# internally with the correct chip-specific flags.
+_REQUIRED_BINS = ["avr-as", "avr-objcopy", "avr-gcc"]
 _CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".C"}
 
 
 class AvrgasToolchain(ExternalToolchain):
     """
-    GNU AS + avr-ld + avr-objcopy toolchain for AVR targets.
+    GNU AS + avr-gcc (linker driver) + avr-objcopy toolchain for AVR targets.
     Downloads a self-contained pre-built avr-gcc toolchain into
     ~/.pymcu/tools/ so no system package installation is required.
 
@@ -112,31 +117,51 @@ class AvrgasToolchain(ExternalToolchain):
         },
     }
 
-    # Shared linker script template: places .text at 0x0000, .data at SRAM start.
-    # Sufficient for ATmega328P; extended linker scripts are user-providable via
-    # [tool.pymcu.ffi] linker_script = "path/to/custom.ld".
-    _DEFAULT_LD_SCRIPT = """\
-OUTPUT_FORMAT("elf32-avr","elf32-avr","elf32-avr")
-OUTPUT_ARCH(avr:5)
-ENTRY(main)
-SECTIONS
-{
-  .text 0x000000 :
-  {
-    *(.vectors)
-    *(.text*)
-    *(.rodata*)
-    . = ALIGN(2);
-  }
-  .data 0x800100 :
-  {
-    *(.data*)
-    *(.bss*)
-    *(COMMON)
-    . = ALIGN(1);
-  }
-}
-"""
+    # RAMSTART per chip family (byte offset of first SRAM byte in AVR data space).
+    # ELF .data section VMA = 0x800000 + RAMSTART.
+    # ATtiny parts have RAMSTART=0x60; ATmega parts default to 0x100.
+    _RAMSTART: dict[str, int] = {
+        "attiny13":   0x60, "attiny13a":  0x60,
+        "attiny24":   0x60, "attiny25":   0x60,
+        "attiny44":   0x60, "attiny45":   0x60,
+        "attiny84":   0x60, "attiny85":   0x60,
+        "attiny2313": 0x60, "attiny4313": 0x60,
+    }
+    _DEFAULT_RAMSTART = 0x100  # ATmega48/88/168/328(P) and similar
+
+    def _chip_ramstart(self) -> int:
+        return self._RAMSTART.get(self.chip.lower(), self._DEFAULT_RAMSTART)
+
+    def _default_ld_script(self) -> str:
+        """
+        Generate a chip-specific linker script.
+
+        .data VMA is derived from RAMSTART so ATtiny (0x60) and ATmega (0x100)
+        chips both get the correct SRAM base address.  OUTPUT_ARCH is omitted:
+        avr-gcc sets the correct BFD emulation via -mmcu=<chip>.
+        """
+        data_org = 0x800000 + self._chip_ramstart()
+        return (
+            'OUTPUT_FORMAT("elf32-avr","elf32-avr","elf32-avr")\n'
+            "ENTRY(main)\n"
+            "SECTIONS\n"
+            "{\n"
+            "  .text 0x000000 :\n"
+            "  {\n"
+            "    *(.vectors)\n"
+            "    *(.text*)\n"
+            "    *(.rodata*)\n"
+            "    . = ALIGN(2);\n"
+            "  }\n"
+            f"  .data 0x{data_org:06X} :\n"
+            "  {\n"
+            "    *(.data*)\n"
+            "    *(.bss*)\n"
+            "    *(COMMON)\n"
+            "    . = ALIGN(1);\n"
+            "  }\n"
+            "}\n"
+        )
 
     def __init__(self, console: Console, chip: str = "atmega328p"):
         super().__init__(console)
@@ -256,9 +281,9 @@ SECTIONS
         url = info["url"]
         archive_type = info["archive_type"]
 
-        self.console.print("[bold cyan]Whipsnake Toolchain Manager[/bold cyan]")
+        self.console.print("[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
         self.console.print(
-            f"The AVR GNU toolchain (avr-as, avr-ld, avr-objcopy, avr-gcc "
+            f"The AVR GNU toolchain (avr-as, avr-objcopy, avr-gcc "
             f"v{_TOOLCHAIN_VERSION}) is required but was not found.\n"
             f"A pre-built release will be downloaded from:\n"
             f"  [green]{url}[/green]"
@@ -480,27 +505,6 @@ SECTIONS
             objects.append(obj)
         return objects
 
-    def _find_libgcc(self) -> Optional[str]:
-        """
-        Return the path to libgcc.a for the target MCU, or None if unavailable.
-        C code using division/modulo needs GCC runtime helpers (__divmodhi4, etc.).
-        """
-        try:
-            avr_gcc = self._find_bin("avr-gcc")
-        except RuntimeError:
-            return None
-        try:
-            result = subprocess.run(
-                [avr_gcc, f"-mmcu={self.chip}", "-print-libgcc-file-name"],
-                capture_output=True, text=True, check=True,
-            )
-            path = result.stdout.strip()
-            if path and Path(path).exists():
-                return path
-        except Exception:
-            pass
-        return None
-
     def link(
         self,
         firmware_obj: Path,
@@ -509,41 +513,41 @@ SECTIONS
         linker_script: Optional[Path] = None,
     ) -> Path:
         """
-        Link firmware.o + C object files -> firmware.elf using avr-ld.
-        libgcc is automatically located via avr-gcc so that C runtime
-        helpers (__divmodhi4, __mulhi3, etc.) resolve correctly.
+        Link firmware.o + C object files -> firmware.elf using avr-gcc as the
+        linker driver.
+
+        avr-gcc -mmcu=<chip> -nostartfiles automatically selects:
+          - the correct BFD emulation (avr5 for ATmega, avr25 for ATtiny, etc.)
+          - the matching libgcc.a (so __divmodhi4, __mulhi3, etc. resolve)
+        No hardcoded -m avr5 or manual libgcc path lookup is needed.
+
         Returns the ELF file path.
         """
-        avr_ld = self._find_bin("avr-ld")
-
+        avr_gcc = self._find_bin("avr-gcc")
         elf_out = output_dir / "firmware.elf"
 
-        # Write default linker script if none provided
+        # Write chip-specific linker script if none provided
         if linker_script is None:
             ld_script_path = output_dir / "_pymcu.ld"
-            ld_script_path.write_text(self._DEFAULT_LD_SCRIPT)
+            ld_script_path.write_text(self._default_ld_script())
             linker_script = ld_script_path
 
-        # Locate libgcc for this MCU to satisfy GCC runtime helper references
-        libgcc = self._find_libgcc()
-
         cmd = [
-            avr_ld,
-            "-m", "avr5",          # ATmega328P is avr5 architecture
+            avr_gcc,
+            f"-mmcu={self.chip}",
+            "-nostartfiles",   # our assembly provides the entry point; skip crt0.o
             "-T", str(linker_script),
             str(firmware_obj),
             *[str(o) for o in c_objects],
+            "-o", str(elf_out),
         ]
-        if libgcc:
-            cmd += ["--start-group", libgcc, "--end-group"]
-        cmd += ["-o", str(elf_out)]
 
-        self.console.print(f"[debug] avr-ld: {' '.join(cmd)}", style="dim")
+        self.console.print(f"[debug] avr-gcc (link): {' '.join(cmd)}", style="dim")
         try:
             subprocess.run(cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
-            raise RuntimeError(f"avr-ld failed:\n{err}")
+            raise RuntimeError(f"avr-gcc link failed:\n{err}")
         return elf_out
 
     def elf_to_hex(self, elf_file: Path) -> Path:
