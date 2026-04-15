@@ -14,16 +14,29 @@
  * -----------------------------------------------------------------------------
  */
 
-namespace PyMCU.Common;
+using PyMCU.Common;
+using PyMCU.Frontend;
 
-public sealed record CompilerOptions(
-    string FilePath,
-    string OutputPath,
-    string Arch,
-    string Chip,
-    ulong Frequency,
-    List<string> Configs,
-    List<string> Includes,
-    int ResetVector,
-    int InterruptVector
-);
+namespace PyMCU.Pipeline.Phases;
+
+public class ParsingPhase : ICompilerPhase
+{
+    public string Name => "Lexical & Syntax Analysis";
+
+    public void Execute(CompilationContext context)
+    {
+        try
+        {
+            var lexer = new Lexer(context.SourceCode);
+            var tokens = lexer.Tokenize();
+
+            var parser = new Parser(tokens);
+            context.RootAst = parser.ParseProgram();
+        }
+        catch (CompilerError e)
+        {
+            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
+            context.HasErrors = true;
+        }
+    }
+}
