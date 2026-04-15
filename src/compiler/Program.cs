@@ -22,28 +22,6 @@ using PyMCU.IR.IRGenerator;
 
 namespace PyMCU;
 
-public sealed record CompilerOptions(
-    string FilePath,
-    string OutputPath,
-    string Arch,
-    string Chip,
-    ulong Frequency,
-    List<string> Configs,
-    List<string> Includes,
-    int ResetVector,
-    int InterruptVector
-);
-
-public class CompilerContext
-{
-    public Dictionary<string, ProgramNode> ModuleCache { get; } = new();
-    public List<ProgramNode> LinearImports { get; } = new();
-    public Dictionary<string, ProgramNode> NamedModules { get; } = new();
-    public HashSet<string> LoadingModules { get; } = new();
-    public DeviceConfig Config { get; set; } = new();
-    public Dictionary<string, List<string>> ModuleSourceLines { get; } = new();
-}
-
 public static class Program
 {
     public static int Main(string[] args)
@@ -79,8 +57,7 @@ public static class Program
             {
                 source = File.ReadAllText(options.FilePath);
                 using var reader = new StringReader(source);
-                string? line;
-                while ((line = reader.ReadLine()) != null)
+                while (reader.ReadLine() is { } line)
                 {
                     sourceLines.Add(line);
                 }
@@ -265,29 +242,27 @@ public static class Program
     private static string ResolveModule(string moduleName, List<string> includePaths, string currentFilePath,
         int relativeLevel)
     {
-        string pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
+        var pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
 
         if (relativeLevel > 0)
         {
-            string searchDir = Path.GetDirectoryName(currentFilePath) ?? string.Empty;
+            var searchDir = Path.GetDirectoryName(currentFilePath) ?? string.Empty;
 
-            for (int i = 1; i < relativeLevel; i++)
+            for (var i = 1; i < relativeLevel; i++)
             {
                 searchDir = Path.GetDirectoryName(searchDir) ?? string.Empty;
             }
 
-            string fullPath = Path.Combine(searchDir, pathRel + ".py");
+            var fullPath = Path.Combine(searchDir, pathRel + ".py");
             if (File.Exists(fullPath)) return fullPath;
 
             fullPath = Path.Combine(searchDir, pathRel, "__init__.py");
-            if (File.Exists(fullPath)) return fullPath;
-
-            throw new Exception($"Relative import not found: {fullPath}");
+            return File.Exists(fullPath) ? fullPath : throw new Exception($"Relative import not found: {fullPath}");
         }
 
         foreach (var baseDir in includePaths)
         {
-            string fullPath = Path.Combine(baseDir, pathRel + ".py");
+            var fullPath = Path.Combine(baseDir, pathRel + ".py");
             if (File.Exists(fullPath)) return fullPath;
 
             fullPath = Path.Combine(baseDir, pathRel, "__init__.py");
@@ -302,10 +277,10 @@ public static class Program
     {
         foreach (var imp in ast.Imports)
         {
-            string path = string.Empty;
+            var path = string.Empty;
             try
             {
-                if (imp.ModuleName == "pymcu.types" || imp.ModuleName == "pymcu.chips")
+                if (imp.ModuleName is "pymcu.types" or "pymcu.chips")
                 {
                     continue;
                 }
@@ -323,12 +298,11 @@ public static class Program
                 Console.WriteLine($"Loading module: {path}");
                 ctx.LoadingModules.Add(path);
 
-                string src = File.ReadAllText(path);
+                var src = File.ReadAllText(path);
                 var lines = new List<string>();
                 using (var reader = new StringReader(src))
                 {
-                    string? line;
-                    while ((line = reader.ReadLine()) != null)
+                    while (reader.ReadLine() is { } line)
                     {
                         lines.Add(line);
                     }
@@ -359,83 +333,94 @@ public static class Program
     private static CompilerOptions ParseArgs(ReadOnlySpan<string> args)
     {
         string? file = null;
-        string output = "";
-        string arch = "pic14";
-        string chip = "";
+        var output = "";
+        var arch = "pic14";
+        var chip = "";
         ulong freq = 4000000;
         var configs = new List<string>();
         var includes = new List<string>();
-        int resetVector = -1;
-        int interruptVector = -1;
+        var resetVector = -1;
+        var interruptVector = -1;
 
-        for (int i = 0; i < args.Length; i++)
+        for (var i = 0; i < args.Length; i++)
         {
             var arg = args[i];
 
-            if (arg == "-o" || arg == "--output")
+            switch (arg)
             {
-                if (++i < args.Length) output = args[i];
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "--arch")
-            {
-                if (++i < args.Length) arch = args[i];
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "--chip")
-            {
-                if (++i < args.Length) chip = args[i];
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "--freq")
-            {
-                if (++i < args.Length)
+                case "-o":
+                case "--output":
+                {
+                    if (++i < args.Length) output = args[i];
+                    else throw new ArgumentException($"Missing argument for {arg}");
+                    break;
+                }
+                case "--arch" when ++i < args.Length:
+                    arch = args[i];
+                    break;
+                case "--arch":
+                    throw new ArgumentException($"Missing argument for {arg}");
+                case "--chip" when ++i < args.Length:
+                    chip = args[i];
+                    break;
+                case "--chip":
+                    throw new ArgumentException($"Missing argument for {arg}");
+                case "--freq" when ++i < args.Length:
                 {
                     if (!ulong.TryParse(args[i], out freq))
                         throw new ArgumentException($"Invalid frequency value: {args[i]}");
+                    break;
                 }
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "-C" || arg == "--config")
-            {
-                if (++i < args.Length) configs.Add(args[i]);
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "-I" || arg == "--include")
-            {
-                if (++i < args.Length) includes.Add(args[i]);
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "--reset-vector")
-            {
-                if (++i < args.Length)
+                case "--freq":
+                    throw new ArgumentException($"Missing argument for {arg}");
+                case "-C":
+                case "--config":
+                {
+                    if (++i < args.Length) configs.Add(args[i]);
+                    else throw new ArgumentException($"Missing argument for {arg}");
+                    break;
+                }
+                case "-I":
+                case "--include":
+                {
+                    if (++i < args.Length) includes.Add(args[i]);
+                    else throw new ArgumentException($"Missing argument for {arg}");
+                    break;
+                }
+                case "--reset-vector" when ++i < args.Length:
                 {
                     if (!int.TryParse(args[i], out resetVector))
                         throw new ArgumentException($"Invalid reset vector value: {args[i]}");
+                    break;
                 }
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "--interrupt-vector")
-            {
-                if (++i < args.Length)
+                case "--reset-vector":
+                    throw new ArgumentException($"Missing argument for {arg}");
+                case "--interrupt-vector" when ++i < args.Length:
                 {
                     if (!int.TryParse(args[i], out interruptVector))
                         throw new ArgumentException($"Invalid interrupt vector value: {args[i]}");
+                    break;
                 }
-                else throw new ArgumentException($"Missing argument for {arg}");
-            }
-            else if (arg == "-h" || arg == "--help")
-            {
-                PrintHelp();
-                Environment.Exit(0);
-            }
-            else if (!arg.StartsWith("-") && file == null)
-            {
-                file = arg;
-            }
-            else
-            {
-                throw new ArgumentException($"Unknown argument: {arg}");
+                case "--interrupt-vector":
+                    throw new ArgumentException($"Missing argument for {arg}");
+                case "-h":
+                case "--help":
+                    PrintHelp();
+                    Environment.Exit(0);
+                    break;
+                default:
+                {
+                    if (!arg.StartsWith("-") && file == null)
+                    {
+                        file = arg;
+                    }
+                    else
+                    {
+                        throw new ArgumentException($"Unknown argument: {arg}");
+                    }
+
+                    break;
+                }
             }
         }
 
