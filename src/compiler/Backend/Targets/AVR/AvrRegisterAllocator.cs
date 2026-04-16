@@ -20,8 +20,12 @@ namespace PyMCU.Backend.Targets.AVR;
 
 public static class AvrRegisterAllocator
 {
-    private static int SizeOfType(DataType t) =>
-        t is DataType.UINT16 or DataType.INT16 ? 2 : 1;
+    private static int SizeOfType(DataType t) => t switch
+    {
+        DataType.UINT32 or DataType.INT32 => 4,
+        DataType.UINT16 or DataType.INT16 => 2,
+        _ => 1,
+    };
 
     public static Dictionary<string, string> Allocate(ProgramIR program)
     {
@@ -103,7 +107,12 @@ public static class AvrRegisterAllocator
             }
         }
 
-        var sorted = useCount.OrderByDescending(kv => kv.Value).ToList();
+        // Collect eligible: only UINT8/UINT16 (1-2 bytes). Exclude UINT32+ because the
+        // global allocator has no callee-save/restore, so multi-byte values spanning a
+        // function call boundary would be clobbered by the callee's own register usage.
+        var sorted = useCount
+            .Where(kv => varTypes.TryGetValue(kv.Key, out var dt) && SizeOfType(dt) <= 2)
+            .OrderByDescending(kv => kv.Value).ToList();
 
         var result = new Dictionary<string, string>();
         var nextReg = 4;

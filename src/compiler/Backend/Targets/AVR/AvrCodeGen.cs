@@ -85,29 +85,30 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void LoadIntoReg(Val val, string reg, DataType type = DataType.UINT8)
     {
-        var is16 = type.SizeOf() == 2;
-        var regH = is16 ? GetHighReg(reg) : "";
+        int size = type.SizeOf();
+        var regH  = size >= 2 ? GetHighReg(reg) : "";
+        // For 32-bit: byte2=R22, byte3=R23 (AVR-GCC uint32 convention when base=R24)
+        // When base is not R24, fall back to reg+2/+3 (not used for 32-bit in practice)
+        var regB2 = size == 4 ? (reg == "R24" ? "R22" : $"R{int.Parse(reg[1..]) + 2}") : "";
+        var regB3 = size == 4 ? (reg == "R24" ? "R23" : $"R{int.Parse(reg[1..]) + 3}") : "";
 
         switch (val)
         {
             case Constant c:
             {
                 Emit("LDI", reg, $"{c.Value & 0xFF}");
-                if (is16) Emit("LDI", regH, $"{(c.Value >> 8) & 0xFF}");
+                if (size >= 2) Emit("LDI", regH, $"{(c.Value >> 8) & 0xFF}");
+                if (size == 4) { Emit("LDI", regB2, $"{(c.Value >> 16) & 0xFF}"); Emit("LDI", regB3, $"{(c.Value >> 24) & 0xFF}"); }
                 return;
             }
             case MemoryAddress mem:
             {
                 if (mem.Address is >= 0x20 and <= 0x5F)
-                {
                     Emit("IN", reg, $"0x{mem.Address - 0x20:X2}");
-                }
                 else
-                {
                     Emit("LDS", reg, $"0x{mem.Address:X4}");
-                }
-
-                if (is16) Emit("LDS", regH, $"0x{mem.Address + 1:X4}");
+                if (size >= 2) Emit("LDS", regH,  $"0x{mem.Address + 1:X4}");
+                if (size == 4) { Emit("LDS", regB2, $"0x{mem.Address + 2:X4}"); Emit("LDS", regB3, $"0x{mem.Address + 3:X4}"); }
                 return;
             }
         }
@@ -116,61 +117,62 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out var srcReg))
         {
-            if (srcReg == reg) return;
-            Emit("MOV", reg, srcReg);
-            if (is16) Emit("MOV", regH, GetHighReg(srcReg));
+            if (srcReg != reg) Emit("MOV", reg, srcReg);
+            if (size >= 2) Emit("MOV", regH, GetHighReg(srcReg));
+            if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(srcReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(srcReg[1..]) + 3}"); }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _tmpRegLayout.TryGetValue(name, out var tmpReg))
         {
-            if (tmpReg == reg) return;
-            Emit("MOV", reg, tmpReg);
-            if (is16) Emit("MOV", regH, GetHighReg(tmpReg));
+            if (tmpReg != reg) Emit("MOV", reg, tmpReg);
+            if (size >= 2) Emit("MOV", regH, GetHighReg(tmpReg));
+            if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(tmpReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(tmpReg[1..]) + 3}"); }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
         {
-            if (offset + (is16 ? 1 : 0) < 64)
+            bool nearY = offset + (size - 1) < 64;
+            if (nearY)
             {
                 Emit("LDD", reg, $"Y+{offset}");
-                if (is16) Emit("LDD", regH, $"Y+{offset + 1}");
+                if (size >= 2) Emit("LDD", regH,  $"Y+{offset + 1}");
+                if (size == 4) { Emit("LDD", regB2, $"Y+{offset + 2}"); Emit("LDD", regB3, $"Y+{offset + 3}"); }
             }
             else
             {
                 var abs = 0x0100 + offset;
                 Emit("LDS", reg, $"0x{abs:X4}");
-                if (is16) Emit("LDS", regH, $"0x{abs + 1:X4}");
+                if (size >= 2) Emit("LDS", regH,  $"0x{abs + 1:X4}");
+                if (size == 4) { Emit("LDS", regB2, $"0x{abs + 2:X4}"); Emit("LDS", regB3, $"0x{abs + 3:X4}"); }
             }
-
             return;
         }
 
         var addr = ResolveAddress(val);
         if (string.IsNullOrEmpty(addr)) return;
         Emit("LDS", reg, addr);
-        if (is16) Emit("LDS", regH, addr + "+1");
+        if (size >= 2) Emit("LDS", regH, addr + "+1");
+        if (size == 4) { Emit("LDS", regB2, addr + "+2"); Emit("LDS", regB3, addr + "+3"); }
     }
 
     private void StoreRegInto(string reg, Val val, DataType type = DataType.UINT8)
     {
         if (val is Constant) return;
-        var is16 = type.SizeOf() == 2;
-        var regH = is16 ? GetHighReg(reg) : "";
+        int size = type.SizeOf();
+        var regH  = size >= 2 ? GetHighReg(reg) : "";
+        var regB2 = size == 4 ? (reg == "R24" ? "R22" : $"R{int.Parse(reg[1..]) + 2}") : "";
+        var regB3 = size == 4 ? (reg == "R24" ? "R23" : $"R{int.Parse(reg[1..]) + 3}") : "";
 
         if (val is MemoryAddress mem)
         {
             if (mem.Address is >= 0x20 and <= 0x5F)
-            {
                 Emit("OUT", $"0x{mem.Address - 0x20:X2}", reg);
-            }
             else
-            {
                 Emit("STS", $"0x{mem.Address:X4}", reg);
-            }
-
-            if (is16) Emit("STS", $"0x{mem.Address + 1:X4}", regH);
+            if (size >= 2) Emit("STS", $"0x{mem.Address + 1:X4}", regH);
+            if (size == 4) { Emit("STS", $"0x{mem.Address + 2:X4}", regB2); Emit("STS", $"0x{mem.Address + 3:X4}", regB3); }
             return;
         }
 
@@ -178,41 +180,44 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out var dstReg))
         {
-            if (dstReg == reg) return;
-            Emit("MOV", dstReg, reg);
-            if (is16) Emit("MOV", GetHighReg(dstReg), regH);
+            if (dstReg != reg) Emit("MOV", dstReg, reg);
+            if (size >= 2) Emit("MOV", GetHighReg(dstReg), regH);
+            if (size == 4) { Emit("MOV", $"R{int.Parse(dstReg[1..]) + 2}", regB2); Emit("MOV", $"R{int.Parse(dstReg[1..]) + 3}", regB3); }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _tmpRegLayout.TryGetValue(name, out var tmpReg))
         {
-            if (tmpReg == reg) return;
-            Emit("MOV", tmpReg, reg);
-            if (is16) Emit("MOV", GetHighReg(tmpReg), regH);
+            if (tmpReg != reg) Emit("MOV", tmpReg, reg);
+            if (size >= 2) Emit("MOV", GetHighReg(tmpReg), regH);
+            if (size == 4) { Emit("MOV", $"R{int.Parse(tmpReg[1..]) + 2}", regB2); Emit("MOV", $"R{int.Parse(tmpReg[1..]) + 3}", regB3); }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
         {
-            if (offset + (is16 ? 1 : 0) < 64)
+            bool nearY = offset + (size - 1) < 64;
+            if (nearY)
             {
                 Emit("STD", $"Y+{offset}", reg);
-                if (is16) Emit("STD", $"Y+{offset + 1}", regH);
+                if (size >= 2) Emit("STD", $"Y+{offset + 1}", regH);
+                if (size == 4) { Emit("STD", $"Y+{offset + 2}", regB2); Emit("STD", $"Y+{offset + 3}", regB3); }
             }
             else
             {
                 var abs = 0x0100 + offset;
                 Emit("STS", $"0x{abs:X4}", reg);
-                if (is16) Emit("STS", $"0x{abs + 1:X4}", regH);
+                if (size >= 2) Emit("STS", $"0x{abs + 1:X4}", regH);
+                if (size == 4) { Emit("STS", $"0x{abs + 2:X4}", regB2); Emit("STS", $"0x{abs + 3:X4}", regB3); }
             }
-
             return;
         }
 
         var addr = ResolveAddress(val);
         if (string.IsNullOrEmpty(addr)) return;
         Emit("STS", addr, reg);
-        if (is16) Emit("STS", addr + "+1", regH);
+        if (size >= 2) Emit("STS", addr + "+1", regH);
+        if (size == 4) { Emit("STS", addr + "+2", regB2); Emit("STS", addr + "+3", regB3); }
     }
 
     public override void Compile(ProgramIR program, TextWriter output)
@@ -363,15 +368,34 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             {
                 var pname = func.Params[k];
                 bool p16 = _varSizes.TryGetValue(pname, out int psz) && psz == 2;
+                bool p32 = _varSizes.TryGetValue(pname, out int psz32) && psz32 == 4;
+                // For uint32, param k=0 occupies R24:R25:R22:R23 (not argRegs[k] alone).
+                // argRegs array is for separate parameters; a uint32 first arg spans R24-R23.
+                string aR = argRegs[k];
                 if (_regLayout.TryGetValue(pname, out var r))
                 {
-                    if (argRegs[k] != r) Emit("MOV", r, argRegs[k]);
-                    if (p16) Emit("MOV", GetHighReg(r), GetHighReg(argRegs[k]));
+                    if (aR != r) Emit("MOV", r, aR);
+                    if (p16 || p32) Emit("MOV", GetHighReg(r), GetHighReg(aR));
+                    if (p32)
+                    {
+                        // bytes 2 and 3 are in R22 and R23 when k==0 (first arg)
+                        string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
+                        string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                        Emit("MOV", $"R{int.Parse(r[1..]) + 2}", aR2);
+                        Emit("MOV", $"R{int.Parse(r[1..]) + 3}", aR3);
+                    }
                 }
                 else if (_stackLayout.TryGetValue(pname, out int off))
                 {
-                    Emit("STD", $"Y+{off}", argRegs[k]);
-                    if (p16) Emit("STD", $"Y+{off + 1}", GetHighReg(argRegs[k]));
+                    Emit("STD", $"Y+{off}", aR);
+                    if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
+                    if (p32)
+                    {
+                        string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
+                        string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                        Emit("STD", $"Y+{off + 2}", aR2);
+                        Emit("STD", $"Y+{off + 3}", aR3);
+                    }
                 }
             }
         }
@@ -574,13 +598,20 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         LoadIntoReg(li.SrcPtr, "R26", DataType.UINT16);
         DataType dstType = GetValType(li.Dst);
-        if (dstType.SizeOf() == 2)
+        int dstSize = dstType.SizeOf();
+        if (dstSize == 4)
+        {
+            Emit("LD", "R24", "X+");
+            Emit("LD", "R25", "X+");
+            Emit("LD", "R22", "X+");
+            Emit("LD", "R23", "X");
+        }
+        else if (dstSize == 2)
         {
             Emit("LD", "R24", "X+");
             Emit("LD", "R25", "X");
         }
         else Emit("LD", "R24", "X");
-
         StoreRegInto("R24", li.Dst, dstType);
     }
 
@@ -589,10 +620,18 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         LoadIntoReg(si.DstPtr, "R26", DataType.UINT16);
         DataType srcType = GetValType(si.Src);
         LoadIntoReg(si.Src, "R24", srcType);
-        if (srcType.SizeOf() == 2)
+        int srcSize = srcType.SizeOf();
+        if (srcSize == 4)
         {
             Emit("ST", "X+", "R24");
-            Emit("ST", "X", "R25");
+            Emit("ST", "X+", "R25");
+            Emit("ST", "X+", "R22");
+            Emit("ST", "X",  "R23");
+        }
+        else if (srcSize == 2)
+        {
+            Emit("ST", "X+", "R24");
+            Emit("ST", "X",  "R25");
         }
         else Emit("ST", "X", "R24");
     }
@@ -640,13 +679,75 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         DataType type = GetValType(b.Dst);
         bool is16 = type.SizeOf() == 2;
+        bool is32 = type.SizeOf() == 4;
         LoadIntoReg(b.Src1, "R24", type);
 
         bool usedImm = false;
         if (b.Src2 is Constant c2)
         {
             int val = c2.Value;
-            if (!is16)
+            if (is32)
+            {
+                switch (b.Op)
+                {
+                    case IrBinOp.BitAnd:
+                        Emit("ANDI", "R24", $"{val & 0xFF}");
+                        Emit("ANDI", "R25", $"{(val >> 8) & 0xFF}");
+                        Emit("ANDI", "R22", $"{(val >> 16) & 0xFF}");
+                        Emit("ANDI", "R23", $"{(val >> 24) & 0xFF}");
+                        usedImm = true;
+                        break;
+                    case IrBinOp.BitOr:
+                        Emit("ORI", "R24", $"{val & 0xFF}");
+                        Emit("ORI", "R25", $"{(val >> 8) & 0xFF}");
+                        Emit("ORI", "R22", $"{(val >> 16) & 0xFF}");
+                        Emit("ORI", "R23", $"{(val >> 24) & 0xFF}");
+                        usedImm = true;
+                        break;
+                    case IrBinOp.RShift:
+                    {
+                        int byteShift = val / 8;
+                        int bitShift  = val % 8;
+                        if (byteShift >= 4) { Emit("CLR","R24"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        else if (byteShift == 3) { Emit("MOV","R24","R23"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        else if (byteShift == 2) { Emit("MOV","R24","R22"); Emit("MOV","R25","R23"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        else if (byteShift == 1) { Emit("MOV","R24","R25"); Emit("MOV","R25","R22"); Emit("MOV","R22","R23"); Emit("CLR","R23"); }
+                        for (int i = 0; i < bitShift; i++) { Emit("LSR","R23"); Emit("ROR","R22"); Emit("ROR","R25"); Emit("ROR","R24"); }
+                        usedImm = true;
+                        break;
+                    }
+                    case IrBinOp.LShift:
+                    {
+                        int byteShift = val / 8;
+                        int bitShift  = val % 8;
+                        if (byteShift >= 4) { Emit("CLR","R24"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        else if (byteShift == 3) { Emit("MOV","R23","R24"); Emit("CLR","R24"); Emit("CLR","R25"); Emit("CLR","R22"); }
+                        else if (byteShift == 2) { Emit("MOV","R23","R25"); Emit("MOV","R22","R24"); Emit("CLR","R24"); Emit("CLR","R25"); }
+                        else if (byteShift == 1) { Emit("MOV","R23","R22"); Emit("MOV","R22","R25"); Emit("MOV","R25","R24"); Emit("CLR","R24"); }
+                        for (int i = 0; i < bitShift; i++) { Emit("LSL","R24"); Emit("ROL","R25"); Emit("ROL","R22"); Emit("ROL","R23"); }
+                        usedImm = true;
+                        break;
+                    }
+                    case IrBinOp.Add:
+                    {
+                        int neg = -val;
+                        Emit("SUBI", "R24", $"{(byte)(neg & 0xFF)}");
+                        Emit("SBCI", "R25", $"{(byte)((neg >> 8) & 0xFF)}");
+                        Emit("SBCI", "R22", $"{(byte)((neg >> 16) & 0xFF)}");
+                        Emit("SBCI", "R23", $"{(byte)((neg >> 24) & 0xFF)}");
+                        usedImm = true;
+                        break;
+                    }
+                    case IrBinOp.Sub:
+                        Emit("SUBI", "R24", $"{val & 0xFF}");
+                        Emit("SBCI", "R25", $"{(val >> 8) & 0xFF}");
+                        Emit("SBCI", "R22", $"{(val >> 16) & 0xFF}");
+                        Emit("SBCI", "R23", $"{(val >> 24) & 0xFF}");
+                        usedImm = true;
+                        break;
+                }
+            }
+            else if (!is16)
             {
                 switch (b.Op)
                 {
@@ -707,7 +808,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 if (!usedImm)
                 {
                     Emit("ADD", "R24", "R18");
-                    if (is16) Emit("ADC", "R25", "R19");
+                    if (is16 || is32) Emit("ADC", "R25", "R19");
+                    if (is32) { Emit("ADC", "R22", "R20"); Emit("ADC", "R23", "R21"); }
                 }
 
                 break;
@@ -715,7 +817,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 if (!usedImm)
                 {
                     Emit("SUB", "R24", "R18");
-                    if (is16) Emit("SBC", "R25", "R19");
+                    if (is16 || is32) Emit("SBC", "R25", "R19");
+                    if (is32) { Emit("SBC", "R22", "R20"); Emit("SBC", "R23", "R21"); }
                 }
 
                 break;
@@ -723,7 +826,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 if (!usedImm)
                 {
                     Emit("AND", "R24", "R18");
-                    if (is16) Emit("AND", "R25", "R19");
+                    if (is16 || is32) Emit("AND", "R25", "R19");
+                    if (is32) { Emit("AND", "R22", "R20"); Emit("AND", "R23", "R21"); }
                 }
 
                 break;
@@ -731,13 +835,15 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 if (!usedImm)
                 {
                     Emit("OR", "R24", "R18");
-                    if (is16) Emit("OR", "R25", "R19");
+                    if (is16 || is32) Emit("OR", "R25", "R19");
+                    if (is32) { Emit("OR", "R22", "R20"); Emit("OR", "R23", "R21"); }
                 }
 
                 break;
             case IrBinOp.BitXor:
                 Emit("EOR", "R24", "R18");
-                if (is16) Emit("EOR", "R25", "R19");
+                if (is16 || is32) Emit("EOR", "R25", "R19");
+                if (is32) { Emit("EOR", "R22", "R20"); Emit("EOR", "R23", "R21"); }
                 break;
             case IrBinOp.LShift:
                 if (!usedImm)
@@ -748,7 +854,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     Emit("TST", "R18");
                     EmitBranch("BREQ", ld);
                     Emit("LSL", "R24");
-                    if (is16) Emit("ROL", "R25");
+                    if (is16 || is32) Emit("ROL", "R25");
+                    if (is32) { Emit("ROL", "R22"); Emit("ROL", "R23"); }
                     Emit("DEC", "R18");
                     Emit("RJMP", ls);
                     EmitLabel(ld);
@@ -763,7 +870,14 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     EmitLabel(rs);
                     Emit("TST", "R18");
                     EmitBranch("BREQ", rd);
-                    if (is16)
+                    if (is32)
+                    {
+                        Emit("LSR", "R23");
+                        Emit("ROR", "R22");
+                        Emit("ROR", "R25");
+                        Emit("ROR", "R24");
+                    }
+                    else if (is16)
                     {
                         Emit("LSR", "R25");
                         Emit("ROR", "R24");
