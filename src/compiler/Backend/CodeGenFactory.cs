@@ -21,6 +21,7 @@ using PyMCU.Backend.Targets.PIO;
 using PyMCU.Backend.Targets.RiscV;
 using PyMCU.Common;
 using PyMCU.Backend.Targets.PIC18;
+using PyMCU.Common.Models;
 
 namespace PyMCU.Backend;
 

@@ -16,8 +16,9 @@
 
 using PyMCU.Common;
 using PyMCU.Common.Abstractions;
+using PyMCU.Frontend;
 
-namespace PyMCU.Frontend;
+namespace PyMCU.Infrastructure;
 
 public class FileSystemModuleLoader : IModuleLoader
 {
