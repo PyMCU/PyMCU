@@ -36,11 +36,6 @@ public class BackendPhase : ICompilerPhase
             var deviceConfig = context.DeviceConfig;
             var options = context.Options;
 
-            if (!string.IsNullOrEmpty(context.Config.Chip)) deviceConfig.Chip = context.Config.Chip;
-            if (!string.IsNullOrEmpty(context.Config.Arch)) deviceConfig.Arch = context.Config.Arch;
-            if (!string.IsNullOrEmpty(context.Config.TargetChip))
-                deviceConfig.TargetChip = context.Config.TargetChip;
-            if (context.Config.RamSize > 0) deviceConfig.RamSize = context.Config.RamSize;
 
             string targetArch = deviceConfig.Arch;
             if (string.IsNullOrEmpty(targetArch))

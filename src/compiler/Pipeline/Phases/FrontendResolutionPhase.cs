@@ -39,17 +39,25 @@ public class FrontendResolutionPhase(IModuleLoader moduleLoader) : ICompilerPhas
             var moduleGraph = BuildDependencyGraph(context.RootAst, context.Options.FilePath, context);
             var resolutionOrder = moduleGraph.GetTopologicalSort();
 
-            var preScanner = new PreScanVisitor(context.Config);
-            var conditional = new ConditionalCompilator(context.Config);
+            var preScanner = new PreScanVisitor(context.DeviceConfig);
+            var conditional = new ConditionalCompilator(context.DeviceConfig);
 
             foreach (var astNode in resolutionOrder)
             {
                 preScanner.Scan(astNode);
 
-                if (string.IsNullOrEmpty(context.Config.Chip)) context.Config.Chip = context.Options.Arch;
-                if (string.IsNullOrEmpty(context.Config.Arch)) context.Config.Arch = context.Options.Arch;
+                if (string.IsNullOrEmpty(context.DeviceConfig.Chip)) context.DeviceConfig.Chip = context.Options.Chip;
+                if (string.IsNullOrEmpty(context.DeviceConfig.Arch)) context.DeviceConfig.Arch = context.Options.Arch;
 
                 conditional.Process(astNode);
+            }
+
+            foreach (var astNode in resolutionOrder)
+            {
+                foreach (var imp in astNode.Imports.Where(imp => imp.ModuleName is not ("pymcu.types" or "pymcu.chips")).Where(imp => !context.NamedModules.ContainsKey(imp.ModuleName)))
+                {
+                    moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
+                }
             }
         }
         catch (CompilerError e)
@@ -63,27 +71,32 @@ public class FrontendResolutionPhase(IModuleLoader moduleLoader) : ICompilerPhas
     {
         var graph = new DependencyGraph();
         var queue = new Queue<(ProgramNode Ast, string Path)>();
-        var visitedPaths = new HashSet<string>();
+        var visitedModules = new HashSet<string>();
+        int operations = 0;
 
         queue.Enqueue((rootAst, rootPath));
-        visitedPaths.Add(rootPath);
         graph.AddNode(rootAst);
 
         while (queue.Count > 0)
         {
+            if (++operations > MaxQueueOperations)
+                throw new CompilerError("ImportError",
+                    "Dependency graph exceeded maximum size. Possible circular dependency.", 0, 0);
+
             var (currentAst, currentPath) = queue.Dequeue();
 
             foreach (var imp in currentAst.Imports)
             {
                 if (imp.ModuleName is "pymcu.types" or "pymcu.chips") continue;
 
-                var importedAst = moduleLoader.LoadModule(imp.ModuleName, currentPath, context);
+                var importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context);
+                var importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context);
 
                 graph.AddDependencyEdge(importedAst, currentAst);
 
-                if (visitedPaths.Add(imp.ModuleName))
+                if (visitedModules.Add(imp.ModuleName))
                 {
-                    queue.Enqueue((importedAst, currentPath));
+                    queue.Enqueue((importedAst, importedPath));
                 }
             }
         }

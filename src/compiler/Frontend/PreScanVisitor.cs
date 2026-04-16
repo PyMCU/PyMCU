@@ -114,19 +114,6 @@ public class PreScanVisitor
                             $"[Warning] Build specifies '{config.TargetChip}', but code imports '{parsedChip}'. Using source code chip.");
                         config.TargetChip = parsedChip;
                     }
-
-                    // Auto-detect architecture if not already set
-                    if (string.IsNullOrEmpty(config.Arch))
-                    {
-                        if (parsedChip.StartsWith("pic16f1") && parsedChip.Length >= 9)
-                        {
-                            config.Arch = "pic14e";
-                        }
-                        else
-                        {
-                            config.Arch = "pic14";
-                        }
-                    }
                 }
                 else
                 {

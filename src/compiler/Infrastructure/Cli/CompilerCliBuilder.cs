@@ -36,7 +36,7 @@ public static class CompilerCliBuilder
         Option<string> archOption = new("--arch")
         {
             Description = "Target architecture",
-            DefaultValueFactory = parseResult => "pic14"
+            DefaultValueFactory = parseResult => "avr"
         };
 
         Option<string> chipOption = new("--chip")
@@ -102,7 +102,7 @@ public static class CompilerCliBuilder
             CompilerOptions options = new(
                 FilePath: file,
                 OutputPath: output,
-                Arch: parseResult.GetValue(archOption) ?? "pic14",
+                Arch: parseResult.GetValue(archOption) ?? string.Empty,
                 Chip: parseResult.GetValue(chipOption) ?? string.Empty,
                 Frequency: parseResult.GetValue(freqOption),
                 Configs: parseResult.GetValue(configOption) ?? [],

@@ -46,8 +46,8 @@ public class InitializationPhase : ICompilerPhase
 
         try
         {
-            var source = File.ReadAllText(options.FilePath);
-            using var reader = new StringReader(source);
+            context.SourceCode = File.ReadAllText(options.FilePath);
+            using var reader = new StringReader(context.SourceCode);
             while (reader.ReadLine() is { } line)
             {
                 context.SourceLines.Add(line);
