@@ -52,7 +52,7 @@ public class BootstrapPhase : CompilerPhaseBase
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[Warning] Chip bootstrap failed: {ex.Message}");
+            Logger.Warning("Bootstrap", $"Chip bootstrap failed: {ex.Message}");
             context.HasErrors = true;
         }
     }

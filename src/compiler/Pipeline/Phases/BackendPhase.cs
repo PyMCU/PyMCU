@@ -54,12 +54,12 @@ public class BackendPhase : CompilerPhaseBase
         if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
             Directory.CreateDirectory(outputParent);
 
-        Console.WriteLine(
-            $"[pymcuc] Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
+        Logger.Info("pymcuc",
+            $"Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
 
         using var asmFile = new StreamWriter(options.OutputPath);
         backend.Compile(ir, asmFile);
 
-        Console.WriteLine($"[pymcuc] Success! Output written to {options.OutputPath}");
+        Logger.Verbose("pymcuc", $"Output written to {options.OutputPath}");
     }
 }

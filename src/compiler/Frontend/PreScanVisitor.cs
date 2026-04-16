@@ -94,8 +94,8 @@ public class PreScanVisitor(DeviceConfig config)
                     // since the code was written for a specific chip.
                     if (!string.IsNullOrEmpty(config.TargetChip) && config.TargetChip != parsedChip)
                     {
-                        Console.Error.WriteLine(
-                            $"[Warning] Build specifies '{config.TargetChip}', but code imports '{parsedChip}'. Using source code chip.");
+                        Logger.Warning("PreScan",
+                            $"Build specifies '{config.TargetChip}', but code imports '{parsedChip}'. Using source code chip.");
                         config.TargetChip = parsedChip;
                     }
                 }
@@ -138,7 +138,7 @@ public class PreScanVisitor(DeviceConfig config)
             }
         }
 
-        Console.WriteLine(
-            $"[PreScan] Configured device: {config.Chip} (Arch: {config.Arch}) (RAM: {config.RamSize}, Flash: {config.FlashSize})");
+        Logger.Verbose("PreScan",
+            $"Configured device: {config.Chip} (Arch: {config.Arch}) (RAM: {config.RamSize}, Flash: {config.FlashSize})");
     }
 }
