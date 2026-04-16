@@ -4,34 +4,69 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
-  build_stdlib:
+  # Classifies the triggering ref: stable tag, pre-release tag, or no tag
+  # (manual dispatch without a tag — wheels are built but nothing is published).
+  check-tag:
+    name: Detect release type
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      is_stable: ${{ steps.tag.outputs.is_stable }}
+      is_prerelease: ${{ steps.tag.outputs.is_prerelease }}
+    steps:
+      - name: Classify tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF_NAME:-}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_stable=true"     >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "is_stable=false"    >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false"    >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-stdlib:
     name: Build pymcu-stdlib
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Install uv
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
         uses: astral-sh/setup-uv@v5
-      - name: Build stdlib
-        run: |
-          cd lib
-          uv build
-      - name: Upload artifacts
+
+      - name: Build stdlib wheel
+        run: cd lib && uv build
+
+      - name: Upload stdlib artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-stdlib
           path: lib/dist/*
+          retention-days: 15
 
-  build_wheels:
-    name: Build wheels for ${{ matrix.os }}
+  build-wheels:
+    name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           submodules: true
 
@@ -41,45 +76,58 @@ jobs:
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
-        env:
-          CIBW_WRAPPED_WHEEL_DIR: src/driver
         with:
           package-dir: src/driver
 
-      - name: Upload artifacts
+      - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
           path: ./wheelhouse/*.whl
+          retention-days: 15
 
-  publish:
-    name: Publish Package
-    needs: [build_stdlib, build_wheels]
+  # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [check-tag, build-stdlib, build-wheels]
+    if: needs.check-tag.outputs.is_stable == 'true'
     runs-on: ubuntu-latest
     environment: release
     permissions:
       id-token: write
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Install uv
+
+      - name: Set up uv
         uses: astral-sh/setup-uv@v5
-      - name: Publish Package
-        env:
-          TARGET_URL: ${{ secrets.PUBLISH_REGISTRY_URL }}
-          TARGET_USER: ${{ secrets.PUBLISH_USER }}
-          TARGET_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-        run: |
-          if [ -n "$TARGET_URL" ]; then
-            uv publish --publish-url "$TARGET_URL" --username "$TARGET_USER" --password "$TARGET_TOKEN" dist/*
-          else
-            if [ -z "$TARGET_TOKEN" ]; then
-              # Attempt OIDC publish if no token is provided
-              uv publish dist/*
-            else
-              uv publish --token "$TARGET_TOKEN" dist/*
-            fi
-          fi
+
+      - name: Publish to PyPI
+        run: uv publish dist/*
+
+  # Runs only on a pre-release tag (any v* tag that is not vX.Y.Z).
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [check-tag, build-stdlib, build-wheels]
+    if: needs.check-tag.outputs.is_prerelease == 'true'
+    runs-on: ubuntu-latest
+    environment: prerelease
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Publish to TestPyPI
+        run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
