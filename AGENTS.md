@@ -12,7 +12,8 @@ PyMCU is a Python-to-MCU compiler. It takes a statically-typed subset of Python 
 it to bare-metal firmware for microcontrollers (currently AVR/ATmega328P, PIC, RISC-V, PIO).
 
 Key components:
-- `src/compiler/` — C++ compiler (`pymcuc`): Lexer, Parser, IRGenerator, AVR codegen
+- `src/compiler/` — C# compiler (`pymcuc`): Lexer, Parser, IRGenerator, AVR codegen
+- 
 - `lib/src/pymcu/` — Python stdlib compiled into firmware (HAL, drivers, boards)
 - `src/driver/` — Python CLI driver (`pymcu build/flash/new`)
 - `tests/integration/` — .NET/AVR8Sharp integration tests (must always pass)

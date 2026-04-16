@@ -781,6 +781,13 @@ public partial class IRGenerator
             DataType varType = DataType.UINT8;
             if (obj is Variable v)
             {
+                // Resolve local ptr[T] compile-time constant address variable
+                if (constantAddressVariables.TryGetValue(v.Name, out int ptrAddr))
+                {
+                    DataType elemType = DataType.UINT8;
+                    if (variableTypes.TryGetValue(v.Name, out var et)) elemType = et;
+                    return new MemoryAddress(ptrAddr, elemType);
+                }
                 if (variableTypes.TryGetValue(v.Name, out var vt)) varType = vt;
                 obj = v with { Type = varType };
             }

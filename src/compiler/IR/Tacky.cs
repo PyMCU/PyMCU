@@ -135,6 +135,7 @@ public class Function
 {
     public string Name { get; set; } = "";
     public List<string> Params { get; set; } = new();
+    public DataType ReturnType { get; set; } = DataType.VOID;
     public List<Instruction> Body { get; set; } = new();
     public bool IsInline { get; set; } = false;
     public bool IsInterrupt { get; set; } = false;

@@ -84,6 +84,7 @@ public partial class IRGenerator
         irFunc.IsInline = funcNode.IsInline;
         irFunc.IsInterrupt = funcNode.IsInterrupt;
         irFunc.InterruptVector = funcNode.InterruptVector;
+        irFunc.ReturnType = DataTypeExtensions.StringToDataType(funcNode.ReturnType);
 
         currentFunctionGlobals.Clear();
         currentInstructions.Clear();
@@ -92,7 +93,10 @@ public partial class IRGenerator
 
         foreach (var param in funcNode.Params)
         {
-            irFunc.Params.Add(currentFunction + "." + param.Name);
+            string qualifiedParam = currentFunction + "." + param.Name;
+            irFunc.Params.Add(qualifiedParam);
+            DataType paramDt = DataTypeExtensions.StringToDataType(param.Type);
+            variableTypes[qualifiedParam] = paramDt;
         }
 
         arraysWithVariableIndex.Clear();

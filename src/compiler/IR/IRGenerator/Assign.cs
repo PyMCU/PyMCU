@@ -401,7 +401,15 @@ public partial class IRGenerator
                 var varType = DataType.UINT8;
                 var originalName = memExpr2.Object is VariableExpr veObj ? veObj.Name : null;
 
-                if (originalName != null && variableTypes.TryGetValue(originalName, out var typeGlob))
+                // Resolve local ptr[T] compile-time constant address variable
+                if (target is Variable ptrVar && constantAddressVariables.TryGetValue(ptrVar.Name, out int ptrAddr))
+                {
+                    DataType elemType = DataType.UINT8;
+                    if (variableTypes.TryGetValue(ptrVar.Name, out var et)) elemType = et;
+                    target = new MemoryAddress(ptrAddr, elemType);
+                    varType = elemType;
+                }
+                else if (originalName != null && variableTypes.TryGetValue(originalName, out var typeGlob))
                     varType = typeGlob;
                 else if (originalName != null && !string.IsNullOrEmpty(currentInlinePrefix) &&
                          variableTypes.TryGetValue(currentInlinePrefix + originalName, out var typeInline))
@@ -441,6 +449,23 @@ public partial class IRGenerator
                     }
                     case 2:
                         throw new Exception("16-bit .value assignment requires constant address");
+                    case 4 when target is MemoryAddress addr32:
+                    {
+                        if (value is Constant constVal32)
+                        {
+                            Emit(new Copy(new Constant(constVal32.Value & 0xFF),         new MemoryAddress(addr32.Address,     DataType.UINT8)));
+                            Emit(new Copy(new Constant((constVal32.Value >> 8)  & 0xFF), new MemoryAddress(addr32.Address + 1, DataType.UINT8)));
+                            Emit(new Copy(new Constant((constVal32.Value >> 16) & 0xFF), new MemoryAddress(addr32.Address + 2, DataType.UINT8)));
+                            Emit(new Copy(new Constant((constVal32.Value >> 24) & 0xFF), new MemoryAddress(addr32.Address + 3, DataType.UINT8)));
+                        }
+                        else
+                        {
+                            Emit(new Copy(value, new MemoryAddress(addr32.Address, DataType.UINT32)));
+                        }
+                        break;
+                    }
+                    case 4:
+                        throw new Exception("32-bit .value assignment requires constant address");
                     default:
                         throw new Exception("Unsupported type size for .value assignment");
                 }
@@ -755,8 +780,16 @@ public partial class IRGenerator
         }
 
         DataType type = DataType.UINT8;
+        bool isPtrAnnotation = stmt.Annotation.StartsWith("ptr[") && stmt.Annotation.EndsWith("]");
+        DataType ptrElemType = DataType.UINT8;
+        if (isPtrAnnotation)
+        {
+            string inner = stmt.Annotation.Substring(4, stmt.Annotation.Length - 5);
+            ptrElemType = DataTypeExtensions.StringToDataType(inner);
+        }
+
         if (stmt.Annotation.Contains("ptr[uint16]")) type = DataType.UINT16;
-        else if (stmt.Annotation.Contains("ptr[uint32]")) type = DataType.UINT32;
+        else if (stmt.Annotation.Contains("ptr[uint32]")) type = DataType.UINT16; // ptr var holds a 16-bit address on AVR
         else if (stmt.Annotation.Contains("uint16")) type = DataType.UINT16;
         else if (stmt.Annotation.Contains("uint32")) type = DataType.UINT32;
 
@@ -770,6 +803,16 @@ public partial class IRGenerator
         if (stmt.Value != null)
         {
             Val rhs = VisitExpression(stmt.Value);
+
+            // For ptr[T] = ptr(constant), register the constant address and element type;
+            // do not emit a Copy (the "variable" is a compile-time address constant).
+            if (isPtrAnnotation && rhs is MemoryAddress ptrAddr)
+            {
+                constantAddressVariables[qualified2] = ptrAddr.Address;
+                variableTypes[qualified2] = ptrElemType;
+                return;
+            }
+
             if (rhs is MemoryAddress addr) rhs = addr with { Type = type };
             Emit(new Copy(rhs, new Variable(qualified2, type)));
 

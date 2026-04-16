@@ -71,18 +71,19 @@ public static class Optimizer
         }
     }
 
-    private static Function CloneFunction(Function f)
+private static Function CloneFunction(Function f)
+{
+    return new Function
     {
-        return new Function
-        {
-            Name = f.Name,
-            Params = [..f.Params],
-            Body = [..f.Body],
-            IsInline = f.IsInline,
-            IsInterrupt = f.IsInterrupt,
-            InterruptVector = f.InterruptVector,
-        };
-    }
+        Name = f.Name,
+        Params = [..f.Params],
+        ReturnType = f.ReturnType,
+        Body = [..f.Body],
+        IsInline = f.IsInline,
+        IsInterrupt = f.IsInterrupt,
+        InterruptVector = f.InterruptVector,
+    };
+}
 
     private static void OptimizeFunction(Function func)
     {

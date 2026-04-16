@@ -1479,8 +1479,25 @@ public class PIC14CodeGen : CodeGen
                 }
                 else
                 {
-                    throw new NotSupportedException(
-                        "PIC14: 16-bit AugAssign var addition not fully implemented");
+                    // var16 += var16:
+                    //   W = operand_lo; target_lo += W (sets Carry)
+                    //   if carry: target_hi++
+                    //   W = operand_hi; target_hi += W
+                    string opAddr = ResolveAddress(arg.Operand);
+                    string opAddrHi = opAddr.StartsWith("0x")
+                        ? $"0x{ParseHexAddr(opAddr) + 1:X2}"
+                        : opAddr + "+1";
+                    SelectBank(opAddr);
+                    Emit("MOVF", opAddr, "W");
+                    SelectBank(targetAddr);
+                    Emit("ADDWF", targetAddr, "F");
+                    SelectBank(targetAddrHi);
+                    Emit("BTFSC", "STATUS", "0");
+                    Emit("INCF", targetAddrHi, "F");
+                    SelectBank(opAddrHi);
+                    Emit("MOVF", opAddrHi, "W");
+                    SelectBank(targetAddrHi);
+                    Emit("ADDWF", targetAddrHi, "F");
                 }
 
                 return;
