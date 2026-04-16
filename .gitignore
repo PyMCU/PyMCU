@@ -71,3 +71,5 @@ extensions/vscode-pymcu/.vscode
 
 extensions/jetbrains-pymcu/.gradle/
 extensions/jetbrains-pymcu/.intellijPlatform/
+
+WORK_SUMMARY.md
