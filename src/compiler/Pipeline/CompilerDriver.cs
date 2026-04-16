@@ -66,6 +66,7 @@ public class CompilerDriver
             Logger.PhaseEnd(phase.Name, sw.ElapsedMilliseconds);
         }
 
+        Logger.PrintTargetSummary(context.DeviceConfig.Chip, context.DeviceConfig.Frequency);
         Logger.BuildSuccess(options.OutputPath);
         return 0;
     }

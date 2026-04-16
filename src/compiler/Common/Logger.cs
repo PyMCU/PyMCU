@@ -76,6 +76,22 @@ public static class Logger
                 $"  [green]✓[/] [bold]{Markup.Escape(name)}[/] [dim]{elapsedMs}ms[/]");
     }
 
+    public static void PrintTargetSummary(string chip, ulong freqHz)
+    {
+        var chipLabel = string.IsNullOrEmpty(chip) ? "unknown" : chip;
+        var freqLabel = freqHz >= 1_000_000
+            ? $"{freqHz / 1_000_000} MHz"
+            : freqHz >= 1_000
+                ? $"{freqHz / 1_000} kHz"
+                : $"{freqHz} Hz";
+
+        if (_isDriverMode)
+            Console.WriteLine($"[BUILD_INFO] chip={chipLabel} freq={freqHz}");
+        else
+            AnsiConsole.MarkupLine(
+                $"  [dim]Target:[/] [bold]{Markup.Escape(chipLabel)}[/] [dim]@[/] {Markup.Escape(freqLabel)}");
+    }
+
     public static void BuildSuccess(string outputPath)
     {
         if (_isDriverMode)
