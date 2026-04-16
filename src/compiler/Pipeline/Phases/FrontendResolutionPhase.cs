@@ -17,90 +17,57 @@
 using PyMCU.Common;
 using PyMCU.Common.Abstractions;
 using PyMCU.Frontend;
+using PyMCU.Pipeline.Phases.Processors;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class FrontendResolutionPhase(IModuleLoader moduleLoader) : ICompilerPhase
+public class FrontendResolutionPhase(
+    IModuleLoader moduleLoader,
+    IDependencyGraphBuilder graphBuilder) : CompilerPhaseBase
 {
-    public string Name => "Semantic & Dependency Resolution";
+    public override string Name => "Semantic & Dependency Resolution";
 
-    private const int MaxQueueOperations = 5000;
-
-    public void Execute(CompilationContext context)
+    protected override bool Guard(CompilationContext context)
     {
-        if (context.RootAst == null)
-        {
-            context.HasErrors = true;
-            return;
-        }
-
-        try
-        {
-            var moduleGraph = BuildDependencyGraph(context.RootAst, context.Options.FilePath, context);
-            var resolutionOrder = moduleGraph.GetTopologicalSort();
-
-            var preScanner = new PreScanVisitor(context.DeviceConfig);
-            var conditional = new ConditionalCompilator(context.DeviceConfig);
-
-            foreach (var astNode in resolutionOrder)
-            {
-                preScanner.Scan(astNode);
-
-                if (string.IsNullOrEmpty(context.DeviceConfig.Chip)) context.DeviceConfig.Chip = context.Options.Chip;
-                if (string.IsNullOrEmpty(context.DeviceConfig.Arch)) context.DeviceConfig.Arch = context.Options.Arch;
-
-                conditional.Process(astNode);
-            }
-
-            foreach (var astNode in resolutionOrder)
-            {
-                foreach (var imp in astNode.Imports.Where(imp => imp.ModuleName is not ("pymcu.types" or "pymcu.chips")).Where(imp => !context.NamedModules.ContainsKey(imp.ModuleName)))
-                {
-                    moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
-                }
-            }
-        }
-        catch (CompilerError e)
-        {
-            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
-            context.HasErrors = true;
-        }
+        if (context.RootAst != null) return true;
+        context.HasErrors = true;
+        return false;
     }
 
-    private DependencyGraph BuildDependencyGraph(ProgramNode rootAst, string rootPath, CompilationContext context)
+    protected override void Run(CompilationContext context)
     {
-        var graph = new DependencyGraph();
-        var queue = new Queue<(ProgramNode Ast, string Path)>();
-        var visitedModules = new HashSet<string>();
-        int operations = 0;
+        var resolutionOrder = graphBuilder
+            .Build(context.RootAst!, context.Options.FilePath, context)
+            .GetTopologicalSort();
 
-        queue.Enqueue((rootAst, rootPath));
-        graph.AddNode(rootAst);
+        // Build the processor chain once, bound to the shared DeviceConfig instance.
+        IAstProcessor[] processors =
+        [
+            new PreScanProcessor(new PreScanVisitor(context.DeviceConfig)),
+            new DeviceConfigFallbackProcessor(),
+            new ConditionalCompilationProcessor(new ConditionalCompilator(context.DeviceConfig)),
+        ];
 
-        while (queue.Count > 0)
+        foreach (var node in resolutionOrder)
         {
-            if (++operations > MaxQueueOperations)
-                throw new CompilerError("ImportError",
-                    "Dependency graph exceeded maximum size. Possible circular dependency.", 0, 0);
-
-            var (currentAst, currentPath) = queue.Dequeue();
-
-            foreach (var imp in currentAst.Imports)
-            {
-                if (imp.ModuleName is "pymcu.types" or "pymcu.chips") continue;
-
-                var importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context);
-                var importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context);
-
-                graph.AddDependencyEdge(importedAst, currentAst);
-
-                if (visitedModules.Add(imp.ModuleName))
-                {
-                    queue.Enqueue((importedAst, importedPath));
-                }
-            }
+            foreach (var processor in processors)
+                processor.Process(node, context);
         }
 
-        return graph;
+        LoadPostConditionalModules(resolutionOrder, context);
+    }
+
+    // Loads any modules that conditional compilation revealed after the graph was built.
+    private void LoadPostConditionalModules(IEnumerable<ProgramNode> nodes, CompilationContext context)
+    {
+        foreach (var node in nodes)
+        {
+            foreach (var imp in node.Imports)
+            {
+                if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
+                if (!context.NamedModules.ContainsKey(imp.ModuleName))
+                    moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
+            }
+        }
     }
 }

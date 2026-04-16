@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Common.Models;
+using PyMCU.Frontend;
 using PyMCU.Infrastructure;
 using PyMCU.Infrastructure.Cli;
 
@@ -32,12 +33,13 @@ public static class Program
     private static int RunCompiler(CompilerOptions options)
     {
         var moduleLoader = new FileSystemModuleLoader();
+        var graphBuilder = new DependencyGraphBuilder(moduleLoader);
 
         var driver = new Pipeline.CompilerDriver()
             .AddPhase(new Pipeline.Phases.InitializationPhase())
             .AddPhase(new Pipeline.Phases.BootstrapPhase())
             .AddPhase(new Pipeline.Phases.ParsingPhase())
-            .AddPhase(new Pipeline.Phases.FrontendResolutionPhase(moduleLoader))
+            .AddPhase(new Pipeline.Phases.FrontendResolutionPhase(moduleLoader, graphBuilder))
             .AddPhase(new Pipeline.Phases.IrGenerationPhase())
             .AddPhase(new Pipeline.Phases.BackendPhase());
 
