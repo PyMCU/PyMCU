@@ -66,23 +66,24 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "10.x"
-
+      
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
-      - name: Create virtual environment
-        run: uv venv .venv
-
-      - name: Install PyMCU CLI from local source
-        run: uv pip install -e . lib/
-
-      - name: Install compat stdlib flavors
+      - name: Create virtual environment and install dependencies
         run: |
-          uv pip install external/pymcu-micropython/
-          uv pip install external/pymcu-circuitpython/
+          uv venv .venv
+          uv pip install --python .venv -e .
+          uv pip install --python .venv ./lib
+          uv pip install --python .venv ./external/pymcu-micropython
+          uv pip install --python .venv ./external/pymcu-circuitpython
 
-      - name: Add venv to PATH
-        run: echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
+      - name: Configure environment
+        run: |
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
+          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> $GITHUB_ENV
 
       - name: Build pymcuc compiler
         run: |
