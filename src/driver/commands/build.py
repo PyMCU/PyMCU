@@ -59,6 +59,21 @@ _COMPILER_PHASES = [
 ]
 _COMPILER_PHASE_STEP = 40.0 / len(_COMPILER_PHASES)  # spreads 10 -> 50 %
 
+# Flash capacity in bytes for known chips.
+# Used for the flash-usage report after assembly.
+FLASH_SIZES: dict[str, int] = {
+    "atmega328p": 32768, "atmega328": 32768,
+    "atmega168p": 16384, "atmega168": 16384,
+    "atmega88p":  8192,  "atmega88":  8192,
+    "atmega48p":  4096,  "atmega48":  4096,
+    "atmega2560": 262144,
+    "atmega32u4": 32768,
+    "attiny85": 8192,  "attiny45": 4096,  "attiny25": 2048,
+    "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
+    "attiny13": 1024,  "attiny13a": 1024,
+    "attiny2313": 2048, "attiny4313": 4096,
+}
+
 
 def _make_compiler_output_handler(progress, task, verbose: bool):
     """
@@ -66,12 +81,13 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
     structured progress tokens to Rich progress updates.
 
     Token protocol (emitted by Logger in driver mode):
-      [PHASE_START] <name>       -> update description
-      [PHASE_END]   <name> <ms>  -> advance progress
-      [BUILD_OK]    <path>       -> advance to 50 %
-      [BUILD_FAIL]  <phase>      -> stop (caller handles exit)
-      [INFO]        <text>       -> show in verbose mode
-      [VERBOSE]     <text>       -> show in verbose mode
+      [PHASE_START] <name>           -> update description
+      [PHASE_END]   <name> <ms>      -> advance progress
+      [BUILD_INFO]  chip=X freq=Y    -> enrich progress bar description
+      [BUILD_OK]    <path>           -> advance to 50 %
+      [BUILD_FAIL]  <phase>          -> stop (caller handles exit)
+      [INFO]        <text>           -> show in verbose mode
+      [VERBOSE]     <text>           -> show in verbose mode
     """
     phase_index = [0]
 
@@ -80,11 +96,27 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
             name = line[len("[PHASE_START] "):]
             progress.update(task, description=f"  [cyan]{name}[/cyan]...")
         elif line.startswith("[PHASE_END] "):
-            rest = line[len("[PHASE_END] "):]
-            parts = rest.rsplit(" ", 1)
             phase_index[0] += 1
             completed = 10 + phase_index[0] * _COMPILER_PHASE_STEP
             progress.update(task, completed=int(completed))
+        elif line.startswith("[BUILD_INFO] "):
+            # Parse key=value pairs emitted by Logger.PrintTargetSummary
+            info: dict[str, str] = {}
+            for part in line[len("[BUILD_INFO] "):].split():
+                if "=" in part:
+                    k, _, v = part.partition("=")
+                    info[k] = v
+            chip = info.get("chip", "")
+            freq_hz = int(info.get("freq", "0") or "0")
+            if chip and freq_hz:
+                freq_label = (
+                    f"{freq_hz // 1_000_000} MHz" if freq_hz >= 1_000_000
+                    else f"{freq_hz // 1_000} kHz" if freq_hz >= 1_000
+                    else f"{freq_hz} Hz"
+                )
+                progress.update(task, description=f"  [cyan]Building[/cyan] {chip} @ {freq_label}...")
+            elif chip:
+                progress.update(task, description=f"  [cyan]Building[/cyan] {chip}...")
         elif line.startswith("[BUILD_OK] "):
             progress.update(task, completed=50)
         elif verbose and line.startswith(("[INFO] ", "[VERBOSE] ")):
@@ -155,17 +187,24 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             config = tomlkit.load(f)
 
         pymcu_config = config.get("tool", {}).get("pymcu", {})
-        chip_key     = pymcu_config.get("chip",  None)
+        target_key   = pymcu_config.get("target", None)
+        # Compatibility: accept legacy "chip" key with a deprecation warning
+        if target_key is None and pymcu_config.get("chip"):
+            target_key = pymcu_config.get("chip")
+            console.print(
+                "[bold yellow]Deprecation:[/bold yellow] 'chip' in [tool.pymcu] is deprecated. "
+                "Rename it to 'target'."
+            )
         board_key    = pymcu_config.get("board", None)
         freq         = pymcu_config.get("frequency", 4000000)
         src_path     = pymcu_config.get("sources", "src")
 
-        # board and chip are mutually exclusive
-        if chip_key and board_key:
+        # board and target are mutually exclusive
+        if target_key and board_key:
             implied = BOARD_CHIPS.get(board_key, "?")
             console.print(
-                f"[bold red]Error:[/bold red] Cannot set both 'chip' and 'board' in \\[tool.pymcu].\n"
-                f"  'board = \"{board_key}\"' implies chip = \"{implied}\". Remove the 'chip' key."
+                f"[bold red]Error:[/bold red] Cannot set both 'target' and 'board' in \\[tool.pymcu].\n"
+                f"  'board = \"{board_key}\"' implies target = \"{implied}\". Remove the 'target' key."
             )
             raise typer.Exit(code=1)
 
@@ -194,17 +233,17 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     f"Install it with: pip install pymcu-{flavor}"
                 )
 
-        # Derive chip from board or fall back to explicit chip / default
+        # Derive target from board or fall back to explicit target / default
         if board_key:
-            chip = _resolve_chip_for_board(board_key, extension_board_chips)
-            if chip is None:
+            target = _resolve_chip_for_board(board_key, extension_board_chips)
+            if target is None:
                 console.print(
                     f"[bold red]Error:[/bold red] Unknown board '{board_key}'. "
                     f"Add it to BOARD_CHIPS in build.py or provide a board_chips.py in your extension package."
                 )
                 raise typer.Exit(code=1)
         else:
-            chip = chip_key or "pic16f84a"
+            target = target_key or "pic16f84a"
 
         project_root = pyproject_path.parent.absolute()
         sources_dir = (project_root / src_path).resolve()
@@ -290,12 +329,12 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         # (avr-as + avr-ld + avr-objcopy) is used instead of avra.
         if use_ffi:
             try:
-                toolchain = get_ffi_toolchain_for_chip(chip, console)
+                toolchain = get_ffi_toolchain_for_chip(target, console)
             except ValueError as e:
                 console.print(f"[bold red]Error:[/bold red] {e}")
                 raise typer.Exit(code=1)
         else:
-            toolchain = get_toolchain_for_chip(chip, console)
+            toolchain = get_toolchain_for_chip(target, console)
 
         # 2. Interactive Install Check (BEFORE Progress Bar)
         if not toolchain.is_cached():
@@ -317,7 +356,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             console=console
         ) as progress:
             
-            build_task = progress.add_task(description=f"  [cyan]Building[/cyan] {chip}...", total=100)
+            build_task = progress.add_task(description=f"  [cyan]Building[/cyan] {target}...", total=100)
 
             # Step 1: Compilation (Python -> ASM)
             # Progress 10-50% is driven by PHASE_START/PHASE_END tokens from pymcuc.
@@ -327,7 +366,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 compiler.compile(
                     input_file=entry_point,
                     output_file=str(output_file),
-                    arch=chip,
+                    target=target,
                     freq=freq,
                     configs=config_map,
                     search_path=sources_dir,
@@ -356,17 +395,17 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 # PIC Float Support
                 if '#include "float.inc"' in asm_content:
                     progress.update(build_task, description="Injecting Float Library...")
-                    arch = "pic16" # Default for PIC10/12/16
-                    if chip.lower().startswith("pic18"):
-                        arch = "pic18"
-                        
-                    src_inc = math_lib_path / arch / "float.inc"
+                    pic_arch = "pic16" # Default for PIC10/12/16
+                    if target.lower().startswith("pic18"):
+                        pic_arch = "pic18"
+
+                    src_inc = math_lib_path / pic_arch / "float.inc"
                     dst_inc = output_dir / "float.inc"
                     
                     if src_inc.exists():
                         shutil.copy(str(src_inc), str(dst_inc))
                     else:
-                        console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {arch}")
+                        console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {pic_arch}")
 
                 # AVR Math Runtime Injection
                 # If we are targeting AVR, we need to assemble and link the math runtime
@@ -548,19 +587,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 progress.update(build_task, description="Reporting size...")
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:
-                    # Chip flash sizes (bytes) — extend as needed
-                    flash_sizes = {
-                        "atmega328p": 32768, "atmega328": 32768,
-                        "atmega168p": 16384, "atmega168": 16384,
-                        "atmega88p": 8192,   "atmega88": 8192,
-                        "atmega48p": 4096,   "atmega48": 4096,
-                        "atmega2560": 262144,
-                        "attiny85": 8192,  "attiny45": 4096,  "attiny25": 2048,
-                        "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
-                        "attiny13": 1024,  "attiny13a": 1024,
-                        "attiny2313": 2048, "attiny4313": 4096,
-                    }
-                    flash_total = flash_sizes.get(chip.lower(), 0)
+                    flash_total = FLASH_SIZES.get(target.lower(), 0)
                     if flash_total:
                         pct = flash_bytes * 100 // flash_total
                         console.print(
@@ -571,7 +598,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                         console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
 
                 # Optional ELF conversion for debug tooling (avr-objcopy)
-                link_result = toolchain.link(hex_file, chip, output_dir)
+                link_result = toolchain.link(hex_file, target, output_dir)
                 if link_result:
                     elf_path, _ = link_result
                     debug_dir = output_dir / "debug"
@@ -580,20 +607,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     shutil.move(str(elf_path), str(debug_dir / elf_path.name))
             elif hex_file is not None:
                 # Flash size report for avr-as builds (FFI or non-FFI).
-                # ELF is already moved to debug/ by the assembly step above.
                 progress.update(build_task, description="Reporting size...")
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:
-                    flash_sizes = {
-                        "atmega328p": 32768, "atmega328": 32768,
-                        "atmega2560": 262144, "atmega168": 16384,
-                        "atmega88": 8192, "atmega48": 4096,
-                        "attiny85": 8192,  "attiny45": 4096,  "attiny25": 2048,
-                        "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
-                        "attiny13": 1024,  "attiny13a": 1024,
-                        "attiny2313": 2048, "attiny4313": 4096,
-                    }
-                    flash_total = flash_sizes.get(chip.lower(), 0)
+                    flash_total = FLASH_SIZES.get(target.lower(), 0)
                     if flash_total:
                         pct = flash_bytes * 100 // flash_total
                         console.print(

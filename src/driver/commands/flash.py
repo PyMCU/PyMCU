@@ -79,12 +79,12 @@ def flash(
             "arduino_mega":  "atmega2560",
             "arduino_micro": "atmega32u4",
         }
-        chip = pymcu_config.get("chip") or _BOARD_CHIP_MAP.get(
+        chip = pymcu_config.get("target") or pymcu_config.get("chip") or _BOARD_CHIP_MAP.get(
             str(pymcu_config.get("board", "")).replace("-", "_"), ""
         )
         if not chip:
             console.print(
-                "[red]No 'chip' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
+                "[red]No 'target' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
             )
             raise typer.Exit(code=1)
 
