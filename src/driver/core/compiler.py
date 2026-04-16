@@ -104,7 +104,7 @@ class PyMCUCompiler:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
 
-    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None):
+    def compile(self, input_file: str, output_file: str, arch: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--arch", arch, "--chip", arch, "--freq", str(freq)]
@@ -142,10 +142,31 @@ class PyMCUCompiler:
             cmd.extend(["-C", f"{key}={val}"])
         
         try:
-            # Let stderr flow through to the terminal so VS Code's problem
-            # matcher can parse diagnostic lines (file:line:col: severity: msg).
-            result = subprocess.run(cmd)
-            if result.returncode != 0:
+            # stdout is captured so the driver can parse structured progress tokens:
+            #   [PHASE_START] <name>
+            #   [PHASE_END]   <name> <elapsedMs>
+            #   [BUILD_OK]    <outputPath>
+            #   [BUILD_FAIL]  <phaseName>
+            #   [INFO]        [<component>] <message>
+            #   [VERBOSE]     [<component>] <message>
+            #
+            # stderr is left to pass through directly so VS Code's problem matcher
+            # can parse diagnostic lines (file:line:col: severity: msg).
+            with subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                bufsize=1,
+            ) as proc:
+                if proc.stdout and on_output:
+                    for raw in proc.stdout:
+                        on_output(raw.rstrip("\n").rstrip("\r"))
+                elif proc.stdout:
+                    proc.stdout.read()  # drain to avoid blocking
+                proc.wait()
+
+            if proc.returncode != 0:
                 raise RuntimeError("Compilation failed (see diagnostics above)")
         except FileNotFoundError:
             raise RuntimeError(f"Compiler '{compiler}' not found.")

@@ -45,8 +45,55 @@ from ..core.compiler import PyMCUCompiler
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Board → chip mapping
+# Compiler phase → progress mapping
+# Must match the phase Names declared in Program.cs / CompilerDriver pipeline.
+# Each PHASE_END token advances the build_task by one step within the 10-50 range.
 # ---------------------------------------------------------------------------
+_COMPILER_PHASES = [
+    "Initialization",
+    "Bootstrapping",
+    "Parsing",
+    "Frontend Resolution",
+    "IR Generation",
+    "Backend Phase",
+]
+_COMPILER_PHASE_STEP = 40.0 / len(_COMPILER_PHASES)  # spreads 10 -> 50 %
+
+
+def _make_compiler_output_handler(progress, task, verbose: bool):
+    """
+    Returns a callback that receives each stdout line from pymcuc and maps
+    structured progress tokens to Rich progress updates.
+
+    Token protocol (emitted by Logger in driver mode):
+      [PHASE_START] <name>       -> update description
+      [PHASE_END]   <name> <ms>  -> advance progress
+      [BUILD_OK]    <path>       -> advance to 50 %
+      [BUILD_FAIL]  <phase>      -> stop (caller handles exit)
+      [INFO]        <text>       -> show in verbose mode
+      [VERBOSE]     <text>       -> show in verbose mode
+    """
+    phase_index = [0]
+
+    def handle(line: str):
+        if line.startswith("[PHASE_START] "):
+            name = line[len("[PHASE_START] "):]
+            progress.update(task, description=f"  [cyan]{name}[/cyan]...")
+        elif line.startswith("[PHASE_END] "):
+            rest = line[len("[PHASE_END] "):]
+            parts = rest.rsplit(" ", 1)
+            phase_index[0] += 1
+            completed = 10 + phase_index[0] * _COMPILER_PHASE_STEP
+            progress.update(task, completed=int(completed))
+        elif line.startswith("[BUILD_OK] "):
+            progress.update(task, completed=50)
+        elif verbose and line.startswith(("[INFO] ", "[VERBOSE] ")):
+            progress.console.print(f"  [dim]{line}[/dim]")
+
+    return handle
+
+
+
 # When pyproject.toml uses  board = "arduino_uno"  instead of  chip = "...",
 # the chip is derived from this dict.  Extension packages may supplement it
 # via a board_chips.py module (see _load_extension_board_chips()).
@@ -270,10 +317,12 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             console=console
         ) as progress:
             
-            build_task = progress.add_task(description=f"Building {chip}...", total=100)
-            
+            build_task = progress.add_task(description=f"  [cyan]Building[/cyan] {chip}...", total=100)
+
             # Step 1: Compilation (Python -> ASM)
-            progress.update(build_task, description="Compiling Python to ASM...", completed=10)
+            # Progress 10-50% is driven by PHASE_START/PHASE_END tokens from pymcuc.
+            progress.update(build_task, description="  [cyan]Compiling[/cyan]...", completed=10)
+            compiler_handler = _make_compiler_output_handler(progress, build_task, verbose)
             try:
                 compiler.compile(
                     input_file=entry_point,
@@ -285,7 +334,9 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     verbose=verbose,
                     reset_vector=reset_vector,
                     interrupt_vector=interrupt_vector,
-                    extra_includes=extra_includes or None)
+                    extra_includes=extra_includes or None,
+                    on_output=compiler_handler,
+                )
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")
@@ -378,7 +429,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                 console.print("[bold yellow]Warning:[/bold yellow] pymcu-stdlib not installed, math operations may fail.")
 
             # Step 2: Assembly (ASM -> HEX)
-            progress.update(build_task, description="Assembling...", completed=60)
+            progress.update(build_task, description="  [cyan]Assembling[/cyan]...", completed=60)
             hex_file: Path | None = None
             try:
                 if use_ffi:
@@ -390,7 +441,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     firmware_obj = ffi_tc.assemble(output_file)
 
                     # 2b. Compile C sources declared in [tool.pymcu.ffi]
-                    progress.update(build_task, description="Compiling C sources...", completed=65)
+                    progress.update(build_task, description="  [cyan]Compiling C sources[/cyan]...", completed=65)
                     c_source_paths = [
                         (project_root / p).resolve() for p in ffi_sources_raw
                     ]
@@ -404,7 +455,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     )
 
                     # 2c. Link firmware.o + C objects → firmware.elf
-                    progress.update(build_task, description="Linking...", completed=75)
+                    progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)
                     linker_script_rel: str | None = ffi_config.get("linker_script", None)
                     linker_script_path = (
                         (project_root / linker_script_rel).resolve()
@@ -415,7 +466,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     )
 
                     # 2d. ELF → Intel HEX
-                    progress.update(build_task, description="Generating HEX...", completed=85)
+                    progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = ffi_tc.elf_to_hex(elf_file)
 
                     # Move ELF to dist/debug/
@@ -434,10 +485,9 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     gas_tc: _AvrgasToolchain = toolchain  # type: ignore[assignment]
 
                     firmware_obj = gas_tc.assemble(output_file)
-                    progress.update(build_task, description="Linking...", completed=75)
+                    progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
-                    progress.update(build_task, description="Generating HEX...", completed=85)
-                    hex_file = gas_tc.elf_to_hex(elf_file)
+                    progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
 
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)
