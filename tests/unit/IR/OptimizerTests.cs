@@ -1,3 +1,4 @@
+using FluentAssertions;
 using PyMCU.Common;
 using PyMCU.Common.Models;
 using PyMCU.Frontend;
@@ -5,6 +6,7 @@ using PyMCU.IR;
 using PyMCU.IR.IRGenerator;
 using Xunit;
 using IrBinaryOp = PyMCU.IR.BinaryOp;
+using IrUnaryOp = PyMCU.IR.UnaryOp;
 
 namespace PyMCU.UnitTests;
 
@@ -141,3 +143,309 @@ public class OptimizerTests
             "res must be assigned 30, or Return must carry the constant 30 directly");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-pass tests using FluentAssertions
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class OptimizerPassTests
+{
+    private static ProgramIR MakeProgram(params Instruction[] body)
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function { Name = "main", Body = body.ToList() });
+        return prog;
+    }
+
+    private static ProgramIR MakeProgramWithFunctions(params Function[] funcs)
+    {
+        var prog = new ProgramIR();
+        prog.Functions.AddRange(funcs);
+        return prog;
+    }
+
+    private static List<Instruction> Optimize(params Instruction[] body)
+        => Optimizer.Optimize(MakeProgram(body)).Functions[0].Body;
+
+    // ─── FoldConstants — Unary ───────────────────────────────────────────────
+
+    [Fact]
+    public void FoldConstants_Unary_Neg_ProducesNegatedConstant()
+    {
+        var body = Optimize(
+            new Unary(IrUnaryOp.Neg, new Constant(5), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value
+            .Should().Be(new Constant(-5));
+    }
+
+    [Fact]
+    public void FoldConstants_Unary_Not_Zero_ProducesOne()
+    {
+        var body = Optimize(
+            new Unary(IrUnaryOp.Not, new Constant(0), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value
+            .Should().Be(new Constant(1));
+    }
+
+    [Fact]
+    public void FoldConstants_Unary_Not_NonZero_ProducesZero()
+    {
+        var body = Optimize(
+            new Unary(IrUnaryOp.Not, new Constant(42), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value
+            .Should().Be(new Constant(0));
+    }
+
+    [Fact]
+    public void FoldConstants_Unary_BitNot_ProducesFlippedBits()
+    {
+        var body = Optimize(
+            new Unary(IrUnaryOp.BitNot, new Constant(5), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value
+            .Should().Be(new Constant(~5));
+    }
+
+    // ─── FoldConstants — Binary edge cases ───────────────────────────────────
+
+    [Fact]
+    public void FoldConstants_DivByZero_IsNotFolded()
+    {
+        var body = Optimize(
+            new Binary(IrBinaryOp.Div, new Constant(10), new Constant(0), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Binary>().Should().ContainSingle(b =>
+            b.Op == IrBinaryOp.Div && b.Src2 == new Constant(0));
+    }
+
+    [Fact]
+    public void FoldConstants_Equal_TrueCase_ProducesOne()
+    {
+        var body = Optimize(
+            new Binary(IrBinaryOp.Equal, new Constant(3), new Constant(3), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value.Should().Be(new Constant(1));
+    }
+
+    [Fact]
+    public void FoldConstants_LessThan_ProducesCorrectResult()
+    {
+        var body = Optimize(
+            new Binary(IrBinaryOp.LessThan, new Constant(2), new Constant(5), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value.Should().Be(new Constant(1));
+    }
+
+    [Fact]
+    public void FoldConstants_BitAnd_ProducesCorrectResult()
+    {
+        var body = Optimize(
+            new Binary(IrBinaryOp.BitAnd, new Constant(0b1100), new Constant(0b1010), new Temporary("t1")),
+            new Return(new Temporary("t1")));
+
+        body.OfType<Return>().First().Value.Should().Be(new Constant(0b1000));
+    }
+
+    // ─── CollapseBoolJumps ────────────────────────────────────────────────────
+
+    [Fact]
+    public void CollapseBoolJumps_Equal_WithJumpIfZero_BecomesJumpIfNotEqual()
+    {
+        var a = new Variable("a");
+        var b = new Variable("b");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new Binary(IrBinaryOp.Equal, a, b, t),
+            new JumpIfZero(t, "end"),
+            new Return(new Constant(1)),
+            new Label("end"),
+            new Return(new Constant(0)));
+
+        body.OfType<JumpIfNotEqual>().Should().ContainSingle(j => j.Target == "end");
+        body.OfType<JumpIfZero>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CollapseBoolJumps_Equal_WithJumpIfNotZero_BecomesJumpIfEqual()
+    {
+        var a = new Variable("a");
+        var b = new Variable("b");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new Binary(IrBinaryOp.Equal, a, b, t),
+            new JumpIfNotZero(t, "hit"),
+            new Return(new Constant(0)),
+            new Label("hit"),
+            new Return(new Constant(1)));
+
+        body.OfType<JumpIfEqual>().Should().ContainSingle(j => j.Target == "hit");
+        body.OfType<JumpIfNotZero>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CollapseBoolJumps_LessThan_WithJumpIfZero_BecomesJumpIfGreaterOrEqual()
+    {
+        var a = new Variable("a");
+        var b = new Variable("b");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new Binary(IrBinaryOp.LessThan, a, b, t),
+            new JumpIfZero(t, "end"),
+            new Return(new Constant(1)),
+            new Label("end"),
+            new Return(new Constant(0)));
+
+        body.OfType<JumpIfGreaterOrEqual>().Should().ContainSingle(j => j.Target == "end");
+    }
+
+    [Fact]
+    public void CollapseBoolJumps_GreaterThan_WithJumpIfNotZero_BecomesJumpIfGreaterThan()
+    {
+        var a = new Variable("a");
+        var b = new Variable("b");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new Binary(IrBinaryOp.GreaterThan, a, b, t),
+            new JumpIfNotZero(t, "hit"),
+            new Return(new Constant(0)),
+            new Label("hit"),
+            new Return(new Constant(1)));
+
+        body.OfType<JumpIfGreaterThan>().Should().ContainSingle(j => j.Target == "hit");
+    }
+
+    // ─── CollapseBitChecks ────────────────────────────────────────────────────
+
+    [Fact]
+    public void CollapseBitChecks_JumpIfEqual1_BecomesJumpIfBitSet()
+    {
+        var src = new Variable("port");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new BitCheck(src, 3, t),
+            new JumpIfEqual(t, new Constant(1), "set"),
+            new Return(new Constant(0)),
+            new Label("set"),
+            new Return(new Constant(1)));
+
+        body.OfType<JumpIfBitSet>().Should().ContainSingle(j => j.Bit == 3 && j.Target == "set");
+        body.OfType<JumpIfEqual>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CollapseBitChecks_JumpIfEqual0_BecomesJumpIfBitClear()
+    {
+        var src = new Variable("port");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new BitCheck(src, 2, t),
+            new JumpIfEqual(t, new Constant(0), "clear"),
+            new Return(new Constant(1)),
+            new Label("clear"),
+            new Return(new Constant(0)));
+
+        body.OfType<JumpIfBitClear>().Should().ContainSingle(j => j.Bit == 2 && j.Target == "clear");
+    }
+
+    [Fact]
+    public void CollapseBitChecks_JumpIfNotEqual0_BecomesJumpIfBitSet()
+    {
+        var src = new Variable("port");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new BitCheck(src, 1, t),
+            new JumpIfNotEqual(t, new Constant(0), "set"),
+            new Return(new Constant(0)),
+            new Label("set"),
+            new Return(new Constant(1)));
+
+        body.OfType<JumpIfBitSet>().Should().ContainSingle(j => j.Bit == 1 && j.Target == "set");
+    }
+
+    [Fact]
+    public void CollapseBitChecks_JumpIfNotEqual1_BecomesJumpIfBitClear()
+    {
+        var src = new Variable("port");
+        var t = new Temporary("t1");
+        var body = Optimize(
+            new BitCheck(src, 0, t),
+            new JumpIfNotEqual(t, new Constant(1), "clear"),
+            new Return(new Constant(1)),
+            new Label("clear"),
+            new Return(new Constant(0)));
+
+        body.OfType<JumpIfBitClear>().Should().ContainSingle(j => j.Bit == 0 && j.Target == "clear");
+    }
+
+    // ─── Dead Function Elimination ────────────────────────────────────────────
+
+    [Fact]
+    public void DFE_RemovesUnreachableFunction()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function { Name = "main",  Body = [new Return(new Constant(0))] },
+            new Function { Name = "unused", Body = [new Return(new Constant(1))] });
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Should().NotContain(f => f.Name == "unused");
+    }
+
+    [Fact]
+    public void DFE_KeepsTransitivelyCalledFunction()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function
+            {
+                Name = "main",
+                Body = [new Call("helper", [], new Temporary("r")), new Return(new Constant(0))]
+            },
+            new Function { Name = "helper", Body = [new Return(new Constant(1))] });
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Should().ContainSingle(f => f.Name == "helper");
+    }
+
+    [Fact]
+    public void DFE_KeepsISR_EvenIfNotCalledFromMain()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function { Name = "main",    Body = [new Return(new Constant(0))] },
+            new Function { Name = "isr_tim", Body = [new Return(new Constant(0))], IsInterrupt = true });
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Should().ContainSingle(f => f.Name == "isr_tim");
+    }
+
+    [Fact]
+    public void DFE_RemovesDeadChain_KeepsReachableChain()
+    {
+        var prog = MakeProgramWithFunctions(
+            new Function
+            {
+                Name = "main",
+                Body = [new Call("a", [], new Temporary("r")), new Return(new Constant(0))]
+            },
+            new Function
+            {
+                Name = "a",
+                Body = [new Call("b", [], new Temporary("r")), new Return(new Constant(0))]
+            },
+            new Function { Name = "b",    Body = [new Return(new Constant(0))] },
+            new Function { Name = "dead", Body = [new Return(new Constant(0))] });
+
+        var optimized = Optimizer.Optimize(prog);
+        optimized.Functions.Select(f => f.Name)
+            .Should().BeEquivalentTo(["main", "a", "b"]);
+    }
+}
+
