@@ -34,6 +34,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private readonly Dictionary<string, string> _stringPool = new();
     private bool _uartSendZNeeded;
     private int _labelCounter;
+    private Function? _currentFunction;
 
     private string MakeLabel(string prefix = ".L") => $"{prefix}_{_labelCounter++}";
     private static string GetHighReg(string reg) => "R" + (int.Parse(reg[1..]) + 1);
@@ -129,44 +130,92 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out var srcReg))
         {
+            DataType sourceType = GetValType(val);
+            bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+
             if (srcReg != reg) Emit("MOV", reg, srcReg);
-            if (size >= 2) Emit("MOV", regH, GetHighReg(srcReg));
+            else if (!needSignExt && srcReg == reg)
+            {
+                // Source already in target reg; still need to populate high bytes if multi-byte
+                if (size >= 2) Emit("MOV", regH, GetHighReg(srcReg));
+                if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(srcReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(srcReg[1..]) + 3}"); }
+                return;
+            }
+
+            if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(srcReg));
             if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(srcReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(srcReg[1..]) + 3}"); }
+
+            if (needSignExt)
+            {
+                Emit("MOV", regH, reg);
+                Emit("LSL", regH);
+                Emit("SBC", regH, regH);
+            }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _tmpRegLayout.TryGetValue(name, out var tmpReg))
         {
+            DataType sourceType = GetValType(val);
+            bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+
             if (tmpReg != reg) Emit("MOV", reg, tmpReg);
-            if (size >= 2) Emit("MOV", regH, GetHighReg(tmpReg));
+            if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(tmpReg));
             if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(tmpReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(tmpReg[1..]) + 3}"); }
+
+            if (needSignExt)
+            {
+                Emit("MOV", regH, reg);
+                Emit("LSL", regH);
+                Emit("SBC", regH, regH);
+            }
             return;
         }
 
         if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
         {
             bool nearY = offset + (size - 1) < 64;
+            DataType sourceType = GetValType(val);
+            bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+
             if (nearY)
             {
                 Emit("LDD", reg, $"Y+{offset}");
-                if (size >= 2) Emit("LDD", regH,  $"Y+{offset + 1}");
+                if (size >= 2 && !needSignExt) Emit("LDD", regH,  $"Y+{offset + 1}");
                 if (size == 4) { Emit("LDD", regB2, $"Y+{offset + 2}"); Emit("LDD", regB3, $"Y+{offset + 3}"); }
             }
             else
             {
                 var abs = 0x0100 + offset;
                 Emit("LDS", reg, $"0x{abs:X4}");
-                if (size >= 2) Emit("LDS", regH,  $"0x{abs + 1:X4}");
+                if (size >= 2 && !needSignExt) Emit("LDS", regH,  $"0x{abs + 1:X4}");
                 if (size == 4) { Emit("LDS", regB2, $"0x{abs + 2:X4}"); Emit("LDS", regB3, $"0x{abs + 3:X4}"); }
+            }
+
+            if (needSignExt)
+            {
+                Emit("MOV", regH, reg);
+                Emit("LSL", regH);
+                Emit("SBC", regH, regH);
             }
             return;
         }
 
         var addr = ResolveAddress(val);
         if (string.IsNullOrEmpty(addr)) return;
+        DataType srcType = GetValType(val);
+        bool signExt = size == 2 && srcType.SizeOf() == 1 && IsSignedType(srcType);
+
         Emit("LDS", reg, addr);
-        if (size >= 2) Emit("LDS", regH, addr + "+1");
+        if (size >= 2 && !signExt) Emit("LDS", regH, addr + "+1");
         if (size == 4) { Emit("LDS", regB2, addr + "+2"); Emit("LDS", regB3, addr + "+3"); }
+
+        if (signExt)
+        {
+            Emit("MOV", regH, reg);
+            Emit("LSL", regH);
+            Emit("SBC", regH, regH);
+        }
     }
 
     private void StoreRegInto(string reg, Val val, DataType type = DataType.UINT8)
@@ -355,6 +404,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileFunction(Function func)
     {
+        _currentFunction = func;
         _tmpRegLayout = AvrLinearScan.Allocate(func);
         foreach (var (name, _) in _tmpRegLayout)
             _allTmpRegNames.Add(name);
@@ -476,8 +526,11 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         if (r.Value is not NoneVal)
         {
-            var type = GetValType(r.Value);
-            LoadIntoReg(r.Value, "R24", type);
+            // Note: Cannot infer return type from IR (no type metadata on Function).
+            // Sign-extension for returns would require IR changes.
+            // For now, use the value's own type.
+            var returnType = GetValType(r.Value);
+            LoadIntoReg(r.Value, "R24", returnType);
         }
 
         Emit("RET");
