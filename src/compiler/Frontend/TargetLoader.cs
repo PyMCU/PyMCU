@@ -51,7 +51,7 @@ public static class TargetLoader
             FilePath = ResolveChipModule(chipName, includePaths)
         };
 
-        Console.WriteLine($"[TargetLoader] Loading chip: {chipName} from {result.FilePath}");
+        Logger.Verbose("TargetLoader", $"Loading chip: {chipName} from {result.FilePath}");
 
         // Step 2: Read and tokenize
         var source = Utils.ReadSource(result.FilePath);
@@ -82,8 +82,8 @@ public static class TargetLoader
                 $"Chip definition '{chipName}' does not contain a valid device_info() call. Expected: device_info(chip=\"{chipName}\", arch=\"...\", ram_size=...)");
         }
 
-        Console.WriteLine(
-            $"[TargetLoader] Target: {result.Config.Chip} (arch={result.Config.Arch}, RAM={result.Config.RamSize})");
+        Logger.Verbose("TargetLoader",
+            $"Target: {result.Config.Chip} (arch={result.Config.Arch}, RAM={result.Config.RamSize})");
 
         return result;
     }

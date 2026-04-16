@@ -54,7 +54,7 @@ public class BackendPhase : CompilerPhaseBase
         if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
             Directory.CreateDirectory(outputParent);
 
-        Logger.Info("pymcuc",
+        Logger.Verbose("pymcuc",
             $"Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
 
         using var asmFile = new StreamWriter(options.OutputPath);

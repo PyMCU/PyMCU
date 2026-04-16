@@ -49,7 +49,7 @@ public class FileSystemModuleLoader : IModuleLoader
             throw new CompilerError("ImportError", $"Attempt to concurrent cyclic load: {path}", 0, 0);
         }
 
-        Console.WriteLine($"[pymcuc] I/O: Loading {path}");
+        Logger.Verbose("pymcuc", $"I/O: Loading {path}");
         context.LoadingModules.Add(path);
 
         var src = File.ReadAllText(path);
