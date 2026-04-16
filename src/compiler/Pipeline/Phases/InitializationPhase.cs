@@ -26,6 +26,9 @@ public class InitializationPhase : CompilerPhaseBase
     {
         var options = context.Options;
 
+        // Initialize logger with verbose mode setting
+        Logger.Initialize(options.Verbose);
+
         context.DeviceConfig.Frequency = options.Frequency;
         context.DeviceConfig.ResetVector = options.ResetVector;
         context.DeviceConfig.InterruptVector = options.InterruptVector;

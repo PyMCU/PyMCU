@@ -25,5 +25,6 @@ public sealed record CompilerOptions(
     List<string> Configs,
     List<string> Includes,
     int ResetVector,
-    int InterruptVector
+    int InterruptVector,
+    bool Verbose
 );

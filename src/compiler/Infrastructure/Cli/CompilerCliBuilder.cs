@@ -77,6 +77,12 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => -1
         };
 
+        Option<bool> verboseOption = new("--verbose", "-v")
+        {
+            Description = "Enable verbose logging output",
+            DefaultValueFactory = parseResult => false
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -88,6 +94,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(includeOption);
         rootCommand.Options.Add(resetVectorOption);
         rootCommand.Options.Add(interruptVectorOption);
+        rootCommand.Options.Add(verboseOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -108,7 +115,8 @@ public static class CompilerCliBuilder
                 Configs: parseResult.GetValue(configOption) ?? [],
                 Includes: parseResult.GetValue(includeOption) ?? [],
                 ResetVector: parseResult.GetValue(resetVectorOption),
-                InterruptVector: parseResult.GetValue(interruptVectorOption)
+                InterruptVector: parseResult.GetValue(interruptVectorOption),
+                Verbose: parseResult.GetValue(verboseOption)
             );
 
             var exitCode = compilerRunner(options);
