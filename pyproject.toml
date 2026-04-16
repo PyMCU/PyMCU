@@ -19,13 +19,8 @@ dependencies = [
     "pymcu-stdlib>=0.1.0a1"
 ]
 
-[[tool.uv.index]]
-name = "gitea"
-url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple"
-explicit = true
-
 [tool.uv.sources]
-pymcu-stdlib = {index = "gitea"}
+pymcu-stdlib = {path = "lib", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"

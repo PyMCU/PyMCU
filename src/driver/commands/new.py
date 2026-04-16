@@ -136,43 +136,10 @@ def new(name: str):
             doc.add("project", project)
 
             if pkg_manager == "uv":
-                uv_index = tomlkit.table()
-                uv_index.add("name", "gitea")
-                uv_index.add("url", "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple")
-                uv_index.add("explicit", True)
-
-                uv_indices = tomlkit.aot()
-                uv_indices.append(uv_index)
-
-                tool_uv = tomlkit.table()
-                tool_uv.add("index", uv_indices)
-
-                sources = tomlkit.table()
-                pymcu_stdlib_source = tomlkit.inline_table()
-                pymcu_stdlib_source.update({"index": "gitea"})
-                sources.add("pymcu-stdlib", pymcu_stdlib_source)
-                tool_uv.add("sources", sources)
-
-                tool = tomlkit.table()
-                tool.add("uv", tool_uv)
-                doc.add("tool", tool)
+                pass  # No custom index needed; pymcu packages are on PyPI
 
             elif pkg_manager == "poetry":
-                # Poetry uses [[tool.poetry.source]]
-                poetry_source = tomlkit.table()
-                poetry_source.add("name", "gitea")
-                poetry_source.add("url", "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple")
-                poetry_source.add("priority", "supplemental")
-
-                poetry_sources = tomlkit.aot()
-                poetry_sources.append(poetry_source)
-
-                tool_poetry = tomlkit.table()
-                tool_poetry.add("source", poetry_sources)
-
-                if "tool" not in doc:
-                    doc.add("tool", tomlkit.table())
-                doc["tool"].add("poetry", tool_poetry)
+                pass  # No custom source needed; pymcu packages are on PyPI
 
             # PyMCU specific config
             pymcu_tool = tomlkit.table()
@@ -229,7 +196,7 @@ def new(name: str):
             with open(project_path / "pyproject.toml", "w") as f:
                 f.write(tomlkit.dumps(doc))
 
-            requirements_content = "--extra-index-url https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple\npymcu-stdlib\n"
+            requirements_content = "pymcu-stdlib\n"
 
             try:
                 from importlib.metadata import version
