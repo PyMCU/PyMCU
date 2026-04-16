@@ -70,13 +70,19 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Create virtual environment
+        run: uv venv .venv
+
       - name: Install PyMCU CLI from local source
-        run: uv pip install --system -e . lib/
+        run: uv pip install -e . lib/
 
       - name: Install compat stdlib flavors
         run: |
-          uv pip install --system external/pymcu-micropython/
-          uv pip install --system external/pymcu-circuitpython/
+          uv pip install external/pymcu-micropython/
+          uv pip install external/pymcu-circuitpython/
+
+      - name: Add venv to PATH
+        run: echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
 
       - name: Build pymcuc compiler
         run: |
