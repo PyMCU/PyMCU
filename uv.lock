@@ -66,7 +66,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pymcu-stdlib", specifier = ">=0.1.2a5", index = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" },
+    { name = "pymcu-stdlib", specifier = ">=0.1.0a1" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "tomlkit", specifier = ">=0.12.0" },
     { name = "typer", specifier = ">=0.12.0" },
@@ -74,12 +74,9 @@ requires-dist = [
 
 [[package]]
 name = "pymcu-stdlib"
-version = "0.1.2a5"
-source = { registry = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/simple" }
-sdist = { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-stdlib/0.1.2a5/pymcu_stdlib-0.1.2a5.tar.gz", hash = "sha256:11366351710dc38ba5bc39f29067f1d7f7d32c6786c941cfac90993d80bfc584" }
-wheels = [
-    { url = "https://gitea.begeistert.dev/api/packages/begeistert/pypi/files/pymcu-stdlib/0.1.2a5/pymcu_stdlib-0.1.2a5-py3-none-any.whl", hash = "sha256:674c9ae158de05635d6a8c3bbbe8c9d174c79fcc7d4f28f3333a0a245a6f8332" },
-]
+version = "0.1.0a1"
+source = { editable = "lib" }
+
 
 [[package]]
 name = "rich"
