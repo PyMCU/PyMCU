@@ -14,20 +14,12 @@
  * -----------------------------------------------------------------------------
  */
 
-using PyMCU.Common;
 using PyMCU.Common.Models;
 
 namespace PyMCU.Frontend;
 
-public class ConditionalCompilator
+public class ConditionalCompilator(DeviceConfig config)
 {
-    private readonly DeviceConfig config;
-
-    public ConditionalCompilator(DeviceConfig config)
-    {
-        this.config = config;
-    }
-
     public void Process(ProgramNode program)
     {
         var newGlobals = new List<Statement>();
@@ -50,10 +42,21 @@ public class ConditionalCompilator
 
         foreach (var func in program.Functions)
         {
-            if (func != null)
-            {
-                ProcessBlock(func.Body, program);
-            }
+            ProcessBlock(func.Body, program);
+        }
+    }
+
+    // Moves all statements in a Block into newStmts, routing ImportStmt to prog.Imports.
+    private static void FlushBlock(Statement? body, ProgramNode prog, List<Statement> newStmts)
+    {
+        if (body is not Block block) return;
+
+        foreach (var inner in block.Statements)
+        {
+            if (inner is ImportStmt imp)
+                prog.Imports.Add(CloneImport(imp));
+            else
+                newStmts.Add(inner);
         }
     }
 
@@ -118,14 +121,48 @@ public class ConditionalCompilator
         }
     }
 
-    private static ImportStmt CloneImport(ImportStmt src)
-    {
-        var clone = new ImportStmt(src.ModuleName, new List<string>(src.Symbols), src.RelativeLevel)
+    private static ImportStmt CloneImport(ImportStmt src) =>
+        new(src.ModuleName, new List<string>(src.Symbols), src.RelativeLevel)
         {
             ModuleAlias = src.ModuleAlias,
             Aliases = new Dictionary<string, string>(src.Aliases),
         };
-        return clone;
+
+    // Resolves a compile-time config expression to its string value.
+    // Throws if the expression is not a known compile-time constant.
+    private string ResolveConfigValue(Expression e)
+    {
+        if (e is VariableExpr varExpr)
+        {
+            if (varExpr.Name == "__CHIP__") return config.Chip;
+            if (varExpr.Name == "__FREQ__" || varExpr.Name == "F_CPU") return config.Frequency.ToString();
+            throw new Exception("Unknown var");
+        }
+
+        if (e is MemberAccessExpr memExpr && memExpr.Object is VariableExpr objVar && objVar.Name == "__CHIP__")
+        {
+            if (memExpr.Member == "arch") return config.Arch;
+            if (memExpr.Member == "chip" || memExpr.Member == "name") return config.Chip;
+        }
+
+        if (e is StringLiteral str) return str.Value;
+        if (e is IntegerLiteral intLit) return intLit.Value.ToString();
+
+        throw new Exception("Not a constant");
+    }
+
+    // Returns the winning branch body for a compile-time if/elif/else, or null if no branch applies.
+    // Throws if any condition cannot be evaluated at compile time.
+    private Statement? ChooseBranch(IfStmt ifStmt)
+    {
+        if (EvaluateCondition(ifStmt.Condition)) return ifStmt.ThenBranch;
+
+        foreach (var (cond, body) in ifStmt.ElifBranches)
+        {
+            if (EvaluateCondition(cond)) return body;
+        }
+
+        return ifStmt.ElseBranch;
     }
 
     private bool ProcessStatement(Statement stmt, ProgramNode prog, List<Statement> newStmts)
@@ -133,93 +170,19 @@ public class ConditionalCompilator
         if (stmt is ImportStmt imp)
         {
             prog.Imports.Add(CloneImport(imp));
-            return true; // Stripped
+            return true;
         }
 
         if (stmt is IfStmt ifStmt)
         {
-            bool? conditionResult = null;
-
             try
             {
-                if (EvaluateCondition(ifStmt.Condition))
-                {
-                    conditionResult = true;
-                }
-                else
-                {
-                    bool elifTaken = false;
-                    foreach (var branch in ifStmt.ElifBranches)
-                    {
-                        if (EvaluateCondition(branch.Condition))
-                        {
-                            if (branch.Body is Block block)
-                            {
-                                foreach (var inner in block.Statements)
-                                {
-                                    if (inner is ImportStmt innerImp)
-                                    {
-                                        prog.Imports.Add(CloneImport(innerImp));
-                                    }
-                                    else
-                                    {
-                                        newStmts.Add(inner);
-                                    }
-                                }
-                            }
-
-                            elifTaken = true;
-                            break;
-                        }
-                    }
-
-                    if (!elifTaken)
-                    {
-                        if (ifStmt.ElseBranch is Block block)
-                        {
-                            foreach (var inner in block.Statements)
-                            {
-                                if (inner is ImportStmt innerImp)
-                                {
-                                    prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                        new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
-                                }
-                                else
-                                {
-                                    newStmts.Add(inner);
-                                }
-                            }
-                        }
-                    }
-
-                    return true;
-                }
+                FlushBlock(ChooseBranch(ifStmt), prog, newStmts);
+                return true;
             }
             catch
             {
-                // Not compile time
                 return false;
-            }
-
-            if (conditionResult.HasValue && conditionResult.Value)
-            {
-                if (ifStmt.ThenBranch is Block block)
-                {
-                    foreach (var inner in block.Statements)
-                    {
-                        if (inner is ImportStmt innerImp)
-                        {
-                            prog.Imports.Add(new ImportStmt(innerImp.ModuleName, new List<string>(innerImp.Symbols),
-                                innerImp.RelativeLevel));
-                        }
-                        else
-                        {
-                            newStmts.Add(inner);
-                        }
-                    }
-                }
-
-                return true;
             }
         }
 
@@ -227,76 +190,27 @@ public class ConditionalCompilator
         {
             try
             {
-                string targetVal = EvaluateMatchTarget(matchStmt.Target);
+                string targetVal = ResolveConfigValue(matchStmt.Target);
 
                 foreach (var branch in matchStmt.Branches)
                 {
                     if (branch.Pattern == null)
                     {
                         // Wildcard
-                        if (branch.Body is Block block)
-                        {
-                            foreach (var inner in block.Statements)
-                            {
-                                if (inner is ImportStmt innerImp)
-                                {
-                                    prog.Imports.Add(new ImportStmt(innerImp.ModuleName,
-                                        new List<string>(innerImp.Symbols), innerImp.RelativeLevel));
-                                }
-                                else
-                                {
-                                    newStmts.Add(inner);
-                                }
-                            }
-                        }
-
+                        FlushBlock(branch.Body, prog, newStmts);
                         return true;
                     }
 
-                    if (branch.Pattern is IntegerLiteral intLit)
+                    if (branch.Pattern is IntegerLiteral intLit && intLit.Value.ToString() == targetVal)
                     {
-                        if (intLit.Value.ToString() == targetVal)
-                        {
-                            if (branch.Body is Block block)
-                            {
-                                foreach (var inner in block.Statements)
-                                {
-                                    if (inner is ImportStmt innerImp)
-                                    {
-                                        prog.Imports.Add(CloneImport(innerImp));
-                                    }
-                                    else
-                                    {
-                                        newStmts.Add(inner);
-                                    }
-                                }
-                            }
-
-                            return true;
-                        }
+                        FlushBlock(branch.Body, prog, newStmts);
+                        return true;
                     }
 
-                    if (branch.Pattern is StringLiteral strLit)
+                    if (branch.Pattern is StringLiteral strLit && strLit.Value == targetVal)
                     {
-                        if (strLit.Value == targetVal)
-                        {
-                            if (branch.Body is Block block)
-                            {
-                                foreach (var inner in block.Statements)
-                                {
-                                    if (inner is ImportStmt innerImp)
-                                    {
-                                        prog.Imports.Add(CloneImport(innerImp));
-                                    }
-                                    else
-                                    {
-                                        newStmts.Add(inner);
-                                    }
-                                }
-                            }
-
-                            return true;
-                        }
+                        FlushBlock(branch.Body, prog, newStmts);
+                        return true;
                     }
 
                     if (branch.Pattern is BinaryExpr binExpr)
@@ -317,33 +231,16 @@ public class ConditionalCompilator
                         }
 
                         Flatten(binExpr);
+
                         bool anyAlt = false;
                         foreach (var alt in alts)
                         {
-                            if (alt == targetVal)
-                            {
-                                anyAlt = true;
-                                break;
-                            }
+                            if (alt == targetVal) { anyAlt = true; break; }
                         }
 
                         if (anyAlt)
                         {
-                            if (branch.Body is Block block)
-                            {
-                                foreach (var inner in block.Statements)
-                                {
-                                    if (inner is ImportStmt innerImp)
-                                    {
-                                        prog.Imports.Add(CloneImport(innerImp));
-                                    }
-                                    else
-                                    {
-                                        newStmts.Add(inner);
-                                    }
-                                }
-                            }
-
+                            FlushBlock(branch.Body, prog, newStmts);
                             return true;
                         }
                     }
@@ -366,87 +263,23 @@ public class ConditionalCompilator
 
         if (expr is BinaryExpr bin)
         {
-            if (bin.Op == BinaryOp.Or)
-            {
-                return EvaluateCondition(bin.Left) || EvaluateCondition(bin.Right);
-            }
-
-            if (bin.Op == BinaryOp.And)
-            {
-                return EvaluateCondition(bin.Left) && EvaluateCondition(bin.Right);
-            }
+            if (bin.Op == BinaryOp.Or)  return EvaluateCondition(bin.Left) || EvaluateCondition(bin.Right);
+            if (bin.Op == BinaryOp.And) return EvaluateCondition(bin.Left) && EvaluateCondition(bin.Right);
 
             if (bin.Op == BinaryOp.Equal || bin.Op == BinaryOp.NotEqual)
             {
-                string GetVal(Expression e)
-                {
-                    if (e is VariableExpr varExpr)
-                    {
-                        if (varExpr.Name == "__CHIP__") return config.Chip;
-                        if (varExpr.Name == "__FREQ__" || varExpr.Name == "F_CPU") return config.Frequency.ToString();
-                        throw new Exception("Unknown var");
-                    }
-
-                    if (e is MemberAccessExpr memExpr)
-                    {
-                        if (memExpr.Object is VariableExpr objVar && objVar.Name == "__CHIP__")
-                        {
-                            if (memExpr.Member == "arch") return config.Arch;
-                            if (memExpr.Member == "chip" || memExpr.Member == "name") return config.Chip;
-                        }
-
-                        throw new Exception("Unknown member");
-                    }
-
-                    if (e is StringLiteral str) return str.Value;
-                    if (e is IntegerLiteral intLit) return intLit.Value.ToString();
-                    throw new Exception("Not a constant");
-                }
-
-                string left = GetVal(bin.Left);
-                string right = GetVal(bin.Right);
-
-                if (bin.Op == BinaryOp.Equal) return left == right;
-                return left != right;
+                string left  = ResolveConfigValue(bin.Left);
+                string right = ResolveConfigValue(bin.Right);
+                return bin.Op == BinaryOp.Equal ? left == right : left != right;
             }
         }
 
-        if (expr is CallExpr call && call.Callee is MemberAccessExpr mem)
+        if (expr is CallExpr call && call.Callee is MemberAccessExpr mem && mem.Member == "startswith"
+            && call.Args.Count == 1 && call.Args[0] is StringLiteral argStr)
         {
-            if (mem.Member == "startswith" && call.Args.Count == 1 && call.Args[0] is StringLiteral argStr)
-            {
-                string ObjectVal(Expression e)
-                {
-                    if (e is MemberAccessExpr m && m.Object is VariableExpr objVar && objVar.Name == "__CHIP__")
-                    {
-                        if (m.Member == "arch") return config.Arch;
-                        if (m.Member == "chip" || m.Member == "name") return config.Chip;
-                    }
-
-                    throw new Exception("Unsupported startswith object");
-                }
-
-                return ObjectVal(mem.Object).StartsWith(argStr.Value);
-            }
+            return ResolveConfigValue(mem.Object).StartsWith(argStr.Value);
         }
 
         throw new Exception("Unsupported condition");
-    }
-
-    private string EvaluateMatchTarget(Expression expr)
-    {
-        if (expr is VariableExpr varExpr)
-        {
-            if (varExpr.Name == "__CHIP__") return config.Chip;
-            if (varExpr.Name == "__FREQ__" || varExpr.Name == "F_CPU") return config.Frequency.ToString();
-        }
-
-        if (expr is MemberAccessExpr memExpr && memExpr.Object is VariableExpr objVar && objVar.Name == "__CHIP__")
-        {
-            if (memExpr.Member == "arch") return config.Arch;
-            if (memExpr.Member == "chip" || memExpr.Member == "name") return config.Chip;
-        }
-
-        throw new Exception("Unsupported match target");
     }
 }
