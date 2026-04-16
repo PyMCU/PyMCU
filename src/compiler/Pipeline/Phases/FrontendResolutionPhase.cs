@@ -54,20 +54,59 @@ public class FrontendResolutionPhase(
                 processor.Process(node, context);
         }
 
-        LoadPostConditionalModules(resolutionOrder, context);
+        LoadPostConditionalModulesRecursive(processors, context);
     }
 
-    // Loads any modules that conditional compilation revealed after the graph was built.
-    private void LoadPostConditionalModules(IEnumerable<ProgramNode> nodes, CompilationContext context)
+    // Recursively loads and processes any modules that conditional compilation revealed
+    // after the initial graph was built. This ensures transitive imports are fully resolved.
+    // For example: _lcd/gpio.py imports time.py → time.py's inline functions must be registered.
+    private void LoadPostConditionalModulesRecursive(
+        IAstProcessor[] processors,
+        CompilationContext context)
     {
-        foreach (var node in nodes)
+        const int maxIterations = 10;
+        var processedModules = new HashSet<string>(context.NamedModules.Keys);
+        var iteration = 0;
+
+        while (iteration++ < maxIterations)
         {
-            foreach (var imp in node.Imports)
+            var newModules = new List<ProgramNode>();
+
+            // Create snapshot of current modules to avoid modification-during-iteration
+            var currentModules = context.NamedModules.ToList();
+
+            // Scan all currently processed modules for imports
+            foreach (var (moduleName, node) in currentModules)
             {
-                if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
-                if (!context.NamedModules.ContainsKey(imp.ModuleName))
-                    moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
+                foreach (var imp in node.Imports)
+                {
+                    if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
+                    if (processedModules.Contains(imp.ModuleName)) continue;
+
+                    // Load the module if not yet loaded
+                    if (!context.NamedModules.ContainsKey(imp.ModuleName))
+                        moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
+
+                    var importedModule = context.NamedModules[imp.ModuleName];
+                    if (processedModules.Add(imp.ModuleName))
+                        newModules.Add(importedModule);
+                }
+            }
+
+            // No new modules discovered → we're done
+            if (newModules.Count == 0)
+                break;
+
+            // Process all newly discovered modules through the full processor pipeline
+            foreach (var module in newModules)
+            {
+                foreach (var processor in processors)
+                    processor.Process(module, context);
             }
         }
+
+        if (iteration >= maxIterations)
+            throw new CompilerError("ImportError",
+                "Exceeded maximum iterations while loading transitive imports. Possible circular dependency.", 0, 0);
     }
 }
