@@ -722,11 +722,20 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     {
                         int byteShift = val / 8;
                         int bitShift  = val % 8;
-                        if (byteShift >= 4) { Emit("CLR","R24"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        bool s32 = IsSignedType(type);
+                        if (byteShift >= 4)
+                        {
+                            if (s32) { Emit("MOV","R24","R23"); Emit("LSL","R24"); Emit("SBC","R24","R24"); Emit("MOV","R25","R24"); Emit("MOV","R22","R24"); Emit("MOV","R23","R24"); }
+                            else { Emit("CLR","R24"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
+                        }
                         else if (byteShift == 3) { Emit("MOV","R24","R23"); Emit("CLR","R25"); Emit("CLR","R22"); Emit("CLR","R23"); }
                         else if (byteShift == 2) { Emit("MOV","R24","R22"); Emit("MOV","R25","R23"); Emit("CLR","R22"); Emit("CLR","R23"); }
                         else if (byteShift == 1) { Emit("MOV","R24","R25"); Emit("MOV","R25","R22"); Emit("MOV","R22","R23"); Emit("CLR","R23"); }
-                        for (int i = 0; i < bitShift; i++) { Emit("LSR","R23"); Emit("ROR","R22"); Emit("ROR","R25"); Emit("ROR","R24"); }
+                        for (int i = 0; i < bitShift; i++)
+                        {
+                            if (s32) Emit("ASR","R23"); else Emit("LSR","R23");
+                            Emit("ROR","R22"); Emit("ROR","R25"); Emit("ROR","R24");
+                        }
                         usedImm = true;
                         break;
                     }
@@ -790,7 +799,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                         usedImm = true;
                         break;
                     case IrBinOp.RShift:
-                        for (int i = 0; i < (val & 7); i++) Emit("LSR", "R24");
+                        for (int i = 0; i < (val & 7); i++)
+                            if (IsSignedType(type)) Emit("ASR", "R24"); else Emit("LSR", "R24");
                         usedImm = true;
                         break;
                 }
@@ -886,17 +896,20 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     EmitBranch("BREQ", rd);
                     if (is32)
                     {
-                        Emit("LSR", "R23");
+                        if (IsSignedType(type)) Emit("ASR", "R23"); else Emit("LSR", "R23");
                         Emit("ROR", "R22");
                         Emit("ROR", "R25");
                         Emit("ROR", "R24");
                     }
                     else if (is16)
                     {
-                        Emit("LSR", "R25");
+                        if (IsSignedType(type)) Emit("ASR", "R25"); else Emit("LSR", "R25");
                         Emit("ROR", "R24");
                     }
-                    else Emit("LSR", "R24");
+                    else
+                    {
+                        if (IsSignedType(type)) Emit("ASR", "R24"); else Emit("LSR", "R24");
+                    }
 
                     Emit("DEC", "R18");
                     Emit("RJMP", rs);
@@ -1196,7 +1209,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                         usedImm = true;
                         break;
                     case IrBinOp.RShift:
-                        for (int i = 0; i < (val & 7); i++) Emit("LSR", "R24");
+                        for (int i = 0; i < (val & 7); i++)
+                            if (IsSignedType(type)) Emit("ASR", "R24"); else Emit("LSR", "R24");
                         usedImm = true;
                         break;
                     case IrBinOp.Mul:
@@ -1287,10 +1301,13 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     EmitBranch("BREQ", rd);
                     if (is16)
                     {
-                        Emit("LSR", "R25");
+                        if (IsSignedType(type)) Emit("ASR", "R25"); else Emit("LSR", "R25");
                         Emit("ROR", "R24");
                     }
-                    else Emit("LSR", "R24");
+                    else
+                    {
+                        if (IsSignedType(type)) Emit("ASR", "R24"); else Emit("LSR", "R24");
+                    }
 
                     Emit("DEC", "R18");
                     Emit("RJMP", rs);
