@@ -42,6 +42,11 @@ public class CompilationContext(CompilerOptions options)
 
     public bool HasErrors { get; set; }
 
+    // Set to true by BootstrapPhase after the target chip file has been loaded
+    // and DeviceConfig.Arch/Chip are populated from it.
+    // When true, PreScanVisitor treats any further device_info() calls as
+    // module annotations to validate, not as target directives to apply.
+    public bool IsTargetEstablished { get; set; }
 
     public List<ProgramNode> LinearImports { get; } = [];
 }
