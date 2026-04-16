@@ -22,6 +22,11 @@ namespace PyMCU.Infrastructure;
 
 public class FileSystemModuleLoader : IModuleLoader
 {
+    public string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context)
+    {
+        return ResolveModulePath(moduleName, context.IncludePaths, currentFilePath, 0);
+    }
+
     public ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context)
     {
         string path;

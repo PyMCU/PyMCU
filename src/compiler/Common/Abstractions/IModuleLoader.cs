@@ -21,4 +21,5 @@ namespace PyMCU.Common.Abstractions;
 public interface IModuleLoader
 {
     ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context);
+    string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context);
 }
