@@ -14,7 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
-namespace PyMCU.Common;
+namespace PyMCU.Common.Models;
 
 public sealed record CompilerOptions(
     string FilePath,

@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
 
 namespace PyMCU.IR.IRGenerator;

@@ -15,14 +15,16 @@
  */
 
 using PyMCU.Common;
+using PyMCU.Common.Abstractions;
 using PyMCU.Frontend;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class FrontendResolutionPhase : ICompilerPhase
+public class FrontendResolutionPhase(IModuleLoader moduleLoader) : ICompilerPhase
 {
     public string Name => "Semantic & Dependency Resolution";
-    private const int MaxIterations = 100;
+
+    private const int MaxQueueOperations = 5000;
 
     public void Execute(CompilationContext context)
     {
@@ -34,31 +36,21 @@ public class FrontendResolutionPhase : ICompilerPhase
 
         try
         {
-            LoadImportsRecursively(context.RootAst, context, context.Options.FilePath);
+            var moduleGraph = BuildDependencyGraph(context.RootAst, context.Options.FilePath, context);
+            var resolutionOrder = moduleGraph.GetTopologicalSort();
 
             var preScanner = new PreScanVisitor(context.Config);
-            preScanner.Scan(context.RootAst);
-            foreach (var modAst in context.NamedModules.Values)
-            {
-                preScanner.Scan(modAst);
-            }
-
-            if (string.IsNullOrEmpty(context.Config.Chip)) context.Config.Chip = context.Options.Arch;
-            if (string.IsNullOrEmpty(context.Config.Arch)) context.Config.Arch = context.Options.Arch;
-
             var conditional = new ConditionalCompilator(context.Config);
-            conditional.Process(context.RootAst);
 
-            var ccProcessed = new HashSet<ProgramNode> { context.RootAst };
-            foreach (var modAst in context.NamedModules.Values)
+            foreach (var astNode in resolutionOrder)
             {
-                if (ccProcessed.Add(modAst))
-                {
-                    conditional.Process(modAst);
-                }
-            }
+                preScanner.Scan(astNode);
 
-            ResolveIteratively(context, conditional, ccProcessed);
+                if (string.IsNullOrEmpty(context.Config.Chip)) context.Config.Chip = context.Options.Arch;
+                if (string.IsNullOrEmpty(context.Config.Arch)) context.Config.Arch = context.Options.Arch;
+
+                conditional.Process(astNode);
+            }
         }
         catch (CompilerError e)
         {
@@ -67,108 +59,35 @@ public class FrontendResolutionPhase : ICompilerPhase
         }
     }
 
-    private void ResolveIteratively(CompilationContext context, ConditionalCompilator conditional, HashSet<ProgramNode> ccProcessed)
+    private DependencyGraph BuildDependencyGraph(ProgramNode rootAst, string rootPath, CompilationContext context)
     {
-        var anyNew = true;
-        var iteration = 0;
+        var graph = new DependencyGraph();
+        var queue = new Queue<(ProgramNode Ast, string Path)>();
+        var visitedPaths = new HashSet<string>();
 
-        while (anyNew && iteration < MaxIterations)
+        queue.Enqueue((rootAst, rootPath));
+        visitedPaths.Add(rootPath);
+        graph.AddNode(rootAst);
+
+        while (queue.Count > 0)
         {
-            anyNew = false;
-            iteration++;
+            var (currentAst, currentPath) = queue.Dequeue();
 
-            foreach (var modAst in context.NamedModules.Values.ToList())
+            foreach (var imp in currentAst.Imports)
             {
-                if (!ccProcessed.Add(modAst)) continue;
-                conditional.Process(modAst);
-                anyNew = true;
-            }
+                if (imp.ModuleName is "pymcu.types" or "pymcu.chips") continue;
 
-            var beforeCount = context.NamedModules.Count;
+                var importedAst = moduleLoader.LoadModule(imp.ModuleName, currentPath, context);
 
-            LoadImportsRecursively(context.RootAst!, context, context.Options.FilePath);
-            foreach (var modAst in context.NamedModules.Values.ToList())
-            {
-                LoadImportsRecursively(modAst, context, context.Options.FilePath);
-            }
+                graph.AddDependencyEdge(importedAst, currentAst);
 
-            if (context.NamedModules.Count > beforeCount)
-            {
-                anyNew = true;
+                if (visitedPaths.Add(imp.ModuleName))
+                {
+                    queue.Enqueue((importedAst, currentPath));
+                }
             }
         }
 
-        if (iteration >= MaxIterations)
-        {
-            throw new CompilerError("SemanticError", "The iteration limit was exceeded in dependency resolution. Check for circular macros.", 0, 0);
-        }
-    }
-
-    private void LoadImportsRecursively(ProgramNode ast, CompilationContext context, string currentPath)
-    {
-        foreach (var imp in ast.Imports)
-        {
-            if (imp.ModuleName is "pymcu.types" or "pymcu.chips") continue;
-
-            string path = ResolveModule(imp.ModuleName, context.IncludePaths, currentPath, imp.RelativeLevel);
-
-            if (context.ModuleCache.TryGetValue(path, out var cachedAst))
-            {
-                context.NamedModules[imp.ModuleName] = cachedAst;
-                continue;
-            }
-
-            if (context.LoadingModules.Contains(path)) continue;
-
-            Console.WriteLine($"[pymcuc] Loading module: {path}");
-            context.LoadingModules.Add(path);
-
-            var src = File.ReadAllText(path);
-            context.ModuleSourceLines[imp.ModuleName] = new List<string>(File.ReadAllLines(path));
-
-            var lexer = new Lexer(src);
-            var parser = new Parser(lexer.Tokenize());
-            var modAst = parser.ParseProgram();
-
-            context.ModuleCache[path] = modAst;
-            context.NamedModules[imp.ModuleName] = modAst;
-
-            LoadImportsRecursively(modAst, context, path);
-
-            context.LoadingModules.Remove(path);
-        }
-    }
-
-    private static string ResolveModule(string moduleName, List<string> includePaths, string currentFilePath,
-        int relativeLevel)
-    {
-        var pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
-
-        if (relativeLevel > 0)
-        {
-            var searchDir = Path.GetDirectoryName(currentFilePath) ?? string.Empty;
-
-            for (var i = 1; i < relativeLevel; i++)
-            {
-                searchDir = Path.GetDirectoryName(searchDir) ?? string.Empty;
-            }
-
-            var fullPath = Path.Combine(searchDir, pathRel + ".py");
-            if (File.Exists(fullPath)) return fullPath;
-
-            fullPath = Path.Combine(searchDir, pathRel, "__init__.py");
-            return File.Exists(fullPath) ? fullPath : throw new Exception($"Relative import not found: {fullPath}");
-        }
-
-        foreach (var baseDir in includePaths)
-        {
-            var fullPath = Path.Combine(baseDir, pathRel + ".py");
-            if (File.Exists(fullPath)) return fullPath;
-
-            fullPath = Path.Combine(baseDir, pathRel, "__init__.py");
-            if (File.Exists(fullPath)) return fullPath;
-        }
-
-        throw new Exception($"Module not found: {moduleName}");
+        return graph;
     }
 }

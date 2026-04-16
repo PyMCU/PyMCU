@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
 

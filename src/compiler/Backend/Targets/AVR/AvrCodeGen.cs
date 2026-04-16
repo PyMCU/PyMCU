@@ -16,6 +16,7 @@
 
 using PyMCU.Backend.Analysis;
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.IR;
 using IrBinOp = PyMCU.IR.BinaryOp;
 using IrUnOp = PyMCU.IR.UnaryOp;

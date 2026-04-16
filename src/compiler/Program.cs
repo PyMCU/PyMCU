@@ -14,7 +14,8 @@
  * -----------------------------------------------------------------------------
  */
 
-using PyMCU.Common;
+using PyMCU.Common.Models;
+using PyMCU.Frontend;
 
 namespace PyMCU;
 
@@ -24,11 +25,13 @@ public static class Program
     {
         var options = ParseArgs(args);
 
+        var moduleLoader = new FileSystemModuleLoader();
+
         var driver = new Pipeline.CompilerDriver()
             .AddPhase(new Pipeline.Phases.InitializationPhase())
             .AddPhase(new Pipeline.Phases.BootstrapPhase())
             .AddPhase(new Pipeline.Phases.ParsingPhase())
-            .AddPhase(new Pipeline.Phases.FrontendResolutionPhase())
+            .AddPhase(new Pipeline.Phases.FrontendResolutionPhase(moduleLoader))
             .AddPhase(new Pipeline.Phases.IrGenerationPhase())
             .AddPhase(new Pipeline.Phases.BackendPhase());
 

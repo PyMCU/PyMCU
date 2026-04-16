@@ -14,7 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
-namespace PyMCU.Common;
+namespace PyMCU.Common.Models;
 
 public class DeviceConfig
 {

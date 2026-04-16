@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Common;
+using PyMCU.Common.Models;
 
 namespace PyMCU.Frontend;
 

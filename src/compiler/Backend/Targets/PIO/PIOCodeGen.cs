@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.IR;
 
 namespace PyMCU.Backend.Targets.PIO;
