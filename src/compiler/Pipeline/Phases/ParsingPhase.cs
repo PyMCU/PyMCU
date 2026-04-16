@@ -19,24 +19,16 @@ using PyMCU.Frontend;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class ParsingPhase : ICompilerPhase
+public class ParsingPhase : CompilerPhaseBase
 {
-    public string Name => "Lexical & Syntax Analysis";
+    public override string Name => "Lexical & Syntax Analysis";
 
-    public void Execute(CompilationContext context)
+    protected override void Run(CompilationContext context)
     {
-        try
-        {
-            var lexer = new Lexer(context.SourceCode);
-            var tokens = lexer.Tokenize();
+        var lexer = new Lexer(context.SourceCode);
+        var tokens = lexer.Tokenize();
 
-            var parser = new Parser(tokens);
-            context.RootAst = parser.ParseProgram();
-        }
-        catch (CompilerError e)
-        {
-            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
-            context.HasErrors = true;
-        }
+        var parser = new Parser(tokens);
+        context.RootAst = parser.ParseProgram();
     }
 }

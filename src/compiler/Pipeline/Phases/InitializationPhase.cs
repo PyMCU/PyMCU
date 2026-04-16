@@ -18,11 +18,11 @@ using PyMCU.Common;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class InitializationPhase : ICompilerPhase
+public class InitializationPhase : CompilerPhaseBase
 {
-    public string Name => "Initialization";
+    public override string Name => "Initialization";
 
-    public void Execute(CompilationContext context)
+    protected override void Run(CompilationContext context)
     {
         var options = context.Options;
 

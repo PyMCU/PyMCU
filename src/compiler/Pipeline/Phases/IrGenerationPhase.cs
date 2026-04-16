@@ -20,29 +20,23 @@ using PyMCU.IR.IRGenerator;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class IrGenerationPhase : ICompilerPhase
+public class IrGenerationPhase : CompilerPhaseBase
 {
-    public string Name => "IR Generation";
-    public void Execute(CompilationContext context)
+    public override string Name => "IR Generation";
+
+    protected override bool Guard(CompilationContext context)
     {
-        if (context.RootAst == null)
-        {
-            context.HasErrors = true;
-            return;
-        }
+        if (context.RootAst != null) return true;
+        context.HasErrors = true;
+        return false;
+    }
 
-        try
-        {
-            var irGen = new IRGenerator();
-            var ir = irGen.Generate(context.RootAst, context.NamedModules, context.DeviceConfig, context.SourceLines,
-                context.ModuleSourceLines);
+    protected override void Run(CompilationContext context)
+    {
+        var irGen = new IRGenerator();
+        var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
+            context.SourceLines, context.ModuleSourceLines);
 
-            context.IntermediateRepresentation = Optimizer.Optimize(ir);
-        }
-        catch (CompilerError e)
-        {
-            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
-            context.HasErrors = true;
-        }
+        context.IntermediateRepresentation = Optimizer.Optimize(ir);
     }
 }

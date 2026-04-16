@@ -19,10 +19,11 @@ using PyMCU.Frontend;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class BootstrapPhase : ICompilerPhase
+public class BootstrapPhase : CompilerPhaseBase
 {
-    public string Name => "Bootstrapping";
-    public void Execute(CompilationContext context)
+    public override string Name => "Bootstrapping";
+
+    protected override void Run(CompilationContext context)
     {
         var options = context.Options;
         var deviceConfig = context.DeviceConfig;

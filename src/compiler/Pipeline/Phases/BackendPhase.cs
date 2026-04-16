@@ -19,57 +19,47 @@ using PyMCU.Common;
 
 namespace PyMCU.Pipeline.Phases;
 
-public class BackendPhase : ICompilerPhase
+public class BackendPhase : CompilerPhaseBase
 {
-    public string Name => "Backend Phase";
-    public void Execute(CompilationContext context)
+    public override string Name => "Backend Phase";
+
+    protected override bool Guard(CompilationContext context)
     {
-        if (context.IntermediateRepresentation == null)
+        if (context.IntermediateRepresentation != null) return true;
+        context.HasErrors = true;
+        return false;
+    }
+
+    protected override void Run(CompilationContext context)
+    {
+        var ir = context.IntermediateRepresentation!;
+        var deviceConfig = context.DeviceConfig;
+        var options = context.Options;
+
+
+        string targetArch = deviceConfig.Arch;
+        if (string.IsNullOrEmpty(targetArch))
         {
-            context.HasErrors = true;
-            return;
+            targetArch = deviceConfig.Chip;
+            if (string.IsNullOrEmpty(targetArch)) targetArch = options.Arch;
         }
 
-        try
-        {
-            var ir = context.IntermediateRepresentation;
-            var deviceConfig = context.DeviceConfig;
-            var options = context.Options;
+        if (string.IsNullOrEmpty(deviceConfig.Chip)) deviceConfig.Chip = options.Arch;
+        if (string.IsNullOrEmpty(deviceConfig.Arch)) deviceConfig.Arch = options.Arch;
+        if (string.IsNullOrEmpty(deviceConfig.TargetChip)) deviceConfig.TargetChip = deviceConfig.Chip;
 
+        var backend = CodeGenFactory.Create(targetArch, deviceConfig);
 
-            string targetArch = deviceConfig.Arch;
-            if (string.IsNullOrEmpty(targetArch))
-            {
-                targetArch = deviceConfig.Chip;
-                if (string.IsNullOrEmpty(targetArch)) targetArch = options.Arch;
-            }
+        var outputParent = Path.GetDirectoryName(options.OutputPath);
+        if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
+            Directory.CreateDirectory(outputParent);
 
-            if (string.IsNullOrEmpty(deviceConfig.Chip)) deviceConfig.Chip = options.Arch;
-            if (string.IsNullOrEmpty(deviceConfig.Arch)) deviceConfig.Arch = options.Arch;
-            if (string.IsNullOrEmpty(deviceConfig.TargetChip)) deviceConfig.TargetChip = deviceConfig.Chip;
+        Console.WriteLine(
+            $"[pymcuc] Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
 
-            var backend = CodeGenFactory.Create(targetArch, deviceConfig);
+        using var asmFile = new StreamWriter(options.OutputPath);
+        backend.Compile(ir, asmFile);
 
-            var outputParent = Path.GetDirectoryName(options.OutputPath);
-            if (!string.IsNullOrEmpty(outputParent) && !Directory.Exists(outputParent))
-            {
-                Directory.CreateDirectory(outputParent);
-            }
-
-            Console.WriteLine(
-                $"[pymcuc] Compiling {options.FilePath} -> {options.OutputPath} ({targetArch} @ {deviceConfig.Frequency}Hz)");
-
-            using (var asmFile = new StreamWriter(options.OutputPath))
-            {
-                backend.Compile(ir, asmFile);
-            }
-
-            Console.WriteLine($"[pymcuc] Success! Output written to {options.OutputPath}");
-        }
-        catch (CompilerError e)
-        {
-            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
-            context.HasErrors = true;
-        }
+        Console.WriteLine($"[pymcuc] Success! Output written to {options.OutputPath}");
     }
 }
