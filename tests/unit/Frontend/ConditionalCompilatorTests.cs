@@ -331,3 +331,150 @@ public class ConditionalCompilatorTests
     }
 }
 
+public class CompileTimeEvaluatorTests
+{
+    private static DeviceConfig AvrConfig() =>
+        new() { Chip = "atmega328p", Arch = "avr", Frequency = 16000000 };
+
+    private static CompileTimeEvaluator Evaluator() => new(AvrConfig());
+
+    // -------------------------------------------------------------------------
+    // Resolve
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Resolve_Chip_ReturnsChipName()
+        => Evaluator().Resolve(new VariableExpr("__CHIP__")).Should().Be("atmega328p");
+
+    [Fact]
+    public void Resolve_Freq_ReturnsFrequencyString()
+        => Evaluator().Resolve(new VariableExpr("__FREQ__")).Should().Be("16000000");
+
+    [Fact]
+    public void Resolve_FCPU_ReturnsFrequencyString()
+        => Evaluator().Resolve(new VariableExpr("F_CPU")).Should().Be("16000000");
+
+    [Fact]
+    public void Resolve_ChipArch_ReturnsArch()
+        => Evaluator().Resolve(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch")).Should().Be("avr");
+
+    [Fact]
+    public void Resolve_ChipDotChip_ReturnsChipName()
+        => Evaluator().Resolve(new MemberAccessExpr(new VariableExpr("__CHIP__"), "chip")).Should().Be("atmega328p");
+
+    [Fact]
+    public void Resolve_ChipDotName_ReturnsChipName()
+        => Evaluator().Resolve(new MemberAccessExpr(new VariableExpr("__CHIP__"), "name")).Should().Be("atmega328p");
+
+    [Fact]
+    public void Resolve_StringLiteral_ReturnsSameValue()
+        => Evaluator().Resolve(new StringLiteral("avr")).Should().Be("avr");
+
+    [Fact]
+    public void Resolve_IntegerLiteral_ReturnsStringRepresentation()
+        => Evaluator().Resolve(new IntegerLiteral(8000000)).Should().Be("8000000");
+
+    [Fact]
+    public void Resolve_UnknownVar_Throws()
+    {
+        var act = () => Evaluator().Resolve(new VariableExpr("runtime_var"));
+        act.Should().Throw<Exception>();
+    }
+
+    // -------------------------------------------------------------------------
+    // MatchesPattern
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void MatchesPattern_Null_IsWildcard()
+        => Evaluator().MatchesPattern(null, "avr").Should().BeTrue();
+
+    [Fact]
+    public void MatchesPattern_StringLiteral_MatchesExact()
+        => Evaluator().MatchesPattern(new StringLiteral("avr"), "avr").Should().BeTrue();
+
+    [Fact]
+    public void MatchesPattern_StringLiteral_DoesNotMatchDifferent()
+        => Evaluator().MatchesPattern(new StringLiteral("pic"), "avr").Should().BeFalse();
+
+    [Fact]
+    public void MatchesPattern_IntegerLiteral_MatchesTarget()
+        => Evaluator().MatchesPattern(new IntegerLiteral(16000000), "16000000").Should().BeTrue();
+
+    [Fact]
+    public void MatchesPattern_OrPattern_MatchesFirstAlternative()
+    {
+        var or = new BinaryExpr(new StringLiteral("avr"), BinaryOp.BitOr, new StringLiteral("avr8"));
+        Evaluator().MatchesPattern(or, "avr").Should().BeTrue();
+    }
+
+    [Fact]
+    public void MatchesPattern_OrPattern_MatchesSecondAlternative()
+    {
+        var or = new BinaryExpr(new StringLiteral("pic"), BinaryOp.BitOr, new StringLiteral("avr"));
+        Evaluator().MatchesPattern(or, "avr").Should().BeTrue();
+    }
+
+    [Fact]
+    public void MatchesPattern_OrPattern_ReturnsFalseWhenNoneMatch()
+    {
+        var or = new BinaryExpr(new StringLiteral("pic"), BinaryOp.BitOr, new StringLiteral("riscv"));
+        Evaluator().MatchesPattern(or, "avr").Should().BeFalse();
+    }
+
+    // -------------------------------------------------------------------------
+    // EvaluateCondition
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void EvaluateCondition_Null_ReturnsFalse()
+        => Evaluator().EvaluateCondition(null).Should().BeFalse();
+
+    [Fact]
+    public void EvaluateCondition_Equal_TrueWhenMatch()
+    {
+        var cond = new BinaryExpr(
+            new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
+            BinaryOp.Equal,
+            new StringLiteral("avr"));
+        Evaluator().EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateCondition_Equal_FalseWhenNoMatch()
+    {
+        var cond = new BinaryExpr(
+            new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
+            BinaryOp.Equal,
+            new StringLiteral("pic"));
+        Evaluator().EvaluateCondition(cond).Should().BeFalse();
+    }
+
+    [Fact]
+    public void EvaluateCondition_NotEqual_TrueWhenDifferent()
+    {
+        var cond = new BinaryExpr(
+            new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"),
+            BinaryOp.NotEqual,
+            new StringLiteral("pic"));
+        Evaluator().EvaluateCondition(cond).Should().BeTrue();
+    }
+
+    [Fact]
+    public void EvaluateCondition_And_FalseWhenOneIsFalse()
+    {
+        var cond = new BinaryExpr(
+            new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("avr")),
+            BinaryOp.And,
+            new BinaryExpr(new MemberAccessExpr(new VariableExpr("__CHIP__"), "arch"), BinaryOp.Equal, new StringLiteral("pic")));
+        Evaluator().EvaluateCondition(cond).Should().BeFalse();
+    }
+
+    [Fact]
+    public void EvaluateCondition_UnsupportedExpr_Throws()
+    {
+        var act = () => Evaluator().EvaluateCondition(new IntegerLiteral(1));
+        act.Should().Throw<Exception>();
+    }
+}
+
