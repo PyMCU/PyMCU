@@ -68,12 +68,18 @@ public class FrontendResolutionPhase(
         var processedModules = new HashSet<string>(context.NamedModules.Keys);
         var iteration = 0;
 
+        Logger.Verbose("FrontendResolution",
+            $"Starting post-conditional module loading (initial modules: {processedModules.Count})");
+
         while (iteration++ < maxIterations)
         {
             var newModules = new List<ProgramNode>();
 
             // Create snapshot of current modules to avoid modification-during-iteration
             var currentModules = context.NamedModules.ToList();
+
+            Logger.Verbose("FrontendResolution",
+                $"Iteration {iteration}: Scanning {currentModules.Count} modules for new imports");
 
             // Scan all currently processed modules for imports
             foreach (var (moduleName, node) in currentModules)
@@ -82,6 +88,9 @@ public class FrontendResolutionPhase(
                 {
                     if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
                     if (processedModules.Contains(imp.ModuleName)) continue;
+
+                    Logger.Verbose("FrontendResolution",
+                        $"Discovered new import: {imp.ModuleName} (from {moduleName})");
 
                     // Load the module if not yet loaded
                     if (!context.NamedModules.ContainsKey(imp.ModuleName))
@@ -95,7 +104,14 @@ public class FrontendResolutionPhase(
 
             // No new modules discovered → we're done
             if (newModules.Count == 0)
+            {
+                Logger.Verbose("FrontendResolution",
+                    $"Iteration {iteration}: No new modules found, convergence reached");
                 break;
+            }
+
+            Logger.Verbose("FrontendResolution",
+                $"Iteration {iteration}: Processing {newModules.Count} new module(s)");
 
             // Process all newly discovered modules through the full processor pipeline
             foreach (var module in newModules)
@@ -108,5 +124,8 @@ public class FrontendResolutionPhase(
         if (iteration >= maxIterations)
             throw new CompilerError("ImportError",
                 "Exceeded maximum iterations while loading transitive imports. Possible circular dependency.", 0, 0);
+
+        Logger.Verbose("FrontendResolution",
+            $"Post-conditional module loading complete (total modules: {context.NamedModules.Count})");
     }
 }
