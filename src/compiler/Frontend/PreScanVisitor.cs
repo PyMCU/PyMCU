@@ -89,14 +89,14 @@ public class PreScanVisitor(DeviceConfig config)
                     config.DetectedChip = parsedChip;
                     config.Chip = parsedChip;
 
-                    // Validation: CLI/TOML vs source code chip
-                    // Source code device_info() takes precedence over CLI --arch,
-                    // since the code was written for a specific chip.
+                    // Validation: --target (build system) takes precedence over device_info()
+                    // in the chip file. The chip file provides arch/ram metadata but does NOT
+                    // override the explicit target declared in pyproject.toml / CLI.
                     if (!string.IsNullOrEmpty(config.TargetChip) && config.TargetChip != parsedChip)
                     {
                         Logger.Warning("PreScan",
-                            $"Build specifies '{config.TargetChip}', but code imports '{parsedChip}'. Using source code chip.");
-                        config.TargetChip = parsedChip;
+                            $"Target '{config.TargetChip}' (from build config) differs from chip file '{parsedChip}'. Using build target.");
+                        // TargetChip intentionally kept — build system wins.
                     }
                 }
                 else
