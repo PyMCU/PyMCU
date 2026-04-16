@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     gputils \
     binutils-avr \
     gcc-avr \
+    avr-libc \
     git \
     python3 \
     nodejs \
