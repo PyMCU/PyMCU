@@ -44,5 +44,4 @@ public class CompilationContext(CompilerOptions options)
 
 
     public List<ProgramNode> LinearImports { get; } = [];
-    public DeviceConfig Config { get; set; } = new();
 }
