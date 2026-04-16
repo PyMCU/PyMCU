@@ -298,16 +298,12 @@ public static class Optimizer
             {
                 case Copy { Dst: Temporary tDst } copy:
                 {
-                    if (blacklistedTemps.Contains(tDst.Name))
+                    if (!blacklistedTemps.Contains(tDst.Name))
                     {
-                    }
-                    else if (tempCopies.Remove(tDst.Name))
-                    {
-                        blacklistedTemps.Add(tDst.Name);
-                    }
-                    else
-                    {
-                        tempCopies[tDst.Name] = copy.Src;
+                        if (tempCopies.Remove(tDst.Name))
+                            blacklistedTemps.Add(tDst.Name);
+                        else
+                            tempCopies[tDst.Name] = copy.Src;
                     }
 
                     break;
@@ -419,6 +415,7 @@ public static class Optimizer
             else if (func.Body[j] is JumpIfNotEqual jne)
             {
                 (Temporary? s, Constant? c) = MatchTmpConst(jne.Src1, jne.Src2, dstTmp.Name);
+                if (s == null) (s, c) = MatchTmpConst(jne.Src2, jne.Src1, dstTmp.Name);
                 if (s != null && c != null)
                 {
                     if (c.Value == 0) func.Body[j] = new JumpIfBitSet(bc.Source, bc.Bit, jne.Target);
