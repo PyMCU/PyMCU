@@ -2,7 +2,7 @@
 name = "pcint-counter"
 version = "0.1.0"
 dependencies = [
-    "pymcu-stdlib>=0.1.0a1",
+    "pymcu-stdlib>=0.1.2a5",
     "pymcu>=0.1.0a27"
 ]
 
