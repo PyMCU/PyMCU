@@ -27,10 +27,9 @@ public class DeviceConfigFallbackProcessor : IAstProcessor
     public void Process(ProgramNode node, CompilationContext context)
     {
         if (string.IsNullOrEmpty(context.DeviceConfig.Chip))
-            context.DeviceConfig.Chip = context.Options.Chip;
+            context.DeviceConfig.Chip = context.Options.Target;
 
         if (string.IsNullOrEmpty(context.DeviceConfig.Arch))
             context.DeviceConfig.Arch = context.Options.Arch;
     }
 }
-

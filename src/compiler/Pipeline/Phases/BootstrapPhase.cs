@@ -29,10 +29,10 @@ public class BootstrapPhase : CompilerPhaseBase
         var deviceConfig = context.DeviceConfig;
         var includePaths = context.IncludePaths;
 
-        if (string.IsNullOrEmpty(options.Chip)) return;
+        if (string.IsNullOrEmpty(options.Target)) return;
         try
         {
-            var target = TargetLoader.Bootstrap(options.Chip, includePaths);
+            var target = TargetLoader.Bootstrap(options.Target, includePaths);
 
             deviceConfig.Chip = target.Config.Chip;
             deviceConfig.DetectedChip = target.Config.DetectedChip;
@@ -43,7 +43,7 @@ public class BootstrapPhase : CompilerPhaseBase
 
             if (string.IsNullOrEmpty(deviceConfig.TargetChip))
             {
-                deviceConfig.TargetChip = options.Chip;
+                deviceConfig.TargetChip = options.Target;
             }
 
             context.ModuleSourceLines[target.ModuleName] = target.SourceLines;

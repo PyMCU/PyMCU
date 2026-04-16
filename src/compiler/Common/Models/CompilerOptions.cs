@@ -20,7 +20,7 @@ public sealed record CompilerOptions(
     string FilePath,
     string OutputPath,
     string Arch,
-    string Chip,
+    string Target,
     ulong Frequency,
     List<string> Configs,
     List<string> Includes,

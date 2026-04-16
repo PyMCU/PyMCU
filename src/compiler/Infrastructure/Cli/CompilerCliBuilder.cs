@@ -35,13 +35,13 @@ public static class CompilerCliBuilder
 
         Option<string> archOption = new("--arch")
         {
-            Description = "Target architecture",
-            DefaultValueFactory = parseResult => "avr"
+            Description = "Target architecture (internal/advanced use only)",
+            DefaultValueFactory = parseResult => string.Empty
         };
 
-        Option<string> chipOption = new("--chip")
+        Option<string> targetOption = new("--target")
         {
-            Description = "Target chip (e.g., pic16f18877). Locates pymcu/chips/<chip>.py",
+            Description = "Target chip (e.g., atmega328p, pic16f18877). Locates pymcu/chips/<target>.py",
             DefaultValueFactory = parseResult => string.Empty
         };
 
@@ -88,7 +88,7 @@ public static class CompilerCliBuilder
         rootCommand.Arguments.Add(fileArgument);
         rootCommand.Options.Add(outputOption);
         rootCommand.Options.Add(archOption);
-        rootCommand.Options.Add(chipOption);
+        rootCommand.Options.Add(targetOption);
         rootCommand.Options.Add(freqOption);
         rootCommand.Options.Add(configOption);
         rootCommand.Options.Add(includeOption);
@@ -110,7 +110,7 @@ public static class CompilerCliBuilder
                 FilePath: file,
                 OutputPath: output,
                 Arch: parseResult.GetValue(archOption) ?? string.Empty,
-                Chip: parseResult.GetValue(chipOption) ?? string.Empty,
+                Target: parseResult.GetValue(targetOption) ?? string.Empty,
                 Frequency: parseResult.GetValue(freqOption),
                 Configs: parseResult.GetValue(configOption) ?? [],
                 Includes: parseResult.GetValue(includeOption) ?? [],

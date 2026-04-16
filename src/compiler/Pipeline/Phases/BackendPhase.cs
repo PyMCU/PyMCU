@@ -44,7 +44,7 @@ public class BackendPhase : CompilerPhaseBase
             if (string.IsNullOrEmpty(targetArch)) targetArch = options.Arch;
         }
 
-        if (string.IsNullOrEmpty(deviceConfig.Chip)) deviceConfig.Chip = options.Arch;
+        if (string.IsNullOrEmpty(deviceConfig.Chip)) deviceConfig.Chip = options.Target;
         if (string.IsNullOrEmpty(deviceConfig.Arch)) deviceConfig.Arch = options.Arch;
         if (string.IsNullOrEmpty(deviceConfig.TargetChip)) deviceConfig.TargetChip = deviceConfig.Chip;
 
