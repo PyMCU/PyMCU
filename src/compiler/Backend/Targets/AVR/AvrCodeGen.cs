@@ -69,6 +69,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         _ => DataType.UINT8,
     };
 
+    private static bool IsSignedType(DataType t) => t.IsSigned();
+
     private void EmitBranch(string cond, string target)
     {
         var inv = new Dictionary<string, string>
