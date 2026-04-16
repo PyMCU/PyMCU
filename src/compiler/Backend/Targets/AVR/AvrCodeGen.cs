@@ -71,6 +71,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private static bool IsSignedType(DataType t) => t.IsSigned();
 
+    // Returns true if the comparison should use signed branches (BRLT/BRGE).
+    // Negative constants indicate a signed context even when type info is lost by folding.
+    private static bool IsSignedComparison(Val src1, Val src2)
+    {
+        if (IsSignedType(GetValType(src1)) || IsSignedType(GetValType(src2))) return true;
+        if (src1 is Constant c1 && c1.Value < 0) return true;
+        if (src2 is Constant c2 && c2.Value < 0) return true;
+        return false;
+    }
+
     private void EmitBranch(string cond, string target)
     {
         var inv = new Dictionary<string, string>
@@ -438,10 +448,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     : $"{d.SourceFile}:{d.Line}: {d.Text}"); break;
             case JumpIfEqual je: CompileCompareJump(je.Src1, je.Src2, "BREQ", je.Target); break;
             case JumpIfNotEqual jne: CompileCompareJump(jne.Src1, jne.Src2, "BRNE", jne.Target); break;
-            case JumpIfLessThan jlt: CompileCompareJump(jlt.Src1, jlt.Src2, "BRLO", jlt.Target); break;
+            case JumpIfLessThan jlt: CompileCompareJump(jlt.Src1, jlt.Src2, IsSignedComparison(jlt.Src1, jlt.Src2) ? "BRLT" : "BRLO", jlt.Target); break;
             case JumpIfLessOrEqual jle: CompileLessOrEqual(jle); break;
             case JumpIfGreaterThan jgt: CompileGreaterThan(jgt); break;
-            case JumpIfGreaterOrEqual jge: CompileCompareJump(jge.Src1, jge.Src2, "BRSH", jge.Target); break;
+            case JumpIfGreaterOrEqual jge: CompileCompareJump(jge.Src1, jge.Src2, IsSignedComparison(jge.Src1, jge.Src2) ? "BRGE" : "BRSH", jge.Target); break;
             case Call c: CompileCall(c); break;
             case Copy cp: CompileCopy(cp); break;
             case LoadIndirect li: CompileLoadIndirect(li); break;
@@ -533,19 +543,21 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         var type = GetValType(jle.Src1);
         EmitCompare(jle.Src1, jle.Src2, type);
-        EmitBranch("BRLO", jle.Target);
+        string brLo = IsSignedComparison(jle.Src1, jle.Src2) ? "BRLT" : "BRLO";
+        EmitBranch(brLo, jle.Target);
         EmitBranch("BREQ", jle.Target);
     }
 
     private void CompileGreaterThan(JumpIfGreaterThan jgt)
     {
         var type = GetValType(jgt.Src1);
+        bool signed = IsSignedComparison(jgt.Src1, jgt.Src2);
         LoadIntoReg(jgt.Src1, "R24", type);
 
         if (jgt.Src2 is Constant c)
         {
             int val = c.Value;
-            int maxVal = type.SizeOf() == 2 ? 0xFFFF : 0xFF;
+            int maxVal = type.SizeOf() == 2 ? (signed ? 0x7FFF : 0xFFFF) : (signed ? 0x7F : 0xFF);
             if (val < maxVal)
             {
                 int cmpVal = val + 1;
@@ -558,7 +570,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 else Emit("CPI", "R24", $"{cmpVal & 0xFF}");
 
-                EmitBranch("BRSH", jgt.Target);
+                EmitBranch(signed ? "BRGE" : "BRSH", jgt.Target);
             }
 
             return; // a > max is always false
@@ -569,7 +581,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (type.SizeOf() == 2) Emit("CPC", "R25", "R19");
         var skip = MakeLabel("L_BRHI_SKIP");
         Emit("BREQ", skip);
-        EmitBranch("BRSH", jgt.Target);
+        EmitBranch(signed ? "BRGE" : "BRSH", jgt.Target);
         EmitLabel(skip);
     }
 
@@ -959,7 +971,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
                 var sk = MakeLabel("L_SKIP");
                 Emit("LDI", "R24", "1");
-                EmitBranch("BRLO", sk);
+                EmitBranch(IsSignedComparison(b.Src1, b.Src2) ? "BRLT" : "BRLO", sk);
                 Emit("LDI", "R24", "0");
                 EmitLabel(sk);
                 if (is16) Emit("LDI", "R25", "0");
@@ -975,7 +987,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
                 var sk = MakeLabel("L_SKIP");
                 Emit("LDI", "R24", "1");
-                EmitBranch("BRSH", sk);
+                EmitBranch(IsSignedComparison(b.Src1, b.Src2) ? "BRGE" : "BRSH", sk);
                 Emit("LDI", "R24", "0");
                 EmitLabel(sk);
                 if (is16) Emit("LDI", "R25", "0");
@@ -992,7 +1004,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 var lt = MakeLabel("L_TRUE");
                 var ld2 = MakeLabel("L_DONE");
                 EmitBranch("BREQ", ld2);
-                EmitBranch("BRSH", lt);
+                EmitBranch(IsSignedComparison(b.Src1, b.Src2) ? "BRGE" : "BRSH", lt);
                 EmitLabel(ld2);
                 Emit("LDI", "R24", "0");
                 var lf = MakeLabel("L_FINAL");
@@ -1012,7 +1024,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
 
                 var lt = MakeLabel("L_TRUE");
-                EmitBranch("BRLO", lt);
+                EmitBranch(IsSignedComparison(b.Src1, b.Src2) ? "BRLT" : "BRLO", lt);
                 EmitBranch("BREQ", lt);
                 Emit("LDI", "R24", "0");
                 var lf = MakeLabel("L_FINAL");
