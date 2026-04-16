@@ -37,7 +37,7 @@ public class CompilerDriver
         // (idempotent) as a no-op.
         Logger.Initialize(options.Verbose);
 
-        var version = typeof(CompilerDriver).Assembly.GetName().Version?.ToString(3) ?? "dev";
+        var version = CompilerInfo.Version;
         Logger.PrintBanner(version);
 
         var context = new CompilationContext(options);

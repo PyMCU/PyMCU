@@ -8,6 +8,7 @@
     <PublishAot>true</PublishAot>
     <RootNamespace>PyMCU</RootNamespace>
     <AssemblyName>pymcuc</AssemblyName>
+    <Version>1.0.0-beta1</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
@@ -15,5 +16,22 @@
     <PackageReference Include="System.CommandLine" Version="2.0.6" />
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
+
+  <!--
+    WriteVersionInfo — AOT-safe version stamping.
+    Overwrites Common/CompilerInfo.cs with a const string derived from $(Version).
+    No runtime reflection required — the value is a compile-time constant.
+  -->
+  <Target Name="WriteVersionInfo" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <_VersionLines Include="// &lt;auto-generated/&gt; — do not edit manually." />
+      <_VersionLines Include="namespace PyMCU.Common%3B public static class CompilerInfo { public const string Version = &quot;$(Version)&quot;%3B }" />
+    </ItemGroup>
+    <WriteLinesToFile
+      File="$(MSBuildThisFileDirectory)Common/CompilerInfo.cs"
+      Lines="@(_VersionLines)"
+      Overwrite="true"
+      WriteOnlyWhenDifferent="true" />
+  </Target>
 
 </Project>
