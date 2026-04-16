@@ -71,12 +71,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install PyMCU CLI from local source
-        run: uv pip install -e . lib/
+        run: uv pip install --system -e . lib/
 
       - name: Install compat stdlib flavors
         run: |
-          uv pip install external/pymcu-micropython/
-          uv pip install external/pymcu-circuitpython/
+          uv pip install --system external/pymcu-micropython/
+          uv pip install --system external/pymcu-circuitpython/
 
       - name: Build pymcuc compiler
         run: |
