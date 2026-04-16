@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using System.Diagnostics;
 using PyMCU.Common;
 using PyMCU.Common.Models;
 
@@ -31,26 +32,41 @@ public class CompilerDriver
 
     public int Run(CompilerOptions options)
     {
+        // Initialize early so PhaseStart/PhaseEnd work correctly for every phase,
+        // including Initialization itself. InitializationPhase re-calls this
+        // (idempotent) as a no-op.
+        Logger.Initialize(options.Verbose);
+
+        var version = typeof(CompilerDriver).Assembly.GetName().Version?.ToString(3) ?? "dev";
+        Logger.PrintBanner(version);
+
         var context = new CompilationContext(options);
 
         foreach (var phase in _phases)
         {
+            var sw = Stopwatch.StartNew();
+            Logger.PhaseStart(phase.Name);
             try
             {
                 phase.Execute(context);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[Fatal] Unhandled exception in phase '{phase.Name}': {ex.Message}");
+                Logger.Error("Fatal", $"Unhandled exception in phase '{phase.Name}': {ex.Message}");
                 context.HasErrors = true;
             }
+            sw.Stop();
 
-            if (!context.HasErrors) continue;
-            Console.Error.WriteLine($"[Pipeline] Compilation aborted in phase: {phase.Name}");
-            return 1;
+            if (context.HasErrors)
+            {
+                Logger.BuildFailed(phase.Name);
+                return 1;
+            }
+
+            Logger.PhaseEnd(phase.Name, sw.ElapsedMilliseconds);
         }
 
-        Console.WriteLine($"[pymcuc] Compilation successful -> {options.OutputPath}");
+        Logger.BuildSuccess(options.OutputPath);
         return 0;
     }
 }
