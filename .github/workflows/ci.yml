@@ -50,7 +50,7 @@ jobs:
       contents: read
       packages: read
     container:
-      image: ghcr.io/${{ github.repository }}:latest
+      image: ghcr.io/pymcu/pymcu:latest
       options: --user root
       credentials:
         username: ${{ github.actor }}
