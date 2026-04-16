@@ -23,23 +23,25 @@ namespace PyMCU.Frontend;
 // This runs BEFORE type checking or code generation.
 public class PreScanVisitor(DeviceConfig config)
 {
-    public void Scan(ProgramNode program)
+    // isTargetEstablished = true  → target was set by BootstrapPhase; validate only.
+    // isTargetEstablished = false → first device_info() seen establishes the target.
+    public void Scan(ProgramNode program, bool isTargetEstablished = false)
     {
         foreach (var stmt in program.GlobalStatements)
         {
-            VisitStatement(stmt);
+            VisitStatement(stmt, isTargetEstablished);
         }
     }
 
-    private void VisitStatement(Statement stmt)
+    private void VisitStatement(Statement stmt, bool isTargetEstablished)
     {
         if (stmt is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "device_info" } } call })
         {
-            HandleDeviceInfo(call);
+            HandleDeviceInfo(call, isTargetEstablished);
         }
     }
 
-    private void HandleDeviceInfo(CallExpr call)
+    private void HandleDeviceInfo(CallExpr call, bool isTargetEstablished)
     {
         int positionalIndex = 0;
 
@@ -57,21 +59,11 @@ public class PreScanVisitor(DeviceConfig config)
             {
                 switch (positionalIndex)
                 {
-                    case 0:
-                        key = "arch";
-                        break;
-                    case 1:
-                        key = "chip";
-                        break;
-                    case 2:
-                        key = "ram_size";
-                        break;
-                    case 3:
-                        key = "flash_size";
-                        break;
-                    case 4:
-                        key = "eeprom_size";
-                        break;
+                    case 0: key = "arch"; break;
+                    case 1: key = "chip"; break;
+                    case 2: key = "ram_size"; break;
+                    case 3: key = "flash_size"; break;
+                    case 4: key = "eeprom_size"; break;
                     default:
                         throw new CompilerError("ConfigError", "Too many positional arguments in device_info",
                             call.Line, 0);
@@ -86,17 +78,44 @@ public class PreScanVisitor(DeviceConfig config)
                 if (valueExpr is StringLiteral lit)
                 {
                     string parsedChip = lit.Value;
-                    config.DetectedChip = parsedChip;
-                    config.Chip = parsedChip;
 
-                    // Validation: --target (build system) takes precedence over device_info()
-                    // in the chip file. The chip file provides arch/ram metadata but does NOT
-                    // override the explicit target declared in pyproject.toml / CLI.
-                    if (!string.IsNullOrEmpty(config.TargetChip) && config.TargetChip != parsedChip)
+                    if (isTargetEstablished)
                     {
-                        Logger.Warning("PreScan",
-                            $"Target '{config.TargetChip}' (from build config) differs from chip file '{parsedChip}'. Using build target.");
-                        // TargetChip intentionally kept — build system wins.
+                        // Target is locked. Validate arch-family compatibility.
+                        // Same chip family (e.g. atmega328 in an atmega328p project): warning only.
+                        // Different family (e.g. pic18 chip in an avr project): fatal error.
+                        if (!ArchFamilyResolver.SameFamily(config.Arch, parsedChip))
+                        {
+                            var importedFamily = ArchFamilyResolver.Resolve(parsedChip);
+                            var targetFamily   = ArchFamilyResolver.Resolve(config.Arch);
+                            throw new CompilerError("TargetMismatch",
+                                $"Cross-architecture import detected: chip file declares '{parsedChip}' " +
+                                $"(family={importedFamily}) but the build target is '{config.TargetChip}' " +
+                                $"(family={targetFamily}). Cannot mix chip definitions from different " +
+                                $"architecture families. Check your imports or your [tool.pymcu] target.",
+                                call.Line, 0);
+                        }
+
+                        if (config.TargetChip != parsedChip)
+                        {
+                            Logger.Warning("PreScan",
+                                $"Chip file declares '{parsedChip}' but build target is '{config.TargetChip}'. " +
+                                $"Same architecture family — proceeding with build target.");
+                        }
+                        // Do NOT overwrite config.Chip or config.TargetChip.
+                    }
+                    else
+                    {
+                        // Bootstrap mode: first device_info() establishes the target.
+                        config.DetectedChip = parsedChip;
+                        config.Chip = parsedChip;
+
+                        if (!string.IsNullOrEmpty(config.TargetChip) && config.TargetChip != parsedChip)
+                        {
+                            Logger.Warning("PreScan",
+                                $"Target '{config.TargetChip}' (from build config) differs from chip file '{parsedChip}'. " +
+                                $"Using build target.");
+                        }
                     }
                 }
                 else
@@ -108,7 +127,10 @@ public class PreScanVisitor(DeviceConfig config)
             {
                 if (valueExpr is StringLiteral lit)
                 {
-                    config.Arch = lit.Value;
+                    if (!isTargetEstablished)
+                        config.Arch = lit.Value;
+                    // When established: arch= in a non-bootstrap chip file is ignored;
+                    // family validation already happened via the chip= key above.
                 }
                 else
                 {
@@ -117,24 +139,18 @@ public class PreScanVisitor(DeviceConfig config)
             }
             else if (key == "ram_size")
             {
-                if (valueExpr is IntegerLiteral lit)
-                {
+                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
                     config.RamSize = lit.Value;
-                }
             }
             else if (key == "flash_size")
             {
-                if (valueExpr is IntegerLiteral lit)
-                {
+                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
                     config.FlashSize = lit.Value;
-                }
             }
             else if (key == "eeprom_size")
             {
-                if (valueExpr is IntegerLiteral lit)
-                {
+                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
                     config.EepromSize = lit.Value;
-                }
             }
         }
 

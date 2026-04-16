@@ -25,7 +25,7 @@ public class PreScanProcessor(PreScanVisitor visitor) : IAstProcessor
 {
     public void Process(ProgramNode node, CompilationContext context)
     {
-        visitor.Scan(node);
+        visitor.Scan(node, context.IsTargetEstablished);
     }
 }
 

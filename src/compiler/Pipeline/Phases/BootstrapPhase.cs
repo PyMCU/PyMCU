@@ -49,6 +49,11 @@ public class BootstrapPhase : CompilerPhaseBase
             context.ModuleSourceLines[target.ModuleName] = target.SourceLines;
             context.ModuleCache[target.FilePath] = target.Ast;
             context.NamedModules[target.ModuleName] = target.Ast;
+
+            // Mark the target as established so PreScanVisitor treats any
+            // subsequent device_info() calls as module annotations to validate,
+            // not as target directives to apply.
+            context.IsTargetEstablished = true;
         }
         catch (Exception ex)
         {
