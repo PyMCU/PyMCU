@@ -70,11 +70,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install PyMCU CLI
-        run: uv sync
-
-      - name: Override pymcu-stdlib with local source
-        run: uv pip install lib/
+      - name: Install PyMCU CLI from local source
+        run: uv pip install -e . lib/
 
       - name: Install compat stdlib flavors
         run: |
