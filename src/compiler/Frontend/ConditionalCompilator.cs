@@ -18,8 +18,13 @@ using PyMCU.Common.Models;
 
 namespace PyMCU.Frontend;
 
+// Walks the AST and eliminates compile-time if/match blocks, promoting the
+// selected branch into the surrounding statement list.
+// Condition and pattern evaluation is delegated to CompileTimeEvaluator.
 public class ConditionalCompilator(DeviceConfig config)
 {
+    private readonly CompileTimeEvaluator _evaluator = new(config);
+
     public void Process(ProgramNode program)
     {
         var newGlobals = new List<Statement>();
@@ -167,119 +172,41 @@ public class ConditionalCompilator(DeviceConfig config)
 
     private bool ProcessStatement(Statement stmt, ProgramNode prog, List<Statement> newStmts)
     {
-        if (stmt is ImportStmt imp)
+        switch (stmt)
         {
-            prog.Imports.Add(CloneImport(imp));
-            return true;
-        }
-
-        if (stmt is IfStmt ifStmt)
-        {
-            try
-            {
-                FlushBlock(ChooseBranch(ifStmt), prog, newStmts);
+            case ImportStmt imp:
+                prog.Imports.Add(CloneImport(imp));
                 return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        if (stmt is MatchStmt matchStmt)
-        {
-            try
-            {
-                string targetVal = ResolveConfigValue(matchStmt.Target);
-
-                foreach (var branch in matchStmt.Branches)
+            case IfStmt ifStmt:
+                try
                 {
-                    if (branch.Pattern == null)
-                    {
-                        // Wildcard
-                        FlushBlock(branch.Body, prog, newStmts);
-                        return true;
-                    }
-
-                    if (branch.Pattern is IntegerLiteral intLit && intLit.Value.ToString() == targetVal)
-                    {
-                        FlushBlock(branch.Body, prog, newStmts);
-                        return true;
-                    }
-
-                    if (branch.Pattern is StringLiteral strLit && strLit.Value == targetVal)
-                    {
-                        FlushBlock(branch.Body, prog, newStmts);
-                        return true;
-                    }
-
-                    if (branch.Pattern is BinaryExpr binExpr)
-                    {
-                        var alts = new List<string>();
-
-                        void Flatten(Expression e)
-                        {
-                            if (e is BinaryExpr b && b.Op == BinaryOp.BitOr)
-                            {
-                                Flatten(b.Left);
-                                Flatten(b.Right);
-                                return;
-                            }
-
-                            if (e is StringLiteral s) alts.Add(s.Value);
-                            else if (e is IntegerLiteral il) alts.Add(il.Value.ToString());
-                        }
-
-                        Flatten(binExpr);
-
-                        bool anyAlt = false;
-                        foreach (var alt in alts)
-                        {
-                            if (alt == targetVal) { anyAlt = true; break; }
-                        }
-
-                        if (anyAlt)
-                        {
-                            FlushBlock(branch.Body, prog, newStmts);
-                            return true;
-                        }
-                    }
+                    FlushBlock(ChooseBranch(ifStmt), prog, newStmts);
+                    return true;
                 }
+                catch
+                {
+                    return false;
+                }
+            case MatchStmt matchStmt:
+                try
+                {
+                    var targetVal = _evaluator.Resolve(matchStmt.Target);
 
-                return true; // No case matched, eliminate match
-            }
-            catch
-            {
+                    foreach (var branch in matchStmt.Branches.Where(branch =>
+                                 _evaluator.MatchesPattern(branch.Pattern, targetVal)))
+                    {
+                        FlushBlock(branch.Body, prog, newStmts);
+                        return true;
+                    }
+
+                    return true; // No case matched — eliminate the match
+                }
+                catch
+                {
+                    return false;
+                }
+            default:
                 return false;
-            }
         }
-
-        return false;
-    }
-
-    private bool EvaluateCondition(Expression? expr)
-    {
-        if (expr == null) return false;
-
-        if (expr is BinaryExpr bin)
-        {
-            if (bin.Op == BinaryOp.Or)  return EvaluateCondition(bin.Left) || EvaluateCondition(bin.Right);
-            if (bin.Op == BinaryOp.And) return EvaluateCondition(bin.Left) && EvaluateCondition(bin.Right);
-
-            if (bin.Op == BinaryOp.Equal || bin.Op == BinaryOp.NotEqual)
-            {
-                string left  = ResolveConfigValue(bin.Left);
-                string right = ResolveConfigValue(bin.Right);
-                return bin.Op == BinaryOp.Equal ? left == right : left != right;
-            }
-        }
-
-        if (expr is CallExpr call && call.Callee is MemberAccessExpr mem && mem.Member == "startswith"
-            && call.Args.Count == 1 && call.Args[0] is StringLiteral argStr)
-        {
-            return ResolveConfigValue(mem.Object).StartsWith(argStr.Value);
-        }
-
-        throw new Exception("Unsupported condition");
     }
 }
