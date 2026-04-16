@@ -1,6 +1,7 @@
 using PyMCU.Backend;
 using PyMCU.Backend.Targets.RiscV;
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.IR;
 using Xunit;
 

@@ -1,9 +1,11 @@
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
 using PyMCU.IR.IRGenerator;
 using Xunit;
 using IrBinaryOp = PyMCU.IR.BinaryOp;
+using IrUnaryOp = PyMCU.IR.UnaryOp;
 
 namespace PyMCU.UnitTests;
 

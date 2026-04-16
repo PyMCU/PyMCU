@@ -1,4 +1,5 @@
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.Frontend;
 using PyMCU.IR;
 using PyMCU.IR.IRGenerator;

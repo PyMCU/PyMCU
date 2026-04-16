@@ -1,5 +1,6 @@
 using PyMCU.Backend.Targets.AVR;
 using PyMCU.Common;
+using PyMCU.Common.Models;
 using PyMCU.IR;
 using Xunit;
 using IrBinaryOp = PyMCU.IR.BinaryOp;
