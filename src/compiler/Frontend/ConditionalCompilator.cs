@@ -32,23 +32,17 @@ public class ConditionalCompilator(DeviceConfig config)
         foreach (var stmt in program.GlobalStatements)
         {
             if (!ProcessStatement(stmt, program, newGlobals))
-            {
                 newGlobals.Add(stmt);
-            }
         }
 
         program.GlobalStatements.Clear();
         program.GlobalStatements.AddRange(newGlobals);
 
         foreach (var stmt in program.GlobalStatements)
-        {
             ProcessBlock(stmt, program);
-        }
 
         foreach (var func in program.Functions)
-        {
             ProcessBlock(func.Body, program);
-        }
     }
 
     // Moves all statements in a Block into newStmts, routing ImportStmt to prog.Imports.

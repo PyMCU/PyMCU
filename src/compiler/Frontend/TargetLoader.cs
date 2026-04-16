@@ -54,7 +54,7 @@ public static class TargetLoader
         Console.WriteLine($"[TargetLoader] Loading chip: {chipName} from {result.FilePath}");
 
         // Step 2: Read and tokenize
-        string source = Utils.ReadSource(result.FilePath);
+        var source = Utils.ReadSource(result.FilePath);
 
         using (var reader = new StringReader(source))
         {

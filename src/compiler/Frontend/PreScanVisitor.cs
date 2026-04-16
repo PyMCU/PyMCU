@@ -21,15 +21,8 @@ namespace PyMCU.Frontend;
 
 // Scans the AST for configuration calls like device_info()
 // This runs BEFORE type checking or code generation.
-public class PreScanVisitor
+public class PreScanVisitor(DeviceConfig config)
 {
-    private readonly DeviceConfig config;
-
-    public PreScanVisitor(DeviceConfig config)
-    {
-        this.config = config;
-    }
-
     public void Scan(ProgramNode program)
     {
         foreach (var stmt in program.GlobalStatements)
@@ -40,18 +33,9 @@ public class PreScanVisitor
 
     private void VisitStatement(Statement stmt)
     {
-        if (stmt is ExprStmt exprStmt)
+        if (stmt is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "device_info" } } call })
         {
-            if (exprStmt.Expr is CallExpr call)
-            {
-                if (call.Callee is VariableExpr varExpr)
-                {
-                    if (varExpr.Name == "device_info")
-                    {
-                        HandleDeviceInfo(call);
-                    }
-                }
-            }
+            HandleDeviceInfo(call);
         }
     }
 
