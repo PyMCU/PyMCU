@@ -526,10 +526,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         if (r.Value is not NoneVal)
         {
-            // Note: Cannot infer return type from IR (no type metadata on Function).
-            // Sign-extension for returns would require IR changes.
-            // For now, use the value's own type.
-            var returnType = GetValType(r.Value);
+            var returnType = _currentFunction?.ReturnType ?? GetValType(r.Value);
             LoadIntoReg(r.Value, "R24", returnType);
         }
 
@@ -656,9 +653,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         // When src is a typeless constant, use the destination's declared type
         // to ensure e.g. `i: uint16 = 0` initialises both bytes.
-        var type = cp.Src is Constant ? GetValType(cp.Dst) : GetValType(cp.Src);
-        LoadIntoReg(cp.Src, "R24", type);
-        StoreRegInto("R24", cp.Dst, type);
+        var srcType = GetValType(cp.Src);
+        var dstType = GetValType(cp.Dst);
+        // Use destination type for size, but LoadIntoReg will check source type for sign-extension
+        var loadType = cp.Src is Constant ? dstType : dstType;
+        LoadIntoReg(cp.Src, "R24", loadType);
+        StoreRegInto("R24", cp.Dst, dstType);
     }
 
     private void CompileLoadIndirect(LoadIndirect li)
