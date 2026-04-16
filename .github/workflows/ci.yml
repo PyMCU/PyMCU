@@ -1,4 +1,4 @@
-name: Integration Tests
+name: CI
 
 on:
   push:
@@ -7,15 +7,54 @@ on:
     branches: ["main"]
 
 jobs:
-  integration:
+  unit:
+    name: Unit Tests (.NET)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - name: Restore packages
+        run: dotnet restore tests/unit/PyMCU.Tests.csproj --nologo
+
+      - name: Run unit tests
+        run: |
+          dotnet test tests/unit/PyMCU.Tests.csproj \
+            --no-restore \
+            --logger "trx;LogFileName=unit-results.trx" \
+            --logger "console;verbosity=normal" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory test-results \
+            --nologo
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: test-results/
+          retention-days: 15
+
+  integration:
     name: Integration Tests (AVR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     container:
-      image: ${{ vars.DOCKER_REGISTRY_URL }}/${{ github.repository }}:latest
+      image: ghcr.io/${{ github.repository }}:latest
       options: --user root
       credentials:
         username: ${{ github.actor }}
-        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -42,12 +81,6 @@ jobs:
           uv pip install external/pymcu-micropython/
           uv pip install external/pymcu-circuitpython/
 
-      # - name: Install build tools
-      #   run: sudo apt-get install -y build-essential flex bison ninja-build cmake
-
-      - name: Install AVR toolchain (avr-as + avr-ld + avr-objcopy + avr-gcc)
-        run: sudo apt-get install -y --no-install-recommends binutils-avr gcc-avr
-
       - name: Build pymcuc compiler
         run: |
           dotnet publish src/compiler/PyMCU.csproj \
@@ -63,6 +96,17 @@ jobs:
         run: |
           dotnet test tests/integration/PyMCU.IntegrationTests.csproj \
             --no-restore \
+            --logger "trx;LogFileName=integration-results.trx" \
             --logger "console;verbosity=normal" \
             --blame-hang-timeout 120s \
+            --results-directory test-results \
+            --nologo \
             -- NUnit.NumberOfTestWorkers=1
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results/
+          retention-days: 15

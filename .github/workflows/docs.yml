@@ -1,15 +1,7 @@
 name: Deploy Documentation to Cloudflare Pages
 
+# Disabled: restore the push/pull_request triggers below to re-enable.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'docs/**'
-      - '.github/workflows/docs.yml'
-  pull_request:
-    paths:
-      - 'docs/**'
   workflow_dispatch:
 
 concurrency:

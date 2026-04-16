@@ -19,12 +19,27 @@ build:
 # ─── test ───────────────────────────────────────────────────────────────────
 # Run unit tests then integration tests (requires build first).
 test: build
+    just test-unit
+    just test-integration
+
+# ─── test-unit ──────────────────────────────────────────────────────────────
+# Run unit tests only.
+test-unit:
     dotnet test "{{repo_root}}/tests/unit/PyMCU.Tests.csproj" \
         --logger "console;verbosity=normal" --nologo
+
+# ─── test-integration ───────────────────────────────────────────────────────
+# Run integration tests only (requires build first).
+test-integration: build
     dotnet test "{{repo_root}}/tests/integration/PyMCU.IntegrationTests.csproj" \
         --logger "console;verbosity=normal" \
         --blame-hang-timeout 120s --nologo \
         -- NUnit.NumberOfTestWorkers=1
+
+# ─── build-stdlib ───────────────────────────────────────────────────────────
+# Build the pymcu-stdlib wheel into lib/dist/.
+build-stdlib:
+    cd "{{repo_root}}/lib" && uv build
 
 # ─── sync-stdlib ────────────────────────────────────────────────────────────
 # Sync the stdlib source tree into the active .venv (mirrors rsync workflow).
