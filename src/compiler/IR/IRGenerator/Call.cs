@@ -913,8 +913,12 @@ public partial class IRGenerator
                     else break;
                 }
 
-                int dotPos = key.IndexOf('.');
-                handlerFuncName = dotPos != -1 ? key.Substring(dotPos + 1) : key;
+                // When compile_isr() is called inside an inlined function, the
+                // inline prefix (e.g. "inline1.millis_init.") makes the key look
+                // like "inline1.millis_init._millis_ovf_isr". Strip the inline
+                // prefix and resolve via ResolveCallee to get the module-qualified
+                // function name (e.g. "pymcu_hal__timer_atmega328p__millis_ovf_isr").
+                handlerFuncName = ResolveCallee(v.Name);
                 handlerProvided = !string.IsNullOrEmpty(handlerFuncName);
             }
             else

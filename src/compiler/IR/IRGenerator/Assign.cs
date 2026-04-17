@@ -357,17 +357,28 @@ public partial class IRGenerator
                     if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
                     else
                     {
-                        string qualifiedName = currentFunction + "." + varExpr.Name;
-                        DataType type = DataType.UINT8;
-                        if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                        // Check if the variable is a module-level mutable global.
+                        // e.g. _millis_count defined at module scope should be accessed
+                        // as a global even when assigned inside a non-inline function.
+                        string moduleGlobalName = currentModulePrefix + varExpr.Name;
+                        if (mutableGlobals.ContainsKey(moduleGlobalName))
+                        {
+                            target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
+                        }
                         else
                         {
-                            if (value is Temporary tmp) type = tmp.Type;
-                            else if (value is Variable vv) type = vv.Type;
-                            variableTypes[qualifiedName] = type;
-                        }
+                            string qualifiedName = currentFunction + "." + varExpr.Name;
+                            DataType type = DataType.UINT8;
+                            if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                            else
+                            {
+                                if (value is Temporary tmp) type = tmp.Type;
+                                else if (value is Variable vv) type = vv.Type;
+                                variableTypes[qualifiedName] = type;
+                            }
 
-                        target = new Variable(qualifiedName, type);
+                            target = new Variable(qualifiedName, type);
+                        }
                     }
                 }
             }
