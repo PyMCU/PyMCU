@@ -40,12 +40,38 @@ public static class PymcuCompiler
         {
             var fileInfo = new FileInfo(PymcuExe);
             Console.WriteLine($"[PymcuCompiler] PymcuExe size: {fileInfo.Length} bytes");
-            // Try to read first line (shebang)
+            Console.WriteLine($"[PymcuCompiler] PymcuExe permissions: {Convert.ToString((int)fileInfo.Attributes, 2)}");
+
+            // Try to read first 10 lines to see content
             try {
-                var firstLine = File.ReadLines(PymcuExe).FirstOrDefault();
-                Console.WriteLine($"[PymcuCompiler] PymcuExe first line: {firstLine}");
+                var lines = File.ReadLines(PymcuExe).Take(10).ToList();
+                Console.WriteLine($"[PymcuCompiler] PymcuExe first {lines.Count} lines:");
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    Console.WriteLine($"[PymcuCompiler]   Line {i + 1}: {lines[i]}");
+                }
             } catch (Exception ex) {
                 Console.WriteLine($"[PymcuCompiler] Cannot read PymcuExe: {ex.Message}");
+            }
+
+            // Try which python3
+            try {
+                var whichPsi = new ProcessStartInfo
+                {
+                    FileName = "which",
+                    Arguments = "python3",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                };
+                using var whichProc = Process.Start(whichPsi);
+                if (whichProc != null)
+                {
+                    whichProc.WaitForExit();
+                    var python3Path = whichProc.StandardOutput.ReadToEnd().Trim();
+                    Console.WriteLine($"[PymcuCompiler] which python3: {python3Path}");
+                }
+            } catch (Exception ex) {
+                Console.WriteLine($"[PymcuCompiler] Cannot run 'which python3': {ex.Message}");
             }
         }
 
@@ -54,9 +80,40 @@ public static class PymcuCompiler
         Console.WriteLine($"[PymcuCompiler] VIRTUAL_ENV : {Environment.GetEnvironmentVariable("VIRTUAL_ENV")}");
         Console.WriteLine($"[PymcuCompiler] PYTHONPATH  : {Environment.GetEnvironmentVariable("PYTHONPATH")}");
 
+        // Check if pyproject.toml exists in example dir
+        var pyprojectPath = Path.Combine(exampleDir, "pyproject.toml");
+        Console.WriteLine($"[PymcuCompiler] pyproject.toml exists: {File.Exists(pyprojectPath)}");
+        if (File.Exists(pyprojectPath))
+        {
+            try {
+                var content = File.ReadAllText(pyprojectPath);
+                Console.WriteLine($"[PymcuCompiler] pyproject.toml content:\n{content}");
+            } catch (Exception ex) {
+                Console.WriteLine($"[PymcuCompiler] Cannot read pyproject.toml: {ex.Message}");
+            }
+        }
+
         if (!Directory.Exists(exampleDir))
             throw new DirectoryNotFoundException(
                 $"Example directory not found: {exampleDir}");
+
+        // Check if pymcuc compiler exists
+        var pymcucPath = Path.Combine(RepoRoot, "build", "bin", "pymcuc");
+        Console.WriteLine($"[PymcuCompiler] pymcuc path: {pymcucPath} (exists={File.Exists(pymcucPath)})");
+        if (File.Exists(pymcucPath))
+        {
+            var fileInfo = new FileInfo(pymcucPath);
+            Console.WriteLine($"[PymcuCompiler] pymcuc size: {fileInfo.Length} bytes");
+        }
+
+        // Check if dist directory already exists from previous runs
+        var distDir = Path.Combine(exampleDir, "dist");
+        Console.WriteLine($"[PymcuCompiler] dist directory exists before build: {Directory.Exists(distDir)}");
+        if (Directory.Exists(distDir))
+        {
+            var hexFileBefore = Path.Combine(distDir, "firmware.hex");
+            Console.WriteLine($"[PymcuCompiler] firmware.hex exists before build: {File.Exists(hexFileBefore)}");
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -70,6 +127,9 @@ public static class PymcuCompiler
         // Verbose pymcu output so compiler path resolution is visible in CI logs
         psi.Environment["PYMCU_VERBOSE"] = "1";
 
+        Console.WriteLine($"[PymcuCompiler] About to execute: {psi.FileName} {psi.Arguments}");
+        Console.WriteLine($"[PymcuCompiler] Working directory: {psi.WorkingDirectory}");
+
         // Diagnostic: Log environment variables being passed to child process
         Console.WriteLine($"[PymcuCompiler] Child process environment:");
         foreach (var entry in psi.Environment)
@@ -82,52 +142,91 @@ public static class PymcuCompiler
             }
         }
 
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start pymcu process.");
-
-        // Collect output on background threads to avoid deadlock
-        var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
-        var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
-
-        var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
-        var stdout   = stdoutTask.GetAwaiter().GetResult();
-        var stderr   = stderrTask.GetAwaiter().GetResult();
-
-        // Always log stdout/stderr for diagnostics, even on success
-        Console.WriteLine($"[PymcuCompiler] === Execution completed for '{name}' ===");
-        Console.WriteLine($"[PymcuCompiler] Exit code: {(finished ? proc.ExitCode.ToString() : "TIMEOUT")}");
-        Console.WriteLine($"[PymcuCompiler] stdout length: {stdout.Length} bytes");
-        Console.WriteLine($"[PymcuCompiler] stderr length: {stderr.Length} bytes");
-        if (!string.IsNullOrWhiteSpace(stdout))
+        Process? proc = null;
+        try
         {
-            Console.WriteLine($"[PymcuCompiler] === STDOUT ===");
-            Console.WriteLine(stdout);
-            Console.WriteLine($"[PymcuCompiler] === END STDOUT ===");
+            proc = Process.Start(psi);
         }
-        if (!string.IsNullOrWhiteSpace(stderr))
+        catch (Exception ex)
         {
-            Console.WriteLine($"[PymcuCompiler] === STDERR ===");
-            Console.WriteLine(stderr);
-            Console.WriteLine($"[PymcuCompiler] === END STDERR ===");
+            Console.WriteLine($"[PymcuCompiler] Failed to start pymcu directly: {ex.Message}");
+            Console.WriteLine($"[PymcuCompiler] Attempting to run with explicit python3...");
+
+            // Try with explicit python3
+            psi.FileName = "python3";
+            psi.Arguments = $"{PymcuExe} build";
+            proc = Process.Start(psi);
         }
 
-        if (!finished)
+        if (proc == null)
+            throw new InvalidOperationException("Failed to start pymcu process.");
+
+        using (proc)
         {
-            proc.Kill();
-            throw new TimeoutException(
-                $"pymcu build timed out after 60 s for example '{name}'.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            // Collect output on background threads to avoid deadlock
+            var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+            var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
+
+            var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
+            var stdout   = stdoutTask.GetAwaiter().GetResult();
+            var stderr   = stderrTask.GetAwaiter().GetResult();
+
+            // Always log stdout/stderr for diagnostics, even on success
+            Console.WriteLine($"[PymcuCompiler] === Execution completed for '{name}' ===");
+            Console.WriteLine($"[PymcuCompiler] Exit code: {(finished ? proc.ExitCode.ToString() : "TIMEOUT")}");
+            Console.WriteLine($"[PymcuCompiler] stdout length: {stdout.Length} bytes");
+            Console.WriteLine($"[PymcuCompiler] stderr length: {stderr.Length} bytes");
+            if (!string.IsNullOrWhiteSpace(stdout))
+            {
+                Console.WriteLine($"[PymcuCompiler] === STDOUT ===");
+                Console.WriteLine(stdout);
+                Console.WriteLine($"[PymcuCompiler] === END STDOUT ===");
+            }
+            if (!string.IsNullOrWhiteSpace(stderr))
+            {
+                Console.WriteLine($"[PymcuCompiler] === STDERR ===");
+                Console.WriteLine(stderr);
+                Console.WriteLine($"[PymcuCompiler] === END STDERR ===");
+            }
+
+            if (!finished)
+            {
+                proc.Kill();
+                throw new TimeoutException(
+                    $"pymcu build timed out after 60 s for example '{name}'.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            }
+
+            if (proc.ExitCode != 0)
+            {
+                Console.WriteLine($"[PymcuCompiler] Build FAILED (exit {proc.ExitCode}) for '{name}'");
+                Console.WriteLine($"[PymcuCompiler] stdout:\n{stdout}");
+                Console.WriteLine($"[PymcuCompiler] stderr:\n{stderr}");
+                throw new InvalidOperationException(
+                    $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            }
         }
 
-        if (proc.ExitCode != 0)
+        // Check dist directory status after successful build
+        Console.WriteLine($"[PymcuCompiler] Build completed successfully (exit 0)");
+        var distDirAfter = Path.Combine(exampleDir, "dist");
+        Console.WriteLine($"[PymcuCompiler] dist directory exists after build: {Directory.Exists(distDirAfter)}");
+        if (Directory.Exists(distDirAfter))
         {
-            Console.WriteLine($"[PymcuCompiler] Build FAILED (exit {proc.ExitCode}) for '{name}'");
-            Console.WriteLine($"[PymcuCompiler] stdout:\n{stdout}");
-            Console.WriteLine($"[PymcuCompiler] stderr:\n{stderr}");
-            throw new InvalidOperationException(
-                $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            var files = Directory.GetFiles(distDirAfter);
+            Console.WriteLine($"[PymcuCompiler] Files in dist directory ({files.Length}):");
+            foreach (var file in files)
+            {
+                var fi = new FileInfo(file);
+                Console.WriteLine($"[PymcuCompiler]   - {Path.GetFileName(file)} ({fi.Length} bytes)");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"[PymcuCompiler] ERROR: dist directory was not created!");
         }
 
         var hexFile = Path.Combine(exampleDir, "dist", "firmware.hex");
+        Console.WriteLine($"[PymcuCompiler] Looking for HEX file: {hexFile}");
         if (!File.Exists(hexFile))
             throw new FileNotFoundException(
                 $"Firmware HEX not found after build: {hexFile}");
