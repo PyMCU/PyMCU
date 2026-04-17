@@ -472,14 +472,32 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 else if (_stackLayout.TryGetValue(pname, out int off))
                 {
-                    Emit("STD", $"Y+{off}", aR);
-                    if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
-                    if (p32)
+                    int pSize = p32 ? 4 : (p16 ? 2 : 1);
+                    bool nearY = off + (pSize - 1) < 64;
+                    if (nearY)
                     {
-                        string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
-                        string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
-                        Emit("STD", $"Y+{off + 2}", aR2);
-                        Emit("STD", $"Y+{off + 3}", aR3);
+                        Emit("STD", $"Y+{off}", aR);
+                        if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
+                        if (p32)
+                        {
+                            string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
+                            string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                            Emit("STD", $"Y+{off + 2}", aR2);
+                            Emit("STD", $"Y+{off + 3}", aR3);
+                        }
+                    }
+                    else
+                    {
+                        var abs = 0x0100 + off;
+                        Emit("STS", $"0x{abs:X4}", aR);
+                        if (p16 || p32) Emit("STS", $"0x{abs + 1:X4}", GetHighReg(aR));
+                        if (p32)
+                        {
+                            string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
+                            string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                            Emit("STS", $"0x{abs + 2:X4}", aR2);
+                            Emit("STS", $"0x{abs + 3:X4}", aR3);
+                        }
                     }
                 }
             }
