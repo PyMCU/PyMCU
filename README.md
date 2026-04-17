@@ -2,6 +2,19 @@
 
 PyMCU is a modern toolchain for programming 8-bit microcontrollers using a statically-typed subset of Python. It compiles directly to bare-metal machine code with zero runtime overhead — no heap, no interpreter. Currently supports AVR (ATmega48/88/168/328 family, ATtiny25/45/85, ATtiny24/44/84, ATtiny2313/4313, ATtiny13/13a), PIC14/PIC14E, PIC18, and experimental RISC-V targets.
 
+## Licensing
+
+| Component | License |
+|-----------|---------|
+| Compiler & CLI driver (`src/`) | [AGPL-3.0](LICENSE) with [Commercial Exception](COMMERCIAL_EXCEPTION.md) |
+| Standard library (`lib/`) | [MIT](lib/LICENSE) |
+| Your compiled firmware (output) | Yours — see [COMMERCIAL_EXCEPTION.md](COMMERCIAL_EXCEPTION.md) |
+
+The compiler and driver are open-source under the AGPL-3.0. Embedding or redistributing
+them in a closed-source product requires a commercial license. The firmware you build with
+PyMCU is **entirely yours** and is not subject to the AGPL. See
+[COMMERCIAL_EXCEPTION.md](COMMERCIAL_EXCEPTION.md) for the full dual-license terms.
+
 ## Installation
 
 PyMCU is best installed using `pipx` to keep it isolated from your system Python:
