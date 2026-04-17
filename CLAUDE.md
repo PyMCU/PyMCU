@@ -30,7 +30,7 @@ Each commit must leave `dotnet test tests/integration/PyMCU.IntegrationTests.csp
   any file under `lib/src/pymcu/`.
 - **HAL match rules** — see `AGENTS.md` for dotted-name vs capture-name patterns.
 - **No workarounds for compiler bugs** — If a language feature generates wrong code,
-  fix the root cause in the C++ compiler (Parser, IRGenerator, Optimizer, AVRCodeGen).
+  fix the root cause in the C# compiler (Parser, IRGenerator, Optimizer, AVRCodeGen).
   Do NOT write Python source code that exploits broken codegen to produce the right output.
   Workarounds are invisible to users, break when the bug is fixed, and make the stdlib
   harder to read and reason about.
@@ -42,7 +42,7 @@ Each commit must leave `dotnet test tests/integration/PyMCU.IntegrationTests.csp
 1. Read the relevant compiler files before touching them.
 2. Make a plan — identify all files to change (Parser, IRGenerator, AVRCodeGen, HAL, tests).
 3. Implement in small commits (one logical change each).
-4. After each compiler change: `cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)`.
+4. After each compiler change: `dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo`.
 5. After each stdlib change: `rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/`.
 6. Run integration tests: `dotnet test tests/integration/PyMCU.IntegrationTests.csproj`.
 7. Update `LANGUAGE_ROADMAP.md`, `docs/docs/roadmap.md`, and `docs/docs/limitations.md`.
