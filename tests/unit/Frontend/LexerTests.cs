@@ -124,6 +124,8 @@ public class LexerTests
     [Fact]
     public void UnterminatedString_ThrowsLexicalError()
     {
+        // Note: Lexer is a ref struct and cannot be captured in a lambda,
+        // so Assert.Throws<LexicalError>() cannot be used here.
         var lexer = new Lexer("\"unterminated");
         bool thrown = false;
         try { lexer.Tokenize(); } catch (LexicalError) { thrown = true; }
@@ -300,6 +302,8 @@ public class LexerTests
     public void BangAlone_ThrowsLexicalError()
     {
         // A bare '!' (not '!=') is not valid Python — the lexer must reject it.
+        // Note: Lexer is a ref struct and cannot be captured in a lambda,
+        // so Assert.Throws<LexicalError>() cannot be used here.
         var lexer = new Lexer("!");
         bool thrown = false;
         try { lexer.Tokenize(); } catch (LexicalError) { thrown = true; }

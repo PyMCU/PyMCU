@@ -389,8 +389,11 @@ public class ParserControlFlowTests
     [Fact]
     public void NonlocalStatement_Parsed()
     {
-        // nonlocal is parsed as a statement in the outer function body
-        var prog = Parse("def outer():\n    x: int = 0\n    nonlocal x\n    pass\n");
+        // The PyMCU parser accepts `nonlocal` as a statement node (syntactic parsing),
+        // even though nested functions (the only meaningful context for nonlocal) are
+        // not yet supported by the compiler backend. The test verifies the parser
+        // produces a NonlocalStmt node rather than throwing a syntax error.
+        var prog = Parse("def f():\n    nonlocal x\n    pass\n");
         Assert.Contains(prog.Functions[0].Body.Statements, s => s is NonlocalStmt);
     }
 
