@@ -373,6 +373,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     public override void EmitContextSave()
     {
         EmitComment("ISR prologue -- save context");
+        // R0 is clobbered by every MUL; R1 is the zero register assumed by SBC/ADC after MUL.
+        // avr-gcc saves both in every ISR to prevent corruption of the interrupted context.
+        Emit("PUSH", "R0");
+        Emit("PUSH", "R1");
         Emit("PUSH", "R16");
         Emit("PUSH", "R17");
         Emit("PUSH", "R18");
@@ -383,6 +387,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("PUSH", "R27");
         Emit("IN", "R16", "0x3F");
         Emit("PUSH", "R16");
+        // Ensure R1 == 0 inside the ISR body (MUL may have left it non-zero in main).
+        Emit("CLR", "R1");
     }
 
     public override void EmitContextRestore()
@@ -398,6 +404,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("POP", "R18");
         Emit("POP", "R17");
         Emit("POP", "R16");
+        Emit("POP", "R1");
+        Emit("POP", "R0");
     }
 
     public override void EmitInterruptReturn() => Emit("RETI");
@@ -715,8 +723,15 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 Emit("NEG", "R24");
                 if (is16)
                 {
+                    // 16-bit two's-complement negation:
+                    //   NEG R24   -> R24 = -lo, C = (lo != 0)
+                    //   COM R25   -> R25 = ~hi
+                    //   SBCI R25, 255 -> R25 = ~hi + 1 - C  (SBCI 0xFF ≡ +1 in 8-bit)
+                    // When lo!=0 (C=1): R25 = ~hi + 0 = ~hi         ✓
+                    // When lo==0 (C=0): R25 = ~hi + 1 = ~hi + 1     ✓
+                    // avr-gcc emits the same sequence (com/neg/sbci r,-1).
                     Emit("COM", "R25");
-                    Emit("ADC", "R25", "R1");
+                    Emit("SBCI", "R25", "255");
                 }
 
                 break;

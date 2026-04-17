@@ -267,6 +267,63 @@ public class AVRCodeGenTests
         Assert.Contains("NEG\tR24", asm);
     }
 
+    // ─── Neg16 correctness ────────────────────────────────────────────────
+    // 16-bit negation must emit NEG R24 / COM R25 / SBCI R25, 255.
+    // The former (wrong) codegen used ADC R25, R1 which adds carry instead of
+    // subtracting it, producing wrong results whenever the low byte is 0
+    // (e.g. -0x0100 = 0xFE00 instead of the correct 0xFF00).
+
+    [Fact]
+    public void UnaryNeg16_EmitsNegComSbci_NotAdc()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body =
+            [
+                new Unary(PyMCU.IR.UnaryOp.Neg,
+                    new Variable("x", DataType.INT16),
+                    new Variable("y", DataType.INT16)),
+                new Return(new NoneVal())
+            ]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.Contains("NEG\tR24", asm);
+        Assert.Contains("COM\tR25", asm);
+        // The carry-correcting instruction must be SBCI R25, 255, NOT ADC R25, R1.
+        Assert.Contains("SBCI\tR25, 255", asm);
+        Assert.DoesNotContain("ADC\tR25, R1", asm);
+    }
+
+    [Fact]
+    public void UnaryNeg16_DoesNotUseAdcR1ForCarryCorrection()
+    {
+        // Regression guard: ADC R25, R1 after NEG R24 + COM R25 adds carry when
+        // it should subtract carry. For the value 0x0100 (lo=0, C=0 after NEG):
+        //   Wrong:  COM R25 + ADC R25, R1 -> ~0x01 + 0 = 0xFE  (gives 0xFE00, not 0xFF00)
+        //   Correct: COM R25 + SBCI R25,255 -> ~0x01 + 1 - 0 = 0xFF (gives 0xFF00) ✓
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            ReturnType = DataType.INT16,
+            Body =
+            [
+                new Unary(PyMCU.IR.UnaryOp.Neg,
+                    new Variable("x", DataType.INT16),
+                    new Variable("y", DataType.INT16)),
+                new Return(new Variable("y", DataType.INT16))
+            ]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.DoesNotContain("ADC\tR25, R1", asm);
+    }
+
     // ─── UnaryBitNot ──────────────────────────────────────────────────────
 
     [Fact]
@@ -326,5 +383,72 @@ public class AVRCodeGenTests
         var asm = Compile(prog);
 
         Assert.Contains(".extern uart_puts", asm);
+    }
+
+    // ─── ISR context save/restore: R0 and R1 ─────────────────────────────
+    // R0 is clobbered by every MUL instruction.
+    // R1 is the zero register relied on by SBC/ADC patterns after MUL.
+    // Both must be saved in the ISR prologue and restored in the epilogue,
+    // matching what avr-gcc generates for every ISR.
+
+    [Fact]
+    public void IsrContextSave_PushesR0AndR1()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function { Name = "main", Body = [new Return(new NoneVal())] });
+        prog.Functions.Add(new Function
+        {
+            Name = "timer_isr",
+            IsInterrupt = true,
+            InterruptVector = 0x14,
+            Body = [new Return(new NoneVal())]
+        });
+
+        var asm = Compile(prog);
+
+        // The ISR prologue must push R0 and R1 to preserve the interrupted context.
+        Assert.Contains("PUSH\tR0", asm);
+        Assert.Contains("PUSH\tR1", asm);
+    }
+
+    [Fact]
+    public void IsrContextRestore_PopsR0AndR1()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function { Name = "main", Body = [new Return(new NoneVal())] });
+        prog.Functions.Add(new Function
+        {
+            Name = "timer_isr",
+            IsInterrupt = true,
+            InterruptVector = 0x14,
+            Body = [new Return(new NoneVal())]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.Contains("POP\tR0", asm);
+        Assert.Contains("POP\tR1", asm);
+    }
+
+    [Fact]
+    public void IsrContextSave_ClearsR1AfterPush()
+    {
+        // Inside the ISR body R1 must equal 0 so that patterns like
+        // "ADC Rd, R1" and "SBC Rd, R1" work correctly even if main's
+        // MUL left R1 != 0 at the moment the interrupt fired.
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function { Name = "main", Body = [new Return(new NoneVal())] });
+        prog.Functions.Add(new Function
+        {
+            Name = "timer_isr",
+            IsInterrupt = true,
+            InterruptVector = 0x14,
+            Body = [new Return(new NoneVal())]
+        });
+
+        var asm = Compile(prog);
+
+        // CLR R1 must appear in the ISR section (after the PUSH R1 save).
+        Assert.Contains("CLR\tR1", asm);
     }
 }
