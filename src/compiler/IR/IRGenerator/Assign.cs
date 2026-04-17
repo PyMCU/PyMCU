@@ -630,6 +630,42 @@ public partial class IRGenerator
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // const[uint8[N]] annotation → flash (PROGMEM) array.
+        if (stmt.Annotation.StartsWith("const[") && stmt.Annotation.EndsWith("]"))
+        {
+            string constInner = stmt.Annotation.Substring(6, stmt.Annotation.Length - 7);
+            int ciB = constInner.IndexOf('[');
+            int ciC = constInner.LastIndexOf(']');
+            if (ciB != -1 && ciC == constInner.Length - 1 && ciC > ciB + 1)
+            {
+                string ciNum = constInner.Substring(ciB + 1, ciC - ciB - 1);
+                if (!string.IsNullOrEmpty(ciNum) && ciNum.All(char.IsDigit))
+                {
+                    int count = int.Parse(ciNum);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(constInner.Substring(0, ciB));
+                    if (elemDt == DataType.UINT8)
+                    {
+                        string qualified = string.IsNullOrEmpty(currentFunction)
+                            ? stmt.Target
+                            : currentFunction + "." + stmt.Target;
+                        arraySizes[qualified] = count;
+                        arrayElemTypes[qualified] = elemDt;
+                        variableTypes[qualified] = elemDt;
+                        flashArrays.Add(qualified);
+
+                        var bytes = new List<int>(Enumerable.Repeat(0, count));
+                        if (stmt.Value is ListExpr le)
+                        {
+                            for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
+                                if (le.Elements[k] is IntegerLiteral il) bytes[k] = il.Value;
+                        }
+                        Emit(new FlashData(qualified, bytes));
+                        return;
+                    }
+                }
+            }
+        }
+
         if (stmt.Annotation == "bytearray")
         {
             int count = 0;

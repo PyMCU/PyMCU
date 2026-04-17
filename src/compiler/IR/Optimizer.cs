@@ -640,6 +640,7 @@ private static Function CloneFunction(Function f)
         BitCheck bc => bc.Dst,
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
+        ArrayLoadFlash alf => alf.Dst,
         _ => null,
     };
 
@@ -652,6 +653,7 @@ private static Function CloneFunction(Function f)
         BitCheck bc => bc with { Dst = newDst },
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
+        ArrayLoadFlash alf => alf with { Dst = newDst },
         _ => instr,
     };
 
@@ -714,6 +716,10 @@ private static Function CloneFunction(Function f)
                 register(si.DstPtr);
                 break;
             case ArrayLoad al: register(al.Index); break;
+            case ArrayLoadFlash alf: register(alf.Index); break;
+            case InlineAsm ia when ia.Operands != null:
+                foreach (var op in ia.Operands) register(op);
+                break;
             case ArrayStore ast:
                 register(ast.Index);
                 register(ast.Src);
@@ -748,6 +754,8 @@ private static Function CloneFunction(Function f)
             LoadIndirect li => li with { SrcPtr = replace(li.SrcPtr) },
             StoreIndirect si => si with { Src = replace(si.Src), DstPtr = replace(si.DstPtr) },
             ArrayLoad al => al with { Index = replace(al.Index) },
+            ArrayLoadFlash alf => alf with { Index = replace(alf.Index) },
+            InlineAsm ia when ia.Operands != null => ia with { Operands = ia.Operands.Select(replace).ToList() },
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
             _ => instr,
         };

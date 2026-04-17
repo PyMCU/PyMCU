@@ -64,18 +64,43 @@ public partial class IRGenerator
                 type = annAssign.Annotation;
                 initializer = annAssign.Value;
 
-                int bracket = type.IndexOf('[');
-                int close = type.LastIndexOf(']');
-                if (bracket != -1 && close != -1 && close == type.Length - 1 && close > bracket + 1)
+                // Detect const[uint8[N]] flash array annotation.
+                if (type.StartsWith("const[") && type.EndsWith("]"))
                 {
-                    string inner = type.Substring(bracket + 1, close - bracket - 1);
-                    if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                    string constInner = type.Substring(6, type.Length - 7); // strip "const[" and "]"
+                    int ciB = constInner.IndexOf('[');
+                    int ciC = constInner.LastIndexOf(']');
+                    if (ciB != -1 && ciC == constInner.Length - 1 && ciC > ciB + 1)
                     {
-                        int count = int.Parse(inner);
-                        DataType elemDt = DataTypeExtensions.StringToDataType(type.Substring(0, bracket));
-                        arraySizes[name] = count;
-                        arrayElemTypes[name] = elemDt;
-                        moduleSramArrays.Add(name);
+                        string ciNum = constInner.Substring(ciB + 1, ciC - ciB - 1);
+                        if (!string.IsNullOrEmpty(ciNum) && ciNum.All(char.IsDigit))
+                        {
+                            int count = int.Parse(ciNum);
+                            DataType elemDt = DataTypeExtensions.StringToDataType(constInner.Substring(0, ciB));
+                            if (elemDt == DataType.UINT8)
+                            {
+                                arraySizes[name] = count;
+                                arrayElemTypes[name] = elemDt;
+                                flashArrays.Add(name);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    int bracket = type.IndexOf('[');
+                    int close = type.LastIndexOf(']');
+                    if (bracket != -1 && close != -1 && close == type.Length - 1 && close > bracket + 1)
+                    {
+                        string inner = type.Substring(bracket + 1, close - bracket - 1);
+                        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                        {
+                            int count = int.Parse(inner);
+                            DataType elemDt = DataTypeExtensions.StringToDataType(type.Substring(0, bracket));
+                            arraySizes[name] = count;
+                            arrayElemTypes[name] = elemDt;
+                            moduleSramArrays.Add(name);
+                        }
                     }
                 }
             }

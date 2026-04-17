@@ -46,7 +46,7 @@ public class MillisMicrosTests
     public void Cp1_MillisAtLeast10()
     {
         var uno = Boot();
-        uno.RunToBreak(maxMs: 200);
+        uno.RunToBreak(maxInstructions: 50_000_000);
         var lo = uno.Data[Gpior0Addr];
         var hi = uno.Data[Gpior1Addr];
         int count = lo | (hi << 8);
@@ -58,7 +58,7 @@ public class MillisMicrosTests
     public void Cp1_MillisHighByte_IsZero_ForSmallCount()
     {
         var uno = Boot();
-        uno.RunToBreak(maxMs: 200);
+        uno.RunToBreak(maxInstructions: 50_000_000);
         uno.Data[Gpior1Addr].Should().Be(0,
             "millis() high byte must be 0 when count is < 256");
     }
@@ -69,9 +69,9 @@ public class MillisMicrosTests
     public void Cp2_MillisAtLeast50()
     {
         var uno = Boot();
-        uno.RunToBreak(maxMs: 200);
+        uno.RunToBreak(maxInstructions: 50_000_000);
         uno.RunInstructions(1);
-        uno.RunToBreak(maxMs: 200);
+        uno.RunToBreak(maxInstructions: 50_000_000);
         var lo = uno.Data[Gpior0Addr];
         var hi = uno.Data[Gpior1Addr];
         int count = lo | (hi << 8);

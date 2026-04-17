@@ -708,26 +708,41 @@ public partial class IRGenerator
 
         if (callee == "asm")
         {
-            if (expr.Args.Count != 1) throw new Exception("asm() expects exactly one string argument");
-            if (expr.Args[0] is StringLiteral str)
-            {
-                Emit(new InlineAsm(str.Value));
-                return new NoneVal();
-            }
+            // asm("code")                  — bare inline assembly (no constraints)
+            // asm("code", op0, op1, ...)   — assembly with %N register constraints
+            if (expr.Args.Count < 1) throw new Exception("asm() requires at least one string argument");
 
-            if (expr.Args[0] is FStringExpr fstr)
+            string? code = null;
+            if (expr.Args[0] is StringLiteral str2)
+                code = str2.Value;
+            else if (expr.Args[0] is FStringExpr fstr2)
             {
-                var resolved = VisitFStringExpr(fstr);
-                if (resolved is not Constant c || !stringIdToStr.TryGetValue(c.Value, out var s))
+                var resolved = VisitFStringExpr(fstr2);
+                if (resolved is Constant c2 && stringIdToStr.TryGetValue(c2.Value, out var s2))
+                    code = s2;
+                else
                     throw new Exception("asm() f-string did not resolve to a string constant");
-                if (s != null) Emit(new InlineAsm(s));
-                return new NoneVal();
-
             }
+            else if (expr.Args[0] is VariableExpr ve2)
+                throw new Exception($"asm() argument must be a string literal, got variable '{ve2.Name}'");
+            else
+                throw new Exception("asm() argument must be a compile-time string literal");
 
-            if (expr.Args[0] is VariableExpr ve)
-                throw new Exception($"asm() argument must be a string literal, got variable '{ve.Name}'");
-            throw new Exception("asm() argument must be a compile-time string literal");
+            if (code == null) return new NoneVal();
+
+            if (expr.Args.Count == 1)
+            {
+                Emit(new InlineAsm(code));
+            }
+            else
+            {
+                // Collect constraint operands (%0, %1, …)
+                var operands = new List<Val>();
+                for (int i = 1; i < expr.Args.Count; i++)
+                    operands.Add(VisitExpression(expr.Args[i]));
+                Emit(new InlineAsm(code, operands));
+            }
+            return new NoneVal();
         }
 
         if (callee == "uart_send_string" || callee == "uart_send_string_ln")

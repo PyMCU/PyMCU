@@ -33,6 +33,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private readonly HashSet<string> _allTmpRegNames = [];
     private readonly Dictionary<string, string> _stringPool = new();
     private bool _uartSendZNeeded;
+    private readonly Dictionary<string, List<int>> _flashArrayPool = new();
     private int _labelCounter;
     private Function? _currentFunction;
 
@@ -286,6 +287,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         _assembly.Clear();
         _stringPool.Clear();
         _uartSendZNeeded = false;
+        _flashArrayPool.Clear();
         _allTmpRegNames.Clear();
         _labelCounter = 0;
 
@@ -368,6 +370,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             output.WriteLine(line.ToString());
 
         EmitStringPool(output);
+        EmitFlashArrayPool(output);
     }
 
     public override void EmitContextSave()
@@ -523,8 +526,19 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfBitSet jbs: CompileJumpIfBitSet(jbs); break;
             case JumpIfBitClear jbc: CompileJumpIfBitClear(jbc); break;
             case AugAssign aa: CompileAugAssign(aa); break;
-            case InlineAsm asm2: _assembly.Add(AvrAsmLine.MakeRaw(asm2.Code)); break;
+            case InlineAsm asm2:
+                if (asm2.Operands == null || asm2.Operands.Count == 0)
+                {
+                    _assembly.Add(AvrAsmLine.MakeRaw(asm2.Code));
+                }
+                else
+                {
+                    CompileInlineAsmWithConstraints(asm2);
+                }
+                break;
             case ArrayLoad al: CompileArrayLoad(al); break;
+            case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
+            case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
             case UARTSendString us: CompileUartSendString(us); break;
         }
@@ -1599,6 +1613,63 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("LDI", "R30", $"lo8({label})");
         Emit("LDI", "R31", $"hi8({label})");
         Emit("CALL", "__uart_send_z");
+    }
+
+    private void CompileInlineAsmWithConstraints(InlineAsm ia)
+    {
+        // %N constraint substitution: load operand N into scratch register R1{6+N},
+        // substitute %N in the template, emit the assembly, then store back.
+        // Scratch registers: %0→R16, %1→R17, %2→R18, %3→R19 (uint8 only).
+        if (ia.Operands == null || ia.Operands.Count == 0) return;
+        if (ia.Operands.Count > 4)
+            throw new InvalidOperationException("asm() constraint: maximum 4 operands (%0–%3)");
+
+        var scratchRegs = new[] { "R16", "R17", "R18", "R19" };
+
+        // Load each operand into its scratch register.
+        for (int i = 0; i < ia.Operands.Count; i++)
+            LoadIntoReg(ia.Operands[i], scratchRegs[i], DataType.UINT8);
+
+        // Substitute %N → RNN in the template and emit.
+        var code = ia.Code;
+        for (int i = ia.Operands.Count - 1; i >= 0; i--)
+            code = code.Replace($"%{i}", scratchRegs[i]);
+        _assembly.Add(AvrAsmLine.MakeRaw(code));
+
+        // Store result register back into any non-constant operand.
+        for (int i = 0; i < ia.Operands.Count; i++)
+        {
+            if (ia.Operands[i] is not Constant)
+                StoreRegInto(scratchRegs[i], ia.Operands[i], DataType.UINT8);
+        }
+    }
+
+    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    {
+        // Load one byte from a flash-resident const[uint8[N]] table via LPM Z.
+        // Table label in flash byte-address space (same as string pool labels).
+        var label = "__flash_" + alf.ArrayName.Replace('.', '_');
+        LoadIntoReg(alf.Index, "R24");            // index -> R24
+        Emit("LDI", "R30", $"lo8({label})");      // ZL = base byte address
+        Emit("LDI", "R31", $"hi8({label})");      // ZH = base byte address
+        Emit("ADD", "R30", "R24");                // Z += index (8-bit index, no overflow for small tables)
+        Emit("ADC", "R31", "R1");                 // propagate carry (R1 = 0 after MUL clears)
+        Emit("LPM", "R24", "Z");                  // load byte from flash
+        StoreRegInto("R24", alf.Dst, DataType.UINT8);
+    }
+
+    private void EmitFlashArrayPool(TextWriter os)
+    {
+        if (_flashArrayPool.Count == 0) return;
+        os.WriteLine();
+        os.WriteLine("; --- Flash Array Pool (LPM lookup tables, const[uint8[N]]) ---");
+        foreach (var (name, bytes) in _flashArrayPool)
+        {
+            var label = "__flash_" + name.Replace('.', '_');
+            os.WriteLine($"{label}:");
+            os.WriteLine("\t.byte " + string.Join(", ", bytes));
+            os.WriteLine("\t.balign 2");
+        }
     }
 
     private void EmitStringPool(TextWriter os)
