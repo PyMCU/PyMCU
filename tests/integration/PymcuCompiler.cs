@@ -35,6 +35,20 @@ public static class PymcuCompiler
     {
         Console.WriteLine($"[PymcuCompiler] RepoRoot    : {RepoRoot}");
         Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
+
+        if (File.Exists(PymcuExe))
+        {
+            var fileInfo = new FileInfo(PymcuExe);
+            Console.WriteLine($"[PymcuCompiler] PymcuExe size: {fileInfo.Length} bytes");
+            // Try to read first line (shebang)
+            try {
+                var firstLine = File.ReadLines(PymcuExe).FirstOrDefault();
+                Console.WriteLine($"[PymcuCompiler] PymcuExe first line: {firstLine}");
+            } catch (Exception ex) {
+                Console.WriteLine($"[PymcuCompiler] Cannot read PymcuExe: {ex.Message}");
+            }
+        }
+
         Console.WriteLine($"[PymcuCompiler] ExampleDir  : {exampleDir} (exists={Directory.Exists(exampleDir)})");
         Console.WriteLine($"[PymcuCompiler] PATH        : {Environment.GetEnvironmentVariable("PATH")}");
         Console.WriteLine($"[PymcuCompiler] VIRTUAL_ENV : {Environment.GetEnvironmentVariable("VIRTUAL_ENV")}");
@@ -78,6 +92,24 @@ public static class PymcuCompiler
         var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
         var stdout   = stdoutTask.GetAwaiter().GetResult();
         var stderr   = stderrTask.GetAwaiter().GetResult();
+
+        // Always log stdout/stderr for diagnostics, even on success
+        Console.WriteLine($"[PymcuCompiler] === Execution completed for '{name}' ===");
+        Console.WriteLine($"[PymcuCompiler] Exit code: {(finished ? proc.ExitCode.ToString() : "TIMEOUT")}");
+        Console.WriteLine($"[PymcuCompiler] stdout length: {stdout.Length} bytes");
+        Console.WriteLine($"[PymcuCompiler] stderr length: {stderr.Length} bytes");
+        if (!string.IsNullOrWhiteSpace(stdout))
+        {
+            Console.WriteLine($"[PymcuCompiler] === STDOUT ===");
+            Console.WriteLine(stdout);
+            Console.WriteLine($"[PymcuCompiler] === END STDOUT ===");
+        }
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            Console.WriteLine($"[PymcuCompiler] === STDERR ===");
+            Console.WriteLine(stderr);
+            Console.WriteLine($"[PymcuCompiler] === END STDERR ===");
+        }
 
         if (!finished)
         {
