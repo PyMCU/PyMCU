@@ -128,10 +128,10 @@ When implementing a feature:
 
 | Layer | Location | Notes |
 |-------|----------|-------|
-| Lexer / Parser / AST | `src/compiler/frontend/` | Tokens, AST nodes |
-| IR Generator | `src/compiler/ir/IRGenerator.cpp` | Python AST → Tacky IR |
-| AVR Codegen | `src/compiler/backend/targets/avr/AVRCodeGen.cpp` | IR → AVR asm |
-| Peephole | `src/compiler/backend/targets/avr/AVRPeephole.cpp` | Post-codegen optimisation |
+| Lexer / Parser / AST | `src/compiler/Frontend/` | Tokens, AST nodes |
+| IR Generator | `src/compiler/IR/IRGenerator/` | Python AST → Tacky IR |
+| AVR Codegen | `src/compiler/Backend/Targets/AVR/AvrCodeGen.cs` | IR → AVR asm |
+| Peephole | `src/compiler/Backend/Targets/AVR/AvrPeephole.cs` | Post-codegen optimisation |
 | AVR Register ABI | — | arg0→R24, arg1→R22, arg2→R20, return→R24:R25 |
 | Stack | — | Y (R28:R29) base; LDD/STD Y+offset for locals |
 | IO access | — | 0x20-0x3F → SBI/CBI; 0x40-0x5F → IN/OUT; >0x5F → LDS/STS |

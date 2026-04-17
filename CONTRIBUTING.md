@@ -20,8 +20,7 @@ and pull requests.
 
 3. **Build the compiler:**
    ```bash
-   cmake -B build -S src/compiler -DCMAKE_BUILD_TYPE=Release
-   cmake --build build --target pymcuc -j$(sysctl -n hw.ncpu)
+   dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
    ```
 
 4. **Run integration tests:**
@@ -38,7 +37,7 @@ compiler feature before merging.
 
 ```
 pymcu/
-  src/compiler/           # C++ compiler (pymcuc)
+  src/compiler/           # C# compiler (pymcuc)
     frontend/             # Lexer, Parser, AST
     ir/                   # IRGenerator, Optimizer, Tacky IR
     backend/targets/avr/  # AVR codegen, peephole, register allocator
@@ -179,4 +178,4 @@ mkdocs serve             # preview at http://127.0.0.1:8000
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the AGPL-3.0 License (compiler/driver) or the MIT License (stdlib), as applicable. See `COMMERCIAL_EXCEPTION.md` for the full dual-license terms.
