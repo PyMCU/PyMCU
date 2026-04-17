@@ -124,6 +124,10 @@ public partial class IRGenerator
     // Only uint8 element type is supported.  SRAM not allocated; access via LPM Z.
     private HashSet<string> flashArrays = new();
 
+    // FlashData instructions collected during ScanGlobals for global const[uint8[N]] arrays.
+    // Injected into the main function body in Generate() so the backend can emit .byte tables.
+    private List<Instruction> pendingFlashData = new();
+
     // Lambda support (F9).
     private Dictionary<string, LambdaExpr> lambdaFunctionsMap = new();
     private Dictionary<string, string> lambdaVariableNames = new();

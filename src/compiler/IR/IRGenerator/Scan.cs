@@ -82,6 +82,17 @@ public partial class IRGenerator
                                 arraySizes[name] = count;
                                 arrayElemTypes[name] = elemDt;
                                 flashArrays.Add(name);
+
+                                // Collect FlashData so Generate() can inject it into the
+                                // main function body; ScanGlobals runs before VisitFunction.
+                                var bytes = new List<int>(Enumerable.Repeat(0, count));
+                                if (initializer is ListExpr le)
+                                {
+                                    for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
+                                        if (le.Elements[k] is IntegerLiteral il)
+                                            bytes[k] = il.Value;
+                                }
+                                pendingFlashData.Add(new FlashData(name, bytes));
                             }
                         }
                     }

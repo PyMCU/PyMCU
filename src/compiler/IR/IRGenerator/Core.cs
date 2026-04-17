@@ -175,6 +175,7 @@ public partial class IRGenerator
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
         externFunctionMap.Clear();
+        pendingFlashData.Clear();
 
         intrinsicNames.Add("uart_send_string");
         intrinsicNames.Add("uart_send_string_ln");
@@ -383,6 +384,17 @@ public partial class IRGenerator
             if (!entry.Func.IsInline)
             {
                 irProgram.Functions.Add(VisitFunction(entry.Func));
+            }
+        }
+
+        // Inject FlashData instructions (global const[uint8[N]] arrays) into the
+        // main function body so the backend emits .byte tables in flash.
+        if (pendingFlashData.Count > 0)
+        {
+            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFunc != null)
+            {
+                mainFunc.Body.InsertRange(0, pendingFlashData);
             }
         }
 

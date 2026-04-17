@@ -530,6 +530,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
+                    hex_file = gas_tc.elf_to_hex(elf_file)
 
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)
