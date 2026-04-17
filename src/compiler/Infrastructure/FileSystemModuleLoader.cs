@@ -41,6 +41,13 @@ public class FileSystemModuleLoader : IModuleLoader
 
         if (context.ModuleCache.TryGetValue(path, out var cachedAst))
         {
+            // Register the module under the requested name even on a cache hit.
+            // The same physical file can be imported under different qualified names
+            // (e.g. "time" via `import time` and "pymcu.time" via
+            // `from pymcu.time import …`).  Without this, the second name is never
+            // added to NamedModules, which causes a KeyNotFoundException in
+            // FrontendResolutionPhase when it tries context.NamedModules[imp.ModuleName].
+            context.NamedModules[moduleName] = cachedAst;
             return cachedAst;
         }
 
