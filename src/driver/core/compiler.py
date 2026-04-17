@@ -145,8 +145,13 @@ class PyMCUCompiler:
                 self.console.print(f"[debug] Stdlib found at: {stdlib_abs}", style="dim")
                 self.console.print(f"[debug] Adding include path: {include_path}", style="dim")
 
+            # Only the stdlib's parent directory is added as an include path, so
+            # imports must go through the `pymcu.*` namespace (e.g. `from pymcu.time
+            # import delay_ms`). Shadowing bare ecosystem names such as `time`,
+            # `machine`, or `board` is the responsibility of opt-in compat packages
+            # (`pymcu-circuitpython`, `pymcu-micropython`), which the driver adds via
+            # `extra_includes` above. See docs/docs/compat/ for the design rationale.
             cmd.extend(["-I", include_path])
-            cmd.extend(["-I", stdlib_abs]) # Add package dir itself as fallback
             
         for key, val in configs.items():
             cmd.extend(["-C", f"{key}={val}"])
