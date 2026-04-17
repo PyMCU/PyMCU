@@ -449,14 +449,33 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 else if (_stackLayout.TryGetValue(pname, out int off))
                 {
-                    Emit("STD", $"Y+{off}", aR);
-                    if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
-                    if (p32)
+                    // AVR STD Y+q only supports 0 <= q <= 63. Fall back to STS
+                    // with the absolute address when the param's stack slot
+                    // (or any byte of a 16/32-bit slot) falls past the window.
+                    int sizeBytes = p32 ? 4 : (p16 ? 2 : 1);
+                    bool nearY = off + (sizeBytes - 1) < 64;
+                    string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
+                    string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                    if (nearY)
                     {
-                        string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
-                        string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
-                        Emit("STD", $"Y+{off + 2}", aR2);
-                        Emit("STD", $"Y+{off + 3}", aR3);
+                        Emit("STD", $"Y+{off}", aR);
+                        if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
+                        if (p32)
+                        {
+                            Emit("STD", $"Y+{off + 2}", aR2);
+                            Emit("STD", $"Y+{off + 3}", aR3);
+                        }
+                    }
+                    else
+                    {
+                        var abs = 0x0100 + off;
+                        Emit("STS", $"0x{abs:X4}", aR);
+                        if (p16 || p32) Emit("STS", $"0x{abs + 1:X4}", GetHighReg(aR));
+                        if (p32)
+                        {
+                            Emit("STS", $"0x{abs + 2:X4}", aR2);
+                            Emit("STS", $"0x{abs + 3:X4}", aR3);
+                        }
                     }
                 }
             }
