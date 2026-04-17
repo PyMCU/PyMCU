@@ -193,6 +193,21 @@ class I2C:
         return 0
 
     @inline
+    def write_bytes(self, addr: uint8, buf, n: uint8) -> uint8:
+        """Controller: send START, SLA+W, n bytes from buf[], STOP.
+
+        Returns 1 if all n bytes were ACK'd, 0 on any NACK or bus error.
+        """
+        match __CHIP__.arch:
+            case "avr":
+                if self._mode == "c":
+                    from pymcu.hal._i2c.avr import i2c_write_bytes
+                    return i2c_write_bytes(addr, buf, n)
+            case _:
+                return 0
+        return 0
+
+    @inline
     def read_from(self, addr: uint8) -> uint8:
         """Controller: send START, SLA+R, read one byte with NACK, STOP.
 

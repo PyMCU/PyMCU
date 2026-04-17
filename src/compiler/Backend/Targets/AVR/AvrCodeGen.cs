@@ -1003,16 +1003,37 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 if (is16)
                 {
                     // 16x16 -> 16-bit product (low 16 bits only).
-                    // a = R25:R24, b = R19:R18. Use R20:R21 as scratch.
-                    Emit("MUL", "R24", "R18");  // a_lo * b_lo -> R1:R0
-                    Emit("MOV", "R20", "R0");   // result_lo
-                    Emit("MOV", "R21", "R1");   // result_hi (partial)
-                    Emit("MUL", "R24", "R19");  // a_lo * b_hi -> R1:R0
-                    Emit("ADD", "R21", "R0");   // result_hi += low(a_lo*b_hi)
-                    Emit("MUL", "R25", "R18");  // a_hi * b_lo -> R1:R0
-                    Emit("ADD", "R21", "R0");   // result_hi += low(a_hi*b_lo)
-                    Emit("MOV", "R24", "R20");
-                    Emit("MOV", "R25", "R21");
+                    // a = R25:R24 (hi:lo), b = R19:R18 (hi:lo).
+                    if (IsSignedType(type))
+                    {
+                        // Signed path: MULSU requires both operands in R16-R23.
+                        // R24/R25 are outside that range, so copy them to R22/R23.
+                        // R22 = a_hi (copy of R25), R23 = a_lo (copy of R24).
+                        Emit("MUL",   "R24", "R18");  // unsigned lo×lo -> R1:R0
+                        Emit("MOV",   "R20", "R0");   // result_lo
+                        Emit("MOV",   "R21", "R1");   // partial_hi
+                        Emit("MOV",   "R22", "R25");  // a_hi -> R22 (within R16-R23)
+                        Emit("MULSU", "R22", "R18");  // signed(a_hi) × unsigned(b_lo) -> R1:R0
+                        Emit("ADD",   "R21", "R0");   // partial_hi += R0
+                        Emit("MOV",   "R23", "R24");  // a_lo -> R23 (within R16-R23)
+                        Emit("MULSU", "R19", "R23");  // signed(b_hi) × unsigned(a_lo) -> R1:R0
+                        Emit("ADD",   "R21", "R0");   // partial_hi += R0
+                        Emit("MOV",   "R24", "R20");
+                        Emit("MOV",   "R25", "R21");
+                    }
+                    else
+                    {
+                        // Unsigned path: all MUL (unsigned × unsigned).
+                        Emit("MUL", "R24", "R18");  // a_lo * b_lo -> R1:R0
+                        Emit("MOV", "R20", "R0");   // result_lo
+                        Emit("MOV", "R21", "R1");   // result_hi (partial)
+                        Emit("MUL", "R24", "R19");  // a_lo * b_hi -> R1:R0
+                        Emit("ADD", "R21", "R0");   // result_hi += low(a_lo*b_hi)
+                        Emit("MUL", "R25", "R18");  // a_hi * b_lo -> R1:R0
+                        Emit("ADD", "R21", "R0");   // result_hi += low(a_hi*b_lo)
+                        Emit("MOV", "R24", "R20");
+                        Emit("MOV", "R25", "R21");
+                    }
                 }
                 else
                 {
@@ -1413,15 +1434,35 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 case IrBinOp.Mul:
                     if (is16)
                     {
-                        Emit("MUL", "R24", "R18");
-                        Emit("MOV", "R20", "R0");
-                        Emit("MOV", "R21", "R1");
-                        Emit("MUL", "R24", "R19");
-                        Emit("ADD", "R21", "R0");
-                        Emit("MUL", "R25", "R18");
-                        Emit("ADD", "R21", "R0");
-                        Emit("MOV", "R24", "R20");
-                        Emit("MOV", "R25", "R21");
+                        // a = R25:R24 (hi:lo), b = R19:R18 (hi:lo).
+                        if (IsSignedType(type))
+                        {
+                            // Signed: MULSU requires operands in R16-R23.
+                            // Copy a_hi/a_lo into R22/R23 (within range).
+                            Emit("MUL",   "R24", "R18");  // unsigned lo×lo -> R1:R0
+                            Emit("MOV",   "R20", "R0");
+                            Emit("MOV",   "R21", "R1");
+                            Emit("MOV",   "R22", "R25");  // a_hi -> R22
+                            Emit("MULSU", "R22", "R18");  // signed(a_hi) × unsigned(b_lo)
+                            Emit("ADD",   "R21", "R0");
+                            Emit("MOV",   "R23", "R24");  // a_lo -> R23
+                            Emit("MULSU", "R19", "R23");  // signed(b_hi) × unsigned(a_lo)
+                            Emit("ADD",   "R21", "R0");
+                            Emit("MOV",   "R24", "R20");
+                            Emit("MOV",   "R25", "R21");
+                        }
+                        else
+                        {
+                            Emit("MUL", "R24", "R18");
+                            Emit("MOV", "R20", "R0");
+                            Emit("MOV", "R21", "R1");
+                            Emit("MUL", "R24", "R19");
+                            Emit("ADD", "R21", "R0");
+                            Emit("MUL", "R25", "R18");
+                            Emit("ADD", "R21", "R0");
+                            Emit("MOV", "R24", "R20");
+                            Emit("MOV", "R25", "R21");
+                        }
                     }
                     else
                     {
