@@ -99,4 +99,232 @@ public class AVRCodeGenTests
 
         Assert.Equal(-1, second);
     }
+
+    // ─── HighMemoryStore ──────────────────────────────────────────────────
+    // Addresses > 0x5F must use STS (not OUT) for stores.
+
+    [Fact]
+    public void HighMemoryStore_UsesSTS()
+    {
+        // Data address 0x80 is outside the I/O range → must emit STS.
+        var prog = MakeProgram("main",
+            new Copy(new Constant(7), new MemoryAddress(0x80)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("STS\t0x0080, R24", asm);
+    }
+
+    // ─── HighMemoryLoad ───────────────────────────────────────────────────
+    // Addresses > 0x5F must use LDS (not IN) for loads.
+
+    [Fact]
+    public void HighMemoryLoad_UsesLDS()
+    {
+        // Data address 0x80 is outside the I/O range → must emit LDS.
+        var prog = MakeProgram("main",
+            new Copy(new MemoryAddress(0x80), new Variable("x")),
+            new Return(new Constant(0)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("LDS\tR24, 0x0080", asm);
+        Assert.DoesNotContain("IN\t", asm);
+    }
+
+    // ─── IOSpaceLoad ──────────────────────────────────────────────────────
+    // Addresses in 0x20–0x5F must use IN for loads.
+
+    [Fact]
+    public void IOSpaceLoad_UsesIN()
+    {
+        // PINB (data 0x23) → IN 0x03
+        var prog = MakeProgram("main",
+            new Copy(new MemoryAddress(0x23), new Variable("pins")),
+            new Return(new Constant(0)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("IN\tR24, 0x03", asm);
+    }
+
+    // ─── BitClearIO ───────────────────────────────────────────────────────
+    // BitClear on an I/O address (0x20–0x3F) must emit CBI.
+
+    [Fact]
+    public void BitClearIO_EmitsCBI()
+    {
+        // DDRB (data 0x24) bit 3 = 0 → CBI 0x04, 3
+        var prog = MakeProgram("main",
+            new BitClear(new MemoryAddress(0x24), 3));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CBI\t0x04, 3", asm);
+    }
+
+    // ─── BitSetIO ─────────────────────────────────────────────────────────
+    // BitSet on an I/O address (0x20–0x3F) must emit SBI.
+
+    [Fact]
+    public void BitSetIO_EmitsSBI()
+    {
+        // PORTB (data 0x25) bit 5 = 1 → SBI 0x05, 5
+        var prog = MakeProgram("main",
+            new BitSet(new MemoryAddress(0x25), 5));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("SBI\t0x05, 5", asm);
+    }
+
+    // ─── Uint16ReturnValue ────────────────────────────────────────────────
+    // Return of a constant > 255 must fill both R24 (low byte) and R25 (high byte).
+
+    [Fact]
+    public void Uint16ReturnValue_FillsBothReturnRegisters()
+    {
+        // 300 = 0x012C → R24 = 0x2C (44), R25 = 0x01 (1)
+        // The function must declare UINT16 return type so the codegen sizes the load.
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            ReturnType = DataType.UINT16,
+            Body = [new Return(new Constant(300))]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.Contains("LDI\tR24, 44", asm);  // low byte: 300 & 0xFF = 44
+        Assert.Contains("LDI\tR25, 1", asm);   // high byte: (300 >> 8) & 0xFF = 1
+    }
+
+    // ─── BitSetHighMemory ─────────────────────────────────────────────────
+    // BitSet on an address outside the SBI range (> 0x3F) must use LDS/ORI/STS.
+
+    [Fact]
+    public void BitSetHighMemory_UsesLdsOriSts()
+    {
+        // Address 0x60 is above the SBI/CBI range (0x20–0x3F).
+        var prog = MakeProgram("main",
+            new BitSet(new MemoryAddress(0x60), 2));
+
+        var asm = Compile(prog);
+
+        // Must not use SBI (only valid for 0x20–0x3F)
+        Assert.DoesNotContain("SBI\t", asm);
+        // Must use ORI to set the bit
+        Assert.Contains("ORI\tR24, 4", asm);  // 1 << 2 = 4
+    }
+
+    // ─── BitClearHighMemory ───────────────────────────────────────────────
+    // BitClear on an address outside the CBI range (> 0x3F) must use LDS/ANDI/STS.
+
+    [Fact]
+    public void BitClearHighMemory_UsesLdsAndiSts()
+    {
+        // Address 0x68 is above the SBI/CBI range.
+        var prog = MakeProgram("main",
+            new BitClear(new MemoryAddress(0x68), 1));
+
+        var asm = Compile(prog);
+
+        Assert.DoesNotContain("CBI\t", asm);
+        // ANDI mask for clearing bit 1: ~(1<<1) & 0xFF = 0xFD = 253
+        Assert.Contains("ANDI\tR24, 253", asm);
+    }
+
+    // ─── InlineAsm passthrough ────────────────────────────────────────────
+
+    [Fact]
+    public void InlineAsm_EmittedVerbatim()
+    {
+        var prog = MakeProgram("main",
+            new InlineAsm("NOP"),
+            new InlineAsm("NOP"),
+            new Return(new NoneVal()));
+
+        var asm = Compile(prog);
+
+        // Count raw NOP lines (not in a comment)
+        int nopCount = asm
+            .Split('\n')
+            .Count(line => line.Trim() == "NOP");
+        Assert.True(nopCount >= 2, $"Expected ≥ 2 NOP lines, found {nopCount}");
+    }
+
+    // ─── UnaryNeg ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void UnaryNeg_EmitsNEG()
+    {
+        var prog = MakeProgram("main",
+            new Unary(PyMCU.IR.UnaryOp.Neg, new Variable("x"), new Variable("y")));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("NEG\tR24", asm);
+    }
+
+    // ─── UnaryBitNot ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void UnaryBitNot_EmitsCOM()
+    {
+        var prog = MakeProgram("main",
+            new Unary(PyMCU.IR.UnaryOp.BitNot, new Variable("x"), new Variable("y")));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("COM\tR24", asm);
+    }
+
+    // ─── DuplicateISRVector ───────────────────────────────────────────────
+    // Two ISRs on the same vector must cause a compile-time error.
+
+    [Fact]
+    public void DuplicateISRVector_ThrowsException()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body = [new Return(new NoneVal())]
+        });
+        prog.Functions.Add(new Function
+        {
+            Name = "isr_a",
+            IsInterrupt = true,
+            InterruptVector = 0x02,
+            Body = [new Return(new NoneVal())]
+        });
+        prog.Functions.Add(new Function
+        {
+            Name = "isr_b",
+            IsInterrupt = true,
+            InterruptVector = 0x02,  // same vector as isr_a
+            Body = [new Return(new NoneVal())]
+        });
+
+        Assert.Throws<Exception>(() => Compile(prog));
+    }
+
+    // ─── ExternSymbols ────────────────────────────────────────────────────
+
+    [Fact]
+    public void ExternSymbols_EmittedWithDotExternDirective()
+    {
+        var prog = new ProgramIR();
+        prog.ExternSymbols.Add("uart_puts");
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body = [new Return(new NoneVal())]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.Contains(".extern uart_puts", asm);
+    }
 }
