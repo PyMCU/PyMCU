@@ -127,6 +127,15 @@ public static class PymcuCompiler
         // Verbose pymcu output so compiler path resolution is visible in CI logs
         psi.Environment["PYMCU_VERBOSE"] = "1";
 
+        // Use python3 explicitly instead of relying on shebang - more reliable in CI
+        var venvPython = Path.Combine(RepoRoot, ".venv", "bin", "python3");
+        Console.WriteLine($"[PymcuCompiler] Using explicit python3: {venvPython}");
+        Console.WriteLine($"[PymcuCompiler] python3 exists: {File.Exists(venvPython)}");
+
+        // Execute: python3 /path/to/pymcu build
+        psi.FileName = venvPython;
+        psi.Arguments = $"{PymcuExe} build";
+
         Console.WriteLine($"[PymcuCompiler] About to execute: {psi.FileName} {psi.Arguments}");
         Console.WriteLine($"[PymcuCompiler] Working directory: {psi.WorkingDirectory}");
 
@@ -142,34 +151,16 @@ public static class PymcuCompiler
             }
         }
 
-        Process? proc = null;
-        try
-        {
-            proc = Process.Start(psi);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[PymcuCompiler] Failed to start pymcu directly: {ex.Message}");
-            Console.WriteLine($"[PymcuCompiler] Attempting to run with explicit python3...");
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start pymcu process.");
 
-            // Try with explicit python3
-            psi.FileName = "python3";
-            psi.Arguments = $"{PymcuExe} build";
-            proc = Process.Start(psi);
-        }
+        // Collect output on background threads to avoid deadlock
+        var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+        var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
 
-        if (proc == null)
-            throw new InvalidOperationException("Failed to start pymcu process.");
-
-        using (proc)
-        {
-            // Collect output on background threads to avoid deadlock
-            var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
-            var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
-
-            var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
-            var stdout   = stdoutTask.GetAwaiter().GetResult();
-            var stderr   = stderrTask.GetAwaiter().GetResult();
+        var finished = proc.WaitForExit(60_000); // 60-second compilation timeout
+        var stdout   = stdoutTask.GetAwaiter().GetResult();
+        var stderr   = stderrTask.GetAwaiter().GetResult();
 
             // Always log stdout/stderr for diagnostics, even on success
             Console.WriteLine($"[PymcuCompiler] === Execution completed for '{name}' ===");
@@ -204,7 +195,6 @@ public static class PymcuCompiler
                 throw new InvalidOperationException(
                     $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
             }
-        }
 
         // Check dist directory status after successful build
         Console.WriteLine($"[PymcuCompiler] Build completed successfully (exit 0)");
