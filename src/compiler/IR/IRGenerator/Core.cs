@@ -263,12 +263,67 @@ public partial class IRGenerator
             }
         }
 
+        // Track which AST objects have already been scanned so that the same
+        // physical module file loaded under two different qualified names
+        // (e.g. "time" via `import time` AND "pymcu.time" via
+        // `from pymcu.time import …`) is only scanned once.  For the alias
+        // name we still need all inline functions to be accessible under the
+        // alias prefix (e.g. pymcu_time_delay_ms) so we copy them after the
+        // canonical scan rather than running ScanFunctions a second time.
+        var astToCanonicalPrefix = new Dictionary<ProgramNode, string>(ReferenceEqualityComparer.Instance);
+
         foreach (var kvp in importedModules)
         {
             var modName = kvp.Key;
             var modAst = kvp.Value;
+            string modPrefix = modName.Replace('.', '_') + "_";
+
+            if (astToCanonicalPrefix.TryGetValue(modAst, out var canonicalPrefix))
+            {
+                // Same AST already fully scanned under canonicalPrefix.
+                // Share the same scope object so symbol-propagation loops
+                // that look up modules[modName] still find the right entries.
+                if (modules.TryGetValue(canonicalPrefix.Substring(0, canonicalPrefix.Length - 1), out var sharedScope))
+                    modules[modName] = sharedScope;
+                else
+                    modules[modName] = new ModuleScope();
+
+                // Propagate inline functions from canonical prefix to alias prefix
+                // so callee resolution via importedAliases works for both names.
+                var inlineAdds = new List<KeyValuePair<string, FunctionDef?>>();
+                foreach (var fn in inlineFunctions)
+                {
+                    if (!fn.Key.StartsWith(canonicalPrefix)) continue;
+                    string aliasKey = modPrefix + fn.Key.Substring(canonicalPrefix.Length);
+                    if (!inlineFunctions.ContainsKey(aliasKey))
+                        inlineAdds.Add(new KeyValuePair<string, FunctionDef?>(aliasKey, fn.Value));
+                }
+                foreach (var add in inlineAdds)
+                {
+                    inlineFunctions[add.Key] = add.Value;
+                    string srcKey = canonicalPrefix + add.Key.Substring(modPrefix.Length);
+                    if (functionParams.TryGetValue(srcKey, out var p)) functionParams.TryAdd(add.Key, p);
+                    if (functionReturnTypes.TryGetValue(srcKey, out var rt)) functionReturnTypes.TryAdd(add.Key, rt);
+                    if (functionParamTypes.TryGetValue(srcKey, out var pt)) functionParamTypes.TryAdd(add.Key, pt);
+                }
+                // Propagate globals under the alias prefix too.
+                var globAdds = new List<KeyValuePair<string, SymbolInfo>>();
+                foreach (var g in globals)
+                {
+                    if (!g.Key.StartsWith(canonicalPrefix)) continue;
+                    string aliasKey = modPrefix + g.Key.Substring(canonicalPrefix.Length);
+                    if (!globals.ContainsKey(aliasKey))
+                        globAdds.Add(new KeyValuePair<string, SymbolInfo>(aliasKey, g.Value));
+                }
+                foreach (var add in globAdds)
+                    globals[add.Key] = add.Value;
+
+                continue;
+            }
+
+            astToCanonicalPrefix[modAst] = modPrefix;
             modules[modName] = new ModuleScope();
-            currentModulePrefix = modName.Replace('.', '_') + "_";
+            currentModulePrefix = modPrefix;
             int dotPos = modName.LastIndexOf('.');
             currentSourceFile = (dotPos != -1 ? modName.Substring(dotPos + 1) : modName) + ".py";
             ScanGlobals(modAst, modules[modName]);
