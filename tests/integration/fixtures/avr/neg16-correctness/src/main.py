@@ -6,7 +6,7 @@
 # so ADC would leave the high byte one less than correct (0xFE instead of 0xFF).
 #
 # Example: -(int16(0x0100)) = -256 = 0xFF00
-#   Wrong  (ADC): NEG R24 -> 0, C=0; COM R25 -> 0xFE; ADC R25,R1 -> 0xFE+0 = 0xFE  => 0xFE00
+#   Wrong  (ADC): NEG R24 -> 0, C=0; COM R25 -> 0xFE; ADC R25,R1 -> 0xFE+0 (R1=0) = 0xFE  => 0xFE00
 #   Correct (SBCI R25,255): NEG R24 -> 0, C=0; COM R25 -> 0xFE; 0xFE+1-0 = 0xFF    => 0xFF00
 #
 # Checkpoints (ATmega328P data-space):
