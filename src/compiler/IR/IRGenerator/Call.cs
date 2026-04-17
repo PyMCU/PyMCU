@@ -736,10 +736,22 @@ public partial class IRGenerator
             }
             else
             {
-                // Collect constraint operands (%0, %1, …)
+                // Collect constraint operands (%0, %1, …).
+                // Operands must resolve to Variables (not Constants) so that
+                // the backend can both load the current value and store back
+                // the modified result after the inline assembly executes.
                 var operands = new List<Val>();
                 for (int i = 1; i < expr.Args.Count; i++)
-                    operands.Add(VisitExpression(expr.Args[i]));
+                {
+                    if (expr.Args[i] is VariableExpr ve)
+                    {
+                        operands.Add(ResolveAsmOperand(ve.Name));
+                    }
+                    else
+                    {
+                        operands.Add(VisitExpression(expr.Args[i]));
+                    }
+                }
                 Emit(new InlineAsm(code, operands));
             }
             return new NoneVal();

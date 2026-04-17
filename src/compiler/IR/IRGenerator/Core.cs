@@ -604,6 +604,24 @@ public partial class IRGenerator
         return new Variable(finalLocalName, type);
     }
 
+    // Resolve a variable name used as an asm() constraint operand.
+    // Unlike ResolveBinding, this always returns a Variable (never a Constant)
+    // so that the backend can load and then store back the modified value.
+    private Val ResolveAsmOperand(string name)
+    {
+        string localName = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+
+        DataType type = DataType.UINT8;
+        if (variableTypes.TryGetValue(localName, out var dt))
+            type = dt;
+        else if (variableTypes.TryGetValue(name, out var dt2))
+            type = dt2;
+
+        return new Variable(localName, type);
+    }
+
     private string? ResolveStrConstant(string name)
     {
         var key = name;

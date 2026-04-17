@@ -282,16 +282,24 @@ private static Function CloneFunction(Function f)
 
         for (var i = 0; i < func.Body.Count; ++i)
         {
-            // 1. Substitute uses
-            func.Body[i] = ReplaceUses(func.Body[i], v =>
+            // 1. Substitute uses — but NOT InlineAsm operands, which are
+            //    read+write and must remain as Variables for backend writeback.
+            if (func.Body[i] is InlineAsm { Operands: not null })
             {
-                return v switch
+                // Leave InlineAsm operands as-is (no constant propagation).
+            }
+            else
+            {
+                func.Body[i] = ReplaceUses(func.Body[i], v =>
                 {
-                    Temporary t when tempCopies.TryGetValue(t.Name, out var replacement) => replacement,
-                    Variable var2 when varConsts.TryGetValue(var2.Name, out int cv) => new Constant(cv),
-                    _ => v
-                };
-            });
+                    return v switch
+                    {
+                        Temporary t when tempCopies.TryGetValue(t.Name, out var replacement) => replacement,
+                        Variable var2 when varConsts.TryGetValue(var2.Name, out int cv) => new Constant(cv),
+                        _ => v
+                    };
+                });
+            }
 
             // 2. Track new copies
             var instr = func.Body[i];
@@ -327,6 +335,10 @@ private static Function CloneFunction(Function f)
                     break;
                 case Unary un:
                     InvalidateVar(un.Dst);
+                    break;
+                // InlineAsm with operands may modify variables; invalidate them.
+                case InlineAsm { Operands: not null } ia:
+                    foreach (var op in ia.Operands) InvalidateVar(op);
                     break;
                 case Label:
                     varConsts.Clear();
