@@ -562,8 +562,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         var type = GetValType(jnz.Condition);
         LoadIntoReg(jnz.Condition, "R24", type);
+        // OR R24, R25 already sets the Z flag for 16-bit values; no separate TST needed.
         if (type.SizeOf() == 2) Emit("OR", "R24", "R25");
-        Emit("TST", "R24");
+        else Emit("TST", "R24");
         EmitBranch("BRNE", jnz.Target);
     }
 
@@ -716,28 +717,34 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         DataType type = GetValType(u.Dst);
         LoadIntoReg(u.Src, "R24", type);
         bool is16 = type.SizeOf() == 2;
+        bool is32 = type.SizeOf() == 4;
 
         switch (u.Op)
         {
             case IrUnOp.Neg:
+                // Two's-complement negation using the NEG/COM/SBCI carry-chain.
+                // NEG R24 sets C = (R24_original != 0).
+                // Each subsequent byte: COM Rn ; SBCI Rn, 255
+                //   computes ~Rn + 1 - C, which is the correct borrow-propagated byte.
+                // avr-gcc emits the identical sequence for all widths.
                 Emit("NEG", "R24");
-                if (is16)
+                if (is16 || is32)
                 {
-                    // 16-bit two's-complement negation:
-                    //   NEG R24   -> R24 = -lo, C = (lo != 0)
-                    //   COM R25   -> R25 = ~hi
-                    //   SBCI R25, 255 -> R25 = ~hi + 1 - C  (SBCI 0xFF ≡ +1 in 8-bit)
-                    // When lo!=0 (C=1): R25 = ~hi + 0 = ~hi         ✓
-                    // When lo==0 (C=0): R25 = ~hi + 1 = ~hi + 1     ✓
-                    // avr-gcc emits the same sequence (com/neg/sbci r,-1).
                     Emit("COM", "R25");
                     Emit("SBCI", "R25", "255");
                 }
-
+                if (is32)
+                {
+                    Emit("COM", "R22");
+                    Emit("SBCI", "R22", "255");
+                    Emit("COM", "R23");
+                    Emit("SBCI", "R23", "255");
+                }
                 break;
             case IrUnOp.BitNot:
                 Emit("COM", "R24");
-                if (is16) Emit("COM", "R25");
+                if (is16 || is32) Emit("COM", "R25");
+                if (is32) { Emit("COM", "R22"); Emit("COM", "R23"); }
                 break;
             case IrUnOp.Not:
                 var lTrue = MakeLabel("L_NOT_TRUE");
@@ -878,14 +885,21 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 switch (b.Op)
                 {
                     case IrBinOp.Add:
-                        int neg = -val;
-                        Emit("SUBI", "R24", $"{(byte)(neg & 0xFF)}");
-                        Emit("SBCI", "R25", $"{(byte)((neg >> 8) & 0xFF)}");
+                        // ADIW R24, k is a 1-word, 2-cycle instruction for k in 1..63.
+                        // SUBI+SBCI is 2 words / 4 cycles.  ADIW also handles k=0 (NOP-equivalent).
+                        if (val >= 0 && val <= 63)
+                            Emit("ADIW", "R24", $"{val}");
+                        else if (val >= -63 && val < 0)
+                            Emit("SBIW", "R24", $"{-val}");
+                        else { int neg = -val; Emit("SUBI", "R24", $"{(byte)(neg & 0xFF)}"); Emit("SBCI", "R25", $"{(byte)((neg >> 8) & 0xFF)}"); }
                         usedImm = true;
                         break;
                     case IrBinOp.Sub:
-                        Emit("SUBI", "R24", $"{val & 0xFF}");
-                        Emit("SBCI", "R25", $"{(val >> 8) & 0xFF}");
+                        if (val >= 0 && val <= 63)
+                            Emit("SBIW", "R24", $"{val}");
+                        else if (val >= -63 && val < 0)
+                            Emit("ADIW", "R24", $"{-val}");
+                        else { Emit("SUBI", "R24", $"{(byte)(val & 0xFF)}"); Emit("SBCI", "R25", $"{(byte)((val >> 8) & 0xFF)}"); }
                         usedImm = true;
                         break;
                 }
@@ -1008,8 +1022,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 Emit("CLR", "R1");
                 break;
             case IrBinOp.Div:
-            case IrBinOp.FloorDiv: Emit("CALL", "__div8"); break;
-            case IrBinOp.Mod: Emit("CALL", "__mod8"); break;
+            case IrBinOp.FloorDiv:
+                if (is32) Emit("CALL", "__div32");
+                else if (is16) Emit("CALL", "__div16");
+                else Emit("CALL", "__div8");
+                break;
+            case IrBinOp.Mod:
+                if (is32) Emit("CALL", "__mod32");
+                else if (is16) Emit("CALL", "__mod16");
+                else Emit("CALL", "__mod8");
+                break;
             case IrBinOp.Equal:
             {
                 if (!usedImm)
@@ -1237,6 +1259,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         var type = GetValType(aa.Target);
         var is16 = type.SizeOf() == 2;
+        var is32 = type.SizeOf() == 4;
         LoadIntoReg(aa.Target, "R24", type);
 
         var usedImm = false;
@@ -1301,14 +1324,19 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 switch (aa.Op)
                 {
                     case IrBinOp.Add:
-                        var neg = -val;
-                        Emit("SUBI", "R24", $"{(byte)(neg & 0xFF)}");
-                        Emit("SBCI", "R25", $"{(byte)((neg >> 8) & 0xFF)}");
+                        if (val >= 0 && val <= 63)
+                            Emit("ADIW", "R24", $"{val}");
+                        else if (val >= -63 && val < 0)
+                            Emit("SBIW", "R24", $"{-val}");
+                        else { var neg = -val; Emit("SUBI", "R24", $"{(byte)(neg & 0xFF)}"); Emit("SBCI", "R25", $"{(byte)((neg >> 8) & 0xFF)}"); }
                         usedImm = true;
                         break;
                     case IrBinOp.Sub:
-                        Emit("SUBI", "R24", $"{val & 0xFF}");
-                        Emit("SBCI", "R25", $"{(val >> 8) & 0xFF}");
+                        if (val >= 0 && val <= 63)
+                            Emit("SBIW", "R24", $"{val}");
+                        else if (val >= -63 && val < 0)
+                            Emit("ADIW", "R24", $"{-val}");
+                        else { Emit("SUBI", "R24", $"{(byte)(val & 0xFF)}"); Emit("SBCI", "R25", $"{(byte)((val >> 8) & 0xFF)}"); }
                         usedImm = true;
                         break;
                     default:
@@ -1403,8 +1431,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     Emit("CLR", "R1");
                     break;
                 case IrBinOp.Div:
-                case IrBinOp.FloorDiv: Emit("CALL", "__div8"); break;
-                case IrBinOp.Mod: Emit("CALL", "__mod8"); break;
+                case IrBinOp.FloorDiv:
+                    if (is32) Emit("CALL", "__div32");
+                    else if (is16) Emit("CALL", "__div16");
+                    else Emit("CALL", "__div8");
+                    break;
+                case IrBinOp.Mod:
+                    if (is32) Emit("CALL", "__mod32");
+                    else if (is16) Emit("CALL", "__mod16");
+                    else Emit("CALL", "__mod8");
+                    break;
                 case IrBinOp.Equal:
                 case IrBinOp.NotEqual:
                 case IrBinOp.LessThan:

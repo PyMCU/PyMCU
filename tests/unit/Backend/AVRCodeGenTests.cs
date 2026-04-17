@@ -451,4 +451,221 @@ public class AVRCodeGenTests
         // CLR R1 must appear in the ISR section (after the PUSH R1 save).
         Assert.Contains("CLR\tR1", asm);
     }
+
+    // ─── 32-bit NEG ───────────────────────────────────────────────────────
+    // int32 negation must emit NEG R24 / COM+SBCI R25 / COM+SBCI R22 / COM+SBCI R23.
+
+    [Fact]
+    public void UnaryNeg32_EmitsFullCarryChain()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body =
+            [
+                new Unary(PyMCU.IR.UnaryOp.Neg,
+                    new Variable("x", DataType.INT32),
+                    new Variable("y", DataType.INT32)),
+                new Return(new NoneVal())
+            ]
+        });
+
+        var asm = Compile(prog);
+
+        // Every byte after the first needs COM + SBCI 255 for carry propagation.
+        Assert.Contains("NEG\tR24", asm);
+        Assert.Contains("COM\tR25", asm);
+        Assert.Contains("COM\tR22", asm);
+        Assert.Contains("COM\tR23", asm);
+        // All three high bytes need SBCI 255 for the carry correction.
+        var sbciCount = asm.Split('\n').Count(l => l.Trim().StartsWith("SBCI\tR") && l.Contains("255"));
+        Assert.True(sbciCount >= 3, $"Expected ≥ 3 SBCI Rn, 255 instructions; found {sbciCount}");
+    }
+
+    // ─── 32-bit BitNot ────────────────────────────────────────────────────
+
+    [Fact]
+    public void UnaryBitNot32_ComsAllFourBytes()
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body =
+            [
+                new Unary(PyMCU.IR.UnaryOp.BitNot,
+                    new Variable("x", DataType.UINT32),
+                    new Variable("y", DataType.UINT32)),
+                new Return(new NoneVal())
+            ]
+        });
+
+        var asm = Compile(prog);
+
+        Assert.Contains("COM\tR24", asm);
+        Assert.Contains("COM\tR25", asm);
+        Assert.Contains("COM\tR22", asm);
+        Assert.Contains("COM\tR23", asm);
+    }
+
+    // ─── JumpIfNotZero 16-bit: no redundant TST ───────────────────────────
+    // OR R24, R25 sets the Z flag; emitting TST R24 afterwards is a wasted cycle.
+
+    [Fact]
+    public void JumpIfNotZero16_NoTstAfterOr()
+    {
+        var prog = MakeProgram("main",
+            new JumpIfNotZero(new Variable("x", DataType.UINT16), "done"),
+            new Label("done"),
+            new Return(new NoneVal()));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("OR\tR24, R25", asm);
+        // TST R24 after OR R24, R25 is redundant and must not appear in the 16-bit path.
+        // We check the OR appears and that no spurious TST follows it.
+        var lines = asm.Split('\n').Select(l => l.Trim()).ToList();
+        int orIdx = lines.FindIndex(l => l.StartsWith("OR\tR24, R25"));
+        Assert.True(orIdx >= 0);
+        // The instruction immediately after OR must NOT be TST R24.
+        if (orIdx + 1 < lines.Count)
+            Assert.False(lines[orIdx + 1].StartsWith("TST\tR24"),
+                "TST R24 after OR R24,R25 is redundant and must be removed");
+    }
+
+    // ─── ADIW / SBIW optimization for 16-bit immediate add/sub ───────────
+    // For constants in 1..63, the codegen must emit ADIW (1 word / 2 cycles)
+    // instead of SUBI + SBCI (2 words / 4 cycles).
+
+    [Fact]
+    public void Binary_Uint16_Add_SmallConst_EmitsADIW()
+    {
+        // x + 5: should use ADIW R24, 5 (1 word) not SUBI+SBCI (2 words)
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Add,
+                new Variable("x", DataType.UINT16),
+                new Constant(5),
+                new Variable("y", DataType.UINT16)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("ADIW\tR24, 5", asm);
+        Assert.DoesNotContain("SUBI\tR24", asm);
+        Assert.DoesNotContain("SBCI\tR25", asm);
+    }
+
+    [Fact]
+    public void Binary_Uint16_Sub_SmallConst_EmitsSBIW()
+    {
+        // x - 10: should use SBIW R24, 10 not SUBI+SBCI
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Sub,
+                new Variable("x", DataType.UINT16),
+                new Constant(10),
+                new Variable("y", DataType.UINT16)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("SBIW\tR24, 10", asm);
+        Assert.DoesNotContain("SUBI\tR24", asm);
+    }
+
+    [Fact]
+    public void Binary_Uint16_Add_LargeConst_EmitsSubiSbci()
+    {
+        // x + 200: out of ADIW range (>63); must fall back to SUBI+SBCI
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Add,
+                new Variable("x", DataType.UINT16),
+                new Constant(200),
+                new Variable("y", DataType.UINT16)));
+
+        var asm = Compile(prog);
+
+        Assert.DoesNotContain("ADIW", asm);
+        Assert.Contains("SUBI\tR24", asm);
+        Assert.Contains("SBCI\tR25", asm);
+    }
+
+    // ─── div/mod dispatch by type size ────────────────────────────────────
+    // The compiler must call __div16/__mod16 for uint16 and __div32/__mod32 for uint32.
+    // Calling __div8 for 16-bit operands would silently truncate the dividend.
+
+    [Fact]
+    public void Div_Uint16_Calls_Div16_NotDiv8()
+    {
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Div,
+                new Variable("a", DataType.UINT16),
+                new Variable("b", DataType.UINT16),
+                new Variable("c", DataType.UINT16)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__div16", asm);
+        Assert.DoesNotContain("CALL\t__div8", asm);
+    }
+
+    [Fact]
+    public void Mod_Uint16_Calls_Mod16_NotMod8()
+    {
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Mod,
+                new Variable("a", DataType.UINT16),
+                new Variable("b", DataType.UINT16),
+                new Variable("c", DataType.UINT16)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__mod16", asm);
+        Assert.DoesNotContain("CALL\t__mod8", asm);
+    }
+
+    [Fact]
+    public void Div_Uint32_Calls_Div32()
+    {
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Div,
+                new Variable("a", DataType.UINT32),
+                new Variable("b", DataType.UINT32),
+                new Variable("c", DataType.UINT32)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__div32", asm);
+        Assert.DoesNotContain("CALL\t__div8", asm);
+        Assert.DoesNotContain("CALL\t__div16", asm);
+    }
+
+    [Fact]
+    public void Mod_Uint32_Calls_Mod32()
+    {
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Mod,
+                new Variable("a", DataType.UINT32),
+                new Variable("b", DataType.UINT32),
+                new Variable("c", DataType.UINT32)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__mod32", asm);
+        Assert.DoesNotContain("CALL\t__mod8", asm);
+        Assert.DoesNotContain("CALL\t__mod16", asm);
+    }
+
+    [Fact]
+    public void Div_Uint8_Calls_Div8()
+    {
+        // Regression: 8-bit div must still call __div8 after the dispatch change.
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Div,
+                new Variable("a", DataType.UINT8),
+                new Variable("b", DataType.UINT8),
+                new Variable("c", DataType.UINT8)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__div8", asm);
+    }
 }
