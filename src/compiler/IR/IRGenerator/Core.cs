@@ -279,7 +279,19 @@ public partial class IRGenerator
         {
             var modName = kvp.Key;
             var modAst = kvp.Value;
-            var scope = modules[modName];
+            if (!modules.TryGetValue(modName, out var scope))
+            {
+                // Module was not scanned in the first pass - this can happen if
+                // importedModules was modified after the first foreach.
+                // Create the scope now to avoid KeyNotFoundException.
+                scope = new ModuleScope();
+                modules[modName] = scope;
+                currentModulePrefix = modName.Replace('.', '_') + "_";
+                int dotPos2 = modName.LastIndexOf('.');
+                currentSourceFile = (dotPos2 != -1 ? modName.Substring(dotPos2 + 1) : modName) + ".py";
+                ScanGlobals(modAst, scope);
+                ScanFunctions(modAst, scope);
+            }
             foreach (var imp in modAst.Imports)
             {
                 if (modules.TryGetValue(imp.ModuleName, out var srcScope))
