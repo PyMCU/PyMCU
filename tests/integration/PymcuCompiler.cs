@@ -37,6 +37,8 @@ public static class PymcuCompiler
         Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
         Console.WriteLine($"[PymcuCompiler] ExampleDir  : {exampleDir} (exists={Directory.Exists(exampleDir)})");
         Console.WriteLine($"[PymcuCompiler] PATH        : {Environment.GetEnvironmentVariable("PATH")}");
+        Console.WriteLine($"[PymcuCompiler] VIRTUAL_ENV : {Environment.GetEnvironmentVariable("VIRTUAL_ENV")}");
+        Console.WriteLine($"[PymcuCompiler] PYTHONPATH  : {Environment.GetEnvironmentVariable("PYTHONPATH")}");
 
         if (!Directory.Exists(exampleDir))
             throw new DirectoryNotFoundException(
@@ -53,6 +55,18 @@ public static class PymcuCompiler
         };
         // Verbose pymcu output so compiler path resolution is visible in CI logs
         psi.Environment["PYMCU_VERBOSE"] = "1";
+
+        // Diagnostic: Log environment variables being passed to child process
+        Console.WriteLine($"[PymcuCompiler] Child process environment:");
+        foreach (var entry in psi.Environment)
+        {
+            if (entry.Key.Contains("PATH") ||
+                entry.Key.Contains("PYTHON") ||
+                entry.Key.Contains("VIRTUAL"))
+            {
+                Console.WriteLine($"[PymcuCompiler]   {entry.Key} = {entry.Value}");
+            }
+        }
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start pymcu process.");

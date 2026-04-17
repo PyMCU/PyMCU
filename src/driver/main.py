@@ -52,6 +52,14 @@ def _ensure_venv():
     if is_verbose:
         os.environ["PYMCU_VERBOSE"] = "1"
 
+    if is_verbose:
+        console.print(f"[debug] _ensure_venv() called", style="dim")
+        console.print(f"[debug] Current working directory: {cwd}", style="dim")
+        console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
+        console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
+        console.print(f"[debug] Looking for venv at: {venv_path}", style="dim")
+        console.print(f"[debug] venv exists: {venv_path.exists()}", style="dim")
+
     if venv_path.exists() and venv_path.is_dir():
         # Check if we are already using this venv
         try:
@@ -82,10 +90,16 @@ def _ensure_venv():
                 else:
                      if is_verbose:
                         console.print(f"[debug] Local executable not found at {local_exe}", style="dim")
+            else:
+                if is_verbose:
+                    console.print(f"[debug] Already using target venv, no switch needed", style="dim")
         except Exception as e:
             if is_verbose:
                 console.print(f"[debug] Venv switch failed: {e}", style="dim")
             pass # Fallback if resolution fails or execv fails
+    else:
+        if is_verbose:
+            console.print(f"[debug] No local .venv found, continuing with current Python", style="dim")
 
 
 # Application definition

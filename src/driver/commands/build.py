@@ -33,6 +33,7 @@ from pathlib import Path
 import tomlkit
 import typer
 import os
+import sys
 import shutil
 import importlib.util
 from rich.console import Console
@@ -177,6 +178,16 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     return total
 
 def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
+    # Diagnostic logging at start of build
+    is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+    if is_verbose:
+        console.print("[debug] === Build command started ===", style="dim cyan")
+        console.print(f"[debug] Current working directory: {os.getcwd()}", style="dim")
+        console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
+        console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
+        console.print(f"[debug] VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
+        console.print(f"[debug] PATH: {os.environ.get('PATH', 'NOT SET')}", style="dim")
+
     pyproject_path = Path("pyproject.toml")
     if not pyproject_path.exists():
         console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")

@@ -90,16 +90,26 @@ class PyMCUCompiler:
             is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
             if is_verbose:
                 self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
-                self.console.print(f"[debug] sys.path: {sys.path}", style="dim")
+                self.console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
+                self.console.print(f"[debug] sys.path ({len(sys.path)} entries):", style="dim")
+                for i, path_entry in enumerate(sys.path):
+                    self.console.print(f"[debug]   [{i}] {path_entry}", style="dim")
+                self.console.print(f"[debug] VIRTUAL_ENV env var: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
+                self.console.print(f"[debug] PATH env var: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
             import pymcu
+            if is_verbose:
+                self.console.print(f"[debug] pymcu imported successfully from: {pymcu.__file__}", style="dim green")
             if hasattr(pymcu, "__file__") and pymcu.__file__:
                 p = Path(pymcu.__file__).parent / "chips"
                 if p.is_dir():
                     # Return the package directory itself
                     return str(Path(pymcu.__file__).parent)
+                elif is_verbose:
+                    self.console.print(f"[debug] chips directory not found at: {p}", style="yellow")
         except ImportError as e:
             self.console.print(f"[debug] Failed to import pymcu: {e}", style="red")
+            self.console.print(f"[debug] sys.path was: {sys.path}", style="red")
         except Exception as e:
             self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
         return ""
