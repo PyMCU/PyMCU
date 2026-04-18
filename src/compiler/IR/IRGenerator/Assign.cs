@@ -223,12 +223,12 @@ public partial class IRGenerator
                                         : (!string.IsNullOrEmpty(currentFunction)
                                             ? currentFunction + "." + varExprBin.Name
                                             : varExprBin.Name);
-                                    // Use the global name when the target is a module-level mutable global.
+                    // Use the global name when the target is a module-level mutable global.
                                     if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
                                     {
-                                        string mgk = currentModulePrefix + varExprBin.Name;
-                                        if (mutableGlobals.ContainsKey(mgk))
-                                            qualifiedName = mgk;
+                                        string mutableGlobalKey = currentModulePrefix + varExprBin.Name;
+                                        if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                                            qualifiedName = mutableGlobalKey;
                                     }
                                     instanceClasses[qualifiedName] = cls;
                                     pendingConstructorTarget = qualifiedName;
