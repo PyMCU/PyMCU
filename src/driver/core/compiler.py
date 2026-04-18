@@ -113,10 +113,13 @@ class PyMCUCompiler:
                 self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
-    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None):
+    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--target", target, "--freq", str(freq)]
+
+        if emit_ir_path:
+            cmd.extend(["--emit-ir", emit_ir_path])
 
         if reset_vector is not None:
             cmd.extend(["--reset-vector", str(reset_vector)])

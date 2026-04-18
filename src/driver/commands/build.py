@@ -37,6 +37,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
+from ..backends import get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
 from ..core.boards import BOARD_CHIPS
 
@@ -408,23 +409,57 @@ def build(
             build_task = progress.add_task(description=f"  [cyan]Building[/cyan] {target}...", total=100)
 
             # Step 1: Compilation (Python -> ASM)
+            # When a backend plugin is installed for this chip, use the two-phase
+            # approach: pymcuc --emit-ir (frontend only) then backend binary (codegen).
+            # Otherwise fall back to single-step compilation (non-AVR backends).
             # Progress 10-50% is driven by PHASE_START/PHASE_END tokens from pymcuc.
             progress.update(build_task, description="  [cyan]Compiling[/cyan]...", completed=10)
             compiler_handler = _make_compiler_output_handler(progress, build_task, verbose)
+            backend_plugin = get_backend_for_chip(target)
             try:
-                compiler.compile(
-                    input_file=entry_point,
-                    output_file=str(output_file),
-                    target=target,
-                    freq=freq,
-                    configs=config_map,
-                    search_path=sources_dir,
-                    verbose=verbose,
-                    reset_vector=reset_vector,
-                    interrupt_vector=interrupt_vector,
-                    extra_includes=extra_includes or None,
-                    on_output=compiler_handler,
-                )
+                if backend_plugin is not None:
+                    ir_file = output_dir / "firmware.mir"
+                    compiler.compile(
+                        input_file=entry_point,
+                        output_file=str(output_file),
+                        target=target,
+                        freq=freq,
+                        configs=config_map,
+                        search_path=sources_dir,
+                        verbose=verbose,
+                        reset_vector=reset_vector,
+                        interrupt_vector=interrupt_vector,
+                        extra_includes=extra_includes or None,
+                        on_output=compiler_handler,
+                        emit_ir_path=str(ir_file),
+                    )
+                    progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
+                    run_backend(
+                        backend_binary=backend_plugin.get_backend_binary(),
+                        ir_file=ir_file,
+                        output_file=output_file,
+                        target=target,
+                        freq=freq,
+                        configs=config_map,
+                        reset_vector=reset_vector,
+                        interrupt_vector=interrupt_vector,
+                        verbose=verbose,
+                        on_output=compiler_handler,
+                    )
+                else:
+                    compiler.compile(
+                        input_file=entry_point,
+                        output_file=str(output_file),
+                        target=target,
+                        freq=freq,
+                        configs=config_map,
+                        search_path=sources_dir,
+                        verbose=verbose,
+                        reset_vector=reset_vector,
+                        interrupt_vector=interrupt_vector,
+                        extra_includes=extra_includes or None,
+                        on_output=compiler_handler,
+                    )
             except RuntimeError as e:
                 progress.stop()
                 console.print(f"[bold red]Compilation Error:[/bold red] {e}")
