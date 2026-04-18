@@ -24,46 +24,101 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from rich.console import Console
-from .base import ExternalToolchain
-from .gputils import GputilsToolchain
-from .avra import AvraToolchain
-from .avrgas import AvrgasToolchain
+"""
+Toolchain discovery and factory functions.
 
-def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
+Toolchains are discovered at runtime via the ``pymcu.toolchains`` entry-point
+group.  Install a toolchain plugin package (e.g. ``pip install pymcu[avr]``)
+to make it available.  No code in this module needs to change when new
+toolchain packages are released.
+"""
+
+from __future__ import annotations
+
+from importlib.metadata import entry_points
+from typing import TYPE_CHECKING
+
+from pymcu_toolchain_sdk import ExternalToolchain, ToolchainPlugin
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+# ---------------------------------------------------------------------------
+# Hint table: chip prefix -> suggested install command
+# ---------------------------------------------------------------------------
+_CHIP_INSTALL_HINTS: dict[str, str] = {
+    "at": "pip install pymcu[avr]",
+    "pic": "pip install pymcu[pic]",
+}
+
+
+def _hint_for_chip(chip: str) -> str:
+    chip_lower = chip.lower()
+    for prefix, hint in _CHIP_INSTALL_HINTS.items():
+        if chip_lower.startswith(prefix):
+            return f" Try: {hint}"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Plugin discovery
+# ---------------------------------------------------------------------------
+
+def discover_plugins() -> dict[str, type[ToolchainPlugin]]:
     """
-    Factory method to return the appropriate toolchain for a given chip.
+    Return all registered toolchain plugins keyed by family name.
 
-    AVR chips use AvrgasToolchain (pre-built GNU AVR binutils; no source
-    compilation required).  PIC chips use GputilsToolchain.  AvraToolchain
-    is kept as a class for legacy opt-in but is NOT included in the default
-    selection list.
+    Plugins are discovered via the ``pymcu.toolchains`` entry-point group.
+    Install a plugin package (e.g. ``pip install pymcu[avr]``) to register
+    a new toolchain family.
+    """
+    plugins: dict[str, type[ToolchainPlugin]] = {}
+    for ep in entry_points(group="pymcu.toolchains"):
+        try:
+            cls = ep.load()
+            if isinstance(cls, type) and issubclass(cls, ToolchainPlugin):
+                plugins[cls.family] = cls
+        except Exception:
+            pass
+    return plugins
+
+
+# ---------------------------------------------------------------------------
+# Factory functions
+# ---------------------------------------------------------------------------
+
+def get_toolchain_for_chip(chip: str, console: "Console") -> ExternalToolchain:
+    """
+    Return the appropriate toolchain for *chip* by querying all registered
+    toolchain plugins.
 
     Raises:
-        ValueError: If no toolchain supports the given chip.
+        ValueError: If no installed plugin supports the given chip.
     """
-    toolchains = [
-        GputilsToolchain,
-        AvrgasToolchain,
-    ]
+    for plugin_cls in discover_plugins().values():
+        if plugin_cls.supports(chip):
+            return plugin_cls.get_toolchain(console, chip)
 
-    for toolchain_cls in toolchains:
-        if toolchain_cls.supports(chip):
-            return toolchain_cls(console, chip)
-
-    raise ValueError(f"No toolchain found supporting chip: {chip}")
+    hint = _hint_for_chip(chip)
+    raise ValueError(
+        f"No toolchain found for chip '{chip}'.{hint}"
+    )
 
 
-def get_ffi_toolchain_for_chip(chip: str, console: Console) -> AvrgasToolchain:
+def get_ffi_toolchain_for_chip(chip: str, console: "Console") -> ExternalToolchain:
     """
-    Return an AvrgasToolchain (avr-as + avr-ld + avr-objcopy) for chips that
-    support C interop via @extern().  Currently all AVR chips are supported.
+    Return an FFI-capable toolchain for *chip* (C interop via @extern).
 
     Raises:
-        ValueError: If the chip is not supported by AvrgasToolchain.
+        ValueError: If the chip is not supported by any installed FFI plugin.
     """
-    if not AvrgasToolchain.supports(chip):
-        raise ValueError(
-            f"C interop ([tool.pymcu.ffi]) is not supported for chip: {chip}"
-        )
-    return AvrgasToolchain(console, chip)
+    for plugin_cls in discover_plugins().values():
+        if plugin_cls.supports(chip):
+            ffi_tc = plugin_cls.get_ffi_toolchain(console, chip)
+            if ffi_tc is not None:
+                return ffi_tc
+
+    hint = _hint_for_chip(chip)
+    raise ValueError(
+        f"C interop ([tool.pymcu.ffi]) is not supported for chip '{chip}'.{hint}"
+    )

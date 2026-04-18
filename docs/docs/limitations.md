@@ -204,6 +204,16 @@ relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` a
 
 ---
 
+## Supported Targets
+
+PyMCU currently ships toolchain plugins for **AVR** and **PIC** architectures.
+Additional architectures (RISC-V, ARM Cortex-M, RP2040 PIO) are on the
+[roadmap](roadmap.md). Third-party toolchain plugins can add new targets
+without any changes to the core `pymcu` package — see
+[Toolchain Plugins](toolchain-plugins.md) for details.
+
+---
+
 ## Getting Help
 
 If you hit a compile error on a Python construct not covered here, please open an issue at the

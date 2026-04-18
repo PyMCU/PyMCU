@@ -525,8 +525,7 @@ def build(
             try:
                 if use_ffi:
                     # ── FFI pipeline: avr-as + avr-gcc + avr-ld + avr-objcopy ──────────
-                    from ..toolchains.avrgas import AvrgasToolchain as _AvrgasToolchain
-                    ffi_tc: _AvrgasToolchain = toolchain  # type: ignore[assignment]
+                    ffi_tc = toolchain  # type: ignore[assignment]
 
                     # 2a. Assemble firmware.asm → firmware.o (ELF)
                     firmware_obj = ffi_tc.assemble(output_file)
@@ -576,8 +575,7 @@ def build(
                 elif toolchain.get_name() == "avr-as":
                     # ── avr-as pipeline (non-FFI): assemble → link → objcopy ───────────
                     # Same as FFI but without C compilation.
-                    from ..toolchains.avrgas import AvrgasToolchain as _AvrgasToolchain
-                    gas_tc: _AvrgasToolchain = toolchain  # type: ignore[assignment]
+                    gas_tc = toolchain  # type: ignore[assignment]
 
                     firmware_obj = gas_tc.assemble(output_file)
                     progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)

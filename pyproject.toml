@@ -16,11 +16,20 @@ dependencies = [
     "typer>=0.12.0",
     "tomlkit>=0.12.0",
     "rich>=13.0.0",
-    "pymcu-stdlib>=0.1.0a1"
+    "pymcu-stdlib>=0.1.0a1",
+    "pymcu-toolchain-sdk>=0.1.0a1",
 ]
+
+[project.optional-dependencies]
+avr = ["pymcu-toolchain-avr>=0.1.0a1"]
+pic = ["pymcu-toolchain-pic>=0.1.0a1"]
+all = ["pymcu-toolchain-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
+pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
+pymcu-toolchain-avr = {path = "extensions/pymcu-toolchain-avr", editable = true}
+pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"

@@ -29,8 +29,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
-from ..toolchains.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION as _AVR_VERSION
-from ..toolchains.gputils import GputilsToolchain
+from ..toolchains import discover_plugins
 
 console = Console()
 
@@ -41,52 +40,32 @@ toolchain_app = typer.Typer(
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_TOOLCHAINS = {
-    "avr": {
-        "cls": AvrgasToolchain,
-        "version": _AVR_VERSION,
-        "description": "GNU AVR binutils (avr-as, avr-ld, avr-objcopy)",
-        "sample_chip": "atmega328p",
-    },
-    "pic": {
-        "cls": GputilsToolchain,
-        "version": GputilsToolchain.METADATA["version"],
-        "description": "GNU PIC Utilities (gpasm/gplink)",
-        "sample_chip": "pic16f84a",
-    },
-}
-
-
-def _make_instance(family: str):
-    """Return a toolchain instance for the given family name."""
-    meta = _TOOLCHAINS[family]
-    chip = meta["sample_chip"]
-    return meta["cls"](console, chip)
-
-
-# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 @toolchain_app.command("list")
 def toolchain_list():
-    """List all known toolchains and their installation status."""
+    """List all installed toolchain plugins and their installation status."""
+    plugins = discover_plugins()
+
+    if not plugins:
+        console.print(
+            "[yellow]No toolchain plugins installed.[/yellow]\n"
+            "Install one with:  [bold]pip install pymcu[avr][/bold]  "
+            "or  [bold]pip install pymcu[pic][/bold]"
+        )
+        return
+
     table = Table(title="PyMCU Toolchains", box=box.ROUNDED)
     table.add_column("Family", style="cyan", no_wrap=True)
     table.add_column("Description", style="white")
     table.add_column("Version", style="magenta")
     table.add_column("Status", style="bold")
 
-    for family, meta in _TOOLCHAINS.items():
-        tc = _make_instance(family)
-        if tc.is_cached():
-            status = "[green]installed[/green]"
-        else:
-            status = "[dim]not installed[/dim]"
-        table.add_row(family, meta["description"], meta["version"], status)
+    for family, plugin_cls in plugins.items():
+        tc = plugin_cls.get_instance(console)
+        status = "[green]installed[/green]" if tc.is_cached() else "[dim]not installed[/dim]"
+        table.add_row(family, plugin_cls.description, plugin_cls.version, status)
 
     console.print(table)
 
@@ -95,7 +74,7 @@ def toolchain_list():
 def toolchain_install(
     family: str = typer.Argument(
         ...,
-        help="Toolchain family to install: avr or pic.",
+        help="Toolchain family to install (e.g. avr, pic).",
     ),
 ):
     """
@@ -106,19 +85,27 @@ def toolchain_install(
         pymcu toolchain install avr
         pymcu toolchain install pic
     """
-    if family not in _TOOLCHAINS:
-        console.print(
-            f"[red]Unknown toolchain family: {family!r}. "
-            f"Valid options: {', '.join(_TOOLCHAINS)}[/red]"
-        )
+    plugins = discover_plugins()
+
+    if family not in plugins:
+        if plugins:
+            console.print(
+                f"[red]Unknown toolchain family: {family!r}. "
+                f"Installed plugins: {', '.join(plugins)}[/red]"
+            )
+        else:
+            console.print(
+                f"[red]No toolchain plugins installed.[/red]\n"
+                f"Install one first, e.g.:  [bold]pip install pymcu[{family}][/bold]"
+            )
         raise typer.Exit(code=1)
 
-    tc = _make_instance(family)
+    plugin_cls = plugins[family]
+    tc = plugin_cls.get_instance(console)
 
     if tc.is_cached():
-        meta = _TOOLCHAINS[family]
         console.print(
-            f"[green]Toolchain '{family}' (v{meta['version']}) is already installed.[/green]"
+            f"[green]Toolchain '{family}' (v{plugin_cls.version}) is already installed.[/green]"
         )
         return
 
@@ -134,7 +121,7 @@ def toolchain_install(
 def toolchain_update(
     family: str = typer.Argument(
         ...,
-        help="Toolchain family to update: avr or pic.",
+        help="Toolchain family to update (e.g. avr, pic).",
     ),
 ):
     """
@@ -144,14 +131,23 @@ def toolchain_update(
     --------
         pymcu toolchain update avr
     """
-    if family not in _TOOLCHAINS:
-        console.print(
-            f"[red]Unknown toolchain family: {family!r}. "
-            f"Valid options: {', '.join(_TOOLCHAINS)}[/red]"
-        )
+    plugins = discover_plugins()
+
+    if family not in plugins:
+        if plugins:
+            console.print(
+                f"[red]Unknown toolchain family: {family!r}. "
+                f"Installed plugins: {', '.join(plugins)}[/red]"
+            )
+        else:
+            console.print(
+                f"[red]No toolchain plugins installed.[/red]\n"
+                f"Install one first, e.g.:  [bold]pip install pymcu[{family}][/bold]"
+            )
         raise typer.Exit(code=1)
 
-    tc = _make_instance(family)
+    plugin_cls = plugins[family]
+    tc = plugin_cls.get_instance(console)
 
     # Force reinstall by wiping the version file so is_cached() returns False.
     version_file = tc._version_file()
@@ -160,9 +156,8 @@ def toolchain_update(
 
     try:
         tc.install()
-        meta = _TOOLCHAINS[family]
         console.print(
-            f"[bold green]Toolchain '{family}' updated to v{meta['version']}.[/bold green]"
+            f"[bold green]Toolchain '{family}' updated to v{plugin_cls.version}.[/bold green]"
         )
     except RuntimeError as e:
         console.print(f"[bold red]Update failed:[/bold red] {e}")

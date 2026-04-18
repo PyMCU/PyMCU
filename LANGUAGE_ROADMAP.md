@@ -305,6 +305,16 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 These are the highest-value features not yet implemented, in priority order.
 
+### CLI / Driver
+
+| Feature | Effort | Notes |
+|---------|--------|-------|
+| Plugin-based toolchain system | ✅ Implemented | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
+| `pymcu-toolchain-sdk` | ✅ Implemented | Standalone SDK package; base classes + `ToolchainPlugin` ABC |
+| `pymcu-toolchain-avr` | ✅ Implemented | AVR plugin (GNU AVR binutils); independent of core `pymcu` |
+| `pymcu-toolchain-pic` | ✅ Implemented | PIC plugin (GNU PIC Utilities); independent of core `pymcu` |
+| Programmer plugin system | ~1 week | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
+
 ### Language
 
 | Feature | Effort | Why |
