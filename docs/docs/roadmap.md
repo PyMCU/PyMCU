@@ -17,6 +17,8 @@ Everything below is shipped and covered by integration tests.
 | `for i, x in enumerate(iterable)` | Compile-time index counter |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`), dotted-name patterns; DCE on `__CHIP__` |
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return |
+| `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
+| Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level executable statements |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
@@ -58,6 +60,7 @@ Everything below is shipped and covered by integration tests.
 | Feature | Notes |
 |---------|-------|
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Required annotation for all variables |
+| `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` / `ptr(addr)` | Memory-mapped I/O |
 | `const[T]` | Compile-time constant enforcement |
 | `asm("instr")` | Inline assembly |

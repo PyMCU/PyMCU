@@ -80,14 +80,23 @@ memory layout.
 | `int8` | 8-bit | -128 – 127 | Signed byte |
 | `uint16` | 16-bit | 0 – 65535 | Counters, UART baud divisors |
 | `int16` | 16-bit | -32768 – 32767 | Signed 16-bit |
+| `int` | 16-bit | -32768 – 32767 | Built-in alias for `int16`; no import required |
 | `uint32` | 32-bit | 0 – 4294967295 | Timestamps, large counters |
 | `int32` | 32-bit | — | Signed 32-bit |
 | `bool` | 8-bit | 0 / 1 | Aliases `uint8`; `True`/`False` fold to 1/0 |
 
+The built-in `int` type requires no import and maps to signed 16-bit — the natural integer
+width on 16-bit AVR.  For unsigned values or other widths, import from `pymcu.types`:
+
 ```python
-x: uint8 = 0
-counter: uint16 = 0
-flag: bool = False
+# No import needed for int (int16)
+count: int = 0
+delta: int = int(raw - baseline)
+
+# Explicit types for other widths (requires from pymcu.types import ...)
+from pymcu.types import uint8, uint16
+flag: uint8 = 0
+baud: uint16 = 9600
 ```
 
 ### Pointer type `ptr[T]`
@@ -857,7 +866,8 @@ while True:
 ```
 
 **Things that still need changes:**
-- Type annotations: add `x: uint8 = 0` where the compiler needs a width.
+- Type annotations: add `x: int = 0` (or a specific-width type) where the compiler needs a width.
+  Python's built-in `int` works without any import and maps to `int16`.
 - `float` arithmetic: replace with integer or fixed-point.
 - `try / except`: use return codes + `match / case`.
 - `f"..."` format strings: use `uart.write_str()` + `uart.print_byte()`.

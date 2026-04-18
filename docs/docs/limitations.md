@@ -105,7 +105,8 @@ and all comparison / bitwise dunders).
 
 **Supported:** `uint8`, `uint16`, `uint32`, `int8`, `int16`, `int32`, `bool` (as `uint8`),
 fixed-size arrays `uint8[N]`, `bytearray`, `bytes` literal `b"..."`, tuple literals and
-tuple unpacking for multi-return functions.
+tuple unpacking for multi-return functions.  Python's built-in `int` annotation maps to `int16`
+and requires no import.  The `int(val)` cast expression likewise works without an import.
 
 ---
 

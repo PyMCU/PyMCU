@@ -19,18 +19,27 @@ target = "atmega328p"
 
 ## Step 2: Copy your CircuitPython source
 
-Your `code.py` becomes `src/main.py`. The `main()` function is the entry point.
+Your `code.py` becomes `src/main.py`.  Top-level code compiles as-is — PyMCU automatically
+synthesizes an entry point from top-level executable statements, so no wrapper is required.
+
+If you prefer an explicit entry point, wrapping code in `def main():` continues to work.
 
 ## Step 3: Add type annotations
 
-PyMCU requires explicit integer widths. Add them to every variable declaration:
+PyMCU requires explicit integer widths. Python's built-in `int` is supported as a shorthand
+for `int16` and requires no import:
 
 ```python
 # CircuitPython
 count = 0
 val = sensor.value
 
-# PyMCU
+# PyMCU -- int works without any import
+count: int = 0
+val: int = sensor.value
+
+# For unsigned or wider types, use pymcu.types:
+from pymcu.types import uint8, uint16
 count: uint16 = 0
 val: uint8 = sensor.value
 ```

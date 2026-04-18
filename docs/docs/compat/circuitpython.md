@@ -148,8 +148,29 @@ time.sleep(1)        # 1 second (integer only)
 count = 0
 
 # PyMCU
-count: uint16 = 0
+count: int = 0   # int maps to int16; no import needed
 ```
+
+### Top-level code works out of the box
+
+PyMCU supports CircuitPython-style scripts that place executable code at the top level —
+no `def main():` wrapper is required:
+
+```python
+# CircuitPython script — compiles unchanged in PyMCU
+import board, digitalio, time
+
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
+while True:
+    led.value = True
+    time.sleep_ms(500)
+    led.value = False
+    time.sleep_ms(500)
+```
+
+The compiler automatically synthesizes a `main` entry point from any top-level executable
+statements.  If you prefer the explicit style, `def main():` continues to work.
 
 ### Replace float sleep with milliseconds
 
@@ -181,17 +202,6 @@ except RuntimeError:
 val: uint16 = sensor.read()   # returns 0xFFFF on error
 if val == 0xFFFF:
     val = 0
-```
-
-### Wrap top-level code in `def main():`
-
-```python
-# CircuitPython (top-level)
-led = digitalio.DigitalInOut(board.LED)
-
-# PyMCU
-def main():
-    led = digitalio.DigitalInOut(board.LED)
 ```
 
 ---

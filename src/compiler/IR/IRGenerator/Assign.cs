@@ -659,6 +659,9 @@ public partial class IRGenerator
                         string qualified = string.IsNullOrEmpty(currentFunction)
                             ? stmt.Target
                             : currentFunction + "." + stmt.Target;
+                        // Synthesized main: fall back to the module-level name registered by ScanGlobals.
+                        if (!flashArrays.Contains(qualified) && flashArrays.Contains(stmt.Target))
+                            qualified = stmt.Target;
                         arraySizes[qualified] = count;
                         arrayElemTypes[qualified] = elemDt;
                         variableTypes[qualified] = elemDt;
@@ -702,6 +705,9 @@ public partial class IRGenerator
             string qualified = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;
+            // Synthesized main: fall back to the module-level name registered by ScanGlobals.
+            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+                qualified = stmt.Target;
             arraySizes[qualified] = count;
             arrayElemTypes[qualified] = DataType.UINT8;
             variableTypes[qualified] = DataType.UINT8;
@@ -724,6 +730,9 @@ public partial class IRGenerator
                 string qualified = string.IsNullOrEmpty(currentFunction)
                     ? stmt.Target
                     : currentFunction + "." + stmt.Target;
+                // Synthesized main: fall back to the module-level name registered by ScanGlobals.
+                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+                    qualified = stmt.Target;
                 arraySizes[qualified] = count;
                 arrayElemTypes[qualified] = elemDt;
                 variableTypes[qualified] = elemDt;
@@ -843,6 +852,16 @@ public partial class IRGenerator
         string qualified2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+        // When processing a top-level AnnAssign inside a synthesized (or explicit) main() body,
+        // the variable may already be registered as a module-level mutable global by ScanGlobals.
+        // Use the global name so we emit an initializer for the global rather than creating a
+        // shadowing function-local variable.
+        if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string mutableGlobalKey = currentModulePrefix + stmt.Target;
+            if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                qualified2 = mutableGlobalKey;
+        }
         variableTypes[qualified2] = type;
 
         if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2) strConstantVariables[qualified2] = sl2.Value;
