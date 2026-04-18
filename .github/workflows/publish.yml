@@ -58,19 +58,30 @@ jobs:
   # One native job per platform — produces a single py3-none-<platform> wheel
   # per OS/arch. pymcuc is a .NET AOT binary with no Python ABI dependency, so
   # there is no need to build one wheel per Python version.
+  #
+  # The macOS x86_64 (osx-x64) wheel is cross-compiled from the macos-latest
+  # (Apple Silicon) runner using .NET's built-in cross-compilation support,
+  # avoiding the slow macos-13 Intel runner entirely.
   build-wheels:
-    name: Build wheel (${{ matrix.os }})
+    name: Build wheel (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
-          - os: ubuntu-24.04-arm
-          - os: macos-latest
-          - os: macos-13
-          - os: windows-latest
+          - name: linux-x64
+            os: ubuntu-latest
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+          - name: macos-arm64
+            os: macos-latest
+          - name: macos-x64
+            os: macos-latest
+            dotnet_rid: osx-x64
+            wheel_platform_tag: macosx_13_0_x86_64
+          - name: windows-x64
+            os: windows-latest
 
     steps:
       - name: Checkout code
@@ -87,12 +98,15 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Build wheel
+        env:
+          DOTNET_RID: ${{ matrix.dotnet_rid }}
+          WHEEL_PLATFORM_TAG: ${{ matrix.wheel_platform_tag }}
         run: uv build --wheel
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
+          name: dist-${{ matrix.name }}
           path: dist/*.whl
           retention-days: 15
 
