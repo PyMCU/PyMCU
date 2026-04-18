@@ -24,25 +24,17 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-import shutil
-from pathlib import Path
-import typer
-from rich.console import Console
+# Canonical mapping from well-known board names to chip identifiers.
+# Extension packages may supplement this at build time via board_chips.py.
+# Both `build` and `flash` commands import from here to avoid drift.
+BOARD_CHIPS: dict[str, str] = {
+    "arduino_uno":   "atmega328p",
+    "arduino_nano":  "atmega328p",
+    "arduino_mega":  "atmega2560",
+    "arduino_micro": "atmega32u4",
+}
 
-console = Console()
 
-def clean():
-    """
-    Removes build artifacts (dist/ directory, including dist/_generated/).
-    """
-    dist_dir = Path("dist")
-    
-    if dist_dir.exists():
-        try:
-            shutil.rmtree(dist_dir, ignore_errors=True)
-            console.print(f"[bold green]+[/bold green] Cleaned build artifacts in '{dist_dir}'.")
-        except Exception as e:
-            console.print(f"[bold red]Error cleaning '{dist_dir}':[/bold red] {e}")
-            raise typer.Exit(code=1)
-    else:
-        console.print("[yellow]Nothing to clean (dist/ directory does not exist).[/yellow]")
+def default_programmer(chip: str) -> str:
+    """Return the default programmer name for a given chip identifier."""
+    return "avrdude" if chip.lower().startswith("at") else "pk2cmd"

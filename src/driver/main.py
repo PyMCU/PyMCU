@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -84,9 +79,16 @@ def _ensure_venv():
                 if local_exe.exists():
                     if is_verbose:
                         console.print(f"[debug] Switching to local venv: {local_exe}", style="dim")
-                    # Replace current process with the local venv version
-                    # We use os.execv to replace the current process
-                    os.execv(str(local_exe), [str(local_exe)] + sys.argv[1:])
+                    # Replace current process with the local venv version.
+                    # Guard against symlink loops (e.g. project dir is itself a symlink).
+                    try:
+                        os.execv(str(local_exe), [str(local_exe)] + sys.argv[1:])
+                    except (OSError, PermissionError) as exec_err:
+                        if is_verbose:
+                            console.print(
+                                f"[debug] execv failed ({exec_err}), continuing with current interpreter",
+                                style="dim",
+                            )
                 else:
                      if is_verbose:
                         console.print(f"[debug] Local executable not found at {local_exe}", style="dim")
@@ -108,6 +110,7 @@ from .commands.build import build
 from .commands.clean import clean
 from .commands.flash import flash
 from .commands.version import version
+from .commands.toolchain import toolchain_app
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -128,6 +131,7 @@ app.command()(new)
 app.command()(build)
 app.command()(clean)
 app.command()(flash)
+app.add_typer(toolchain_app)
 
 def run_cli():
     _ensure_venv()
