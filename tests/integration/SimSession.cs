@@ -35,15 +35,29 @@ namespace PyMCU.IntegrationTests;
 /// </remarks>
 public sealed class SimSession
 {
-    private static readonly FieldInfo? EepromWriteCompleteCycles =
-        typeof(ArduinoUnoSimulation).Assembly
-            .GetType("AVR8Sharp.Core.Peripherals.AvrEeprom")
-            ?.GetField("_writeCompleteCycles", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly FieldInfo EepromWriteCompleteCycles;
+    private static readonly FieldInfo EepromWriteEnabledCycles;
 
-    private static readonly FieldInfo? EepromWriteEnabledCycles =
-        typeof(ArduinoUnoSimulation).Assembly
+    static SimSession()
+    {
+        var eepromType = typeof(ArduinoUnoSimulation).Assembly
             .GetType("AVR8Sharp.Core.Peripherals.AvrEeprom")
-            ?.GetField("_writeEnabledCycles", BindingFlags.NonPublic | BindingFlags.Instance);
+            ?? throw new InvalidOperationException(
+                "AVR8Sharp.Core.Peripherals.AvrEeprom type not found. " +
+                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
+
+        EepromWriteCompleteCycles = eepromType
+            .GetField("_writeCompleteCycles", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "AvrEeprom._writeCompleteCycles field not found. " +
+                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
+
+        EepromWriteEnabledCycles = eepromType
+            .GetField("_writeEnabledCycles", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "AvrEeprom._writeEnabledCycles field not found. " +
+                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
+    }
 
     private readonly ArduinoUnoSimulation _sim;
     private readonly byte[] _dataSnapshot;
@@ -93,8 +107,8 @@ public sealed class SimSession
         //    causing the firmware's polling loop to spin forever.
         if (_sim.Eeprom is not null)
         {
-            EepromWriteCompleteCycles?.SetValue(_sim.Eeprom, 0u);
-            EepromWriteEnabledCycles?.SetValue(_sim.Eeprom, 0u);
+            EepromWriteCompleteCycles.SetValue(_sim.Eeprom, 0u);
+            EepromWriteEnabledCycles.SetValue(_sim.Eeprom, 0u);
         }
 
         // 6. Clear the UART receive buffer captured by the serial probe.
