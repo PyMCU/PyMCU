@@ -15,10 +15,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class NestedCallsTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("nested-calls");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("nested-calls"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -115,10 +115,5 @@ public class NestedCallsTests
         }
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

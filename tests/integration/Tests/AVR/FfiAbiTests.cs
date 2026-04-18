@@ -29,15 +29,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class FfiAbiTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("ffi-abi");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("ffi-abi"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunUntilSerial(uno.Serial, "ABI\n", maxMs: 200);
         return uno;
     }

@@ -13,11 +13,11 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class BitwiseOpsTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
     private static readonly byte[] ExpectedBytes = [255, 15, 240, 224, 56, 199, 0, 8, 1, 68];
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("bitwise-ops");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("bitwise-ops"));
 
     [Test]
     public void Output_ExactByteSequence()
@@ -67,10 +67,5 @@ public class BitwiseOpsTests
             "PB5 should be configured as output (High or Low)");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

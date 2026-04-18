@@ -17,10 +17,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class DhtSensorTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("dht-sensor");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("dht-sensor"));
 
     // ── Boot helper ───────────────────────────────────────────────────────────
 
@@ -30,8 +30,7 @@ public class DhtSensorTests
     /// </summary>
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.PortD.SetPinValue(2, true); // idle HIGH
         uno.RunUntilSerial(uno.Serial, "DHT11\n", maxMs: 500);
         return uno;

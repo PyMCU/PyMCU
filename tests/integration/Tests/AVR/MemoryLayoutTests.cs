@@ -21,7 +21,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class MemoryLayoutTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P data-space addresses
     private const int TCCR0A_ADDR = 0x44;
@@ -33,12 +33,11 @@ public class MemoryLayoutTests
     private const int OCR1A_ADDR  = 0x88;   // OCR1AL (LE word: low at 0x88, high at 0x89)
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("memory-layout");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("memory-layout"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }

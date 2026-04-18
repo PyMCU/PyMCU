@@ -24,15 +24,14 @@ public class SignedExtendTests
     private const int Gpior2 = 0x4B;
     private const int Ocr0A  = 0x47;
 
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("signed-extend");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("signed-extend"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }

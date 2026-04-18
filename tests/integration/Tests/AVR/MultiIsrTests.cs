@@ -16,10 +16,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class MultiIsrTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("multi-isr");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("multi-isr"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -102,8 +102,7 @@ public class MultiIsrTests
 
     private ArduinoUnoSimulation Sim()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.PortD.SetPinValue(2, true); // button released initially (INT0 requires falling edge)
         return uno;
     }

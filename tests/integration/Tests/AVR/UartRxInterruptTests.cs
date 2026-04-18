@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class UartRxInterruptTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("uart-rx-interrupt");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("uart-rx-interrupt"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -69,10 +69,5 @@ public class UartRxInterruptTests
         uno.Serial.Bytes.Last().Should().Be(0x58, "injected byte should be echoed");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

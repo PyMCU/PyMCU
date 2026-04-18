@@ -13,15 +13,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class InheritanceZcaTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("inheritance-zca");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("inheritance-zca"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunUntilSerial(uno.Serial, "IZ\n", maxMs: 200);
         return uno;
     }

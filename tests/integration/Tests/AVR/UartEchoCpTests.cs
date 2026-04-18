@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class UartEchoCpTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("uart-echo-cp");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("uart-echo-cp"));
 
     [Test]
     public void Boot_SendsReadyBanner()
@@ -73,10 +73,5 @@ public class UartEchoCpTests
         uno.PortB.Should().HavePinLow(5); // D13 = PB5
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

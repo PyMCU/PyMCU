@@ -23,7 +23,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class MmioSpyTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P data-space addresses
     private const int TCCR0A_ADDR = 0x44;
@@ -32,14 +32,13 @@ public class MmioSpyTests
     private const int PORTB_ADDR  = 0x25;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("mmio-spy");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("mmio-spy"));
 
     [Test]
     public void Tccr0a_WrittenExactlyOnce()
     {
         // The firmware writes TCCR0A once (0x83). The hook must fire exactly once.
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         var count = 0;
         uno.Cpu.Mmio.RegisterWrite(TCCR0A_ADDR, (v, o, a, m) => { count++; return false; });
         uno.RunToBreak();
@@ -50,8 +49,7 @@ public class MmioSpyTests
     public void Ocr0a_CapturedValue_Is128()
     {
         // OCR0A is written with value 128 (0x80) for 50% duty cycle.
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         byte capturedValue = 0;
         uno.Cpu.Mmio.RegisterWrite(OCR0A_ADDR, (v, o, a, m) =>
         {
@@ -67,8 +65,7 @@ public class MmioSpyTests
     {
         // Good practice: configure mode (TCCR0A) before enabling the prescaler clock
         // (TCCR0B). The firmware intentionally writes in this order.
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         var writeOrder = new List<string>();
         uno.Cpu.Mmio.RegisterWrite(TCCR0A_ADDR, (v, o, a, m) => { writeOrder.Add("TCCR0A"); return false; });
         uno.Cpu.Mmio.RegisterWrite(TCCR0B_ADDR, (v, o, a, m) => { writeOrder.Add("TCCR0B"); return false; });
@@ -82,8 +79,7 @@ public class MmioSpyTests
     {
         // The firmware drives PORTB[5] high, low, then high again = 3 writes to PORTB.
         // (DDRB is a separate register; PORTB writes are counted independently.)
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         var portBWriteCount = 0;
         uno.Cpu.Mmio.RegisterWrite(PORTB_ADDR, (v, o, a, m) => { portBWriteCount++; return false; });
         uno.RunToBreak();
@@ -96,8 +92,7 @@ public class MmioSpyTests
     {
         // The last PORTB write in the firmware is PORTB[5]=1, so bit 5 (mask 0x20)
         // must be set in the final value captured by the hook.
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         byte lastPortBValue = 0;
         uno.Cpu.Mmio.RegisterWrite(PORTB_ADDR, (v, o, a, m) =>
         {

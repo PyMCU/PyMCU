@@ -16,7 +16,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class TimerCtcTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P memory-mapped addresses
     private const int TCCR1A = 0x80;
@@ -26,7 +26,7 @@ public class TimerCtcTests
     private const int OCR1AH = 0x89;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("timer-ctc");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("timer-ctc"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -106,10 +106,5 @@ public class TimerCtcTests
         ledAfter.Should().NotBe(ledBefore, "LED on PB5 must toggle after first CTC compare match");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

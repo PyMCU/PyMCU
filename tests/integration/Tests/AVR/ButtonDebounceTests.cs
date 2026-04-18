@@ -13,10 +13,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class ButtonDebounceTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("button-debounce");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("button-debounce"));
 
     [Test]
     public void SinglePress_SendsCountOne()
@@ -71,8 +71,7 @@ public class ButtonDebounceTests
 
     private ArduinoUnoSimulation Sim()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.PortD.SetPinValue(2, true); // released
         return uno;
     }

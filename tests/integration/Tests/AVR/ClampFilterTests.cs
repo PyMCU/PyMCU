@@ -15,10 +15,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class ClampFilterTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("clamp-filter");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("clamp-filter"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -127,10 +127,5 @@ public class ClampFilterTests
         uno.Serial.Bytes[before2].Should().Be(126, "hi boundary not clamped");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

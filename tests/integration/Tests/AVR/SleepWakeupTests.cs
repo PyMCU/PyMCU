@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class SleepWakeupTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("sleep-wakeup");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("sleep-wakeup"));
 
     [Test]
     public void Boot_PrintsSleepDemo()
@@ -68,10 +68,5 @@ public class SleepWakeupTests
         uno.Serial.Should().Contain("DONE");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

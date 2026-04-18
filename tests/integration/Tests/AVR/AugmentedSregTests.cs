@@ -37,12 +37,12 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class AugmentedSregTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     private const int GPIOR0_ADDR = 0x3E;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("augmented-sreg");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("augmented-sreg"));
 
     private static void SkipBreaks(ArduinoUnoSimulation uno, int count)
     {
@@ -53,12 +53,7 @@ public class AugmentedSregTests
         }
     }
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     // --- Checkpoint 1: OR  (0x00 | 0x80 = 0x80) ---
 
