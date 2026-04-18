@@ -188,7 +188,8 @@ def run_backend(
 
         if proc.returncode == 2:
             raise RuntimeError(
-                f"Backend license error (exit code 2). Check your license key."
+                f"Backend license error (exit code 2). "
+                f"Run 'pymcu backend check' for details, or set PYMCU_LICENSE_KEY."
             )
         if proc.returncode != 0:
             raise RuntimeError(

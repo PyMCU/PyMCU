@@ -22,8 +22,14 @@ namespace PyMCU.Backend.License;
 public static class LicenseValidator
 {
     // RSA-2048 public key (PEM, base64 body only, no header/footer lines).
-    // Replace with the real key before shipping paid backends.
-    // The matching private key is used server-side to sign JWT tokens at purchase.
+    //
+    // DEVELOPMENT NOTE: This placeholder value is intentional in the open-source
+    // SDK. When the placeholder is detected (see VerifySignature below), signature
+    // verification is skipped so that backend authors can develop and test without
+    // a production key. Free backends (e.g. AVR) call LicenseValidator.Free() and
+    // never reach this code. Paid backends must embed the real RSA public key before
+    // distribution — the CI pipeline for paid repos will replace this value via a
+    // build secret.
     private const string PublicKeyPem =
         "REPLACE_WITH_REAL_RSA2048_PUBLIC_KEY_BASE64_HERE";
 
