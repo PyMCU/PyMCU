@@ -30,87 +30,72 @@ import subprocess
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any
-import shutil as _shutil
-from .base import ExternalToolchain
-from ..core.base_tool import _is_non_interactive, _tool_lock
+from pymcu_toolchain_sdk import ExternalToolchain
+from pymcu_toolchain_sdk import _is_non_interactive, _tool_lock
 from rich.prompt import Confirm
-from rich.console import Console
 
-class GputilsToolchain(ExternalToolchain):
+class AvraToolchain(ExternalToolchain):
     """
-    Concrete strategy for the GNU PIC Utilities (gputils) toolchain.
+    Legacy toolchain: AVRA (Atmel AVR Assembler).
 
-    Binary resolution order:
-      1. System PATH (``gpasm`` already installed via Homebrew / apt).
-      2. Locally cached binary in ~/.pymcu/tools/{platform}/gputils/.
-      3. Download source archive and compile (Linux/macOS).
-         Windows uses a zip archive of pre-built binaries.
+    .. deprecated::
+        AvraToolchain is no longer included in the default factory.
+        Use AvrgasToolchain (GNU AVR binutils, pre-built) for new projects.
+        This class is kept for legacy opt-in only.
 
-    To skip SHA-256 verification (development only), set
-    ``PYMCU_SKIP_HASH_CHECK=1``.
+    Handles Windows binary download and Linux/macOS source compilation.
+    SHA-256 verification is enforced; set PYMCU_SKIP_HASH_CHECK=1 to bypass
+    during development (hashes are not yet populated).
     """
 
     METADATA = {
-        "version": "1.5.2",
-        "description": "GNU PIC Utilities (assembler/linker)",
+        "version": "1.3.0",
+        "description": "AVRA - Assembler for the Atmel AVR microcontroller family",
         "platforms": {
-            # Windows: pre-built zip from SourceForge (no source compilation).
             "win32-x86_64": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils-win32/1.5.2/gputils-win32-1.5.2.zip",
-                # TODO: replace with real SHA-256 once the official archive is
-                # available.  Until then set PYMCU_SKIP_HASH_CHECK=1.
+                "url": "https://downloads.sourceforge.net/project/avra/1.3.0/avra-1.3.0-win32.zip",
+                # TODO: populate real SHA-256.  Set PYMCU_SKIP_HASH_CHECK=1 until then.
                 "hash": "placeholder",
                 "archive_type": "zip",
-                "bin_path": "bin/gpasm.exe",
+                "bin_path": "bin/avra.exe"
             },
-            # Linux x86_64 / aarch64: build from source.
             "linux-x86_64": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
-                # TODO: replace with real SHA-256.
+                "url": "https://downloads.sourceforge.net/project/avra/1.3.0/avra-1.3.0.tar.bz2",
                 "hash": "placeholder",
                 "archive_type": "tar.bz2",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+                "bin_path": "avra-1.3.0/src/avra"
             },
             "linux-arm64": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
+                "url": "https://downloads.sourceforge.net/project/avra/1.3.0/avra-1.3.0.tar.bz2",
                 "hash": "placeholder",
                 "archive_type": "tar.bz2",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+                "bin_path": "avra-1.3.0/src/avra"
             },
-            # macOS: build from source.
             "darwin-x86_64": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
-                "hash": "8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2",
+                "url": "https://downloads.sourceforge.net/project/avra/1.3.0/avra-1.3.0.tar.bz2",
+                "hash": "placeholder",
                 "archive_type": "tar.bz2",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+                "bin_path": "avra-1.3.0/src/avra"
             },
             "darwin-arm64": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
-                "hash": "8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2",
+                "url": "https://downloads.sourceforge.net/project/avra/1.3.0/avra-1.3.0.tar.bz2",
+                "hash": "placeholder",
                 "archive_type": "tar.bz2",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+                "bin_path": "avra-1.3.0/src/avra"
             },
         }
     }
 
     @classmethod
     def supports(cls, chip: str) -> bool:
-        """
-        Checks if the chip belongs to the PIC family (10/12/14/16/17/18).
-        """
         chip_lower = chip.lower()
-        
-        # Generic architecture names
-        if chip_lower in ["baseline", "midrange", "advanced"]:
+        if chip_lower in ["avr"]:
             return True
-        
-        # Regex for PIC families: 
-        # Starts with 'pic', followed by 10/12/14/16/17/18, optional letters (f/lf/c/hv), then digits
-        pattern = r"^pic(10|12|14|16|17|18)[a-z]*\d+\w*$"
+        pattern = r"^at(mega|tiny|xmega|90)[a-z]*\d+\w*$"
         return bool(re.match(pattern, chip_lower))
 
     def get_name(self) -> str:
-        return "gputils"
+        return "avra"
 
     def _get_platform_key(self) -> str:
         import platform as _platform
@@ -125,56 +110,19 @@ class GputilsToolchain(ExternalToolchain):
         key = self._get_platform_key()
         info = self.METADATA["platforms"].get(key)
         if not info:
-            raise RuntimeError(
-                f"gputils has no configuration for platform: {key}.\n"
-                "Install gputils via your package manager "
-                "(brew install gputils  /  sudo apt install gputils)."
-            )
+            raise RuntimeError(f"Avra has no configuration for platform: {key}")
         return info
 
-    @staticmethod
-    def _find_system_gpasm() -> "Path | None":
-        """Return the path to a system-installed gpasm, or None."""
-        found = _shutil.which("gpasm")
-        return Path(found) if found else None
-
     def is_cached(self) -> bool:
-        # System PATH takes priority
-        if self._find_system_gpasm() is not None:
-            return True
         try:
             info = self._get_platform_info()
-            version = self.METADATA["version"]
             local_bin = self._get_tool_dir() / info["bin_path"]
+            version = self.METADATA["version"]
             return local_bin.exists() and self._read_cached_version() == version
         except RuntimeError:
             return False
 
-    def _resolve_binary(self) -> Path:
-        sys_path = self._find_system_gpasm()
-        if sys_path:
-            return sys_path
-        try:
-            info = self._get_platform_info()
-            local_bin = self._get_tool_dir() / info["bin_path"]
-            if local_bin.exists():
-                return local_bin
-        except RuntimeError:
-            pass
-        raise RuntimeError(
-            "gpasm not found on PATH or in local cache.\n"
-            "Install it with:  brew install gputils  or  sudo apt install gputils\n"
-            "or run 'pymcu toolchain install pic' to download it automatically."
-        )
-
     def install(self) -> Path:
-        # If already on system PATH, nothing to do.
-        sys_bin = self._find_system_gpasm()
-        if sys_bin:
-            self.console.print(f"[green]gpasm found on PATH at {sys_bin}[/green]")
-            self._write_cached_version(self.METADATA["version"])
-            return sys_bin
-
         info = self._get_platform_info()
         url = info["url"]
         expected_hash = info["hash"]
@@ -184,13 +132,8 @@ class GputilsToolchain(ExternalToolchain):
         version = self.METADATA["version"]
 
         self.console.print(f"[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
-        self.console.print(
-            f"Tool '{name}' ({desc}) is not on PATH and not in local cache.\n"
-            "[dim]Tip: install gputils via your package manager "
-            "(brew install gputils / sudo apt install gputils) to skip this step.[/dim]"
-        )
+        self.console.print(f"Tool '{name}' ({desc}) is required but not found.")
 
-        from ..core.base_tool import _is_non_interactive
         if _is_non_interactive():
             self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
         elif not Confirm.ask(
@@ -201,14 +144,13 @@ class GputilsToolchain(ExternalToolchain):
         target_dir = self._get_tool_dir()
         if not target_dir.exists():
             target_dir.mkdir(parents=True, exist_ok=True)
-
+            
         filename = url.split("/")[-1]
         download_path = target_dir / filename
 
         with _tool_lock(self._lock_file()):
-            # Re-check after acquiring lock in case another process installed.
             if self.is_cached():
-                return self._resolve_binary()
+                return target_dir / info["bin_path"]
 
             # 1. Download
             self._download_file(url, download_path, f"Downloading {name}...")
@@ -236,10 +178,10 @@ class GputilsToolchain(ExternalToolchain):
             # 3. Extract
             self._extract_archive(download_path, target_dir, archive_type)
 
-            # 4. Compile from source (POSIX platforms only)
+            # 4. Compile from source (POSIX only)
             if sys.platform != "win32":
                 self._compile_from_source(target_dir, name, info["bin_path"])
-
+            
             # Cleanup archive
             if download_path.exists():
                 download_path.unlink()
@@ -249,18 +191,17 @@ class GputilsToolchain(ExternalToolchain):
         return target_dir / info["bin_path"]
 
     def _compile_from_source(self, target_dir: Path, name: str, relative_bin_path: str):
-        """Helper to handle the ./configure && make workflow."""
+        """Helper to handle the make workflow."""
         extracted_items = list(target_dir.iterdir())
         source_dir = None
         for item in extracted_items:
-            if item.is_dir() and (item / "configure").exists():
-                source_dir = item
+            if item.is_dir() and (item / "src").exists():
+                source_dir = item / "src"
                 break
         
         if source_dir:
             self.console.print(f"[bold yellow]Compiling {name} from source (this may take a few minutes)...[/bold yellow]")
             try:
-                subprocess.run(["./configure"], cwd=source_dir, check=True, capture_output=True)
                 subprocess.run(["make", "-j4"], cwd=source_dir, check=True, capture_output=True)
                 self.console.print(f"[green]Compilation successful.[/green]")
                 
@@ -274,32 +215,69 @@ class GputilsToolchain(ExternalToolchain):
                 self.console.print(e.stderr.decode() if e.stderr else str(e))
                 raise RuntimeError(f"Failed to compile {name}.")
 
-    def assemble(self, asm_file: Path, output_file: Optional[Path] = None) -> Path:
-        tool_path = self._resolve_binary()
-        
-        cmd = [str(tool_path), str(asm_file)]
-        
-        # Include directory of the source file (so float.inc next to it is found)
-        cmd.extend(["-I", str(asm_file.parent.resolve())])
-        
-        # Header Include Fix: cached binary layout
-        # Structure: .../gputils-1.5.2/gpasm/gpasm -> header is at .../gputils-1.5.2/header
-        if not self._find_system_gpasm():
+    def link(self, hex_file: Path, chip: str, output_dir: Path):
+        """
+        Convert HEX → ELF using avr-objcopy, then report memory usage via avr-size.
+        Returns (elf_path, size_report) or None if avr-objcopy is not found.
+        """
+        import shutil as sh
+        avr_objcopy = sh.which("avr-objcopy")
+        if not avr_objcopy:
+            return None
+
+        elf_file = output_dir / "firmware.elf"
+        try:
+            subprocess.run(
+                [avr_objcopy, "-I", "ihex", "-O", "elf32-avr",
+                 str(hex_file), str(elf_file)],
+                check=True, capture_output=True
+            )
+        except subprocess.CalledProcessError as e:
+            err = e.stderr.decode() if e.stderr else str(e)
+            self.console.print(f"[yellow]avr-objcopy failed:[/yellow] {err}")
+            return None
+
+        size_output = None
+        avr_size = sh.which("avr-size")
+        if avr_size:
             try:
-                info = self._get_platform_info()
-                local_bin = self._get_tool_dir() / info["bin_path"]
-                header_dir = local_bin.parent.parent / "header"
-                if header_dir.exists() and header_dir.is_dir():
-                    cmd.extend(["-I", str(header_dir)])
-            except RuntimeError:
+                result = subprocess.run(
+                    [avr_size, "-C", f"--mcu={chip}", str(elf_file)],
+                    capture_output=True, text=True
+                )
+                size_output = result.stdout
+            except Exception:
                 pass
+
+        return (elf_file, size_output)
+
+    def assemble(self, asm_file: Path, output_file: Optional[Path] = None) -> Path:
+        info = self._get_platform_info()
+        tool_path = self._get_tool_dir() / info["bin_path"]
+
+        if not tool_path.exists():
+             raise RuntimeError(f"Assembler not found at {tool_path}. Please run install() first.")
+
+        # Determine output path: honour explicit override, else place .hex alongside .asm
+        hex_out = output_file if output_file is not None else asm_file.with_suffix(".hex")
+
+        cmd = [str(tool_path), str(asm_file), "-o", str(hex_out)]
+
+        # Include directory of the source file
+        cmd.extend(["-I", str(asm_file.parent.resolve())])
+
+        # Include standard includes if available
+        # Structure: .../avra-1.3.0/src/avra -> includes is at .../avra-1.3.0/includes
+        includes_dir = tool_path.parent.parent / "includes"
+        if includes_dir.exists() and includes_dir.is_dir():
+            cmd.extend(["-I", str(includes_dir)])
+
+        self.console.print(f"[debug] Assembler: {cmd[0]}", style="dim")
 
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            return asm_file.with_suffix(".hex")
+            return hex_out
         except subprocess.CalledProcessError as e:
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
             self.console.print(f"[red]Assembler failed:[/red]\n{err}")
-            raise RuntimeError("Assembly failed.")
-
-
+            raise RuntimeError(f"Assembly failed.\n{err}")

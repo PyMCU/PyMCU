@@ -312,6 +312,15 @@ Highest-value features not yet implemented, in priority order.
 | `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API |
 | `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
 
+### CLI / Driver
+
+| Feature | Notes |
+|---------|-------|
+| Plugin-based toolchain system | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
+| `pymcu-toolchain-sdk` | Standalone SDK package with base classes and `ToolchainPlugin` ABC |
+| `pymcu-toolchain-avr` | AVR toolchain plugin (GNU AVR binutils); decoupled from core `pymcu` |
+| `pymcu-toolchain-pic` | PIC toolchain plugin (GNU PIC Utilities); decoupled from core `pymcu` |
+
 ---
 
 ## Not Planned

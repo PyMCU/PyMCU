@@ -75,6 +75,8 @@ jobs:
       - name: Create virtual environment and install dependencies
         run: |
           uv venv .venv
+          uv pip install --python .venv ./extensions/pymcu-toolchain-sdk
+          uv pip install --python .venv ./extensions/pymcu-toolchain-avr
           uv pip install --python .venv -e .
           uv pip install --python .venv ./lib
           uv pip install --python .venv ./external/pymcu-micropython
@@ -138,6 +140,9 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer
+          pip install ./extensions/pymcu-toolchain-sdk
+          pip install ./extensions/pymcu-toolchain-avr
+          pip install ./extensions/pymcu-toolchain-pic
 
       - name: Run driver tests
         run: pytest tests/driver/ -v --tb=short

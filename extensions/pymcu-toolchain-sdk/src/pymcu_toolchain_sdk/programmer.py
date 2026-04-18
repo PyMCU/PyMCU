@@ -1,5 +1,5 @@
 # -----------------------------------------------------------------------------
-# PyMCU CLI Driver
+# PyMCU Toolchain SDK
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -24,7 +24,27 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-# Compatibility shim: all implementations have moved to pymcu-toolchain-sdk.
-# Internal driver code that imports from here continues to work unchanged.
+from abc import abstractmethod
+from pathlib import Path
+from .base_tool import CacheableTool
 
-from pymcu_toolchain_sdk import HardwareProgrammer  # noqa: F401
+
+class HardwareProgrammer(CacheableTool):
+    """
+    Abstract base class for hardware programmers/debuggers (e.g., pk2cmd, picotool, avrdude).
+    Inherits caching and installation logic from CacheableTool.
+    """
+
+    @abstractmethod
+    def flash(self, hex_file: Path, chip: str, *, port: str | None = None, baud: int | None = None) -> None:
+        """
+        Flashes the firmware to the target chip.
+
+        Args:
+            hex_file: Path to the Intel HEX firmware file.
+            chip: Chip identifier (e.g. "atmega328p", "pic16f84a").
+            port: Serial port to use (e.g. "/dev/cu.usbmodem14101"). Optional;
+                  programmers that auto-select their device may ignore it.
+            baud: Baud rate for communication. Optional; defaults to programmer default.
+        """
+        pass

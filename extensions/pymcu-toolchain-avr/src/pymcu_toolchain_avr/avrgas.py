@@ -58,7 +58,7 @@ from typing import Optional
 from rich.console import Console
 from rich.prompt import Confirm
 
-from .base import ExternalToolchain
+from pymcu_toolchain_sdk import ExternalToolchain
 
 
 # Pre-built avr-gcc toolchain by Zak Kemble (MIT-compatible, self-contained)
@@ -270,7 +270,7 @@ class AvrgasToolchain(ExternalToolchain):
         no system package manager is required.  The release is fetched from:
         https://github.com/ZakKemble/avr-gcc-build/releases
         """
-        from ..core.base_tool import _is_non_interactive, _tool_lock
+        from pymcu_toolchain_sdk import _is_non_interactive, _tool_lock
         try:
             info = self._platform_info()
         except RuntimeError as exc:
@@ -437,7 +437,6 @@ class AvrgasToolchain(ExternalToolchain):
         obj_out = asm_file.with_suffix(".o")
         avr_as = self._find_bin("avr-as")
 
-        # Translate AVRA-specific syntax to GNU AS before assembling
         # Translate AVRA-specific syntax to GNU AS before assembling
         src = asm_file.read_text()
         translated = self._avra_to_gnuas(src)
