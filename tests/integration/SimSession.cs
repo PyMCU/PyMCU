@@ -1,3 +1,4 @@
+using System.Reflection;
 using Avr8Sharp.TestKit.Boards;
 
 namespace PyMCU.IntegrationTests;
@@ -25,11 +26,25 @@ namespace PyMCU.IntegrationTests;
 ///         callbacks from the previous test cannot fire into the next test).</item>
 ///   <item>Reset <c>Cpu.Cycles</c> to 0 so <c>RunMilliseconds</c> measures from the
 ///         start of the new test.</item>
+///   <item>Zero the EEPROM peripheral's internal write-timing counters
+///         (<c>_writeCompleteCycles</c> / <c>_writeEnabledCycles</c>) so that a
+///         stale value from the previous test cannot cause the EEPROM write
+///         callback to silently skip the write and leave <c>EEPE</c> stuck high.</item>
 ///   <item>Clear the UART serial-probe receive buffer.</item>
 /// </list>
 /// </remarks>
 public sealed class SimSession
 {
+    private static readonly FieldInfo? EepromWriteCompleteCycles =
+        typeof(ArduinoUnoSimulation).Assembly
+            .GetType("AVR8Sharp.Core.Peripherals.AvrEeprom")
+            ?.GetField("_writeCompleteCycles", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private static readonly FieldInfo? EepromWriteEnabledCycles =
+        typeof(ArduinoUnoSimulation).Assembly
+            .GetType("AVR8Sharp.Core.Peripherals.AvrEeprom")
+            ?.GetField("_writeEnabledCycles", BindingFlags.NonPublic | BindingFlags.Instance);
+
     private readonly ArduinoUnoSimulation _sim;
     private readonly byte[] _dataSnapshot;
 
@@ -70,7 +85,19 @@ public sealed class SimSession
         // 4. Reset the cycle counter so RunMilliseconds(ms) measures from 0.
         _sim.Cpu.Cycles = 0;
 
-        // 5. Clear the UART receive buffer captured by the serial probe.
+        // 5. Reset EEPROM peripheral timing state.  Cpu.Reset() zeroes Cpu.Cycles but
+        //    AvrEeprom keeps its own _writeCompleteCycles / _writeEnabledCycles counters.
+        //    If a previous test left a stale _writeCompleteCycles > 0, the EEPROM write
+        //    callback sees (Cycles=0) < _writeCompleteCycles and silently skips starting
+        //    the new write while leaving EEPE=1 in EECR with no clock event to clear it —
+        //    causing the firmware's polling loop to spin forever.
+        if (_sim.Eeprom is not null)
+        {
+            EepromWriteCompleteCycles?.SetValue(_sim.Eeprom, 0u);
+            EepromWriteEnabledCycles?.SetValue(_sim.Eeprom, 0u);
+        }
+
+        // 6. Clear the UART receive buffer captured by the serial probe.
         _sim.Serial.Clear();
 
         return _sim;
