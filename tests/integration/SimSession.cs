@@ -27,6 +27,13 @@ namespace PyMCU.IntegrationTests;
 ///         start of the new test.</item>
 ///   <item>Clear the UART serial-probe receive buffer.</item>
 /// </list>
+/// <para>
+/// <b>Note:</b> <c>SimSession</c> is not suitable for firmware that relies on EEPROM
+/// peripheral state across tests.  <c>AvrEeprom</c> keeps internal write-timing counters
+/// (<c>_writeCompleteCycles</c> / <c>_writeEnabledCycles</c>) that are not reset by
+/// <c>Cpu.Reset()</c>.  Fixtures that exercise EEPROM should create a fresh
+/// <see cref="ArduinoUnoSimulation"/> per test instead (see <c>EepromTests</c>).
+/// </para>
 /// </remarks>
 public sealed class SimSession
 {
