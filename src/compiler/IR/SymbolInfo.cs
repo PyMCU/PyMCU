@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
