@@ -115,8 +115,12 @@ public record JumpIfBitClear(Val Source, int Bit, string Target) : Instruction;
 // Augmented assignment: target op= operand (in-place modification)
 public record AugAssign(BinaryOp Op, Val Target, Val Operand) : Instruction;
 
-// Inline assembly
-public record InlineAsm(string Code) : Instruction;
+// Inline assembly.
+// When Operands is non-null, the code string contains %0, %1, ... placeholders
+// that are substituted with registers assigned to the corresponding operands by
+// the backend.  All operands are treated as read-write (loaded before, stored after).
+// Maximum 4 operands (%0–%3).  Only uint8 (single-register) operands are supported.
+public record InlineAsm(string Code, IList<Val>? Operands = null) : Instruction;
 
 // Flash-resident string send via LPM+Z loop (AVR only).
 public record UARTSendString(string Text, string EndStr) : Instruction;
@@ -126,6 +130,13 @@ public record DebugLine(int Line, string Text, string SourceFile) : Instruction;
 
 // Variable-index array load: dst = array_name[index]
 public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType, int Count) : Instruction;
+
+// ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
+public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;
+
+// Flash-resident read-only byte array (placed in .text / PROGMEM via const[uint8[N]]).
+// Bytes holds the literal initializer values; AVR codegen emits a .db table in flash.
+public record FlashData(string Name, List<int> Bytes) : Instruction;
 
 // Variable-index array store: array_name[index] = src
 public record ArrayStore(string ArrayName, Val Index, Val Src, DataType ElemType, int Count) : Instruction;

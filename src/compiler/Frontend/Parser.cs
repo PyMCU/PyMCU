@@ -140,6 +140,28 @@ public class Parser
             {
                 var inner = Consume(TokenType.Identifier, "Expected inner type");
                 typeStr += inner.Value;
+
+                // Handle nested bracket: e.g. const[uint8[4]] or const[str]
+                if (Match(TokenType.LBracket))
+                {
+                    typeStr += "[";
+                    if (Check(TokenType.Identifier))
+                    {
+                        var innerType = Consume(TokenType.Identifier, "Expected inner type name");
+                        typeStr += innerType.Value;
+                    }
+                    else if (Check(TokenType.Number))
+                    {
+                        var innerSize = Consume(TokenType.Number, "Expected array size");
+                        typeStr += innerSize.Value;
+                    }
+                    else
+                    {
+                        Error("Expected type name or array size inside '['");
+                    }
+                    Consume(TokenType.RBracket, "Expected ']'");
+                    typeStr += "]";
+                }
             }
             else if (Check(TokenType.Number))
             {

@@ -460,7 +460,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     avr_math_path = math_lib_path / "avr"
                     
                     # List of runtime functions to check
-                    runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16"]
+                    runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32"]
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
                     
                     if needed_funcs:
@@ -469,7 +469,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                             "__div8": "div.S",
                             "__mod8": "div.S",
                             "__mul8": "mul.S",
-                            "__div16": "div16.S"
+                            "__div16": "div16.S",
+                            "__mod16": "div16.S",
+                            "__div32": "div32.S",
+                            "__mod32": "div32.S",
                         }
                         math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
                         included_files = set()
@@ -575,10 +578,6 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = gas_tc.elf_to_hex(elf_file)
-                    _diag_log(f"avr-as: Generated hex_file: {hex_file}")
-                    _diag_log(f"avr-as: hex_file exists: {hex_file.exists() if hex_file else 'None'}")
-                    if hex_file and hex_file.exists():
-                        _diag_log(f"avr-as: hex_file size: {hex_file.stat().st_size} bytes")
 
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)

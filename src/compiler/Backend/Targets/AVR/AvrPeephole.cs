@@ -143,6 +143,14 @@ public static class AvrPeephole
 
                 if (current.Type != AvrAsmLine.LineType.Instruction)
                 {
+                    // Raw inline assembly may modify any register — invalidate
+                    // all alias tracking so that subsequent MOV/LDI instructions
+                    // are not incorrectly eliminated as redundant.
+                    if (current.Type == AvrAsmLine.LineType.Raw)
+                    {
+                        for (int k = 0; k < 32; ++k)
+                            aliases[k] = $"raw_{modCtr++}";
+                    }
                     next.Add(current);
                     continue;
                 }

@@ -276,7 +276,32 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
-## v0.9 — Next Tier
+## v0.9 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `const[uint8[N]]` PROGMEM arrays | Global flash-resident byte lookup tables; accessed via `LPM Z` instruction |
+| Inline ASM register constraints `%N` | `asm("LDI %0, 42", var)` — `%0`–`%3` substituted with scratch registers R16–R19 |
+
+### Compiler
+
+| Feature | Notes |
+|---------|-------|
+| Signed 16-bit multiplication (`int16 * int16`) | Uses `MULSU` for cross-product terms; matches avr-gcc output |
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| `millis()` / `micros()` elapsed-time counter | Timer0 overflow ISR at prescaler 64; atomic 32-bit read; 1024 µs / overflow |
+| `SoftI2C` bit-bang I2C | GPIO open-drain emulation; `start`, `stop`, `write`, `read`, `write_to`, `write_bytes`, `read_from`, `ping` |
+| `I2C.write_bytes(addr, buf, n)` multi-byte | Sends START + SLA+W + N data bytes + STOP in one call |
+
+---
+
+## v0.10 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
 
@@ -286,16 +311,16 @@ These are the highest-value features not yet implemented, in priority order.
 |---------|--------|-----|
 | Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
 | `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
-| `const uint8[N]` (PROGMEM arrays) | ~3h | Read-only lookup tables in flash; `PROGMEM` + `pgm_read_byte` |
+| `const uint8[N]` (PROGMEM arrays) | ~3h | ✅ Implemented in v0.9 |
 
 ### HAL
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| `SoftI2C` bit-bang | ~3h | I2C on arbitrary pins; no hardware TWI dependency |
-| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | Send N bytes in one transaction; currently single-byte only |
+| `SoftI2C` bit-bang | ~3h | ✅ Implemented in v0.9 |
+| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | ✅ Implemented in v0.9 as `I2C.write_bytes` |
 | `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| Timer `millis()` / `micros()` | ~4h | Elapsed-time counter via Timer0 overflow accumulation |
+| Timer `millis()` / `micros()` | ~4h | ✅ Implemented in v0.9 |
 | Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
 | `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |
 
