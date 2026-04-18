@@ -33,6 +33,7 @@ from pathlib import Path
 import tomlkit
 import typer
 import os
+import sys
 import shutil
 import importlib.util
 from rich.console import Console
@@ -43,6 +44,15 @@ from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..core.compiler import PyMCUCompiler
 
 console = Console()
+
+# CI Diagnostic logger - always print to stderr for visibility
+import sys as _sys_for_diag
+def _diag_log(msg: str):
+    """Always log to stderr for CI visibility (NUnit doesn't capture stdout for failed tests)"""
+    print(f"[PYMCU_BUILD_DIAG] {msg}", file=_sys_for_diag.stderr, flush=True)
+    # Also to stdout for normal verbose mode
+    if os.environ.get("PYMCU_VERBOSE") == "1":
+        print(f"[PYMCU_BUILD_DIAG] {msg}", flush=True)
 
 # ---------------------------------------------------------------------------
 # Compiler phase → progress mapping
@@ -177,27 +187,60 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     return total
 
 def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
+    # Diagnostic logging at start of build - ALWAYS log to stderr for CI visibility
+    _diag_log("=== BUILD COMMAND STARTED ===")
+    _diag_log(f"Working directory: {os.getcwd()}")
+    _diag_log(f"sys.executable: {sys.executable}")
+    _diag_log(f"sys.prefix: {sys.prefix}")
+    _diag_log(f"sys.version: {sys.version}")
+    _diag_log(f"sys.path: {sys.path}")
+    _diag_log(f"VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}")
+    _diag_log(f"PATH: {os.environ.get('PATH', 'NOT SET')}")
+    _diag_log(f"PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}")
+
+    # Diagnostic logging at start of build
+    is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+    if is_verbose:
+        console.print("[debug] === Build command started ===", style="dim cyan")
+        console.print(f"[debug] Current working directory: {os.getcwd()}", style="dim")
+        console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
+        console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
+        console.print(f"[debug] VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
+        console.print(f"[debug] PATH: {os.environ.get('PATH', 'NOT SET')}", style="dim")
+
     pyproject_path = Path("pyproject.toml")
+    _diag_log(f"Looking for pyproject.toml at: {pyproject_path.absolute()}")
+    _diag_log(f"pyproject.toml exists: {pyproject_path.exists()}")
     if not pyproject_path.exists():
+        _diag_log("ERROR: pyproject.toml NOT FOUND")
         console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
         raise typer.Exit(code=1)
 
     try:
+        _diag_log("Reading pyproject.toml...")
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
+        _diag_log("pyproject.toml loaded successfully")
         pymcu_config = config.get("tool", {}).get("pymcu", {})
+        _diag_log(f"pymcu_config keys: {list(pymcu_config.keys())}")
+
         target_key   = pymcu_config.get("target", None)
+        _diag_log(f"target_key from config: {target_key}")
+
         # Compatibility: accept legacy "chip" key with a deprecation warning
         if target_key is None and pymcu_config.get("chip"):
             target_key = pymcu_config.get("chip")
+            _diag_log(f"Using legacy 'chip' key: {target_key}")
             console.print(
                 "[bold yellow]Deprecation:[/bold yellow] 'chip' in [tool.pymcu] is deprecated. "
                 "Rename it to 'target'."
             )
         board_key    = pymcu_config.get("board", None)
+        _diag_log(f"board_key from config: {board_key}")
         freq         = pymcu_config.get("frequency", 4000000)
         src_path     = pymcu_config.get("sources", "src")
+        _diag_log(f"freq: {freq}, src_path: {src_path}")
 
         # board and target are mutually exclusive
         if target_key and board_key:
@@ -510,6 +553,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     # 2d. ELF → Intel HEX
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = ffi_tc.elf_to_hex(elf_file)
+                    _diag_log(f"FFI: Generated hex_file: {hex_file}")
+                    _diag_log(f"FFI: hex_file exists: {hex_file.exists() if hex_file else 'None'}")
+                    if hex_file and hex_file.exists():
+                        _diag_log(f"FFI: hex_file size: {hex_file.stat().st_size} bytes")
 
                     # Move ELF to dist/debug/
                     debug_dir = output_dir / "debug"
@@ -548,6 +595,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     for _pass in range(8):
                         try:
                             hex_file = toolchain.assemble(output_file)
+                            _diag_log(f"avra: Generated hex_file on pass {_pass}: {hex_file}")
+                            _diag_log(f"avra: hex_file exists: {hex_file.exists() if hex_file else 'None'}")
+                            if hex_file and hex_file.exists():
+                                _diag_log(f"avra: hex_file size: {hex_file.stat().st_size} bytes")
                             break
                         except RuntimeError as e:
                             err_str = str(e)
@@ -638,8 +689,27 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             
             progress.update(build_task, description="Done!", completed=100)
 
+        _diag_log(f"Build completed! Output directory: {output_dir}")
+        _diag_log(f"Output directory exists: {output_dir.exists()}")
+        if output_dir.exists():
+            files = list(output_dir.glob("*"))
+            _diag_log(f"Files in output directory ({len(files)}):")
+            for f in files:
+                _diag_log(f"  - {f.name} ({f.stat().st_size} bytes)")
+
+            # Explicitly check for firmware.hex
+            hex_file = output_dir / "firmware.hex"
+            _diag_log(f"firmware.hex exists: {hex_file.exists()}")
+            if hex_file.exists():
+                _diag_log(f"firmware.hex size: {hex_file.stat().st_size} bytes")
+        else:
+            _diag_log(f"ERROR: Output directory does not exist!")
+
         console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
 
     except Exception as e:
+        _diag_log(f"BUILD FAILED with exception: {type(e).__name__}: {e}")
+        import traceback
+        _diag_log(f"Traceback:\n{traceback.format_exc()}")
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1)

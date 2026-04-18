@@ -20,7 +20,7 @@ from pymcu.types import uint8, uint16
 from pymcu.boards.arduino_uno import D2, LED_BUILTIN
 from pymcu.hal.gpio import Pin
 from pymcu.hal.uart import UART
-import time
+from pymcu.time import delay_ms
 from dht11 import DHT11
 
 
@@ -48,4 +48,4 @@ def main():
             print("H:", sensor.humidity, " T:", sensor.temperature, sep="")
             led.high()
 
-        time.sleep_ms(2000)
+        delay_ms(2000)
