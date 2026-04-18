@@ -35,7 +35,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class PtrRwRoundtripTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     private const int GPIOR0_ADDR = 0x3E;
     private const int GPIOR1_ADDR = 0x4A;
@@ -43,20 +43,18 @@ public class PtrRwRoundtripTests
     private const int OCR1A_ADDR  = 0x88;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("ptr-rw-roundtrip");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("ptr-rw-roundtrip"));
 
     private ArduinoUnoSimulation BootCp1()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }
 
     private ArduinoUnoSimulation BootCp2()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         uno.RunInstructions(1); // step over BREAK at cp1
         uno.RunToBreak();       // arrive at cp2

@@ -12,10 +12,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class Uint16MathTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("uint16-math");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("uint16-math"));
 
     [Test]
     public void AllTests_Pass()
@@ -43,10 +43,5 @@ public class Uint16MathTests
         uno.Serial.Should().ContainLine("DONE");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

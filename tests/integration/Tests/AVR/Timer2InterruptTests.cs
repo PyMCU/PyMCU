@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class Timer2InterruptTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("timer2-interrupt");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("timer2-interrupt"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -59,10 +59,5 @@ public class Timer2InterruptTests
         tCount.Should().BeGreaterThanOrEqualTo(2, "two Timer2 overflow groups should fire within 2.5 s");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

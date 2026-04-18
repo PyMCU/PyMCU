@@ -28,7 +28,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class DeepCallsTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P data-space addresses
     private const int GPIOR0_ADDR = 0x3E;
@@ -36,12 +36,11 @@ public class DeepCallsTests
     private const int GPIOR2_ADDR = 0x4B;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("deep-calls");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("deep-calls"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }

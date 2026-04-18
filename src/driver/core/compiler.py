@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -31,6 +26,7 @@
 
 import sys
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from rich.console import Console
@@ -51,43 +47,45 @@ class PyMCUCompiler:
         return Path(__file__).parent.parent 
 
     def get_compiler_path(self) -> Path:
-        # Standard lookup logic
         # compiler.py is in src/driver/core/
         # toolchain.py was in src/driver/
         # Compiler usually sits near the package root or in bin/
         
-        # We'll search relative to src/driver (parent of this file's dir)
         base_path = self._get_start_path() 
         
         candidates = ["pymcuc"]
         if sys.platform == "win32":
             candidates.insert(0, "pymcuc.exe")
 
-        # 1. Check adjacent (standard wheel layout)
+        # 1. Check adjacent to src/driver/ (standard wheel layout)
         for name in candidates:
             local_compiler = base_path / name
-            if local_compiler.exists(): return local_compiler
-            
-            # Check in bin/ subdirectory
+            if local_compiler.exists():
+                return local_compiler
             bin_compiler = base_path / "bin" / name
-            if bin_compiler.exists(): return bin_compiler
+            if bin_compiler.exists():
+                return bin_compiler
 
-        # 2. Development environment fallbacks (build/bin)
-        project_root = base_path.parent.parent # If base is src/driver -> project is src/../
-        for d in ["build/bin", "cmake-build-debug/bin", "cmake-build-release/bin"]:
-             for name in candidates:
-                p = project_root / d / name
-                if p.exists(): return p
-            
-        return Path("pymcuc") # Fallback to PATH
+        # 2. Development environment fallback (dotnet publish target)
+        project_root = base_path.parent.parent
+        for name in candidates:
+            p = project_root / "build" / "bin" / name
+            if p.exists():
+                return p
+
+        # 3. System PATH
+        which_result = shutil.which("pymcuc")
+        if which_result:
+            return Path(which_result)
+
+        return Path("pymcuc")  # Last-resort relative fallback
 
     def get_stdlib_path(self, verbose: bool = False) -> str:
         """
         Resolves the PyMCU Standard Library path.
         """
+        is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
         try:
-            # Diagnostic for debugging import failure
-            is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
             if is_verbose:
                 self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
                 self.console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
@@ -103,15 +101,16 @@ class PyMCUCompiler:
             if hasattr(pymcu, "__file__") and pymcu.__file__:
                 p = Path(pymcu.__file__).parent / "chips"
                 if p.is_dir():
-                    # Return the package directory itself
                     return str(Path(pymcu.__file__).parent)
                 elif is_verbose:
                     self.console.print(f"[debug] chips directory not found at: {p}", style="yellow")
         except ImportError as e:
-            self.console.print(f"[debug] Failed to import pymcu: {e}", style="red")
-            self.console.print(f"[debug] sys.path was: {sys.path}", style="red")
+            if is_verbose:
+                self.console.print(f"[debug] Failed to import pymcu: {e}", style="dim")
+                self.console.print(f"[debug] sys.path was: {sys.path}", style="dim")
         except Exception as e:
-            self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="red")
+            if is_verbose:
+                self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
     def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None):

@@ -15,10 +15,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class CallbacksTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("callbacks");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("callbacks"));
 
     [Test]
     public void Boot_SendsCallbacksBanner()
@@ -55,10 +55,5 @@ public class CallbacksTests
         passBytes[2].Should().Be(254, "invert(1) = 0xFF ^ 1 = 254");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

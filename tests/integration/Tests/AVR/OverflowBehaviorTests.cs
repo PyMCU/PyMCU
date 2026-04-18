@@ -32,15 +32,14 @@ public class OverflowBehaviorTests
     private const int Ocr0B = 0x48;
     private const int Ocr1AH = 0x89;
 
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("overflow-behavior");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("overflow-behavior"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }

@@ -13,10 +13,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class ShiftRegisterTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("shift-register");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("shift-register"));
 
     [Test]
     public void FirstPattern_Is0x01()
@@ -56,10 +56,5 @@ public class ShiftRegisterTests
             "PB2 should be configured as output");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

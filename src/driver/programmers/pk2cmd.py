@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -29,6 +24,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import os
 import sys
 import subprocess
 from pathlib import Path
@@ -80,7 +76,8 @@ class Pk2cmdProgrammer(HardwareProgrammer):
         try:
             info = self._get_platform_info()
             local_bin = self._get_tool_dir() / info["bin_path"]
-            return local_bin.exists()
+            version = self.METADATA["version"]
+            return local_bin.exists() and self._read_cached_version() == version
         except RuntimeError:
             return False
 
@@ -93,9 +90,12 @@ class Pk2cmdProgrammer(HardwareProgrammer):
 
         self.console.print(f"[bold cyan]PyMCU Hardware Manager[/bold cyan]")
         self.console.print(f"Programmer '{name}' ({desc}) is required but not found locally.")
-        
-        if not Confirm.ask(f"Do you want to download and install it automatically?", default=True):
-             raise RuntimeError(f"Installation of {name} aborted by user.")
+
+        from ..core.base_tool import _is_non_interactive, _tool_lock
+        if _is_non_interactive():
+            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
+        elif not Confirm.ask("Do you want to download and install it automatically?", default=True):
+            raise RuntimeError(f"Installation of {name} aborted by user.")
 
         target_dir = self._get_tool_dir()
         if not target_dir.exists():
@@ -104,29 +104,42 @@ class Pk2cmdProgrammer(HardwareProgrammer):
         filename = url.split("/")[-1]
         download_path = target_dir / filename
 
-        # 1. Download
-        self._download_file(url, download_path, f"Downloading {name}...")
+        with _tool_lock(self._lock_file()):
+            if self.is_cached():
+                return target_dir / info["bin_path"]
 
-        # 2. Verify (Strict)
-        self.console.print("Verifying integrity...", end="")
-        if not self.verify_sha256(download_path, expected_hash):
-             self.console.print(" [bold red]FAILED[/bold red]")
-             if download_path.exists():
+            # 1. Download
+            self._download_file(url, download_path, f"Downloading {name}...")
+
+            # 2. SHA-256 Verification
+            skip_hash = os.environ.get("PYMCU_SKIP_HASH_CHECK") == "1"
+            if expected_hash and expected_hash not in ("placeholder", "PLACEHOLDER"):
+                self.console.print("Verifying integrity...", end="")
+                if not self.verify_sha256(download_path, expected_hash):
+                    self.console.print(" [bold red]FAILED[/bold red]")
+                    if download_path.exists():
+                        download_path.unlink()
+                    raise RuntimeError(f"SHA-256 verification failed for {filename}.")
+                self.console.print(" [green]OK[/green]")
+            elif not skip_hash:
+                self.console.print(
+                    "[yellow]Warning: No SHA-256 hash configured for this platform. "
+                    "Set PYMCU_SKIP_HASH_CHECK=1 to suppress this warning.[/yellow]"
+                )
+
+            # 3. Extract
+            self._extract_archive(download_path, target_dir, info.get("archive_type"))
+            
+            # 4. Permissions (Linux/Mac)
+            if sys.platform != "win32":
+                bin_path = target_dir / info["bin_path"]
+                if bin_path.exists():
+                    bin_path.chmod(0o755)
+            
+            if download_path.exists():
                 download_path.unlink()
-             raise RuntimeError(f"SHA-256 verification failed for {filename}.")
-        self.console.print(" [green]OK[/green]")
 
-        # 3. Extract
-        self._extract_archive(download_path, target_dir, info.get("archive_type"))
-        
-        # 4. Permissions (Linux/Mac)
-        if sys.platform != "win32":
-            bin_path = target_dir / info["bin_path"]
-            if bin_path.exists():
-                bin_path.chmod(0o755)
-        
-        if download_path.exists():
-            download_path.unlink()
+            self._write_cached_version(self.METADATA["version"])
 
         return target_dir / info["bin_path"]
 

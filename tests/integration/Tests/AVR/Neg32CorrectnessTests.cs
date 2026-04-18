@@ -38,15 +38,14 @@ public class Neg32CorrectnessTests
     private const int Ocr1AH = 0x89;
     private const int Ocr1BL = 0x8A;
 
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("neg32-correctness");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("neg32-correctness"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunToBreak();
         return uno;
     }

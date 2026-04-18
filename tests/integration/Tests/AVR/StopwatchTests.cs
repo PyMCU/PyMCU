@@ -15,10 +15,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class StopwatchTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("stopwatch");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("stopwatch"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -130,8 +130,7 @@ public class StopwatchTests
 
     private ArduinoUnoSimulation Sim()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.PortD.SetPinValue(2, true); // INT0 button released
         uno.PortD.SetPinValue(3, true); // INT1 button released
         return uno;

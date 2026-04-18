@@ -15,13 +15,13 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class NeoPixelTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P DDRD data-space address (controls pin direction for port D)
     private const int DDRD = 0x2A;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("neopixel");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("neopixel"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -85,10 +85,5 @@ public class NeoPixelTests
         uno.Serial.Bytes[before + 6].Should().Be(0, "phase wraps back to 0 after 3 colors");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

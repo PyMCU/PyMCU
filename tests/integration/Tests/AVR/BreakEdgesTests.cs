@@ -26,7 +26,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class BreakEdgesTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P data-space addresses
     private const int GPIOR0_ADDR = 0x3E;
@@ -34,7 +34,7 @@ public class BreakEdgesTests
     private const int GPIOR2_ADDR = 0x4B;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("break-edges");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("break-edges"));
 
     /// <summary>Advances the simulation through N BREAK checkpoints.</summary>
     private static void SkipBreaks(ArduinoUnoSimulation uno, int count)
@@ -46,12 +46,7 @@ public class BreakEdgesTests
         }
     }
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     [Test]
     public void Break1_PinHigh_Gpior0HasMagicByte()

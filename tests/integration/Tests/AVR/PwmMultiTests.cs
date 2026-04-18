@@ -16,7 +16,7 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class PwmMultiTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P data-space addresses
     private const int TCCR0A = 0x44;
@@ -30,7 +30,7 @@ public class PwmMultiTests
     private const int OCR2A  = 0xB3;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("pwm-multi");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("pwm-multi"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -113,10 +113,5 @@ public class PwmMultiTests
         oa100.Should().BeGreaterThan(oa0, "OCR0A increases as duty ramps up");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

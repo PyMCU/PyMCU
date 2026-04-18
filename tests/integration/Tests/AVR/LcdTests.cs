@@ -14,14 +14,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class LcdTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     // ATmega328P DDR register data-space addresses
     private const int DDRD = 0x2A;  // Port D direction: PD4=bit4, PD5=bit5, PD6=bit6, PD7=bit7
     private const int DDRB = 0x24;  // Port B direction: PB0=bit0, PB1=bit1
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("lcd");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("lcd"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -60,10 +60,5 @@ public class LcdTests
         (ddrb & 0x03).Should().Be(0x03, "DDRB bits 0-1 (PB0=D6, PB1=D7) must be set as outputs");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

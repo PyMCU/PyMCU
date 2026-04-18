@@ -13,10 +13,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class MultiPinTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("multi-pin");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("multi-pin"));
 
     [Test]
     public void Initial_Step0_PB0IsHigh()
@@ -82,8 +82,7 @@ public class MultiPinTests
 
     private ArduinoUnoSimulation Sim()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.PortD.SetPinValue(2, true); // A released
         uno.PortD.SetPinValue(3, true); // B released
         return uno;

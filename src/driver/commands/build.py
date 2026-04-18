@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -36,23 +31,23 @@ import os
 import sys
 import shutil
 import importlib.util
+from typing import List, Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..core.compiler import PyMCUCompiler
+from ..core.boards import BOARD_CHIPS
 
 console = Console()
 
-# CI Diagnostic logger - always print to stderr for visibility
+# CI Diagnostic logger — active only when --verbose / PYMCU_VERBOSE=1.
 import sys as _sys_for_diag
-def _diag_log(msg: str):
-    """Always log to stderr for CI visibility (NUnit doesn't capture stdout for failed tests)"""
-    print(f"[PYMCU_BUILD_DIAG] {msg}", file=_sys_for_diag.stderr, flush=True)
-    # Also to stdout for normal verbose mode
-    if os.environ.get("PYMCU_VERBOSE") == "1":
-        print(f"[PYMCU_BUILD_DIAG] {msg}", flush=True)
+def _diag_log(msg: str, verbose: bool = False):
+    """Log a diagnostic message to stderr when verbose mode is active."""
+    if verbose or os.environ.get("PYMCU_VERBOSE") == "1":
+        print(f"[PYMCU_BUILD_DIAG] {msg}", file=_sys_for_diag.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # Compiler phase → progress mapping
@@ -136,16 +131,10 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
 
 
 
-# When pyproject.toml uses  board = "arduino_uno"  instead of  chip = "...",
-# the chip is derived from this dict.  Extension packages may supplement it
-# via a board_chips.py module (see _load_extension_board_chips()).
+# BOARD_CHIPS is imported from core.boards to avoid duplication with flash.py.
+# Extension packages may supplement it via a board_chips.py module
+# (see _load_extension_board_chips()).
 # ---------------------------------------------------------------------------
-BOARD_CHIPS: dict[str, str] = {
-    "arduino_uno":   "atmega328p",
-    "arduino_nano":  "atmega328p",
-    "arduino_mega":  "atmega2560",
-    "arduino_micro": "atmega32u4",
-}
 
 
 def _load_extension_board_chips(flavor: str) -> dict[str, str]:
@@ -181,25 +170,30 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
                 rec_len  = int(line[1:3], 16)
                 rec_type = int(line[7:9], 16)
                 if rec_type == 0x00:   # data record
-                    total += rec_len
+                    total = total + rec_len
     except Exception:
         pass
     return total
 
-def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging")):
-    # Diagnostic logging at start of build - ALWAYS log to stderr for CI visibility
-    _diag_log("=== BUILD COMMAND STARTED ===")
-    _diag_log(f"Working directory: {os.getcwd()}")
-    _diag_log(f"sys.executable: {sys.executable}")
-    _diag_log(f"sys.prefix: {sys.prefix}")
-    _diag_log(f"sys.version: {sys.version}")
-    _diag_log(f"sys.path: {sys.path}")
-    _diag_log(f"VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}")
-    _diag_log(f"PATH: {os.environ.get('PATH', 'NOT SET')}")
-    _diag_log(f"PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}")
-
-    # Diagnostic logging at start of build
+def build(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
+    stdlib_override: Optional[List[str]] = typer.Option(
+        None, "--stdlib",
+        help="Override stdlib flavor(s) from pyproject.toml (e.g. --stdlib micropython). "
+             "Can be specified multiple times.",
+    ),
+):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
+    _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
+    _diag_log(f"Working directory: {os.getcwd()}", verbose=is_verbose)
+    _diag_log(f"sys.executable: {sys.executable}", verbose=is_verbose)
+    _diag_log(f"sys.prefix: {sys.prefix}", verbose=is_verbose)
+    _diag_log(f"sys.version: {sys.version}", verbose=is_verbose)
+    _diag_log(f"sys.path: {sys.path}", verbose=is_verbose)
+    _diag_log(f"VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", verbose=is_verbose)
+    _diag_log(f"PATH: {os.environ.get('PATH', 'NOT SET')}", verbose=is_verbose)
+    _diag_log(f"PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}", verbose=is_verbose)
+
     if is_verbose:
         console.print("[debug] === Build command started ===", style="dim cyan")
         console.print(f"[debug] Current working directory: {os.getcwd()}", style="dim")
@@ -209,38 +203,38 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         console.print(f"[debug] PATH: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
     pyproject_path = Path("pyproject.toml")
-    _diag_log(f"Looking for pyproject.toml at: {pyproject_path.absolute()}")
-    _diag_log(f"pyproject.toml exists: {pyproject_path.exists()}")
+    _diag_log(f"Looking for pyproject.toml at: {pyproject_path.absolute()}", verbose=is_verbose)
+    _diag_log(f"pyproject.toml exists: {pyproject_path.exists()}", verbose=is_verbose)
     if not pyproject_path.exists():
-        _diag_log("ERROR: pyproject.toml NOT FOUND")
+        _diag_log("ERROR: pyproject.toml NOT FOUND", verbose=is_verbose)
         console.print("[red]No pyproject.toml found. Are you in a pymcu project?[/red]")
         raise typer.Exit(code=1)
 
     try:
-        _diag_log("Reading pyproject.toml...")
+        _diag_log("Reading pyproject.toml...", verbose=is_verbose)
         with open(pyproject_path, "r") as f:
             config = tomlkit.load(f)
 
-        _diag_log("pyproject.toml loaded successfully")
+        _diag_log("pyproject.toml loaded successfully", verbose=is_verbose)
         pymcu_config = config.get("tool", {}).get("pymcu", {})
-        _diag_log(f"pymcu_config keys: {list(pymcu_config.keys())}")
+        _diag_log(f"pymcu_config keys: {list(pymcu_config.keys())}", verbose=is_verbose)
 
         target_key   = pymcu_config.get("target", None)
-        _diag_log(f"target_key from config: {target_key}")
+        _diag_log(f"target_key from config: {target_key}", verbose=is_verbose)
 
         # Compatibility: accept legacy "chip" key with a deprecation warning
         if target_key is None and pymcu_config.get("chip"):
             target_key = pymcu_config.get("chip")
-            _diag_log(f"Using legacy 'chip' key: {target_key}")
+            _diag_log(f"Using legacy 'chip' key: {target_key}", verbose=is_verbose)
             console.print(
                 "[bold yellow]Deprecation:[/bold yellow] 'chip' in [tool.pymcu] is deprecated. "
                 "Rename it to 'target'."
             )
         board_key    = pymcu_config.get("board", None)
-        _diag_log(f"board_key from config: {board_key}")
+        _diag_log(f"board_key from config: {board_key}", verbose=is_verbose)
         freq         = pymcu_config.get("frequency", 4000000)
         src_path     = pymcu_config.get("sources", "src")
-        _diag_log(f"freq: {freq}, src_path: {src_path}")
+        _diag_log(f"freq: {freq}, src_path: {src_path}", verbose=is_verbose)
 
         # board and target are mutually exclusive
         if target_key and board_key:
@@ -251,11 +245,28 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             )
             raise typer.Exit(code=1)
 
-        # Resolve extension packages and their extra board→chip entries
-        stdlib_flavors = pymcu_config.get("stdlib", [])
+        # Resolve stdlib flavors: CLI --stdlib overrides pyproject.toml
+        stdlib_flavors: list[str] = (
+            list(stdlib_override)
+            if stdlib_override
+            else list(pymcu_config.get("stdlib", []))
+        )
         extension_board_chips: dict[str, str] = {}
         extra_includes: list[str] = []
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
+
+        # stdlib_path: inject a local stdlib directory before any installed package
+        stdlib_path_override: str | None = pymcu_config.get("stdlib_path", None)
+        if stdlib_path_override:
+            resolved_stdlib_path = (pyproject_path.parent / stdlib_path_override).resolve()
+            if resolved_stdlib_path.is_dir():
+                extra_includes.append(str(resolved_stdlib_path))
+                _diag_log(f"stdlib_path override: {resolved_stdlib_path}", verbose=is_verbose)
+            else:
+                console.print(
+                    f"[bold yellow]Warning:[/bold yellow] stdlib_path '{stdlib_path_override}' "
+                    f"not found at {resolved_stdlib_path}."
+                )
 
         for flavor in stdlib_flavors:
             spec = importlib.util.find_spec(f"pymcu_{flavor}")
@@ -282,7 +293,7 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             if target is None:
                 console.print(
                     f"[bold red]Error:[/bold red] Unknown board '{board_key}'. "
-                    f"Add it to BOARD_CHIPS in build.py or provide a board_chips.py in your extension package."
+                    f"Add it to BOARD_CHIPS in core/boards.py or provide a board_chips.py in your extension package."
                 )
                 raise typer.Exit(code=1)
         else:
@@ -311,11 +322,6 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
         vectors_config = pymcu_config.get("vectors", {})
         reset_vector = vectors_config.get("reset", None)
         interrupt_vector = vectors_config.get("interrupt", None)
-
-        if not Path(entry_point).exists():
-            console.print(f"[red]Entry point not found at: {entry_point}[/red]")
-            console.print(f"[yellow]Check 'sources' in pyproject.toml (current: {src_path})[/yellow]")
-            raise typer.Exit(code=1)
 
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
@@ -553,10 +559,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     # 2d. ELF → Intel HEX
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = ffi_tc.elf_to_hex(elf_file)
-                    _diag_log(f"FFI: Generated hex_file: {hex_file}")
-                    _diag_log(f"FFI: hex_file exists: {hex_file.exists() if hex_file else 'None'}")
+                    _diag_log(f"FFI: Generated hex_file: {hex_file}", verbose=is_verbose)
+                    _diag_log(f"FFI: hex_file exists: {hex_file.exists() if hex_file else 'None'}", verbose=is_verbose)
                     if hex_file and hex_file.exists():
-                        _diag_log(f"FFI: hex_file size: {hex_file.stat().st_size} bytes")
+                        _diag_log(f"FFI: hex_file size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
 
                     # Move ELF to dist/debug/
                     debug_dir = output_dir / "debug"
@@ -595,10 +601,10 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
                     for _pass in range(8):
                         try:
                             hex_file = toolchain.assemble(output_file)
-                            _diag_log(f"avra: Generated hex_file on pass {_pass}: {hex_file}")
-                            _diag_log(f"avra: hex_file exists: {hex_file.exists() if hex_file else 'None'}")
+                            _diag_log(f"avra: Generated hex_file on pass {_pass}: {hex_file}", verbose=is_verbose)
+                            _diag_log(f"avra: hex_file exists: {hex_file.exists() if hex_file else 'None'}", verbose=is_verbose)
                             if hex_file and hex_file.exists():
-                                _diag_log(f"avra: hex_file size: {hex_file.stat().st_size} bytes")
+                                _diag_log(f"avra: hex_file size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
                             break
                         except RuntimeError as e:
                             err_str = str(e)
@@ -689,27 +695,25 @@ def build(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable ve
             
             progress.update(build_task, description="Done!", completed=100)
 
-        _diag_log(f"Build completed! Output directory: {output_dir}")
-        _diag_log(f"Output directory exists: {output_dir.exists()}")
-        if output_dir.exists():
+        _diag_log(f"Build completed! Output directory: {output_dir}", verbose=is_verbose)
+        _diag_log(f"Output directory exists: {output_dir.exists()}", verbose=is_verbose)
+        if is_verbose and output_dir.exists():
             files = list(output_dir.glob("*"))
-            _diag_log(f"Files in output directory ({len(files)}):")
+            _diag_log(f"Files in output directory ({len(files)}):", verbose=is_verbose)
             for f in files:
-                _diag_log(f"  - {f.name} ({f.stat().st_size} bytes)")
+                _diag_log(f"  - {f.name} ({f.stat().st_size} bytes)", verbose=is_verbose)
 
-            # Explicitly check for firmware.hex
             hex_file = output_dir / "firmware.hex"
-            _diag_log(f"firmware.hex exists: {hex_file.exists()}")
+            _diag_log(f"firmware.hex exists: {hex_file.exists()}", verbose=is_verbose)
             if hex_file.exists():
-                _diag_log(f"firmware.hex size: {hex_file.stat().st_size} bytes")
-        else:
-            _diag_log(f"ERROR: Output directory does not exist!")
+                _diag_log(f"firmware.hex size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
 
         console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
 
     except Exception as e:
-        _diag_log(f"BUILD FAILED with exception: {type(e).__name__}: {e}")
-        import traceback
-        _diag_log(f"Traceback:\n{traceback.format_exc()}")
+        _diag_log(f"BUILD FAILED with exception: {type(e).__name__}: {e}", verbose=is_verbose)
+        if is_verbose:
+            import traceback
+            _diag_log(f"Traceback:\n{traceback.format_exc()}", verbose=is_verbose)
         console.print(f"[bold red]Error:[/bold red] {e}")
         raise typer.Exit(code=1)

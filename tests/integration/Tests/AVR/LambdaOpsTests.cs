@@ -13,15 +13,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class LambdaOpsTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("lambda-ops");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("lambda-ops"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunUntilSerial(uno.Serial, "LB\n", maxMs: 200);
         return uno;
     }
