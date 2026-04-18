@@ -120,6 +120,14 @@ public partial class IRGenerator
     // Module-level arrays that unconditionally use SRAM (bytearray declarations at global scope).
     private HashSet<string> moduleSramArrays = new();
 
+    // Global arrays declared with const[uint8[N]] annotation: placed in flash (PROGMEM).
+    // Only uint8 element type is supported.  SRAM not allocated; access via LPM Z.
+    private HashSet<string> flashArrays = new();
+
+    // FlashData instructions collected during ScanGlobals for global const[uint8[N]] arrays.
+    // Injected into the main function body in Generate() so the backend can emit .byte tables.
+    private List<Instruction> pendingFlashData = new();
+
     // Lambda support (F9).
     private Dictionary<string, LambdaExpr> lambdaFunctionsMap = new();
     private Dictionary<string, string> lambdaVariableNames = new();

@@ -13,7 +13,7 @@
 # Accuracy: ~10-20% at ms level (acceptable for most MCU use cases).
 # For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, uint16, inline, asm
+from pymcu.types import uint8, uint16, uint32, inline, asm
 from pymcu.chips import __CHIP__
 
 @inline
@@ -232,3 +232,51 @@ def _delay_us_pic12(us: uint8):
     while i < us:
         asm("    NOP")
         i = i + 1
+
+
+@inline
+def millis_init():
+    """Initialize the hardware millisecond counter.
+
+    Configures Timer0 (prescaler 64) and registers an overflow ISR that
+    increments a uint32 counter once per ~1 ms.  Must be called once before
+    using millis() or micros().  AVR (ATmega328P) only.
+    """
+    match __CHIP__.arch:
+        case "avr":
+            from pymcu.hal._timer.atmega328p import millis_init as _millis_init_avr
+            _millis_init_avr()
+
+
+@inline
+def millis() -> uint32:
+    """Return elapsed milliseconds since millis_init() was called.
+
+    Reads a Timer0-overflow counter atomically under CLI/SEI.
+    AVR (ATmega328P) only; returns 0 on unsupported architectures.
+    """
+    match __CHIP__.arch:
+        case "avr":
+            from pymcu.hal._timer.atmega328p import millis as _millis_avr
+            return _millis_avr()
+        case _:
+            return 0
+    return 0
+
+
+@inline
+def micros() -> uint32:
+    """Return elapsed microseconds since millis_init() was called.
+
+    Combines the overflow counter with the current TCNT0 value for
+    4 us resolution at 16 MHz / prescaler 64.
+    AVR (ATmega328P) only; returns 0 on unsupported architectures.
+    """
+    match __CHIP__.arch:
+        case "avr":
+            from pymcu.hal._timer.atmega328p import micros as _micros_avr
+            return _micros_avr()
+        case _:
+            return 0
+    return 0
+
