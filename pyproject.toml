@@ -46,4 +46,9 @@ path = "hatch_build.py"
 include = ["src/", "hatch_build.py"]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [
+    ".",
+    "extensions/pymcu-toolchain-sdk/src",
+    "extensions/pymcu-toolchain-avr/src",
+    "extensions/pymcu-toolchain-pic/src",
+]
