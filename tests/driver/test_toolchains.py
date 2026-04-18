@@ -9,14 +9,33 @@ import zipfile
 import tarfile
 import io
 from pathlib import Path
+from importlib.metadata import EntryPoint
+from unittest.mock import patch, MagicMock
 import pytest
 
 from rich.console import Console
-from src.driver.toolchains.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
-from src.driver.toolchains.gputils import GputilsToolchain
-from src.driver.toolchains.avra import AvraToolchain
-from src.driver.toolchains import get_toolchain_for_chip
+from pymcu_toolchain_avr.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
+from pymcu_toolchain_pic.gputils import GputilsToolchain
+from pymcu_toolchain_avr.avra import AvraToolchain
+from pymcu_toolchain_avr import AvrToolchainPlugin
+from pymcu_toolchain_pic import PicToolchainPlugin
+from src.driver.toolchains import get_toolchain_for_chip, discover_plugins
 from src.driver.core.base_tool import CacheableTool, _default_platform_key, _is_non_interactive
+
+
+# ---------------------------------------------------------------------------
+# Helper to mock entry_points for discover_plugins
+# ---------------------------------------------------------------------------
+
+def _make_entry_points(plugins):
+    """Return a mock for importlib.metadata.entry_points that yields plugin classes."""
+    eps = []
+    for name, cls in plugins.items():
+        ep = MagicMock(spec=EntryPoint)
+        ep.name = name
+        ep.load.return_value = cls
+        eps.append(ep)
+    return eps
 
 
 # ---------------------------------------------------------------------------
@@ -99,26 +118,63 @@ class TestGputilsSupports:
 # ---------------------------------------------------------------------------
 
 class TestGetToolchainForChip:
+    def _entry_points(self):
+        return _make_entry_points({"avr": AvrToolchainPlugin, "pic": PicToolchainPlugin})
+
     def test_avr_chip_returns_avrgas(self):
-        tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
+        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
+            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
         assert isinstance(tc, AvrgasToolchain)
 
     def test_pic_chip_returns_gputils(self):
-        tc = get_toolchain_for_chip("pic16f84a", Console(quiet=True))
+        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
+            tc = get_toolchain_for_chip("pic16f84a", Console(quiet=True))
         assert isinstance(tc, GputilsToolchain)
 
     def test_avra_not_in_factory(self):
-        # AvraToolchain must NOT be returned by the default factory
-        tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
+        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
+            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
         assert not isinstance(tc, AvraToolchain)
 
     def test_unknown_chip_raises(self):
-        with pytest.raises(ValueError, match="No toolchain found"):
-            get_toolchain_for_chip("unknown_mcu_xyz", Console(quiet=True))
+        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
+            with pytest.raises(ValueError, match="No toolchain found"):
+                get_toolchain_for_chip("unknown_mcu_xyz", Console(quiet=True))
 
     def test_chip_stored_on_instance(self):
-        tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
+        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
+            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
         assert tc.chip == "atmega328p"
+
+
+# ---------------------------------------------------------------------------
+# discover_plugins
+# ---------------------------------------------------------------------------
+
+class TestDiscoverPlugins:
+    def test_returns_avr_and_pic(self):
+        eps = _make_entry_points({"avr": AvrToolchainPlugin, "pic": PicToolchainPlugin})
+        with patch("src.driver.toolchains.entry_points", return_value=eps):
+            plugins = discover_plugins()
+        assert "avr" in plugins
+        assert "pic" in plugins
+        assert plugins["avr"] is AvrToolchainPlugin
+        assert plugins["pic"] is PicToolchainPlugin
+
+    def test_returns_empty_when_no_plugins(self):
+        with patch("src.driver.toolchains.entry_points", return_value=[]):
+            plugins = discover_plugins()
+        assert plugins == {}
+
+    def test_skips_broken_entry_points(self):
+        bad_ep = MagicMock(spec=EntryPoint)
+        bad_ep.name = "broken"
+        bad_ep.load.side_effect = ImportError("module missing")
+        eps = [bad_ep] + _make_entry_points({"avr": AvrToolchainPlugin})
+        with patch("src.driver.toolchains.entry_points", return_value=eps):
+            plugins = discover_plugins()
+        assert "avr" in plugins
+        assert "broken" not in plugins
 
 
 # ---------------------------------------------------------------------------
@@ -283,3 +339,4 @@ class TestVersionFile:
         monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
         tc = GputilsToolchain(Console(quiet=True))
         assert tc._read_cached_version() == ""
+

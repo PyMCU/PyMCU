@@ -150,13 +150,31 @@ def mock_toolchain(monkeypatch, tmp_path):
         hex_out.write_text(":00000001FF\n")  # minimal valid HEX EOF record
         return hex_out
 
-    from src.driver.toolchains import avrgas, gputils
+    import pymcu_toolchain_avr.avrgas as avrgas
+    import pymcu_toolchain_pic.gputils as gputils
     monkeypatch.setattr(avrgas.AvrgasToolchain, "is_cached", fake_is_cached)
     monkeypatch.setattr(avrgas.AvrgasToolchain, "install", fake_install)
     monkeypatch.setattr(avrgas.AvrgasToolchain, "assemble", fake_assemble)
     monkeypatch.setattr(gputils.GputilsToolchain, "is_cached", fake_is_cached)
     monkeypatch.setattr(gputils.GputilsToolchain, "install", fake_install)
     monkeypatch.setattr(gputils.GputilsToolchain, "assemble", fake_assemble)
+
+    # Also make discover_plugins return the AVR and PIC plugins so the build
+    # command can resolve a toolchain without needing real entry points.
+    from importlib.metadata import EntryPoint
+    from unittest.mock import MagicMock
+    from pymcu_toolchain_avr import AvrToolchainPlugin
+    from pymcu_toolchain_pic import PicToolchainPlugin
+
+    def _make_ep(name, cls):
+        ep = MagicMock(spec=EntryPoint)
+        ep.name = name
+        ep.load.return_value = cls
+        return ep
+
+    eps = [_make_ep("avr", AvrToolchainPlugin), _make_ep("pic", PicToolchainPlugin)]
+    monkeypatch.setattr("src.driver.toolchains.entry_points", lambda **kw: eps)
+
     return calls
 
 
@@ -182,5 +200,5 @@ def mock_download(monkeypatch):
         return True
 
     monkeypatch.setattr(urllib.request, "urlretrieve", fake_retrieve)
-    from src.driver.core.base_tool import CacheableTool
+    from pymcu_toolchain_sdk import CacheableTool
     monkeypatch.setattr(CacheableTool, "verify_sha256", fake_verify)
