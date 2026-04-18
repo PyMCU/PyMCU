@@ -77,7 +77,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         with:
-          package-dir: src/driver
+          package-dir: .
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
