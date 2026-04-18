@@ -914,11 +914,17 @@ public partial class IRGenerator
                 }
 
                 // When compile_isr() is called inside an inlined function, the
-                // inline prefix (e.g. "inline1.millis_init.") makes the key look
-                // like "inline1.millis_init._millis_ovf_isr". Strip the inline
-                // prefix and resolve via ResolveCallee to get the module-qualified
-                // function name (e.g. "pymcu_hal__timer_atmega328p__millis_ovf_isr").
-                handlerFuncName = ResolveCallee(v.Name);
+                // handler parameter is an alias chain (e.g. handler -> main.int0_isr).
+                // After alias resolution above, `key` holds the resolved name which
+                // may be scope-qualified (e.g. "main.int0_isr" for a function defined
+                // at top-level in main.py).  Extract the bare function name (after
+                // the last dot) and resolve it via ResolveCallee so it gets the
+                // correct module-qualified IR name.
+                string resolvedName = key;
+                int lastDot = resolvedName.LastIndexOf('.');
+                if (lastDot >= 0)
+                    resolvedName = resolvedName.Substring(lastDot + 1);
+                handlerFuncName = ResolveCallee(resolvedName);
                 handlerProvided = !string.IsNullOrEmpty(handlerFuncName);
             }
             else
