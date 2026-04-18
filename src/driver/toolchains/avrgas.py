@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -109,6 +104,11 @@ class AvrgasToolchain(ExternalToolchain):
             "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux.tar.bz2",
             "archive_type": "tar.bz2",
             "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux/bin",
+        },
+        "linux-arm64": {
+            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-aarch64-linux.tar.bz2",
+            "archive_type": "tar.bz2",
+            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-aarch64-linux/bin",
         },
         "win32-x86_64": {
             "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows.zip",
@@ -250,13 +250,14 @@ class AvrgasToolchain(ExternalToolchain):
     def is_cached(self) -> bool:
         """
         Returns True if all required binaries are available either in the
-        local ~/.pymcu/tools/ cache or on the system PATH.
+        local ~/.pymcu/tools/ cache (at the correct version) or on PATH.
         """
         cached = self._cached_bin_dir()
         if cached is not None:
             exe_suffix = ".exe" if sys.platform == "win32" else ""
             if all((cached / (b + exe_suffix)).exists() for b in _REQUIRED_BINS):
-                return True
+                if self._read_cached_version() == _TOOLCHAIN_VERSION:
+                    return True
         return all(shutil.which(b) is not None for b in _REQUIRED_BINS)
 
     # ------------------------------------------------------------------
@@ -269,6 +270,7 @@ class AvrgasToolchain(ExternalToolchain):
         no system package manager is required.  The release is fetched from:
         https://github.com/ZakKemble/avr-gcc-build/releases
         """
+        from ..core.base_tool import _is_non_interactive, _tool_lock
         try:
             info = self._platform_info()
         except RuntimeError as exc:
@@ -288,7 +290,9 @@ class AvrgasToolchain(ExternalToolchain):
             f"A pre-built release will be downloaded from:\n"
             f"  [green]{url}[/green]"
         )
-        if not Confirm.ask("Download and install to local cache?", default=True):
+        if _is_non_interactive():
+            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
+        elif not Confirm.ask("Download and install to local cache?", default=True):
             raise RuntimeError("avr-gcc installation aborted by user.")
 
         tool_dir = self._get_tool_dir()
@@ -297,22 +301,28 @@ class AvrgasToolchain(ExternalToolchain):
         filename = url.split("/")[-1]
         download_path = tool_dir / filename
 
-        self._download_file(url, download_path, f"Downloading avr-gcc {_TOOLCHAIN_VERSION}...")
-        self.console.print("[green]Download complete.[/green]")
+        with _tool_lock(self._lock_file()):
+            if self.is_cached():
+                return
 
-        self._extract_archive(download_path, tool_dir, archive_type)
+            self._download_file(url, download_path, f"Downloading avr-gcc {_TOOLCHAIN_VERSION}...")
+            self.console.print("[green]Download complete.[/green]")
 
-        # Ensure all binaries are executable on Unix
-        if sys.platform != "win32":
-            bin_dir = tool_dir / info["bin_dir"]
-            if bin_dir.is_dir():
-                for entry in bin_dir.iterdir():
-                    if entry.is_file():
-                        entry.chmod(entry.stat().st_mode | 0o111)
+            self._extract_archive(download_path, tool_dir, archive_type)
 
-        # Remove downloaded archive to save space
-        if download_path.exists():
-            download_path.unlink()
+            # Ensure all binaries are executable on Unix
+            if sys.platform != "win32":
+                bin_dir = tool_dir / info["bin_dir"]
+                if bin_dir.is_dir():
+                    for entry in bin_dir.iterdir():
+                        if entry.is_file():
+                            entry.chmod(entry.stat().st_mode | 0o111)
+
+            # Remove downloaded archive to save space
+            if download_path.exists():
+                download_path.unlink()
+
+            self._write_cached_version(_TOOLCHAIN_VERSION)
 
         self.console.print(
             f"[bold green]avr-gcc {_TOOLCHAIN_VERSION} installed to "

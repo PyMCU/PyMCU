@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -38,26 +33,23 @@ from .avrgas import AvrgasToolchain
 def get_toolchain_for_chip(chip: str, console: Console) -> ExternalToolchain:
     """
     Factory method to return the appropriate toolchain for a given chip.
-    Currently supports:
-    - Gputils (PIC10/12/14/16/17/18)
-    - AvrgasToolchain (AVR, avr-as + avr-ld + avr-objcopy)
+
+    AVR chips use AvrgasToolchain (pre-built GNU AVR binutils; no source
+    compilation required).  PIC chips use GputilsToolchain.  AvraToolchain
+    is kept as a class for legacy opt-in but is NOT included in the default
+    selection list.
 
     Raises:
         ValueError: If no toolchain supports the given chip.
     """
-    # List of available toolchains in preference order.
-    # AvrgasToolchain is preferred over AvraToolchain for AVR: avr-as ships
-    # with binutils-avr (standard distro package) and does not require
-    # building AVRA from source.
     toolchains = [
         GputilsToolchain,
         AvrgasToolchain,
-        AvraToolchain,
     ]
 
     for toolchain_cls in toolchains:
         if toolchain_cls.supports(chip):
-            return toolchain_cls(console, chip) if toolchain_cls is AvrgasToolchain else toolchain_cls(console)
+            return toolchain_cls(console, chip)
 
     raise ValueError(f"No toolchain found supporting chip: {chip}")
 

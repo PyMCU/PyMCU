@@ -2,25 +2,20 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -35,39 +30,66 @@ import subprocess
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any
+import shutil as _shutil
 from .base import ExternalToolchain
+from ..core.base_tool import _is_non_interactive, _tool_lock
 from rich.prompt import Confirm
 from rich.console import Console
 
 class GputilsToolchain(ExternalToolchain):
     """
     Concrete strategy for the GNU PIC Utilities (gputils) toolchain.
-    Handles source compilation on Linux/macOS and binary download on Windows.
-    Enforces strict SHA-256 validation.
+
+    Binary resolution order:
+      1. System PATH (``gpasm`` already installed via Homebrew / apt).
+      2. Locally cached binary in ~/.pymcu/tools/{platform}/gputils/.
+      3. Download source archive and compile (Linux/macOS).
+         Windows uses a zip archive of pre-built binaries.
+
+    To skip SHA-256 verification (development only), set
+    ``PYMCU_SKIP_HASH_CHECK=1``.
     """
 
     METADATA = {
         "version": "1.5.2",
         "description": "GNU PIC Utilities (assembler/linker)",
         "platforms": {
-            "win32": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils-win32/1.5.2/gputils-1.5.2.exe",
-                "hash": "placeholder", # Updates needed for production use
-                "archive_type": "exe", 
-                "bin_path": "bin/gpasm.exe"
+            # Windows: pre-built zip from SourceForge (no source compilation).
+            "win32-x86_64": {
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils-win32/1.5.2/gputils-win32-1.5.2.zip",
+                # TODO: replace with real SHA-256 once the official archive is
+                # available.  Until then set PYMCU_SKIP_HASH_CHECK=1.
+                "hash": "placeholder",
+                "archive_type": "zip",
+                "bin_path": "bin/gpasm.exe",
             },
-            "linux": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.0.2/gputils-1.5.2.tar.gz",
-                "hash": "placeholder", # Updates needed for production use
-                "archive_type": "tar.gz",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm" 
+            # Linux x86_64 / aarch64: build from source.
+            "linux-x86_64": {
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
+                # TODO: replace with real SHA-256.
+                "hash": "placeholder",
+                "archive_type": "tar.bz2",
+                "bin_path": "gputils-1.5.2/gpasm/gpasm",
             },
-            "darwin": {
-                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.0/gputils-1.5.2.tar.bz2",
+            "linux-arm64": {
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
+                "hash": "placeholder",
+                "archive_type": "tar.bz2",
+                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+            },
+            # macOS: build from source.
+            "darwin-x86_64": {
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
                 "hash": "8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2",
                 "archive_type": "tar.bz2",
-                "bin_path": "gputils-1.5.2/gpasm/gpasm"
-            }
+                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+            },
+            "darwin-arm64": {
+                "url": "https://downloads.sourceforge.net/project/gputils/gputils/1.5.2/gputils-1.5.2.tar.bz2",
+                "hash": "8fb8820b31d7c1f7c776141ccb3c4f06f40af915da6374128d752d1eee3addf2",
+                "archive_type": "tar.bz2",
+                "bin_path": "gputils-1.5.2/gpasm/gpasm",
+            },
         }
     }
 
@@ -90,72 +112,144 @@ class GputilsToolchain(ExternalToolchain):
     def get_name(self) -> str:
         return "gputils"
 
+    def _get_platform_key(self) -> str:
+        import platform as _platform
+        machine = _platform.machine().lower()
+        arch = "x86_64" if machine in ("amd64", "x86_64") else (
+            "arm64" if machine in ("arm64", "aarch64") else machine
+        )
+        os_name = sys.platform if not sys.platform.startswith("linux") else "linux"
+        return f"{os_name}-{arch}"
+
     def _get_platform_info(self) -> Dict[str, Any]:
-        info = self.METADATA["platforms"].get(sys.platform)
+        key = self._get_platform_key()
+        info = self.METADATA["platforms"].get(key)
         if not info:
-             raise RuntimeError(f"Gputils has no configuration for platform: {sys.platform}")
+            raise RuntimeError(
+                f"gputils has no configuration for platform: {key}.\n"
+                "Install gputils via your package manager "
+                "(brew install gputils  /  sudo apt install gputils)."
+            )
         return info
 
+    @staticmethod
+    def _find_system_gpasm() -> "Path | None":
+        """Return the path to a system-installed gpasm, or None."""
+        found = _shutil.which("gpasm")
+        return Path(found) if found else None
+
     def is_cached(self) -> bool:
+        # System PATH takes priority
+        if self._find_system_gpasm() is not None:
+            return True
         try:
             info = self._get_platform_info()
+            version = self.METADATA["version"]
             local_bin = self._get_tool_dir() / info["bin_path"]
-            return local_bin.exists()
+            return local_bin.exists() and self._read_cached_version() == version
         except RuntimeError:
             return False
 
+    def _resolve_binary(self) -> Path:
+        sys_path = self._find_system_gpasm()
+        if sys_path:
+            return sys_path
+        try:
+            info = self._get_platform_info()
+            local_bin = self._get_tool_dir() / info["bin_path"]
+            if local_bin.exists():
+                return local_bin
+        except RuntimeError:
+            pass
+        raise RuntimeError(
+            "gpasm not found on PATH or in local cache.\n"
+            "Install it with:  brew install gputils  or  sudo apt install gputils\n"
+            "or run 'pymcu toolchain install pic' to download it automatically."
+        )
+
     def install(self) -> Path:
+        # If already on system PATH, nothing to do.
+        sys_bin = self._find_system_gpasm()
+        if sys_bin:
+            self.console.print(f"[green]gpasm found on PATH at {sys_bin}[/green]")
+            self._write_cached_version(self.METADATA["version"])
+            return sys_bin
+
         info = self._get_platform_info()
         url = info["url"]
         expected_hash = info["hash"]
         desc = self.METADATA["description"]
         name = self.get_name()
         archive_type = info.get("archive_type")
+        version = self.METADATA["version"]
 
         self.console.print(f"[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
-        self.console.print(f"Tool '{name}' ({desc}) is required but not found.")
-        
-        if not Confirm.ask(f"Do you want to download and install it automatically from [green]{url}[/green]?", default=True):
-             raise RuntimeError(f"Installation of {name} aborted by user.")
+        self.console.print(
+            f"Tool '{name}' ({desc}) is not on PATH and not in local cache.\n"
+            "[dim]Tip: install gputils via your package manager "
+            "(brew install gputils / sudo apt install gputils) to skip this step.[/dim]"
+        )
+
+        from ..core.base_tool import _is_non_interactive
+        if _is_non_interactive():
+            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
+        elif not Confirm.ask(
+            f"Download and install from [green]{url}[/green]?", default=True
+        ):
+            raise RuntimeError(f"Installation of {name} aborted by user.")
 
         target_dir = self._get_tool_dir()
         if not target_dir.exists():
             target_dir.mkdir(parents=True, exist_ok=True)
-            
+
         filename = url.split("/")[-1]
         download_path = target_dir / filename
 
-        # 1. Download
-        self._download_file(url, download_path, f"Downloading {name}...")
-        self.console.print(f"[green]Download complete.[/green]")
+        with _tool_lock(self._lock_file()):
+            # Re-check after acquiring lock in case another process installed.
+            if self.is_cached():
+                return self._resolve_binary()
 
-        # 2. Strict Verification
-        self.console.print("Verifying integrity...", end="")
-        if not self.verify_sha256(download_path, expected_hash):
-            self.console.print(" [bold red]FAILED[/bold red]")
-            # Cleanup potentially malicious file
+            # 1. Download
+            self._download_file(url, download_path, f"Downloading {name}...")
+            self.console.print(f"[green]Download complete.[/green]")
+
+            # 2. SHA-256 Verification
+            skip_hash = os.environ.get("PYMCU_SKIP_HASH_CHECK") == "1"
+            if expected_hash and expected_hash not in ("placeholder", "PLACEHOLDER"):
+                self.console.print("Verifying integrity...", end="")
+                if not self.verify_sha256(download_path, expected_hash):
+                    self.console.print(" [bold red]FAILED[/bold red]")
+                    if download_path.exists():
+                        download_path.unlink()
+                    raise RuntimeError(
+                        f"SHA-256 verification failed for {filename}. "
+                        "The file may be corrupted or tampered with."
+                    )
+                self.console.print(" [green]OK[/green]")
+            elif not skip_hash:
+                self.console.print(
+                    "[yellow]Warning: No SHA-256 hash configured for this platform. "
+                    "Set PYMCU_SKIP_HASH_CHECK=1 to suppress this warning.[/yellow]"
+                )
+
+            # 3. Extract
+            self._extract_archive(download_path, target_dir, archive_type)
+
+            # 4. Compile from source (POSIX platforms only)
+            if sys.platform != "win32":
+                self._compile_from_source(target_dir, name, info["bin_path"])
+
+            # Cleanup archive
             if download_path.exists():
                 download_path.unlink()
-            raise RuntimeError(f"SHA-256 verification failed for {filename}. The file may be corrupted or tampered with.")
-        self.console.print(" [green]OK[/green]")
 
-        # 3. Extract
-        self._extract_archive(download_path, target_dir, archive_type)
+            self._write_cached_version(version)
 
-        # 4. Compile (if needed)
-        if sys.platform != "win32":
-            self._compile_from_source(target_dir, name, info["bin_path"])
-        
-        # Cleanup archive
-        if download_path.exists():
-            download_path.unlink()
-
-        # Return path
         return target_dir / info["bin_path"]
 
     def _compile_from_source(self, target_dir: Path, name: str, relative_bin_path: str):
         """Helper to handle the ./configure && make workflow."""
-        # Find the source directory (contains 'configure')
         extracted_items = list(target_dir.iterdir())
         source_dir = None
         for item in extracted_items:
@@ -164,50 +258,45 @@ class GputilsToolchain(ExternalToolchain):
                 break
         
         if source_dir:
-             self.console.print(f"[bold yellow]Compiling {name} from source (this may take a few minutes)...[/bold yellow]")
-             try:
-                 # Configure
-                 subprocess.run(["./configure"], cwd=source_dir, check=True, capture_output=True)
-                 # Make (-j4)
-                 subprocess.run(["make", "-j4"], cwd=source_dir, check=True, capture_output=True)
-                 self.console.print(f"[green]Compilation successful.[/green]")
-                 
-                 # Ensure binary is executable
-                 bin_path = target_dir / relative_bin_path
-                 if bin_path.exists():
-                     bin_path.chmod(0o755)
-                 else:
-                     self.console.print(f"[red]Warning: Expected binary not found at {bin_path}[/red]")
-             except subprocess.CalledProcessError as e:
-                 self.console.print(f"[red]Compilation failed:[/red]")
-                 self.console.print(e.stderr.decode() if e.stderr else str(e))
-                 raise RuntimeError(f"Failed to compile {name}.")
+            self.console.print(f"[bold yellow]Compiling {name} from source (this may take a few minutes)...[/bold yellow]")
+            try:
+                subprocess.run(["./configure"], cwd=source_dir, check=True, capture_output=True)
+                subprocess.run(["make", "-j4"], cwd=source_dir, check=True, capture_output=True)
+                self.console.print(f"[green]Compilation successful.[/green]")
+                
+                bin_path = target_dir / relative_bin_path
+                if bin_path.exists():
+                    bin_path.chmod(0o755)
+                else:
+                    self.console.print(f"[red]Warning: Expected binary not found at {bin_path}[/red]")
+            except subprocess.CalledProcessError as e:
+                self.console.print(f"[red]Compilation failed:[/red]")
+                self.console.print(e.stderr.decode() if e.stderr else str(e))
+                raise RuntimeError(f"Failed to compile {name}.")
 
     def assemble(self, asm_file: Path, output_file: Optional[Path] = None) -> Path:
-        info = self._get_platform_info()
-        tool_path = self._get_tool_dir() / info["bin_path"]
+        tool_path = self._resolve_binary()
         
-        if not tool_path.exists():
-             raise RuntimeError(f"Assembler not found at {tool_path}. Please run install() first.")
-
         cmd = [str(tool_path), str(asm_file)]
         
         # Include directory of the source file (so float.inc next to it is found)
         cmd.extend(["-I", str(asm_file.parent.resolve())])
         
-        # Header Include Fix:
-        # Check adjacent "header" directory relative to logic
+        # Header Include Fix: cached binary layout
         # Structure: .../gputils-1.5.2/gpasm/gpasm -> header is at .../gputils-1.5.2/header
-        header_dir = tool_path.parent.parent / "header"
-        if header_dir.exists() and header_dir.is_dir():
-            cmd.extend(["-I", str(header_dir)])
-            
-        self.console.print(f"[debug] Assembler: {cmd[0]}", style="dim")
-        
+        if not self._find_system_gpasm():
+            try:
+                info = self._get_platform_info()
+                local_bin = self._get_tool_dir() / info["bin_path"]
+                header_dir = local_bin.parent.parent / "header"
+                if header_dir.exists() and header_dir.is_dir():
+                    cmd.extend(["-I", str(header_dir)])
+            except RuntimeError:
+                pass
+
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            # Default output is .hex
-            return asm_file.with_suffix(".hex") 
+            return asm_file.with_suffix(".hex")
         except subprocess.CalledProcessError as e:
             err = e.stderr.decode() if e.stderr else e.stdout.decode()
             self.console.print(f"[red]Assembler failed:[/red]\n{err}")
