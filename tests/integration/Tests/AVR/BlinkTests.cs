@@ -13,10 +13,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class BlinkTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("blink");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("blink"));
 
     [Test]
     public void Led_StartsHighAfterBoot()
@@ -65,10 +65,5 @@ public class BlinkTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

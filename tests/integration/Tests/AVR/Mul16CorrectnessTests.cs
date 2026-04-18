@@ -27,17 +27,12 @@ public class Mul16CorrectnessTests
     private const int Gpior0Addr = 0x3E;
     private const int Gpior1Addr = 0x4A;
 
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("mul16-correctness");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("mul16-correctness"));
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     [Test]
     public void Cp1_Mul300x200_LowByte_Is0x60()

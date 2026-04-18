@@ -28,14 +28,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class InlineMultisiteTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     private const int GPIOR0_ADDR = 0x3E;
     private const int GPIOR1_ADDR = 0x4A;
     private const int GPIOR2_ADDR = 0x4B;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("inline-multisite");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("inline-multisite"));
 
     private static void SkipBreaks(ArduinoUnoSimulation uno, int count)
     {
@@ -46,12 +46,7 @@ public class InlineMultisiteTests
         }
     }
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     // --- Checkpoint 1: min_u8 ---
 

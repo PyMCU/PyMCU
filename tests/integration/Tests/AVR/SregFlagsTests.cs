@@ -26,10 +26,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class SregFlagsTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("sreg-flags");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("sreg-flags"));
 
     /// <summary>Advances the simulation through N BREAK checkpoints.</summary>
     private static void SkipBreaks(ArduinoUnoSimulation uno, int count)
@@ -41,12 +41,7 @@ public class SregFlagsTests
         }
     }
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     // ── Checkpoint 1: 255 + 1 = 0 ────────────────────────────────────────────
 

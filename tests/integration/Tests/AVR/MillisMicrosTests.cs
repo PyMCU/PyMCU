@@ -28,17 +28,12 @@ public class MillisMicrosTests
     private const int Gpior0Addr = 0x3E;
     private const int Gpior1Addr = 0x4A;
 
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("millis-micros");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("millis-micros"));
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     // ── Checkpoint 1: millis() >= 10 after 10 overflow cycles ──────────────
 

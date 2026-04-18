@@ -26,14 +26,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class CtrlFlowStressTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     private const int GPIOR0_ADDR = 0x3E;
     private const int GPIOR1_ADDR = 0x4A;
     private const int GPIOR2_ADDR = 0x4B;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("ctrl-flow-stress");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("ctrl-flow-stress"));
 
     /// <summary>Advances the simulation through N complete BREAK checkpoints.</summary>
     private static void SkipBreaks(ArduinoUnoSimulation uno, int count)
@@ -45,12 +45,7 @@ public class CtrlFlowStressTests
         }
     }
 
-    private ArduinoUnoSimulation Boot()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Boot() => _session.Reset();
 
     // --- Checkpoint 1: continue ---
 

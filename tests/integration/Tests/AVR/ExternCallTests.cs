@@ -17,15 +17,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class ExternCallTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("extern-call");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("extern-call"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunUntilSerial(uno.Serial, "EXTERN\n", maxMs: 200);
         return uno;
     }

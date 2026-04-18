@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class MatrixMathTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("matrix-math");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("matrix-math"));
 
     [Test]
     public void Boot_SendsMatrixBanner()
@@ -56,10 +56,5 @@ public class MatrixMathTests
         uno.Serial.Should().HaveBytesAt(47, [0x01, 0x02, 0x04, 0x08, 0x0A]);
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

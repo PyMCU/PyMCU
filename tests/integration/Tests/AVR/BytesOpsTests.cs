@@ -11,15 +11,14 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class BytesOpsTests
 {
-    private static string _hex = null!;
+    private static SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.BuildFixture("bytes-ops");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.BuildFixture("bytes-ops"));
 
     private ArduinoUnoSimulation Boot()
     {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
+        var uno = _session.Reset();
         uno.RunUntilSerial(uno.Serial, "BYTES\n", maxMs: 200);
         return uno;
     }

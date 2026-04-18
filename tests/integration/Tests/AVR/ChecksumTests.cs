@@ -14,10 +14,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class ChecksumTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("checksum");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("checksum"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -118,10 +118,5 @@ public class ChecksumTests
         uno.Serial.Bytes[before + 2].Should().Be(expectedXor2, "group 2 XOR correct");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

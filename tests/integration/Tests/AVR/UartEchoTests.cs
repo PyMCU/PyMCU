@@ -13,10 +13,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class UartEchoTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("uart-echo");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("uart-echo"));
 
     [Test]
     public void Boot_SendsEchoBanner()
@@ -62,10 +62,5 @@ public class UartEchoTests
         uno.Serial.Bytes.Last().Should().Be(0x00);
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

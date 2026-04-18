@@ -13,13 +13,13 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class PwmFadeTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
     // ATmega328P data-space addresses (I/O addr + 0x20)
     private const int TCCR0A = 0x44;
     private const int OCR0A  = 0x47;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("pwm-fade");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("pwm-fade"));
 
     [Test]
     public void PwmMode_Configured_FastPwm()
@@ -61,10 +61,5 @@ public class PwmFadeTests
         uno.Data[OCR0A].Should().BeLessThan(255, "OCR0A decreases during fade-out");
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }

@@ -16,10 +16,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 [TestFixture]
 public class SoftPwmTests
 {
-    private string _hex = null!;
+    private SimSession _session = null!;
 
     [OneTimeSetUp]
-    public void BuildFirmware() => _hex = PymcuCompiler.Build("soft-pwm");
+    public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("soft-pwm"));
 
     [Test]
     public void Boot_SendsBanner()
@@ -75,10 +75,5 @@ public class SoftPwmTests
         }
     }
 
-    private ArduinoUnoSimulation Sim()
-    {
-        var uno = new ArduinoUnoSimulation();
-        uno.WithHex(_hex);
-        return uno;
-    }
+    private ArduinoUnoSimulation Sim() => _session.Reset();
 }
