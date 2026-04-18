@@ -26,6 +26,16 @@ public class ConditionalCompilationProcessor(ConditionalCompilator compilator) :
 {
     public void Process(ProgramNode node, CompilationContext context)
     {
+        if (node == context.RootAst)
+        {
+            compilator.ModuleName = "__main__";
+        }
+        else
+        {
+            var entry = context.NamedModules.FirstOrDefault(kv => kv.Value == node);
+            compilator.ModuleName = entry.Key ?? "__main__";
+        }
+
         compilator.Process(node);
     }
 }

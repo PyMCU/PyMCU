@@ -23,6 +23,9 @@ namespace PyMCU.Frontend;
 // and matching case-branch patterns. Does not touch or mutate the AST.
 public class CompileTimeEvaluator(DeviceConfig config)
 {
+    // Current module name — "__main__" for the entry file, dotted name for libraries.
+    public string ModuleName { get; set; } = "__main__";
+
     // Resolves a compile-time expression to its string representation.
     // Throws if the expression is not a known compile-time constant.
     public string Resolve(Expression e)
@@ -33,6 +36,8 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 return config.Chip;
             case VariableExpr { Name: "__FREQ__" or "F_CPU" }:
                 return config.Frequency.ToString();
+            case VariableExpr { Name: "__name__" }:
+                return ModuleName;
             case VariableExpr varExpr:
                 throw new Exception("Unknown var");
             case MemberAccessExpr { Object: VariableExpr { Name: "__CHIP__" } } memExpr:
