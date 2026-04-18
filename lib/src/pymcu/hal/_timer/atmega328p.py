@@ -2,7 +2,22 @@ from pymcu.chips.atmega328p import TCCR0A, TCCR0B, TCNT0, TIMSK0, TIFR0, OCR0A
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, TCNT1L, TCNT1H, TIMSK1, TIFR1, OCR1A
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, TCNT2, TIMSK2, TIFR2, OCR2A
 from pymcu.chips.atmega328p import SREG
-from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.types import uint8, uint16, uint32, inline, asm, compile_isr, Callable
+
+# ---- millis() / micros() counter (Timer0 overflow, prescaler 64) ----
+#
+# Timer0 at 16 MHz, prescaler 64: overflow every 256 * 64 / 16000000 = 1024 us ~= 1 ms.
+# _millis_count is incremented once per overflow by _millis_ovf_isr().
+# millis() reads it under CLI/SEI guard so the 4-byte read is atomic.
+# micros() approximates using the current TCNT0 value (each tick = 4 us).
+
+_millis_count: uint32 = 0
+
+
+def _millis_ovf_isr():
+    # Non-inline: compiled once, placed at Timer0 OVF vector by millis_init().
+    # Increment the global overflow counter; main reads it via millis().
+    _millis_count = _millis_count + 1
 
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----
 
@@ -211,3 +226,49 @@ def timer2_irq_compa_setup(handler: Callable):
     TIMSK2[1] = 1        # OCIE2A
     SREG[7] = 1          # SEI
     compile_isr(handler, 0x000E)
+
+
+# ---- millis_init / millis / micros ----
+#
+# millis_init() configures Timer0 with prescaler 64 (normal mode) and registers
+# _millis_ovf_isr at the Timer0 OVF vector (byte 0x0020).  Call once from main().
+# Do NOT call if Timer0 is already in use for PWM or another purpose.
+#
+# millis() returns elapsed milliseconds since millis_init() was called.
+# The count wraps to 0 after 2^32 - 1 ms (~49 days).
+#
+# micros() returns elapsed microseconds.  It combines the 32-bit overflow counter
+# with the current TCNT0 value (each TCNT0 tick = 4 us at prescaler 64, 16 MHz).
+# Accuracy: +/-4 us from the TCNT0 granularity.
+
+@inline
+def millis_init():
+    # Normal mode: WGM0[2:0] = 000. CS0[2:0] = 011 -> prescaler 64.
+    TCCR0A.value = 0x00
+    TCCR0B.value = 0x03   # prescaler 64
+    TCNT0.value  = 0
+    TIMSK0[0]    = 1      # TOIE0: enable Timer0 overflow interrupt
+    SREG[7]      = 1      # SEI: enable global interrupts
+    compile_isr(_millis_ovf_isr, 0x0020)   # Timer0 OVF vector (byte address)
+
+
+@inline
+def millis() -> uint32:
+    # Read the 4-byte counter atomically by disabling interrupts briefly.
+    asm("CLI")
+    t: uint32 = _millis_count
+    asm("SEI")
+    return t
+
+
+@inline
+def micros() -> uint32:
+    # Approximate: millis * 1024 (each overflow = 1024 us) + TCNT0 * 4.
+    # CLI/SEI guard prevents the overflow counter incrementing mid-read.
+    asm("CLI")
+    t: uint32 = _millis_count
+    tc: uint8 = TCNT0.value
+    asm("SEI")
+    ticks: uint32 = uint32(tc)
+    return (t << 10) + (ticks << 2)
+

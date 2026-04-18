@@ -175,6 +175,7 @@ public partial class IRGenerator
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
         externFunctionMap.Clear();
+        pendingFlashData.Clear();
 
         intrinsicNames.Add("uart_send_string");
         intrinsicNames.Add("uart_send_string_ln");
@@ -386,6 +387,17 @@ public partial class IRGenerator
             }
         }
 
+        // Inject FlashData instructions (global const[uint8[N]] arrays) into the
+        // main function body so the backend emits .byte tables in flash.
+        if (pendingFlashData.Count > 0)
+        {
+            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFunc != null)
+            {
+                mainFunc.Body.InsertRange(0, pendingFlashData);
+            }
+        }
+
         foreach (var kvp in pendingIsrRegistrations)
         {
             string bareName = kvp.Key;
@@ -590,6 +602,24 @@ public partial class IRGenerator
         }
 
         return new Variable(finalLocalName, type);
+    }
+
+    // Resolve a variable name used as an asm() constraint operand.
+    // Unlike ResolveBinding, this always returns a Variable (never a Constant)
+    // so that the backend can load and then store back the modified value.
+    private Val ResolveAsmOperand(string name)
+    {
+        string localName = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+
+        DataType type = DataType.UINT8;
+        if (variableTypes.TryGetValue(localName, out var dt))
+            type = dt;
+        else if (variableTypes.TryGetValue(name, out var dt2))
+            type = dt2;
+
+        return new Variable(localName, type);
     }
 
     private string? ResolveStrConstant(string name)

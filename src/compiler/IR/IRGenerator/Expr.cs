@@ -613,6 +613,14 @@ public partial class IRGenerator
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
+                if (flashArrays.Contains(qualified))
+                {
+                    Val idxVal = VisitExpression(expr.Index);
+                    Temporary tmp = MakeTemp(DataType.UINT8);
+                    Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
+                    return tmp;
+                }
+
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                 {
                     Val idxVal = VisitExpression(expr.Index);

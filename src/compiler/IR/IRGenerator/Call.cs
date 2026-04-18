@@ -708,26 +708,53 @@ public partial class IRGenerator
 
         if (callee == "asm")
         {
-            if (expr.Args.Count != 1) throw new Exception("asm() expects exactly one string argument");
-            if (expr.Args[0] is StringLiteral str)
-            {
-                Emit(new InlineAsm(str.Value));
-                return new NoneVal();
-            }
+            // asm("code")                  — bare inline assembly (no constraints)
+            // asm("code", op0, op1, ...)   — assembly with %N register constraints
+            if (expr.Args.Count < 1) throw new Exception("asm() requires at least one string argument");
 
-            if (expr.Args[0] is FStringExpr fstr)
+            string? code = null;
+            if (expr.Args[0] is StringLiteral str2)
+                code = str2.Value;
+            else if (expr.Args[0] is FStringExpr fstr2)
             {
-                var resolved = VisitFStringExpr(fstr);
-                if (resolved is not Constant c || !stringIdToStr.TryGetValue(c.Value, out var s))
+                var resolved = VisitFStringExpr(fstr2);
+                if (resolved is Constant c2 && stringIdToStr.TryGetValue(c2.Value, out var s2))
+                    code = s2;
+                else
                     throw new Exception("asm() f-string did not resolve to a string constant");
-                if (s != null) Emit(new InlineAsm(s));
-                return new NoneVal();
-
             }
+            else if (expr.Args[0] is VariableExpr ve2)
+                throw new Exception($"asm() argument must be a string literal, got variable '{ve2.Name}'");
+            else
+                throw new Exception("asm() argument must be a compile-time string literal");
 
-            if (expr.Args[0] is VariableExpr ve)
-                throw new Exception($"asm() argument must be a string literal, got variable '{ve.Name}'");
-            throw new Exception("asm() argument must be a compile-time string literal");
+            if (code == null) return new NoneVal();
+
+            if (expr.Args.Count == 1)
+            {
+                Emit(new InlineAsm(code));
+            }
+            else
+            {
+                // Collect constraint operands (%0, %1, …).
+                // Operands must resolve to Variables (not Constants) so that
+                // the backend can both load the current value and store back
+                // the modified result after the inline assembly executes.
+                var operands = new List<Val>();
+                for (int i = 1; i < expr.Args.Count; i++)
+                {
+                    if (expr.Args[i] is VariableExpr ve)
+                    {
+                        operands.Add(ResolveAsmOperand(ve.Name));
+                    }
+                    else
+                    {
+                        operands.Add(VisitExpression(expr.Args[i]));
+                    }
+                }
+                Emit(new InlineAsm(code, operands));
+            }
+            return new NoneVal();
         }
 
         if (callee == "uart_send_string" || callee == "uart_send_string_ln")
@@ -886,8 +913,18 @@ public partial class IRGenerator
                     else break;
                 }
 
-                int dotPos = key.IndexOf('.');
-                handlerFuncName = dotPos != -1 ? key.Substring(dotPos + 1) : key;
+                // When compile_isr() is called inside an inlined function, the
+                // handler parameter is an alias chain (e.g. handler -> main.int0_isr).
+                // After alias resolution above, `key` holds the resolved name which
+                // may be scope-qualified (e.g. "main.int0_isr" for a function defined
+                // at top-level in main.py).  Extract the bare function name (after
+                // the last dot) and resolve it via ResolveCallee so it gets the
+                // correct module-qualified IR name.
+                string resolvedName = key;
+                int lastDot = resolvedName.LastIndexOf('.');
+                if (lastDot >= 0)
+                    resolvedName = resolvedName.Substring(lastDot + 1);
+                handlerFuncName = ResolveCallee(resolvedName);
                 handlerProvided = !string.IsNullOrEmpty(handlerFuncName);
             }
             else

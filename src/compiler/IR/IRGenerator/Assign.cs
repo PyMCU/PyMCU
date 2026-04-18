@@ -357,17 +357,28 @@ public partial class IRGenerator
                     if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
                     else
                     {
-                        string qualifiedName = currentFunction + "." + varExpr.Name;
-                        DataType type = DataType.UINT8;
-                        if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                        // Check if the variable is a module-level mutable global.
+                        // e.g. _millis_count defined at module scope should be accessed
+                        // as a global even when assigned inside a non-inline function.
+                        string moduleGlobalName = currentModulePrefix + varExpr.Name;
+                        if (mutableGlobals.ContainsKey(moduleGlobalName))
+                        {
+                            target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
+                        }
                         else
                         {
-                            if (value is Temporary tmp) type = tmp.Type;
-                            else if (value is Variable vv) type = vv.Type;
-                            variableTypes[qualifiedName] = type;
-                        }
+                            string qualifiedName = currentFunction + "." + varExpr.Name;
+                            DataType type = DataType.UINT8;
+                            if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                            else
+                            {
+                                if (value is Temporary tmp) type = tmp.Type;
+                                else if (value is Variable vv) type = vv.Type;
+                                variableTypes[qualifiedName] = type;
+                            }
 
-                        target = new Variable(qualifiedName, type);
+                            target = new Variable(qualifiedName, type);
+                        }
                     }
                 }
             }
@@ -630,6 +641,42 @@ public partial class IRGenerator
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // const[uint8[N]] annotation → flash (PROGMEM) array.
+        if (stmt.Annotation.StartsWith("const[") && stmt.Annotation.EndsWith("]"))
+        {
+            string constInner = stmt.Annotation.Substring(6, stmt.Annotation.Length - 7);
+            int ciB = constInner.IndexOf('[');
+            int ciC = constInner.LastIndexOf(']');
+            if (ciB != -1 && ciC == constInner.Length - 1 && ciC > ciB + 1)
+            {
+                string ciNum = constInner.Substring(ciB + 1, ciC - ciB - 1);
+                if (!string.IsNullOrEmpty(ciNum) && ciNum.All(char.IsDigit))
+                {
+                    int count = int.Parse(ciNum);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(constInner.Substring(0, ciB));
+                    if (elemDt == DataType.UINT8)
+                    {
+                        string qualified = string.IsNullOrEmpty(currentFunction)
+                            ? stmt.Target
+                            : currentFunction + "." + stmt.Target;
+                        arraySizes[qualified] = count;
+                        arrayElemTypes[qualified] = elemDt;
+                        variableTypes[qualified] = elemDt;
+                        flashArrays.Add(qualified);
+
+                        var bytes = new List<int>(Enumerable.Repeat(0, count));
+                        if (stmt.Value is ListExpr le)
+                        {
+                            for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
+                                if (le.Elements[k] is IntegerLiteral il) bytes[k] = il.Value;
+                        }
+                        Emit(new FlashData(qualified, bytes));
+                        return;
+                    }
+                }
+            }
+        }
+
         if (stmt.Annotation == "bytearray")
         {
             int count = 0;

@@ -7,6 +7,11 @@
 ;   Output: R25:R24 (Quotient), R27:R26 (Remainder)
 ;   Clobbers: R26, R27, R16
 ;
+; __mod16: Unsigned 16-bit Modulo
+;   Input:  R25:R24 (Dividend), R19:R18 (Divisor)
+;   Output: R25:R24 (Remainder)
+;   Clobbers: R26, R27, R16
+;
 ; -----------------------------------------------------------------------------
 
 __div16:
@@ -38,4 +43,10 @@ __div16_next:
 
 __div16_done:
     pop r16
+    ret
+
+__mod16:
+    rcall __div16
+    mov r24, r26    ; Move Remainder Low to result
+    mov r25, r27    ; Move Remainder High to result
     ret

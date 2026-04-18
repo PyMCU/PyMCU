@@ -140,6 +140,39 @@ def i2c_write_to(addr: uint8, data: uint8) -> uint8:
 
 
 @inline
+def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:
+    # Send START, SLA+W, n bytes from buf[], then STOP.
+    # Returns 1 if all bytes were ACK'd, 0 on any NACK or bus error.
+    TWCR.value = 0xA4           # START: TWINT|TWSTA|TWEN
+    while TWCR[7] == 0:
+        pass
+    start_status: uint8 = TWSR.value & 0xF8
+    if start_status == 0x08:    # START OK
+        TWDR.value = addr << 1  # SLA+W
+        TWCR.value = 0x84
+        while TWCR[7] == 0:
+            pass
+        ack_status: uint8 = TWSR.value & 0xF8
+        if ack_status == 0x18:  # address ACK received
+            i: uint8 = 0
+            all_ack: uint8 = 1
+            while i < n:
+                TWDR.value = buf[i]
+                TWCR.value = 0x84
+                while TWCR[7] == 0:
+                    pass
+                data_status: uint8 = TWSR.value & 0xF8
+                if data_status != 0x28:  # not DATA ACK
+                    all_ack = 0
+                    i = n  # break
+                i = i + 1
+            TWCR.value = 0x94   # STOP
+            return all_ack
+    TWCR.value = 0x94           # STOP on any failure
+    return 0
+
+
+@inline
 def i2c_read_from(addr: uint8) -> uint8:
     # Send START, SLA+R, read one byte with NACK, STOP.
     # Returns the byte read, or 0 if address NACK (no device).
