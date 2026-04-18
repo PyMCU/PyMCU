@@ -55,14 +55,22 @@ jobs:
           path: lib/dist/*
           retention-days: 15
 
+  # One native job per platform — produces a single py3-none-<platform> wheel
+  # per OS/arch. pymcuc is a .NET AOT binary with no Python ABI dependency, so
+  # there is no need to build one wheel per Python version.
   build-wheels:
-    name: Build wheels (${{ matrix.os }})
+    name: Build wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          - os: macos-latest
+          - os: macos-13
+          - os: windows-latest
 
     steps:
       - name: Checkout code
@@ -70,20 +78,22 @@ jobs:
         with:
           submodules: true
 
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.21.3
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
         with:
-          package-dir: .
+          dotnet-version: "10.x"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheel
+        run: uv build --wheel
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
+          path: dist/*.whl
           retention-days: 15
 
   # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
