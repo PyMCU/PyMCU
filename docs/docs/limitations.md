@@ -32,11 +32,12 @@ Fixed-size arrays `arr: uint8[N]` are fully supported with constant- and variabl
 | `str.split()`, `str.join()`, `str.format()` | Heap strings | Not available |
 | `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` / `uart.println()` calls |
-| `str[i]` indexing on a runtime string | No runtime string object | Iterate compile-time literals: `for ch in "literal":` |
+| `str[i]` indexing on a runtime string | No runtime string object | Use `const[str]` parameters — runtime subscript reads from flash via `ArrayLoadFlash` |
 
 **Supported:** String literals in flash, raw string literals `r"\n"` (no escape processing),
 `uart.println("literal")`, `uart.write_str("text")`, `for ch in "ABC":` (compile-time unroll),
-`f"text={const}"` where all interpolations are compile-time constants.
+`f"text={const}"` where all interpolations are compile-time constants,
+`const[str]` runtime subscript `s[i]` (reads byte from flash), `if __name__ == "__main__":` guard.
 
 ---
 
