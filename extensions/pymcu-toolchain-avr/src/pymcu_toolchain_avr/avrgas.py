@@ -438,7 +438,6 @@ class AvrgasToolchain(ExternalToolchain):
         avr_as = self._find_bin("avr-as")
 
         # Translate AVRA-specific syntax to GNU AS before assembling
-        # Translate AVRA-specific syntax to GNU AS before assembling
         src = asm_file.read_text()
         translated = self._avra_to_gnuas(src)
         asm_file.write_text(translated)
