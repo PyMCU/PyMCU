@@ -7,11 +7,7 @@
 .equ pymcu_hal__timer_atmega328p__millis_count, _stack_base + 3
 .equ uart, _stack_base + 7
 .equ led, _stack_base + 8
-.equ tmp_5, _stack_base + 10
-.equ tmp_6, _stack_base + 11
-.equ inline2__delay_ms_avr_i, _stack_base + 12
-.equ tmp_8, _stack_base + 14
-.equ tmp_11, _stack_base + 15
+.equ inline2__delay_ms_avr_i, _stack_base + 10
 
 .org 0x0000
 .global main
@@ -50,84 +46,100 @@ L_BIT_WRITE_DONE_1:
 	LDI	R24, 0
 	MOV	R4, R24
 ; main.py:16: uart.println("NOMAIN")
-	LDI	R24, 21
-	LDI	R25, 1
-	CALL	uart_println
-	MOV	R16, R24
+	LDI	R30, lo8(__str_0)
+	LDI	R31, hi8(__str_0)
+	CALL	__uart_send_z
+L_44:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_3
+	RJMP	L_45
+L_BR_SKIP_3:
+	RJMP	L_44
+L_45:
+	LDI	R24, 10
+	STS	0x00C6, R24
 ; main.py:18: while True:
-L_39:
+L_46:
 ; main.py:19:     led.high()
-	CALL	led_high
-	MOV	R16, R24
+	SBI	0x05, 5
 ; main.py:20:     delay_ms(500)
 ; main.py:21:     led.low()
 	LDI	R24, 0
 	LDI	R25, 0
-	STD	Y+12, R24
-	STD	Y+13, R25
-L_43:
-	LDD	R24, Y+12
-	LDD	R25, Y+13
-	LDI	R18, 244
-	LDI	R19, 1
-	CP	R24, R18
-	CPC	R25, R19
-	BRLO	L_BR_SKIP_3
-	RJMP	L_44
-L_BR_SKIP_3:
-	CALL	pymcu_time__delay_1ms_avr
-	LDD	R24, Y+12
-	LDD	R25, Y+13
-	ADIW	R24, 1
-	STD	Y+12, R24
-	STD	Y+13, R25
-	RJMP	L_43
-L_44:
-; main.py:21:     led.low()
-	CALL	led_low
-	MOV	R16, R24
-; main.py:22:     delay_ms(500)
-; main.py:21:     led.low()
-	LDI	R24, 0
-	LDI	R25, 0
-	STD	Y+12, R24
-	STD	Y+13, R25
-L_47:
-	LDD	R24, Y+12
-	LDD	R25, Y+13
+	STD	Y+10, R24
+	STD	Y+11, R25
+L_51:
+	LDD	R24, Y+10
+	LDD	R25, Y+11
 	LDI	R18, 244
 	LDI	R19, 1
 	CP	R24, R18
 	CPC	R25, R19
 	BRLO	L_BR_SKIP_4
-	RJMP	L_48
+	RJMP	L_52
 L_BR_SKIP_4:
 	CALL	pymcu_time__delay_1ms_avr
-	LDD	R24, Y+12
-	LDD	R25, Y+13
+	LDD	R24, Y+10
+	LDD	R25, Y+11
 	ADIW	R24, 1
-	STD	Y+12, R24
-	STD	Y+13, R25
-	RJMP	L_47
-L_48:
+	STD	Y+10, R24
+	STD	Y+11, R25
+	RJMP	L_51
+L_52:
+; main.py:21:     led.low()
+	CBI	0x05, 5
+; main.py:22:     delay_ms(500)
+; main.py:21:     led.low()
+	LDI	R24, 0
+	LDI	R25, 0
+	STD	Y+10, R24
+	STD	Y+11, R25
+L_56:
+	LDD	R24, Y+10
+	LDD	R25, Y+11
+	LDI	R18, 244
+	LDI	R19, 1
+	CP	R24, R18
+	CPC	R25, R19
+	BRLO	L_BR_SKIP_5
+	RJMP	L_57
+L_BR_SKIP_5:
+	CALL	pymcu_time__delay_1ms_avr
+	LDD	R24, Y+10
+	LDD	R25, Y+11
+	ADIW	R24, 1
+	STD	Y+10, R24
+	STD	Y+11, R25
+	RJMP	L_56
+L_57:
 ; main.py:23:     count = count + 1
 	INC	R4
 	MOV	R24, R4
 ; main.py:24:     if count == 3:
 	CPI	R24, 3
-	BREQ	L_BR_SKIP_5
-	RJMP	L_49
-L_BR_SKIP_5:
+	BREQ	L_BR_SKIP_6
+	RJMP	L_58
+L_BR_SKIP_6:
 ; main.py:25:         uart.println("THREE")
-	LDI	R24, 22
-	LDI	R25, 1
-	CALL	uart_println
-	MOV	R16, R24
+	LDI	R30, lo8(__str_1)
+	LDI	R31, hi8(__str_1)
+	CALL	__uart_send_z
+L_64:
+	LDS	R24, 0x00C0
+	ANDI	R24, 32
+	BREQ	L_BR_SKIP_7
+	RJMP	L_65
+L_BR_SKIP_7:
+	RJMP	L_64
+L_65:
+	LDI	R24, 10
+	STS	0x00C6, R24
 ; main.py:26:         count = 0
 	LDI	R24, 0
 	MOV	R4, R24
-L_49:
-	RJMP	L_39
+L_58:
+	RJMP	L_46
 	RET
 pymcu_time__delay_1ms_avr:
     PUSH R24
@@ -143,3 +155,25 @@ _dly_inner_avr:
     POP R25
     POP R24
 	RET
+
+; --- Flash String Pool (LPM+Z UART send) ---
+__uart_send_z:
+__usendz_loop:
+	LPM	R24, Z+
+	TST	R24
+	BREQ	__usendz_done
+__usendz_wait:
+	LDS	R25, 0x00C0
+	SBRS	R25, 5
+	RJMP	__usendz_wait
+	STS	0x00C6, R24
+	RJMP	__usendz_loop
+__usendz_done:
+	RET
+
+__str_0:
+	.byte 78, 79, 77, 65, 73, 78, 0
+	.balign 2
+__str_1:
+	.byte 84, 72, 82, 69, 69, 0
+	.balign 2

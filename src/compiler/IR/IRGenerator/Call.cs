@@ -681,7 +681,8 @@ public partial class IRGenerator
         var castTypes = new Dictionary<string, DataType>
         {
             { "uint8", DataType.UINT8 }, { "uint16", DataType.UINT16 }, { "uint32", DataType.UINT32 },
-            { "int8", DataType.INT8 }, { "int16", DataType.INT16 }, { "int32", DataType.INT32 }
+            { "int8", DataType.INT8 }, { "int16", DataType.INT16 }, { "int32", DataType.INT32 },
+            { "int", DataType.INT16 }
         };
         if (castTypes.TryGetValue(callee, out DataType dstType))
         {

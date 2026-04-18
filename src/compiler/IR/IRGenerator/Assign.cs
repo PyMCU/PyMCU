@@ -154,6 +154,15 @@ public partial class IRGenerator
                         : (!string.IsNullOrEmpty(currentFunction)
                             ? currentFunction + "." + varExprCtor.Name
                             : varExprCtor.Name);
+                    // When the target variable is a module-level mutable global (e.g. declared at
+                    // top level in an entrypoint-less script), use its global name so that later
+                    // method lookups on the global variable resolve the class type correctly.
+                    if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                    {
+                        string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
+                        if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                            qualifiedName = mutableGlobalKey;
+                    }
                     instanceClasses[qualifiedName] = resolvedClass;
                     pendingConstructorTarget = qualifiedName;
                     virtualInstances.Add(qualifiedName);
@@ -214,6 +223,13 @@ public partial class IRGenerator
                                         : (!string.IsNullOrEmpty(currentFunction)
                                             ? currentFunction + "." + varExprBin.Name
                                             : varExprBin.Name);
+                                    // Use the global name when the target is a module-level mutable global.
+                                    if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                                    {
+                                        string mgk = currentModulePrefix + varExprBin.Name;
+                                        if (mutableGlobals.ContainsKey(mgk))
+                                            qualifiedName = mgk;
+                                    }
                                     instanceClasses[qualifiedName] = cls;
                                     pendingConstructorTarget = qualifiedName;
                                     virtualInstances.Add(qualifiedName);

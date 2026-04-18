@@ -5,7 +5,7 @@
 .equ pymcu_hal__uart_avr__rx_head, _stack_base + 1
 .equ pymcu_hal__uart_avr__rx_tail, _stack_base + 2
 .equ pymcu_hal__timer_atmega328p__millis_count, _stack_base + 3
-.equ inline2__delay_ms_avr_i, _stack_base + 18
+.equ inline2__delay_ms_avr_i, _stack_base + 19
 
 .org 0x0000
 .global main
@@ -62,17 +62,17 @@ L_31:
 ; main.py:16:     x: int = 100
 	LDI	R24, 100
 	LDI	R25, 0
-	MOV	R8, R24
-	MOV	R9, R25
+	MOV	R6, R24
+	MOV	R7, R25
 ; main.py:17:     y: int = 200
 	LDI	R24, 200
-	MOV	R10, R24
-	MOV	R11, R25
+	MOV	R8, R24
+	MOV	R9, R25
 ; main.py:18:     z: int = x + y
 	LDI	R24, 44
 	LDI	R25, 1
-	MOV	R12, R24
-	MOV	R13, R25
+	MOV	R10, R24
+	MOV	R11, R25
 ; main.py:19:     if z == 300:
 	LDI	R18, 44
 	LDI	R19, 1
@@ -117,17 +117,13 @@ L_32:
 ; main.py:25:     raw: int = 42
 	LDI	R24, 42
 	LDI	R25, 0
+	MOV	R12, R24
+	MOV	R13, R25
+; main.py:26:     casted: int = int(raw)
 	MOV	R14, R24
 	MOV	R15, R25
-; main.py:26:     casted: int = int(raw)
-	CALL	int
-	MOV	R4, R24
-	MOV	R5, R25
 ; main.py:27:     if casted == 42:
-	LDI	R18, 42
-	LDI	R19, 0
-	CP	R24, R18
-	CPC	R25, R19
+	CPI	R24, 42
 	BREQ	L_BR_SKIP_4
 	RJMP	L_49
 L_BR_SKIP_4:
@@ -167,13 +163,13 @@ L_48:
 ; main.py:33:     neg: int = 0
 	LDI	R24, 0
 	LDI	R25, 0
-	MOV	R6, R24
-	MOV	R7, R25
+	MOV	R4, R24
+	MOV	R5, R25
 ; main.py:34:     neg = neg - 1
 	LDI	R24, 255
 	LDI	R25, 255
-	MOV	R6, R24
-	MOV	R7, R25
+	MOV	R4, R24
+	MOV	R5, R25
 ; main.py:35:     if neg == -1:
 	CPI	R24, 255
 	BREQ	L_BR_SKIP_7
@@ -219,11 +215,11 @@ L_80:
 ; main.py:30:         uart.println("B:FAIL")
 	LDI	R24, 0
 	LDI	R25, 0
-	STD	Y+18, R24
-	STD	Y+19, R25
+	STD	Y+19, R24
+	STD	Y+20, R25
 L_84:
-	LDD	R24, Y+18
-	LDD	R25, Y+19
+	LDD	R24, Y+19
+	LDD	R25, Y+20
 	LDI	R18, 232
 	LDI	R19, 3
 	CP	R24, R18
@@ -232,11 +228,11 @@ L_84:
 	RJMP	L_85
 L_BR_SKIP_10:
 	CALL	pymcu_time__delay_1ms_avr
-	LDD	R24, Y+18
-	LDD	R25, Y+19
+	LDD	R24, Y+19
+	LDD	R25, Y+20
 	ADIW	R24, 1
-	STD	Y+18, R24
-	STD	Y+19, R25
+	STD	Y+19, R24
+	STD	Y+20, R25
 	RJMP	L_84
 L_85:
 	RJMP	L_80

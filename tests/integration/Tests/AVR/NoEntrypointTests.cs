@@ -35,9 +35,9 @@ public class NoEntrypointTests
     public void Led_GoesHighOnFirstBlink()
     {
         var uno = Sim();
-        // After the UART banner the loop starts: led.high() then delay_ms(500).
-        // At 700 ms the LED should have gone high at least once.
-        uno.RunMilliseconds(700);
+        // After the UART banner the loop starts: led.high() fires immediately.
+        // At 200 ms we are well within the first 500 ms high phase.
+        uno.RunMilliseconds(200);
         uno.PortB.Should().HavePinHigh(5);
     }
 
@@ -45,9 +45,9 @@ public class NoEntrypointTests
     public void Led_GoesLowAfterFirstHighDelay()
     {
         var uno = Sim();
-        // After high()+delay_ms(500), low() fires.  At ~1100 ms we are inside
-        // the second delay_ms(500) — LED is low.
-        uno.RunMilliseconds(1100);
+        // led.low() fires ~500 ms after boot.  At 700 ms we are inside the
+        // 500 ms low phase (between 500 ms and 1000 ms).
+        uno.RunMilliseconds(700);
         uno.PortB.Should().HavePinLow(5);
     }
 
