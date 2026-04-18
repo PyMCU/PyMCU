@@ -1,4 +1,3 @@
-using System.Reflection;
 using Avr8Sharp.TestKit.Boards;
 
 namespace PyMCU.IntegrationTests;
@@ -26,39 +25,18 @@ namespace PyMCU.IntegrationTests;
 ///         callbacks from the previous test cannot fire into the next test).</item>
 ///   <item>Reset <c>Cpu.Cycles</c> to 0 so <c>RunMilliseconds</c> measures from the
 ///         start of the new test.</item>
-///   <item>Zero the EEPROM peripheral's internal write-timing counters
-///         (<c>_writeCompleteCycles</c> / <c>_writeEnabledCycles</c>) so that a
-///         stale value from the previous test cannot cause the EEPROM write
-///         callback to silently skip the write and leave <c>EEPE</c> stuck high.</item>
 ///   <item>Clear the UART serial-probe receive buffer.</item>
 /// </list>
+/// <para>
+/// <b>Note:</b> <c>SimSession</c> is not suitable for firmware that relies on EEPROM
+/// peripheral state across tests.  <c>AvrEeprom</c> keeps internal write-timing counters
+/// (<c>_writeCompleteCycles</c> / <c>_writeEnabledCycles</c>) that are not reset by
+/// <c>Cpu.Reset()</c>.  Fixtures that exercise EEPROM should create a fresh
+/// <see cref="ArduinoUnoSimulation"/> per test instead (see <c>EepromTests</c>).
+/// </para>
 /// </remarks>
 public sealed class SimSession
 {
-    private static readonly FieldInfo EepromWriteCompleteCycles;
-    private static readonly FieldInfo EepromWriteEnabledCycles;
-
-    static SimSession()
-    {
-        var eepromType = typeof(ArduinoUnoSimulation).Assembly
-            .GetType("AVR8Sharp.Core.Peripherals.AvrEeprom")
-            ?? throw new InvalidOperationException(
-                "AVR8Sharp.Core.Peripherals.AvrEeprom type not found. " +
-                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
-
-        EepromWriteCompleteCycles = eepromType
-            .GetField("_writeCompleteCycles", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "AvrEeprom._writeCompleteCycles field not found. " +
-                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
-
-        EepromWriteEnabledCycles = eepromType
-            .GetField("_writeEnabledCycles", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "AvrEeprom._writeEnabledCycles field not found. " +
-                "If AVR8Sharp was updated, review SimSession.Reset() EEPROM reset logic.");
-    }
-
     private readonly ArduinoUnoSimulation _sim;
     private readonly byte[] _dataSnapshot;
 
@@ -99,19 +77,7 @@ public sealed class SimSession
         // 4. Reset the cycle counter so RunMilliseconds(ms) measures from 0.
         _sim.Cpu.Cycles = 0;
 
-        // 5. Reset EEPROM peripheral timing state.  Cpu.Reset() zeroes Cpu.Cycles but
-        //    AvrEeprom keeps its own _writeCompleteCycles / _writeEnabledCycles counters.
-        //    If a previous test left a stale _writeCompleteCycles > 0, the EEPROM write
-        //    callback sees (Cycles=0) < _writeCompleteCycles and silently skips starting
-        //    the new write while leaving EEPE=1 in EECR with no clock event to clear it —
-        //    causing the firmware's polling loop to spin forever.
-        if (_sim.Eeprom is not null)
-        {
-            EepromWriteCompleteCycles.SetValue(_sim.Eeprom, 0u);
-            EepromWriteEnabledCycles.SetValue(_sim.Eeprom, 0u);
-        }
-
-        // 6. Clear the UART receive buffer captured by the serial probe.
+        // 5. Clear the UART receive buffer captured by the serial probe.
         _sim.Serial.Clear();
 
         return _sim;
