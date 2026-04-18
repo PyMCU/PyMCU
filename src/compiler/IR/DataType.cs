@@ -70,7 +70,7 @@ public static class DataTypeExtensions
     {
         if (string.IsNullOrEmpty(typeStr) || typeStr == "uint8")
             return DataType.UINT8;
-        if (typeStr == "int") return DataType.UINT16;
+        if (typeStr == "int") return DataType.INT16;
         if (typeStr == "int8") return DataType.INT8;
         if (typeStr == "uint16") return DataType.UINT16;
         if (typeStr == "int16") return DataType.INT16;

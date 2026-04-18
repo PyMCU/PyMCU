@@ -17,6 +17,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | `for i, x in enumerate(iterable)` | Compile-time index counter |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`) patterns; DCE on `__CHIP__` |
 | `def` (functions) | Typed params, defaults, keyword args, overloading by type |
+| `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
+| Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level executable statements |
 | `class` | Zero-cost flattening, `@inline` methods, constructors |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
@@ -61,6 +63,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Required annotation for all variables |
+| `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` | Memory-mapped I/O pointer |
 | `const[T]` | Compile-time constant enforcement |
 | `asm("instr")` | Inline assembly emission |
@@ -301,7 +304,33 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
-## v0.10 — Next Tier
+## v0.10 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `__name__` compile-time constant | `"__main__"` for entry file, dotted module name for libraries — matches CPython semantics |
+| `if __name__ == "__main__":` guard | Compile-time guard for entry-point code; body promoted to top-level in main, eliminated in libs |
+| `const[str]` runtime subscript | Runtime-indexed access on compile-time string constants via `ArrayLoadFlash` (LPM Z on AVR) |
+
+### Compiler
+
+| Feature | Notes |
+|---------|-------|
+| Remove `UARTSendString` IR instruction | String output decomposed to `FlashData` + `ArrayLoadFlash` inline loop — no UART knowledge in IR layer |
+| `print()` routes through stdlib | `print()` calls `uart_write_str` (inline) for strings, `uart_write_decimal_u8` for numbers — arch code lives in stdlib |
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| `uart_write_str` pure PyMCU loop | Replaces compiler-intrinsic `uart_send_string` with idiomatic `while b != 0: uart_write(b)` inline loop |
+| `pymcu.hal.console` module | Arch-dispatched `print_str` / `print_u8` wrappers for portable console output |
+
+---
+
+## v0.11 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
 

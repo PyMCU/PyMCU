@@ -177,9 +177,7 @@ public partial class IRGenerator
         externFunctionMap.Clear();
         pendingFlashData.Clear();
 
-        intrinsicNames.Add("uart_send_string");
-        intrinsicNames.Add("uart_send_string_ln");
-        foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32" })
+        foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
         intrinsicNames.Add("print");
         intrinsicNames.Add("sleep_ms");
@@ -371,6 +369,45 @@ public partial class IRGenerator
         currentSourceFile = "main.py";
         ScanGlobals(mainAst);
         ScanFunctions(mainAst);
+
+        // Synthesize a `main` function from top-level executable statements when the
+        // user has not written an explicit `def main():`.  This allows MicroPython-
+        // and CircuitPython-style scripts that have no entry-point wrapper.
+        bool hasExplicitMain = mainAst.Functions.Any(f => f.Name == "main");
+        if (!hasExplicitMain)
+        {
+            var executableStmts = mainAst.GlobalStatements
+                .Where(s => !IsTopLevelPureDeclaration(s))
+                .ToList();
+
+            if (executableStmts.Count > 0)
+            {
+                var syntheticBlock = new Block();
+                foreach (var s in executableStmts)
+                    syntheticBlock.Statements.Add(s);
+
+                var syntheticMain = new FunctionDef("main", new List<Param>(), "None", syntheticBlock);
+                functionsToCompile.Insert(0,
+                    new FunctionEntry { Prefix = "", Func = syntheticMain, SourceFile = "main.py" });
+                functionReturnTypes["main"] = "None";
+                functionParams["main"] = new List<string>();
+                functionParamTypes["main"] = new List<DataType>();
+            }
+        }
+        else
+        {
+            // Explicit `def main()` exists.  Truly executable top-level statements
+            // (control flow, function calls) are not allowed alongside it — they
+            // would silently be ignored, confusing users.  Pure variable declarations
+            // (`x: uint16 = 0`) are fine and are used for module-level globals.
+            var conflicting = mainAst.GlobalStatements
+                .Where(IsTopLevelRuntimeStatement)
+                .ToList();
+            if (conflicting.Count > 0)
+                throw new Exception(
+                    "Top-level executable statements cannot coexist with an explicit def main(): function. " +
+                    "Either remove def main() and use top-level code, or move all logic inside def main().");
+        }
 
         foreach (var imp in mainAst.Imports)
         {
@@ -702,6 +739,33 @@ public partial class IRGenerator
         return null;
     }
 
+    // Interns a compile-time string value as a null-terminated FlashData entry,
+    // returning the flash array name.  Reuses an existing entry if the same string
+    // was interned before.  Registers the entry in flashArrays / arraySizes /
+    // arrayElemTypes so that ArrayLoadFlash works for runtime-indexed access.
+    private int _flashStrCounter;
+    private readonly Dictionary<string, string> _flashStrCache = new();
+
+    private string InternStringAsFlash(string value)
+    {
+        if (_flashStrCache.TryGetValue(value, out var existing))
+            return existing;
+
+        var name = $"__cstr_{_flashStrCounter++}";
+        var bytes = System.Text.Encoding.ASCII.GetBytes(value)
+            .Select(b => (int)b)
+            .Append(0) // null terminator
+            .ToList();
+
+        Emit(new FlashData(name, bytes));
+        flashArrays.Add(name);
+        arraySizes[name] = bytes.Count;
+        arrayElemTypes[name] = DataType.UINT8;
+
+        _flashStrCache[value] = name;
+        return name;
+    }
+
     private string ResolveCallee(string name)
     {
         int dotPos = name.IndexOf('.');
@@ -739,4 +803,46 @@ public partial class IRGenerator
 
         return name;
     }
+
+    // Returns true for top-level statements that are purely declarative and have no
+    // runtime effect when visited inside a function body.  Such statements are either
+    // already handled at scan time (globals, constants, class / function definitions)
+    // or are no-ops at the IR level (imports, class definitions).
+    //
+    // Used by the synthesized-main logic to decide which GlobalStatements to include
+    // in the generated `main` body.
+    private bool IsTopLevelPureDeclaration(Statement s)
+    {
+        // Imports and class definitions are scanned before IR generation and have no
+        // runtime representation in a function body.
+        if (s is ImportStmt || s is ClassDef) return true;
+
+        if (s is AnnAssign ann)
+        {
+            // const[T[N]] flash arrays are already injected via pendingFlashData —
+            // including them again would emit a duplicate FlashData instruction.
+            if (ann.Annotation.StartsWith("const[") && ann.Annotation.EndsWith("]"))
+            {
+                string inner = ann.Annotation.Substring(6, ann.Annotation.Length - 7);
+                if (inner.Contains('[')) return true; // const[uint8[N]] — flash array
+            }
+
+            // If ScanGlobals resolved this name as a compile-time constant (e.g.
+            // `MY_VAL: const[uint8] = 42` or an all-caps assignment), there is no
+            // runtime initializer to emit.
+            if (globals.ContainsKey(ann.Target)) return true;
+
+            return false;
+        }
+
+        return false;
+    }
+
+    // Returns true for statements that are clearly runtime control-flow or expressions
+    // (while, for, if, function calls, etc.).  Used to detect conflicting top-level
+    // code when an explicit `def main():` is present — such code would be silently
+    // dropped, which is always a mistake.
+    private static bool IsTopLevelRuntimeStatement(Statement s) =>
+        s is WhileStmt or ForStmt or IfStmt or MatchStmt or ExprStmt or
+        WithStmt or AugAssignStmt or TupleUnpackStmt;
 }

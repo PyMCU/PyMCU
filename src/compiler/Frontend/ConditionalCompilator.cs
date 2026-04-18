@@ -25,6 +25,13 @@ public class ConditionalCompilator(DeviceConfig config)
 {
     private readonly CompileTimeEvaluator _evaluator = new(config);
 
+    // Current module name — set by ConditionalCompilationProcessor before Process().
+    public string ModuleName
+    {
+        get => _evaluator.ModuleName;
+        set => _evaluator.ModuleName = value;
+    }
+
     public void Process(ProgramNode program)
     {
         var newGlobals = new List<Statement>();

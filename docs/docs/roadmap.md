@@ -17,6 +17,8 @@ Everything below is shipped and covered by integration tests.
 | `for i, x in enumerate(iterable)` | Compile-time index counter |
 | `match` / `case` | Literal, wildcard `_`, OR (`|`), dotted-name patterns; DCE on `__CHIP__` |
 | `def` | Typed params, defaults, keyword args, overloading by type, tuple multi-return |
+| `def main():` | Explicit entry point (optional — top-level scripts compile without it) |
+| Top-level scripts (no `def main():`) | Compiler synthesizes `main` from top-level executable statements |
 | `class` | ZCA `@inline` flattening, constructors, `@property` / `@name.setter` |
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `class Foo(Enum)` | Zero-cost integer constants; no SRAM |
@@ -58,6 +60,7 @@ Everything below is shipped and covered by integration tests.
 | Feature | Notes |
 |---------|-------|
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Required annotation for all variables |
+| `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` / `ptr(addr)` | Memory-mapped I/O |
 | `const[T]` | Compile-time constant enforcement |
 | `asm("instr")` | Inline assembly |
@@ -283,7 +286,33 @@ cflags       = ["-O2"]
 
 ---
 
-## v0.10 — Next Tier
+## v0.10 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `__name__` compile-time constant | `"__main__"` for entry file, dotted module name for libraries — matches CPython semantics |
+| `if __name__ == "__main__":` guard | Compile-time guard for entry-point code; body promoted to top-level in main, eliminated in libs |
+| `const[str]` runtime subscript | Runtime-indexed access on compile-time string constants via `ArrayLoadFlash` (LPM Z on AVR) |
+
+### Compiler
+
+| Feature | Notes |
+|---------|-------|
+| Remove `UARTSendString` IR instruction | String output decomposed to `FlashData` + `ArrayLoadFlash` inline loop — no UART knowledge in IR layer |
+| `print()` routes through stdlib | `print()` calls `uart_write_str` (inline) for strings, `uart_write_decimal_u8` for numbers |
+
+### HAL
+
+| Feature | Notes |
+|---------|-------|
+| `uart_write_str` pure PyMCU loop | Replaces compiler-intrinsic `uart_send_string` with idiomatic inline loop |
+| `pymcu.hal.console` module | Arch-dispatched `print_str` / `print_u8` wrappers for portable console output |
+
+---
+
+## v0.11 — Next Tier
 
 Highest-value features not yet implemented, in priority order.
 

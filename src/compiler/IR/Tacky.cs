@@ -122,9 +122,6 @@ public record AugAssign(BinaryOp Op, Val Target, Val Operand) : Instruction;
 // Maximum 4 operands (%0–%3).  Only uint8 (single-register) operands are supported.
 public record InlineAsm(string Code, IList<Val>? Operands = null) : Instruction;
 
-// Flash-resident string send via LPM+Z loop (AVR only).
-public record UARTSendString(string Text, string EndStr) : Instruction;
-
 // Debugging
 public record DebugLine(int Line, string Text, string SourceFile) : Instruction;
 

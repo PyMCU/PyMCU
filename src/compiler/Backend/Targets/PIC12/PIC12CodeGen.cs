@@ -187,8 +187,6 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
                 else
                     EmitComment($"Line {arg.Line}: {arg.Text}");
                 break;
-            // AVR-only; no-op here
-            case UARTSendString: break;
             case ArrayLoad: break;
             case ArrayStore: break;
         }

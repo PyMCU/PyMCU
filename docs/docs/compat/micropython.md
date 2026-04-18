@@ -193,15 +193,35 @@ def fast():
 
 ## Porting Guide
 
-### Wrap top-level code in `def main():`
+### Top-level code works out of the box
+
+PyMCU supports MicroPython-style scripts that place executable code at the top level — no
+`def main():` wrapper is required:
 
 ```python
-# MicroPython (top-level execution)
-led = Pin(13, Pin.OUT)
+# MicroPython script — compiles unchanged in PyMCU
+from machine import Pin
+from utime import sleep_ms
 
-# PyMCU
+led = Pin(13, Pin.OUT)
+while True:
+    led.value(1)
+    sleep_ms(500)
+    led.value(0)
+    sleep_ms(500)
+```
+
+The compiler automatically synthesizes a `main` entry point from any top-level executable
+statements.  If you prefer the explicit style, `def main():` continues to work:
+
+```python
 def main():
     led = Pin(13, Pin.OUT)
+    while True:
+        led.value(1)
+        sleep_ms(500)
+        led.value(0)
+        sleep_ms(500)
 ```
 
 ### Add type annotations

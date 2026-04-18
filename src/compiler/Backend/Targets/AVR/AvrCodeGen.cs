@@ -31,8 +31,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, string> _regLayout = new();
     private Dictionary<string, string> _tmpRegLayout = new();
     private readonly HashSet<string> _allTmpRegNames = [];
-    private readonly Dictionary<string, string> _stringPool = new();
-    private bool _uartSendZNeeded;
     private readonly Dictionary<string, List<int>> _flashArrayPool = new();
     // Maps function name → list of parameter sizes (in bytes) for correct call-site arg loading.
     private Dictionary<string, List<int>> _functionParamSizes = new();
@@ -287,8 +285,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     public override void Compile(ProgramIR program, TextWriter output)
     {
         _assembly.Clear();
-        _stringPool.Clear();
-        _uartSendZNeeded = false;
         _flashArrayPool.Clear();
         _allTmpRegNames.Clear();
         _labelCounter = 0;
@@ -381,7 +377,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var line in optimized)
             output.WriteLine(line.ToString());
 
-        EmitStringPool(output);
         EmitFlashArrayPool(output);
     }
 
@@ -570,7 +565,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
             case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
-            case UARTSendString us: CompileUartSendString(us); break;
         }
     }
 
@@ -1635,26 +1629,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
     }
 
-    private string InternString(string text)
-    {
-        if (_stringPool.TryGetValue(text, out var label)) return label;
-        label = $"__str_{_stringPool.Count}";
-        _stringPool[text] = label;
-        return label;
-    }
-
-    private void CompileUartSendString(UARTSendString us)
-    {
-        _uartSendZNeeded = true;
-        var content = us.Text + us.EndStr;
-        if (string.IsNullOrEmpty(content)) return;
-        var label = InternString(content);
-
-        Emit("LDI", "R30", $"lo8({label})");
-        Emit("LDI", "R31", $"hi8({label})");
-        Emit("CALL", "__uart_send_z");
-    }
-
     private void CompileInlineAsmWithConstraints(InlineAsm ia)
     {
         // %N constraint substitution: load operand N into scratch register R1{6+N},
@@ -1708,43 +1682,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             var label = "__flash_" + name.Replace('.', '_');
             os.WriteLine($"{label}:");
             os.WriteLine("\t.byte " + string.Join(", ", bytes));
-            os.WriteLine("\t.balign 2");
-        }
-    }
-
-    private void EmitStringPool(TextWriter os)
-    {
-        if (!_uartSendZNeeded) return;
-        os.WriteLine();
-        os.WriteLine("; --- Flash String Pool (LPM+Z UART send) ---");
-        os.WriteLine("__uart_send_z:");
-        os.WriteLine("__usendz_loop:");
-        os.WriteLine("\tLPM\tR24, Z+");
-        os.WriteLine("\tTST\tR24");
-        os.WriteLine("\tBREQ\t__usendz_done");
-        os.WriteLine("__usendz_wait:");
-        os.WriteLine("\tLDS\tR25, 0x00C0");
-        os.WriteLine("\tSBRS\tR25, 5");
-        os.WriteLine("\tRJMP\t__usendz_wait");
-        os.WriteLine("\tSTS\t0x00C6, R24");
-        os.WriteLine("\tRJMP\t__usendz_loop");
-        os.WriteLine("__usendz_done:");
-        os.WriteLine("\tRET");
-        os.WriteLine();
-
-        foreach (var (text, label) in _stringPool)
-        {
-            os.WriteLine($"{label}:");
-            os.Write("\t.byte ");
-            var first = true;
-            foreach (var ch in System.Text.Encoding.ASCII.GetBytes(text))
-            {
-                if (!first) os.Write(", ");
-                os.Write(ch);
-                first = false;
-            }
-
-            os.WriteLine(", 0");
             os.WriteLine("\t.balign 2");
         }
     }

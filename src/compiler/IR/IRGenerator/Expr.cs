@@ -661,11 +661,20 @@ public partial class IRGenerator
             string? strVal = ResolveStrConstant(localName);
             if (strVal != null)
             {
-                if (!(expr.Index is IntegerLiteral ic))
-                    throw new Exception("String subscript index must be a compile-time constant");
-                if (ic.Value < 0 || ic.Value >= strVal.Length)
-                    throw new Exception("String subscript index out of range");
-                return new Constant((int)strVal[ic.Value]);
+                if (expr.Index is IntegerLiteral ic)
+                {
+                    if (ic.Value < 0 || ic.Value >= strVal.Length)
+                        throw new Exception("String subscript index out of range");
+                    return new Constant((int)strVal[ic.Value]);
+                }
+
+                // Runtime index on a const[str]: intern string as flash data and
+                // emit ArrayLoadFlash so the loop can iterate byte by byte.
+                string flashName = InternStringAsFlash(strVal);
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary tmp = MakeTemp(DataType.UINT8);
+                Emit(new ArrayLoadFlash(flashName, idxVal, tmp));
+                return tmp;
             }
         }
 

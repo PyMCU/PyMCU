@@ -19,19 +19,27 @@ target = "atmega328p"
 
 ## Step 2: Copy your MicroPython source
 
-Your `main.py` stays as `src/main.py`. The `main()` function is the entry point (unlike
-MicroPython's top-level execution; wrap your top-level code in `def main():`).
+Your `main.py` stays as `src/main.py`.  Top-level code compiles as-is — PyMCU automatically
+synthesizes an entry point from top-level executable statements, so no wrapper is required.
+
+If you prefer an explicit entry point, wrapping code in `def main():` continues to work.
 
 ## Step 3: Add type annotations
+
+Python's built-in `int` is supported as a shorthand for `int16` and requires no import:
 
 ```python
 # MicroPython
 count = 0
 data = bytearray(8)
 
-# PyMCU
+# PyMCU -- int works without any import
+count: int = 0
+data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]  # bytearray needs explicit size
+
+# For unsigned or wider types, use pymcu.types:
+from pymcu.types import uint8, uint16
 count: uint16 = 0
-data: uint8[8] = [0, 0, 0, 0, 0, 0, 0, 0]
 ```
 
 ## Step 4: Replace unsupported features
@@ -126,16 +134,16 @@ while True:
 from machine import Pin       # identical
 from utime import sleep_ms    # identical
 
-def main():
-    led = Pin(13, Pin.OUT)    # integer pin numbers work
-    while True:
-        led.value(1)
-        sleep_ms(500)
-        led.value(0)
-        sleep_ms(500)
+led = Pin(13, Pin.OUT)        # top-level code works -- no wrapper needed
+while True:
+    led.value(1)
+    sleep_ms(500)
+    led.value(0)
+    sleep_ms(500)
 ```
 
-The only required change is wrapping in `def main():`.
+This is a zero-change port: the MicroPython source compiles directly.  An explicit
+`def main():` wrapper is accepted but not required.
 
 ## What stays the same
 
