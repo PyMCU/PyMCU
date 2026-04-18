@@ -14,18 +14,15 @@
  * -----------------------------------------------------------------------------
  */
 
-namespace PyMCU.Common.Models;
+using PyMCU.IR;
 
-public sealed record CompilerOptions(
-    string FilePath,
-    string OutputPath,
-    string Arch,
-    string Target,
-    ulong Frequency,
-    List<string> Configs,
-    List<string> Includes,
-    int ResetVector,
-    int InterruptVector,
-    bool Verbose,
-    string? EmitIrPath = null
-);
+namespace PyMCU.Backend;
+
+public abstract class CodeGen
+{
+    public abstract void Compile(ProgramIR program, TextWriter output);
+
+    public abstract void EmitContextSave();
+    public abstract void EmitContextRestore();
+    public abstract void EmitInterruptReturn();
+}

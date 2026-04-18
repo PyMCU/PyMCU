@@ -1,6 +1,11 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/compiler/PyMCU.csproj" />
+    <Project Path="src/backend-sdk/PyMCU.Backend.SDK.csproj" />
+  </Folder>
+  <Folder Name="/src/backends/">
+    <Project Path="src/backends/avr/PyMCU.Backend.AVR.csproj" />
+    <Project Path="src/backends/avr/runner/PyMCU.Backend.AVR.Runner.csproj" />
   </Folder>
   <Folder Name="/tests/" />
   <Folder Name="/tests/integration/">

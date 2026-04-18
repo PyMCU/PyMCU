@@ -17,6 +17,28 @@
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\backend-sdk\PyMCU.Backend.SDK.csproj" />
+  </ItemGroup>
+
+  <!-- Exclude shared types that now live in PyMCU.Backend.SDK. -->
+  <ItemGroup>
+    <Compile Remove="IR\DataType.cs" />
+    <Compile Remove="IR\Tacky.cs" />
+    <Compile Remove="Common\Models\DeviceConfig.cs" />
+    <Compile Remove="Backend\CodeGen.cs" />
+    <Compile Remove="Backend\Analysis\StackAllocator.cs" />
+    <Compile Remove="Backend\Analysis\DynamicStackAllocator.cs" />
+  </ItemGroup>
+
+  <!-- Exclude AVR backend files that now live in PyMCU.Backend.AVR. -->
+  <ItemGroup>
+    <Compile Remove="Backend\Targets\AVR\AvrCodeGen.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrLinearScan.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrPeephole.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrRegisterAllocator.cs" />
+  </ItemGroup>
+
   <!--
     WriteVersionInfo — AOT-safe version stamping.
     Overwrites Common/CompilerInfo.cs with a const string derived from $(Version).
