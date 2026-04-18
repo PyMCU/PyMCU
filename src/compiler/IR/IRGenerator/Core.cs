@@ -177,8 +177,6 @@ public partial class IRGenerator
         externFunctionMap.Clear();
         pendingFlashData.Clear();
 
-        intrinsicNames.Add("uart_send_string");
-        intrinsicNames.Add("uart_send_string_ln");
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
         intrinsicNames.Add("print");
@@ -739,6 +737,33 @@ public partial class IRGenerator
         }
 
         return null;
+    }
+
+    // Interns a compile-time string value as a null-terminated FlashData entry,
+    // returning the flash array name.  Reuses an existing entry if the same string
+    // was interned before.  Registers the entry in flashArrays / arraySizes /
+    // arrayElemTypes so that ArrayLoadFlash works for runtime-indexed access.
+    private int _flashStrCounter;
+    private readonly Dictionary<string, string> _flashStrCache = new();
+
+    private string InternStringAsFlash(string value)
+    {
+        if (_flashStrCache.TryGetValue(value, out var existing))
+            return existing;
+
+        var name = $"__cstr_{_flashStrCounter++}";
+        var bytes = System.Text.Encoding.ASCII.GetBytes(value)
+            .Select(b => (int)b)
+            .Append(0) // null terminator
+            .ToList();
+
+        Emit(new FlashData(name, bytes));
+        flashArrays.Add(name);
+        arraySizes[name] = bytes.Count;
+        arrayElemTypes[name] = DataType.UINT8;
+
+        _flashStrCache[value] = name;
+        return name;
     }
 
     private string ResolveCallee(string name)

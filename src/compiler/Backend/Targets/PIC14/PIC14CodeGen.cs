@@ -432,8 +432,6 @@ public class PIC14CodeGen : CodeGen
             case JumpIfBitSet arg: CompileVariant(arg); break;
             case JumpIfBitClear arg: CompileVariant(arg); break;
             case Call arg: CompileVariant(arg); break;
-            // AVR-only; no-op here
-            case UARTSendString: break;
             case ArrayLoad: break;
             case ArrayStore: break;
             default:

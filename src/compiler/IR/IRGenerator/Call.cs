@@ -758,33 +758,6 @@ public partial class IRGenerator
             return new NoneVal();
         }
 
-        if (callee == "uart_send_string" || callee == "uart_send_string_ln")
-        {
-            bool addNl = callee == "uart_send_string_ln";
-            if (expr.Args.Count != 1) throw new Exception(callee + "() expects exactly one string argument");
-
-            string ResolveStrArg(Expression argExpr)
-            {
-                if (argExpr is StringLiteral lit) return lit.Value;
-                if (argExpr is VariableExpr v)
-                {
-                    string key = currentInlinePrefix + v.Name;
-                    for (int depth = 0; depth < 20; ++depth)
-                    {
-                        if (strConstantVariables.TryGetValue(key, out string s)) return s;
-                        if (variableAliases.TryGetValue(key, out string ak)) key = ak;
-                        else break;
-                    }
-                }
-
-                throw new Exception(callee + "() argument must be a compile-time string constant");
-            }
-
-            string text = ResolveStrArg(expr.Args[0]);
-            Emit(new UARTSendString(text, addNl ? "\n" : ""));
-            return new NoneVal();
-        }
-
         if (callee == "print")
         {
             string endStr = "\n";
@@ -807,10 +780,27 @@ public partial class IRGenerator
                 else posArgs.Add(arg);
             }
 
+            // Resolve uart_write_str inline function for string output
+            string writeStrFn = ResolveCallee("uart_write_str");
+            if (writeStrFn == "uart_write_str")
+            {
+                foreach (var fnName in inlineFunctions.Keys)
+                {
+                    if (fnName.EndsWith("_uart_write_str"))
+                    {
+                        writeStrFn = fnName;
+                        break;
+                    }
+                }
+            }
+
             void EmitStr(string s)
             {
                 if (string.IsNullOrEmpty(s)) return;
-                Emit(new UARTSendString(s, ""));
+                var synthCall = new CallExpr(
+                    new VariableExpr(writeStrFn),
+                    new List<Expression> { new StringLiteral(s) });
+                VisitCall(synthCall);
             }
 
             string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
@@ -831,7 +821,10 @@ public partial class IRGenerator
             {
                 if (arg is StringLiteral lit)
                 {
-                    Emit(new UARTSendString(lit.Value, ""));
+                    var synthCall = new CallExpr(
+                        new VariableExpr(writeStrFn),
+                        new List<Expression> { lit });
+                    VisitCall(synthCall);
                     return;
                 }
 
@@ -841,7 +834,10 @@ public partial class IRGenerator
                     string? strVal = ResolveStrConstant(key);
                     if (strVal != null)
                     {
-                        Emit(new UARTSendString(strVal, ""));
+                        var synthCall = new CallExpr(
+                            new VariableExpr(writeStrFn),
+                            new List<Expression> { new StringLiteral(strVal) });
+                        VisitCall(synthCall);
                         return;
                     }
                 }

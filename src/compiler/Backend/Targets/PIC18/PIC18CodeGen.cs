@@ -240,7 +240,6 @@ public class PIC18CodeGen : CodeGen
                     if (!string.IsNullOrEmpty(arg.SourceFile)) EmitComment($"{arg.SourceFile}:{arg.Line}: {arg.Text}");
                     else EmitComment($"Line {arg.Line}: {arg.Text}");
                     break;
-                case UARTSendString: break;
                 case ArrayLoad: break;
                 case ArrayStore: break;
             }

@@ -110,9 +110,14 @@ def uart_write_decimal_u8(value: uint8):
 
 @inline
 def uart_write_str(s: const[str]):
-    # Emit a UARTSendString IR instruction — AVR backend stores the string in
-    # flash and sends it via a shared LPM+Z loop (much smaller than inline unrolling)
-    uart_send_string(s)
+    # s is a compile-time string constant. The compiler interns it as FlashData
+    # and iterates byte-by-byte via ArrayLoadFlash.
+    i: uint8 = 0
+    b: uint8 = s[0]
+    while b != 0:
+        uart_write(b)
+        i = i + 1
+        b = s[i]
 
 
 @inline
