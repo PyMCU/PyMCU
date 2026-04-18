@@ -38,18 +38,3 @@ include = ["src/", "hatch_build.py"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-
-[tool.cibuildwheel]
-build-frontend = "build"
-# Optimization: skip some versions if needed
-skip = "cp36-* cp37-* cp38-* cp39-* cp310-* pp*"
-
-[tool.cibuildwheel.linux]
-archs = ["x86_64", "aarch64"]
-
-[tool.cibuildwheel.macos]
-archs = ["x86_64", "arm64"]
-
-[tool.cibuildwheel.windows]
-archs = ["AMD64", "x86"]
-
