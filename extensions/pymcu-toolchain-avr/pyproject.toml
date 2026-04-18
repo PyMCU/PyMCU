@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymcu-toolchain-avr"
+version = "0.1.0a1"
+description = "AVR toolchain plugin for PyMCU (GNU AVR binutils: avr-as, avr-gcc, avr-objcopy)"
+readme = "README.md"
+authors = [
+    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
+]
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-only" }
+dependencies = [
+    "pymcu-toolchain-sdk>=0.1.0a1",
+]
+
+[project.entry-points."pymcu.toolchains"]
+avr = "pymcu_toolchain_avr:AvrToolchainPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pymcu_toolchain_avr"]
