@@ -31,8 +31,8 @@ import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import shutil as _shutil
-from pymcu_toolchain_sdk import ExternalToolchain
-from pymcu_toolchain_sdk import _is_non_interactive, _tool_lock
+from pymcu.toolchain.sdk import ExternalToolchain
+from pymcu.toolchain.sdk import _is_non_interactive, _tool_lock
 from rich.prompt import Confirm
 from rich.console import Console
 
@@ -190,7 +190,7 @@ class GputilsToolchain(ExternalToolchain):
             "(brew install gputils / sudo apt install gputils) to skip this step.[/dim]"
         )
 
-        from pymcu_toolchain_sdk import _is_non_interactive
+        from pymcu.toolchain.sdk import _is_non_interactive
         if _is_non_interactive():
             self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
         elif not Confirm.ask(

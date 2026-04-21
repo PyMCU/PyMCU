@@ -15,4 +15,4 @@ license = { text = "MIT" }
 dependencies = []
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu_backend_sdk"]
+packages = ["src/pymcu"]

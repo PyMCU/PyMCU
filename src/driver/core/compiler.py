@@ -97,13 +97,13 @@ class PyMCUCompiler:
 
             import pymcu
             if is_verbose:
-                self.console.print(f"[debug] pymcu imported successfully from: {pymcu.__file__}", style="dim green")
-            if hasattr(pymcu, "__file__") and pymcu.__file__:
-                p = Path(pymcu.__file__).parent / "chips"
-                if p.is_dir():
-                    return str(Path(pymcu.__file__).parent)
-                elif is_verbose:
-                    self.console.print(f"[debug] chips directory not found at: {p}", style="yellow")
+                self.console.print(f"[debug] pymcu namespace __path__: {list(pymcu.__path__)}", style="dim green")
+            for _p in pymcu.__path__:
+                chips_dir = Path(_p) / "chips"
+                if chips_dir.is_dir():
+                    return str(Path(_p))
+            if is_verbose:
+                self.console.print(f"[debug] chips/ not found in any pymcu.__path__ entry", style="yellow")
         except ImportError as e:
             if is_verbose:
                 self.console.print(f"[debug] Failed to import pymcu: {e}", style="dim")

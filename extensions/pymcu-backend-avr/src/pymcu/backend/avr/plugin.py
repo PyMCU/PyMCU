@@ -20,13 +20,13 @@ and emits an AVR assembler (``.asm``) file.
 
 Entry-point registration (pyproject.toml):
     [project.entry-points."pymcu.backends"]
-    avr = "pymcu_backend_avr:AvrBackendPlugin"
+    avr = "pymcu.backend.avr:AvrBackendPlugin"
 """
 
 import sys
 from pathlib import Path
 
-from pymcu_backend_sdk import BackendPlugin, LicenseStatus
+from pymcu.backend.sdk import BackendPlugin, LicenseStatus
 
 
 class AvrBackendPlugin(BackendPlugin):
@@ -52,14 +52,15 @@ class AvrBackendPlugin(BackendPlugin):
             return adjacent
 
         # 2. Development fallback: dotnet publish output.
-        repo_root = package_dir.parent.parent.parent.parent.parent
+        repo_root = package_dir.parent.parent.parent.parent.parent.parent.parent
         dev_path = repo_root / "build" / "bin" / binary_name
         if dev_path.exists():
             return dev_path
 
-        # 3. src/backends/avr/runner built output (dev shortcut).
+        # 3. extensions/pymcu-backend-avr/csharp/cli built output (dev shortcut).
         runner_debug = (
-            repo_root / "src" / "backends" / "avr" / "runner" / "bin" / "Debug" / "net10.0" / binary_name
+            package_dir.parent.parent.parent.parent.parent
+            / "csharp" / "cli" / "bin" / "Debug" / "net10.0" / binary_name
         )
         if runner_debug.exists():
             return runner_debug

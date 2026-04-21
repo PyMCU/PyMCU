@@ -5,10 +5,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>PyMCU.Backend.AVR.Runner</RootNamespace>
+    <RootNamespace>PyMCU.Backend.AVR.Cli</RootNamespace>
     <AssemblyName>pymcuc-avr</AssemblyName>
     <Version>1.0.0-beta1</Version>
-    <!-- MIT: free AVR backend runner. -->
+    <!-- MIT: free AVR backend CLI. -->
     <!-- SPDX-License-Identifier: MIT -->
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishAot>true</PublishAot>
@@ -17,7 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\PyMCU.Backend.AVR.csproj" />
+    <ProjectReference Include="..\lib\PyMCU.Backend.AVR.csproj" />
   </ItemGroup>
 
   <ItemGroup>

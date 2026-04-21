@@ -15,12 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\backend-sdk\PyMCU.Backend.SDK.csproj" />
-  </ItemGroup>
-
-  <!-- Exclude the standalone runner subdirectory from this library. -->
-  <ItemGroup>
-    <Compile Remove="runner\**\*" />
+    <ProjectReference Include="..\..\..\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
   </ItemGroup>
 
 </Project>

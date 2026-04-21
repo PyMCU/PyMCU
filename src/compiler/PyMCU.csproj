@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\backend-sdk\PyMCU.Backend.SDK.csproj" />
+    <ProjectReference Include="..\..\extensions\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
   </ItemGroup>
 
   <!-- Exclude shared types that now live in PyMCU.Backend.SDK. -->

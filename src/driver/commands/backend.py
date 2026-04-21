@@ -98,7 +98,7 @@ def backend_list(
     for family, cls in plugins.items():
         try:
             status = cls.validate_license()
-            from pymcu_backend_sdk import LicenseStatus
+            from pymcu.backend.sdk import LicenseStatus
             if status == LicenseStatus.VALID:
                 license_label = "[green]valid[/green]"
             elif status == LicenseStatus.MISSING:
@@ -156,7 +156,7 @@ def backend_check():
     all_ok = True
     for family, cls in plugins.items():
         try:
-            from pymcu_backend_sdk import LicenseStatus
+            from pymcu.backend.sdk import LicenseStatus
             status = cls.validate_license()
             if status == LicenseStatus.VALID:
                 console.print(f"[green]{family}[/green]: license valid")

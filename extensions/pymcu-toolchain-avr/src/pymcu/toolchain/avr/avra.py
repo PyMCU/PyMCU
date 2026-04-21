@@ -30,8 +30,8 @@ import subprocess
 import re
 from pathlib import Path
 from typing import Optional, Dict, Any
-from pymcu_toolchain_sdk import ExternalToolchain
-from pymcu_toolchain_sdk import _is_non_interactive, _tool_lock
+from pymcu.toolchain.sdk import ExternalToolchain
+from pymcu.toolchain.sdk import _is_non_interactive, _tool_lock
 from rich.prompt import Confirm
 
 class AvraToolchain(ExternalToolchain):

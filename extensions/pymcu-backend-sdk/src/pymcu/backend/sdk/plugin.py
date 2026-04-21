@@ -18,7 +18,7 @@ Every backend package published to PyPI must implement this ABC and register
 it under the ``pymcu.backends`` entry-point group in its ``pyproject.toml``::
 
     [project.entry-points."pymcu.backends"]
-    avr = "pymcu_backend_avr:AvrBackendPlugin"
+    avr = "pymcu.backend.avr:AvrBackendPlugin"
 
 The ``pymcu`` driver discovers all registered plugins at runtime via
 ``importlib.metadata.entry_points(group="pymcu.backends")``.

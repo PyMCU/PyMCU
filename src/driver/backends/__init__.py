@@ -70,7 +70,7 @@ def discover_backends() -> dict[str, type]:
     Returns an empty dict if no backend packages are installed.
     """
     try:
-        from pymcu_backend_sdk import BackendPlugin
+        from pymcu.backend.sdk import BackendPlugin
     except ImportError:
         return {}
 

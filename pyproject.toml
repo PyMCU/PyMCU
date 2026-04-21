@@ -56,3 +56,4 @@ pythonpath = [
     "extensions/pymcu-backend-sdk/src",
     "extensions/pymcu-backend-avr/src",
 ]
+addopts = ["--import-mode=importlib"]

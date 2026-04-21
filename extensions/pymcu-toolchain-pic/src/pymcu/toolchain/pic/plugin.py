@@ -32,7 +32,7 @@ discovers it automatically at runtime.
 """
 
 from rich.console import Console
-from pymcu_toolchain_sdk import ToolchainPlugin
+from pymcu.toolchain.sdk import ToolchainPlugin
 
 from .gputils import GputilsToolchain
 

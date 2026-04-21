@@ -31,7 +31,7 @@ Every toolchain package published to PyPI must implement this ABC and register
 it under the ``pymcu.toolchains`` entry-point group in its ``pyproject.toml``::
 
     [project.entry-points."pymcu.toolchains"]
-    avr = "pymcu_toolchain_avr:AvrToolchainPlugin"
+    avr = "pymcu.toolchain.avr:AvrToolchainPlugin"
 
 The ``pymcu`` CLI discovers all registered plugins at runtime via
 ``importlib.metadata.entry_points(group="pymcu.toolchains")``.
