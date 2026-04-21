@@ -34,7 +34,7 @@ discovers it automatically at runtime.
 from typing import Optional
 
 from rich.console import Console
-from pymcu_toolchain_sdk import ExternalToolchain, ToolchainPlugin
+from pymcu.toolchain.sdk import ExternalToolchain, ToolchainPlugin
 
 from .avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
 

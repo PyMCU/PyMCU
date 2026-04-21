@@ -111,6 +111,7 @@ from .commands.clean import clean
 from .commands.flash import flash
 from .commands.version import version
 from .commands.toolchain import toolchain_app
+from .commands.backend import backend_app
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -132,6 +133,7 @@ app.command()(build)
 app.command()(clean)
 app.command()(flash)
 app.add_typer(toolchain_app)
+app.add_typer(backend_app)
 
 def run_cli():
     _ensure_venv()

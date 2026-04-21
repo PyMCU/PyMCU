@@ -26,5 +26,6 @@ public sealed record CompilerOptions(
     List<string> Includes,
     int ResetVector,
     int InterruptVector,
-    bool Verbose
+    bool Verbose,
+    string? EmitIrPath = null
 );

@@ -10,7 +10,7 @@ pymcu-toolchain-sdk — public API surface for PyMCU toolchain plugin packages.
 
 Import from this package to access the stable base classes and plugin protocol::
 
-    from pymcu_toolchain_sdk import (
+    from pymcu.toolchain.sdk import (
         CacheableTool,
         ExternalToolchain,
         HardwareProgrammer,

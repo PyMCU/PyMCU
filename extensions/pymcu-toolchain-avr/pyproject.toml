@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.entry-points."pymcu.toolchains"]
-avr = "pymcu_toolchain_avr:AvrToolchainPlugin"
+avr = "pymcu.toolchain.avr:AvrToolchainPlugin"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu_toolchain_avr"]
+packages = ["src/pymcu"]

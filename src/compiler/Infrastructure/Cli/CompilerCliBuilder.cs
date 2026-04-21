@@ -83,6 +83,12 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => false
         };
 
+        Option<string?> emitIrOption = new("--emit-ir")
+        {
+            Description = "Emit the IR to a .mir file instead of invoking a codegen backend",
+            DefaultValueFactory = parseResult => null
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -95,6 +101,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(resetVectorOption);
         rootCommand.Options.Add(interruptVectorOption);
         rootCommand.Options.Add(verboseOption);
+        rootCommand.Options.Add(emitIrOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -116,7 +123,8 @@ public static class CompilerCliBuilder
                 Includes: parseResult.GetValue(includeOption) ?? [],
                 ResetVector: parseResult.GetValue(resetVectorOption),
                 InterruptVector: parseResult.GetValue(interruptVectorOption),
-                Verbose: parseResult.GetValue(verboseOption)
+                Verbose: parseResult.GetValue(verboseOption),
+                EmitIrPath: parseResult.GetValue(emitIrOption)
             );
 
             var exitCode = compilerRunner(options);

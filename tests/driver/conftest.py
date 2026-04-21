@@ -150,8 +150,8 @@ def mock_toolchain(monkeypatch, tmp_path):
         hex_out.write_text(":00000001FF\n")  # minimal valid HEX EOF record
         return hex_out
 
-    import pymcu_toolchain_avr.avrgas as avrgas
-    import pymcu_toolchain_pic.gputils as gputils
+    import pymcu.toolchain.avr.avrgas as avrgas
+    import pymcu.toolchain.pic.gputils as gputils
     monkeypatch.setattr(avrgas.AvrgasToolchain, "is_cached", fake_is_cached)
     monkeypatch.setattr(avrgas.AvrgasToolchain, "install", fake_install)
     monkeypatch.setattr(avrgas.AvrgasToolchain, "assemble", fake_assemble)
@@ -163,8 +163,8 @@ def mock_toolchain(monkeypatch, tmp_path):
     # command can resolve a toolchain without needing real entry points.
     from importlib.metadata import EntryPoint
     from unittest.mock import MagicMock
-    from pymcu_toolchain_avr import AvrToolchainPlugin
-    from pymcu_toolchain_pic import PicToolchainPlugin
+    from pymcu.toolchain.avr import AvrToolchainPlugin
+    from pymcu.toolchain.pic import PicToolchainPlugin
 
     def _make_ep(name, cls):
         ep = MagicMock(spec=EntryPoint)
@@ -200,5 +200,5 @@ def mock_download(monkeypatch):
         return True
 
     monkeypatch.setattr(urllib.request, "urlretrieve", fake_retrieve)
-    from pymcu_toolchain_sdk import CacheableTool
+    from pymcu.toolchain.sdk import CacheableTool
     monkeypatch.setattr(CacheableTool, "verify_sha256", fake_verify)

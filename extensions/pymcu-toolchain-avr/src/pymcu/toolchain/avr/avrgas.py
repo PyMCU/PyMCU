@@ -58,7 +58,7 @@ from typing import Optional
 from rich.console import Console
 from rich.prompt import Confirm
 
-from pymcu_toolchain_sdk import ExternalToolchain
+from pymcu.toolchain.sdk import ExternalToolchain
 
 
 # Pre-built avr-gcc toolchain by Zak Kemble (MIT-compatible, self-contained)
@@ -270,7 +270,7 @@ class AvrgasToolchain(ExternalToolchain):
         no system package manager is required.  The release is fetched from:
         https://github.com/ZakKemble/avr-gcc-build/releases
         """
-        from pymcu_toolchain_sdk import _is_non_interactive, _tool_lock
+        from pymcu.toolchain.sdk import _is_non_interactive, _tool_lock
         try:
             info = self._platform_info()
         except RuntimeError as exc:

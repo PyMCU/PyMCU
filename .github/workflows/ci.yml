@@ -81,6 +81,8 @@ jobs:
           uv pip install --python .venv ./lib
           uv pip install --python .venv ./external/pymcu-micropython
           uv pip install --python .venv ./external/pymcu-circuitpython
+          uv pip install --python .venv ./extensions/pymcu-backend-sdk
+          uv pip install --python .venv ./extensions/pymcu-backend-avr
 
       - name: Configure environment
         run: |
@@ -90,6 +92,11 @@ jobs:
       - name: Build pymcuc compiler
         run: |
           dotnet publish src/compiler/PyMCU.csproj \
+            -c Release -o build/bin --nologo
+
+      - name: Build pymcuc-avr backend CLI
+        run: |
+          dotnet publish extensions/pymcu-backend-avr/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
             -c Release -o build/bin --nologo
 
       - name: Add pymcuc to PATH

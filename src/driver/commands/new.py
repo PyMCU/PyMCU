@@ -48,8 +48,8 @@ def get_available_chips() -> List[str]:
     """
     try:
         import pymcu
-        if hasattr(pymcu, '__file__') and pymcu.__file__:
-            chips_dir = Path(pymcu.__file__).parent / "chips"
+        for p in pymcu.__path__:
+            chips_dir = Path(p) / "chips"
             if chips_dir.is_dir():
                 chips = [
                     f.stem for f in chips_dir.glob("*.py")

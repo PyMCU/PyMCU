@@ -27,4 +27,4 @@
 # Compatibility shim: all implementations have moved to pymcu-toolchain-sdk.
 # Internal driver code that imports from here continues to work unchanged.
 
-from pymcu_toolchain_sdk import HardwareProgrammer  # noqa: F401
+from pymcu.toolchain.sdk import HardwareProgrammer  # noqa: F401
