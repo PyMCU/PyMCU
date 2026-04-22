@@ -68,11 +68,7 @@ public partial class IRGenerator
         if (expr is LambdaExpr lam) return VisitLambdaExpr(lam);
 
         if (expr is FloatLiteral floatLit)
-        {
-            string name = "float_ct_" + floatCtCounter++;
-            floatConstantVariables[name] = floatLit.Value;
-            return new Variable(name, DataType.UINT8);
-        }
+            return new FloatConstant(floatLit.Value);
 
         throw new Exception("IR Generation: Unknown Expression type");
     }
@@ -421,36 +417,63 @@ public partial class IRGenerator
 
         double? AsFloatCt(Val v)
         {
+            if (v is FloatConstant fc) return fc.Value;
             if (v is Variable vv && floatConstantVariables.TryGetValue(vv.Name, out double f)) return f;
             if (v is Constant cv) return cv.Value;
             return null;
         }
 
-        bool v1IsFloat = v1 is Variable vv1 && floatConstantVariables.ContainsKey(vv1.Name);
-        bool v2IsFloat = v2 is Variable vv2 && floatConstantVariables.ContainsKey(vv2.Name);
-        if (v1IsFloat || v2IsFloat)
+        bool v1IsFloat = v1 is FloatConstant
+            || (v1 is Variable vv1 && floatConstantVariables.ContainsKey(vv1.Name));
+        bool v2IsFloat = v2 is FloatConstant
+            || (v2 is Variable vv2 && floatConstantVariables.ContainsKey(vv2.Name));
+        bool eitherFloat = v1IsFloat || v2IsFloat
+            || GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT;
+        if (eitherFloat)
         {
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
             if (f1.HasValue && f2.HasValue)
             {
-                double res = 0;
-                switch (expr.Op)
+                // Compile-time fold: both operands are known constants.
+                double res = expr.Op switch
                 {
-                    case AstBinOp.Add: res = f1.Value + f2.Value; break;
-                    case AstBinOp.Sub: res = f1.Value - f2.Value; break;
-                    case AstBinOp.Mul: res = f1.Value * f2.Value; break;
-                    case AstBinOp.Div:
-                    case AstBinOp.FloorDiv: res = f2.Value != 0.0 ? f1.Value / f2.Value : 0.0; break;
-                    case AstBinOp.Mod: res = f1.Value % f2.Value; break;
-                }
-
-                return new Constant((int)Math.Round(res));
+                    AstBinOp.Add => f1.Value + f2.Value,
+                    AstBinOp.Sub => f1.Value - f2.Value,
+                    AstBinOp.Mul => f1.Value * f2.Value,
+                    AstBinOp.Div or AstBinOp.FloorDiv => f2.Value != 0.0 ? f1.Value / f2.Value : 0.0,
+                    AstBinOp.Mod => f1.Value % f2.Value,
+                    _ => 0.0
+                };
+                return new FloatConstant(res);
             }
+
+            // Runtime float operation: emit Binary with FLOAT destination.
+            static BinaryOp MapOp(AstBinOp op) => op switch
+            {
+                AstBinOp.Add => BinaryOp.Add,
+                AstBinOp.Sub => BinaryOp.Sub,
+                AstBinOp.Mul => BinaryOp.Mul,
+                AstBinOp.Div or AstBinOp.FloorDiv => BinaryOp.Div,
+                AstBinOp.Mod => BinaryOp.Mod,
+                AstBinOp.Equal => BinaryOp.Equal,
+                AstBinOp.NotEqual => BinaryOp.NotEqual,
+                AstBinOp.Less => BinaryOp.LessThan,
+                AstBinOp.LessEq => BinaryOp.LessEqual,
+                AstBinOp.Greater => BinaryOp.GreaterThan,
+                AstBinOp.GreaterEq => BinaryOp.GreaterEqual,
+                _ => throw new NotSupportedException($"Float op {op} not supported at runtime")
+            };
+            bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
+                or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
+            Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
+            Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
+            return floatDst;
         }
 
         DataType GetValType(Val v)
         {
+            if (v is FloatConstant) return DataType.FLOAT;
             if (v is Variable varV) return varV.Type;
             if (v is Temporary tmp) return tmp.Type;
             if (v is Constant c)

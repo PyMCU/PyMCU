@@ -114,6 +114,8 @@ public partial class IRGenerator
     {
         switch (expr)
         {
+            case FloatLiteral:
+                return DataType.FLOAT;
             case BooleanLiteral or IntegerLiteral:
                 break;
             case VariableExpr varExpr:
