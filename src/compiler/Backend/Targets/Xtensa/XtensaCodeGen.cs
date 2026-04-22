@@ -70,6 +70,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     private void Emit(string m, string o1) => assembly.Add(XtensaAsmLine.MakeInstruction(m, o1));
     private void Emit(string m, string o1, string o2) => assembly.Add(XtensaAsmLine.MakeInstruction(m, o1, o2));
     private void Emit(string m, string o1, string o2, string o3) => assembly.Add(XtensaAsmLine.MakeInstruction(m, o1, o2, o3));
+    private void Emit(string m, string o1, string o2, string o3, string o4) => assembly.Add(XtensaAsmLine.MakeInstruction(m, o1, o2, o3, o4));
     private void EmitLabel(string l) => assembly.Add(XtensaAsmLine.MakeLabel(l));
     private void EmitComment(string c) => assembly.Add(XtensaAsmLine.MakeComment(c));
     private void EmitRaw(string t) => assembly.Add(XtensaAsmLine.MakeRaw(t));
@@ -228,14 +229,14 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         EmitRaw(".align 4");
         EmitLabel(func.Name);
 
-        // Prologue
-        Emit("addi", "a1", "a1", (-currentStackAdjustment).ToString());
-        if (!currentIsLeaf)
-            Emit("s32i", "a0", "a1", (currentStackAdjustment - 4).ToString());
-        Emit("s32i", "a12", "a1", (currentStackAdjustment - 8).ToString());
-        Emit("addi", "a12", "a1", currentStackAdjustment.ToString());
-
-        // Initialise stack pointer for the entry function
+        // For the bare-metal entry point, initialise the stack pointer to the
+        // top of DRAM before the standard prologue adjusts it.  The addresses
+        // below are the inclusive top of each chip's DRAM region:
+        //   ESP8266 / LX106  — DRAM ends at 0x40000000 (96 KB)
+        //   ESP32-S3          — DRAM ends at 0x3FCFFFFF (512 KB)
+        //   ESP32-S2          — DRAM ends at 0x3FFFFFFF (320 KB)
+        //   ESP32 / generic   — DRAM ends at 0x3FFFFFFF (320 KB)
+        // Reference: ESP-IDF memory layout docs, Xtensa LX6/LX7 TRM.
         if (func.Name == "main")
         {
             string stackTop = cfg.Chip.ToLowerInvariant() switch
@@ -245,15 +246,16 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 var c when c.StartsWith("esp32s2") => "0x3FFFFFFF",
                 _ => "0x3FFFFFFF"   // esp32 / generic Xtensa
             };
-            // Override the stack pointer before the prologue adjustments take
-            // effect.  We re-emit the prologue using the correct SP value by
-            // pre-loading a1 at the very start of main.
-            // Insert the movi before the addi already emitted by replacing the
-            // last two instructions: easier to just insert a pre-init block.
-            // Because we are in the two-pass temporary list we can prepend here.
-            assembly.Insert(assembly.Count - 4, XtensaAsmLine.MakeComment("initialise stack pointer"));
-            assembly.Insert(assembly.Count - 4, XtensaAsmLine.MakeInstruction("movi", "a1", stackTop));
+            EmitComment("initialise stack pointer to top of DRAM");
+            Emit("movi", "a1", stackTop);
         }
+
+        // Prologue
+        Emit("addi", "a1", "a1", (-currentStackAdjustment).ToString());
+        if (!currentIsLeaf)
+            Emit("s32i", "a0", "a1", (currentStackAdjustment - 4).ToString());
+        Emit("s32i", "a12", "a1", (currentStackAdjustment - 8).ToString());
+        Emit("addi", "a12", "a1", currentStackAdjustment.ToString());
 
         foreach (var instr in func.Body)
             CompileInstruction(instr);
@@ -556,7 +558,8 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileBitCheck(BitCheck arg)
     {
         LoadIntoReg(arg.Source, "a8");
-        EmitRaw($"\textui\ta8, a8, {arg.Bit}, 1");
+        // extui: extract bit field (4 operands: dst, src, low-bit, bitcount)
+        Emit("extui", "a8", "a8", arg.Bit.ToString(), "1");
         StoreRegInto("a8", arg.Dst);
     }
 

@@ -33,10 +33,11 @@ public class XtensaAsmLine
     public string Op1 = "";
     public string Op2 = "";
     public string Op3 = "";
+    public string Op4 = "";
     public string Content = "";
 
-    public static XtensaAsmLine MakeInstruction(string m, string o1 = "", string o2 = "", string o3 = "")
-        => new() { Type = LineType.Instruction, Mnemonic = m, Op1 = o1, Op2 = o2, Op3 = o3 };
+    public static XtensaAsmLine MakeInstruction(string m, string o1 = "", string o2 = "", string o3 = "", string o4 = "")
+        => new() { Type = LineType.Instruction, Mnemonic = m, Op1 = o1, Op2 = o2, Op3 = o3, Op4 = o4 };
 
     public static XtensaAsmLine MakeLabel(string l)
         => new() { Type = LineType.Label, LabelText = l };
@@ -55,18 +56,23 @@ public class XtensaAsmLine
         switch (Type)
         {
             case LineType.Instruction:
-                if (string.IsNullOrEmpty(Op3))
+                if (string.IsNullOrEmpty(Op4))
                 {
-                    if (string.IsNullOrEmpty(Op2))
+                    if (string.IsNullOrEmpty(Op3))
                     {
-                        if (string.IsNullOrEmpty(Op1)) return $"\t{Mnemonic}";
-                        return $"\t{Mnemonic}\t{Op1}";
+                        if (string.IsNullOrEmpty(Op2))
+                        {
+                            if (string.IsNullOrEmpty(Op1)) return $"\t{Mnemonic}";
+                            return $"\t{Mnemonic}\t{Op1}";
+                        }
+
+                        return $"\t{Mnemonic}\t{Op1}, {Op2}";
                     }
 
-                    return $"\t{Mnemonic}\t{Op1}, {Op2}";
+                    return $"\t{Mnemonic}\t{Op1}, {Op2}, {Op3}";
                 }
 
-                return $"\t{Mnemonic}\t{Op1}, {Op2}, {Op3}";
+                return $"\t{Mnemonic}\t{Op1}, {Op2}, {Op3}, {Op4}";
             case LineType.Label: return $"{LabelText}:";
             case LineType.Comment: return $"# {Content}";
             case LineType.Raw: return Content;
