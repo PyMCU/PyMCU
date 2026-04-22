@@ -72,6 +72,11 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
     private const int ArgBase  = 0x71;
     private const int VarBase  = 0x20;
 
+    // ISR context save area (above ArgBase, outside the user variable space).
+    // These are in the high-end unbanked GPR region present on most PIC16F devices.
+    private const int WsaveReg      = 0x7A;
+    private const int StatusSaveReg = 0x7B;
+
     // -------------------------------------------------------------------------
     // Emit helpers
     // -------------------------------------------------------------------------
@@ -375,20 +380,21 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
     public override void EmitContextSave()
     {
         // PIC14 has no shadow registers; save W/STATUS/FSR manually.
-        EmitComment("ISR context save: push W and STATUS to dedicated save areas");
-        Emit("MOVWF",  "0x20");  // save W to a dedicated save area — TODO: use a fixed EQU label
-        Emit("SWAPF",  "0x03",  "W");   // STATUS → W via SWAPF to avoid affecting STATUS
-        Emit("MOVWF",  "0x21");         // save STATUS
+        // WsaveReg and StatusSaveReg are reserved above the user variable space (unbanked region).
+        EmitComment("ISR context save: push W and STATUS to reserved save area");
+        Emit("MOVWF",  Addr(WsaveReg));              // save W to dedicated save area
+        Emit("SWAPF",  Addr(StatusReg), "W");        // STATUS → W via SWAPF to avoid affecting STATUS
+        Emit("MOVWF",  Addr(StatusSaveReg));         // save STATUS
         EmitComment("TODO(wip): save BSR/FSR if needed by ISR body");
     }
 
     public override void EmitContextRestore()
     {
         EmitComment("ISR context restore");
-        Emit("SWAPF",  "0x21",  "W");   // restore STATUS (via SWAPF to avoid Z corruption)
-        Emit("MOVWF",  "0x03");         // write to STATUS
-        Emit("SWAPF",  "0x20",  "F");   // swap W save in place
-        Emit("SWAPF",  "0x20",  "W");   // restore original W without corrupting STATUS
+        Emit("SWAPF",  Addr(StatusSaveReg), "W");   // restore STATUS (via SWAPF to avoid Z corruption)
+        Emit("MOVWF",  Addr(StatusReg));             // write to STATUS
+        Emit("SWAPF",  Addr(WsaveReg), "F");         // swap W save in place
+        Emit("SWAPF",  Addr(WsaveReg), "W");         // restore original W without corrupting STATUS
     }
 
     public override void EmitInterruptReturn() => Emit("RETFIE");
@@ -555,12 +561,16 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
             Emit("MOVF",  Addr(TmpLo), "W");
             Emit("IORWF", Addr(TmpHi), "W");  // W = lo | hi; updates Z
         }
+        else if (jz.Condition is Constant c)
+        {
+            // MOVLW does not update Z; store to TmpLo and MOVF to set Z.
+            Emit("MOVLW", $"0x{c.Value & 0xFF:X2}");
+            Emit("MOVWF", Addr(TmpLo));
+            Emit("MOVF",  Addr(TmpLo), "F");  // sets Z
+        }
         else
         {
-            LoadIntoW(jz.Condition);     // MOVF sets Z if zero
-            Emit("MOVF", Addr(TmpLo), "W");  // redundant read just to set Z — re-do:
-            // Actually MOVLW doesn't update Z; MOVF does. Let's use the right form:
-            _assembly.RemoveAt(_assembly.Count - 1); // remove the redundant MOVF
+            LoadIntoW(jz.Condition);  // MOVF addr, W sets Z for Variable/Temporary/MemoryAddress
         }
         Emit("BTFSC", Addr(StatusReg), $"{StatusZ}");  // Z=0 → skip GOTO → don't jump
         Emit("GOTO",  jz.Target);
@@ -573,6 +583,12 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
             Load16Into(jnz.Condition, TmpLo, TmpHi);
             Emit("MOVF",  Addr(TmpLo), "W");
             Emit("IORWF", Addr(TmpHi), "W");
+        }
+        else if (jnz.Condition is Constant c)
+        {
+            Emit("MOVLW", $"0x{c.Value & 0xFF:X2}");
+            Emit("MOVWF", Addr(TmpLo));
+            Emit("MOVF",  Addr(TmpLo), "F");
         }
         else
         {
@@ -679,14 +695,12 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
             switch (u.Op)
             {
                 case IrUnOp.Neg:
-                    // Two's complement: ~lo + 1 : ~hi + carry
+                    // Two's complement: ~lo + 1 : ~hi + carry from lo.
+                    // COMF both bytes first, then INCF lo. If lo wraps to 0 (Z=1), propagate carry to hi.
                     Emit("COMF",  Addr(TmpLo), "F");
                     Emit("COMF",  Addr(TmpHi), "F");
-                    Emit("INCF",  Addr(TmpLo), "F");  // lo++
-                    // Carry from lo into hi: if TmpLo became 0 after increment, carry occurred.
-                    string negCarryL = MakeLabel("L14_NEG16_CARRY");
-                    string negDoneL  = MakeLabel("L14_NEG16_DONE");
-                    Emit("BTFSC", Addr(StatusReg), $"{StatusZ}");  // if lo==0 after INC: carry
+                    Emit("INCF",  Addr(TmpLo), "F");    // lo++; Z=1 if lo wrapped to 0 (carry)
+                    Emit("BTFSC", Addr(StatusReg), $"{StatusZ}");  // Z=0 → skip; Z=1 → carry into hi
                     Emit("INCF",  Addr(TmpHi), "F");
                     break;
                 case IrUnOp.BitNot:
@@ -993,26 +1007,25 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
         switch (b.Op)
         {
             case IrBinOp.Add:
-                // Low byte: TmpLo += Tmp2Lo; carry saved in STATUS.C.
+                // Low byte: add; propagate carry to high byte BEFORE adding high bytes.
                 Emit("MOVF",  Addr(Tmp2Lo), "W");
-                Emit("ADDWF", Addr(TmpLo),  "F");   // TmpLo += Tmp2Lo; C = carry
-                // High byte: TmpHi += Tmp2Hi + carry (manual).
+                Emit("ADDWF", Addr(TmpLo),  "F");   // TmpLo += Tmp2Lo; C = carry from lo
+                Emit("BTFSC", Addr(StatusReg), $"{StatusC}");  // C=0 → skip INCF (no carry)
+                Emit("INCF",  Addr(TmpHi), "F");    // C=1 → carry from lo into hi
                 Emit("MOVF",  Addr(Tmp2Hi), "W");
                 Emit("ADDWF", Addr(TmpHi),  "F");   // TmpHi += Tmp2Hi
-                // Add the carry from the low byte.
-                string addCarryL = MakeLabel("L14_ADD16_CARRY");
-                Emit("BTFSC", Addr(StatusReg), $"{StatusC}");  // carry was set earlier? (already consumed by ADDWF hi)
-                // Note: carry from the second ADDWF may overwrite the first carry.  This is a
-                // known WIP limitation; a correct implementation needs BTFSC after the lo-add
-                // before the hi-add, which would require saving the carry first.
-                EmitComment("TODO(wip): 16-bit Add carry propagation may be incorrect; needs ADDWFC or save-C pattern");
+                EmitComment("TODO(wip): carry overflow from INCF TmpHi is not propagated further");
                 break;
             case IrBinOp.Sub:
+                // Low byte: subtract; propagate borrow to high byte BEFORE subtracting high bytes.
+                // After SUBWF: C=0 means borrow (TmpLo < Tmp2Lo).
                 Emit("MOVF",  Addr(Tmp2Lo), "W");
-                Emit("SUBWF", Addr(TmpLo),  "F");   // TmpLo -= Tmp2Lo
+                Emit("SUBWF", Addr(TmpLo),  "F");   // TmpLo -= Tmp2Lo; C=0 if borrow
+                Emit("BTFSS", Addr(StatusReg), $"{StatusC}");  // C=1 → skip DECF (no borrow)
+                Emit("DECF",  Addr(TmpHi), "F");    // C=0 → borrow → decrement hi
                 Emit("MOVF",  Addr(Tmp2Hi), "W");
-                Emit("SUBWF", Addr(TmpHi),  "F");   // TmpHi -= Tmp2Hi (borrow not propagated — WIP)
-                EmitComment("TODO(wip): 16-bit Sub borrow propagation not implemented");
+                Emit("SUBWF", Addr(TmpHi),  "F");   // TmpHi -= Tmp2Hi
+                EmitComment("TODO(wip): borrow from DECF TmpHi underflow is not propagated further");
                 break;
             case IrBinOp.BitAnd:
                 Emit("MOVF",  Addr(Tmp2Lo), "W"); Emit("ANDWF", Addr(TmpLo), "F");
@@ -1075,21 +1088,36 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
     private void CompileBitWrite(BitWrite bw)
     {
         int tgtAddr = AddrOf(bw.Target);
-        string reg = tgtAddr >= 0 ? Addr(tgtAddr) : Addr(TmpLo);
-        if (tgtAddr < 0) { LoadIntoW(bw.Target); Emit("MOVWF", Addr(TmpLo)); }
+        string reg;
+        if (tgtAddr >= 0)
+        {
+            reg = Addr(tgtAddr);
+        }
+        else
+        {
+            // Load target into TmpLo so BSF/BCF can act on it.
+            LoadIntoW(bw.Target);
+            Emit("MOVWF", Addr(TmpLo));
+            reg = Addr(TmpLo);
+        }
+        // Load src into Tmp2Lo to test without disturbing TmpLo.
         LoadIntoW(bw.Src);
-        Emit("MOVWF", Addr(TmpLo));
+        Emit("MOVWF", Addr(Tmp2Lo));
+        Emit("MOVF",  Addr(Tmp2Lo), "F");           // test src; sets Z
         string setL  = MakeLabel("L14_BW_SET");
         string doneL = MakeLabel("L14_BW_DONE");
-        Emit("MOVF",  Addr(TmpLo), "F");           // test src
-        Emit("BTFSC", Addr(StatusReg), $"{StatusZ}"); // Z=0 (nonzero) → skip → set
+        Emit("BTFSC", Addr(StatusReg), $"{StatusZ}"); // Z=0 (nonzero src) → skip GOTO setL → set
         Emit("GOTO",  setL);
         Emit("BCF", reg, $"{bw.Bit}");
         Emit("GOTO",  doneL);
         EmitLabel(setL);
         Emit("BSF", reg, $"{bw.Bit}");
         EmitLabel(doneL);
-        if (tgtAddr < 0) StoreW(bw.Target);
+        if (tgtAddr < 0)
+        {
+            Emit("MOVF",  Addr(TmpLo), "W");
+            StoreW(bw.Target);
+        }
     }
 
     private void CompileJumpIfBitSet(JumpIfBitSet jbs)
@@ -1125,14 +1153,22 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
             switch (aa.Op)
             {
                 case IrBinOp.Add:
-                    Emit("MOVF",  Addr(Tmp2Lo), "W"); Emit("ADDWF", Addr(TmpLo), "F");
-                    Emit("MOVF",  Addr(Tmp2Hi), "W"); Emit("ADDWF", Addr(TmpHi), "F");
-                    EmitComment("TODO(wip): 16-bit AugAssign Add carry propagation incomplete");
+                    Emit("MOVF",  Addr(Tmp2Lo), "W");
+                    Emit("ADDWF", Addr(TmpLo), "F");
+                    Emit("BTFSC", Addr(StatusReg), $"{StatusC}");  // C=0 → skip INCF
+                    Emit("INCF",  Addr(TmpHi), "F");   // carry from lo into hi
+                    Emit("MOVF",  Addr(Tmp2Hi), "W");
+                    Emit("ADDWF", Addr(TmpHi), "F");
+                    EmitComment("TODO(wip): 16-bit AugAssign Add overflow from INCF not propagated");
                     break;
                 case IrBinOp.Sub:
-                    Emit("MOVF",  Addr(Tmp2Lo), "W"); Emit("SUBWF", Addr(TmpLo), "F");
-                    Emit("MOVF",  Addr(Tmp2Hi), "W"); Emit("SUBWF", Addr(TmpHi), "F");
-                    EmitComment("TODO(wip): 16-bit AugAssign Sub borrow not propagated");
+                    Emit("MOVF",  Addr(Tmp2Lo), "W");
+                    Emit("SUBWF", Addr(TmpLo), "F");
+                    Emit("BTFSS", Addr(StatusReg), $"{StatusC}");  // C=1 → skip DECF (no borrow)
+                    Emit("DECF",  Addr(TmpHi), "F");   // borrow from lo into hi
+                    Emit("MOVF",  Addr(Tmp2Hi), "W");
+                    Emit("SUBWF", Addr(TmpHi), "F");
+                    EmitComment("TODO(wip): 16-bit AugAssign Sub DECF underflow not propagated");
                     break;
                 case IrBinOp.BitAnd:
                     Emit("MOVF",  Addr(Tmp2Lo), "W"); Emit("ANDWF", Addr(TmpLo), "F");

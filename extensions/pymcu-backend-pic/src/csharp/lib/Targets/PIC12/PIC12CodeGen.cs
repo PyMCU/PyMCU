@@ -71,6 +71,12 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
     private const int ArgBase  = 0x2D;
     private const int VarBase  = 0x20;
 
+    // ISR context save area, placed above ArgBase and outside user variable space.
+    // PIC12F has limited GPR; 0x50-0x51 are typically available on PIC12F629/675 as
+    // unbanked registers (confirmed device-specific; adjust for other PIC12 variants).
+    private const int WsaveReg      = 0x50;
+    private const int StatusSaveReg = 0x51;
+
     // -------------------------------------------------------------------------
     // Emit helpers
     // -------------------------------------------------------------------------
@@ -293,19 +299,19 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
 
     public override void EmitContextSave()
     {
-        EmitComment("ISR context save (PIC12 — manual W/STATUS save)");
-        Emit("MOVWF",  Addr(0x50));         // save W to dedicated area (device-specific)
-        Emit("SWAPF",  Addr(StatusReg), "W");
-        Emit("MOVWF",  Addr(0x51));         // save STATUS (swapped nibbles to avoid Z modification)
+        EmitComment("ISR context save (PIC12 — manual W/STATUS save to reserved area)");
+        Emit("MOVWF",  Addr(WsaveReg));              // save W
+        Emit("SWAPF",  Addr(StatusReg), "W");        // STATUS → W via SWAPF (doesn't affect STATUS)
+        Emit("MOVWF",  Addr(StatusSaveReg));         // save STATUS
     }
 
     public override void EmitContextRestore()
     {
         EmitComment("ISR context restore (PIC12)");
-        Emit("SWAPF",  Addr(0x51), "W");
-        Emit("MOVWF",  Addr(StatusReg));
-        Emit("SWAPF",  Addr(0x50), "F");
-        Emit("SWAPF",  Addr(0x50), "W");
+        Emit("SWAPF",  Addr(StatusSaveReg), "W");   // restore STATUS (via SWAPF)
+        Emit("MOVWF",  Addr(StatusReg));             // write to STATUS
+        Emit("SWAPF",  Addr(WsaveReg), "F");         // swap W save in place
+        Emit("SWAPF",  Addr(WsaveReg), "W");         // restore original W
     }
 
     public override void EmitInterruptReturn() => Emit("RETFIE");
@@ -438,21 +444,37 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
                 break;
             }
             case BitWrite bw:
-                EmitComment("TODO(wip): BitWrite — simplified implementation");
-                LoadIntoW(bw.Src);
+            {
+                EmitComment("BitWrite: set or clear target bit based on src value");
+                int addr = AddrOf(bw.Target);
+                string f;
+                if (addr >= 0)
                 {
-                    int addr = AddrOf(bw.Target);
-                    string f = addr >= 0 ? Addr(addr) : Addr(TmpLo);
-                    if (addr < 0) { Emit("MOVWF", Addr(Tmp2Lo)); LoadIntoW(bw.Target); Emit("MOVWF", Addr(TmpLo)); Emit("MOVF", Addr(Tmp2Lo), "W"); f = Addr(TmpLo); }
+                    f = Addr(addr);
+                }
+                else
+                {
+                    // Load target into TmpLo so BSF/BCF can act on it.
+                    LoadIntoW(bw.Target);
                     Emit("MOVWF", Addr(TmpLo));
-                    Emit("MOVF",  Addr(TmpLo), "F");
-                    string setL = MakeLabel("L12_BW_S"); string doneL = MakeLabel("L12_BW_D");
-                    Emit("BTFSS", Addr(StatusReg), $"{StatusZ}"); Emit("GOTO", setL);
-                    Emit("BCF", f, $"{bw.Bit}"); Emit("GOTO", doneL);
-                    EmitLabel(setL); Emit("BSF", f, $"{bw.Bit}");
-                    EmitLabel(doneL);
+                    f = Addr(TmpLo);
+                }
+                // Load src into Tmp2Lo to test without disturbing TmpLo.
+                LoadIntoW(bw.Src);
+                Emit("MOVWF", Addr(Tmp2Lo));
+                Emit("MOVF",  Addr(Tmp2Lo), "F");     // sets Z from src value
+                string setL = MakeLabel("L12_BW_S"); string doneL = MakeLabel("L12_BW_D");
+                Emit("BTFSS", Addr(StatusReg), $"{StatusZ}"); Emit("GOTO", setL); // src!=0 → set
+                Emit("BCF", f, $"{bw.Bit}"); Emit("GOTO", doneL);
+                EmitLabel(setL); Emit("BSF", f, $"{bw.Bit}");
+                EmitLabel(doneL);
+                if (addr < 0)
+                {
+                    Emit("MOVF",  Addr(TmpLo), "W");
+                    StoreW(bw.Target);
                 }
                 break;
+            }
             case JumpIfBitSet jbs:
             {
                 int addr = AddrOf(jbs.Source);

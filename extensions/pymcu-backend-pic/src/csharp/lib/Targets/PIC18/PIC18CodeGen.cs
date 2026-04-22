@@ -764,15 +764,14 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             switch (u.Op)
             {
                 case IrUnOp.Neg:
-                    // Two's complement negation: negate lo, then subtract hi from 0 with borrow.
+                    // Two's complement negation: negate lo, then complement hi + carry.
+                    // NEGF lo: lo = -lo_orig. C=1 if lo_orig==0 (no borrow); C=0 otherwise.
+                    // COMF hi: hi = ~hi_orig.
+                    // BTFSC STATUS.C (skip if C=0): INCF hi only when C=1 (lo_orig was 0).
                     Emit("NEGF", Addr(TmpLo), "ACCESS");
                     Emit("COMF", Addr(TmpHi), "F", "ACCESS");
-                    // Add carry from lo negation (if TmpLo was 0, C=0 after NEGF, else C=1).
-                    // PIC18 has no ADDC Fhi, 0. Use BTFSC/INCF pattern:
-                    string negSkip = MakeLabel("L18_NEG16_SK");
-                    Emit("BTFSS", "0xFD8", "0", "ACCESS");  // STATUS.C at 0xFD8 bit 0
+                    Emit("BTFSC", "0xFD8", "0", "ACCESS");  // STATUS.C: skip if C=0 (no carry)
                     Emit("INCF",  Addr(TmpHi), "F", "ACCESS");
-                    EmitLabel(negSkip);
                     break;
                 case IrUnOp.BitNot:
                     Emit("COMF", Addr(TmpLo), "F", "ACCESS");
@@ -951,9 +950,18 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                         Emit("MOVWF", Addr(TmpLo), "ACCESS");
                         bool signed = type.IsSigned();
                         if (signed)
-                            Emit("ASRF", Addr(TmpLo), "W", "ACCESS");   // arithmetic shift (PIC18 has no ASRF; TODO)
+                        {
+                            // Arithmetic right shift on PIC18: load sign bit into C, then RRCF.
+                            // BCF STATUS.C; BTFSC TmpLo, 7; BSF STATUS.C; RRCF TmpLo, W
+                            Emit("BCF",   "0xFD8", "0", "ACCESS");  // STATUS.C = 0
+                            Emit("BTFSC", Addr(TmpLo), "7", "ACCESS"); // if bit7=0, skip
+                            Emit("BSF",   "0xFD8", "0", "ACCESS");  // STATUS.C = sign bit
+                            Emit("RRCF",  Addr(TmpLo), "W", "ACCESS"); // shift right, MSB = C
+                        }
                         else
+                        {
                             Emit("RRNCF", Addr(TmpLo), "W", "ACCESS");  // logical shift right no-carry
+                        }
                     }
                     EmitComment("TODO(wip): RShift masking not applied for carry-in bits");
                     StoreW(b.Dst);
@@ -1213,17 +1221,12 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             Emit("MOVWF", Addr(TmpLo), "ACCESS");
         }
 
-        Emit("BTFSC", f, $"{bck.Bit}", "ACCESS");  // skip if bit clear → bit was SET
-        Emit("GOTO",  doneL);                       // bit SET → proceed to store 1 below? Wait, need logic check.
-        // If bit is SET: BTFSC does NOT skip → falls to GOTO doneL → jumps past 'set 1'. No, we want 1 when set.
-        // Fix: BTFSC skips if CLEAR. So if CLEAR → skip GOTO falseL; if SET → execute GOTO falseL? No...
-        // Let's use BTFSS (skip if SET): skip to trueL if bit is SET.
-        // Re-do:
-        _assembly.RemoveAt(_assembly.Count - 1); // remove the GOTO doneL
-        _assembly.RemoveAt(_assembly.Count - 1); // remove the BTFSC
+        // BTFSS: skip next instruction if bit is SET.
+        // If bit SET → skip GOTO falseL → fall through to set W=1.
+        // If bit CLEAR → execute GOTO falseL → set W=0.
         Emit("BTFSS", f, $"{bck.Bit}", "ACCESS");  // skip if SET
-        Emit("GOTO",  falseL);                      // bit is CLEAR → false
-        Emit("MOVLW", "0x01");                      // bit is SET → W=1
+        Emit("GOTO",  falseL);                      // bit CLEAR → false
+        Emit("MOVLW", "0x01");                      // bit SET → W=1
         Emit("GOTO",  doneL);
         EmitLabel(falseL);
         Emit("CLRW");                               // W=0
@@ -1233,29 +1236,36 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileBitWrite(BitWrite bw)
     {
-        LoadIntoW(bw.Src);
         int tgtAddr = AddrOf(bw.Target);
-        string reg = tgtAddr >= 0 ? Addr(tgtAddr) : Addr(TmpLo);
-        if (tgtAddr < 0)
+        string reg;
+        if (tgtAddr >= 0)
         {
-            Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");  // save src in Tmp2Lo
+            reg = Addr(tgtAddr);
+        }
+        else
+        {
+            // Load target into TmpLo so BSF/BCF can act on it.
             LoadIntoW(bw.Target);
             Emit("MOVWF", Addr(TmpLo), "ACCESS");
-            Emit("MOVF",  Addr(Tmp2Lo), "W", "ACCESS");  // restore src to W
             reg = Addr(TmpLo);
         }
-        string skipSet  = MakeLabel("L18_BW_S");
+        // Load src into Tmp2Lo to test without disturbing TmpLo.
+        LoadIntoW(bw.Src);
+        Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
+        Emit("MOVF",  Addr(Tmp2Lo), "F", "ACCESS");  // sets Z from src value
+        string skipSet   = MakeLabel("L18_BW_S");
         string skipClear = MakeLabel("L18_BW_C");
-        Emit("MOVWF", Addr(TmpLo), "ACCESS");  // save src
-        Emit("MOVF",  Addr(TmpLo), "F", "ACCESS");  // test W (src value)
-        Emit("BZ",    skipSet);                 // src=0 → clear the bit
-        Emit("BSF",   reg, $"{bw.Bit}", "ACCESS");
-        Emit("GOTO",  skipClear);
+        Emit("BZ",   skipSet);                  // src=0 → clear bit
+        Emit("BSF",  reg, $"{bw.Bit}", "ACCESS");
+        Emit("GOTO", skipClear);
         EmitLabel(skipSet);
-        Emit("BCF",   reg, $"{bw.Bit}", "ACCESS");
+        Emit("BCF",  reg, $"{bw.Bit}", "ACCESS");
         EmitLabel(skipClear);
         if (tgtAddr < 0)
+        {
+            Emit("MOVF",  Addr(TmpLo), "W", "ACCESS");
             StoreW(bw.Target);
+        }
     }
 
     private void CompileJumpIfBitSet(JumpIfBitSet jbs)
