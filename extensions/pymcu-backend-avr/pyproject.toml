@@ -20,4 +20,4 @@ dependencies = [
 avr = "pymcu.backend.avr:AvrBackendPlugin"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu"]
+packages = ["src/python/pymcu"]

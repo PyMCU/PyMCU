@@ -63,12 +63,134 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private static DataType GetValType(Val val) => val switch
     {
+        FloatConstant => DataType.FLOAT,
         Variable v => v.Type,
         Temporary t => t.Type,
         MemoryAddress m => m.Type.SizeOf() > 1 ? m.Type : DataType.UINT8,
         Constant { Value: > 255 or < -128 } => DataType.UINT16,
         _ => DataType.UINT8,
     };
+
+    // -------------------------------------------------------------------------
+    // Soft-float helpers
+    // -------------------------------------------------------------------------
+
+    // Load a FLOAT value into R22(B0/LSB):R23(B1):R24(B2):R25(B3/MSB).
+    private void LoadFloatIntoRegs(Val val)
+    {
+        if (val is FloatConstant fc)
+        {
+            uint bits = BitConverter.SingleToUInt32Bits((float)fc.Value);
+            Emit("LDI", "R22", $"{bits & 0xFF}");
+            Emit("LDI", "R23", $"{(bits >> 8) & 0xFF}");
+            Emit("LDI", "R24", $"{(bits >> 16) & 0xFF}");
+            Emit("LDI", "R25", $"{(bits >> 24) & 0xFF}");
+            return;
+        }
+
+        var name = val switch { Variable v => v.Name, Temporary t => t.Name, _ => "" };
+        if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
+        {
+            if (offset + 3 < 64)
+            {
+                Emit("LDD", "R22", $"Y+{offset}");
+                Emit("LDD", "R23", $"Y+{offset + 1}");
+                Emit("LDD", "R24", $"Y+{offset + 2}");
+                Emit("LDD", "R25", $"Y+{offset + 3}");
+            }
+            else
+            {
+                int abs = 0x0100 + offset;
+                Emit("LDS", "R22", $"0x{abs:X4}");
+                Emit("LDS", "R23", $"0x{abs + 1:X4}");
+                Emit("LDS", "R24", $"0x{abs + 2:X4}");
+                Emit("LDS", "R25", $"0x{abs + 3:X4}");
+            }
+            return;
+        }
+
+        // Global variable fallback
+        var addr = ResolveAddress(val);
+        Emit("LDS", "R22", addr);
+        Emit("LDS", "R23", $"{addr}+1");
+        Emit("LDS", "R24", $"{addr}+2");
+        Emit("LDS", "R25", $"{addr}+3");
+    }
+
+    // Store R22:R23:R24:R25 into a FLOAT destination.
+    private void StoreFloatFromRegs(Val dst)
+    {
+        var name = dst switch { Variable v => v.Name, Temporary t => t.Name, _ => "" };
+        if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
+        {
+            if (offset + 3 < 64)
+            {
+                Emit("STD", $"Y+{offset}", "R22");
+                Emit("STD", $"Y+{offset + 1}", "R23");
+                Emit("STD", $"Y+{offset + 2}", "R24");
+                Emit("STD", $"Y+{offset + 3}", "R25");
+            }
+            else
+            {
+                int abs = 0x0100 + offset;
+                Emit("STS", $"0x{abs:X4}", "R22");
+                Emit("STS", $"0x{abs + 1:X4}", "R23");
+                Emit("STS", $"0x{abs + 2:X4}", "R24");
+                Emit("STS", $"0x{abs + 3:X4}", "R25");
+            }
+            return;
+        }
+
+        var addr = ResolveAddress(dst);
+        Emit("STS", addr, "R22");
+        Emit("STS", $"{addr}+1", "R23");
+        Emit("STS", $"{addr}+2", "R24");
+        Emit("STS", $"{addr}+3", "R25");
+    }
+
+    // Compile a binary operation where at least one operand is FLOAT.
+    private void CompileFloatBinary(Binary b)
+    {
+        // Load arg0 into R22:R25, preserve on stack, load arg1 into R22:R25,
+        // move arg1 to R18:R21, restore arg0 to R22:R25, call routine.
+        LoadFloatIntoRegs(b.Src1);
+        Emit("PUSH", "R25");
+        Emit("PUSH", "R24");
+        Emit("PUSH", "R23");
+        Emit("PUSH", "R22");
+        LoadFloatIntoRegs(b.Src2);
+        Emit("MOV", "R18", "R22");
+        Emit("MOV", "R19", "R23");
+        Emit("MOV", "R20", "R24");
+        Emit("MOV", "R21", "R25");
+        Emit("POP", "R22");
+        Emit("POP", "R23");
+        Emit("POP", "R24");
+        Emit("POP", "R25");
+
+        string routine = b.Op switch
+        {
+            IrBinOp.Add          => "__fp_add",
+            IrBinOp.Sub          => "__fp_sub",
+            IrBinOp.Mul          => "__fp_mul",
+            IrBinOp.Div or IrBinOp.FloorDiv => "__fp_div",
+            IrBinOp.Equal        => "__fp_eq",
+            IrBinOp.NotEqual     => "__fp_ne",
+            IrBinOp.LessThan     => "__fp_lt",
+            IrBinOp.LessEqual    => "__fp_le",
+            IrBinOp.GreaterThan  => "__fp_gt",
+            IrBinOp.GreaterEqual => "__fp_ge",
+            _ => throw new NotSupportedException($"Float binary op {b.Op} not supported")
+        };
+        Emit("CALL", routine);
+
+        bool isArith = b.Op is IrBinOp.Add or IrBinOp.Sub or IrBinOp.Mul
+                       or IrBinOp.Div or IrBinOp.FloorDiv;
+        if (isArith)
+            StoreFloatFromRegs(b.Dst);
+        else
+            StoreRegInto("R24", b.Dst, DataType.UINT8);
+    }
 
     private static bool IsSignedType(DataType t) => t.IsSigned();
 
@@ -572,7 +694,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (r.Value is not NoneVal)
         {
             var returnType = _currentFunction?.ReturnType ?? GetValType(r.Value);
-            LoadIntoReg(r.Value, "R24", returnType);
+            if (returnType == DataType.FLOAT)
+                LoadFloatIntoRegs(r.Value);
+            else
+                LoadIntoReg(r.Value, "R24", returnType);
         }
 
         Emit("RET");
@@ -683,13 +808,30 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
+        // Float arguments use R22:R25 (arg0) and R18:R21 (arg1) per float convention.
+        // Integer arguments use R24 (arg0), R22 (arg1), R20 (arg2), R18 (arg3).
         string[] argRegs = ["R24", "R22", "R20", "R18"];
         for (var k = 0; k < call.Args.Count && k < 4; k++)
         {
+            var argType = GetValType(call.Args[k]);
+            if (argType == DataType.FLOAT)
+            {
+                // Float arg0 → R22:R25; float arg1 → R18:R21
+                if (k == 0)
+                    LoadFloatIntoRegs(call.Args[k]);
+                else if (k == 1)
+                {
+                    LoadFloatIntoRegs(call.Args[k]);
+                    Emit("MOV", "R18", "R22");
+                    Emit("MOV", "R19", "R23");
+                    Emit("MOV", "R20", "R24");
+                    Emit("MOV", "R21", "R25");
+                }
+                continue;
+            }
             // Use the declared parameter size when available so that constants
             // (e.g. Constant(-1) for an int16 param) are loaded with the correct
             // width instead of the size inferred from the constant's magnitude.
-            var argType = GetValType(call.Args[k]);
             if (_functionParamSizes.TryGetValue(call.FunctionName, out var paramSizes) &&
                 k < paramSizes.Count)
             {
@@ -702,16 +844,24 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         Emit("CALL", call.FunctionName);
         var dstType = GetValType(call.Dst);
-        StoreRegInto("R24", call.Dst, dstType);
+        if (dstType == DataType.FLOAT)
+            StoreFloatFromRegs(call.Dst);
+        else
+            StoreRegInto("R24", call.Dst, dstType);
     }
 
     private void CompileCopy(Copy cp)
     {
-        // When src is a typeless constant, use the destination's declared type
-        // to ensure e.g. `i: uint16 = 0` initialises both bytes.
         var srcType = GetValType(cp.Src);
         var dstType = GetValType(cp.Dst);
-        // Use destination type for size, but LoadIntoReg will check source type for sign-extension
+        if (srcType == DataType.FLOAT || dstType == DataType.FLOAT)
+        {
+            LoadFloatIntoRegs(cp.Src);
+            StoreFloatFromRegs(cp.Dst);
+            return;
+        }
+        // When src is a typeless constant, use the destination's declared type
+        // to ensure e.g. `i: uint16 = 0` initialises both bytes.
         var loadType = cp.Src is Constant ? dstType : dstType;
         LoadIntoReg(cp.Src, "R24", loadType);
         StoreRegInto("R24", cp.Dst, dstType);
@@ -814,6 +964,14 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileBinary(Binary b)
     {
         DataType type = GetValType(b.Dst);
+        // Delegate float operations to soft-float routines.
+        if (type == DataType.FLOAT
+            || GetValType(b.Src1) == DataType.FLOAT
+            || GetValType(b.Src2) == DataType.FLOAT)
+        {
+            CompileFloatBinary(b);
+            return;
+        }
         bool is16 = type.SizeOf() == 2;
         bool is32 = type.SizeOf() == 4;
         LoadIntoReg(b.Src1, "R24", type);

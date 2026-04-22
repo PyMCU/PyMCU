@@ -52,15 +52,18 @@ class AvrBackendPlugin(BackendPlugin):
             return adjacent
 
         # 2. Development fallback: dotnet publish output.
-        repo_root = package_dir.parent.parent.parent.parent.parent.parent.parent
+        # package_dir = .../extensions/pymcu-backend-avr/src/python/pymcu/backend/avr
+        # repo_root   = package_dir / ../../../../../../..  (7 levels up)
+        repo_root = package_dir.parents[6]
         dev_path = repo_root / "build" / "bin" / binary_name
         if dev_path.exists():
             return dev_path
 
-        # 3. extensions/pymcu-backend-avr/csharp/cli built output (dev shortcut).
+        # 3. extensions/pymcu-backend-avr/src/csharp/cli built output (dev shortcut).
+        backend_root = package_dir.parents[4]  # .../extensions/pymcu-backend-avr
         runner_debug = (
-            package_dir.parent.parent.parent.parent.parent
-            / "csharp" / "cli" / "bin" / "Debug" / "net10.0" / binary_name
+            backend_root / "src" / "csharp" / "cli"
+            / "bin" / "Debug" / "net10.0" / binary_name
         )
         if runner_debug.exists():
             return runner_debug

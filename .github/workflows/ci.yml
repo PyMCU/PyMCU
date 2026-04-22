@@ -96,7 +96,7 @@ jobs:
 
       - name: Build pymcuc-avr backend CLI
         run: |
-          dotnet publish extensions/pymcu-backend-avr/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
+          dotnet publish extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
             -c Release -o build/bin --nologo
 
       - name: Add pymcuc to PATH
