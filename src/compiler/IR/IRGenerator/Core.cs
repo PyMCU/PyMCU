@@ -198,8 +198,8 @@ public partial class IRGenerator
 
         if (config.Frequency > 0)
         {
-            constantVariables["__FREQ__"] = (int)config.Frequency;
-            constantVariables["__FREQUENCY__"] = (int)config.Frequency;
+            SetConst("__FREQ__", (int)config.Frequency);
+            SetConst("__FREQUENCY__", (int)config.Frequency);
         }
 
         foreach (var imp in mainAst.Imports)
@@ -570,7 +570,7 @@ public partial class IRGenerator
                 }
 
                 string localName = currentFunction + "." + name;
-                if (constantVariables.TryGetValue(localName, out int localVal))
+                if (TryGetConst(localName, out int localVal))
                 {
                     return new Constant(localVal);
                 }
@@ -582,7 +582,7 @@ public partial class IRGenerator
                 return new Variable(moduleGlobal, modType);
             }
 
-            if (constantVariables.TryGetValue(moduleGlobal, out int modVal))
+            if (TryGetConst(moduleGlobal, out int modVal))
             {
                 return new Constant(modVal);
             }
@@ -592,7 +592,7 @@ public partial class IRGenerator
                 return new Variable(name, bareType);
             }
 
-            if (constantVariables.TryGetValue(name, out int bareVal))
+            if (TryGetConst(name, out int bareVal))
             {
                 return new Constant(bareVal);
             }
@@ -601,7 +601,7 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentInlinePrefix))
         {
             string inlineName = currentInlinePrefix + name;
-            if (constantVariables.TryGetValue(inlineName, out int inlineVal))
+            if (TryGetConst(inlineName, out int inlineVal))
             {
                 return new Constant(inlineVal);
             }
@@ -620,16 +620,16 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
         {
             string localName = currentFunction + "." + name;
-            if (constantVariables.TryGetValue(localName, out int localVal))
+            if (TryGetConst(localName, out int localVal))
             {
                 return new Constant(localVal);
             }
         }
 
         string mg = currentModulePrefix + name;
-        if (constantVariables.TryGetValue(mg, out int mgVal))
+        if (TryGetConst(mg, out int mgVal))
             return new Constant(mgVal);
-        if (constantVariables.TryGetValue(name, out int nameVal))
+        if (TryGetConst(name, out int nameVal))
             return new Constant(nameVal);
 
         foreach (var mod in modules)
@@ -653,7 +653,7 @@ public partial class IRGenerator
             ? currentInlinePrefix + name
             : currentFunction + "." + name;
 
-        if (constantVariables.TryGetValue(finalLocalName, out int finVal))
+        if (TryGetConst(finalLocalName, out int finVal))
         {
             return new Constant(finVal);
         }
@@ -686,7 +686,7 @@ public partial class IRGenerator
                 if (!variableAliases.TryGetValue(resolved, out string next)) break;
                 if (next.StartsWith("tmp_"))
                 {
-                    if (constantVariables.TryGetValue(next, out int tmpVal)) return new Constant(tmpVal);
+                    if (TryGetConst(next, out int tmpVal)) return new Constant(tmpVal);
                     if (constantAddressVariables.TryGetValue(next, out int tmpAddr))
                         return new MemoryAddress(tmpAddr, DataType.UINT16);
                     break;
@@ -698,7 +698,7 @@ public partial class IRGenerator
 
             if (lastNonTemp != finalLocalName)
             {
-                if (constantVariables.TryGetValue(lastNonTemp, out int lstVal)) return new Constant(lstVal);
+                if (TryGetConst(lastNonTemp, out int lstVal)) return new Constant(lstVal);
                 if (constantAddressVariables.TryGetValue(lastNonTemp, out int lstAddr))
                     return new MemoryAddress(lstAddr, DataType.UINT16);
                 DataType resolvedType = DataType.UINT8;
