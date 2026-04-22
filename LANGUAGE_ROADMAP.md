@@ -348,7 +348,7 @@ These are the highest-value features not yet implemented, in priority order.
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
+| ~~Soft float~~ / `fixed16` | ~~1 week~~ | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
 | `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
 | `const uint8[N]` (PROGMEM arrays) | ~3h | ✅ Implemented in v0.9 |
 

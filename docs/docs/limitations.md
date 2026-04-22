@@ -96,7 +96,7 @@ and all comparison / bitwise dunders).
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `float` arithmetic (native) | No FPU on AVR; soft-float not yet implemented | Fixed-point `int16` with manual scaling (`fixed16` planned v0.8) |
+| `float` arithmetic (native) | No hardware FPU; uses IEEE 754 soft-float (`__fp_add/sub/mul/div`) | Supported on AVR — expect ~200-400 cycles per operation |
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
 | `None` as a runtime-checked value | Folds to `Constant{-1}` at compile time | Use a sentinel value (e.g. `0xFF`) |
@@ -193,8 +193,10 @@ relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` a
 
 - **Stack depth:** ~80 nested non-inline calls before stack overflow (2KB SRAM, ~16 bytes/frame).
   Use `@inline` for leaf helpers to avoid stack frames.
-- **No soft float yet:** Use integer arithmetic and manual fixed-point scaling. `fixed16` (Q8.8)
-  is planned for v0.8.
+- **Soft float (IEEE 754 single-precision):** `float` variables and arithmetic (`+`, `-`, `*`, `/`,
+  comparisons) are supported via a pure-assembly soft-float library (`__fp_add`, `__fp_sub`,
+  `__fp_mul`, `__fp_div`, `__fp_cmp`). No FPU required. Expect ~200-400 cycles per operation.
+  Subnormals are treated as zero; NaN and Inf propagate correctly.
 - **No heap:** Every variable must have a size known at compile time.
 - **Interrupts and globals:** Mutable globals written from an ISR must be declared `global` inside
   the ISR and accessed atomically (disable interrupts or use `GPIOR0` flag pattern).
