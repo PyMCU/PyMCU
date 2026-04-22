@@ -34,7 +34,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | Integer literals | Decimal, hex, binary, octal, `_` separators |
-| `True` / `False` / `None` | Folded to `Constant{1/0/-1}` |
+| `True` / `False` / `None` | `True`/`False` fold to `Constant{1/0}`; `None` on object-reference types folds via `is None` / `is not None`; `None` on numeric types is a TypeError |
 | String literals | Single- and double-quoted; mapped to stable compile-time IDs |
 | Arithmetic `+ - * / % //` | Full constant folding |
 | Comparison `== != < <= > >=` | |
