@@ -382,8 +382,9 @@ These are the highest-value features not yet implemented, in priority order.
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
 | RP2040 PIO backend | ~1 week | Programmable I/O state machine output |
 | Over-the-air (OTA) support | ~1 week | Bootloader + pymcu flash over UART |
-| LLVM IR backend | ~4 weeks | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
-| ARM Cortex-M0/M4 backend | ~3 weeks | STM32, nRF52; via LLVM or direct codegen |
+| LLVM IR backend (ARM) | 🚧 In progress | `pymcu-arm` package; emits LLVM IR for clang |
+| ARM Cortex-M backend (RP2040 / RP2350) | 🚧 In progress | `thumbv6m-none-eabi` (M0+), `thumbv8m.main-none-eabi` (M33); via LLVM |
+| ARM Cortex-M (STM32, nRF52) | future | Extend `pymcu-arm` with additional chip targets |
 
 ---
 
