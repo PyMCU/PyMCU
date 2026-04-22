@@ -702,6 +702,9 @@ public partial class IRGenerator
                 return new Constant(val);
             }
 
+            if (v is FloatConstant fc)
+                return new Constant((int)fc.Value);
+
             Temporary dst = MakeTemp(dstType);
             Emit(new Copy(v, dst));
             return dst;
@@ -1168,6 +1171,15 @@ public partial class IRGenerator
                         throw new Exception(
                             $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
                     constantVariables[paramName] = cArg2.Value;
+                    continue;
+                }
+
+                if (argValues[i] is FloatConstant fcArg)
+                {
+                    floatConstantVariables[paramName] = fcArg.Value;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                     continue;
                 }
 
