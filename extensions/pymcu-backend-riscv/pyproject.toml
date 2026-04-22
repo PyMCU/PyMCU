@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pymcu-backend-riscv"
+name = "pymcu-riscv"
 version = "0.1.0a1"
-description = "PyMCU RISC-V codegen backend (RV32EC, CH32V)"
+description = "PyMCU RISC-V support: codegen backend (RV32EC, CH32V)"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
-    "pymcu-backend-sdk>=0.1.0a1",
+    "pymcu-plugin-sdk>=0.1.0a1",
 ]
 
 [project.entry-points."pymcu.backends"]

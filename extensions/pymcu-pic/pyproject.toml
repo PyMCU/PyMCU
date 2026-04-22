@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymcu-pic"
+version = "0.1.0a1"
+description = "PyMCU PIC support: codegen backend (PIC12/PIC14/PIC18) and GNU PIC Utilities toolchain"
+readme = "README.md"
+authors = [
+    { name = "Ivan Montiel Cardona", email = "developer@begeistert.dev" }
+]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pymcu-plugin-sdk>=0.1.0a1",
+]
+
+[project.entry-points."pymcu.backends"]
+pic = "pymcu.backend.pic:PicBackendPlugin"
+
+[project.entry-points."pymcu.toolchains"]
+pic = "pymcu.toolchain.pic:PicToolchainPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/pymcu"]
+

@@ -11,27 +11,29 @@ authors = [
     { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
 ]
 requires-python = ">=3.11"
-license = { text = "AGPL-3.0-only" }
+license = { text = "MIT" }
 dependencies = [
     "typer>=0.12.0",
     "tomlkit>=0.12.0",
     "rich>=13.0.0",
     "pymcu-stdlib>=0.1.0a1",
-    "pymcu-toolchain-sdk>=0.1.0a1",
+    "pymcu-plugin-sdk>=0.1.0a1",
 ]
 
 [project.optional-dependencies]
-avr = ["pymcu-toolchain-avr>=0.1.0a1", "pymcu-backend-avr>=0.1.0a1"]
-pic = ["pymcu-toolchain-pic>=0.1.0a1"]
-all = ["pymcu-toolchain-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1", "pymcu-backend-avr>=0.1.0a1"]
+avr = ["pymcu-avr>=0.1.0a1"]
+pic = ["pymcu-pic>=0.1.0a1"]
+riscv = ["pymcu-riscv>=0.1.0a1"]
+pio = ["pymcu-pio>=0.1.0a1"]
+all = ["pymcu-avr>=0.1.0a1", "pymcu-pic>=0.1.0a1", "pymcu-riscv>=0.1.0a1", "pymcu-pio>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
-pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
-pymcu-toolchain-avr = {path = "extensions/pymcu-toolchain-avr", editable = true}
-pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
-pymcu-backend-sdk = {path = "extensions/pymcu-backend-sdk", editable = true}
-pymcu-backend-avr = {path = "extensions/pymcu-backend-avr", editable = true}
+pymcu-plugin-sdk = {path = "extensions/pymcu-plugin-sdk", editable = true}
+pymcu-avr = {path = "extensions/pymcu-avr", editable = true}
+pymcu-pic = {path = "extensions/pymcu-pic", editable = true}
+pymcu-riscv = {path = "extensions/pymcu-backend-riscv", editable = true}
+pymcu-pio = {path = "extensions/pymcu-backend-pio", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
@@ -50,10 +52,10 @@ include = ["src/", "hatch_build.py"]
 [tool.pytest.ini_options]
 pythonpath = [
     ".",
-    "extensions/pymcu-toolchain-sdk/src",
-    "extensions/pymcu-toolchain-avr/src",
-    "extensions/pymcu-toolchain-pic/src",
-    "extensions/pymcu-backend-sdk/src",
-    "extensions/pymcu-backend-avr/src",
+    "extensions/pymcu-plugin-sdk/src",
+    "extensions/pymcu-avr/src/python",
+    "extensions/pymcu-pic/src/python",
+    "extensions/pymcu-backend-riscv/src/python",
+    "extensions/pymcu-backend-pio/src/python",
 ]
 addopts = ["--import-mode=importlib"]
