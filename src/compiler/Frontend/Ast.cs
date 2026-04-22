@@ -99,6 +99,13 @@ public class BooleanLiteral : Expression
     public BooleanLiteral(bool value) => Value = value;
 }
 
+/// Represents the Python <c>None</c> literal. Distinct from <see cref="IntegerLiteral"/>
+/// so the IR generator can diagnose accidental <c>None</c> assignments to numeric-typed
+/// variables while preserving the existing object-reference sentinel behaviour.
+public class NoneExpr : Expression
+{
+}
+
 public class StringLiteral : Expression
 {
     public string Value { get; }

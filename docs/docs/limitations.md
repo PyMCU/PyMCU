@@ -99,10 +99,26 @@ and all comparison / bitwise dunders).
 | `float` arithmetic (native) | No hardware FPU; uses IEEE 754 soft-float (`__fp_add/sub/mul/div`) | Supported on AVR — expect ~200-400 cycles per operation |
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
-| `None` as a runtime-checked value | Folds to `Constant{-1}` at compile time | Use a sentinel value (e.g. `0xFF`) |
-| `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern |
+| `None` assigned to a numeric type (`x: uint8 = None`) | Compiler TypeError: `None` folds to `Constant{-1}` which collides with valid integer values | Use a sentinel constant (e.g. `0xFF`) |
+| `None` as default for a numeric parameter (`def f(x: uint8 = None)`) | Compiler TypeError (same reason as above) | Use a sentinel constant (e.g. `0xFF`) |
+| `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern (see below) |
 | `Union` types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
+
+**Idiomatic sentinel pattern (PEP 484 `Optional` idiom):**
+Instead of `def __init__(self, cs: Pin = None)` for object references, use the `is None` / `is not None` guard — this is fully supported because `Pin` maps to an object reference type and the compiler constant-folds `is None` to `0`. For numeric types, choose a domain-appropriate sentinel constant:
+```python
+# Object references — None is allowed and is/is-not folds correctly
+def transfer(cs: Pin = None):
+    if cs is not None:
+        ...          # this branch is always taken when a Pin is passed
+
+# Numeric types — use an explicit sentinel value
+UNSET: const[uint8] = 0xFF      # or any value outside the valid domain
+def init(pull: const[uint8] = 0xFF):
+    if pull != 0xFF:
+        configure_pull(pull)
+```
 
 **Supported:** `uint8`, `uint16`, `uint32`, `int8`, `int16`, `int32`, `bool` (as `uint8`),
 fixed-size arrays `uint8[N]`, `bytearray`, `bytes` literal `b"..."`, tuple literals and

@@ -1255,6 +1255,14 @@ public partial class IRGenerator
                 if (boundParams.Contains(i)) continue;
                 if (func.Params[i].DefaultValue != null)
                 {
+                    if (func.Params[i].DefaultValue is NoneExpr)
+                    {
+                        DataType pdt = DataTypeExtensions.StringToDataType(func.Params[i].Type);
+                        if (pdt != DataType.VOID && pdt != DataType.UNKNOWN)
+                            throw new Exception(
+                                $"TypeError: cannot use None as default for '{func.Params[i].Type}' parameter '{func.Params[i].Name}'; use a sentinel constant (e.g. 0xFF) instead");
+                    }
+
                     string paramName = currentInlinePrefix + func.Params[i].Name;
                     Val defaultVal = VisitExpression(func.Params[i].DefaultValue!);
 

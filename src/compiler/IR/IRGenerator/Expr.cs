@@ -36,6 +36,8 @@ public partial class IRGenerator
 
         if (expr is BooleanLiteral boolean) return new Constant(boolean.Value ? 1 : 0);
 
+        if (expr is NoneExpr) return new Constant(-1);
+
         if (expr is StringLiteral str)
         {
             if (str.Value.Length == 1) return new Constant((int)str.Value[0]);
