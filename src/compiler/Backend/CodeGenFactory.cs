@@ -14,68 +14,54 @@
  * -----------------------------------------------------------------------------
  */
 
-using PyMCU.Backend.Targets.PIC12;
-using PyMCU.Backend.Targets.PIC14;
-using PyMCU.Backend.Targets.PIO;
-using PyMCU.Backend.Targets.RiscV;
-using PyMCU.Common;
-using PyMCU.Backend.Targets.PIC18;
 using PyMCU.Common.Models;
 
 namespace PyMCU.Backend;
 
+/// <summary>
+/// CodeGenFactory — routing table for architecture → backend binary.
+///
+/// All backends have been extracted to external plugin packages
+/// (pymcu-backend-avr, pymcu-backend-pic, pymcu-backend-riscv, pymcu-backend-pio).
+/// Direct instantiation is no longer supported. Use 'pymcu build' or
+/// '--emit-ir' + the appropriate pymcuc-{arch} binary.
+/// </summary>
 public static class CodeGenFactory
 {
-    // Chip/arch prefixes that are handled by the external pymcuc-avr backend.
-    private static readonly string[] AvrPrefixes =
-        ["avr", "avr8", "atmega", "attiny", "at90", "atxmega"];
+    private static readonly (string[] Prefixes, string Binary, string Hint)[] Backends =
+    [
+        (["avr", "avr8", "atmega", "attiny", "at90", "atxmega"],
+            "pymcuc-avr", "pip install pymcu-backend-avr"),
 
-    private static bool IsAvrArch(string arch)
-    {
-        var a = arch.ToLowerInvariant();
-        foreach (var prefix in AvrPrefixes)
-            if (a == prefix || a.StartsWith(prefix)) return true;
-        return false;
-    }
+        (["pic12", "baseline", "pic10f", "pic12f", "pic14", "pic14e", "midrange", "pic16f",
+          "pic18", "advanced", "pic18f"],
+            "pymcuc-pic", "pip install pymcu-backend-pic"),
+
+        (["riscv", "rv32ec", "ch32v"],
+            "pymcuc-riscv", "pip install pymcu-backend-riscv"),
+
+        (["pio", "rp2040-pio"],
+            "pymcuc-pio", "pip install pymcu-backend-pio"),
+    ];
 
     public static CodeGen Create(string arch, DeviceConfig config)
     {
-        // AVR has moved to an external backend binary (pymcuc-avr).
-        // Direct compilation is no longer supported; use --emit-ir to produce a
-        // .mir file and then invoke pymcuc-avr, or use 'pymcu build' which does
-        // this automatically.
-        if (IsAvrArch(arch))
-        {
-            throw new NotSupportedException(
-                $"AVR codegen ({arch}) is not available in pymcuc directly.\n" +
-                "  Use '--emit-ir output.mir' to produce IR and run:\n" +
-                "    pymcuc-avr output.mir -o firmware.asm --target <chip>\n" +
-                "  Or use 'pymcu build' which handles this automatically.");
-        }
+        var a = arch.ToLowerInvariant();
 
-        if (arch == "pic12" || arch == "baseline" || arch.StartsWith("pic10f") || arch.StartsWith("pic12f"))
+        foreach (var (prefixes, binary, hint) in Backends)
         {
-            return new PIC12CodeGen(config);
-        }
-        
-        if (arch == "pic14" || arch == "pic14e" || arch == "midrange" || arch.StartsWith("pic16f"))
-        {
-            return new PIC14CodeGen(config);
-        }
-        
-        if (arch == "pic18" || arch == "advanced" || arch.StartsWith("pic18f"))
-        {
-            return new PIC18CodeGen(config);
-        }
-        
-        if (arch == "riscv" || arch == "rv32ec" || arch.StartsWith("ch32v"))
-        {
-            return new RiscvCodeGen(config);
-        }
-        
-        if (arch == "pio" || arch == "rp2040-pio")
-        {
-            return new PIOCodeGen(config);
+            foreach (var prefix in prefixes)
+            {
+                if (a == prefix || a.StartsWith(prefix))
+                {
+                    throw new NotSupportedException(
+                        $"Direct codegen for '{arch}' is not available in pymcuc.\n" +
+                        $"  Install the backend plugin:  {hint}\n" +
+                        $"  Then use 'pymcu build', or:\n" +
+                        $"    pymcuc --emit-ir output.mir --target {arch}\n" +
+                        $"    {binary} output.mir -o firmware.asm --target {arch}");
+                }
+            }
         }
 
         throw new ArgumentException($"Unknown architecture: {arch}", nameof(arch));

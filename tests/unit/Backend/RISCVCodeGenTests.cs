@@ -120,11 +120,12 @@ public class RISCVCodeGenTests
     }
 
     // ─── FactorySupport ──────────────────────────────────────────────────────
+    // CodeGenFactory is now throw-only: all backends are external plugins.
 
     [Fact]
-    public void FactorySupport()
+    public void FactorySupport_ThrowsForExternalBackend()
     {
-        var codegen = CodeGenFactory.Create("ch32v003", Ch32v003);
-        Assert.IsType<RiscvCodeGen>(codegen);
+        var ex = Assert.Throws<NotSupportedException>(() => CodeGenFactory.Create("ch32v003", Ch32v003));
+        Assert.Contains("pymcuc-riscv", ex.Message);
     }
 }
