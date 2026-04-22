@@ -103,6 +103,12 @@ private static Function CloneFunction(Function f)
             // must produce zero additional substitutions.  A non-zero count means a new
             // instruction type defines a variable without being handled by the default branch
             // in PropagateCopies (which calls InvalidateVar via GetDst).
+            //
+            // Safety note: CloneFunction uses a shallow list copy ([..f.Body]).  This is
+            // correct because all Instruction subtypes are C# records — PropagateCopies
+            // replaces body elements with new records via `with` expressions rather than
+            // mutating existing ones, so the clone's body is independent of func.Body
+            // after the first PropagateCopies call below.
             {
                 var clone = CloneFunction(func);
                 PropagateCopies(clone);             // mirrors what we just did
