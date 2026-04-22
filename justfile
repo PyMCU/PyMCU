@@ -16,6 +16,34 @@ build:
     dotnet publish "{{repo_root}}/src/compiler/PyMCU.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
+# ─── build-backend ──────────────────────────────────────────────────────────
+# Compile a single backend plugin binary. Usage: just build-backend avr
+# Expects: extensions/pymcu-backend-{name}/src/csharp/cli/PyMCU.Backend.Cli.csproj
+# (The AVR backend keeps its legacy name PyMCU.Backend.AVR.Cli.csproj — use build-backend-avr.)
+build-backend name:
+    dotnet publish "{{repo_root}}/extensions/pymcu-backend-{{name}}/src/csharp/cli/PyMCU.Backend.Cli.csproj" \
+        -c Release -o "{{compiler_out}}" --nologo
+
+# Build the AVR backend (uses its own .csproj name until renamed).
+build-backend-avr:
+    dotnet publish "{{repo_root}}/extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
+        -c Release -o "{{compiler_out}}" --nologo
+
+# ─── build-all ──────────────────────────────────────────────────────────────
+# Compile the compiler and all registered backend plugin binaries.
+build-all: build
+    just build-backend-avr
+
+# ─── test-backend ───────────────────────────────────────────────────────────
+# Run unit and integration tests for a backend. Usage: just test-backend avr
+test-backend name: (build-backend name)
+    dotnet test "{{repo_root}}/extensions/pymcu-backend-{{name}}/tests/unit/" \
+        --logger "console;verbosity=normal" --nologo
+    dotnet test "{{repo_root}}/extensions/pymcu-backend-{{name}}/tests/integration/" \
+        --logger "console;verbosity=normal" \
+        --blame-hang-timeout 120s --nologo \
+        -- NUnit.NumberOfTestWorkers=1
+
 # ─── test ───────────────────────────────────────────────────────────────────
 # Run unit tests then integration tests (requires build first).
 test: build

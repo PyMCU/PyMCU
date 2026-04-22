@@ -1,0 +1,21 @@
+<Project>
+  <!--
+    Directory.Build.props — PyMCU AVR Backend
+    Inherited by all .csproj files under extensions/pymcu-backend-avr/.
+    Self-contained so this folder can be extracted to an independent repo
+    without changes to any project file.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Ivan Montiel Cardona and the PyMCU Project Authors</Authors>
+    <Copyright>Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
