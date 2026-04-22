@@ -235,6 +235,17 @@ def _delay_us_pic12(us: uint8):
 
 
 @inline
+def sleep(seconds: float):
+    """Delay for approximately the given number of seconds.
+
+    Accepts compile-time float literals: sleep(0.5) compiles to
+    delay_ms(500) with zero runtime float overhead.
+    Only constant float values at the call site are supported.
+    """
+    delay_ms(int(seconds * 1000))
+
+
+@inline
 def millis_init():
     """Initialize the hardware millisecond counter.
 
