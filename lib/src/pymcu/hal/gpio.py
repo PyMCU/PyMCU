@@ -111,7 +111,7 @@ class Pin:
                 if value != -1:
                     from pymcu.hal._gpio.pic18f45k50 import pin_write
                     pin_write(name, value)
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 if mode == 2:
                     raise NotImplementedError("Open-drain mode not supported on AVR")
                 if alt != -1:
@@ -132,6 +132,12 @@ class Pin:
                 if value != -1:
                     self._port[self._bit] = value
             case "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != -1:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny_b import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
@@ -145,6 +151,12 @@ class Pin:
                 if value != -1:
                     self._port[self._bit] = value
             case "attiny84" | "attiny44" | "attiny24":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != -1:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny_ab import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
@@ -158,6 +170,12 @@ class Pin:
                 if value != -1:
                     self._port[self._bit] = value
             case "attiny2313" | "attiny4313":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != -1:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)

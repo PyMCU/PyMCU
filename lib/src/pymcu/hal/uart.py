@@ -83,14 +83,8 @@ class UART:
         """Transmit a byte as two uppercase hex digits (e.g. 0x2F -> "2F")."""
         hi: uint8 = (byte >> 4) & 0x0F
         lo: uint8 = byte & 0x0F
-        if hi < 10:
-            self.write(hi + 48)
-        else:
-            self.write(hi - 10 + 65)
-        if lo < 10:
-            self.write(lo + 48)
-        else:
-            self.write(lo - 10 + 65)
+        self.write(hi + 48 if hi < 10 else hi + 55)
+        self.write(lo + 48 if lo < 10 else lo + 55)
 
     @inline
     def print_byte(self, value: uint8):
@@ -128,7 +122,8 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_available
                 return uart_available()
-        return 0
+            case _:
+                return 0
 
     @inline
     def read_nb(self) -> uint8:
@@ -141,7 +136,8 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_read_nb
                 return uart_read_nb()
-        return 0
+            case _:
+                return 0
 
     @inline
     def read_byte_isr(self) -> uint8:
@@ -154,7 +150,8 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_read_byte_isr
                 return uart_read_byte_isr()
-        return 0
+            case _:
+                return 0
 
     @inline
     def irq(self, handler: Callable):
@@ -216,7 +213,8 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_rx_available
                 return uart_rx_available()
-        return 0
+            case _:
+                return 0
 
     @inline
     def rx_read(self) -> uint8:
@@ -228,7 +226,8 @@ class UART:
             case "avr":
                 from pymcu.hal._uart.avr import uart_rx_read
                 return uart_rx_read()
-        return 0
+            case _:
+                return 0
 
 
 # ---------------------------------------------------------------------------
