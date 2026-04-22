@@ -24,15 +24,30 @@ build-backend name:
     dotnet publish "{{repo_root}}/extensions/pymcu-backend-{{name}}/src/csharp/cli/PyMCU.Backend.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
-# Build the AVR backend (uses its own .csproj name until renamed).
+# Named backend shorthands (each has its own .csproj name).
 build-backend-avr:
     dotnet publish "{{repo_root}}/extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
+        -c Release -o "{{compiler_out}}" --nologo
+
+build-backend-pic:
+    dotnet publish "{{repo_root}}/extensions/pymcu-backend-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" \
+        -c Release -o "{{compiler_out}}" --nologo
+
+build-backend-riscv:
+    dotnet publish "{{repo_root}}/extensions/pymcu-backend-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" \
+        -c Release -o "{{compiler_out}}" --nologo
+
+build-backend-pio:
+    dotnet publish "{{repo_root}}/extensions/pymcu-backend-pio/src/csharp/cli/PyMCU.Backend.PIO.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 # ─── build-all ──────────────────────────────────────────────────────────────
 # Compile the compiler and all registered backend plugin binaries.
 build-all: build
     just build-backend-avr
+    just build-backend-pic
+    just build-backend-riscv
+    just build-backend-pio
 
 # ─── test-backend ───────────────────────────────────────────────────────────
 # Run unit and integration tests for a backend. Usage: just test-backend avr
