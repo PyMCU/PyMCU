@@ -97,6 +97,24 @@ private static Function CloneFunction(Function f)
             EliminateDeadCodeCfg(cfg);
 
             func.Body = cfg.Blocks.SelectMany(b => b.Instructions).ToList();
+
+#if DEBUG
+            // Idempotency check: a second PropagateCopies pass on the already-propagated body
+            // must produce zero additional substitutions.  A non-zero count means a new
+            // instruction type defines a variable without being handled by the default branch
+            // in PropagateCopies (which calls InvalidateVar via GetDst).
+            {
+                var clone = CloneFunction(func);
+                PropagateCopies(clone);             // mirrors what we just did
+                var secondSubs = PropagateCopies(clone); // must be 0
+                System.Diagnostics.Debug.Assert(
+                    secondSubs == 0,
+                    $"PropagateCopies is not idempotent in '{func.Name}': " +
+                    $"{secondSubs} additional substitution(s) on second pass. " +
+                    "Ensure every instruction type that defines a variable is covered " +
+                    "by GetDst so the default branch in PropagateCopies can invalidate it.");
+            }
+#endif
         }
 
         CollapseBoolJumps(func);
@@ -274,8 +292,12 @@ private static Function CloneFunction(Function f)
         }
     }
 
-    private static void PropagateCopies(Function func)
+    // Returns the number of Variable/Temporary→value substitutions performed.
+    // Callers in OptimizeFunction discard the count; the #if DEBUG idempotency
+    // check in OptimizeFunction calls this a second time and asserts the count is 0.
+    private static int PropagateCopies(Function func)
     {
+        var substitutions = 0;
         var tempCopies = new Dictionary<string, Val>();
         var blacklistedTemps = new HashSet<string>();
         var varConsts = new Dictionary<string, int>();
@@ -292,16 +314,23 @@ private static Function CloneFunction(Function f)
             {
                 func.Body[i] = ReplaceUses(func.Body[i], v =>
                 {
-                    return v switch
+                    if (v is Temporary t && tempCopies.TryGetValue(t.Name, out var replacement))
                     {
-                        Temporary t when tempCopies.TryGetValue(t.Name, out var replacement) => replacement,
-                        Variable var2 when varConsts.TryGetValue(var2.Name, out int cv) => new Constant(cv),
-                        _ => v
-                    };
+                        substitutions++;
+                        return replacement;
+                    }
+
+                    if (v is Variable var2 && varConsts.TryGetValue(var2.Name, out int cv))
+                    {
+                        substitutions++;
+                        return new Constant(cv);
+                    }
+
+                    return v;
                 });
             }
 
-            // 2. Track new copies
+            // 2. Track new copies and invalidate defined variables.
             var instr = func.Body[i];
             switch (instr)
             {
@@ -327,29 +356,29 @@ private static Function CloneFunction(Function f)
 
                     break;
                 }
-                case Call cl:
-                    InvalidateVar(cl.Dst);
-                    break;
-                case AugAssign aug:
-                    InvalidateVar(aug.Target);
-                    break;
-                case Binary bin:
-                    InvalidateVar(bin.Dst);
-                    break;
-                case Unary un:
-                    InvalidateVar(un.Dst);
-                    break;
-                // InlineAsm with operands may modify variables; invalidate them.
+                // InlineAsm operands are read+write; invalidate all of them.
                 case InlineAsm { Operands: not null } ia:
                     foreach (var op in ia.Operands) InvalidateVar(op);
                     break;
+                // A label ends a basic block; stale constant facts from the previous
+                // block cannot safely be carried across a branch target.
                 case Label:
                     varConsts.Clear();
                     break;
+                // For all other instructions that produce a value (Binary, Unary, Call,
+                // AugAssign, BitCheck, LoadIndirect, ArrayLoad, ArrayLoadFlash, …),
+                // delegate to GetDst so any new instruction type added in the future is
+                // automatically covered rather than silently skipped.
+                default:
+                {
+                    var dst = GetDst(instr);
+                    if (dst != null) InvalidateVar(dst);
+                    break;
+                }
             }
         }
 
-        return;
+        return substitutions;
 
         void InvalidateVar(Val dst)
         {
@@ -646,7 +675,7 @@ private static Function CloneFunction(Function f)
         return (null, null);
     }
 
-    private static Val? GetDst(Instruction instr) => instr switch
+    public static Val? GetDst(Instruction instr) => instr switch
     {
         Binary b => b.Dst,
         Unary u => u.Dst,
@@ -656,6 +685,7 @@ private static Function CloneFunction(Function f)
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
         ArrayLoadFlash alf => alf.Dst,
+        AugAssign aa => aa.Target,
         _ => null,
     };
 
@@ -672,7 +702,7 @@ private static Function CloneFunction(Function f)
         _ => instr,
     };
 
-    private static void RegisterUses(Instruction instr, Action<Val> register)
+    public static void RegisterUses(Instruction instr, Action<Val> register)
     {
         switch (instr)
         {

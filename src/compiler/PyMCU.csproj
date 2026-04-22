@@ -56,4 +56,25 @@
       WriteOnlyWhenDifferent="true" />
   </Target>
 
+  <!--
+    EnforceBackendIsolation — prevents the compiler core from taking a direct
+    ProjectReference to any concrete backend package (avr, pic, riscv, pio).
+    Only PyMCU.Backend.SDK (the shared IR contract) is permitted.
+    If this check fires, move the dependency to the relevant extension package.
+  -->
+  <Target Name="EnforceBackendIsolation" BeforeTargets="Build">
+    <ItemGroup>
+      <_ConcreteBackendRef Include="@(ProjectReference)"
+        Condition="$([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-avr'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pic'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-riscv'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pio'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-backend-pio'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-backend-riscv'))" />
+    </ItemGroup>
+    <Error
+      Condition="'@(_ConcreteBackendRef)' != ''"
+      Text="Compiler core (PyMCU.csproj) must not reference concrete backend packages: @(_ConcreteBackendRef). Only PyMCU.Backend.SDK is permitted. Add the dependency to the relevant extension package instead." />
+  </Target>
+
 </Project>

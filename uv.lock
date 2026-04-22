@@ -54,29 +54,114 @@ wheels = [
 ]
 
 [[package]]
-name = "pymcu-compiler"
-version = "0.1.0a28"
+name = "pymcu"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
+    { name = "pymcu-plugin-sdk" },
     { name = "pymcu-stdlib" },
     { name = "rich" },
     { name = "tomlkit" },
     { name = "typer" },
 ]
 
+[package.optional-dependencies]
+all = [
+    { name = "pymcu-avr" },
+    { name = "pymcu-pic" },
+    { name = "pymcu-pio" },
+    { name = "pymcu-riscv" },
+]
+avr = [
+    { name = "pymcu-avr" },
+]
+pic = [
+    { name = "pymcu-pic" },
+]
+pio = [
+    { name = "pymcu-pio" },
+]
+riscv = [
+    { name = "pymcu-riscv" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "pymcu-stdlib", specifier = ">=0.1.0a1" },
+    { name = "pymcu-avr", marker = "extra == 'all'", editable = "extensions/pymcu-avr" },
+    { name = "pymcu-avr", marker = "extra == 'avr'", editable = "extensions/pymcu-avr" },
+    { name = "pymcu-pic", marker = "extra == 'all'", editable = "extensions/pymcu-pic" },
+    { name = "pymcu-pic", marker = "extra == 'pic'", editable = "extensions/pymcu-pic" },
+    { name = "pymcu-pio", marker = "extra == 'all'", editable = "extensions/pymcu-backend-pio" },
+    { name = "pymcu-pio", marker = "extra == 'pio'", editable = "extensions/pymcu-backend-pio" },
+    { name = "pymcu-plugin-sdk", editable = "extensions/pymcu-plugin-sdk" },
+    { name = "pymcu-riscv", marker = "extra == 'all'", editable = "extensions/pymcu-backend-riscv" },
+    { name = "pymcu-riscv", marker = "extra == 'riscv'", editable = "extensions/pymcu-backend-riscv" },
+    { name = "pymcu-stdlib", editable = "lib" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "tomlkit", specifier = ">=0.12.0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]
+provides-extras = ["avr", "pic", "riscv", "pio", "all"]
+
+[[package]]
+name = "pymcu-avr"
+version = "0.1.0a1"
+source = { editable = "extensions/pymcu-avr" }
+dependencies = [
+    { name = "pymcu-plugin-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pymcu-plugin-sdk", specifier = ">=0.1.0a1" }]
+
+[[package]]
+name = "pymcu-pic"
+version = "0.1.0a1"
+source = { editable = "extensions/pymcu-pic" }
+dependencies = [
+    { name = "pymcu-plugin-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pymcu-plugin-sdk", specifier = ">=0.1.0a1" }]
+
+[[package]]
+name = "pymcu-pio"
+version = "0.1.0a1"
+source = { editable = "extensions/pymcu-backend-pio" }
+dependencies = [
+    { name = "pymcu-plugin-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pymcu-plugin-sdk", specifier = ">=0.1.0a1" }]
+
+[[package]]
+name = "pymcu-plugin-sdk"
+version = "0.1.0a1"
+source = { editable = "extensions/pymcu-plugin-sdk" }
+dependencies = [
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "rich", specifier = ">=13.0.0" }]
+
+[[package]]
+name = "pymcu-riscv"
+version = "0.1.0a1"
+source = { editable = "extensions/pymcu-backend-riscv" }
+dependencies = [
+    { name = "pymcu-plugin-sdk" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pymcu-plugin-sdk", specifier = ">=0.1.0a1" }]
 
 [[package]]
 name = "pymcu-stdlib"
 version = "0.1.0a1"
 source = { editable = "lib" }
-
 
 [[package]]
 name = "rich"
