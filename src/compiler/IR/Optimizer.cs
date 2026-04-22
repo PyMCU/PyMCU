@@ -327,6 +327,9 @@ private static Function CloneFunction(Function f)
 
                     break;
                 }
+                case Call cl:
+                    InvalidateVar(cl.Dst);
+                    break;
                 case AugAssign aug:
                     InvalidateVar(aug.Target);
                     break;
