@@ -102,10 +102,8 @@ public partial class IRGenerator
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
-    // Tracks compile-time float constant variables (never emitted to AVR; folded to int at use)
+    // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();
-
-    private int floatCtCounter = 0;
 
     // Maps class name → module prefix where the class is defined.
     private Dictionary<string, string?> classModuleMap = new();
