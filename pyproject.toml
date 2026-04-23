@@ -26,7 +26,8 @@ pic = ["pymcu-pic>=0.1.0a1"]
 riscv = ["pymcu-riscv>=0.1.0a1"]
 pio = ["pymcu-pio>=0.1.0a1"]
 arm = ["pymcu-arm>=0.1.0a1"]
-all = ["pymcu-avr>=0.1.0a1", "pymcu-pic>=0.1.0a1", "pymcu-riscv>=0.1.0a1", "pymcu-pio>=0.1.0a1", "pymcu-arm>=0.1.0a1"]
+xtensa = ["pymcu-xtensa>=0.1.0a1"]
+all = ["pymcu-avr>=0.1.0a1", "pymcu-pic>=0.1.0a1", "pymcu-riscv>=0.1.0a1", "pymcu-pio>=0.1.0a1", "pymcu-arm>=0.1.0a1", "pymcu-xtensa>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
@@ -36,6 +37,7 @@ pymcu-pic = {path = "extensions/pymcu-pic", editable = true}
 pymcu-riscv = {path = "extensions/pymcu-backend-riscv", editable = true}
 pymcu-pio = {path = "extensions/pymcu-backend-pio", editable = true}
 pymcu-arm = {path = "extensions/pymcu-arm", editable = true}
+pymcu-xtensa = {path = "extensions/pymcu-xtensa", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
@@ -60,5 +62,6 @@ pythonpath = [
     "extensions/pymcu-backend-riscv/src/python",
     "extensions/pymcu-backend-pio/src/python",
     "extensions/pymcu-arm/src/python",
+    "extensions/pymcu-xtensa/src/python",
 ]
 addopts = ["--import-mode=importlib"]

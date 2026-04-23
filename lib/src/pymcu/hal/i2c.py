@@ -102,9 +102,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_ping
                     return i2c_ping(addr)
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def start(self) -> uint8:
@@ -114,9 +114,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_start
                     return i2c_start()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def stop(self):
@@ -149,9 +149,9 @@ class I2C:
                 else:
                     from pymcu.hal._i2c.avr import i2c_peripheral_write
                     i2c_peripheral_write(data)
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def read_ack(self) -> uint8:
@@ -161,9 +161,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_read_ack
                     return i2c_read_ack()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def read_nack(self) -> uint8:
@@ -173,9 +173,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_read_nack
                     return i2c_read_nack()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def write_to(self, addr: uint8, data: uint8) -> uint8:
@@ -188,9 +188,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_write_to
                     return i2c_write_to(addr, data)
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def write_bytes(self, addr: uint8, buf, n: uint8) -> uint8:
@@ -203,9 +203,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_write_bytes
                     return i2c_write_bytes(addr, buf, n)
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def read_from(self, addr: uint8) -> uint8:
@@ -218,9 +218,9 @@ class I2C:
                 if self._mode == "c":
                     from pymcu.hal._i2c.avr import i2c_read_from
                     return i2c_read_from(addr)
+                return 0
             case _:
                 return 0
-        return 0
 
     # ---- Peripheral methods --------------------------------------------------
 
@@ -232,9 +232,9 @@ class I2C:
                 if self._mode == "p":
                     from pymcu.hal._i2c.avr import i2c_peripheral_ready
                     return i2c_peripheral_ready()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def status(self) -> uint8:
@@ -244,9 +244,9 @@ class I2C:
                 if self._mode == "p":
                     from pymcu.hal._i2c.avr import i2c_peripheral_status
                     return i2c_peripheral_status()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def acknowledge(self):
@@ -274,9 +274,9 @@ class I2C:
                 if self._mode == "p":
                     from pymcu.hal._i2c.avr import i2c_peripheral_read
                     return i2c_peripheral_read()
+                return 0
             case _:
                 return 0
-        return 0
 
     @inline
     def irq(self, handler: Callable):

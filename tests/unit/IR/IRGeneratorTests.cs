@@ -822,4 +822,65 @@ public class IRGeneratorTests
             i is Copy { Src: Constant { Value: 500 }, Dst: Variable v }
             && v.Type == DataType.UINT16);
     }
+
+    // -------------------------------------------------------------------------
+    // NoneExpr type-checking diagnostics (Improvement 1)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void NoneExpr_AssignedToUint8Variable_ThrowsTypeError()
+    {
+        // x: uint8 = None  ->  TypeError at IR-generation time.
+        const string src =
+            "def f():\n" +
+            "    x: uint8 = None\n";
+
+        Assert.ThrowsAny<Exception>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void NoneExpr_AssignedToInt16Variable_ThrowsTypeError()
+    {
+        // x: int16 = None  ->  TypeError.
+        const string src =
+            "def f():\n" +
+            "    x: int16 = None\n";
+
+        Assert.ThrowsAny<Exception>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void NoneExpr_UsedAsNumericParamDefault_ThrowsTypeError()
+    {
+        // def f(x: uint8 = None)  ->  TypeError when the default is bound.
+        const string src =
+            "@inline\n" +
+            "def helper(x: uint8 = None):\n" +
+            "    pass\n" +
+            "def main():\n" +
+            "    helper()\n";
+
+        Assert.ThrowsAny<Exception>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void NoneExpr_IsNoneCheck_OnClassParam_DoesNotThrow()
+    {
+        // cs is None / cs is not None on a class-typed parameter must not raise a
+        // TypeError — it is the valid object-reference sentinel pattern.
+        const string src =
+            "class Pin:\n" +
+            "    def __init__(self, n: str):\n" +
+            "        pass\n" +
+            "@inline\n" +
+            "def transfer(cs: Pin = None) -> uint8:\n" +
+            "    if cs is not None:\n" +
+            "        return 1\n" +
+            "    return 0\n" +
+            "def main():\n" +
+            "    r: uint8 = transfer()\n";
+
+        var body = GenerateIR(src).Functions[0].Body;
+        Assert.NotEmpty(body);
+    }
 }
