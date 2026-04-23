@@ -3,6 +3,11 @@
   "displayName": "PyMCU Development Tools",
   "description": "Development tools for PyMCU projects, including build and flash commands.",
   "version": "0.0.1",
+  "publisher": "pymcu",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PyMCU/PyMCU"
+  },
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -58,7 +63,12 @@
         "pymcu.packageManager": {
           "type": "string",
           "default": "uv",
-          "enum": ["uv", "pip", "poetry", "pipenv"],
+          "enum": [
+            "uv",
+            "pip",
+            "poetry",
+            "pipenv"
+          ],
           "description": "Package manager used to install project dependencies (e.g. uv sync, pip install -e .)."
         }
       }
@@ -113,17 +123,19 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.54.0",
+    "@types/vscode": "^1.109.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "typescript-eslint": "^8.54.0"
   },
   "extensionDependencies": [
     "tamasfe.even-better-toml"
