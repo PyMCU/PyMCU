@@ -584,10 +584,8 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         string v    = EmitLoad(arg.Source);
         string shft = FreshTmp();
         string mask = FreshTmp();
-        string res  = FreshTmp();
         _out.WriteLine($"  {shft} = lshr i32 {v}, {arg.Bit}");
         _out.WriteLine($"  {mask} = and i32 {shft}, 1");
-        _out.WriteLine($"  {res} = zext i32 {mask} to i32");
         EmitStore(mask, arg.Dst);
     }
 

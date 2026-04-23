@@ -7,7 +7,6 @@
  * -----------------------------------------------------------------------------
  */
 
-// SPDX-License-Identifier: MIT
 // PyMCU Xtensa Backend — IBackendProvider implementation.
 
 using PyMCU.Backend.License;
