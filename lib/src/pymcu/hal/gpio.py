@@ -39,7 +39,11 @@ class Pin:
     IRQ_LOW_LEVEL  = 4
     IRQ_HIGH_LEVEL = 8
 
-    def __init__(self, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    # Sentinel value meaning "not provided" for optional const[uint8] parameters.
+    # 0xFF is safe: no valid pull, value, or alt-function selector uses this value.
+    UNSET = 0xFF
+
+    def __init__(self, name: str, mode: uint8, pull: const[uint8] = 0xFF, value: const = 0xFF, drive: const = 0, alt: const = 0xFF):
         """Configure a digital I/O pin.
 
         name:  port-pin name string (e.g. ``"PB5"``).
@@ -54,67 +58,67 @@ class Pin:
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_set_mode
                 pin_set_mode(name, mode)
-                if pull != -1:
+                if pull != 0xFF:
                     from pymcu.hal._gpio.pic16f18877 import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(name)
                     elif pull == 0:
                         pin_pull_off(name)
-                if value != -1:
+                if value != 0xFF:
                     from pymcu.hal._gpio.pic16f18877 import pin_write
                     pin_write(name, value)
             case "pic16f877a":
                 from pymcu.hal._gpio.pic16f877a import pin_set_mode
                 pin_set_mode(name, mode)
-                if pull != -1:
+                if pull != 0xFF:
                     from pymcu.hal._gpio.pic16f877a import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(name)
                     elif pull == 0:
                         pin_pull_off(name)
-                if value != -1:
+                if value != 0xFF:
                     from pymcu.hal._gpio.pic16f877a import pin_write
                     pin_write(name, value)
             case "pic16f84a":
                 from pymcu.hal._gpio.pic16f84a import pin_set_mode
                 pin_set_mode(name, mode)
-                if pull != -1:
+                if pull != 0xFF:
                     from pymcu.hal._gpio.pic16f84a import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(name)
                     elif pull == 0:
                         pin_pull_off(name)
-                if value != -1:
+                if value != 0xFF:
                     from pymcu.hal._gpio.pic16f84a import pin_write
                     pin_write(name, value)
             case "pic10f200":
                 from pymcu.hal._gpio.pic10f200 import pin_set_mode
                 pin_set_mode(name, mode)
-                if pull != -1:
+                if pull != 0xFF:
                     from pymcu.hal._gpio.pic10f200 import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(name)
                     elif pull == 0:
                         pin_pull_off(name)
-                if value != -1:
+                if value != 0xFF:
                     from pymcu.hal._gpio.pic10f200 import pin_write
                     pin_write(name, value)
             case "pic18f45k50":
                 from pymcu.hal._gpio.pic18f45k50 import pin_set_mode
                 pin_set_mode(name, mode)
-                if pull != -1:
+                if pull != 0xFF:
                     from pymcu.hal._gpio.pic18f45k50 import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(name)
                     elif pull == 0:
                         pin_pull_off(name)
-                if value != -1:
+                if value != 0xFF:
                     from pymcu.hal._gpio.pic18f45k50 import pin_write
                     pin_write(name, value)
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 if mode == 2:
                     raise NotImplementedError("Open-drain mode not supported on AVR")
-                if alt != -1:
+                if alt != 0xFF:
                     raise NotImplementedError("Alternate functions not supported on AVR")
                 if drive != 0:
                     raise NotImplementedError("Drive strength control not supported on AVR")
@@ -124,51 +128,69 @@ class Pin:
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
                 self._ddr[self._bit] = mode ^ 1
-                if pull != -1:
+                if pull != 0xFF:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on AVR")
                     # noinspection PyTypeChecker
                     self._port[self._bit] = pull
-                if value != -1:
+                if value != 0xFF:
                     self._port[self._bit] = value
             case "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != 0xFF:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny_b import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
                 self._ddr[self._bit] = mode ^ 1
-                if pull != -1:
+                if pull != 0xFF:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
-                if value != -1:
+                if value != 0xFF:
                     self._port[self._bit] = value
             case "attiny84" | "attiny44" | "attiny24":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != 0xFF:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny_ab import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
                 self._ddr[self._bit] = mode ^ 1
-                if pull != -1:
+                if pull != 0xFF:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
-                if value != -1:
+                if value != 0xFF:
                     self._port[self._bit] = value
             case "attiny2313" | "attiny4313":
+                if mode == 2:
+                    raise NotImplementedError("Open-drain mode not supported on ATtiny")
+                if alt != 0xFF:
+                    raise NotImplementedError("Alternate functions not supported on ATtiny")
+                if drive != 0:
+                    raise NotImplementedError("Drive strength control not supported on ATtiny")
                 from pymcu.hal._gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
                 self._ddr[self._bit] = mode ^ 1
-                if pull != -1:
+                if pull != 0xFF:
                     if pull == 2:
                         raise NotImplementedError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
-                if value != -1:
+                if value != 0xFF:
                     self._port[self._bit] = value
 
     @inline
@@ -248,14 +270,14 @@ class Pin:
                 self._port[self._bit] = self._port[self._bit] ^ 1
 
     @inline
-    def value(self, x: const = -1) -> uint8:
+    def value(self, x: const = 0xFF) -> uint8:
         """Read or write the pin logical value.
 
         Called with no argument: returns 0 or 1 representing the current
         pin state (input or output).
         Called with ``x=0`` or ``x=1``: sets the output to that value.
         """
-        if x == -1:
+        if x == 0xFF:
             match __CHIP__.name:
                 case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
                     return self._pin[self._bit]
@@ -295,13 +317,13 @@ class Pin:
                     self._port[self._bit] = x
 
     @inline
-    def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    def init(self, mode: const = 0xFF, pull: const = 0xFF, value: const = 0xFF, drive: const = 0, alt: const = 0xFF):
         """Reconfigure pin properties after construction.
 
         All parameters are optional; pass only the ones you want to change.
         Same semantics as the constructor parameters.
         """
-        if mode != -1:
+        if mode != 0xFF:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_set_mode
@@ -320,7 +342,7 @@ class Pin:
                     pin_set_mode(self.name, mode)
                 case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
                     self._ddr[self._bit] = mode ^ 1
-        if pull != -1:
+        if pull != 0xFF:
             match __CHIP__.name:
                 case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
                     if pull == 2:
@@ -356,7 +378,7 @@ class Pin:
                         pin_pull_up(self.name)
                     elif pull == 0:
                         pin_pull_off(self.name)
-        if value != -1:
+        if value != 0xFF:
             match __CHIP__.name:
                 case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
                     self._port[self._bit] = value
@@ -378,7 +400,7 @@ class Pin:
         if drive != 0:
             if __CHIP__.arch == "avr":
                 raise NotImplementedError("Drive strength control not supported on AVR")
-        if alt != -1:
+        if alt != 0xFF:
             if __CHIP__.arch == "avr":
                 raise NotImplementedError("Alternate functions not supported on AVR")
 
@@ -481,13 +503,13 @@ class Pin:
                 return 0
 
     @inline
-    def mode(self, m: const = -1) -> uint8:
+    def mode(self, m: const = 0xFF) -> uint8:
         """Get or set the pin direction.
 
         Called with no argument: returns the current mode constant.
         Called with ``m=Pin.IN`` or ``m=Pin.OUT``: changes the direction.
         """
-        if m != -1:
+        if m != 0xFF:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_set_mode

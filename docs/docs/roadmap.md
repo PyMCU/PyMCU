@@ -33,7 +33,7 @@ Everything below is shipped and covered by integration tests.
 | Feature | Notes |
 |---------|-------|
 | Integer literals | Dec, hex, bin, oct, `_` separators |
-| `True` / `False` / `None` | Folded to `Constant{1/0/-1}` |
+| `True` / `False` / `None` | `True`/`False` fold to `Constant{1/0}`; `None` on object-reference types folds via `is None` / `is not None`; `None` on numeric types is a TypeError |
 | String literals | Single- and double-quoted |
 | Arithmetic `+ - * / % //` | Full constant folding |
 | Comparison `== != < <= > >=` | |
@@ -309,6 +309,21 @@ cflags       = ["-O2"]
 |---------|-------|
 | `uart_write_str` pure PyMCU loop | Replaces compiler-intrinsic `uart_send_string` with idiomatic inline loop |
 | `pymcu.hal.console` module | Arch-dispatched `print_str` / `print_u8` wrappers for portable console output |
+
+---
+
+## v0.12 — Implemented
+
+### Language (PEP features)
+
+| Feature | Notes |
+|---------|-------|
+| PEP 526 — Bare class body annotations | `class Foo:\n    x: uint8` registers `x` as an SRAM member without an RHS |
+| PEP 695 — `type` alias statement | `type Point = uint8` — compile-time type alias; zero SRAM cost |
+| PEP 318/614 — Unknown decorator tolerance | Unrecognised decorators are silently ignored |
+| PEP 3102 — Keyword-only parameters | `def f(a, *, b)` — positional call to `b` raises `TypeError` at compile time |
+| PEP 308 — Chained comparisons | `0 <= x <= 255` — desugared to an `and`-chain; middle operand evaluated once |
+| PEP 701 — f-string format specs | `f"{n:04d}"`, `f"{n:x}"`, `f"{n:X}"`, `f"{n:b}"`, width/align — compile-time only |
 
 ---
 

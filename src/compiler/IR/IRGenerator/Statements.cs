@@ -302,6 +302,12 @@ public partial class IRGenerator
         {
             return;
         }
+        else if (stmt is TypeAliasStmt typeAlias)
+        {
+            // PEP 695: register the alias in the type alias map — emits no code.
+            typeAliases[typeAlias.Name] = typeAlias.Annotation;
+            return;
+        }
         else if (stmt is RaiseStmt raiseStmt)
         {
             throw new Exception($"{raiseStmt.ErrorType}: {raiseStmt.Message}");
