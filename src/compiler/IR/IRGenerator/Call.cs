@@ -174,7 +174,7 @@ public partial class IRGenerator
                     string paramKey = pfx + lam.Params[i].Name;
                     Val argVal = VisitExpression(expr.Args[i]);
                     DataType dt = DataTypeExtensions.StringToDataType(lam.Params[i].Type);
-                    if (argVal is Constant c) constantVariables[paramKey] = c.Value;
+                    if (argVal is Constant c) SetConst(paramKey, c.Value);
                     else
                     {
                         Emit(new Copy(argVal, new Variable(paramKey, dt)));
@@ -190,7 +190,7 @@ public partial class IRGenerator
                 foreach (var p in lam.Params)
                 {
                     string pk = pfx + p.Name;
-                    constantVariables.Remove(pk);
+                    KillConst(pk);
                     variableTypes.Remove(pk);
                 }
 
@@ -905,7 +905,7 @@ public partial class IRGenerator
             if (expr.Args[0] is VariableExpr v)
             {
                 string key = currentInlinePrefix + v.Name;
-                if (constantVariables.TryGetValue(key, out int cv) && cv == 0) return new NoneVal();
+                if (TryGetConst(key, out int cv) && cv == 0) return new NoneVal();
 
                 for (int depth = 0; depth < 20; ++depth)
                 {
@@ -1100,7 +1100,7 @@ public partial class IRGenerator
                         if (strVal != null)
                         {
                             strConstantVariables[paramName] = strVal;
-                            constantVariables.Remove(paramName);
+                            KillConst(paramName);
                             variableAliases.Remove(paramName);
                             continue;
                         }
@@ -1109,14 +1109,14 @@ public partial class IRGenerator
                     if (floatConstantVariables.TryGetValue(vArg.Name, out double fv))
                     {
                         floatConstantVariables[paramName] = fv;
-                        constantVariables.Remove(paramName);
+                        KillConst(paramName);
                         strConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
                         continue;
                     }
 
                     variableAliases[paramName] = vArg.Name;
-                    constantVariables.Remove(paramName);
+                    KillConst(paramName);
                     strConstantVariables.Remove(paramName);
                     continue;
                 }
@@ -1128,18 +1128,18 @@ public partial class IRGenerator
                     // _arduino_pin_name(13) → "PB5").  Without this block the value
                     // would fall through to the runtime Copy, losing the constant.
                     string? tStr = ResolveStrConstant(tArg.Name);
-                    if (tStr == null && constantVariables.TryGetValue(tArg.Name, out int tId))
+                    if (tStr == null && TryGetConst(tArg.Name, out int tId))
                         stringIdToStr.TryGetValue(tId, out tStr);
                     if (tStr != null)
                     {
                         strConstantVariables[paramName] = tStr;
-                        constantVariables.Remove(paramName);
+                        KillConst(paramName);
                         variableAliases.Remove(paramName);
                         continue;
                     }
-                    if (constantVariables.TryGetValue(tArg.Name, out int tNum))
+                    if (TryGetConst(tArg.Name, out int tNum))
                     {
-                        constantVariables[paramName] = tNum;
+                        SetConst(paramName, tNum);
                         strConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
                         continue;
@@ -1176,14 +1176,14 @@ public partial class IRGenerator
                     if (!(argValues[i] is Constant cArg2))
                         throw new Exception(
                             $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
-                    constantVariables[paramName] = cArg2.Value;
+                    SetConst(paramName, cArg2.Value);
                     continue;
                 }
 
                 if (argValues[i] is FloatConstant fcArg)
                 {
                     floatConstantVariables[paramName] = fcArg.Value;
-                    constantVariables.Remove(paramName);
+                    KillConst(paramName);
                     strConstantVariables.Remove(paramName);
                     variableAliases.Remove(paramName);
                     continue;
@@ -1191,7 +1191,7 @@ public partial class IRGenerator
 
                 if (argValues[i] is Constant cArg3)
                 {
-                    constantVariables[paramName] = cArg3.Value;
+                    SetConst(paramName, cArg3.Value);
                     continue;
                 }
 
@@ -1202,7 +1202,7 @@ public partial class IRGenerator
                     continue;
                 }
 
-                constantVariables.Remove(paramName);
+                KillConst(paramName);
                 strConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
@@ -1239,10 +1239,10 @@ public partial class IRGenerator
                                 if (!(kvp.Value is Constant ckw))
                                     throw new Exception(
                                         $"Parameter '{func.Params[pi].Name}' is declared as const and requires a compile-time constant value");
-                                constantVariables[paramName] = ckw.Value;
+                                SetConst(paramName, ckw.Value);
                             }
                         }
-                        else if (kvp.Value is Constant ckw2) constantVariables[paramName] = ckw2.Value;
+                        else if (kvp.Value is Constant ckw2) SetConst(paramName, ckw2.Value);
                         else
                         {
                             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
@@ -1286,11 +1286,11 @@ public partial class IRGenerator
                         if (!(defaultVal is Constant cdf))
                             throw new Exception(
                                 $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant");
-                        constantVariables[paramName] = cdf.Value;
+                        SetConst(paramName, cdf.Value);
                         continue;
                     }
 
-                    if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
+                    if (defaultVal is Constant cdf2) SetConst(paramName, cdf2.Value);
                     else
                     {
                         DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);

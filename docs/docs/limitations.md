@@ -243,6 +243,51 @@ without any changes to the core `pymcu` package — see
 
 ---
 
+## PIC Backend Limitations
+
+### PIC18 (`arch = "pic18"`) — Supported WIP
+
+- All variables must fit in the Access Bank (max **80 bytes** of user data, addresses 0x020–0x06F).
+  Banking is not yet emitted; programs that exceed this limit will produce wrong code.
+- 32-bit integer types (`int32`, `uint32`) and `float` are not supported.
+- Software multiply is supported (8×8 via `MULWF`). 16-bit multiply is not.
+- Software 8-bit divide (`//`, `%`) is supported via `__pic18_div8`; 16-bit divide is not yet emitted.
+- Inline assembly operand constraints (`%0`, `%1`) are passed through as-is.
+- Flash table access (`const uint8[N]` in ROM) uses `TBLRD` and is now implemented.
+
+### PIC14 (`arch = "pic14"`) — Experimental
+
+The compiler will emit `[WARNING] PIC14 is Experimental` at the top of generated output.
+
+- All variables must fit in Bank 0 GPRs (max **76 bytes**, addresses 0x20–0x6B).
+  Programs exceeding this limit will overwrite scratch registers.
+- 32-bit types and `float` are not supported; a `NotSupportedException` is thrown at compile time.
+- Flash table access (`const uint8[N]` in ROM) uses `RETLW` sequences and `ADDWF PCL` lookup.
+- PAGESEL is **not** emitted by default (single-page assumption).
+  Set `[tool.pymcu.fuses] multipage = "true"` in your `pyproject.toml` to enable PAGESEL
+  before every CALL and GOTO when targeting programs larger than one 2K-word page.
+- Software 8-bit divide (`//`, `%`) is supported via `__pic14_div8`. 16-bit divide emits a stub.
+- Signed comparisons are correct for `int8`/`int16` operands using sign-XOR technique.
+- ISR context save includes W, STATUS, and FSR (if the ISR body uses indirect access).
+
+### PIC12 (`arch = "pic12"`) — Experimental
+
+The compiler will emit `[WARNING] PIC12 is Experimental` at the top of generated output.
+
+- **Only 8-bit types** (`uint8`, `int8`, `bool`) are supported.
+  All of the following produce a `NotSupportedException` at compile time:
+  - 16-bit or 32-bit variables or operations
+  - `float`
+  - Variable-count shifts (`<<` / `>>` with a runtime operand)
+  - Software multiply or divide (`*`, `//`, `%`)
+  - Runtime-indexed flash array access
+- Constant-index array access (`a[0]`, `a[3]`, etc.) is supported for both RAM and flash.
+- The hardware call stack is only **2 levels** deep; deeply nested function calls will corrupt the stack.
+- Indirect register access (FSR / INDF) is used for `LoadIndirect`, `StoreIndirect`, `BitSet`,
+  and `BitClear` on unresolved targets.
+
+---
+
 ## Getting Help
 
 If you hit a compile error on a Python construct not covered here, please open an issue at the

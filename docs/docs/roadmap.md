@@ -329,6 +329,22 @@ cflags       = ["-O2"]
 
 ## v0.11 — Next Tier
 
+---
+
+## PIC Backend Tier Model
+
+The `pymcu-backend-pic` extension supports three architecture tiers:
+
+| Tier | Architectures | Notes |
+|------|--------------|-------|
+| **Supported WIP** | PIC18Fxxxx (`arch = "pic18"`) | Signed comparisons (N/OV bits), TBLRD flash tables, soft 8-bit divide, variable-count shifts, conditional ISR saves (FSR0/PROD) |
+| **Experimental** | PIC16Fxxx (`arch = "pic14"`) | 8+16-bit; RETLW flash tables; variable shifts; soft-divide; FSR ISR save; PAGESEL opt-in via `fuses.multipage = "true"` |
+| **Experimental** | PIC12Fxxx / PIC10Fxxx (`arch = "pic12"`) | 8-bit only; hard compile errors on 16-bit ops, variable shifts, Mul/Div, and runtime flash index |
+
+---
+
+## Next: v0.11
+
 Highest-value features not yet implemented, in priority order.
 
 ### Language
