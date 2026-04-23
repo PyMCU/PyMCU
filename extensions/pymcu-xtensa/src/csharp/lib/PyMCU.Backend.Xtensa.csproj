@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\extensions\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\backend-sdk\PyMCU.Backend.SDK.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\compiler\PyMCU.csproj" />
   </ItemGroup>
 

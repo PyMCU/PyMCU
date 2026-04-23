@@ -11,7 +11,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-# Compatibility shim: all implementations have moved to pymcu-toolchain-sdk.
+# Compatibility shim: all implementations have moved to pymcu-plugin-sdk.
 # Internal driver code that imports from here continues to work unchanged.
 
 from pymcu.toolchain.sdk import ExternalToolchain  # noqa: F401

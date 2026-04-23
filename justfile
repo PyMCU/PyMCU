@@ -18,27 +18,27 @@ build:
 
 # ─── build-backend ──────────────────────────────────────────────────────────
 # Compile a single backend plugin binary. Usage: just build-backend avr
-# Expects: extensions/pymcu-backend-{name}/src/csharp/cli/PyMCU.Backend.Cli.csproj
-# (The AVR backend keeps its legacy name PyMCU.Backend.AVR.Cli.csproj — use build-backend-avr.)
+# Expects: extensions/pymcu-{name}/src/csharp/cli/PyMCU.Backend.Cli.csproj
+# (Each backend has its own .csproj name — use build-backend-{arch} shorthands.)
 build-backend name:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-{{name}}/src/csharp/cli/PyMCU.Backend.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-{{name}}/src/csharp/cli/PyMCU.Backend.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 # Named backend shorthands (each has its own .csproj name).
 build-backend-avr:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 build-backend-pic:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 build-backend-riscv:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 build-backend-pio:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-pio/src/csharp/cli/PyMCU.Backend.PIO.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-pio/src/csharp/cli/PyMCU.Backend.PIO.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 # ─── build-all ──────────────────────────────────────────────────────────────
@@ -52,9 +52,9 @@ build-all: build
 # ─── test-backend ───────────────────────────────────────────────────────────
 # Run unit and integration tests for a backend. Usage: just test-backend avr
 test-backend name: (build-backend name)
-    dotnet test "{{repo_root}}/extensions/pymcu-backend-{{name}}/tests/unit/" \
+    dotnet test "{{repo_root}}/extensions/pymcu-{{name}}/tests/unit/" \
         --logger "console;verbosity=normal" --nologo
-    dotnet test "{{repo_root}}/extensions/pymcu-backend-{{name}}/tests/integration/" \
+    dotnet test "{{repo_root}}/extensions/pymcu-{{name}}/tests/integration/" \
         --logger "console;verbosity=normal" \
         --blame-hang-timeout 120s --nologo \
         -- NUnit.NumberOfTestWorkers=1

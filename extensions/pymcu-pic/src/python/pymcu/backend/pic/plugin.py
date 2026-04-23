@@ -42,8 +42,7 @@ class PicBackendPlugin(BackendPlugin):
         1. Adjacent to this module (wheel layout).
         2. repo_root/build/bin/ (dev: dotnet publish output).
         3. extensions/pymcu-pic/src/csharp/cli built output (dev shortcut).
-        4. extensions/pymcu-backend-pic/src/csharp/cli built output (legacy dev).
-        5. System PATH.
+        4. System PATH.
         """
         package_dir = Path(__file__).parent
         binary_name = "pymcuc-pic.exe" if sys.platform == "win32" else "pymcuc-pic"
@@ -69,16 +68,7 @@ class PicBackendPlugin(BackendPlugin):
         if runner_debug.exists():
             return runner_debug
 
-        # 4. Legacy pymcu-backend-pic package CLI debug build.
-        extensions_dir = package_dir.parents[5]  # .../extensions
-        legacy_debug = (
-            extensions_dir / "pymcu-backend-pic" / "src" / "csharp" / "cli"
-            / "bin" / "Debug" / "net10.0" / binary_name
-        )
-        if legacy_debug.exists():
-            return legacy_debug
-
-        # 5. System PATH.
+        # 4. System PATH.
         import shutil
         which_result = shutil.which("pymcuc-pic")
         if which_result:

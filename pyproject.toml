@@ -34,8 +34,8 @@ pymcu-stdlib = {path = "lib", editable = true}
 pymcu-plugin-sdk = {path = "extensions/pymcu-plugin-sdk", editable = true}
 pymcu-avr = {path = "extensions/pymcu-avr", editable = true}
 pymcu-pic = {path = "extensions/pymcu-pic", editable = true}
-pymcu-riscv = {path = "extensions/pymcu-backend-riscv", editable = true}
-pymcu-pio = {path = "extensions/pymcu-backend-pio", editable = true}
+pymcu-riscv = {path = "extensions/pymcu-riscv", editable = true}
+pymcu-pio = {path = "extensions/pymcu-pio", editable = true}
 pymcu-arm = {path = "extensions/pymcu-arm", editable = true}
 pymcu-xtensa = {path = "extensions/pymcu-xtensa", editable = true}
 
@@ -59,8 +59,8 @@ pythonpath = [
     "extensions/pymcu-plugin-sdk/src",
     "extensions/pymcu-avr/src/python",
     "extensions/pymcu-pic/src/python",
-    "extensions/pymcu-backend-riscv/src/python",
-    "extensions/pymcu-backend-pio/src/python",
+    "extensions/pymcu-riscv/src/python",
+    "extensions/pymcu-pio/src/python",
     "extensions/pymcu-arm/src/python",
     "extensions/pymcu-xtensa/src/python",
 ]

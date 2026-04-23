@@ -332,7 +332,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ## PIC Backend Tier Model
 
-The `pymcu-backend-pic` extension supports three PIC architecture tiers:
+The `pymcu-pic` extension supports three PIC architecture tiers:
 
 | Tier | Architectures | Status |
 |------|--------------|--------|
@@ -368,9 +368,11 @@ These are the highest-value features not yet implemented, in priority order.
 | Feature | Effort | Notes |
 |---------|--------|-------|
 | Plugin-based toolchain system | ✅ Implemented | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
-| `pymcu-toolchain-sdk` | ✅ Implemented | Standalone SDK package; base classes + `ToolchainPlugin` ABC |
-| `pymcu-toolchain-avr` | ✅ Implemented | AVR plugin (GNU AVR binutils); independent of core `pymcu` |
-| `pymcu-toolchain-pic` | ✅ Implemented | PIC plugin (GNU PIC Utilities); independent of core `pymcu` |
+| `pymcu-plugin-sdk` | ✅ Implemented | Standalone SDK package; base classes, `BackendPlugin` + `ToolchainPlugin` ABCs |
+| AVR toolchain plugin | ✅ Implemented | Merged into `pymcu-avr` (GNU AVR binutils); independent of core `pymcu` |
+| PIC toolchain plugin | ✅ Implemented | Merged into `pymcu-pic` (GNU PIC Utilities); independent of core `pymcu` |
+| RISC-V toolchain plugin | ✅ Implemented | Merged into `pymcu-riscv` (GNU RISC-V bare-metal); riscv-none-elf / riscv32-unknown-elf |
+| PIO toolchain plugin | ✅ Implemented | Merged into `pymcu-pio` (pioasm from Raspberry Pi Pico SDK) |
 | Programmer plugin system | ~1 week | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
 
 ### Language

@@ -2,24 +2,24 @@
   <Folder Name="/src/">
     <Project Path="src/compiler/PyMCU.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-sdk/">
-    <Project Path="extensions/pymcu-backend-sdk/csharp/PyMCU.Backend.SDK.csproj" />
+  <Folder Name="/src/backend-sdk/">
+    <Project Path="src/backend-sdk/PyMCU.Backend.SDK.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-avr/">
-    <Project Path="extensions/pymcu-backend-avr/src/csharp/lib/PyMCU.Backend.AVR.csproj" />
-    <Project Path="extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" />
+  <Folder Name="/extensions/pymcu-avr/">
+    <Project Path="extensions/pymcu-avr/src/csharp/lib/PyMCU.Backend.AVR.csproj" />
+    <Project Path="extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-pic/">
-    <Project Path="extensions/pymcu-backend-pic/src/csharp/lib/PyMCU.Backend.PIC.csproj" />
-    <Project Path="extensions/pymcu-backend-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" />
+  <Folder Name="/extensions/pymcu-pic/">
+    <Project Path="extensions/pymcu-pic/src/csharp/lib/PyMCU.Backend.PIC.csproj" />
+    <Project Path="extensions/pymcu-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-riscv/">
-    <Project Path="extensions/pymcu-backend-riscv/src/csharp/lib/PyMCU.Backend.RiscV.csproj" />
-    <Project Path="extensions/pymcu-backend-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" />
+  <Folder Name="/extensions/pymcu-riscv/">
+    <Project Path="extensions/pymcu-riscv/src/csharp/lib/PyMCU.Backend.RiscV.csproj" />
+    <Project Path="extensions/pymcu-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-pio/">
-    <Project Path="extensions/pymcu-backend-pio/src/csharp/lib/PyMCU.Backend.PIO.csproj" />
-    <Project Path="extensions/pymcu-backend-pio/src/csharp/cli/PyMCU.Backend.PIO.Cli.csproj" />
+  <Folder Name="/extensions/pymcu-pio/">
+    <Project Path="extensions/pymcu-pio/src/csharp/lib/PyMCU.Backend.PIO.csproj" />
+    <Project Path="extensions/pymcu-pio/src/csharp/cli/PyMCU.Backend.PIO.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/" />
   <Folder Name="/tests/integration/">
