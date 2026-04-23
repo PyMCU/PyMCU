@@ -37,6 +37,7 @@ Fixed-size arrays `arr: uint8[N]` are fully supported with constant- and variabl
 **Supported:** String literals in flash, raw string literals `r"\n"` (no escape processing),
 `uart.println("literal")`, `uart.write_str("text")`, `for ch in "ABC":` (compile-time unroll),
 `f"text={const}"` where all interpolations are compile-time constants,
+`f"{n:04d}"` / `f"{n:x}"` / `f"{n:X}"` / `f"{n:b}"` / width and alignment format specs (compile-time constants only),
 `const[str]` runtime subscript `s[i]` (reads byte from flash), `if __name__ == "__main__":` guard.
 
 ---
@@ -89,6 +90,9 @@ class inheritance with `super()`, `with obj:` context managers (`__enter__`/`__e
 `@staticmethod` (silently treated as a module-level function), operator dunder methods
 (`__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`,
 and all comparison / bitwise dunders).
+Bare class body annotations `x: uint8` (no RHS) register fields as zero-initialised SRAM members.
+Unknown decorators (not `@inline`, `@interrupt`, `@property`, `@staticmethod`, `@extern`) are
+silently ignored at compile time, allowing documentation-only markers.
 
 ---
 
@@ -124,6 +128,11 @@ def init(pull: const[uint8] = 0xFF):
 fixed-size arrays `uint8[N]`, `bytearray`, `bytes` literal `b"..."`, tuple literals and
 tuple unpacking for multi-return functions.  Python's built-in `int` annotation maps to `int16`
 and requires no import.  The `int(val)` cast expression likewise works without an import.
+`type X = T` (PEP 695) type-alias statements are parsed and registered at compile time; they
+emit no SRAM or code.
+Chained comparisons `a <= x <= b` (PEP 308) are fully supported and desugar to an `and`-chain.
+Keyword-only parameters `def f(a, *, b)` (PEP 3102) are supported; passing a keyword-only
+argument positionally is a compile-time `TypeError`.
 
 ---
 

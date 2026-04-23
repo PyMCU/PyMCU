@@ -33,6 +33,7 @@ public partial class IRGenerator
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();
     private Dictionary<string, List<DataType>> functionParamTypes = new();
+    private Dictionary<string, HashSet<string>> functionKeywordOnlyParams = new(); // param names that are keyword-only
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
@@ -131,6 +132,9 @@ public partial class IRGenerator
     private Dictionary<string, string> lambdaVariableNames = new();
     private int lambdaCounter = 0;
     private string pendingLambdaKey = "";
+
+    // PEP 695: type alias map — name → annotation string (compile-time only, no SRAM).
+    private Dictionary<string, string> typeAliases = new();
 
     private DeviceConfig deviceConfig = null!;
 }

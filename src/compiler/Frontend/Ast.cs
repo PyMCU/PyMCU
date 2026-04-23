@@ -117,6 +117,7 @@ public class FStringPart
     public bool IsExpr { get; set; }
     public string Text { get; set; } = "";
     public Expression? Expr { get; set; }
+    public string FormatSpec { get; set; } = "";
 }
 
 public class FStringExpr : Expression
@@ -441,6 +442,35 @@ public class WalrusExpr : Expression
     }
 }
 
+/// Represents chained comparisons such as <c>0 &lt;= x &lt;= 255</c>.
+/// Desugared to <c>(op0(operands[0], operands[1])) and (op1(operands[1], operands[2])) ...</c>
+/// with each middle operand evaluated exactly once.
+public class ChainedCompareExpr : Expression
+{
+    public List<Expression> Operands { get; }
+    public List<BinaryOp> Operators { get; }
+
+    public ChainedCompareExpr(List<Expression> operands, List<BinaryOp> operators)
+    {
+        Operands = operands;
+        Operators = operators;
+    }
+}
+
+/// Represents a PEP 695 <c>type X = annotation</c> type-alias statement.
+/// Emits no code; the alias is registered for compile-time type resolution only.
+public class TypeAliasStmt : Statement
+{
+    public string Name { get; }
+    public string Annotation { get; }
+
+    public TypeAliasStmt(string name, string annotation)
+    {
+        Name = name;
+        Annotation = annotation;
+    }
+}
+
 public class TernaryExpr : Expression
 {
     public Expression TrueVal { get; }
@@ -528,12 +558,14 @@ public class Param
     public string Name { get; }
     public string Type { get; }
     public Expression? DefaultValue { get; }
+    public bool IsKeywordOnly { get; }
 
-    public Param(string name, string type, Expression? defaultValue = null)
+    public Param(string name, string type, Expression? defaultValue = null, bool isKeywordOnly = false)
     {
         Name = name;
         Type = type;
         DefaultValue = defaultValue;
+        IsKeywordOnly = isKeywordOnly;
     }
 }
 

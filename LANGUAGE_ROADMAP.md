@@ -330,6 +330,21 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## v0.12 — Implemented
+
+### Language (PEP features)
+
+| Feature | Notes |
+|---------|-------|
+| PEP 526 — Bare class body annotations | `class Foo:\n    x: uint8` registers `x` as a zero-initialised SRAM member without requiring an RHS |
+| PEP 695 — `type` alias statement | `type Point = uint8` registers a compile-time-only type alias; emits no SRAM or code |
+| PEP 318/614 — Unknown decorator tolerance | Unrecognised decorators are silently ignored rather than raising a `CompileError` |
+| PEP 3102 — Keyword-only parameters | `def f(a, *, b)` — `*` separator flags subsequent params as keyword-only; positional call raises `TypeError` |
+| PEP 308 — Chained comparisons | `0 <= x <= 255` desugars to `(0 <= x) and (x <= 255)` with `x` evaluated exactly once |
+| PEP 701 — f-string format specs | `f"{n:04d}"`, `f"{n:x}"`, `f"{n:X}"`, `f"{n:b}"`, `f"{n:o}"`, width/alignment — compile-time constants only |
+
+---
+
 ## v0.11 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.

@@ -1083,6 +1083,12 @@ public partial class IRGenerator
             {
                 int paramIdx = i + paramOffset;
                 if (paramIdx >= func.Params.Count) break;
+
+                // PEP 3102: keyword-only params must not be bound positionally.
+                if (func.Params[paramIdx].IsKeywordOnly)
+                    throw new Exception(
+                        $"TypeError: '{func.Params[paramIdx].Name}' is a keyword-only parameter and must be passed as a keyword argument");
+
                 string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
                 boundParams.Add(paramIdx);
 

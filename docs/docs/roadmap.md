@@ -312,6 +312,21 @@ cflags       = ["-O2"]
 
 ---
 
+## v0.12 — Implemented
+
+### Language (PEP features)
+
+| Feature | Notes |
+|---------|-------|
+| PEP 526 — Bare class body annotations | `class Foo:\n    x: uint8` registers `x` as an SRAM member without an RHS |
+| PEP 695 — `type` alias statement | `type Point = uint8` — compile-time type alias; zero SRAM cost |
+| PEP 318/614 — Unknown decorator tolerance | Unrecognised decorators are silently ignored |
+| PEP 3102 — Keyword-only parameters | `def f(a, *, b)` — positional call to `b` raises `TypeError` at compile time |
+| PEP 308 — Chained comparisons | `0 <= x <= 255` — desugared to an `and`-chain; middle operand evaluated once |
+| PEP 701 — f-string format specs | `f"{n:04d}"`, `f"{n:x}"`, `f"{n:X}"`, `f"{n:b}"`, width/align — compile-time only |
+
+---
+
 ## v0.11 — Next Tier
 
 Highest-value features not yet implemented, in priority order.
