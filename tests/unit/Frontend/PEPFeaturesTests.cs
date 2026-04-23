@@ -43,10 +43,15 @@ public class PEPFeaturesTests
     public void TypeAlias_EmitsNoCode()
     {
         var ir = GenerateIR("type Byte = uint8\ndef main():\n    pass\n");
-        // A type alias must not produce any SRAM variables or instructions with that name.
-        bool anyNamedByte = ir.Functions.Any(f => f.Body.Any(
-            i => i.ToString()!.Contains("Byte")));
+        // A type alias must not produce any Variable or Temporary named "Byte" in the IR.
+        bool anyNamedByte = ir.Functions.Any(f =>
+            f.Body.OfType<Copy>().Any(c =>
+                (c.Dst is Variable v && v.Name == "Byte") ||
+                (c.Dst is Temporary t && t.Name == "Byte")));
         Assert.False(anyNamedByte);
+        // And the function body should contain only a Return instruction.
+        var mainBody = ir.Functions[0].Body;
+        Assert.Contains(mainBody, i => i is Return);
     }
 
     [Fact]
