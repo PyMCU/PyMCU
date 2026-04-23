@@ -3,6 +3,11 @@
   "displayName": "PyMCU Development Tools",
   "description": "Development tools for PyMCU projects, including build and flash commands.",
   "version": "0.0.1",
+  "publisher": "pymcu",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PyMCU/PyMCU"
+  },
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -118,7 +123,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

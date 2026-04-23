@@ -1,0 +1,111 @@
+name: Build IDE Plugins
+
+# Manually triggered only — builds distribution packages for both IDE plugins
+# but does NOT publish/upload them to any marketplace.
+on:
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: >
+          Optional version string to stamp into the built artifacts
+          (e.g. "0.1.0" or "0.1.0-alpha.1"). Leave blank to use the
+          version already declared in each plugin's manifest.
+        required: false
+        default: ""
+
+jobs:
+  # ─── JetBrains (PyCharm) plugin ──────────────────────────────────────────────
+  build-jetbrains:
+    name: Build JetBrains plugin (.zip)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: extensions/jetbrains-pymcu
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Gradle wrapper validation — ensures the wrapper JAR has not been tampered with
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      # Stamp optional version override into the build before compiling
+      - name: Override plugin version
+        if: inputs.version_override != ''
+        run: |
+          sed -i 's/^version = .*/version = "${{ inputs.version_override }}"/' build.gradle.kts
+
+      - name: Build plugin distribution
+        run: ./gradlew buildPlugin --no-daemon --info
+
+      - name: Upload JetBrains plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jetbrains-plugin-zip
+          # Gradle IntelliJ plugin writes the ZIP to build/distributions/
+          path: extensions/jetbrains-pymcu/build/distributions/*.zip
+          retention-days: 30
+          if-no-files-found: error
+
+  # ─── VS Code extension ───────────────────────────────────────────────────────
+  build-vscode:
+    name: Build VS Code extension (.vsix)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: extensions/vscode-pymcu
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: extensions/vscode-pymcu/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      # Stamp optional version override before packaging
+      - name: Override extension version
+        if: inputs.version_override != ''
+        run: |
+          npm version "${{ inputs.version_override }}" --no-git-tag-version
+
+      - name: Package extension
+        run: npm run package
+
+      - name: Upload VS Code extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension-vsix
+          path: extensions/vscode-pymcu/*.vsix
+          retention-days: 30
+          if-no-files-found: error
