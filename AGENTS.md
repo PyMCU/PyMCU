@@ -19,8 +19,8 @@ Key components:
 - `extensions/pymcu-plugin-sdk/` — Shared Python ABCs for backend + toolchain plugins (MIT)
 - `extensions/pymcu-avr/` — AVR backend + GNU AVR toolchain plugin (MIT)
 - `extensions/pymcu-pic/` — PIC backend + gputils toolchain plugin (MIT)
-- `extensions/pymcu-backend-riscv/` — RISC-V backend plugin, package name `pymcu-riscv` (MIT)
-- `extensions/pymcu-backend-pio/` — RP2040 PIO backend plugin, package name `pymcu-pio` (MIT)
+- `extensions/pymcu-riscv/` — RISC-V backend + GNU RISC-V toolchain plugin (MIT)
+- `extensions/pymcu-pio/` — RP2040 PIO backend + pioasm toolchain plugin (MIT)
 
 **Extension convention:** every new architecture needs exactly:
 1. A merged package in `extensions/pymcu-<arch>/` (backend + toolchain Python, csharp CLI/lib)

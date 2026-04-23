@@ -333,7 +333,7 @@ cflags       = ["-O2"]
 
 ## PIC Backend Tier Model
 
-The `pymcu-backend-pic` extension supports three architecture tiers:
+The `pymcu-pic` extension supports three architecture tiers:
 
 | Tier | Architectures | Notes |
 |------|--------------|-------|
@@ -377,9 +377,11 @@ Highest-value features not yet implemented, in priority order.
 | Feature | Notes |
 |---------|-------|
 | Plugin-based toolchain system | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
-| `pymcu-toolchain-sdk` | Standalone SDK package with base classes and `ToolchainPlugin` ABC |
-| `pymcu-toolchain-avr` | AVR toolchain plugin (GNU AVR binutils); decoupled from core `pymcu` |
-| `pymcu-toolchain-pic` | PIC toolchain plugin (GNU PIC Utilities); decoupled from core `pymcu` |
+| `pymcu-plugin-sdk` | Standalone SDK package; `BackendPlugin` + `ToolchainPlugin` ABCs |
+| AVR toolchain plugin | Merged into `pymcu-avr` (GNU AVR binutils); decoupled from core `pymcu` |
+| PIC toolchain plugin | Merged into `pymcu-pic` (GNU PIC Utilities); decoupled from core `pymcu` |
+| RISC-V toolchain plugin | Merged into `pymcu-riscv` (GNU RISC-V bare-metal toolchain) |
+| PIO toolchain plugin | Merged into `pymcu-pio` (pioasm from Raspberry Pi Pico SDK) |
 
 ---
 

@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\extensions\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
+    <ProjectReference Include="..\..\src\backend-sdk\PyMCU.Backend.SDK.csproj" />
   </ItemGroup>
 
   <!-- Exclude shared types that now live in PyMCU.Backend.SDK. -->
@@ -69,8 +69,8 @@
                 Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pic'))
                 Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-riscv'))
                 Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pio'))
-                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-backend-pio'))
-                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-backend-riscv'))" />
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pio'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-riscv'))" />
     </ItemGroup>
     <Error
       Condition="'@(_ConcreteBackendRef)' != ''"

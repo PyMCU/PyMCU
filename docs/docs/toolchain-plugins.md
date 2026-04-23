@@ -44,7 +44,7 @@ pymcu toolchain update avr      # re-download to pick up a newer version
 
 A toolchain plugin is a Python package that:
 
-1. Depends on `pymcu-toolchain-sdk`
+1. Depends on `pymcu-plugin-sdk`
 2. Implements the `ToolchainPlugin` ABC
 3. Registers itself under the `pymcu.toolchains` entry-point group
 
@@ -52,14 +52,14 @@ A toolchain plugin is a Python package that:
 
 ```toml
 [project]
-name = "pymcu-toolchain-myarch"
-dependencies = ["pymcu-toolchain-sdk>=0.1.0"]
+name = "pymcu-myarch"
+dependencies = ["pymcu-plugin-sdk>=0.1.0a1"]
 ```
 
 ### 2. Implement `ToolchainPlugin`
 
 ```python
-from pymcu_toolchain_sdk import ExternalToolchain, ToolchainPlugin
+from pymcu.toolchain.sdk import ExternalToolchain, ToolchainPlugin
 from rich.console import Console
 from .mytoolchain import MyArchToolchain   # your ExternalToolchain subclass
 
@@ -86,12 +86,12 @@ for architectures that provide a GNU binutils-based pipeline.
 
 ```toml
 [project.entry-points."pymcu.toolchains"]
-myarch = "pymcu_toolchain_myarch:MyArchPlugin"
+myarch = "pymcu.toolchain.myarch:MyArchPlugin"
 ```
 
 ### 4. Implement `ExternalToolchain`
 
-Your toolchain class must extend `pymcu_toolchain_sdk.ExternalToolchain` and implement:
+Your toolchain class must extend `pymcu.toolchain.sdk.ExternalToolchain` and implement:
 
 | Method | Description |
 |---|---|
@@ -106,7 +106,7 @@ Your toolchain class must extend `pymcu_toolchain_sdk.ExternalToolchain` and imp
 ## SDK reference
 
 ```python
-from pymcu_toolchain_sdk import (
+from pymcu.toolchain.sdk import (
     CacheableTool,        # base class for any downloadable, cached tool
     ExternalToolchain,    # base class for assembler/linker toolchains
     HardwareProgrammer,   # base class for hardware flash programmers
@@ -117,8 +117,8 @@ from pymcu_toolchain_sdk import (
 )
 ```
 
-The SDK is the **only** package that toolchain plugins need to depend on.
-They do **not** depend on `pymcu` itself, which avoids circular dependencies.
+The SDK (`pymcu-plugin-sdk`) is the **only** package that toolchain plugins need to
+depend on. They do **not** depend on `pymcu` itself, which avoids circular dependencies.
 
 ---
 
