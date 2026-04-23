@@ -42,6 +42,9 @@ public static class CodeGenFactory
 
         (["pio", "rp2040-pio"],
             "pymcuc-pio", "pip install pymcu-backend-pio"),
+
+        (["xtensa", "esp8266", "esp32", "lx106", "lx6", "lx7"],
+            "pymcuc-xtensa", "pip install pymcu-xtensa"),
     ];
 
     public static CodeGen Create(string arch, DeviceConfig config)
