@@ -268,7 +268,7 @@ public class Parser
             }
             else
             {
-                Error("Unknown decorator: " + decorator.Value);
+                // PEP 614: unknown decorator — silently ignored at compile time.
             }
 
             Consume(TokenType.Newline, "Expected newline after decorator");
@@ -343,11 +343,22 @@ public class Parser
     private List<Param> ParseParameters()
     {
         var parameters = new List<Param>();
+        bool keywordOnly = false;
 
         if (Check(TokenType.RParen)) return parameters;
 
         do
         {
+            // PEP 3102: bare * separator marks all subsequent params as keyword-only.
+            if (Check(TokenType.Star) &&
+                (PeekNext().Type == TokenType.Comma || PeekNext().Type == TokenType.RParen))
+            {
+                Advance(); // consume *
+                keywordOnly = true;
+                if (Check(TokenType.RParen)) break;
+                continue;
+            }
+
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
             if (Match(TokenType.Colon))
@@ -361,7 +372,7 @@ public class Parser
                 defaultVal = ParseExpression();
             }
 
-            parameters.Add(new Param(name.Value, type, defaultVal));
+            parameters.Add(new Param(name.Value, type, defaultVal, keywordOnly));
         } while (Match(TokenType.Comma));
 
         return parameters;
@@ -433,6 +444,13 @@ public class Parser
         if (Check(TokenType.Raise)) return ParseRaiseStatement();
         if (Check(TokenType.With)) return ParseWithStatement();
         if (Check(TokenType.Assert)) return ParseAssertStatement();
+
+        // PEP 695: contextual 'type' keyword for type alias statements.
+        if (Check(TokenType.Identifier) && Peek().Value == "type" &&
+            pos + 1 < tokens.Count && tokens[pos + 1].Type == TokenType.Identifier)
+        {
+            return ParseTypeAliasStatement();
+        }
 
         return ParseSimpleStatement();
     }
@@ -520,6 +538,17 @@ public class Parser
 
         ConsumeStatementEnd();
         return new AssertStmt(cond, message) { Line = line };
+    }
+
+    private Statement ParseTypeAliasStatement()
+    {
+        int line = Peek().Line;
+        Advance(); // consume 'type' identifier
+        string name = Consume(TokenType.Identifier, "Expected type alias name").Value;
+        Consume(TokenType.Equal, "Expected '=' after type alias name");
+        string annotation = ParseTypeAnnotation();
+        ConsumeStatementEnd();
+        return new TypeAliasStmt(name, annotation) { Line = line };
     }
 
     private ImportStmt ParseImportStatement()
@@ -1027,6 +1056,10 @@ public class Parser
     {
         var left = ParseBitwiseOr();
 
+        // Collect all comparison segments to detect chaining (PEP 308).
+        var operands = new List<Expression> { left };
+        var operators = new List<BinaryOp>();
+
         while (Check(TokenType.EqualEqual) || Check(TokenType.BangEqual) ||
                Check(TokenType.Less) || Check(TokenType.LessEqual) ||
                Check(TokenType.Greater) || Check(TokenType.GreaterEqual) ||
@@ -1073,11 +1106,17 @@ public class Parser
                 }
             }
 
-            var right = ParseBitwiseOr();
-            left = new BinaryExpr(left, op, right);
+            operators.Add(op);
+            operands.Add(ParseBitwiseOr());
         }
 
-        return left;
+        if (operators.Count == 0) return operands[0];
+
+        // Single comparison: keep existing BinaryExpr path.
+        if (operators.Count == 1) return new BinaryExpr(operands[0], operators[0], operands[1]);
+
+        // Chained comparison: emit ChainedCompareExpr (PEP 308).
+        return new ChainedCompareExpr(operands, operators);
     }
 
     private Expression ParseBitwiseOr()
@@ -1343,7 +1382,7 @@ public class Parser
 
         if (Match(TokenType.True)) return new BooleanLiteral(true);
         if (Match(TokenType.False)) return new BooleanLiteral(false);
-        if (Match(TokenType.None)) return new IntegerLiteral(-1);
+        if (Match(TokenType.None)) return new NoneExpr();
 
         if (Match(TokenType.Identifier))
         {
@@ -1401,12 +1440,21 @@ public class Parser
                     if (j >= raw.Length) Error("Unterminated '{' in f-string");
                     string exprSrc = raw.Substring(i + 1, j - i - 1);
 
+                    // PEP 701: split off format spec after ':' (e.g. {x:04d} → expr="x", spec="04d").
+                    string formatSpec = "";
+                    int colonPos = exprSrc.IndexOf(':');
+                    if (colonPos >= 0)
+                    {
+                        formatSpec = exprSrc.Substring(colonPos + 1);
+                        exprSrc = exprSrc.Substring(0, colonPos);
+                    }
+
                     var subLex = new Lexer(exprSrc.AsSpan());
                     var subTokens = subLex.Tokenize();
                     var subParser = new Parser(subTokens);
                     var innerExpr = subParser.ParseExpressionPublic();
 
-                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr });
+                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr, FormatSpec = formatSpec });
                     i = j + 1;
                 }
                 else if (raw[i] == '}')

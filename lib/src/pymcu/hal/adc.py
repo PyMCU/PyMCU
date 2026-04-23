@@ -90,8 +90,8 @@ class AnalogPin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read
                 return adc_read()
-
-        return 0
+            case _:
+                return 0
 
     @inline
     def start_conversion(self):
@@ -116,8 +116,8 @@ class AnalogPin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read_result
                 return adc_read_result()
-
-        return 0
+            case _:
+                return 0
 
     @inline
     def irq(self, handler: Callable):
@@ -146,5 +146,5 @@ class AnalogPin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read_u16
                 return adc_read_u16()
-
-        return 0
+            case _:
+                return 0

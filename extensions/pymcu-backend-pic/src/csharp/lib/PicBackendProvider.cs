@@ -11,13 +11,34 @@ namespace PyMCU.Backend.Targets.PIC;
 
 /// <summary>
 /// Backend provider for the PIC architecture family (PIC12, PIC14/16, PIC18).
+///
+/// Architecture tier model:
+///   PIC18  — Supported WIP: full feature set targeted for production support.
+///   PIC14  — Experimental: 8+16-bit; single-page default; limited to 76 bytes GPR.
+///   PIC12  — Experimental: 8-bit only; no 16-bit, variable shifts, or runtime flash index;
+///            max 2 hardware call levels.
+///
 /// This is a free and open-source backend — no license key required.
 /// </summary>
 public sealed class PicBackendProvider : IBackendProvider
 {
     public string Family => "pic";
-    public string Description => "PIC codegen backend (PIC12, PIC14/16F, PIC18F families)";
+    public string Description =>
+        "PIC codegen backend (PIC18=Supported WIP; PIC14/PIC12=Experimental)";
     public string Version => "1.0.0-beta1";
+
+    /// <summary>
+    /// Returns the support tier for an architecture string.
+    ///   "supported"    — PIC18: primary target, full feature set intended.
+    ///   "experimental" — PIC14/PIC12: known limitations; use with caution.
+    /// </summary>
+    public static string GetTier(string arch)
+    {
+        var a = arch.ToLowerInvariant();
+        if (a == "pic18" || a == "advanced" || a.StartsWith("pic18f"))
+            return "supported";
+        return "experimental";
+    }
 
     public bool Supports(string arch)
     {

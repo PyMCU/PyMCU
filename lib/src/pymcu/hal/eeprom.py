@@ -53,5 +53,5 @@ class EEPROM:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._eeprom.atmega328p import eeprom_read
                 return eeprom_read(addr)
-
-        return 0
+            case _:
+                return 0

@@ -34,7 +34,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | Integer literals | Decimal, hex, binary, octal, `_` separators |
-| `True` / `False` / `None` | Folded to `Constant{1/0/-1}` |
+| `True` / `False` / `None` | `True`/`False` fold to `Constant{1/0}`; `None` on object-reference types folds via `is None` / `is not None`; `None` on numeric types is a TypeError |
 | String literals | Single- and double-quoted; mapped to stable compile-time IDs |
 | Arithmetic `+ - * / % //` | Full constant folding |
 | Comparison `== != < <= > >=` | |
@@ -330,6 +330,35 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## PIC Backend Tier Model
+
+The `pymcu-backend-pic` extension supports three PIC architecture tiers:
+
+| Tier | Architectures | Status |
+|------|--------------|--------|
+| **Supported WIP** | PIC18Fxxxx (`arch = "pic18"`) | Full feature set targeted; signed comparisons, flash tables, soft-divide, variable shifts, conditional ISR context saves, banking stub |
+| **Experimental** | PIC16Fxxx / PIC14 (`arch = "pic14"`) | 8+16-bit; RETLW flash tables; variable shifts; soft-divide; signed comparisons; FSR ISR save; single-page default (opt-in PAGESEL via `fuses.multipage = "true"`) |
+| **Experimental** | PIC12Fxxx / PIC10Fxxx (`arch = "pic12"`) | 8-bit only; compile errors on 16-bit, variable shifts, Mul/Div, runtime-indexed flash; FSR-indirect arrays; BitSet/Clear via FSR |
+
+The compiler emits `[WARNING] PIC12/PIC14 is Experimental` at the top of generated output.
+
+---
+
+## v0.12 — Implemented
+
+### Language (PEP features)
+
+| Feature | Notes |
+|---------|-------|
+| PEP 526 — Bare class body annotations | `class Foo:\n    x: uint8` registers `x` as a zero-initialised SRAM member without requiring an RHS |
+| PEP 695 — `type` alias statement | `type Point = uint8` registers a compile-time-only type alias; emits no SRAM or code |
+| PEP 318/614 — Unknown decorator tolerance | Unrecognised decorators are silently ignored rather than raising a `CompileError` |
+| PEP 3102 — Keyword-only parameters | `def f(a, *, b)` — `*` separator flags subsequent params as keyword-only; positional call raises `TypeError` |
+| PEP 308 — Chained comparisons | `0 <= x <= 255` desugars to `(0 <= x) and (x <= 255)` with `x` evaluated exactly once |
+| PEP 701 — f-string format specs | `f"{n:04d}"`, `f"{n:x}"`, `f"{n:X}"`, `f"{n:b}"`, `f"{n:o}"`, width/alignment — compile-time constants only |
+
+---
+
 ## v0.11 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
@@ -378,12 +407,13 @@ These are the highest-value features not yet implemented, in priority order.
 | Feature | Effort | Why |
 |---------|--------|-----|
 | `fixed16` (Q8.8 fixed-point) | ~1 week | Float-like sensor math without FPU |
-| PIC18 codegen | ~2 weeks | Extend backend for PIC18Fxxxx family |
+| PIC18 full production support | ~2 weeks | Signed comparisons, flash tables, soft-divide, variable shifts, ISR context, banking — all implemented as Supported WIP |
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
 | RP2040 PIO backend | ~1 week | Programmable I/O state machine output |
 | Over-the-air (OTA) support | ~1 week | Bootloader + pymcu flash over UART |
-| LLVM IR backend | ~4 weeks | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
-| ARM Cortex-M0/M4 backend | ~3 weeks | STM32, nRF52; via LLVM or direct codegen |
+| LLVM IR backend (ARM) | 🚧 In progress | `pymcu-arm` package; emits LLVM IR for clang |
+| ARM Cortex-M backend (RP2040 / RP2350) | 🚧 In progress | `thumbv6m-none-eabi` (M0+), `thumbv8m.main-none-eabi` (M33); via LLVM |
+| ARM Cortex-M (STM32, nRF52) | future | Extend `pymcu-arm` with additional chip targets |
 
 ---
 

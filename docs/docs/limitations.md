@@ -37,6 +37,7 @@ Fixed-size arrays `arr: uint8[N]` are fully supported with constant- and variabl
 **Supported:** String literals in flash, raw string literals `r"\n"` (no escape processing),
 `uart.println("literal")`, `uart.write_str("text")`, `for ch in "ABC":` (compile-time unroll),
 `f"text={const}"` where all interpolations are compile-time constants,
+`f"{n:04d}"` / `f"{n:x}"` / `f"{n:X}"` / `f"{n:b}"` / width and alignment format specs (compile-time constants only),
 `const[str]` runtime subscript `s[i]` (reads byte from flash), `if __name__ == "__main__":` guard.
 
 ---
@@ -89,6 +90,9 @@ class inheritance with `super()`, `with obj:` context managers (`__enter__`/`__e
 `@staticmethod` (silently treated as a module-level function), operator dunder methods
 (`__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`,
 and all comparison / bitwise dunders).
+Bare class body annotations `x: uint8` (no RHS) register fields as zero-initialised SRAM members.
+Unknown decorators (not `@inline`, `@interrupt`, `@property`, `@staticmethod`, `@extern`) are
+silently ignored at compile time, allowing documentation-only markers.
 
 ---
 
@@ -99,15 +103,36 @@ and all comparison / bitwise dunders).
 | `float` arithmetic (native) | No hardware FPU; uses IEEE 754 soft-float (`__fp_add/sub/mul/div`) | Supported on AVR — expect ~200-400 cycles per operation |
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
-| `None` as a runtime-checked value | Folds to `Constant{-1}` at compile time | Use a sentinel value (e.g. `0xFF`) |
-| `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern |
+| `None` assigned to a numeric type (`x: uint8 = None`) | Compiler TypeError: `None` folds to `Constant{-1}` which collides with valid integer values | Use a sentinel constant (e.g. `0xFF`) |
+| `None` as default for a numeric parameter (`def f(x: uint8 = None)`) | Compiler TypeError (same reason as above) | Use a sentinel constant (e.g. `0xFF`) |
+| `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern (see below) |
 | `Union` types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |
+
+**Idiomatic sentinel pattern (PEP 484 `Optional` idiom):**
+Instead of `def __init__(self, cs: Pin = None)` for object references, use the `is None` / `is not None` guard — this is fully supported because `Pin` maps to an object reference type and the compiler constant-folds `is None` to `0`. For numeric types, choose a domain-appropriate sentinel constant:
+```python
+# Object references — None is allowed and is/is-not folds correctly
+def transfer(cs: Pin = None):
+    if cs is not None:
+        ...          # this branch is always taken when a Pin is passed
+
+# Numeric types — use an explicit sentinel value
+UNSET: const[uint8] = 0xFF      # or any value outside the valid domain
+def init(pull: const[uint8] = 0xFF):
+    if pull != 0xFF:
+        configure_pull(pull)
+```
 
 **Supported:** `uint8`, `uint16`, `uint32`, `int8`, `int16`, `int32`, `bool` (as `uint8`),
 fixed-size arrays `uint8[N]`, `bytearray`, `bytes` literal `b"..."`, tuple literals and
 tuple unpacking for multi-return functions.  Python's built-in `int` annotation maps to `int16`
 and requires no import.  The `int(val)` cast expression likewise works without an import.
+`type X = T` (PEP 695) type-alias statements are parsed and registered at compile time; they
+emit no SRAM or code.
+Chained comparisons `a <= x <= b` (PEP 308) are fully supported and desugar to an `and`-chain.
+Keyword-only parameters `def f(a, *, b)` (PEP 3102) are supported; passing a keyword-only
+argument positionally is a compile-time `TypeError`.
 
 ---
 
@@ -215,6 +240,51 @@ Additional architectures (RISC-V, ARM Cortex-M, RP2040 PIO) are on the
 [roadmap](roadmap.md). Third-party toolchain plugins can add new targets
 without any changes to the core `pymcu` package — see
 [Toolchain Plugins](toolchain-plugins.md) for details.
+
+---
+
+## PIC Backend Limitations
+
+### PIC18 (`arch = "pic18"`) — Supported WIP
+
+- All variables must fit in the Access Bank (max **80 bytes** of user data, addresses 0x020–0x06F).
+  Banking is not yet emitted; programs that exceed this limit will produce wrong code.
+- 32-bit integer types (`int32`, `uint32`) and `float` are not supported.
+- Software multiply is supported (8×8 via `MULWF`). 16-bit multiply is not.
+- Software 8-bit divide (`//`, `%`) is supported via `__pic18_div8`; 16-bit divide is not yet emitted.
+- Inline assembly operand constraints (`%0`, `%1`) are passed through as-is.
+- Flash table access (`const uint8[N]` in ROM) uses `TBLRD` and is now implemented.
+
+### PIC14 (`arch = "pic14"`) — Experimental
+
+The compiler will emit `[WARNING] PIC14 is Experimental` at the top of generated output.
+
+- All variables must fit in Bank 0 GPRs (max **76 bytes**, addresses 0x20–0x6B).
+  Programs exceeding this limit will overwrite scratch registers.
+- 32-bit types and `float` are not supported; a `NotSupportedException` is thrown at compile time.
+- Flash table access (`const uint8[N]` in ROM) uses `RETLW` sequences and `ADDWF PCL` lookup.
+- PAGESEL is **not** emitted by default (single-page assumption).
+  Set `[tool.pymcu.fuses] multipage = "true"` in your `pyproject.toml` to enable PAGESEL
+  before every CALL and GOTO when targeting programs larger than one 2K-word page.
+- Software 8-bit divide (`//`, `%`) is supported via `__pic14_div8`. 16-bit divide emits a stub.
+- Signed comparisons are correct for `int8`/`int16` operands using sign-XOR technique.
+- ISR context save includes W, STATUS, and FSR (if the ISR body uses indirect access).
+
+### PIC12 (`arch = "pic12"`) — Experimental
+
+The compiler will emit `[WARNING] PIC12 is Experimental` at the top of generated output.
+
+- **Only 8-bit types** (`uint8`, `int8`, `bool`) are supported.
+  All of the following produce a `NotSupportedException` at compile time:
+  - 16-bit or 32-bit variables or operations
+  - `float`
+  - Variable-count shifts (`<<` / `>>` with a runtime operand)
+  - Software multiply or divide (`*`, `//`, `%`)
+  - Runtime-indexed flash array access
+- Constant-index array access (`a[0]`, `a[3]`, etc.) is supported for both RAM and flash.
+- The hardware call stack is only **2 levels** deep; deeply nested function calls will corrupt the stack.
+- Indirect register access (FSR / INDF) is used for `LoadIndirect`, `StoreIndirect`, `BitSet`,
+  and `BitClear` on unresolved targets.
 
 ---
 

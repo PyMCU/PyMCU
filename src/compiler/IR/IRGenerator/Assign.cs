@@ -638,6 +638,13 @@ public partial class IRGenerator
             strConstantVariables[q2] = sl.Value;
         }
 
+        if (stmt.Init is NoneExpr)
+        {
+            if (dt != DataType.VOID && dt != DataType.UNKNOWN)
+                throw new Exception(
+                    $"TypeError: cannot assign 'None' to '{stmt.VarType}' variable; use a sentinel constant (e.g. 0xFF) instead");
+        }
+
         if (stmt.Init != null)
         {
             Val val = VisitExpression(stmt.Init);
@@ -881,6 +888,14 @@ public partial class IRGenerator
         variableTypes[qualified2] = type;
 
         if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2) strConstantVariables[qualified2] = sl2.Value;
+
+        if (stmt.Value is NoneExpr)
+        {
+            DataType annoType = DataTypeExtensions.StringToDataType(stmt.Annotation);
+            if (annoType != DataType.VOID && annoType != DataType.UNKNOWN)
+                throw new Exception(
+                    $"TypeError: cannot assign 'None' to '{stmt.Annotation}' variable; use a sentinel constant (e.g. 0xFF) instead");
+        }
 
         if (stmt.Value != null)
         {
