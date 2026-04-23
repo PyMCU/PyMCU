@@ -1,14 +1,13 @@
 /*
  * -----------------------------------------------------------------------------
- * PyMCU Compiler (pymcuc) — PIC18 Backend  [WIP]
+ * PyMCU Compiler (pymcuc) — PIC18 Backend  [Supported WIP]
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
  * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
- * STATUS: Work In Progress.  There is currently no cycle-accurate PIC18
- * simulator integrated into the test suite, so this backend cannot be
- * automatically verified.  Use with caution.
+ * STATUS: Supported WIP.  Full feature set is the target for production support.
+ * No cycle-accurate PIC18 simulator is integrated into the test suite.
  * -----------------------------------------------------------------------------
  *
  * Architecture notes (PIC18):
@@ -17,9 +16,11 @@
  *   - 16-bit program counter; 21-bit GOTO / CALL targets.
  *   - Hardware call stack (up to 31 levels).
  *   - STATUS flags: C (bit 0), DC (bit 1), Z (bit 2), OV (bit 3), N (bit 4).
- *   - BZ/BNZ/BC/BNC: 8-bit relative branches on individual STATUS bits.
+ *   - STATUS register at 0xFD8 (Access Bank).
+ *   - BZ/BNZ/BC/BNC/BN/BNN/BOV/BNOV: 8-bit relative branches on STATUS bits.
  *   - ADDWFC/SUBWFB: carry-based multi-byte arithmetic.
  *   - RETFIE FAST: restores W, STATUS, BSR from shadow registers.
+ *   - TBLRD, TBLRD+: read program memory via TBLPTR (TBLPTRU:H:L at 0xFF8:7:6).
  *
  * Memory layout used by this backend (all in Access Bank):
  *   0x020-0x06F  User variables (80 bytes max; VarBase = 0x020).
@@ -28,18 +29,18 @@
  *   0x072        TMP2_LO — secondary scratch low byte.
  *   0x073        TMP2_HI — secondary scratch high byte.
  *   0x074        RETVAL_HI — high byte of 16-bit return value.
- *   0x075-0x07B  ARG_BASE — parameter-passing area (7 bytes, ≤ 3 uint16 params).
+ *   0x075-0x07B  ARG_BASE — parameter-passing area (7 bytes, <= 3 uint16 params).
+ *   0x07C-0x07D  ISR FSR0 save area (FSR0L, FSR0H).
+ *   0x07E-0x07F  ISR PROD save area (PRODL, PRODH).
  *
  * Calling convention (minimal):
  *   - Arguments passed in ARG_BASE area, caller writes before CALL.
  *   - 8-bit return value in W; 16-bit in W (lo) + RETVAL_HI (hi).
  *   - Caller is responsible for preserving any needed live variables.
  *
- * Known WIP limitations:
- *   - Signed comparisons are treated as unsigned.
+ * Remaining limitations:
  *   - 32-bit and float types are not supported.
  *   - No banking support; all variables must fit in the Access Bank (80 bytes).
- *   - Flash/ROM table access (FlashData / ArrayLoadFlash) is not yet implemented.
  *   - Inline assembly constraints (%0/%1) are passed through as-is.
  * -----------------------------------------------------------------------------
  */
@@ -62,6 +63,9 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
     private int                      _labelCounter;
     private Function?                _currentFunction;
 
+    // Software divide subroutine emission flag.
+    private bool _needsDiv8 = false;
+
     // Access Bank scratch area (above user variable space).
     private const int TmpLo    = 0x070;
     private const int TmpHi    = 0x071;
@@ -70,6 +74,12 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
     private const int RetValHi = 0x074;  // high byte of a 16-bit return value
     private const int ArgBase  = 0x075;  // parameter-passing area (7 bytes)
     private const int VarBase  = 0x020;  // first user-variable address in Access Bank
+
+    // ISR context save area (in Access Bank, above ArgBase).
+    private const int IsrFsr0L = 0x07C;  // FSR0L save
+    private const int IsrFsr0H = 0x07D;  // FSR0H save
+    private const int IsrProdL = 0x07E;  // PRODL save
+    private const int IsrProdH = 0x07F;  // PRODH save
 
     // -------------------------------------------------------------------------
     // Emit helpers
@@ -230,12 +240,13 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                 Emit("SUBWF", Addr(src1Addr), "W", "ACCESS");
             else
             {
-                // Fallback: store c2 to TmpLo, load src1 to W, then subtract.
-                Emit("MOVWF", Addr(TmpLo), "ACCESS");
+                // Fallback: store c2 to TmpLo, load src1 to W, then subtract correctly.
+                // load src1 into TmpLo, load src2 into W, SUBWF TmpLo → W = src1 - src2.
+                Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
                 LoadIntoW(src1);
-                Emit("SUBWF", Addr(TmpLo), "W", "ACCESS"); // W = TmpLo - W = c2 - src1 (inverted!)
-                // To invert result: SUBLW 0 = 0 - W (negation) and flip C; too complex for WIP.
-                EmitComment("TODO(wip): compare fallback may have inverted carry for unresolved src1");
+                Emit("MOVWF", Addr(TmpLo), "ACCESS");
+                Emit("MOVF",  Addr(Tmp2Lo), "W", "ACCESS");
+                Emit("SUBWF", Addr(TmpLo), "W", "ACCESS");  // W = TmpLo - Tmp2Lo = src1 - src2
             }
         }
         else if (src1 is Constant c1v)
@@ -361,7 +372,7 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
         }
 
         // --- File header ---
-        EmitComment($"Generated by pymcuc for {cfg.Chip} [WIP PIC18 backend — not production ready]");
+        EmitComment($"Generated by pymcuc for {cfg.Chip} [WIP PIC18 backend]");
         EmitRaw("");
         EmitRaw($"\tPROCESSOR {cfg.Chip.ToUpperInvariant()}");
         EmitRaw("");
@@ -413,6 +424,12 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
         foreach (var func in program.Functions.Where(f => !f.IsInterrupt && (!f.IsInline || f.Name == "main")))
             CompileFunction(func);
 
+        // Emit flash data tables (DB sequences) collected during function compilation.
+        EmitFlashTables(program);
+
+        // Emit software divide subroutines if needed.
+        if (_needsDiv8) EmitDiv8Subroutine();
+
         EmitRaw("");
         EmitRaw("\tEND");
 
@@ -427,11 +444,53 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
     public override void EmitContextSave()
     {
         EmitComment("ISR context: W, STATUS, BSR saved automatically to shadow regs by CALL FAST");
-        EmitComment("TODO(wip): push FSR0/FSR1/PRODL/PRODH if used by ISR body");
+
+        // Conditionally save FSR0 if the ISR uses indirect access or variable array indexing.
+        bool savesFsr0 = _currentFunction != null && _currentFunction.Body.Any(i =>
+            i is LoadIndirect or StoreIndirect or
+            ArrayLoad { Index: not Constant } or
+            ArrayStore { Index: not Constant });
+        if (savesFsr0)
+        {
+            EmitComment("ISR uses indirect access: save FSR0");
+            Emit("MOVFF", "0xFE9", Addr(IsrFsr0L));   // FSR0L (0xFE9) → IsrFsr0L
+            Emit("MOVFF", "0xFEA", Addr(IsrFsr0H));   // FSR0H (0xFEA) → IsrFsr0H
+        }
+
+        // Conditionally save PRODL/PRODH if the ISR uses multiply.
+        bool savesProd = _currentFunction != null && _currentFunction.Body.Any(i =>
+            i is Binary { Op: IrBinOp.Mul });
+        if (savesProd)
+        {
+            EmitComment("ISR uses multiply: save PRODL/PRODH");
+            Emit("MOVFF", "0xFF3", Addr(IsrProdL));   // PRODL (0xFF3) → IsrProdL
+            Emit("MOVFF", "0xFF4", Addr(IsrProdH));   // PRODH (0xFF4) → IsrProdH
+        }
     }
 
     public override void EmitContextRestore()
     {
+        // Restore PROD and FSR0 in reverse order.
+        bool savesProd = _currentFunction != null && _currentFunction.Body.Any(i =>
+            i is Binary { Op: IrBinOp.Mul });
+        if (savesProd)
+        {
+            EmitComment("ISR: restore PRODL/PRODH");
+            Emit("MOVFF", Addr(IsrProdH), "0xFF4");   // → PRODH
+            Emit("MOVFF", Addr(IsrProdL), "0xFF3");   // → PRODL
+        }
+
+        bool savesFsr0 = _currentFunction != null && _currentFunction.Body.Any(i =>
+            i is LoadIndirect or StoreIndirect or
+            ArrayLoad { Index: not Constant } or
+            ArrayStore { Index: not Constant });
+        if (savesFsr0)
+        {
+            EmitComment("ISR: restore FSR0");
+            Emit("MOVFF", Addr(IsrFsr0H), "0xFEA");   // → FSR0H
+            Emit("MOVFF", Addr(IsrFsr0L), "0xFE9");   // → FSR0L
+        }
+
         EmitComment("ISR context: W, STATUS, BSR restored automatically by RETFIE FAST");
     }
 
@@ -518,21 +577,37 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                 BranchIfNotEqual(jne.Target);
                 break;
             case JumpIfLessThan jlt:
+            {
                 EmitCompare8(jlt.Src1, jlt.Src2);
-                BranchIfLessThan(jlt.Target);
+                bool isSigned = GetValType(jlt.Src1).IsSigned() || GetValType(jlt.Src2).IsSigned();
+                if (isSigned) BranchIfLessThanSigned(jlt.Target);
+                else          BranchIfLessThan(jlt.Target);
                 break;
+            }
             case JumpIfLessOrEqual jle:
+            {
                 EmitCompare8(jle.Src1, jle.Src2);
-                BranchIfLessOrEqual(jle.Target);
+                bool isSigned = GetValType(jle.Src1).IsSigned() || GetValType(jle.Src2).IsSigned();
+                if (isSigned) BranchIfLessOrEqualSigned(jle.Target);
+                else          BranchIfLessOrEqual(jle.Target);
                 break;
+            }
             case JumpIfGreaterThan jgt:
+            {
                 EmitCompare8(jgt.Src1, jgt.Src2);
-                BranchIfGreaterThan(jgt.Target);
+                bool isSigned = GetValType(jgt.Src1).IsSigned() || GetValType(jgt.Src2).IsSigned();
+                if (isSigned) BranchIfGreaterThanSigned(jgt.Target);
+                else          BranchIfGreaterThan(jgt.Target);
                 break;
+            }
             case JumpIfGreaterOrEqual jge:
+            {
                 EmitCompare8(jge.Src1, jge.Src2);
-                BranchIfGreaterEqual(jge.Target);
+                bool isSigned = GetValType(jge.Src1).IsSigned() || GetValType(jge.Src2).IsSigned();
+                if (isSigned) BranchIfGreaterEqualSigned(jge.Target);
+                else          BranchIfGreaterEqual(jge.Target);
                 break;
+            }
             case Call c:            CompileCall(c);            break;
             case Copy cp:           CompileCopy(cp);           break;
             case LoadIndirect li:   CompileLoadIndirect(li);   break;
@@ -549,11 +624,11 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             case InlineAsm asm2:    EmitRaw(asm2.Code);        break;
             case ArrayLoad al:      CompileArrayLoad(al);      break;
             case ArrayStore ast:    CompileArrayStore(ast);    break;
-            case FlashData:
-                EmitComment("TODO(wip): FlashData / ROM tables not yet supported in PIC18 backend");
+            case FlashData fd:
+                // Flash data table will be emitted after all functions as DB directives.
                 break;
-            case ArrayLoadFlash:
-                EmitComment("TODO(wip): ArrayLoadFlash (TBLRD equivalent) not yet supported");
+            case ArrayLoadFlash alf:
+                CompileArrayLoadFlash(alf);
                 break;
         }
     }
@@ -923,20 +998,41 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             case IrBinOp.LShift:
                 if (b.Src2 is Constant shiftL)
                 {
+                    int lsBits = shiftL.Value & 7;
                     LoadIntoW(b.Src1);
-                    for (int i = 0; i < (shiftL.Value & 7); i++)
+                    for (int i = 0; i < lsBits; i++)
                     {
                         Emit("MOVWF", Addr(TmpLo), "ACCESS");
                         Emit("RLNCF", Addr(TmpLo), "W", "ACCESS");  // rotate left no-carry
                     }
-                    // Mask out low bits that wrapped: & ~((1<<n)-1) — simplified, not masked here.
-                    EmitComment("TODO(wip): LShift masking not applied for carry-in bits");
+                    // Mask out bits that wrapped through the rotation (RLNCF uses circular shift,
+                    // so the LSBs receive bits from the MSB of the previous step).
+                    if (lsBits > 0)
+                        Emit("ANDLW", $"0x{(0xFF << lsBits) & 0xFF:X2}");
                     StoreW(b.Dst);
                 }
                 else
                 {
-                    EmitComment("TODO(wip): variable LShift not yet supported in PIC18 backend");
+                    // Variable-count left shift loop: TmpLo=value, Tmp2Lo=count
                     LoadIntoW(b.Src1);
+                    Emit("MOVWF", Addr(TmpLo), "ACCESS");
+                    LoadIntoW(b.Src2);
+                    Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
+                    string loopL = MakeLabel("L18_LSH_LOOP");
+                    string doneL = MakeLabel("L18_LSH_DONE");
+                    EmitLabel(loopL);
+                    Emit("TSTFSZ", Addr(Tmp2Lo), "ACCESS");   // skip if Tmp2Lo=0
+                    Emit("BRA",    doneL + "_SKIP");          // non-zero → don't go to done
+                    Emit("BRA",    doneL);
+                    EmitLabel(doneL + "_SKIP");
+                    // RLNCF is circular; clear the carry-in bit by masking after shift.
+                    Emit("RLNCF", Addr(TmpLo), "F", "ACCESS");
+                    // Mask out the wrapped MSB→LSB bit after each rotation.
+                    Emit("BCF", Addr(TmpLo), "0", "ACCESS");  // clear bit0 (came from MSB)
+                    Emit("DECF", Addr(Tmp2Lo), "F", "ACCESS");
+                    Emit("BRA",  loopL);
+                    EmitLabel(doneL);
+                    Emit("MOVF", Addr(TmpLo), "W", "ACCESS");
                     StoreW(b.Dst);
                 }
                 break;
@@ -944,18 +1040,18 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             case IrBinOp.RShift:
                 if (b.Src2 is Constant shiftR)
                 {
+                    int rsBits = shiftR.Value & 7;
                     LoadIntoW(b.Src1);
-                    for (int i = 0; i < (shiftR.Value & 7); i++)
+                    for (int i = 0; i < rsBits; i++)
                     {
                         Emit("MOVWF", Addr(TmpLo), "ACCESS");
-                        bool signed = type.IsSigned();
-                        if (signed)
+                        bool asr = type.IsSigned();
+                        if (asr)
                         {
-                            // Arithmetic right shift on PIC18: load sign bit into C, then RRCF.
-                            // BCF STATUS.C; BTFSC TmpLo, 7; BSF STATUS.C; RRCF TmpLo, W
-                            Emit("BCF",   "0xFD8", "0", "ACCESS");  // STATUS.C = 0
+                            // Arithmetic right shift: propagate sign bit via carry.
+                            Emit("BCF",   "0xFD8", "0", "ACCESS");     // STATUS.C = 0
                             Emit("BTFSC", Addr(TmpLo), "7", "ACCESS"); // if bit7=0, skip
-                            Emit("BSF",   "0xFD8", "0", "ACCESS");  // STATUS.C = sign bit
+                            Emit("BSF",   "0xFD8", "0", "ACCESS");     // STATUS.C = sign bit
                             Emit("RRCF",  Addr(TmpLo), "W", "ACCESS"); // shift right, MSB = C
                         }
                         else
@@ -963,13 +1059,42 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                             Emit("RRNCF", Addr(TmpLo), "W", "ACCESS");  // logical shift right no-carry
                         }
                     }
-                    EmitComment("TODO(wip): RShift masking not applied for carry-in bits");
+                    // Mask out MSB bits that wrapped through RRNCF (circular) for logical shift.
+                    if (rsBits > 0 && !type.IsSigned())
+                        Emit("ANDLW", $"0x{(0xFF >> rsBits) & 0xFF:X2}");
                     StoreW(b.Dst);
                 }
                 else
                 {
-                    EmitComment("TODO(wip): variable RShift not yet supported in PIC18 backend");
+                    // Variable-count right shift loop: TmpLo=value, Tmp2Lo=count
                     LoadIntoW(b.Src1);
+                    Emit("MOVWF", Addr(TmpLo), "ACCESS");
+                    LoadIntoW(b.Src2);
+                    Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
+                    string loopLR = MakeLabel("L18_RSH_LOOP");
+                    string doneLR = MakeLabel("L18_RSH_DONE");
+                    EmitLabel(loopLR);
+                    Emit("TSTFSZ", Addr(Tmp2Lo), "ACCESS");
+                    Emit("BRA",    doneLR + "_SKIP");
+                    Emit("BRA",    doneLR);
+                    EmitLabel(doneLR + "_SKIP");
+                    if (type.IsSigned())
+                    {
+                        // Arithmetic: propagate sign bit.
+                        Emit("BCF",   "0xFD8", "0", "ACCESS");
+                        Emit("BTFSC", Addr(TmpLo), "7", "ACCESS");
+                        Emit("BSF",   "0xFD8", "0", "ACCESS");
+                        Emit("RRCF",  Addr(TmpLo), "F", "ACCESS");
+                    }
+                    else
+                    {
+                        Emit("RRNCF", Addr(TmpLo), "F", "ACCESS");
+                        Emit("BCF",   Addr(TmpLo), "7", "ACCESS");  // clear wrapped-in MSB
+                    }
+                    Emit("DECF", Addr(Tmp2Lo), "F", "ACCESS");
+                    Emit("BRA",  loopLR);
+                    EmitLabel(doneLR);
+                    Emit("MOVF", Addr(TmpLo), "W", "ACCESS");
                     StoreW(b.Dst);
                 }
                 break;
@@ -996,11 +1121,32 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
 
             case IrBinOp.Div:
             case IrBinOp.FloorDiv:
-            case IrBinOp.Mod:
-                EmitComment($"TODO(wip): {b.Op} requires soft-div routine not yet implemented");
+            {
+                // Software 8-bit divide: TmpLo=dividend, Tmp2Lo=divisor, CALL __pic18_div8
+                // After call: TmpLo=quotient, TmpHi=remainder
                 LoadIntoW(b.Src1);
+                Emit("MOVWF", Addr(TmpLo),  "ACCESS");
+                LoadIntoW(b.Src2);
+                Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
+                _needsDiv8 = true;
+                Emit("CALL", "__pic18_div8");
+                Emit("MOVF", Addr(TmpLo), "W", "ACCESS");  // quotient
                 StoreW(b.Dst);
                 break;
+            }
+
+            case IrBinOp.Mod:
+            {
+                LoadIntoW(b.Src1);
+                Emit("MOVWF", Addr(TmpLo),  "ACCESS");
+                LoadIntoW(b.Src2);
+                Emit("MOVWF", Addr(Tmp2Lo), "ACCESS");
+                _needsDiv8 = true;
+                Emit("CALL", "__pic18_div8");
+                Emit("MOVF", Addr(TmpHi), "W", "ACCESS");  // remainder
+                StoreW(b.Dst);
+                break;
+            }
 
             case IrBinOp.Equal:
                 EmitCompare8(b.Src1, b.Src2);
@@ -1011,21 +1157,37 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                 EmitBoolFromZ(false, b.Dst);
                 break;
             case IrBinOp.LessThan:
+            {
                 EmitCompare8(b.Src1, b.Src2);
-                EmitBoolFromC(false, b.Dst);   // C=0 means src1<src2
+                bool isSigned = GetValType(b.Src1).IsSigned() || GetValType(b.Src2).IsSigned();
+                if (isSigned) EmitSignedBoolLT(b.Dst);
+                else          EmitBoolFromC(false, b.Dst);
                 break;
+            }
             case IrBinOp.GreaterEqual:
+            {
                 EmitCompare8(b.Src1, b.Src2);
-                EmitBoolFromC(true, b.Dst);    // C=1 means src1>=src2
+                bool isSigned = GetValType(b.Src1).IsSigned() || GetValType(b.Src2).IsSigned();
+                if (isSigned) EmitSignedBoolGE(b.Dst);
+                else          EmitBoolFromC(true, b.Dst);
                 break;
+            }
             case IrBinOp.GreaterThan:
+            {
                 EmitCompare8(b.Src1, b.Src2);
-                EmitBoolGT(b.Dst);
+                bool isSigned = GetValType(b.Src1).IsSigned() || GetValType(b.Src2).IsSigned();
+                if (isSigned) EmitSignedBoolGT(b.Dst);
+                else          EmitBoolGT(b.Dst);
                 break;
+            }
             case IrBinOp.LessEqual:
+            {
                 EmitCompare8(b.Src1, b.Src2);
-                EmitBoolLE(b.Dst);
+                bool isSigned = GetValType(b.Src1).IsSigned() || GetValType(b.Src2).IsSigned();
+                if (isSigned) EmitSignedBoolLE(b.Dst);
+                else          EmitBoolLE(b.Dst);
                 break;
+            }
         }
     }
 
@@ -1154,7 +1316,7 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                 Emit("XORWF", Addr(TmpHi),  "F", "ACCESS");
                 break;
             default:
-                EmitComment($"TODO(wip): 16-bit {b.Op} not yet implemented in PIC18 backend");
+                EmitComment($"16-bit {b.Op} not yet implemented in PIC18 backend");
                 break;
         }
         Store16From(TmpLo, TmpHi, b.Dst);
@@ -1336,7 +1498,7 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
                     Emit("XORWF", Addr(TmpHi),  "F", "ACCESS");
                     break;
                 default:
-                    EmitComment($"TODO(wip): 16-bit AugAssign {aa.Op} not implemented");
+                    EmitComment($"16-bit AugAssign {aa.Op} not implemented");
                     break;
             }
             Store16From(TmpLo, TmpHi, aa.Target);
@@ -1391,7 +1553,7 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             case IrBinOp.BitOr:  Emit("IORWF", Addr(TmpLo), "W", "ACCESS"); break;
             case IrBinOp.BitXor: Emit("XORWF", Addr(TmpLo), "W", "ACCESS"); break;
             default:
-                EmitComment($"TODO(wip): AugAssign {aa.Op} not fully implemented");
+                EmitComment($"AugAssign {aa.Op} not fully implemented");
                 break;
         }
         StoreW(aa.Target);
@@ -1483,5 +1645,246 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             LoadIntoW(ast.Src);
             Emit("MOVWF", "0xFEF", "ACCESS");   // INDF0 = W
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // ArrayLoadFlash (PIC18 TBLRD* — table read from program memory)
+    // -------------------------------------------------------------------------
+
+    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    {
+        // Load TBLPTR = base address of the table + index, then TBLRD* to read TABLAT.
+        // TBLPTRU (0xFF8), TBLPTRH (0xFF7), TBLPTRL (0xFF6); TABLAT (0xFF5).
+        string tableName = $"__flash_{alf.ArrayName.Replace('.', '_')}";
+        // Set TBLPTRU = 0 (we assume everything in the first 64K of program memory).
+        Emit("CLRF",  "0xFF8", "ACCESS");          // TBLPTRU = 0
+        Emit("MOVLW", $"HIGH({tableName})");
+        Emit("MOVWF", "0xFF7", "ACCESS");           // TBLPTRH = high byte of label
+        // Load low byte = LOW(table) + index.
+        LoadIntoW(alf.Index);
+        Emit("MOVWF", Addr(TmpLo), "ACCESS");
+        Emit("MOVLW", $"LOW({tableName})");
+        Emit("ADDWF", Addr(TmpLo), "W", "ACCESS"); // W = LOW(table) + index
+        Emit("MOVWF", "0xFF6", "ACCESS");           // TBLPTRL = W
+        Emit("TBLRD*");                             // TABLAT = program_memory[TBLPTR]
+        Emit("MOVF",  "0xFF5", "W", "ACCESS");      // W = TABLAT
+        StoreW(alf.Dst);
+    }
+
+    // -------------------------------------------------------------------------
+    // Flash data table emission (DB directives in CODE section)
+    // -------------------------------------------------------------------------
+
+    private void EmitFlashTables(ProgramIR program)
+    {
+        var flashDataInstrs = program.Functions
+            .SelectMany(f => f.Body)
+            .OfType<FlashData>()
+            .GroupBy(fd => fd.Name)
+            .Select(g => g.First());
+
+        foreach (var fd in flashDataInstrs)
+        {
+            EmitRaw("");
+            EmitComment($"Flash data table: {fd.Name} ({fd.Bytes.Count} bytes)");
+            string safeName = fd.Name.Replace('.', '_');
+            EmitLabel($"__flash_{safeName}");
+            // PIC18 assembler DB directive for byte data in CODE section.
+            var sb = new System.Text.StringBuilder("\tDB\t");
+            for (int i = 0; i < fd.Bytes.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append($"0x{fd.Bytes[i] & 0xFF:X2}");
+            }
+            EmitRaw(sb.ToString());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Signed comparison helpers (PIC18 — uses N and OV bits in STATUS)
+    //
+    // After EmitCompare8 (which performs src1 - src2):
+    //   N (STATUS bit 4) = 1 if result is negative
+    //   OV (STATUS bit 3) = 1 if signed overflow occurred
+    //   Z = 1 if equal
+    //   Signed LT: N XOR OV = 1
+    //   Signed GE: N XOR OV = 0  (i.e., NOT LT)
+    // -------------------------------------------------------------------------
+
+    // Materialise boolean 1 when signed src1 < src2 (N XOR OV = 1), else 0.
+    private void EmitSignedBoolLT(Val dst)
+    {
+        string n1Label = MakeLabel("L18_SLTN1");
+        string noJump  = MakeLabel("L18_SLT_NO");
+        string done    = MakeLabel("L18_SLT_D");
+        // N=0, OV=1 → jump (LT); N=1, OV=0 → jump (LT); others → no jump.
+        Emit("BNN", n1Label);              // N=0 → go check OV
+        // N=1:
+        Emit("BOV", noJump);               // N=1, OV=1 → GE → no
+        Emit("MOVLW", "0x01");             // N=1, OV=0 → LT → yes
+        Emit("GOTO",  done);
+        EmitLabel(n1Label);
+        // N=0:
+        Emit("BNOV", noJump);              // N=0, OV=0 → GE → no
+        Emit("MOVLW", "0x01");             // N=0, OV=1 → LT → yes
+        Emit("GOTO",  done);
+        EmitLabel(noJump);
+        Emit("CLRW");
+        EmitLabel(done);
+        StoreW(dst);
+    }
+
+    private void EmitSignedBoolGE(Val dst)
+    {
+        // GE = NOT LT: N XOR OV = 0.
+        string n1Label = MakeLabel("L18_SGEN1");
+        string noJump  = MakeLabel("L18_SGE_NO");
+        string done    = MakeLabel("L18_SGE_D");
+        Emit("BNN", n1Label);
+        // N=1:
+        Emit("BNOV", noJump);              // N=1, OV=0 → LT → false
+        Emit("MOVLW", "0x01");             // N=1, OV=1 → GE → true
+        Emit("GOTO",  done);
+        EmitLabel(n1Label);
+        // N=0:
+        Emit("BOV", noJump);               // N=0, OV=1 → LT → false
+        Emit("MOVLW", "0x01");             // N=0, OV=0 → GE → true
+        Emit("GOTO",  done);
+        EmitLabel(noJump);
+        Emit("CLRW");
+        EmitLabel(done);
+        StoreW(dst);
+    }
+
+    private void EmitSignedBoolGT(Val dst)
+    {
+        // GT = GE AND NOT Z.
+        string n1Label = MakeLabel("L18_SGTN1");
+        string noJump  = MakeLabel("L18_SGT_NO");
+        string done    = MakeLabel("L18_SGT_D");
+        Emit("BZ",  noJump);               // equal → not GT
+        Emit("BNN", n1Label);
+        // N=1:
+        Emit("BNOV", noJump);
+        Emit("MOVLW", "0x01");
+        Emit("GOTO",  done);
+        EmitLabel(n1Label);
+        // N=0:
+        Emit("BOV", noJump);
+        Emit("MOVLW", "0x01");
+        Emit("GOTO",  done);
+        EmitLabel(noJump);
+        Emit("CLRW");
+        EmitLabel(done);
+        StoreW(dst);
+    }
+
+    private void EmitSignedBoolLE(Val dst)
+    {
+        // LE = LT OR Z.
+        string n1Label = MakeLabel("L18_SLEN1");
+        string jumpTrue = MakeLabel("L18_SLE_T");
+        string noJump  = MakeLabel("L18_SLE_NO");
+        string done    = MakeLabel("L18_SLE_D");
+        Emit("BZ",  jumpTrue);             // equal → LE is true
+        Emit("BNN", n1Label);
+        // N=1:
+        Emit("BOV", noJump);               // N=1, OV=1 → GE → false
+        Emit("GOTO", jumpTrue);            // N=1, OV=0 → LT → true
+        EmitLabel(n1Label);
+        // N=0:
+        Emit("BNOV", noJump);              // N=0, OV=0 → GE → false
+        EmitLabel(jumpTrue);
+        Emit("MOVLW", "0x01");
+        Emit("GOTO",  done);
+        EmitLabel(noJump);
+        Emit("CLRW");
+        EmitLabel(done);
+        StoreW(dst);
+    }
+
+    // Signed branch helpers for JumpIf* instructions (PIC18).
+
+    private void BranchIfLessThanSigned(string target)
+    {
+        // N XOR OV = 1 → jump.
+        string checkN0 = MakeLabel("L18_JSLTN0");
+        string noJump  = MakeLabel("L18_JSLT_NO");
+        Emit("BNN", checkN0);              // N=0 → check OV
+        // N=1:
+        Emit("BOV", noJump);               // N=1, OV=1 → GE → skip
+        Emit("GOTO", target);              // N=1, OV=0 → LT → jump
+        EmitLabel(checkN0);
+        // N=0:
+        Emit("BNOV", noJump);              // N=0, OV=0 → GE → skip
+        Emit("GOTO", target);              // N=0, OV=1 → LT → jump
+        EmitLabel(noJump);
+    }
+
+    private void BranchIfLessOrEqualSigned(string target)
+    {
+        // LT OR Z.
+        string noJump = MakeLabel("L18_JSLE_NO");
+        Emit("BZ", target);               // equal → jump
+        BranchIfLessThanSigned(target);
+    }
+
+    private void BranchIfGreaterThanSigned(string target)
+    {
+        // GT = GE AND NOT Z.
+        string noJump = MakeLabel("L18_JSGT_NO");
+        Emit("BZ", noJump);               // equal → skip
+        BranchIfGreaterEqualSigned(target);
+        EmitLabel(noJump);
+    }
+
+    private void BranchIfGreaterEqualSigned(string target)
+    {
+        // GE = NOT LT: N XOR OV = 0 → jump.
+        string checkN0 = MakeLabel("L18_JSGEN0");
+        string noJump  = MakeLabel("L18_JSGE_NO");
+        Emit("BNN", checkN0);
+        // N=1:
+        Emit("BNOV", noJump);              // N=1, OV=0 → LT → skip
+        Emit("GOTO", target);              // N=1, OV=1 → GE → jump
+        EmitLabel(checkN0);
+        // N=0:
+        Emit("BOV", noJump);               // N=0, OV=1 → LT → skip
+        Emit("GOTO", target);              // N=0, OV=0 → GE → jump
+        EmitLabel(noJump);
+    }
+
+    // -------------------------------------------------------------------------
+    // Software divide subroutine (8-bit unsigned)
+    //
+    // Input:  TmpLo = dividend, Tmp2Lo = divisor
+    // Output: TmpLo = quotient, TmpHi = remainder
+    // Clobbers: Tmp2Hi (bit counter)
+    // -------------------------------------------------------------------------
+
+    private void EmitDiv8Subroutine()
+    {
+        EmitRaw("");
+        EmitComment("8-bit software divide: TmpLo=dividend, Tmp2Lo=divisor");
+        EmitComment("Result: TmpLo=quotient, TmpHi=remainder. Clobbers Tmp2Hi.");
+        EmitLabel("__pic18_div8");
+        Emit("CLRF",    Addr(TmpHi),  "ACCESS");     // remainder = 0
+        Emit("MOVLW",   "0x08");
+        Emit("MOVWF",   Addr(Tmp2Hi), "ACCESS");     // bit counter = 8
+        EmitLabel("__pic18_div8_loop");
+        // Rotate left: C = MSB(TmpLo), TmpLo <<= 1; TmpHi = TmpHi<<1|C
+        Emit("BCF",     "0xFD8", "0", "ACCESS");     // STATUS.C = 0
+        Emit("RLCF",    Addr(TmpLo),  "F", "ACCESS"); // C = MSB(TmpLo), TmpLo <<= 1
+        Emit("RLCF",    Addr(TmpHi),  "F", "ACCESS"); // TmpHi = TmpHi<<1|C
+        // Test: TmpHi - Tmp2Lo; C=1 if TmpHi >= Tmp2Lo
+        Emit("MOVF",    Addr(Tmp2Lo), "W", "ACCESS");
+        Emit("SUBWF",   Addr(TmpHi),  "W", "ACCESS"); // W = TmpHi - Tmp2Lo
+        Emit("BNC",     "__pic18_div8_nosub");        // C=0 → can't subtract → skip
+        Emit("MOVWF",   Addr(TmpHi),  "ACCESS");     // TmpHi = TmpHi - Tmp2Lo
+        Emit("BSF",     Addr(TmpLo),  "0", "ACCESS"); // set LSB of TmpLo (quotient bit = 1)
+        EmitLabel("__pic18_div8_nosub");
+        Emit("DECFSZ",  Addr(Tmp2Hi), "F", "ACCESS"); // count--; skip if 0
+        Emit("BRA",     "__pic18_div8_loop");
+        Emit("RETURN");
     }
 }
