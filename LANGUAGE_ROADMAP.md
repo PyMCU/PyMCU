@@ -330,6 +330,20 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## PIC Backend Tier Model
+
+The `pymcu-backend-pic` extension supports three PIC architecture tiers:
+
+| Tier | Architectures | Status |
+|------|--------------|--------|
+| **Supported WIP** | PIC18Fxxxx (`arch = "pic18"`) | Full feature set targeted; signed comparisons, flash tables, soft-divide, variable shifts, conditional ISR context saves, banking stub |
+| **Experimental** | PIC16Fxxx / PIC14 (`arch = "pic14"`) | 8+16-bit; RETLW flash tables; variable shifts; soft-divide; signed comparisons; FSR ISR save; single-page default (opt-in PAGESEL via `fuses.multipage = "true"`) |
+| **Experimental** | PIC12Fxxx / PIC10Fxxx (`arch = "pic12"`) | 8-bit only; compile errors on 16-bit, variable shifts, Mul/Div, runtime-indexed flash; FSR-indirect arrays; BitSet/Clear via FSR |
+
+The compiler emits `[WARNING] PIC12/PIC14 is Experimental` at the top of generated output.
+
+---
+
 ## v0.11 — Next Tier
 
 These are the highest-value features not yet implemented, in priority order.
@@ -378,7 +392,7 @@ These are the highest-value features not yet implemented, in priority order.
 | Feature | Effort | Why |
 |---------|--------|-----|
 | `fixed16` (Q8.8 fixed-point) | ~1 week | Float-like sensor math without FPU |
-| PIC18 codegen | ~2 weeks | Extend backend for PIC18Fxxxx family |
+| PIC18 full production support | ~2 weeks | Signed comparisons, flash tables, soft-divide, variable shifts, ISR context, banking — all implemented as Supported WIP |
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
 | RP2040 PIO backend | ~1 week | Programmable I/O state machine output |
 | Over-the-air (OTA) support | ~1 week | Bootloader + pymcu flash over UART |
