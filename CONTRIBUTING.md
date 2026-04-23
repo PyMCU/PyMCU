@@ -178,4 +178,5 @@ mkdocs serve             # preview at http://127.0.0.1:8000
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the AGPL-3.0 License (compiler/driver) or the MIT License (stdlib), as applicable. See `COMMERCIAL_EXCEPTION.md` for the full dual-license terms.
+By contributing, you agree that your contributions will be licensed under the MIT License.
+See `LICENSE` for details.

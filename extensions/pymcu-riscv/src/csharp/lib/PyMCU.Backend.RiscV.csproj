@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>PyMCU.Backend.RiscV</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\src\backend-sdk\PyMCU.Backend.SDK.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\compiler\PyMCU.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -2,20 +2,7 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# SPDX-License-Identifier: MIT
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -111,6 +98,7 @@ from .commands.clean import clean
 from .commands.flash import flash
 from .commands.version import version
 from .commands.toolchain import toolchain_app
+from .commands.backend import backend_app
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -132,6 +120,7 @@ app.command()(build)
 app.command()(clean)
 app.command()(flash)
 app.add_typer(toolchain_app)
+app.add_typer(backend_app)
 
 def run_cli():
     _ensure_venv()

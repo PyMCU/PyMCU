@@ -668,4 +668,148 @@ public class AVRCodeGenTests
 
         Assert.Contains("CALL\t__div8", asm);
     }
+
+    // ─── Float (soft-float IEEE 754) ──────────────────────────────────────
+
+    [Fact]
+    public void Float_Constant_EmitsIeee754Bytes()
+    {
+        // 3.14f in IEEE 754 single = 0x4048F5C3
+        // R22=0xC3, R23=0xF5, R24=0x48, R25=0x40
+        var fc = new FloatConstant(3.14);
+        var dst = new Variable("r", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Copy(fc, dst),
+            new Return(new Constant(0)));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("LDI\tR22, 195", asm);  // 0xC3 = 195
+        Assert.Contains("LDI\tR23, 245", asm);  // 0xF5 = 245
+        Assert.Contains("LDI\tR24, 72",  asm);  // 0x48 = 72
+        Assert.Contains("LDI\tR25, 64",  asm);  // 0x40 = 64
+    }
+
+    [Fact]
+    public void Float_Add_EmitsCallToFpAdd()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var c = new Variable("c", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Add, a, b, c));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_add", asm);
+    }
+
+    [Fact]
+    public void Float_Sub_EmitsCallToFpSub()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var c = new Variable("c", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Sub, a, b, c));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_sub", asm);
+    }
+
+    [Fact]
+    public void Float_Mul_EmitsCallToFpMul()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var c = new Variable("c", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Mul, a, b, c));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_mul", asm);
+    }
+
+    [Fact]
+    public void Float_Div_EmitsCallToFpDiv()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var c = new Variable("c", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Div, a, b, c));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_div", asm);
+    }
+
+    [Fact]
+    public void Float_Lt_EmitsCallToFpLt()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var r = new Variable("r", DataType.UINT8);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.LessThan, a, b, r));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_lt", asm);
+    }
+
+    [Fact]
+    public void Float_Gt_EmitsCallToFpGt()
+    {
+        var a = new Variable("a", DataType.FLOAT);
+        var b = new Variable("b", DataType.FLOAT);
+        var r = new Variable("r", DataType.UINT8);
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.GreaterThan, a, b, r));
+
+        var asm = Compile(prog);
+
+        Assert.Contains("CALL\t__fp_gt", asm);
+    }
+
+    [Fact]
+    public void Float_Return_LoadsIntoR22R25()
+    {
+        // Returning a float variable must load into R22:R25 (soft-float return convention).
+        // Copy gives the variable a stack slot; Return must then emit 4 LDD instructions.
+        var fc = new FloatConstant(1.0);
+        var a = new Variable("a", DataType.FLOAT);
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            ReturnType = DataType.FLOAT,
+            Body = [new Copy(fc, a), new Return(a)]
+        });
+
+        var asm = Compile(prog);
+
+        // Stack load into R22 (byte 0 / LSB) and R25 (MSB) must appear.
+        Assert.Contains("LDD\tR22,", asm);
+        Assert.Contains("LDD\tR25,", asm);
+    }
+
+    [Fact]
+    public void Float_Copy_LoadsAndStores()
+    {
+        // Copy from one float var to another goes through R22:R25
+        var src = new Variable("src", DataType.FLOAT);
+        var dst = new Variable("dst", DataType.FLOAT);
+        var prog = MakeProgram("main",
+            new Copy(src, dst));
+
+        var asm = Compile(prog);
+
+        // Load from src (LDD) and store to dst (STD) — both via R22:R25
+        Assert.Contains("LDD\tR22,", asm);
+        Assert.Contains("STD\t", asm);
+        Assert.Contains(", R22", asm);
+    }
 }

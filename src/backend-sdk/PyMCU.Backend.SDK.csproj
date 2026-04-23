@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PyMCU</RootNamespace>
+    <AssemblyName>PyMCU.Backend.SDK</AssemblyName>
+    <Version>1.0.0-beta1</Version>
+    <!-- MIT: paid backend authors reference this without inheriting AGPL. -->
+    <!-- SPDX-License-Identifier: MIT -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- AOT-compatible JSON serialization requires source generation. -->
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
+  </ItemGroup>
+
+</Project>

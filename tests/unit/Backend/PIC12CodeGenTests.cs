@@ -55,12 +55,13 @@ public class PIC12CodeGenTests
     }
 
     // ─── FactorySupport ──────────────────────────────────────────────────────
+    // CodeGenFactory is now throw-only: all backends are external plugins.
 
     [Fact]
-    public void FactorySupport()
+    public void FactorySupport_ThrowsForExternalBackend()
     {
-        var codegen = CodeGenFactory.Create("pic10f200", Pic10f200);
-        Assert.IsType<PIC12CodeGen>(codegen);
+        var ex = Assert.Throws<NotSupportedException>(() => CodeGenFactory.Create("pic10f200", Pic10f200));
+        Assert.Contains("pymcuc-pic", ex.Message);
     }
 
     // ─── TRISInstruction ─────────────────────────────────────────────────────

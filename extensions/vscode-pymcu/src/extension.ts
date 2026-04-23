@@ -113,10 +113,12 @@ async function updateChipStatusBar() {
 
     try {
         const content = fs.readFileSync(pyproject, 'utf-8');
-        // Simple TOML parsing for [tool.pymcu] chip field
-        const chipMatch = content.match(/\[tool\.pymcu\][\s\S]*?chip\s*=\s*"([^"]+)"/);
-        if (chipMatch) {
-            chipStatusBarItem.text = `$(circuit-board) ${chipMatch[1]}`;
+        // Prefer board over chip for display (matches PyMCUConfigReader logic)
+        const boardMatch = content.match(/\[tool\.pymcu\][\s\S]*?board\s*=\s*"([^"]+)"/);
+        const chipMatch  = content.match(/\[tool\.pymcu\][\s\S]*?chip\s*=\s*"([^"]+)"/);
+        const target = boardMatch?.[1] ?? chipMatch?.[1];
+        if (target) {
+            chipStatusBarItem.text = `$(circuit-board) ${target}`;
             chipStatusBarItem.show();
         } else {
             chipStatusBarItem.hide();
@@ -307,7 +309,7 @@ function validatePyproject(document: vscode.TextDocument) {
     
     const lines = text.split('\n');
     let inPymcuSection = false;
-    let foundChip = false;
+    let foundTarget = false;
     let pymcuSectionLine = -1;
 
     for (let i = 0; i < lines.length; i++) {
@@ -325,7 +327,7 @@ function validatePyproject(document: vscode.TextDocument) {
         
         if (inPymcuSection) {
             if (line.startsWith('chip')) {
-                foundChip = true;
+                foundTarget = true;
                 const match = line.match(/^chip\s*=\s*"([^"]*)"/);
                 if (!match) {
                      const range = new vscode.Range(i, 0, i, lines[i].length);
@@ -335,12 +337,23 @@ function validatePyproject(document: vscode.TextDocument) {
                      diagnostics.push(new vscode.Diagnostic(range, 'Chip name cannot be empty', vscode.DiagnosticSeverity.Error));
                 }
             }
+            if (line.startsWith('board')) {
+                foundTarget = true;
+                const match = line.match(/^board\s*=\s*"([^"]*)"/);
+                if (!match) {
+                     const range = new vscode.Range(i, 0, i, lines[i].length);
+                     diagnostics.push(new vscode.Diagnostic(range, 'Invalid format. Expected: board = "name"', vscode.DiagnosticSeverity.Error));
+                } else if (match[1].trim() === '') {
+                     const range = new vscode.Range(i, 0, i, lines[i].length);
+                     diagnostics.push(new vscode.Diagnostic(range, 'Board name cannot be empty', vscode.DiagnosticSeverity.Error));
+                }
+            }
         }
     }
     
-    if (pymcuSectionLine !== -1 && !foundChip) {
+    if (pymcuSectionLine !== -1 && !foundTarget) {
          const range = new vscode.Range(pymcuSectionLine, 0, pymcuSectionLine, lines[pymcuSectionLine].length);
-         diagnostics.push(new vscode.Diagnostic(range, 'Missing "chip" configuration in [tool.pymcu]', vscode.DiagnosticSeverity.Error));
+         diagnostics.push(new vscode.Diagnostic(range, 'Missing "chip" or "board" configuration in [tool.pymcu]', vscode.DiagnosticSeverity.Error));
     }
     
     diagnosticCollection.set(document.uri, diagnostics);

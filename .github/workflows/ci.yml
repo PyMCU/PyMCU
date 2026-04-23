@@ -75,8 +75,8 @@ jobs:
       - name: Create virtual environment and install dependencies
         run: |
           uv venv .venv
-          uv pip install --python .venv ./extensions/pymcu-toolchain-sdk
-          uv pip install --python .venv ./extensions/pymcu-toolchain-avr
+          uv pip install --python .venv ./extensions/pymcu-plugin-sdk
+          uv pip install --python .venv ./extensions/pymcu-avr
           uv pip install --python .venv -e .
           uv pip install --python .venv ./lib
           uv pip install --python .venv ./external/pymcu-micropython
@@ -90,6 +90,11 @@ jobs:
       - name: Build pymcuc compiler
         run: |
           dotnet publish src/compiler/PyMCU.csproj \
+            -c Release -o build/bin --nologo
+
+      - name: Build pymcuc-avr backend CLI
+        run: |
+          dotnet publish extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
             -c Release -o build/bin --nologo
 
       - name: Add pymcuc to PATH
@@ -140,9 +145,9 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer
-          pip install ./extensions/pymcu-toolchain-sdk
-          pip install ./extensions/pymcu-toolchain-avr
-          pip install ./extensions/pymcu-toolchain-pic
+          pip install ./extensions/pymcu-plugin-sdk
+          pip install ./extensions/pymcu-avr
+          pip install ./extensions/pymcu-pic
 
       - name: Run driver tests
         run: pytest tests/driver/ -v --tb=short

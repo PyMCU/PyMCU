@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -83,7 +83,7 @@ public partial class IRGenerator
             {
                 bool TryConst(string name)
                 {
-                    if (!constantVariables.TryGetValue(name, out int cv)) return false;
+                    if (!TryGetConst(name, out int cv)) return false;
                     bit = cv;
                     return true;
                 }
@@ -309,7 +309,7 @@ public partial class IRGenerator
                             switch (argVal)
                             {
                                 case Constant c:
-                                    constantVariables[paramName] = c.Value;
+                                    SetConst(paramName, c.Value);
                                     break;
                                 case Variable vv:
                                     variableAliases[paramName] = vv.Name;
@@ -412,12 +412,12 @@ public partial class IRGenerator
             {
                 if (value is Constant c && target is Variable tv3)
                 {
-                    if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
+                    if (!mutableGlobals.ContainsKey(tv3.Name)) SetConst(tv3.Name, c.Value);
                 }
             }
             else
             {
-                if (target is Variable tv4) constantVariables.Remove(tv4.Name);
+                if (target is Variable tv4) KillConst(tv4.Name);
             }
         }
         else if (stmt.Target is MemberAccessExpr memExpr2)
@@ -510,11 +510,11 @@ public partial class IRGenerator
                 {
                     if (baseName != null && !virtualInstances.Contains(baseName))
                     {
-                        constantVariables[flattenedName] = c.Value;
+                        SetConst(flattenedName, c.Value);
                     }
                     else if (stringIdToStr.TryGetValue(c.Value, out var value1))
                     {
-                        constantVariables[flattenedName] = c.Value;
+                        SetConst(flattenedName, c.Value);
                         strConstantVariables[flattenedName] = value1;
                         return;
                     }
@@ -564,8 +564,8 @@ public partial class IRGenerator
                         return true;
                     }
 
-                    if (!constantVariables.TryGetValue(tname, out int cv2)) return false;
-                    constantVariables[flattenedName] = cv2;
+                    if (!TryGetConst(tname, out int cv2)) return false;
+                    SetConst(flattenedName, cv2);
                     return true;
                 }
             }
@@ -638,6 +638,13 @@ public partial class IRGenerator
             strConstantVariables[q2] = sl.Value;
         }
 
+        if (stmt.Init is NoneExpr)
+        {
+            if (dt != DataType.VOID && dt != DataType.UNKNOWN)
+                throw new Exception(
+                    $"TypeError: cannot assign 'None' to '{stmt.VarType}' variable; use a sentinel constant (e.g. 0xFF) instead");
+        }
+
         if (stmt.Init != null)
         {
             Val val = VisitExpression(stmt.Init);
@@ -649,7 +656,7 @@ public partial class IRGenerator
             {
                 if (val is Constant c && target is Variable tv && !mutableGlobals.ContainsKey(tv.Name))
                 {
-                    constantVariables[tv.Name] = c.Value;
+                    SetConst(tv.Name, c.Value);
                 }
             }
         }
@@ -882,6 +889,14 @@ public partial class IRGenerator
 
         if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2) strConstantVariables[qualified2] = sl2.Value;
 
+        if (stmt.Value is NoneExpr)
+        {
+            DataType annoType = DataTypeExtensions.StringToDataType(stmt.Annotation);
+            if (annoType != DataType.VOID && annoType != DataType.UNKNOWN)
+                throw new Exception(
+                    $"TypeError: cannot assign 'None' to '{stmt.Annotation}' variable; use a sentinel constant (e.g. 0xFF) instead");
+        }
+
         if (stmt.Value != null)
         {
             Val rhs = VisitExpression(stmt.Value);
@@ -920,7 +935,7 @@ public partial class IRGenerator
             if (e is IntegerLiteral il) return il.Value;
             if (e is BooleanLiteral bl) return bl.Value ? 1 : 0;
             if (e is VariableExpr v &&
-                constantVariables.TryGetValue(currentInlinePrefix + v.Name, out int cv)) return cv;
+                TryGetConst(currentInlinePrefix + v.Name, out int cv)) return cv;
             if (e is BinaryExpr be)
             {
                 var lv = EvalConst(be.Left);
@@ -1011,13 +1026,13 @@ public partial class IRGenerator
         var entries = new List<Val>();
         foreach (int oval in outerVals)
         {
-            constantVariables[outerKey] = oval;
+            SetConst(outerKey, oval);
             if (hasInner)
             {
                 var innerVals = CollectIterable(lc.Iterable2!);
                 foreach (int ival in innerVals)
                 {
-                    constantVariables[innerKey] = ival;
+                    SetConst(innerKey, ival);
                     if (lc.Filter != null)
                     {
                         var fv = EvalConst(lc.Filter);
@@ -1028,7 +1043,7 @@ public partial class IRGenerator
                     entries.Add(VisitExpression(lc.Element));
                 }
 
-                constantVariables.Remove(innerKey);
+                KillConst(innerKey);
             }
             else
             {
@@ -1043,7 +1058,7 @@ public partial class IRGenerator
             }
         }
 
-        constantVariables.Remove(outerKey);
+        KillConst(outerKey);
 
         if (entries.Count != count)
             throw new Exception($"List comprehension generated {entries.Count} but array is {count}");
@@ -1075,7 +1090,7 @@ public partial class IRGenerator
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
                 DataType dt = variableTypes.TryGetValue(q, out var dt2) ? dt2 : DataType.UINT8;
                 target = new Variable(q, dt);
-                constantVariables.Remove(q);
+                KillConst(q);
             }
 
             Emit(new AugAssign(IRGenerator.MapAugOp(stmt.Op), target, operand));
@@ -1133,7 +1148,7 @@ public partial class IRGenerator
             {
                 bool TryConst(string name)
                 {
-                    if (constantVariables.TryGetValue(name, out int cv))
+                    if (TryGetConst(name, out int cv))
                     {
                         bit = cv;
                         return true;
@@ -1193,7 +1208,7 @@ public partial class IRGenerator
                     string qualified = QualifyTarget(stmt.Targets[k]);
                     DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : DataType.UINT8;
                     Emit(new Copy(v, new Variable(qualified, dt)));
-                    if (v is Constant c) constantVariables[qualified] = c.Value;
+                    if (v is Constant c) SetConst(qualified, c.Value);
                 }
             }
             else
@@ -1208,7 +1223,7 @@ public partial class IRGenerator
                     Val v = VisitExpression(tup.Elements[k]);
                     string qualified = QualifyTarget(stmt.Targets[k]);
                     Emit(new Copy(v, new Variable(qualified, DataType.UINT8)));
-                    if (v is Constant c) constantVariables[qualified] = c.Value;
+                    if (v is Constant c) SetConst(qualified, c.Value);
                     variableTypes[qualified] = DataType.UINT8;
                 }
 
@@ -1221,7 +1236,7 @@ public partial class IRGenerator
                     Val v = VisitExpression(tup.Elements[srcIdx]);
                     string elemKey = starName + "__" + k;
                     Emit(new Copy(v, new Variable(elemKey, DataType.UINT8)));
-                    if (v is Constant c) constantVariables[elemKey] = c.Value;
+                    if (v is Constant c) SetConst(elemKey, c.Value);
                     variableTypes[elemKey] = DataType.UINT8;
                 }
 
@@ -1232,7 +1247,7 @@ public partial class IRGenerator
                     Val v = VisitExpression(tup.Elements[srcIdx]);
                     string qualified = QualifyTarget(stmt.Targets[starIdx + 1 + k]);
                     Emit(new Copy(v, new Variable(qualified, DataType.UINT8)));
-                    if (v is Constant c) constantVariables[qualified] = c.Value;
+                    if (v is Constant c) SetConst(qualified, c.Value);
                     variableTypes[qualified] = DataType.UINT8;
                 }
             }
@@ -1255,7 +1270,7 @@ public partial class IRGenerator
                 string dstName = QualifyTarget(stmt.Targets[k]);
                 DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t : DataType.UINT8;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
-                if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;
+                if (TryGetConst(srcName, out int cVal)) SetConst(dstName, cVal);
             }
         }
         else

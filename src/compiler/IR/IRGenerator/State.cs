@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -33,6 +33,7 @@ public partial class IRGenerator
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();
     private Dictionary<string, List<DataType>> functionParamTypes = new();
+    private Dictionary<string, HashSet<string>> functionKeywordOnlyParams = new(); // param names that are keyword-only
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
@@ -61,6 +62,13 @@ public partial class IRGenerator
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+
+    // Accessor methods for constantVariables.
+    // Using these helpers rather than direct dictionary access provides a single
+    // location for breakpoints, logging, or future invariant checks.
+    private void SetConst(string name, int value) => constantVariables[name] = value;
+    private void KillConst(string name) => constantVariables.Remove(name);
+    private bool TryGetConst(string name, out int value) => constantVariables.TryGetValue(name, out value);
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
     private string pendingConstructorTarget = ""; // Target variable for constructor inlining
 
@@ -102,10 +110,8 @@ public partial class IRGenerator
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
-    // Tracks compile-time float constant variables (never emitted to AVR; folded to int at use)
+    // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();
-
-    private int floatCtCounter = 0;
 
     // Maps class name → module prefix where the class is defined.
     private Dictionary<string, string?> classModuleMap = new();
@@ -133,6 +139,9 @@ public partial class IRGenerator
     private Dictionary<string, string> lambdaVariableNames = new();
     private int lambdaCounter = 0;
     private string pendingLambdaKey = "";
+
+    // PEP 695: type alias map — name → annotation string (compile-time only, no SRAM).
+    private Dictionary<string, string> typeAliases = new();
 
     private DeviceConfig deviceConfig = null!;
 }

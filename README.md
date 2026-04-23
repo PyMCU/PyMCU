@@ -6,14 +6,12 @@ PyMCU is a modern toolchain for programming 8-bit microcontrollers using a stati
 
 | Component | License |
 |-----------|---------|
-| Compiler & CLI driver (`src/`) | [AGPL-3.0](LICENSE) with [Commercial Exception](COMMERCIAL_EXCEPTION.md) |
+| Compiler, CLI driver & extensions (`src/`, `extensions/`) | [MIT](LICENSE) |
 | Standard library (`lib/`) | [MIT](lib/LICENSE) |
-| Your compiled firmware (output) | Yours — see [COMMERCIAL_EXCEPTION.md](COMMERCIAL_EXCEPTION.md) |
+| Your compiled firmware (output) | Yours — no restrictions |
 
-The compiler and driver are open-source under the AGPL-3.0. Embedding or redistributing
-them in a closed-source product requires a commercial license. The firmware you build with
-PyMCU is **entirely yours** and is not subject to the AGPL. See
-[COMMERCIAL_EXCEPTION.md](COMMERCIAL_EXCEPTION.md) for the full dual-license terms.
+The entire PyMCU toolchain is MIT-licensed. Use it freely in open-source and commercial
+projects alike. The firmware you build with PyMCU belongs entirely to you.
 
 ## Installation
 

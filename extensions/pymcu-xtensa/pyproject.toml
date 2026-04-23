@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymcu-xtensa"
+version = "0.1.0a1"
+description = "PyMCU Xtensa support: codegen backend (ESP8266, ESP32, ESP32-S2, ESP32-S3) and GNU/LLVM toolchain"
+readme = "README.md"
+authors = [
+    { name = "Ivan Montiel Cardona", email = "developer@begeistert.dev" }
+]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pymcu-plugin-sdk>=0.1.0a1",
+]
+
+[project.entry-points."pymcu.backends"]
+xtensa = "pymcu.backend.xtensa:XtensaBackendPlugin"
+
+[project.entry-points."pymcu.toolchains"]
+xtensa = "pymcu.toolchain.xtensa:XtensaToolchainPlugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/pymcu"]

@@ -2,20 +2,7 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# SPDX-License-Identifier: MIT
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -97,13 +84,13 @@ class PyMCUCompiler:
 
             import pymcu
             if is_verbose:
-                self.console.print(f"[debug] pymcu imported successfully from: {pymcu.__file__}", style="dim green")
-            if hasattr(pymcu, "__file__") and pymcu.__file__:
-                p = Path(pymcu.__file__).parent / "chips"
-                if p.is_dir():
-                    return str(Path(pymcu.__file__).parent)
-                elif is_verbose:
-                    self.console.print(f"[debug] chips directory not found at: {p}", style="yellow")
+                self.console.print(f"[debug] pymcu namespace __path__: {list(pymcu.__path__)}", style="dim green")
+            for _p in pymcu.__path__:
+                chips_dir = Path(_p) / "chips"
+                if chips_dir.is_dir():
+                    return str(Path(_p))
+            if is_verbose:
+                self.console.print(f"[debug] chips/ not found in any pymcu.__path__ entry", style="yellow")
         except ImportError as e:
             if is_verbose:
                 self.console.print(f"[debug] Failed to import pymcu: {e}", style="dim")
@@ -113,10 +100,13 @@ class PyMCUCompiler:
                 self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
-    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None):
+    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--target", target, "--freq", str(freq)]
+
+        if emit_ir_path:
+            cmd.extend(["--emit-ir", emit_ir_path])
 
         if reset_vector is not None:
             cmd.extend(["--reset-vector", str(reset_vector)])

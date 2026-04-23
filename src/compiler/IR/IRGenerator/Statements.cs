@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -300,6 +300,12 @@ public partial class IRGenerator
         }
         else if (stmt is PassStmt)
         {
+            return;
+        }
+        else if (stmt is TypeAliasStmt typeAlias)
+        {
+            // PEP 695: register the alias in the type alias map — emits no code.
+            typeAliases[typeAlias.Name] = typeAlias.Annotation;
             return;
         }
         else if (stmt is RaiseStmt raiseStmt)

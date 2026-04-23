@@ -17,6 +17,28 @@
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\backend-sdk\PyMCU.Backend.SDK.csproj" />
+  </ItemGroup>
+
+  <!-- Exclude shared types that now live in PyMCU.Backend.SDK. -->
+  <ItemGroup>
+    <Compile Remove="IR\DataType.cs" />
+    <Compile Remove="IR\Tacky.cs" />
+    <Compile Remove="Common\Models\DeviceConfig.cs" />
+    <Compile Remove="Backend\CodeGen.cs" />
+    <Compile Remove="Backend\Analysis\StackAllocator.cs" />
+    <Compile Remove="Backend\Analysis\DynamicStackAllocator.cs" />
+  </ItemGroup>
+
+  <!-- Exclude AVR backend files that now live in PyMCU.Backend.AVR. -->
+  <ItemGroup>
+    <Compile Remove="Backend\Targets\AVR\AvrCodeGen.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrLinearScan.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrPeephole.cs" />
+    <Compile Remove="Backend\Targets\AVR\AvrRegisterAllocator.cs" />
+  </ItemGroup>
+
   <!--
     WriteVersionInfo — AOT-safe version stamping.
     Overwrites Common/CompilerInfo.cs with a const string derived from $(Version).
@@ -32,6 +54,27 @@
       Lines="@(_VersionLines)"
       Overwrite="true"
       WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
+    EnforceBackendIsolation — prevents the compiler core from taking a direct
+    ProjectReference to any concrete backend package (avr, pic, riscv, pio).
+    Only PyMCU.Backend.SDK (the shared IR contract) is permitted.
+    If this check fires, move the dependency to the relevant extension package.
+  -->
+  <Target Name="EnforceBackendIsolation" BeforeTargets="Build">
+    <ItemGroup>
+      <_ConcreteBackendRef Include="@(ProjectReference)"
+        Condition="$([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-avr'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pic'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-riscv'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pio'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-pio'))
+                Or $([System.String]::Copy('%(Identity)').ToLower().Contains('pymcu-riscv'))" />
+    </ItemGroup>
+    <Error
+      Condition="'@(_ConcreteBackendRef)' != ''"
+      Text="Compiler core (PyMCU.csproj) must not reference concrete backend packages: @(_ConcreteBackendRef). Only PyMCU.Backend.SDK is permitted. Add the dependency to the relevant extension package instead." />
   </Target>
 
 </Project>

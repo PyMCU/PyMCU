@@ -46,7 +46,7 @@ def _delay_ms_pic14(ms: uint8):
         asm("_dly_inner:")
         asm("    DECFSZ __dly_c1, F")
         asm("    GOTO _dly_inner")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_ms_pic14e(ms: uint8):
@@ -66,7 +66,7 @@ def _delay_ms_pic14e(ms: uint8):
         asm("    GOTO _dly_inner_e")
         asm("    DECFSZ __dly_c2, F")
         asm("    GOTO _dly_outer_e")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_ms_pic18(ms: uint8):
@@ -86,7 +86,7 @@ def _delay_ms_pic18(ms: uint8):
         asm("    BRA _dly_inner_18")
         asm("    DECFSZ __dly_c2, F, ACCESS")
         asm("    BRA _dly_outer_18")
-        i = i + 1
+        i += 1
 
 def _delay_1ms_avr():
     """AVR 1ms delay subroutine (non-inline; called once per ms by _delay_ms_avr)."""
@@ -114,7 +114,7 @@ def _delay_ms_avr(ms: uint16):
     i: uint16 = 0
     while i < ms:
         _delay_1ms_avr()
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_ms_riscv(ms: uint8):
@@ -132,7 +132,7 @@ def _delay_ms_riscv(ms: uint8):
         asm("    BNEZ t1, _dly_inner_rv")
         asm("    ADDI t0, t0, -1")
         asm("    BNEZ t0, _dly_outer_rv")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_ms_pic12(ms: uint8):
@@ -146,7 +146,7 @@ def _delay_ms_pic12(ms: uint8):
         asm("_dly_inner_12:")
         asm("    DECFSZ __dly_c1, F")
         asm("    GOTO _dly_inner_12")
-        i = i + 1
+        i += 1
 
 @inline
 def delay_us(us: uint8):
@@ -174,7 +174,7 @@ def _delay_us_pic14(us: uint8):
     i: uint8 = 0
     while i < us:
         asm("    NOP")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_us_pic14e(us: uint8):
@@ -183,7 +183,7 @@ def _delay_us_pic14e(us: uint8):
     while i < us:
         asm("    NOP")
         asm("    NOP")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_us_pic18(us: uint8):
@@ -192,7 +192,7 @@ def _delay_us_pic18(us: uint8):
     while i < us:
         asm("    NOP")
         asm("    NOP")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_us_avr(us: uint8):
@@ -212,7 +212,7 @@ def _delay_us_avr(us: uint8):
         asm("    NOP")
         asm("    NOP")
         asm("    NOP")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_us_riscv(us: uint8):
@@ -223,7 +223,7 @@ def _delay_us_riscv(us: uint8):
         asm("    NOP")
         asm("    NOP")
         asm("    NOP")
-        i = i + 1
+        i += 1
 
 @inline
 def _delay_us_pic12(us: uint8):
@@ -231,7 +231,18 @@ def _delay_us_pic12(us: uint8):
     i: uint8 = 0
     while i < us:
         asm("    NOP")
-        i = i + 1
+        i += 1
+
+
+@inline
+def sleep(seconds: float):
+    """Delay for approximately the given number of seconds.
+
+    Accepts compile-time float literals: sleep(0.5) compiles to
+    delay_ms(500) with zero runtime float overhead.
+    Only constant float values at the call site are supported.
+    """
+    delay_ms(int(seconds * 1000))
 
 
 @inline
@@ -261,7 +272,6 @@ def millis() -> uint32:
             return _millis_avr()
         case _:
             return 0
-    return 0
 
 
 @inline
@@ -278,5 +288,4 @@ def micros() -> uint32:
             return _micros_avr()
         case _:
             return 0
-    return 0
 

@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\compiler\PyMCU.csproj" />
+    <ProjectReference Include="..\..\extensions\pymcu-avr\src\csharp\lib\PyMCU.Backend.AVR.csproj" />
   </ItemGroup>
 
 </Project>

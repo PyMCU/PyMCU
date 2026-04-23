@@ -449,3 +449,120 @@ public class OptimizerPassTests
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PropagateCopies — regression and property tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+public class PropagateCopiesTests
+{
+    private static List<Instruction> Optimize(params Instruction[] body)
+    {
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function { Name = "main", Body = body.ToList() });
+        return Optimizer.Optimize(prog).Functions[0].Body;
+    }
+
+    /// <summary>
+    /// Regression test for the bug fixed in the PropagateCopies optimizer pass:
+    /// a Call instruction that writes to a Variable must invalidate that variable
+    /// in varConsts so subsequent instructions do not see the stale initialization
+    /// constant.
+    ///
+    /// Scenario (mirrors examples/avr/ffi-crc8):
+    ///   crc = 0                          ; varConsts["crc"] = 0
+    ///   crc = crc8_update(crc, 0x28)     ; first call — should read crc = 0 here, then invalidate crc
+    ///   crc = crc8_update(crc, 0x11)     ; second call — crc must be Variable("crc"), NOT Constant(0)
+    ///   return crc
+    ///
+    /// Before the fix, "crc" was never removed from varConsts after the first Call
+    /// wrote to it, so the second call received Constant(0) as its first argument.
+    /// </summary>
+    [Fact]
+    public void CallDest_IsInvalidated_SubsequentCallSeesVariable()
+    {
+        var crc = new Variable("crc");
+        var body = Optimize(
+            new Copy(new Constant(0), crc),
+            new Call("crc8_update", [crc, new Constant(0x28)], crc),
+            new Call("crc8_update", [crc, new Constant(0x11)], crc),
+            new Return(crc));
+
+        // The second call's first argument must not be the stale initialization constant.
+        var calls = body.OfType<Call>().ToList();
+        calls.Should().HaveCountGreaterOrEqualTo(2,
+            "both crc8_update calls must survive optimization");
+        calls[^1].Args[0].Should().NotBe(new Constant(0),
+            "after the first Call writes to crc, varConsts must no longer hold Constant(0) for crc");
+    }
+
+    /// <summary>
+    /// Verifies that running Optimizer.Optimize() twice on the same program produces
+    /// identical Call argument types.  If PropagateCopies were not idempotent,
+    /// a second optimization pass would propagate stale constants that the first
+    /// pass left behind, changing the instruction stream.
+    /// </summary>
+    [Fact]
+    public void Optimize_IsIdempotent_ForCallChains()
+    {
+        var crc = new Variable("crc");
+        var prog = new ProgramIR();
+        prog.Functions.Add(new Function
+        {
+            Name = "main",
+            Body =
+            [
+                new Copy(new Constant(0), crc),
+                new Call("crc8_update", [crc, new Constant(0x28)], crc),
+                new Call("crc8_update", [crc, new Constant(0x11)], crc),
+                new Return(crc),
+            ]
+        });
+
+        var first  = Optimizer.Optimize(prog);
+        var second = Optimizer.Optimize(first);   // second pass on already-optimized code
+
+        var calls1 = first.Functions[0].Body.OfType<Call>().ToList();
+        var calls2 = second.Functions[0].Body.OfType<Call>().ToList();
+
+        calls1.Should().HaveCount(calls2.Count,
+            "idempotency: second pass must not remove or add Call instructions");
+
+        for (var i = 0; i < calls1.Count; i++)
+        {
+            calls1[i].Args.Should().BeEquivalentTo(calls2[i].Args,
+                $"call[{i}] arguments must be identical after a second optimization pass");
+        }
+    }
+
+    /// <summary>
+    /// GetDst must cover every instruction type that defines a value so that
+    /// PropagateCopies can invalidate it via the default branch.
+    /// This test enumerates a representative set and asserts GetDst is non-null.
+    /// </summary>
+    [Fact]
+    public void GetDst_ReturnsNonNull_ForAllDefiningInstructions()
+    {
+        var v = new Variable("x");
+        var t = new Temporary("t1");
+
+        Instruction[] definingInstructions =
+        [
+            new Binary(IrBinaryOp.Add, v, v, t),
+            new Unary(IrUnaryOp.Neg, v, t),
+            new Copy(v, t),
+            new Call("f", [], t),
+            new BitCheck(v, 0, t),
+            new LoadIndirect(v, t),
+            new ArrayLoad("arr", new Constant(0), t, DataType.UINT8, 4),
+            new ArrayLoadFlash("arr", new Constant(0), t),
+            new AugAssign(IrBinaryOp.Add, v, new Constant(1)),
+        ];
+
+        foreach (var instr in definingInstructions)
+        {
+            Optimizer.GetDst(instr).Should().NotBeNull(
+                $"{instr.GetType().Name} defines a value and GetDst must return its destination");
+        }
+    }
+}
+

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -24,6 +24,14 @@ public partial class IRGenerator
     {
         foreach (var stmt in ast.GlobalStatements)
         {
+            // PEP 695: type alias — register for compile-time resolution, emit no code.
+            if (stmt is TypeAliasStmt typeAlias)
+            {
+                typeAliases[currentModulePrefix + typeAlias.Name] = typeAlias.Annotation;
+                typeAliases[typeAlias.Name] = typeAlias.Annotation;
+                continue;
+            }
+
             string name = "";
             string type = "";
             Expression? initializer = null;
@@ -149,7 +157,19 @@ public partial class IRGenerator
                                 break;
                         }
 
-                        if (string.IsNullOrEmpty(innerName) || innerInit == null) continue;
+                        if (string.IsNullOrEmpty(innerName)) continue;
+
+                        // PEP 526: bare annotation (no RHS) — register as mutable SRAM member.
+                        if (innerInit == null)
+                        {
+                            if (!string.IsNullOrEmpty(innerType) && !isEnum)
+                            {
+                                mutableGlobals[currentModulePrefix + innerName] =
+                                    DataTypeExtensions.StringToDataType(innerType);
+                            }
+                            continue;
+                        }
+
                         try
                         {
                             var val = EvaluateConstantExpr(innerInit);
@@ -271,14 +291,18 @@ public partial class IRGenerator
             functionReturnTypes[fullName] = func.ReturnType;
             var @params = new List<string>();
             var paramTypes = new List<DataType>();
+            var koParams = new HashSet<string>();
             foreach (var p in func.Params)
             {
                 @params.Add(p.Name);
                 paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
+                if (p.IsKeywordOnly) koParams.Add(p.Name);
             }
 
             functionParams[fullName] = @params;
             functionParamTypes[fullName] = paramTypes;
+            if (koParams.Count > 0)
+                functionKeywordOnlyParams[fullName] = koParams;
 
             if (scope != null)
             {

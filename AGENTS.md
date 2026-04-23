@@ -13,10 +13,20 @@ it to bare-metal firmware for microcontrollers (currently AVR/ATmega328P, PIC, R
 
 Key components:
 - `src/compiler/` — C# compiler (`pymcuc`): Lexer, Parser, IRGenerator, AVR codegen
-- 
 - `lib/src/pymcu/` — Python stdlib compiled into firmware (HAL, drivers, boards)
 - `src/driver/` — Python CLI driver (`pymcu build/flash/new`)
 - `tests/integration/` — .NET/AVR8Sharp integration tests (must always pass)
+- `extensions/pymcu-plugin-sdk/` — Shared Python ABCs for backend + toolchain plugins (MIT)
+- `extensions/pymcu-avr/` — AVR backend + GNU AVR toolchain plugin (MIT)
+- `extensions/pymcu-pic/` — PIC backend + gputils toolchain plugin (MIT)
+- `extensions/pymcu-riscv/` — RISC-V backend + GNU RISC-V toolchain plugin (MIT)
+- `extensions/pymcu-pio/` — RP2040 PIO backend + pioasm toolchain plugin (MIT)
+
+**Extension convention:** every new architecture needs exactly:
+1. A merged package in `extensions/pymcu-<arch>/` (backend + toolchain Python, csharp CLI/lib)
+2. Register both `pymcu.backends.<arch>` and `pymcu.toolchains.<arch>` entry points
+3. Add `pymcu-<arch>` to `[project.optional-dependencies]` and `[tool.uv.sources]` in root `pyproject.toml`
+4. Add `<arch> = ["pymcu-<arch>>=0.1.0a1"]` to the `all` extra
 
 ---
 

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -33,8 +33,11 @@ public partial class IRGenerator
         if (expr is YieldExpr yieldExpr) return VisitYield(yieldExpr);
         if (expr is IndexExpr idx) return VisitIndex(idx);
         if (expr is MemberAccessExpr mem) return VisitMemberAccess(mem);
+        if (expr is ChainedCompareExpr chain) return VisitChainedCompare(chain);
 
         if (expr is BooleanLiteral boolean) return new Constant(boolean.Value ? 1 : 0);
+
+        if (expr is NoneExpr) return new Constant(-1);
 
         if (expr is StringLiteral str)
         {
@@ -68,11 +71,7 @@ public partial class IRGenerator
         if (expr is LambdaExpr lam) return VisitLambdaExpr(lam);
 
         if (expr is FloatLiteral floatLit)
-        {
-            string name = "float_ct_" + floatCtCounter++;
-            floatConstantVariables[name] = floatLit.Value;
-            return new Variable(name, DataType.UINT8);
-        }
+            return new FloatConstant(floatLit.Value);
 
         throw new Exception("IR Generation: Unknown Expression type");
     }
@@ -170,12 +169,19 @@ public partial class IRGenerator
             else
             {
                 Val val = VisitExpression(part.Expr!);
+                string fragment;
                 if (val is Constant c)
                 {
-                    if (stringIdToStr.TryGetValue(c.Value, out var s)) result += s;
-                    else result += c.Value.ToString();
+                    if (stringIdToStr.TryGetValue(c.Value, out var s)) fragment = s;
+                    else fragment = c.Value.ToString();
                 }
                 else throw new Exception("f-string interpolation requires a compile-time constant expression");
+
+                // PEP 701: apply compile-time format spec (e.g. "04d", "4d", "d").
+                if (!string.IsNullOrEmpty(part.FormatSpec))
+                    fragment = ApplyFStringFormatSpec(fragment, part.FormatSpec);
+
+                result += fragment;
             }
         }
 
@@ -187,6 +193,132 @@ public partial class IRGenerator
         }
 
         return new Constant(stringLiteralIds[result]);
+    }
+
+    private static string ApplyFStringFormatSpec(string value, string spec)
+    {
+        // Parse optional fill/align, width, and type from the format spec.
+        // Supported: [fill][align][0][width][type] where type in {d, x, X, o, b, s}.
+        // Examples: "04d" → zero-pad to 4; "8d" → right-align to 8; "<8s" → left-align to 8.
+        if (string.IsNullOrEmpty(spec)) return value;
+
+        char fill = ' ';
+        char align = '>';
+        bool zeroPad = false;
+        int width = 0;
+        char type = 'd';
+
+        int pos = 0;
+
+        // Two-character fill+align: e.g. '*<' or '>8'
+        if (spec.Length >= 2 && (spec[1] == '<' || spec[1] == '>' || spec[1] == '^'))
+        {
+            fill = spec[0];
+            align = spec[1];
+            pos = 2;
+        }
+        else if (spec.Length >= 1 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^'))
+        {
+            align = spec[0];
+            pos = 1;
+        }
+
+        // Zero-pad flag
+        if (pos < spec.Length && spec[pos] == '0')
+        {
+            zeroPad = true;
+            fill = '0';
+            align = '>';
+            pos++;
+        }
+
+        // Width
+        while (pos < spec.Length && char.IsDigit(spec[pos]))
+        {
+            width = width * 10 + (spec[pos] - '0');
+            pos++;
+        }
+
+        // Type
+        if (pos < spec.Length)
+            type = spec[pos];
+
+        // Convert value to the requested base.
+        string formatted = value;
+        if (int.TryParse(value, out int intVal))
+        {
+            formatted = type switch
+            {
+                'x' => intVal.ToString("x"),
+                'X' => intVal.ToString("X"),
+                'o' => Convert.ToString(intVal, 8),
+                'b' => Convert.ToString(intVal, 2),
+                _ => intVal.ToString()
+            };
+        }
+
+        // Apply width and alignment.
+        if (width > 0 && formatted.Length < width)
+        {
+            int pad = width - formatted.Length;
+            if (zeroPad && (type == 'd' || type == 'x' || type == 'X' || type == 'o' || type == 'b'))
+            {
+                formatted = formatted.PadLeft(width, '0');
+            }
+            else
+            {
+                formatted = align switch
+                {
+                    '<' => formatted.PadRight(width, fill),
+                    '^' => formatted.PadLeft(formatted.Length + pad / 2, fill).PadRight(width, fill),
+                    _ => formatted.PadLeft(width, fill)
+                };
+            }
+        }
+
+        return formatted;
+    }
+
+    /// Evaluates a chained comparison such as <c>0 &lt;= x &lt;= 255</c> (PEP 308).
+    /// Each middle operand is stored in a temporary to avoid double evaluation.
+    private Val VisitChainedCompare(ChainedCompareExpr expr)
+    {
+        // Evaluate all operands, caching non-trivial ones in temporaries so each
+        // middle expression is only evaluated once.
+        var vals = new List<Val>(expr.Operands.Count);
+        for (int i = 0; i < expr.Operands.Count; i++)
+        {
+            Val v = VisitExpression(expr.Operands[i]);
+            // Store non-trivial middle operands so they are not re-evaluated.
+            if (i > 0 && i < expr.Operands.Count - 1 && !(v is Constant))
+            {
+                Temporary tmp = MakeTemp(v is Variable vv ? vv.Type : DataType.UINT8);
+                Emit(new Copy(v, tmp));
+                v = tmp;
+            }
+            vals.Add(v);
+        }
+
+        // Build (pair0) and (pair1) and ...
+        Temporary? result = null;
+        for (int i = 0; i < expr.Operators.Count; i++)
+        {
+            Temporary pairResult = MakeTemp();
+            Emit(new Binary(MapBinaryOp(expr.Operators[i]), vals[i], vals[i + 1], pairResult));
+
+            if (result == null)
+            {
+                result = pairResult;
+            }
+            else
+            {
+                Temporary andResult = MakeTemp();
+                Emit(new Binary(BinaryOp.BitAnd, result, pairResult, andResult));
+                result = andResult;
+            }
+        }
+
+        return result!;
     }
 
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
@@ -421,36 +553,63 @@ public partial class IRGenerator
 
         double? AsFloatCt(Val v)
         {
+            if (v is FloatConstant fc) return fc.Value;
             if (v is Variable vv && floatConstantVariables.TryGetValue(vv.Name, out double f)) return f;
             if (v is Constant cv) return cv.Value;
             return null;
         }
 
-        bool v1IsFloat = v1 is Variable vv1 && floatConstantVariables.ContainsKey(vv1.Name);
-        bool v2IsFloat = v2 is Variable vv2 && floatConstantVariables.ContainsKey(vv2.Name);
-        if (v1IsFloat || v2IsFloat)
+        bool v1IsFloat = v1 is FloatConstant
+            || (v1 is Variable vv1 && floatConstantVariables.ContainsKey(vv1.Name));
+        bool v2IsFloat = v2 is FloatConstant
+            || (v2 is Variable vv2 && floatConstantVariables.ContainsKey(vv2.Name));
+        bool eitherFloat = v1IsFloat || v2IsFloat
+            || GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT;
+        if (eitherFloat)
         {
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
             if (f1.HasValue && f2.HasValue)
             {
-                double res = 0;
-                switch (expr.Op)
+                // Compile-time fold: both operands are known constants.
+                double res = expr.Op switch
                 {
-                    case AstBinOp.Add: res = f1.Value + f2.Value; break;
-                    case AstBinOp.Sub: res = f1.Value - f2.Value; break;
-                    case AstBinOp.Mul: res = f1.Value * f2.Value; break;
-                    case AstBinOp.Div:
-                    case AstBinOp.FloorDiv: res = f2.Value != 0.0 ? f1.Value / f2.Value : 0.0; break;
-                    case AstBinOp.Mod: res = f1.Value % f2.Value; break;
-                }
-
-                return new Constant((int)Math.Round(res));
+                    AstBinOp.Add => f1.Value + f2.Value,
+                    AstBinOp.Sub => f1.Value - f2.Value,
+                    AstBinOp.Mul => f1.Value * f2.Value,
+                    AstBinOp.Div or AstBinOp.FloorDiv => f2.Value != 0.0 ? f1.Value / f2.Value : 0.0,
+                    AstBinOp.Mod => f1.Value % f2.Value,
+                    _ => 0.0
+                };
+                return new FloatConstant(res);
             }
+
+            // Runtime float operation: emit Binary with FLOAT destination.
+            static BinaryOp MapOp(AstBinOp op) => op switch
+            {
+                AstBinOp.Add => BinaryOp.Add,
+                AstBinOp.Sub => BinaryOp.Sub,
+                AstBinOp.Mul => BinaryOp.Mul,
+                AstBinOp.Div or AstBinOp.FloorDiv => BinaryOp.Div,
+                AstBinOp.Mod => BinaryOp.Mod,
+                AstBinOp.Equal => BinaryOp.Equal,
+                AstBinOp.NotEqual => BinaryOp.NotEqual,
+                AstBinOp.Less => BinaryOp.LessThan,
+                AstBinOp.LessEq => BinaryOp.LessEqual,
+                AstBinOp.Greater => BinaryOp.GreaterThan,
+                AstBinOp.GreaterEq => BinaryOp.GreaterEqual,
+                _ => throw new NotSupportedException($"Float op {op} not supported at runtime")
+            };
+            bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
+                or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
+            Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
+            Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
+            return floatDst;
         }
 
         DataType GetValType(Val v)
         {
+            if (v is FloatConstant) return DataType.FLOAT;
             if (v is Variable varV) return varV.Type;
             if (v is Temporary tmp) return tmp.Type;
             if (v is Constant c)

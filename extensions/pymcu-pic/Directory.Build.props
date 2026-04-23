@@ -1,0 +1,19 @@
+<!-- Self-contained MSBuild props for pymcu-pic (backend + toolchain).
+     MSBuild searches upward and stops here — all .csproj files under this
+     folder inherit these properties. Keeping them here allows the extension
+     to be extracted to an independent repository without changes. -->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
+    <RootNamespace>PyMCU</RootNamespace>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Ivan Montiel Cardona and the PyMCU Project Authors</Authors>
+    <Copyright>Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

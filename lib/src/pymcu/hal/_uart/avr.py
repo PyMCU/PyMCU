@@ -47,22 +47,19 @@ def uart_init(baud: const[uint16]):
     DDRD[1] = 1
     DDRD[0] = 0
 
-    # Pre-computed UBRR for 16 MHz — avoids runtime division
+    # Pre-computed UBRR for 16 MHz — avoids runtime division.
+    # High byte is always 0 for all supported baud rates.
+    UBRR0H.value = 0
     if baud == 9600:
         UBRR0L.value = 103
-        UBRR0H.value = 0
     elif baud == 19200:
         UBRR0L.value = 51
-        UBRR0H.value = 0
     elif baud == 38400:
         UBRR0L.value = 25
-        UBRR0H.value = 0
     elif baud == 57600:
         UBRR0L.value = 16
-        UBRR0H.value = 0
     elif baud == 115200:
         UBRR0L.value = 8
-        UBRR0H.value = 0
 
     # 8N1 frame format (UCSZ01=1, UCSZ00=1, async, no parity, 1 stop)
     UCSR0C.value = 0x06
@@ -92,6 +89,8 @@ def uart_read() -> uint8:
 def uart_write_decimal_u8(value: uint8):
     # Print uint8 value as decimal digits (0-255).
     # Uses __div8 / __mod8 from the AVR math runtime.
+    # Variable names (hundreds, tens, units) are re-declared in each branch
+    # because the compiler requires declarations at the point of first use.
     if value >= 100:
         hundreds: uint8 = value // 100
         uart_write(hundreds + 48)
@@ -116,16 +115,14 @@ def uart_write_str(s: const[str]):
     b: uint8 = s[0]
     while b != 0:
         uart_write(b)
-        i = i + 1
+        i += 1
         b = s[i]
 
 
 @inline
 def uart_available() -> uint8:
     # Returns 1 if a byte is waiting in the UART receive buffer (RXC0, bit 7 of UCSR0A)
-    if UCSR0A[7]:
-        return 1
-    return 0
+    return 1 if UCSR0A[7] else 0
 
 
 @inline
@@ -169,9 +166,7 @@ def uart_rx_isr():
 def uart_rx_available() -> uint8:
     # Returns 1 if at least one byte is waiting in the ring buffer.
     global _rx_head, _rx_tail
-    if _rx_head != _rx_tail:
-        return 1
-    return 0
+    return 1 if _rx_head != _rx_tail else 0
 
 
 @inline

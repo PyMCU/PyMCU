@@ -67,26 +67,29 @@ public class PIC18CodeGenTests
         Assert.DoesNotContain("MOVFF\tx, x", asm);
     }
 
-    // ─── ArithmeticAndFactory ─────────────────────────────────────────────────
+    // ─── Factory (throw-only) ─────────────────────────────────────────────────
+    // CodeGenFactory is now throw-only: all backends are external plugins.
 
     [Fact]
-    public void ArithmeticAndFactory()
+    public void Factory_ThrowsForExternalBackend()
     {
-        var codegen = CodeGenFactory.Create("pic18f45k50", Pic18f45k50);
-        Assert.IsType<PIC18CodeGen>(codegen);
+        var ex = Assert.Throws<NotSupportedException>(() => CodeGenFactory.Create("pic18f45k50", Pic18f45k50));
+        Assert.Contains("pymcuc-pic", ex.Message);
+    }
 
+    // ─── Arithmetic ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Arithmetic()
+    {
         // a = 10 + b → MOVLW 0x0A; ADDWF b, W; MOVWF a
-        var prog = MakeProgram("main",
+        var codegen = Compile(MakeProgram("main",
             new Binary(BinaryOp.Add, new Constant(10), new Variable("b"), new Variable("a")),
-            new Return(new NoneVal()));
+            new Return(new NoneVal())));
 
-        var sw = new StringWriter();
-        codegen.Compile(prog, sw);
-        var asm = sw.ToString();
-
-        Assert.Contains("MOVLW\t0x0A", asm);
-        Assert.Contains("ADDWF\tb, W", asm);
-        Assert.Contains("MOVWF\ta", asm);
+        Assert.Contains("MOVLW\t0x0A", codegen);
+        Assert.Contains("ADDWF\tb, W", codegen);
+        Assert.Contains("MOVWF\ta", codegen);
     }
 
     // ─── BankedAccess ─────────────────────────────────────────────────────────

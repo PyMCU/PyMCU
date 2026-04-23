@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -26,5 +26,6 @@ public sealed record CompilerOptions(
     List<string> Includes,
     int ResetVector,
     int InterruptVector,
-    bool Verbose
+    bool Verbose,
+    string? EmitIrPath = null
 );
