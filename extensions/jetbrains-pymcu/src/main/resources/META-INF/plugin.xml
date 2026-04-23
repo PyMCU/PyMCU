@@ -2,7 +2,7 @@
     <id>dev.begeistert.pymcu</id>
     <name>PyMCU</name>
     <version>0.1.0a1</version>
-    <vendor email="begeistert@gmail.com" url="https://github.com/PyMCU/PyMCU">begeistert</vendor>
+    <vendor email="begeistert@gmail.com" url="https://pymcu.dev">begeistert</vendor>
 
     <description><![CDATA[
         PyMCU support for PyCharm: run configurations, error highlighting, tool window,
