@@ -1826,9 +1826,8 @@ public class PIC14CodeGen : CodeGen
         SelectBank(mulA);
         Emit("MOVWF", mulA);
         LoadIntoW(src2);
-        string mulBAddr = GetOrAllocVariable("__mul_b");
-        SelectBank(mulBAddr);
-        Emit("MOVWF", mulBAddr);
+        SelectBank(mulB);
+        Emit("MOVWF", mulB);
         Emit("CALL", "__pic14_mul8");
         StoreWInto(dst);
     }
@@ -1871,9 +1870,8 @@ public class PIC14CodeGen : CodeGen
         SelectBank(divNum);
         Emit("MOVWF", divNum);
         LoadIntoW(src2);
-        string divDenAddr = GetOrAllocVariable("__div_den");
-        SelectBank(divDenAddr);
-        Emit("MOVWF", divDenAddr);
+        SelectBank(divDen);
+        Emit("MOVWF", divDen);
         Emit("CALL", "__pic14_div8");
         if (isRemainder)
         {
