@@ -45,9 +45,7 @@ public class PIC18CodeGen : CodeGen
         {
         }
 
-        public override void EmitInterruptReturn()
-        {
-        }
+        public override void EmitInterruptReturn() => Emit("RETFIE", "FAST");
 
         private string MakeLabel(string prefix) => $"{prefix}_{labelCounter++}";
 
@@ -232,9 +230,9 @@ public class PIC18CodeGen : CodeGen
                 case JumpIfLessOrEqual arg: CompileJumpIfLessOrEqual(arg); break;
                 case JumpIfGreaterThan arg: CompileJumpIfGreaterThan(arg); break;
                 case JumpIfGreaterOrEqual arg: CompileJumpIfGreaterOrEqual(arg); break;
-                case AugAssign: throw new NotSupportedException("PIC18: AugAssign not implemented");
-                case LoadIndirect: throw new NotSupportedException("PIC18: LoadIndirect not yet implemented");
-                case StoreIndirect: throw new NotSupportedException("PIC18: StoreIndirect not yet implemented");
+                case AugAssign arg: CompileAugAssign(arg); break;
+                case LoadIndirect arg: CompileLoadIndirect(arg); break;
+                case StoreIndirect arg: CompileStoreIndirect(arg); break;
                 case InlineAsm arg: assembly.Add(PIC18AsmLine.MakeRaw(arg.Code)); break;
                 case DebugLine arg:
                     if (!string.IsNullOrEmpty(arg.SourceFile)) EmitComment($"{arg.SourceFile}:{arg.Line}: {arg.Text}");
@@ -737,5 +735,103 @@ public class PIC18CodeGen : CodeGen
             Emit("SUBWF", s1, "W", GetAccessMode(s1));
             Emit("BTFSC", "STATUS", "C", "ACCESS");
             Emit("BRA", arg.Target);
+        }
+
+        private void CompileAugAssign(AugAssign aa)
+        {
+            string target = ResolveAddress(aa.Target);
+            switch (aa.Op)
+            {
+                case PyMCU.IR.BinaryOp.Add:
+                    LoadIntoW(aa.Operand);
+                    SelectBank(target);
+                    Emit("ADDWF", target, "F", GetAccessMode(target));
+                    break;
+                case PyMCU.IR.BinaryOp.Sub:
+                    LoadIntoW(aa.Operand);
+                    SelectBank(target);
+                    Emit("SUBWF", target, "F", GetAccessMode(target));
+                    break;
+                case PyMCU.IR.BinaryOp.BitAnd:
+                    LoadIntoW(aa.Operand);
+                    SelectBank(target);
+                    Emit("ANDWF", target, "F", GetAccessMode(target));
+                    break;
+                case PyMCU.IR.BinaryOp.BitOr:
+                    LoadIntoW(aa.Operand);
+                    SelectBank(target);
+                    Emit("IORWF", target, "F", GetAccessMode(target));
+                    break;
+                case PyMCU.IR.BinaryOp.BitXor:
+                    LoadIntoW(aa.Operand);
+                    SelectBank(target);
+                    Emit("XORWF", target, "F", GetAccessMode(target));
+                    break;
+                case PyMCU.IR.BinaryOp.LShift:
+                    CompileAugAssignShift(target, aa.Operand, left: true);
+                    break;
+                case PyMCU.IR.BinaryOp.RShift:
+                    CompileAugAssignShift(target, aa.Operand, left: false);
+                    break;
+                default:
+                    throw new NotSupportedException($"PIC18: AugAssign op {aa.Op} not implemented");
+            }
+        }
+
+        private void CompileAugAssignShift(string target, Val operand, bool left)
+        {
+            string shiftInstr = left ? "RLCF" : "RRCF";
+            string targetMode = GetAccessMode(target);
+            if (operand is Constant c)
+            {
+                int n = c.Value & 7;
+                for (int i = 0; i < n; i++)
+                {
+                    Emit("BCF", "STATUS", "C", "ACCESS");
+                    SelectBank(target);
+                    Emit(shiftInstr, target, "F", targetMode);
+                }
+            }
+            else
+            {
+                string count = GetOrAllocVariable(MakeLabel("aa_cnt"));
+                LoadIntoW(operand);
+                SelectBank(count);
+                Emit("MOVWF", count, GetAccessMode(count));
+                string loopL = MakeLabel("aa_sh_lp");
+                string bodyL = MakeLabel("aa_sh_bd");
+                string doneL = MakeLabel("aa_sh_dn");
+                EmitLabel(loopL);
+                SelectBank(count);
+                Emit("TSTFSZ", count, GetAccessMode(count));
+                Emit("BRA", bodyL);
+                Emit("BRA", doneL);
+                EmitLabel(bodyL);
+                Emit("BCF", "STATUS", "C", "ACCESS");
+                SelectBank(target);
+                Emit(shiftInstr, target, "F", targetMode);
+                SelectBank(count);
+                Emit("DECF", count, "F", GetAccessMode(count));
+                Emit("BRA", loopL);
+                EmitLabel(doneL);
+            }
+        }
+
+        private void CompileLoadIndirect(LoadIndirect li)
+        {
+            LoadIntoW(li.SrcPtr);
+            Emit("MOVWF", "0xFE9", "ACCESS");      // FSR0L = pointer
+            Emit("CLRF", "0xFEA", "ACCESS");       // FSR0H = 0
+            Emit("MOVF", "0xFEF", "W", "ACCESS"); // W = [INDF0]
+            StoreWInto(li.Dst);
+        }
+
+        private void CompileStoreIndirect(StoreIndirect si)
+        {
+            LoadIntoW(si.DstPtr);
+            Emit("MOVWF", "0xFE9", "ACCESS");  // FSR0L = pointer
+            Emit("CLRF", "0xFEA", "ACCESS");   // FSR0H = 0
+            LoadIntoW(si.Src);
+            Emit("MOVWF", "0xFEF", "ACCESS");  // [INDF0] = W
         }
 }

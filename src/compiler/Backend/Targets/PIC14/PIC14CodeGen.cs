@@ -39,6 +39,8 @@ public class PIC14CodeGen : CodeGen
     private int _currentBank = -1;
     private bool _currentBlockTerminated;
     private string _currentFunctionName = "";
+    private bool _needsMul8;
+    private bool _needsDiv8;
 
     public PIC14CodeGen(DeviceConfig cfg)
     {
@@ -364,6 +366,9 @@ public class PIC14CodeGen : CodeGen
                 break;
             }
         }
+
+        if (_needsMul8) EmitMul8Subroutine();
+        if (_needsDiv8) EmitDiv8Subroutine();
 
         if (_usesFloat)
             EmitRaw("#include \"float.inc\"");
@@ -1081,6 +1086,19 @@ public class PIC14CodeGen : CodeGen
                 return;
             }
 
+            // --- Software Mul/Div/Mod ---
+            if (arg.Op == IrBinOp.Mul)
+            {
+                EmitSoftwareMul8(arg.Src1, arg.Src2, arg.Dst);
+                return;
+            }
+
+            if (arg.Op == IrBinOp.Div || arg.Op == IrBinOp.FloorDiv || arg.Op == IrBinOp.Mod)
+            {
+                EmitSoftwareDiv8(arg.Src1, arg.Src2, arg.Dst, arg.Op == IrBinOp.Mod);
+                return;
+            }
+
             // Optimization: src2 is a constant
             if (arg.Src2 is Constant c2)
             {
@@ -1792,5 +1810,107 @@ public class PIC14CodeGen : CodeGen
         Emit("SUBWF", s1, "W");
         Emit("BTFSC", "STATUS", "0");
         Emit("GOTO", arg.Target);
+    }
+
+    // --- Software multiply: __pic14_mul8 ---
+
+    private void EmitSoftwareMul8(Val src1, Val src2, Val dst)
+    {
+        string mulA = GetOrAllocVariable("__mul_a");
+        string mulB = GetOrAllocVariable("__mul_b");
+        GetOrAllocVariable("__mul_result");
+        GetOrAllocVariable("__mul_cnt");
+        _needsMul8 = true;
+
+        LoadIntoW(src1);
+        SelectBank(mulA);
+        Emit("MOVWF", mulA);
+        LoadIntoW(src2);
+        string mulBAddr = GetOrAllocVariable("__mul_b");
+        SelectBank(mulBAddr);
+        Emit("MOVWF", mulBAddr);
+        Emit("CALL", "__pic14_mul8");
+        StoreWInto(dst);
+    }
+
+    private void EmitMul8Subroutine()
+    {
+        EmitRaw("");
+        EmitComment("8-bit software multiply: __mul_a * __mul_b -> W");
+        EmitLabel("__pic14_mul8");
+        Emit("CLRF", "__mul_result");
+        Emit("MOVLW", "0x08");
+        Emit("MOVWF", "__mul_cnt");
+        EmitLabel("__pic14_mul8_loop");
+        Emit("BCF", "STATUS", "0");
+        Emit("RRF", "__mul_b", "F");
+        Emit("BTFSS", "STATUS", "0");
+        Emit("GOTO", "__pic14_mul8_noadd");
+        Emit("MOVF", "__mul_a", "W");
+        Emit("ADDWF", "__mul_result", "F");
+        EmitLabel("__pic14_mul8_noadd");
+        Emit("BCF", "STATUS", "0");
+        Emit("RLF", "__mul_a", "F");
+        Emit("DECFSZ", "__mul_cnt", "F");
+        Emit("GOTO", "__pic14_mul8_loop");
+        Emit("MOVF", "__mul_result", "W");
+        Emit("RETURN");
+    }
+
+    // --- Software divide: __pic14_div8 ---
+
+    private void EmitSoftwareDiv8(Val src1, Val src2, Val dst, bool isRemainder)
+    {
+        string divNum = GetOrAllocVariable("__div_num");
+        string divDen = GetOrAllocVariable("__div_den");
+        GetOrAllocVariable("__div_rem");
+        GetOrAllocVariable("__div_cnt");
+        _needsDiv8 = true;
+
+        LoadIntoW(src1);
+        SelectBank(divNum);
+        Emit("MOVWF", divNum);
+        LoadIntoW(src2);
+        string divDenAddr = GetOrAllocVariable("__div_den");
+        SelectBank(divDenAddr);
+        Emit("MOVWF", divDenAddr);
+        Emit("CALL", "__pic14_div8");
+        if (isRemainder)
+        {
+            string divRem = GetOrAllocVariable("__div_rem");
+            SelectBank(divRem);
+            Emit("MOVF", divRem, "W");
+        }
+
+        StoreWInto(dst);
+    }
+
+    private void EmitDiv8Subroutine()
+    {
+        EmitRaw("");
+        EmitComment("8-bit restoring division: __div_num / __div_den");
+        EmitComment("Quotient in W, remainder in __div_rem");
+        EmitLabel("__pic14_div8");
+        Emit("CLRF", "__div_rem");
+        Emit("MOVLW", "0x08");
+        Emit("MOVWF", "__div_cnt");
+        EmitLabel("__pic14_div8_loop");
+        Emit("BCF", "STATUS", "0");
+        Emit("RLF", "__div_num", "F");
+        Emit("RLF", "__div_rem", "F");
+        Emit("MOVF", "__div_den", "W");
+        Emit("SUBWF", "__div_rem", "W");
+        Emit("BTFSS", "STATUS", "0");
+        Emit("GOTO", "__pic14_div8_nosub");
+        Emit("BSF", "__div_num", "0");
+        Emit("MOVWF", "__div_rem");
+        Emit("GOTO", "__pic14_div8_next");
+        EmitLabel("__pic14_div8_nosub");
+        Emit("BCF", "__div_num", "0");
+        EmitLabel("__pic14_div8_next");
+        Emit("DECFSZ", "__div_cnt", "F");
+        Emit("GOTO", "__pic14_div8_loop");
+        Emit("MOVF", "__div_num", "W");
+        Emit("RETURN");
     }
 }

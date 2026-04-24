@@ -143,4 +143,62 @@ public class PIC18CodeGenTests
         Assert.Contains("SUBWF", asm);
         Assert.Contains("BN", asm);
     }
+
+    // ─── AugAssign ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AugAssign_Add()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.Add, new Variable("x"), new Constant(5)));
+        var asm = Compile(prog);
+
+        Assert.Contains("MOVLW\t0x05", asm);
+        Assert.Contains("ADDWF\tx", asm);
+    }
+
+    [Fact]
+    public void AugAssign_Sub()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.Sub, new Variable("x"), new Constant(3)));
+        var asm = Compile(prog);
+
+        Assert.Contains("MOVLW\t0x03", asm);
+        Assert.Contains("SUBWF\tx", asm);
+    }
+
+    [Fact]
+    public void AugAssign_Bitwise()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.BitAnd, new Variable("x"), new Constant(0x0F)));
+        var asm = Compile(prog);
+
+        Assert.Contains("ANDWF\tx", asm);
+    }
+
+    [Fact]
+    public void AugAssign_LShift_Constant()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.LShift, new Variable("x"), new Constant(2)));
+        var asm = Compile(prog);
+
+        Assert.Contains("RLCF\tx", asm);
+        Assert.Contains("BCF\tSTATUS, C, ACCESS", asm);
+    }
+
+    [Fact]
+    public void LoadIndirect_StoreIndirect()
+    {
+        // ptr = 0x25; val = *ptr
+        var prog = MakeProgram("main",
+            new LoadIndirect(new Constant(0x25), new Variable("val")));
+        var asm = Compile(prog);
+
+        Assert.Contains("0xFE9", asm);  // FSR0L
+        Assert.Contains("0xFEF", asm);  // INDF0
+        Assert.Contains("MOVWF\tval", asm);
+    }
 }

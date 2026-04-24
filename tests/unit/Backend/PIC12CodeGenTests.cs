@@ -91,4 +91,38 @@ public class PIC12CodeGenTests
         Assert.DoesNotContain("MOVWF\t0x07", asm);
         Assert.Contains("__neg_temp", asm);
     }
+
+    // ─── AugAssign ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AugAssignAdd()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.Add, new Variable("x"), new Constant(1)));
+        var asm = Compile(prog);
+
+        Assert.Contains("MOVLW\t0x01", asm);
+        Assert.Contains("ADDWF", asm);
+    }
+
+    [Fact]
+    public void AugAssignSub()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.Sub, new Variable("x"), new Constant(3)));
+        var asm = Compile(prog);
+
+        Assert.Contains("MOVLW\t0x03", asm);
+        Assert.Contains("SUBWF", asm);
+    }
+
+    [Fact]
+    public void AugAssignBitOr()
+    {
+        var prog = MakeProgram("main",
+            new AugAssign(BinaryOp.BitOr, new Variable("x"), new Constant(0xF0)));
+        var asm = Compile(prog);
+
+        Assert.Contains("IORWF", asm);
+    }
 }

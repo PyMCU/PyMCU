@@ -175,7 +175,7 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfLessOrEqual arg: CompileJumpIfLessOrEqual(arg); break;
             case JumpIfGreaterThan arg: CompileJumpIfGreaterThan(arg); break;
             case JumpIfGreaterOrEqual arg: CompileJumpIfGreaterOrEqual(arg); break;
-            case AugAssign: throw new NotSupportedException("PIC12: AugAssign is not yet implemented");
+            case AugAssign arg: CompileAugAssign(arg); break;
             case LoadIndirect:
                 throw new NotSupportedException("PIC12: pointer dereference (LoadIndirect) is not supported");
             case StoreIndirect:
@@ -605,5 +605,66 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
         Emit("SUBWF", s1, "W");
         Emit("BTFSC", "STATUS", "0");
         Emit("GOTO", arg.Target);
+    }
+
+    private void CompileAugAssign(AugAssign aa)
+    {
+        string target = ResolveAddress(aa.Target);
+
+        // Shift operations use the operand as a count and shift target in-place
+        if (aa.Op == PyMCU.IR.BinaryOp.LShift || aa.Op == PyMCU.IR.BinaryOp.RShift)
+        {
+            string rotateOp = aa.Op == PyMCU.IR.BinaryOp.LShift ? "RLF" : "RRF";
+            if (aa.Operand is Constant shiftC)
+            {
+                int n = shiftC.Value & 7;
+                for (int i = 0; i < n; i++)
+                {
+                    Emit("BCF", "STATUS", "0");
+                    Emit(rotateOp, target, "F");
+                }
+            }
+            else
+            {
+                string countAddr = GetOrAllocVariable(MakeLabel("aa12_cnt"));
+                LoadIntoW(aa.Operand);
+                Emit("MOVWF", countAddr);
+                string loopL = MakeLabel("aa12_lp");
+                string doneL = MakeLabel("aa12_dn");
+                Emit("MOVF", countAddr, "W");
+                Emit("BTFSC", "STATUS", "2");
+                Emit("GOTO", doneL);
+                EmitLabel(loopL);
+                Emit("BCF", "STATUS", "0");
+                Emit(rotateOp, target, "F");
+                Emit("DECFSZ", countAddr, "F");
+                Emit("GOTO", loopL);
+                EmitLabel(doneL);
+            }
+
+            return;
+        }
+
+        LoadIntoW(aa.Operand);
+        switch (aa.Op)
+        {
+            case PyMCU.IR.BinaryOp.Add:
+                Emit("ADDWF", target, "F");
+                break;
+            case PyMCU.IR.BinaryOp.Sub:
+                Emit("SUBWF", target, "F");
+                break;
+            case PyMCU.IR.BinaryOp.BitAnd:
+                Emit("ANDWF", target, "F");
+                break;
+            case PyMCU.IR.BinaryOp.BitOr:
+                Emit("IORWF", target, "F");
+                break;
+            case PyMCU.IR.BinaryOp.BitXor:
+                Emit("XORWF", target, "F");
+                break;
+            default:
+                throw new NotSupportedException($"PIC12: AugAssign op {aa.Op} not implemented");
+        }
     }
 }

@@ -181,4 +181,52 @@ public class PIC14CodeGenTests
         Assert.Contains("MOVWF\tadd.b", asm);
         Assert.Contains("CALL\tadd", asm);
     }
+
+    // ─── MulOperation ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void MulOperation()
+    {
+        // c = a * b — PIC14 uses __pic14_mul8 software subroutine
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Mul, new Variable("a"), new Variable("b"), new Variable("c")));
+        var asm = Compile(prog);
+
+        Assert.Contains("__pic14_mul8", asm);
+        Assert.Contains("__mul_a", asm);
+        Assert.Contains("__mul_b", asm);
+        Assert.Contains("CALL\t__pic14_mul8", asm);
+    }
+
+    // ─── DivOperation ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void DivOperation()
+    {
+        // c = a / b — PIC14 uses __pic14_div8 software subroutine
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Div, new Variable("a"), new Variable("b"), new Variable("c")));
+        var asm = Compile(prog);
+
+        Assert.Contains("__pic14_div8", asm);
+        Assert.Contains("__div_num", asm);
+        Assert.Contains("__div_den", asm);
+        Assert.Contains("CALL\t__pic14_div8", asm);
+    }
+
+    // ─── ModOperation ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ModOperation()
+    {
+        // c = a % b — PIC14 uses __pic14_div8, result in __div_rem
+        var prog = MakeProgram("main",
+            new Binary(IrBinaryOp.Mod, new Variable("a"), new Variable("b"), new Variable("c")));
+        var asm = Compile(prog);
+
+        Assert.Contains("__pic14_div8", asm);
+        Assert.Contains("__div_rem", asm);
+        Assert.Contains("CALL\t__pic14_div8", asm);
+    }
 }
+
