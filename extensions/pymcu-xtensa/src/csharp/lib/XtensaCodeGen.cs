@@ -893,9 +893,12 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             // Runtime-index path.
             // Load source into a11 first so it survives the address calculation.
             LoadIntoReg(ast.Src, "a11");
-            // Load index into a9 (may internally use a10 for global variable access).
+            // Load index into a9.  LoadIntoReg may internally use a10 as a scratch
+            // register when loading a global variable, but that is fine: a10 is not
+            // yet carrying useful data at this point, and a9 will hold the final
+            // index value after the call returns.
             LoadIntoReg(ast.Index, "a9");
-            // Now compute base into a10 (a9 already holds the final index value).
+            // Compute array base address into a10 (overwrites any earlier a10 scratch use).
             if (!LoadArrayBase(ast.ArrayName, "a10")) return;
             ScaleAndAddIndex("a10", "a9", elemSize);
             EmitTypedStore("a11", "a10", 0, ast.ElemType);

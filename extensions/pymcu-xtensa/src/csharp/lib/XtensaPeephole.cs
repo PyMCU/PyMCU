@@ -45,12 +45,13 @@ public static class XtensaPeephole
         return out_;
     }
 
-    // When a store to a stack slot is immediately followed by a load from the
-    // same slot into the same register, the load is redundant: the value is
-    // already in the register.  Replace with mov dst, src (or remove if equal).
+    // When a store to a memory slot is immediately followed by a load from the
+    // same base register and byte offset into the same register, the load is
+    // redundant: the value is already in the source register of the store.
+    // Replace with mov dst, src (or remove if src and dst are the same register).
     //
-    // Matches:   s32i rA, base, N      (store)
-    //            l32i rB, base, N      (load  of same base + offset)
+    // Matches:   s32i rA, base, N      (store to base+N)
+    //            l32i rB, base, N      (load  from same base+N)
     // Result:    s32i rA, base, N
     //            mov  rB, rA           (or removed if rA == rB)
     private static List<XtensaAsmLine> EliminateRedundantLoadAfterStore(List<XtensaAsmLine> input)

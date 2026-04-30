@@ -43,8 +43,8 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     private HashSet<string> _declaredFuncs = [];
     // Module-level globals (scalar + array) — bypass alloca, access via @name.
     private HashSet<string> _globals = [];
-    // Flash/rodata arrays: name → byte count.
-    private Dictionary<string, int> _flashArrays = [];
+    // Flash/rodata arrays: name → bytes.
+    private Dictionary<string, List<int>> _flashArrays = [];
 
     // -------------------------------------------------------------------------
     // Target triple / data layout helpers
@@ -224,7 +224,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                         _globals.Add(ast.ArrayName);
                         break;
                     case FlashData fd:
-                        _flashArrays[fd.Name] = fd.Bytes.Count;
+                        _flashArrays[fd.Name] = fd.Bytes;
                         break;
                 }
             }
@@ -258,11 +258,12 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
             _out.WriteLine($"@{safeName} = global [{count} x {llT}] zeroinitializer");
         }
 
-        // Emit read-only flash/rodata arrays.
-        foreach (var (name, byteCount) in _flashArrays)
+        // Emit read-only flash/rodata arrays with their actual byte data.
+        foreach (var (name, bytes) in _flashArrays)
         {
-            var safeName = name.Replace('.', '_');
-            _out.WriteLine($"@{safeName} = constant [{byteCount} x i8] zeroinitializer");
+            var safeName  = name.Replace('.', '_');
+            var byteInits = string.Join(", ", bytes.Select(b => $"i8 {b}"));
+            _out.WriteLine($"@{safeName} = constant [{bytes.Count} x i8] [{byteInits}]");
         }
 
         bool hasGlobals = program.Globals.Count > 0 || arrayDefs.Count > 0 || _flashArrays.Count > 0;
@@ -876,7 +877,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileLlvmArrayLoadFlash(ArrayLoadFlash alf)
     {
         string safeName = alf.ArrayName.Replace('.', '_');
-        int count = _flashArrays.TryGetValue(alf.ArrayName, out int c) ? c : 0;
+        int count = _flashArrays.TryGetValue(alf.ArrayName, out var bytes) ? bytes.Count : 0;
         string idxVal = EmitLoad(alf.Index);
         string gep    = FreshTmp();
         string raw    = FreshTmp();
