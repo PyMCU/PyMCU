@@ -14,7 +14,8 @@ namespace PyMCU.Backend.Targets.Xtensa;
 ///
 /// Current passes:
 ///   - Remove mov rX, rX (self-moves introduced by copy/call sequences).
-///   - Collapse addi a1, a1, +N followed by addi a1, a1, -N (frame enter/exit).
+///   - Consecutive s32i then l32i of the same slot: replace load with mov
+///     (or remove it entirely when src == dst register).
 ///   - Remove consecutive identical label definitions.
 /// </summary>
 public static class XtensaPeephole
@@ -22,6 +23,7 @@ public static class XtensaPeephole
     public static List<XtensaAsmLine> Optimize(List<XtensaAsmLine> input)
     {
         var result = RemoveSelfMoves(input);
+        result = EliminateRedundantLoadAfterStore(result);
         return result;
     }
 
@@ -39,6 +41,51 @@ public static class XtensaPeephole
                 continue; // skip self-move
             }
             out_.Add(line);
+        }
+        return out_;
+    }
+
+    // When a store to a stack slot is immediately followed by a load from the
+    // same slot into the same register, the load is redundant: the value is
+    // already in the register.  Replace with mov dst, src (or remove if equal).
+    //
+    // Matches:   s32i rA, base, N      (store)
+    //            l32i rB, base, N      (load  of same base + offset)
+    // Result:    s32i rA, base, N
+    //            mov  rB, rA           (or removed if rA == rB)
+    private static List<XtensaAsmLine> EliminateRedundantLoadAfterStore(List<XtensaAsmLine> input)
+    {
+        var out_ = new List<XtensaAsmLine>(input.Count);
+        int n = input.Count;
+        for (int i = 0; i < n; i++)
+        {
+            var cur = input[i];
+
+            // Look for s32i rA, base, N  followed by  l32i rB, base, N.
+            if (i + 1 < n
+                && cur.Type == XtensaAsmLine.LineType.Instruction
+                && cur.Mnemonic == "s32i"
+                && !string.IsNullOrEmpty(cur.Op1)   // rA
+                && !string.IsNullOrEmpty(cur.Op2)   // base
+                && !string.IsNullOrEmpty(cur.Op3))  // N
+            {
+                var next = input[i + 1];
+                if (next.Type == XtensaAsmLine.LineType.Instruction
+                    && next.Mnemonic == "l32i"
+                    && next.Op2 == cur.Op2   // same base register
+                    && next.Op3 == cur.Op3)  // same offset
+                {
+                    out_.Add(cur);  // keep the store
+                    // Emit mov rB, rA — but skip if rA == rB (becomes mov rX, rX
+                    // which the previous pass will remove anyway; skip directly).
+                    if (next.Op1 != cur.Op1)
+                        out_.Add(XtensaAsmLine.MakeInstruction("mov", next.Op1, cur.Op1));
+                    i++; // consume the load
+                    continue;
+                }
+            }
+
+            out_.Add(cur);
         }
         return out_;
     }

@@ -49,7 +49,12 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     private bool currentIsLeaf;
     private int labelCounter;
     private int litCounter;
-    private List<(string Label, long Value)> pendingLiterals = [];
+    // Literal pool entries: label → value expression (integer string or symbol name).
+    private List<(string Label, string Expr)> pendingLiterals = [];
+    // Names of ProgramIR globals (scalar vars + SRAM arrays) — backed by .comm in .bss.
+    private HashSet<string> _globals = [];
+    // Read-only byte arrays collected from FlashData instructions; emitted into .rodata.
+    private Dictionary<string, List<int>> _flashArrayPool = [];
 
     // -------------------------------------------------------------------------
     // Emit helpers
@@ -83,8 +88,62 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         else
         {
             string litLabel = $".Llit_{currentFuncName}_{litCounter++}";
-            pendingLiterals.Add((litLabel, value));
+            pendingLiterals.Add((litLabel, ((int)value).ToString()));
             Emit("l32r", reg, litLabel);
+        }
+    }
+
+    // Load the address of a global symbol into a register via the literal pool.
+    private void LoadSymbolAddr(string reg, string symbol)
+    {
+        string litLabel = $".Llit_{currentFuncName}_{litCounter++}";
+        pendingLiterals.Add((litLabel, symbol));
+        Emit("l32r", reg, litLabel);
+    }
+
+    // Emit a typed load: dst = *(base + offset), respecting the DataType width.
+    private void EmitTypedLoad(string dst, string base_, int offset, DataType dt)
+    {
+        string ofs = offset.ToString();
+        switch (dt)
+        {
+            case DataType.UINT8:
+                Emit("l8ui", dst, base_, ofs);
+                break;
+            case DataType.INT8:
+                Emit("l8ui",  dst, base_, ofs);
+                Emit("sext",  dst, dst, "7");
+                break;
+            case DataType.UINT16:
+                Emit("l16ui", dst, base_, ofs);
+                break;
+            case DataType.INT16:
+                Emit("l16ui", dst, base_, ofs);
+                Emit("sext",  dst, dst, "15");
+                break;
+            default:
+                Emit("l32i",  dst, base_, ofs);
+                break;
+        }
+    }
+
+    // Emit a typed store: *(base + offset) = src, respecting the DataType width.
+    private void EmitTypedStore(string src, string base_, int offset, DataType dt)
+    {
+        string ofs = offset.ToString();
+        switch (dt)
+        {
+            case DataType.UINT8:
+            case DataType.INT8:
+                Emit("s8i",  src, base_, ofs);
+                break;
+            case DataType.UINT16:
+            case DataType.INT16:
+                Emit("s16i", src, base_, ofs);
+                break;
+            default:
+                Emit("s32i", src, base_, ofs);
+                break;
         }
     }
 
@@ -101,15 +160,15 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 break;
             case MemoryAddress ma:
                 LoadImmediate("a10", ma.Address);
-                switch (ma.Type)
-                {
-                    case DataType.UINT8:  Emit("l8ui",  reg, "a10", "0"); break;
-                    case DataType.UINT16: Emit("l16ui", reg, "a10", "0"); break;
-                    default:              Emit("l32i",  reg, "a10", "0"); break;
-                }
+                EmitTypedLoad(reg, "a10", 0, ma.Type);
                 break;
             case Variable vr:
-                if (stackLayout.TryGetValue(vr.Name, out int vOff))
+                if (_globals.Contains(vr.Name))
+                {
+                    LoadSymbolAddr("a10", vr.Name.Replace('.', '_'));
+                    EmitTypedLoad(reg, "a10", 0, vr.Type);
+                }
+                else if (stackLayout.TryGetValue(vr.Name, out int vOff))
                     Emit("l32i", reg, "a12", (-vOff).ToString());
                 else
                     LoadImmediate(reg, 0);
@@ -133,15 +192,15 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         {
             case MemoryAddress ma:
                 LoadImmediate("a10", ma.Address);
-                switch (ma.Type)
-                {
-                    case DataType.UINT8:  Emit("s8i",  reg, "a10", "0"); break;
-                    case DataType.UINT16: Emit("s16i", reg, "a10", "0"); break;
-                    default:              Emit("s32i", reg, "a10", "0"); break;
-                }
+                EmitTypedStore(reg, "a10", 0, ma.Type);
                 break;
             case Variable vr:
-                if (stackLayout.TryGetValue(vr.Name, out int vOff))
+                if (_globals.Contains(vr.Name))
+                {
+                    LoadSymbolAddr("a10", vr.Name.Replace('.', '_'));
+                    EmitTypedStore(reg, "a10", 0, vr.Type);
+                }
+                else if (stackLayout.TryGetValue(vr.Name, out int vOff))
                     Emit("s32i", reg, "a12", (-vOff).ToString());
                 break;
             case Temporary tmp:
@@ -158,8 +217,48 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     public override void Compile(ProgramIR program, TextWriter output)
     {
         assembly.Clear();
+        _globals.Clear();
+        _flashArrayPool.Clear();
+
+        // Register global scalar variable names so LoadIntoReg/StoreRegInto use labels.
+        foreach (var g in program.Globals)
+            _globals.Add(g.Name);
+
+        // Pre-scan function bodies: collect SRAM array definitions and flash data.
+        // Arrays not in program.Globals are module-local arrays that still need BSS.
+        var arrayDefs = new Dictionary<string, (DataType ElemType, int Count)>();
+        foreach (var fn in program.Functions)
+        {
+            foreach (var instr in fn.Body)
+            {
+                switch (instr)
+                {
+                    case ArrayLoad al when !_globals.Contains(al.ArrayName)
+                                       && !arrayDefs.ContainsKey(al.ArrayName):
+                        arrayDefs[al.ArrayName] = (al.ElemType, al.Count);
+                        _globals.Add(al.ArrayName);
+                        break;
+                    case ArrayStore ast when !_globals.Contains(ast.ArrayName)
+                                         && !arrayDefs.ContainsKey(ast.ArrayName):
+                        arrayDefs[ast.ArrayName] = (ast.ElemType, ast.Count);
+                        _globals.Add(ast.ArrayName);
+                        break;
+                    case FlashData fd:
+                        _flashArrayPool[fd.Name] = fd.Bytes;
+                        break;
+                }
+            }
+        }
+
         EmitComment($"Generated by pymcuc for Xtensa ({cfg.Chip})");
         EmitRaw(".option call0");
+
+        // Extern symbol declarations.
+        foreach (var sym in program.ExternSymbols)
+            EmitRaw($".extern {sym}");
+        if (program.ExternSymbols.Count > 0)
+            EmitRaw("");
+
         EmitRaw(".section .text");
         EmitRaw(".align 4");
 
@@ -169,6 +268,46 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         var optimized = XtensaPeephole.Optimize(assembly);
         foreach (var line in optimized)
             output.WriteLine(line.ToString());
+
+        // Emit .bss for global scalar variables and SRAM arrays.
+        bool hasBss = program.Globals.Count > 0 || arrayDefs.Count > 0;
+        if (hasBss)
+        {
+            output.WriteLine();
+            output.WriteLine("\t.section .bss");
+            foreach (var g in program.Globals)
+            {
+                if (_flashArrayPool.ContainsKey(g.Name)) continue;
+                var safeName = g.Name.Replace('.', '_');
+                int size  = g.Type.SizeOf();
+                int align = size > 4 ? 4 : size;
+                output.WriteLine($"\t.comm {safeName}, {size}, {align}");
+            }
+            foreach (var (name, (elemType, count)) in arrayDefs)
+            {
+                var safeName  = name.Replace('.', '_');
+                int elemSize  = elemType.SizeOf();
+                int totalSize = count * elemSize;
+                int align     = elemSize > 4 ? 4 : elemSize;
+                output.WriteLine($"\t.comm {safeName}, {totalSize}, {align}");
+            }
+        }
+
+        // Emit .rodata for flash/read-only byte arrays.
+        if (_flashArrayPool.Count > 0)
+        {
+            output.WriteLine();
+            output.WriteLine("\t.section .rodata");
+            output.WriteLine("\t.align 4");
+            foreach (var (name, bytes) in _flashArrayPool)
+            {
+                var safeName = "__rodata_" + name.Replace('.', '_');
+                output.WriteLine($"\t.global {safeName}");
+                output.WriteLine($"{safeName}:");
+                output.WriteLine($"\t.byte {string.Join(", ", bytes)}");
+                output.WriteLine($"\t.balign 4");
+            }
+        }
     }
 
     public override void EmitContextSave() { }
@@ -241,8 +380,8 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         if (pendingLiterals.Count > 0)
         {
             EmitRaw(".literal_position");
-            foreach (var (label, value) in pendingLiterals)
-                EmitRaw($".literal {label}, {(int)value}");
+            foreach (var (label, expr) in pendingLiterals)
+                EmitRaw($".literal {label}, {expr}");
         }
 
         foreach (var line in funcLines)
@@ -254,6 +393,14 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     // -------------------------------------------------------------------------
     // Instruction dispatch
     // -------------------------------------------------------------------------
+
+    // Return true when a Val represents an unsigned integer type.
+    private static bool IsUnsignedVal(Val v) => v switch
+    {
+        Variable vr  => vr.Type  is DataType.UINT8 or DataType.UINT16 or DataType.UINT32,
+        Temporary tr => tr.Type  is DataType.UINT8 or DataType.UINT16 or DataType.UINT32,
+        _            => false
+    };
 
     private void CompileInstruction(Instruction instr)
     {
@@ -272,16 +419,23 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 Emit("bne", "a8", "a9", arg.Target); break;
             case JumpIfLessThan arg:
                 LoadIntoReg(arg.Src1, "a8"); LoadIntoReg(arg.Src2, "a9");
-                Emit("blt", "a8", "a9", arg.Target); break;
+                Emit(IsUnsignedVal(arg.Src1) || IsUnsignedVal(arg.Src2) ? "bltu" : "blt",
+                     "a8", "a9", arg.Target); break;
             case JumpIfLessOrEqual arg:
+                // a8 <= a9  ↔  a9 >= a8
                 LoadIntoReg(arg.Src1, "a8"); LoadIntoReg(arg.Src2, "a9");
-                Emit("bge", "a9", "a8", arg.Target); break;
+                Emit(IsUnsignedVal(arg.Src1) || IsUnsignedVal(arg.Src2) ? "bgeu" : "bge",
+                     "a9", "a8", arg.Target); break;
             case JumpIfGreaterThan arg:
+                // a8 > a9  ↔  a9 < a8
                 LoadIntoReg(arg.Src1, "a8"); LoadIntoReg(arg.Src2, "a9");
-                Emit("blt", "a9", "a8", arg.Target); break;
+                Emit(IsUnsignedVal(arg.Src1) || IsUnsignedVal(arg.Src2) ? "bltu" : "blt",
+                     "a9", "a8", arg.Target); break;
             case JumpIfGreaterOrEqual arg:
+                // a8 >= a9
                 LoadIntoReg(arg.Src1, "a8"); LoadIntoReg(arg.Src2, "a9");
-                Emit("bge", "a8", "a9", arg.Target); break;
+                Emit(IsUnsignedVal(arg.Src1) || IsUnsignedVal(arg.Src2) ? "bgeu" : "bge",
+                     "a8", "a9", arg.Target); break;
             case JumpIfBitSet arg:
                 LoadIntoReg(arg.Source, "a8");
                 Emit("bbsi", "a8", arg.Bit.ToString(), arg.Target); break;
@@ -303,13 +457,13 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 else
                     EmitComment($"Line {arg.Line}: {arg.Text}");
                 break;
-            case AugAssign:      break; // not yet implemented on Xtensa
-            case LoadIndirect:   break; // not yet implemented on Xtensa
-            case StoreIndirect:  break; // not yet implemented on Xtensa
-            case ArrayLoad:      break;
-            case ArrayStore:     break;
-            case ArrayLoadFlash: break;
-            case FlashData:      break;
+            case AugAssign arg:      CompileAugAssign(arg); break;
+            case LoadIndirect arg:   CompileLoadIndirect(arg); break;
+            case StoreIndirect arg:  CompileStoreIndirect(arg); break;
+            case ArrayLoad arg:      CompileArrayLoad(arg); break;
+            case ArrayStore arg:     CompileArrayStore(arg); break;
+            case ArrayLoadFlash arg: CompileArrayLoadFlash(arg); break;
+            case FlashData:          break; // collected in Compile() pre-scan
         }
     }
 
@@ -429,6 +583,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         if (!usedImmediate)
         {
             LoadIntoReg(arg.Src2, "a9");
+            bool isUnsigned = IsUnsignedVal(arg.Src1) || IsUnsignedVal(arg.Src2);
             switch (arg.Op)
             {
                 case BinaryOp.Add:      Emit("add",  "a8", "a8", "a9"); break;
@@ -437,7 +592,11 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 case BinaryOp.BitOr:    Emit("or",   "a8", "a8", "a9"); break;
                 case BinaryOp.BitXor:   Emit("xor",  "a8", "a8", "a9"); break;
                 case BinaryOp.LShift:   Emit("ssl",  "a9"); Emit("sll", "a8", "a8"); break;
-                case BinaryOp.RShift:   Emit("ssr",  "a9"); Emit("srl", "a8", "a8"); break;
+                case BinaryOp.RShift:
+                    // srl = logical (unsigned), sra = arithmetic (signed).
+                    Emit("ssr", "a9");
+                    Emit(isUnsigned ? "srl" : "sra", "a8", "a8");
+                    break;
                 case BinaryOp.Mul:
                     Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
                     Emit("call0", "__mulsi3"); Emit("mov", "a8", "a2");
@@ -445,11 +604,13 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                 case BinaryOp.Div:
                 case BinaryOp.FloorDiv:
                     Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
-                    Emit("call0", "__divsi3"); Emit("mov", "a8", "a2");
+                    Emit("call0", isUnsigned ? "__udivsi3" : "__divsi3");
+                    Emit("mov", "a8", "a2");
                     break;
                 case BinaryOp.Mod:
                     Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
-                    Emit("call0", "__modsi3"); Emit("mov", "a8", "a2");
+                    Emit("call0", isUnsigned ? "__umodsi3" : "__modsi3");
+                    Emit("mov", "a8", "a2");
                     break;
                 case BinaryOp.Equal:
                     Emit("xor", "a8", "a8", "a9");
@@ -460,17 +621,24 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                     CompileSnez("a8");
                     break;
                 case BinaryOp.LessThan:
-                    CompileSlt("a8", "a8", "a9");
+                    if (isUnsigned) CompileSltu("a8", "a8", "a9");
+                    else            CompileSlt("a8",  "a8", "a9");
                     break;
                 case BinaryOp.GreaterEqual:
-                    CompileSlt("a8", "a8", "a9");
+                    // >= is !(a8 < a9)
+                    if (isUnsigned) CompileSltu("a8", "a8", "a9");
+                    else            CompileSlt("a8",  "a8", "a9");
                     CompileSeqz("a8");
                     break;
                 case BinaryOp.GreaterThan:
-                    CompileSlt("a8", "a9", "a8");
+                    // a8 > a9  ↔  a9 < a8
+                    if (isUnsigned) CompileSltu("a8", "a9", "a8");
+                    else            CompileSlt("a8",  "a9", "a8");
                     break;
                 case BinaryOp.LessEqual:
-                    CompileSlt("a8", "a9", "a8");
+                    // a8 <= a9  ↔  !(a9 < a8)
+                    if (isUnsigned) CompileSltu("a8", "a9", "a8");
+                    else            CompileSlt("a8",  "a9", "a8");
                     CompileSeqz("a8");
                     break;
             }
@@ -515,6 +683,239 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         EmitLabel(tl);
         Emit("movi", dst, "1");
         EmitLabel(dl);
+    }
+
+    // unsigned less-than: dst = (src1 <u src2) ? 1 : 0
+    private void CompileSltu(string dst, string src1, string src2)
+    {
+        string tl = MakeLabel("sltu_t");
+        string dl = MakeLabel("sltu_d");
+        Emit("bltu", src1, src2, tl);
+        Emit("movi", dst, "0");
+        Emit("j", dl);
+        EmitLabel(tl);
+        Emit("movi", dst, "1");
+        EmitLabel(dl);
+    }
+
+    // -------------------------------------------------------------------------
+    // AugAssign  (+=, -=, *=, etc. on SRAM variables and array elements)
+    // -------------------------------------------------------------------------
+
+    private void CompileAugAssign(AugAssign arg)
+    {
+        LoadIntoReg(arg.Target, "a8");
+
+        bool usedImmediate = false;
+        if (arg.Operand is Constant c2 && c2.Value >= -2048 && c2.Value <= 2047)
+        {
+            int val = c2.Value;
+            switch (arg.Op)
+            {
+                case BinaryOp.Add:
+                    Emit("addi", "a8", "a8", val.ToString());
+                    usedImmediate = true;
+                    break;
+                case BinaryOp.Sub:
+                    Emit("addi", "a8", "a8", (-val).ToString());
+                    usedImmediate = true;
+                    break;
+            }
+        }
+
+        if (!usedImmediate)
+        {
+            LoadIntoReg(arg.Operand, "a9");
+            bool isUnsigned = IsUnsignedVal(arg.Target) || IsUnsignedVal(arg.Operand);
+            switch (arg.Op)
+            {
+                case BinaryOp.Add:      Emit("add",  "a8", "a8", "a9"); break;
+                case BinaryOp.Sub:      Emit("sub",  "a8", "a8", "a9"); break;
+                case BinaryOp.BitAnd:   Emit("and",  "a8", "a8", "a9"); break;
+                case BinaryOp.BitOr:    Emit("or",   "a8", "a8", "a9"); break;
+                case BinaryOp.BitXor:   Emit("xor",  "a8", "a8", "a9"); break;
+                case BinaryOp.LShift:   Emit("ssl",  "a9"); Emit("sll", "a8", "a8"); break;
+                case BinaryOp.RShift:
+                    Emit("ssr", "a9");
+                    Emit(isUnsigned ? "srl" : "sra", "a8", "a8");
+                    break;
+                case BinaryOp.Mul:
+                    Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
+                    Emit("call0", "__mulsi3"); Emit("mov", "a8", "a2");
+                    break;
+                case BinaryOp.Div:
+                case BinaryOp.FloorDiv:
+                    Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
+                    Emit("call0", isUnsigned ? "__udivsi3" : "__divsi3");
+                    Emit("mov", "a8", "a2");
+                    break;
+                case BinaryOp.Mod:
+                    Emit("mov", "a2", "a8"); Emit("mov", "a3", "a9");
+                    Emit("call0", isUnsigned ? "__umodsi3" : "__modsi3");
+                    Emit("mov", "a8", "a2");
+                    break;
+            }
+        }
+
+        StoreRegInto("a8", arg.Target);
+    }
+
+    // -------------------------------------------------------------------------
+    // LoadIndirect / StoreIndirect  (pointer dereference — MMIO, ptr[T])
+    // -------------------------------------------------------------------------
+
+    private void CompileLoadIndirect(LoadIndirect arg)
+    {
+        LoadIntoReg(arg.SrcPtr, "a10");
+        var dt = arg.Dst is Variable vr ? vr.Type
+               : arg.Dst is Temporary tr ? tr.Type
+               : DataType.UINT32;
+        EmitTypedLoad("a8", "a10", 0, dt);
+        StoreRegInto("a8", arg.Dst);
+    }
+
+    private void CompileStoreIndirect(StoreIndirect arg)
+    {
+        LoadIntoReg(arg.Src, "a8");
+        LoadIntoReg(arg.DstPtr, "a10");
+        var dt = arg.Src is Variable sv ? sv.Type
+               : arg.Src is Temporary st ? st.Type
+               : DataType.UINT32;
+        EmitTypedStore("a8", "a10", 0, dt);
+    }
+
+    // -------------------------------------------------------------------------
+    // ArrayLoad / ArrayStore  (SRAM variable-index arrays)
+    // -------------------------------------------------------------------------
+
+    // Scale idxReg by elemSize and add to baseReg; result in baseReg.
+    // Uses addx2/addx4/addx8 Xtensa instructions for power-of-two element sizes.
+    private void ScaleAndAddIndex(string baseReg, string idxReg, int elemSize)
+    {
+        switch (elemSize)
+        {
+            case 1: Emit("add",   baseReg, baseReg, idxReg); break;
+            // addx2/4/8  ar, as, at  →  ar = (as << n) + at
+            case 2: Emit("addx2", baseReg, idxReg,  baseReg); break;
+            case 4: Emit("addx4", baseReg, idxReg,  baseReg); break;
+            case 8: Emit("addx8", baseReg, idxReg,  baseReg); break;
+            default:
+                // Uncommon element size — fall back to software multiply.
+                Emit("mov", "a2", idxReg);
+                LoadImmediate("a3", elemSize);
+                Emit("call0", "__mulsi3");
+                Emit("add", baseReg, baseReg, "a2");
+                break;
+        }
+    }
+
+    // Load the base address of an array into a10 (global label or frame-relative).
+    // Returns false and emits a comment if the array is not found.
+    private bool LoadArrayBase(string arrayName, string baseReg)
+    {
+        if (_globals.Contains(arrayName))
+        {
+            LoadSymbolAddr(baseReg, arrayName.Replace('.', '_'));
+            return true;
+        }
+        if (stackLayout.TryGetValue(arrayName, out int baseOff))
+        {
+            int adjusted = -baseOff;
+            if (adjusted >= -128 && adjusted <= 127)
+                Emit("addi", baseReg, "a12", adjusted.ToString());
+            else
+            {
+                LoadImmediate(baseReg, adjusted);
+                Emit("add", baseReg, "a12", baseReg);
+            }
+            return true;
+        }
+        EmitComment($"array '{arrayName}' not found in layout -- skip");
+        return false;
+    }
+
+    private void CompileArrayLoad(ArrayLoad al)
+    {
+        int elemSize = al.ElemType.SizeOf();
+
+        if (al.Index is Constant cidx)
+        {
+            // Constant-index path: load base, then emit typed load with byte offset.
+            if (!LoadArrayBase(al.ArrayName, "a10")) { LoadImmediate("a8", 0); StoreRegInto("a8", al.Dst); return; }
+            int byteOff = cidx.Value * elemSize;
+            if (byteOff >= 0 && byteOff <= 255)
+            {
+                EmitTypedLoad("a8", "a10", byteOff, al.ElemType);
+            }
+            else
+            {
+                LoadImmediate("a9", byteOff);
+                Emit("add", "a10", "a10", "a9");
+                EmitTypedLoad("a8", "a10", 0, al.ElemType);
+            }
+        }
+        else
+        {
+            // Runtime-index path: load index first so a10 is free for base.
+            LoadIntoReg(al.Index, "a9");
+            if (!LoadArrayBase(al.ArrayName, "a10")) { LoadImmediate("a8", 0); StoreRegInto("a8", al.Dst); return; }
+            ScaleAndAddIndex("a10", "a9", elemSize);
+            EmitTypedLoad("a8", "a10", 0, al.ElemType);
+        }
+
+        StoreRegInto("a8", al.Dst);
+    }
+
+    private void CompileArrayStore(ArrayStore ast)
+    {
+        int elemSize = ast.ElemType.SizeOf();
+
+        if (ast.Index is Constant cidx)
+        {
+            // Constant-index path.
+            LoadIntoReg(ast.Src, "a8");
+            if (!LoadArrayBase(ast.ArrayName, "a10")) return;
+            int byteOff = cidx.Value * elemSize;
+            if (byteOff >= 0 && byteOff <= 255)
+            {
+                EmitTypedStore("a8", "a10", byteOff, ast.ElemType);
+            }
+            else
+            {
+                Emit("mov", "a11", "a8");           // save value in a11
+                LoadImmediate("a8", byteOff);
+                Emit("add", "a10", "a10", "a8");
+                EmitTypedStore("a11", "a10", 0, ast.ElemType);
+            }
+        }
+        else
+        {
+            // Runtime-index path.
+            // Load source into a11 first so it survives the address calculation.
+            LoadIntoReg(ast.Src, "a11");
+            // Load index into a9 (may internally use a10 for global variable access).
+            LoadIntoReg(ast.Index, "a9");
+            // Now compute base into a10 (a9 already holds the final index value).
+            if (!LoadArrayBase(ast.ArrayName, "a10")) return;
+            ScaleAndAddIndex("a10", "a9", elemSize);
+            EmitTypedStore("a11", "a10", 0, ast.ElemType);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ArrayLoadFlash  (read-only .rodata byte arrays)
+    // -------------------------------------------------------------------------
+
+    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    {
+        // The table is placed in .rodata under the label "__rodata_<safeName>".
+        var label = "__rodata_" + alf.ArrayName.Replace('.', '_');
+        // Load index first; base address will then be loaded into a10.
+        LoadIntoReg(alf.Index, "a9");
+        LoadSymbolAddr("a10", label);
+        Emit("add",  "a10", "a10", "a9");
+        Emit("l8ui", "a8",  "a10", "0");
+        StoreRegInto("a8", alf.Dst);
     }
 
     // -------------------------------------------------------------------------
