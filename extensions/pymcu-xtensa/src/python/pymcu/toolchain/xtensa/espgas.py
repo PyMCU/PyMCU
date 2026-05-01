@@ -23,6 +23,7 @@ xtensa-lx106-elf / xtensa-esp32-elf GCC distribution.
 import re
 import shutil
 import subprocess
+from importlib.resources import files
 from pathlib import Path
 from typing import Optional
 
@@ -48,38 +49,19 @@ def _prefix_for(chip: str) -> str:
     return _DEFAULT_PREFIX
 
 
-def _default_ld_script(chip: str) -> str:
-    """Minimal bare-metal linker script for Xtensa ESP targets."""
-    # Stack/DRAM tops match XtensaCodeGen stack initialisation values.
+def _default_ld_script_path(chip: str, output_dir: Path) -> Path:
+    """Write the bundled linker script for chip to output_dir and return its path."""
     chip_lower = chip.lower()
     if chip_lower.startswith("esp8266") or chip_lower == "lx106":
-        origin = "0x3FFE8000"
-        length = "0x18000"   # 96 KB DRAM on ESP8266
+        resource = "esp8266.ld"
     elif chip_lower.startswith("esp32s3") or chip_lower.startswith("esp32-s3"):
-        origin = "0x3FC80000"
-        length = "0x50000"   # 320 KB (conservative)
+        resource = "esp32s3.ld"
     else:
-        origin = "0x3FFB0000"
-        length = "0x50000"   # 320 KB ESP32/S2
-
-    return (
-        "ENTRY(main)\n"
-        "SECTIONS\n"
-        "{\n"
-        "  .text 0x400D0000 :\n"
-        "  {\n"
-        "    *(.literal .literal.*)\n"
-        "    *(.text .text.*)\n"
-        "    *(.rodata .rodata.*)\n"
-        "  }\n"
-        f"  .data {origin} :\n"
-        "  {\n"
-        "    *(.data .data.*)\n"
-        "    *(.bss .bss.*)\n"
-        "    *(COMMON)\n"
-        "  }\n"
-        "}\n"
-    )
+        resource = "esp32.ld"
+    data = files("pymcu.toolchain.xtensa.resources").joinpath(resource).read_text()
+    out = output_dir / "_pymcu_xtensa.ld"
+    out.write_text(data)
+    return out
 
 
 class EspGasToolchain(ExternalToolchain):
@@ -157,9 +139,7 @@ class EspGasToolchain(ExternalToolchain):
         elf_out = output_dir / "firmware.elf"
 
         if linker_script is None:
-            ld_script_path = output_dir / "_pymcu_xtensa.ld"
-            ld_script_path.write_text(_default_ld_script(self.chip))
-            linker_script = ld_script_path
+            linker_script = _default_ld_script_path(self.chip, output_dir)
 
         all_objects = [str(firmware_obj)] + [str(o) for o in c_objects]
         cmd = [ld_bin, "-T", str(linker_script), *all_objects, "-o", str(elf_out)]
@@ -181,3 +161,37 @@ class EspGasToolchain(ExternalToolchain):
             err = (e.stderr or e.stdout or b"").decode()
             raise RuntimeError(f"{self._prefix}-objcopy failed:\n{err}") from e
         return bin_out
+
+    def flash(self, bin_file: Path, port: str = "/dev/ttyUSB0", baud: int = 115200) -> None:
+        """Flash firmware.bin to the device using esptool.py."""
+        esptool = shutil.which("esptool.py") or shutil.which("esptool")
+        if esptool is None:
+            raise RuntimeError(
+                "esptool.py not found on PATH.\n"
+                "Install it with:  pip install esptool"
+            )
+        chip_arg = self._esptool_chip()
+        cmd = [
+            esptool,
+            "--chip", chip_arg,
+            "--port", port,
+            "--baud", str(baud),
+            "write_flash",
+            "0x10000",
+            str(bin_file),
+        ]
+        self.console.print(f"[debug] {' '.join(cmd)}", style="dim")
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"esptool.py write_flash failed (exit {e.returncode})") from e
+
+    def _esptool_chip(self) -> str:
+        c = self.chip.lower()
+        if c.startswith("esp8266") or c == "lx106":
+            return "esp8266"
+        if c.startswith("esp32s3") or c.startswith("esp32-s3"):
+            return "esp32s3"
+        if c.startswith("esp32s2") or c.startswith("esp32-s2"):
+            return "esp32s2"
+        return "esp32"
