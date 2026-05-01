@@ -24,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\compiler\PyMCU.csproj" />
     <ProjectReference Include="..\..\extensions\pymcu-backend-avr\src\csharp\lib\PyMCU.Backend.AVR.csproj" />
+    <ProjectReference Include="..\..\extensions\pymcu-xtensa\src\csharp\lib\PyMCU.Backend.Xtensa.csproj" />
   </ItemGroup>
 
 </Project>
