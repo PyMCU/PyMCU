@@ -45,7 +45,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     // Module-level globals (scalar + array) — bypass alloca, access via @name.
     private HashSet<string> _globals = [];
     // Flash/rodata arrays: name → bytes.
-    private Dictionary<string, List<int>> _flashArrays = [];
+    private Dictionary<string, List<int>> _roArrays = [];
 
     // -------------------------------------------------------------------------
     // Target triple / data layout helpers
@@ -200,7 +200,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     {
         _out = output;
         _globals.Clear();
-        _flashArrays.Clear();
+        _roArrays.Clear();
 
         // Register global scalar names.
         foreach (var g in program.Globals)
@@ -224,8 +224,8 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                         arrayDefs[ast.ArrayName] = (ast.ElemType, ast.Count);
                         _globals.Add(ast.ArrayName);
                         break;
-                    case FlashData fd:
-                        _flashArrays[fd.Name] = fd.Bytes;
+                    case RoData fd:
+                        _roArrays[fd.Name] = fd.Bytes;
                         break;
                 }
             }
@@ -245,7 +245,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         // Emit global scalar variables.
         foreach (var g in program.Globals)
         {
-            if (_flashArrays.ContainsKey(g.Name)) continue;
+            if (_roArrays.ContainsKey(g.Name)) continue;
             var llT      = LlvmType(g.Type);
             var safeName = g.Name.Replace('.', '_');
             _out.WriteLine($"@{safeName} = global {llT} 0");
@@ -260,7 +260,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         // Emit read-only flash/rodata arrays with their actual byte data.
-        foreach (var (name, bytes) in _flashArrays)
+        foreach (var (name, bytes) in _roArrays)
         {
             var safeName  = name.Replace('.', '_');
             var sb = new StringBuilder();
@@ -272,7 +272,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
             _out.WriteLine($"@{safeName} = constant [{bytes.Count} x i8] [{sb}]");
         }
 
-        bool hasGlobals = program.Globals.Count > 0 || arrayDefs.Count > 0 || _flashArrays.Count > 0;
+        bool hasGlobals = program.Globals.Count > 0 || arrayDefs.Count > 0 || _roArrays.Count > 0;
         if (hasGlobals) _out.WriteLine();
 
         // Forward-declare all program functions so calls in any order work.
@@ -388,7 +388,10 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                 case StoreIndirect i:  AddVal(i.Src); AddVal(i.DstPtr); break;
                 case ArrayLoad i:      AddVal(i.Index); AddVal(i.Dst); break;
                 case ArrayStore i:     AddVal(i.Index); AddVal(i.Src); break;
-                case ArrayLoadFlash i: AddVal(i.Index); AddVal(i.Dst); break;
+                case ArrayLoadRo i: AddVal(i.Index); AddVal(i.Dst); break;
+                case FloatBinary i:    AddVal(i.Src1); AddVal(i.Src2); AddVal(i.Dst); break;
+                case Widen i:          AddVal(i.Src);  AddVal(i.Dst); break;
+                case Narrow i:         AddVal(i.Src);  AddVal(i.Dst); break;
             }
         }
     }
@@ -434,10 +437,13 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                 break;
             case ArrayLoad arg:      CompileLlvmArrayLoad(arg); break;
             case ArrayStore arg:     CompileLlvmArrayStore(arg); break;
-            case ArrayLoadFlash arg: CompileLlvmArrayLoadFlash(arg); break;
-            case FlashData:          break; // collected during Compile() pre-scan
+            case ArrayLoadRo arg: CompileLlvmArrayLoadRo(arg); break;
+            case RoData:          break; // collected during Compile() pre-scan
             case LoadIndirect arg:   CompileLlvmLoadIndirect(arg); break;
             case StoreIndirect arg:  CompileLlvmStoreIndirect(arg); break;
+            case FloatBinary arg:    CompileLlvmFloatBinary(arg); break;
+            case Widen arg:          CompileLlvmWiden(arg); break;
+            case Narrow arg:         CompileLlvmNarrow(arg); break;
         }
     }
 
@@ -877,13 +883,13 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     }
 
     // -------------------------------------------------------------------------
-    // ArrayLoadFlash  (read-only .rodata byte arrays)
+    // ArrayLoadRo  (read-only .rodata byte arrays)
     // -------------------------------------------------------------------------
 
-    private void CompileLlvmArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileLlvmArrayLoadRo(ArrayLoadRo alf)
     {
         string safeName = alf.ArrayName.Replace('.', '_');
-        int count = _flashArrays.TryGetValue(alf.ArrayName, out var bytes) ? bytes.Count : 0;
+        int count = _roArrays.TryGetValue(alf.ArrayName, out var bytes) ? bytes.Count : 0;
         string idxVal = EmitLoad(alf.Index);
         string gep    = FreshTmp();
         string raw    = FreshTmp();
@@ -904,4 +910,83 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         Temporary tr => tr.Type  is DataType.UINT8 or DataType.UINT16 or DataType.UINT32,
         _            => false
     };
+
+    // -------------------------------------------------------------------------
+    // FloatBinary (LLVM fadd/fsub/fmul/fdiv/frem via bitcast from i32 storage)
+    // -------------------------------------------------------------------------
+
+    private void CompileLlvmFloatBinary(FloatBinary arg)
+    {
+        string bits1 = EmitLoad(arg.Src1);
+        string f1 = FreshTmp();
+        _out.WriteLine($"  {f1} = bitcast i32 {bits1} to float");
+
+        string bits2 = EmitLoad(arg.Src2);
+        string f2 = FreshTmp();
+        _out.WriteLine($"  {f2} = bitcast i32 {bits2} to float");
+
+        string fOp = arg.Op switch
+        {
+            BinaryOp.Add                    => "fadd",
+            BinaryOp.Sub                    => "fsub",
+            BinaryOp.Mul                    => "fmul",
+            BinaryOp.Div or BinaryOp.FloorDiv => "fdiv",
+            BinaryOp.Mod                    => "frem",
+            _ => throw new NotSupportedException($"FloatBinary op {arg.Op} not supported in LLVM codegen")
+        };
+        string fresult = FreshTmp();
+        _out.WriteLine($"  {fresult} = {fOp} float {f1}, {f2}");
+
+        string resultBits = FreshTmp();
+        _out.WriteLine($"  {resultBits} = bitcast float {fresult} to i32");
+        EmitStore(resultBits, arg.Dst);
+    }
+
+    // -------------------------------------------------------------------------
+    // Widen / Narrow
+    // -------------------------------------------------------------------------
+
+    private void CompileLlvmWiden(Widen arg)
+    {
+        string v = EmitLoad(arg.Src);
+        string fromT = LlvmType(arg.FromType);
+        string toT = LlvmType(arg.ToType);
+        string result;
+        if (fromT == toT)
+        {
+            result = v;
+        }
+        else
+        {
+            result = FreshTmp();
+            bool isSigned = arg.FromType is DataType.INT8 or DataType.INT16;
+            string ext = isSigned ? "sext" : "zext";
+            _out.WriteLine($"  {result} = {ext} {fromT} {v} to {toT}");
+        }
+        // Coerce to i32 for uniform storage.
+        string stored = result;
+        if (toT != "i32")
+        {
+            string tmp = FreshTmp();
+            bool isSigned = arg.ToType is DataType.INT8 or DataType.INT16;
+            _out.WriteLine($"  {tmp} = {(isSigned ? "sext" : "zext")} {toT} {result} to i32");
+            stored = tmp;
+        }
+        EmitStore(stored, arg.Dst);
+    }
+
+    private void CompileLlvmNarrow(Narrow arg)
+    {
+        string v = EmitLoad(arg.Src);
+        string toT = LlvmType(arg.ToType);
+        string trunc = FreshTmp();
+        _out.WriteLine($"  {trunc} = trunc i32 {v} to {toT}");
+        // Zero-extend back to i32 for uniform storage.
+        string ext = FreshTmp();
+        _out.WriteLine($"  {ext} = zext {toT} {trunc} to i32");
+        EmitStore(ext, arg.Dst);
+    }
+
+    private static string EscapeAsmStr(string s) =>
+        s.Replace("\\", "\\\\").Replace("\"", "\\22").Replace("\n", "\\0A");
 }

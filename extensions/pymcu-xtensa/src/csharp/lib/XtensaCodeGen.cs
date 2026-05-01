@@ -53,8 +53,8 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     private List<(string Label, string Expr)> pendingLiterals = [];
     // Names of ProgramIR globals (scalar vars + SRAM arrays) — backed by .comm in .bss.
     private HashSet<string> _globals = [];
-    // Read-only byte arrays collected from FlashData instructions; emitted into .rodata.
-    private Dictionary<string, List<int>> _flashArrayPool = [];
+    // Read-only byte arrays collected from RoData instructions; emitted into .rodata.
+    private Dictionary<string, List<int>> _roDataPool = [];
 
     // Xtensa ISA immediate-field limits used across multiple methods.
     // movi/l32r selection: movi range is a signed 12-bit immediate.
@@ -232,7 +232,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     {
         assembly.Clear();
         _globals.Clear();
-        _flashArrayPool.Clear();
+        _roDataPool.Clear();
 
         // Register global scalar variable names so LoadIntoReg/StoreRegInto use labels.
         foreach (var g in program.Globals)
@@ -257,8 +257,8 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
                         arrayDefs[ast.ArrayName] = (ast.ElemType, ast.Count);
                         _globals.Add(ast.ArrayName);
                         break;
-                    case FlashData fd:
-                        _flashArrayPool[fd.Name] = fd.Bytes;
+                    case RoData fd:
+                        _roDataPool[fd.Name] = fd.Bytes;
                         break;
                 }
             }
@@ -291,7 +291,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             output.WriteLine("\t.section .bss");
             foreach (var g in program.Globals)
             {
-                if (_flashArrayPool.ContainsKey(g.Name)) continue;
+                if (_roDataPool.ContainsKey(g.Name)) continue;
                 var safeName = g.Name.Replace('.', '_');
                 int size  = g.Type.SizeOf();
                 int align = size > 4 ? 4 : size;
@@ -308,12 +308,12 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         // Emit .rodata for flash/read-only byte arrays.
-        if (_flashArrayPool.Count > 0)
+        if (_roDataPool.Count > 0)
         {
             output.WriteLine();
             output.WriteLine("\t.section .rodata");
             output.WriteLine("\t.align 4");
-            foreach (var (name, bytes) in _flashArrayPool)
+            foreach (var (name, bytes) in _roDataPool)
             {
                 var safeName = RodataPrefix + name.Replace('.', '_');
                 output.WriteLine($"\t.global {safeName}");
@@ -324,9 +324,29 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         }
     }
 
-    public override void EmitContextSave() { }
-    public override void EmitContextRestore() { }
-    public override void EmitInterruptReturn() { }
+    public override void EmitContextSave()
+    {
+        // Save caller-saved registers a0-a11 and the SAR register for a level-1 ISR.
+        // Registers are stored at SP+0 through SP+44 (a0..a11), SAR at SP+48.
+        // The ISR prologue must have already allocated at least 52 bytes on the stack.
+        for (int r = 0; r <= 11; r++)
+            EmitRaw($"\ts32i\ta{r}, a1, {r * 4}");
+        EmitRaw("\trsr\ta8, SAR");
+        EmitRaw("\ts32i\ta8, a1, 48");
+    }
+
+    public override void EmitContextRestore()
+    {
+        EmitRaw("\tl32i\ta8, a1, 48");
+        EmitRaw("\twsr\ta8, SAR");
+        for (int r = 11; r >= 0; r--)
+            EmitRaw($"\tl32i\ta{r}, a1, {r * 4}");
+    }
+
+    public override void EmitInterruptReturn()
+    {
+        EmitRaw("\trfe");
+    }
 
     // -------------------------------------------------------------------------
     // Function compilation
@@ -384,8 +404,30 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         Emit("s32i", "a12", "a1", (currentStackAdjustment - 8).ToString());
         Emit("addi", "a12", "a1", currentStackAdjustment.ToString());
 
-        foreach (var instr in func.Body)
+        // Instruction loop with Binary+Branch fusion.
+        for (int _i = 0; _i < func.Body.Count; _i++)
+        {
+            var instr = func.Body[_i];
+            if (_i + 1 < func.Body.Count && instr is Binary cmpBin
+                && cmpBin.Op is BinaryOp.Equal or BinaryOp.NotEqual
+                    or BinaryOp.LessThan or BinaryOp.LessEqual
+                    or BinaryOp.GreaterThan or BinaryOp.GreaterEqual)
+            {
+                if (func.Body[_i + 1] is JumpIfZero jz && IsSameVal(jz.Condition, cmpBin.Dst))
+                {
+                    EmitFusedBranch(cmpBin.Op, cmpBin.Src1, cmpBin.Src2, jz.Target, isJumpIfZero: true);
+                    _i++;
+                    continue;
+                }
+                if (func.Body[_i + 1] is JumpIfNotZero jnz && IsSameVal(jnz.Condition, cmpBin.Dst))
+                {
+                    EmitFusedBranch(cmpBin.Op, cmpBin.Src1, cmpBin.Src2, jnz.Target, isJumpIfZero: false);
+                    _i++;
+                    continue;
+                }
+            }
             CompileInstruction(instr);
+        }
 
         var funcLines = assembly;
         assembly = savedAssembly;
@@ -415,6 +457,44 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         Temporary tr => tr.Type  is DataType.UINT8 or DataType.UINT16 or DataType.UINT32,
         _            => false
     };
+
+    private static bool IsSameVal(Val a, Val b) => a switch
+    {
+        Variable va => b is Variable vb && va.Name == vb.Name,
+        Temporary ta => b is Temporary tb && ta.Name == tb.Name,
+        _ => false
+    };
+
+    private void EmitFusedBranch(BinaryOp op, Val src1, Val src2, string target, bool isJumpIfZero)
+    {
+        bool isUnsigned = IsUnsignedVal(src1) || IsUnsignedVal(src2);
+        LoadIntoReg(src1, "a8");
+        LoadIntoReg(src2, "a9");
+        // isJumpIfZero=true means: jump when condition==0, i.e., when the comparison is FALSE.
+        // isJumpIfZero=false means: jump when condition!=0, i.e., when the comparison is TRUE.
+        bool jumpWhenTrue = !isJumpIfZero;
+        switch (op)
+        {
+            case BinaryOp.Equal:
+                Emit(jumpWhenTrue ? "beq" : "bne", "a8", "a9", target); break;
+            case BinaryOp.NotEqual:
+                Emit(jumpWhenTrue ? "bne" : "beq", "a8", "a9", target); break;
+            case BinaryOp.LessThan:
+                Emit(jumpWhenTrue ? (isUnsigned ? "bltu" : "blt")
+                                  : (isUnsigned ? "bgeu" : "bge"), "a8", "a9", target); break;
+            case BinaryOp.GreaterEqual:
+                Emit(jumpWhenTrue ? (isUnsigned ? "bgeu" : "bge")
+                                  : (isUnsigned ? "bltu" : "blt"), "a8", "a9", target); break;
+            case BinaryOp.GreaterThan:
+                // src1 > src2 iff src2 < src1 (swap operands)
+                Emit(jumpWhenTrue ? (isUnsigned ? "bltu" : "blt")
+                                  : (isUnsigned ? "bgeu" : "bge"), "a9", "a8", target); break;
+            case BinaryOp.LessEqual:
+                // src1 <= src2 iff src2 >= src1 (swap operands)
+                Emit(jumpWhenTrue ? (isUnsigned ? "bgeu" : "bge")
+                                  : (isUnsigned ? "bltu" : "blt"), "a9", "a8", target); break;
+        }
+    }
 
     private void CompileInstruction(Instruction instr)
     {
@@ -476,8 +556,11 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             case StoreIndirect arg:  CompileStoreIndirect(arg); break;
             case ArrayLoad arg:      CompileArrayLoad(arg); break;
             case ArrayStore arg:     CompileArrayStore(arg); break;
-            case ArrayLoadFlash arg: CompileArrayLoadFlash(arg); break;
-            case FlashData:          break; // collected in Compile() pre-scan
+            case ArrayLoadRo arg: CompileArrayLoadRo(arg); break;
+            case RoData:          break; // collected in Compile() pre-scan
+            case FloatBinary arg: CompileFloatBinary(arg); break;
+            case Widen arg:       CompileWiden(arg); break;
+            case Narrow arg:      CompileNarrow(arg); break;
         }
     }
 
@@ -920,10 +1003,10 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     }
 
     // -------------------------------------------------------------------------
-    // ArrayLoadFlash  (read-only .rodata byte arrays)
+    // ArrayLoadRo  (read-only .rodata byte arrays)
     // -------------------------------------------------------------------------
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         // The table is placed in .rodata under the label "_rodata_<safeName>".
         var label = RodataPrefix + alf.ArrayName.Replace('.', '_');
@@ -979,5 +1062,59 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         // Merge.
         Emit("or", "a9", "a9", "a8");
         StoreRegInto("a9", arg.Target);
+    }
+
+    // -------------------------------------------------------------------------
+    // FloatBinary (soft-float via GCC call0 ABI)
+    // -------------------------------------------------------------------------
+
+    private void CompileFloatBinary(FloatBinary arg)
+    {
+        // Load operands: src1 -> a2, src2 -> a3 (call0 ABI argument registers).
+        LoadIntoReg(arg.Src1, "a2");
+        LoadIntoReg(arg.Src2, "a3");
+        string routine = arg.Op switch
+        {
+            BinaryOp.Add                    => "__addsf3",
+            BinaryOp.Sub                    => "__subsf3",
+            BinaryOp.Mul                    => "__mulsf3",
+            BinaryOp.Div or BinaryOp.FloorDiv => "__divsf3",
+            BinaryOp.Mod                    => "__modsf3",
+            _ => throw new NotSupportedException($"FloatBinary op {arg.Op} not supported on Xtensa")
+        };
+        Emit("call0", routine);
+        // Result is in a2.
+        StoreRegInto("a2", arg.Dst);
+    }
+
+    // -------------------------------------------------------------------------
+    // Widen / Narrow
+    // -------------------------------------------------------------------------
+
+    private void CompileWiden(Widen arg)
+    {
+        LoadIntoReg(arg.Src, "a8");
+        bool isSigned = arg.FromType is DataType.INT8 or DataType.INT16;
+        int bits = arg.FromType.SizeOf() * 8;
+        if (isSigned)
+        {
+            // sext a8, a8, <bits-1>  -- sign-extend bit (bits-1) up to bit 31.
+            Emit("sext", "a8", "a8", (bits - 1).ToString());
+        }
+        else
+        {
+            // extui a8, a8, 0, <bits>  -- zero-extend by masking high bits.
+            Emit("extui", "a8", "a8", "0", bits.ToString());
+        }
+        StoreRegInto("a8", arg.Dst);
+    }
+
+    private void CompileNarrow(Narrow arg)
+    {
+        LoadIntoReg(arg.Src, "a8");
+        int bits = arg.ToType.SizeOf() * 8;
+        // Mask to the target width.
+        Emit("extui", "a8", "a8", "0", bits.ToString());
+        StoreRegInto("a8", arg.Dst);
     }
 }

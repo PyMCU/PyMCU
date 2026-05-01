@@ -372,7 +372,7 @@ private static Function CloneFunction(Function f)
                     varConsts.Clear();
                     break;
                 // For all other instructions that produce a value (Binary, Unary, Call,
-                // AugAssign, BitCheck, LoadIndirect, ArrayLoad, ArrayLoadFlash, …),
+                // AugAssign, BitCheck, LoadIndirect, ArrayLoad, ArrayLoadRo, …),
                 // delegate to GetDst so any new instruction type added in the future is
                 // automatically covered rather than silently skipped.
                 default:
@@ -684,27 +684,33 @@ private static Function CloneFunction(Function f)
     public static Val? GetDst(Instruction instr) => instr switch
     {
         Binary b => b.Dst,
+        FloatBinary fb => fb.Dst,
         Unary u => u.Dst,
         Copy c => c.Dst,
         Call cl => cl.Dst,
         BitCheck bc => bc.Dst,
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
-        ArrayLoadFlash alf => alf.Dst,
+        ArrayLoadRo alf => alf.Dst,
         AugAssign aa => aa.Target,
+        Widen w => w.Dst,
+        Narrow n => n.Dst,
         _ => null,
     };
 
     private static Instruction ReplaceDst(Instruction instr, Val newDst) => instr switch
     {
         Binary b => b with { Dst = newDst },
+        FloatBinary fb => fb with { Dst = newDst },
         Unary u => u with { Dst = newDst },
         Copy c => c with { Dst = newDst },
         Call cl => cl with { Dst = newDst },
         BitCheck bc => bc with { Dst = newDst },
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
-        ArrayLoadFlash alf => alf with { Dst = newDst },
+        ArrayLoadRo alf => alf with { Dst = newDst },
+        Widen w => w with { Dst = newDst },
+        Narrow n => n with { Dst = newDst },
         _ => instr,
     };
 
@@ -767,7 +773,13 @@ private static Function CloneFunction(Function f)
                 register(si.DstPtr);
                 break;
             case ArrayLoad al: register(al.Index); break;
-            case ArrayLoadFlash alf: register(alf.Index); break;
+            case ArrayLoadRo alf: register(alf.Index); break;
+            case FloatBinary fb:
+                register(fb.Src1);
+                register(fb.Src2);
+                break;
+            case Widen w: register(w.Src); break;
+            case Narrow n2: register(n2.Src); break;
             case InlineAsm ia when ia.Operands != null:
                 foreach (var op in ia.Operands) register(op);
                 break;
@@ -805,7 +817,10 @@ private static Function CloneFunction(Function f)
             LoadIndirect li => li with { SrcPtr = replace(li.SrcPtr) },
             StoreIndirect si => si with { Src = replace(si.Src), DstPtr = replace(si.DstPtr) },
             ArrayLoad al => al with { Index = replace(al.Index) },
-            ArrayLoadFlash alf => alf with { Index = replace(alf.Index) },
+            ArrayLoadRo alf => alf with { Index = replace(alf.Index) },
+            FloatBinary fb => fb with { Src1 = replace(fb.Src1), Src2 = replace(fb.Src2) },
+            Widen w => w with { Src = replace(w.Src) },
+            Narrow n2 => n2 with { Src = replace(n2.Src) },
             InlineAsm ia when ia.Operands != null => ia with { Operands = ia.Operands.Select(replace).ToList() },
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
             _ => instr,

@@ -553,14 +553,20 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
                 LoadIntoW(si.Src);
                 Emit("MOVWF", Addr(0x00));  // INDF
                 break;
-            case FlashData fd:
+            case RoData fd:
                 throw new NotSupportedException(
-                    $"PIC12 (Experimental) does not support FlashData ('{fd.Name}'). " +
+                    $"PIC12 (Experimental) does not support RoData ('{fd.Name}'). " +
                     "Use RAM arrays instead.");
-            case ArrayLoadFlash alf:
+            case ArrayLoadRo alf:
                 throw new NotSupportedException(
-                    "PIC12 (Experimental) does not support ArrayLoadFlash. " +
+                    "PIC12 (Experimental) does not support ArrayLoadRo. " +
                     "Only constant-index RAM arrays are supported.");
+            case FloatBinary:
+                throw new NotSupportedException("Float operations are not supported on PIC12.");
+            case Widen w:
+                break; // no-op: PIC12 has no wider registers
+            case Narrow n:
+                break; // no-op: PIC12 operates at byte width natively
         }
     }
 

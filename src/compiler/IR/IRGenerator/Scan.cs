@@ -89,9 +89,9 @@ public partial class IRGenerator
                             {
                                 arraySizes[name] = count;
                                 arrayElemTypes[name] = elemDt;
-                                flashArrays.Add(name);
+                                roArrays.Add(name);
 
-                                // Collect FlashData so Generate() can inject it into the
+                                // Collect RoData so Generate() can inject it into the
                                 // main function body; ScanGlobals runs before VisitFunction.
                                 var bytes = new List<int>(Enumerable.Repeat(0, count));
                                 if (initializer is ListExpr le)
@@ -100,7 +100,7 @@ public partial class IRGenerator
                                         if (le.Elements[k] is IntegerLiteral il)
                                             bytes[k] = il.Value;
                                 }
-                                pendingFlashData.Add(new FlashData(name, bytes));
+                                pendingRoData.Add(new RoData(name, bytes));
                             }
                         }
                     }

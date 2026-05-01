@@ -603,7 +603,10 @@ public partial class IRGenerator
             bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
                 or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
             Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
-            Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
+            if (isCompare)
+                Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
+            else
+                Emit(new FloatBinary(MapOp(expr.Op), v1, v2, floatDst));
             return floatDst;
         }
 
@@ -772,11 +775,11 @@ public partial class IRGenerator
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
-                if (flashArrays.Contains(qualified))
+                if (roArrays.Contains(qualified))
                 {
                     Val idxVal = VisitExpression(expr.Index);
                     Temporary tmp = MakeTemp(DataType.UINT8);
-                    Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
+                    Emit(new ArrayLoadRo(qualified, idxVal, tmp));
                     return tmp;
                 }
 
@@ -828,11 +831,11 @@ public partial class IRGenerator
                 }
 
                 // Runtime index on a const[str]: intern string as flash data and
-                // emit ArrayLoadFlash so the loop can iterate byte by byte.
+                // emit ArrayLoadRo so the loop can iterate byte by byte.
                 string flashName = InternStringAsFlash(strVal);
                 Val idxVal = VisitExpression(expr.Index);
                 Temporary tmp = MakeTemp(DataType.UINT8);
-                Emit(new ArrayLoadFlash(flashName, idxVal, tmp));
+                Emit(new ArrayLoadRo(flashName, idxVal, tmp));
                 return tmp;
             }
         }

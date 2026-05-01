@@ -683,12 +683,12 @@ public partial class IRGenerator
                             ? stmt.Target
                             : currentFunction + "." + stmt.Target;
                         // Synthesized main: fall back to the module-level name registered by ScanGlobals.
-                        if (!flashArrays.Contains(qualified) && flashArrays.Contains(stmt.Target))
+                        if (!roArrays.Contains(qualified) && roArrays.Contains(stmt.Target))
                             qualified = stmt.Target;
                         arraySizes[qualified] = count;
                         arrayElemTypes[qualified] = elemDt;
                         variableTypes[qualified] = elemDt;
-                        flashArrays.Add(qualified);
+                        roArrays.Add(qualified);
 
                         var bytes = new List<int>(Enumerable.Repeat(0, count));
                         if (stmt.Value is ListExpr le)
@@ -696,7 +696,7 @@ public partial class IRGenerator
                             for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
                                 if (le.Elements[k] is IntegerLiteral il) bytes[k] = il.Value;
                         }
-                        Emit(new FlashData(qualified, bytes));
+                        Emit(new RoData(qualified, bytes));
                         return;
                     }
                 }

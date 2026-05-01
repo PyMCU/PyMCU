@@ -624,12 +624,18 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
             case InlineAsm asm2:    EmitRaw(asm2.Code);        break;
             case ArrayLoad al:      CompileArrayLoad(al);      break;
             case ArrayStore ast:    CompileArrayStore(ast);    break;
-            case FlashData fd:
+            case RoData fd:
                 // Flash data table will be emitted after all functions as DB directives.
                 break;
-            case ArrayLoadFlash alf:
-                CompileArrayLoadFlash(alf);
+            case ArrayLoadRo alf:
+                CompileArrayLoadRo(alf);
                 break;
+            case FloatBinary:
+                throw new NotSupportedException("Float operations are not supported on PIC18.");
+            case Widen w:
+                break; // no-op: handled implicitly by register width
+            case Narrow n:
+                break; // no-op: handled implicitly by register width
         }
     }
 
@@ -1648,10 +1654,10 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
     }
 
     // -------------------------------------------------------------------------
-    // ArrayLoadFlash (PIC18 TBLRD* — table read from program memory)
+    // ArrayLoadRo (PIC18 TBLRD* — table read from program memory)
     // -------------------------------------------------------------------------
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         // Load TBLPTR = base address of the table + index, then TBLRD* to read TABLAT.
         // TBLPTRU (0xFF8), TBLPTRH (0xFF7), TBLPTRL (0xFF6); TABLAT (0xFF5).
@@ -1679,7 +1685,7 @@ public class PIC18CodeGen(DeviceConfig cfg) : CodeGen
     {
         var flashDataInstrs = program.Functions
             .SelectMany(f => f.Body)
-            .OfType<FlashData>()
+            .OfType<RoData>()
             .GroupBy(fd => fd.Name)
             .Select(g => g.First());
 

@@ -129,14 +129,24 @@ public record DebugLine(int Line, string Text, string SourceFile) : Instruction;
 public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType, int Count) : Instruction;
 
 // ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
-public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;
+public record ArrayLoadRo(string ArrayName, Val Index, Val Dst) : Instruction;
 
 // Flash-resident read-only byte array (placed in .text / PROGMEM via const[uint8[N]]).
 // Bytes holds the literal initializer values; AVR codegen emits a .db table in flash.
-public record FlashData(string Name, List<int> Bytes) : Instruction;
+public record RoData(string Name, List<int> Bytes) : Instruction;
 
 // Variable-index array store: array_name[index] = src
 public record ArrayStore(string ArrayName, Val Index, Val Src, DataType ElemType, int Count) : Instruction;
+
+// Floating-point binary operation (explicit float arithmetic instruction).
+// Op is one of Add/Sub/Mul/Div/FloorDiv/Mod; Dst has DataType.FLOAT.
+public record FloatBinary(BinaryOp Op, Val Src1, Val Src2, Val Dst) : Instruction;
+
+// Zero-extend (unsigned) or sign-extend (signed) a narrower value to a wider type.
+public record Widen(Val Src, DataType FromType, DataType ToType, Val Dst) : Instruction;
+
+// Truncate a wider value to a narrower type.
+public record Narrow(Val Src, DataType FromType, DataType ToType, Val Dst) : Instruction;
 
 // --- Function Definition ---
 public class Function

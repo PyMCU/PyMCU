@@ -215,12 +215,12 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var g in program.Globals)
             _globals.Add(g.Name);
 
-        // ── Collect FlashData from all function bodies ─────────────────────
+        // ── Collect RoData from all function bodies ─────────────────────
         foreach (var fn in program.Functions)
         {
             foreach (var instr in fn.Body)
             {
-                if (instr is FlashData fd)
+                if (instr is RoData fd)
                     _flashArrays[fd.Name] = fd.Bytes.Count;
             }
         }
@@ -238,7 +238,7 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
         {
             foreach (var instr in fn.Body)
             {
-                if (instr is FlashData fd)
+                if (instr is RoData fd)
                 {
                     var byteList = string.Join(", ", fd.Bytes.Select(b => $"i8 {b}"));
                     Raw($"@{fd.Name} = constant [{fd.Bytes.Count} x i8] [{byteList}]");
@@ -391,8 +391,11 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
                 case JumpIfBitClear jbc: Track(jbc.Source); break;
                 case AugAssign aug: Track(aug.Target); Track(aug.Operand); break;
                 case ArrayLoad al: Track(al.Index); Track(al.Dst); break;
-                case ArrayLoadFlash alf: Track(alf.Index); Track(alf.Dst); break;
+                case ArrayLoadRo alf: Track(alf.Index); Track(alf.Dst); break;
                 case ArrayStore as2: Track(as2.Index); Track(as2.Src); break;
+                case FloatBinary fb:   Track(fb.Src1); Track(fb.Src2); Track(fb.Dst); break;
+                case Widen w:          Track(w.Src);   Track(w.Dst); break;
+                case Narrow n:         Track(n.Src);   Track(n.Dst); break;
             }
         }
     }
@@ -428,10 +431,13 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
             case LoadIndirect li:          CompileLoadIndirect(li);           break;
             case StoreIndirect si:         CompileStoreIndirect(si);          break;
             case ArrayLoad al:             CompileArrayLoad(al);              break;
-            case ArrayLoadFlash alf:       CompileArrayLoadFlash(alf);        break;
+            case ArrayLoadRo alf:       CompileArrayLoadRo(alf);        break;
             case ArrayStore as2:           CompileArrayStore(as2);            break;
-            case FlashData:                break; // emitted at module level in Compile()
+            case RoData:                break; // emitted at module level in Compile()
             case InlineAsm ia:             Ins($"; inline asm (not lowered): {ia.Code}"); break;
+            case FloatBinary fb:           CompileFloatBinary(fb); break;
+            case Widen w:                  CompileWiden(w); break;
+            case Narrow n:                 CompileNarrow(n); break;
             case DebugLine dbg:
                 var src = string.IsNullOrEmpty(dbg.SourceFile) ? "" : $"{dbg.SourceFile}:";
                 Ins($"; {src}{dbg.Line}: {dbg.Text}");
@@ -780,7 +786,7 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
         St(loaded, llT, al.Dst);
     }
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         var (idx, _)   = Ld(alf.Index);
         var idxCoerced = Coerce(idx, "i32", "i32");
@@ -816,4 +822,78 @@ public class ArmLlvmCodeGen(DeviceConfig cfg) : CodeGen
         Ins("ret void");
         _terminated = true;
     }
+
+    // ── FloatBinary (LLVM fadd/fsub/fmul/fdiv/frem) ────────────────────────
+
+    private void CompileFloatBinary(FloatBinary arg)
+    {
+        var (v1, _) = Ld(arg.Src1);
+        string f1 = NT();
+        Ins($"{f1} = bitcast i32 {v1} to float");
+
+        var (v2, _) = Ld(arg.Src2);
+        string f2 = NT();
+        Ins($"{f2} = bitcast i32 {v2} to float");
+
+        string fOp = arg.Op switch
+        {
+            BinaryOp.Add                      => "fadd",
+            BinaryOp.Sub                      => "fsub",
+            BinaryOp.Mul                      => "fmul",
+            BinaryOp.Div or BinaryOp.FloorDiv => "fdiv",
+            BinaryOp.Mod                      => "frem",
+            _ => throw new NotSupportedException($"FloatBinary op {arg.Op} not supported in ARM LLVM codegen")
+        };
+        string fresult = NT();
+        Ins($"{fresult} = {fOp} float {f1}, {f2}");
+
+        string resultBits = NT();
+        Ins($"{resultBits} = bitcast float {fresult} to i32");
+        St(resultBits, "i32", arg.Dst);
+    }
+
+    // ── Widen / Narrow ─────────────────────────────────────────────────────
+
+    private void CompileWiden(Widen arg)
+    {
+        var (v, _) = Ld(arg.Src);
+        string fromT = LlvmIntType(arg.FromType);
+        string toT   = LlvmIntType(arg.ToType);
+        bool isSigned = arg.FromType is DataType.INT8 or DataType.INT16;
+        string result;
+        if (fromT == toT)
+        {
+            result = v;
+        }
+        else
+        {
+            result = NT();
+            Ins($"{result} = {(isSigned ? "sext" : "zext")} {fromT} {v} to {toT}");
+        }
+        string stored = result;
+        if (toT != "i32")
+        {
+            stored = NT();
+            Ins($"{stored} = {(isSigned ? "sext" : "zext")} {toT} {result} to i32");
+        }
+        St(stored, "i32", arg.Dst);
+    }
+
+    private void CompileNarrow(Narrow arg)
+    {
+        var (v, _) = Ld(arg.Src);
+        string toT = LlvmIntType(arg.ToType);
+        string trunc = NT();
+        Ins($"{trunc} = trunc i32 {v} to {toT}");
+        string ext = NT();
+        Ins($"{ext} = zext {toT} {trunc} to i32");
+        St(ext, "i32", arg.Dst);
+    }
+
+    private static string LlvmIntType(DataType dt) => dt switch
+    {
+        DataType.UINT8  or DataType.INT8  => "i8",
+        DataType.UINT16 or DataType.INT16 => "i16",
+        _                                 => "i32"
+    };
 }

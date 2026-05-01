@@ -572,12 +572,18 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
             case InlineAsm asm2:     EmitRaw(asm2.Code);        break;
             case ArrayLoad al:       CompileArrayLoad(al);      break;
             case ArrayStore ast:     CompileArrayStore(ast);    break;
-            case FlashData fd:
+            case RoData fd:
                 // RETLW table will be emitted after all functions; no inline code needed.
                 break;
-            case ArrayLoadFlash alf:
-                CompileArrayLoadFlash(alf);
+            case ArrayLoadRo alf:
+                CompileArrayLoadRo(alf);
                 break;
+            case FloatBinary:
+                throw new NotSupportedException("Float operations are not supported on PIC14.");
+            case Widen w:
+                break; // no-op
+            case Narrow n:
+                break; // no-op
         }
     }
 
@@ -1567,10 +1573,10 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
     }
 
     // -------------------------------------------------------------------------
-    // ArrayLoadFlash (RETLW table lookup)
+    // ArrayLoadRo (RETLW table lookup)
     // -------------------------------------------------------------------------
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         // RETLW table read: put index in W, CALL <table_name>_read.
         // The table is emitted after all functions as a RETLW sequence.
@@ -1590,7 +1596,7 @@ public class PIC14CodeGen(DeviceConfig cfg) : CodeGen
     {
         var flashDataInstrs = program.Functions
             .SelectMany(f => f.Body)
-            .OfType<FlashData>()
+            .OfType<RoData>()
             .GroupBy(fd => fd.Name)
             .Select(g => g.First());
 

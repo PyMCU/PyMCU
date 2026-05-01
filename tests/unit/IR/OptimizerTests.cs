@@ -554,7 +554,7 @@ public class PropagateCopiesTests
             new BitCheck(v, 0, t),
             new LoadIndirect(v, t),
             new ArrayLoad("arr", new Constant(0), t, DataType.UINT8, 4),
-            new ArrayLoadFlash("arr", new Constant(0), t),
+            new ArrayLoadRo("arr", new Constant(0), t),
             new AugAssign(IrBinaryOp.Add, v, new Constant(1)),
         ];
 

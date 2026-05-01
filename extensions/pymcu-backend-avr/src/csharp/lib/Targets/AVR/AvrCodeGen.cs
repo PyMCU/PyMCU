@@ -30,7 +30,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, string> _regLayout = new();
     private Dictionary<string, string> _tmpRegLayout = new();
     private readonly HashSet<string> _allTmpRegNames = [];
-    private readonly Dictionary<string, List<int>> _flashArrayPool = new();
+    private readonly Dictionary<string, List<int>> _roDataPool = new();
     // Maps function name → list of parameter sizes (in bytes) for correct call-site arg loading.
     private Dictionary<string, List<int>> _functionParamSizes = new();
     private int _labelCounter;
@@ -406,7 +406,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     public override void Compile(ProgramIR program, TextWriter output)
     {
         _assembly.Clear();
-        _flashArrayPool.Clear();
+        _roDataPool.Clear();
         _allTmpRegNames.Clear();
         _labelCounter = 0;
 
@@ -683,9 +683,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 break;
             case ArrayLoad al: CompileArrayLoad(al); break;
-            case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
-            case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
+            case ArrayLoadRo alf: CompileArrayLoadRo(alf); break;
+            case RoData fd: _roDataPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
+            case FloatBinary fb: CompileFloatBinary(new Binary(fb.Op, fb.Src1, fb.Src2, fb.Dst)); break;
+            case Widen w: CompileWiden(w); break;
+            case Narrow n: CompileNarrow(n); break;
         }
     }
 
@@ -1815,7 +1818,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
     }
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         // Load one byte from a flash-resident const[uint8[N]] table via LPM Z.
         // Table label in flash byte-address space (same as string pool labels).
@@ -1831,15 +1834,61 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void EmitFlashArrayPool(TextWriter os)
     {
-        if (_flashArrayPool.Count == 0) return;
+        if (_roDataPool.Count == 0) return;
         os.WriteLine();
         os.WriteLine("; --- Flash Array Pool (LPM lookup tables, const[uint8[N]]) ---");
-        foreach (var (name, bytes) in _flashArrayPool)
+        foreach (var (name, bytes) in _roDataPool)
         {
             var label = "__flash_" + name.Replace('.', '_');
             os.WriteLine($"{label}:");
             os.WriteLine("\t.byte " + string.Join(", ", bytes));
             os.WriteLine("\t.balign 2");
         }
+    }
+
+    private void CompileWiden(Widen w)
+    {
+        // Load the narrow source into R24.
+        LoadIntoReg(w.Src, "R24", w.FromType);
+        bool isSigned = w.FromType is DataType.INT8 or DataType.INT16;
+        if (w.ToType.SizeOf() >= 4)
+        {
+            if (isSigned)
+            {
+                // Sign-extend R24 into R24:R25:R22:R23.
+                Emit("CLR", "R25");
+                Emit("SBRC", "R24", "7");
+                Emit("COM", "R25");
+                Emit("MOV", "R22", "R25");
+                Emit("MOV", "R23", "R25");
+            }
+            else
+            {
+                Emit("CLR", "R25");
+                Emit("CLR", "R22");
+                Emit("CLR", "R23");
+            }
+        }
+        else if (w.ToType.SizeOf() == 2)
+        {
+            if (isSigned)
+            {
+                Emit("CLR", "R25");
+                Emit("SBRC", "R24", "7");
+                Emit("COM", "R25");
+            }
+            else
+            {
+                Emit("CLR", "R25");
+            }
+        }
+        StoreRegInto("R24", w.Dst, w.ToType);
+    }
+
+    private void CompileNarrow(Narrow n)
+    {
+        // Load source and truncate by storing only the low byte/word.
+        LoadIntoReg(n.Src, "R24", n.FromType);
+        StoreRegInto("R24", n.Dst, n.ToType);
     }
 }

@@ -177,7 +177,7 @@ public partial class IRGenerator
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
         externFunctionMap.Clear();
-        pendingFlashData.Clear();
+        pendingRoData.Clear();
 
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
@@ -493,14 +493,14 @@ public partial class IRGenerator
             }
         }
 
-        // Inject FlashData instructions (global const[uint8[N]] arrays) into the
+        // Inject RoData instructions (global const[uint8[N]] arrays) into the
         // main function body so the backend emits .byte tables in flash.
-        if (pendingFlashData.Count > 0)
+        if (pendingRoData.Count > 0)
         {
             var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
             if (mainFunc != null)
             {
-                mainFunc.Body.InsertRange(0, pendingFlashData);
+                mainFunc.Body.InsertRange(0, pendingRoData);
             }
         }
 
@@ -741,10 +741,10 @@ public partial class IRGenerator
         return null;
     }
 
-    // Interns a compile-time string value as a null-terminated FlashData entry,
+    // Interns a compile-time string value as a null-terminated RoData entry,
     // returning the flash array name.  Reuses an existing entry if the same string
-    // was interned before.  Registers the entry in flashArrays / arraySizes /
-    // arrayElemTypes so that ArrayLoadFlash works for runtime-indexed access.
+    // was interned before.  Registers the entry in roArrays / arraySizes /
+    // arrayElemTypes so that ArrayLoadRo works for runtime-indexed access.
     private int _flashStrCounter;
     private readonly Dictionary<string, string> _flashStrCache = new();
 
@@ -759,8 +759,8 @@ public partial class IRGenerator
             .Append(0) // null terminator
             .ToList();
 
-        Emit(new FlashData(name, bytes));
-        flashArrays.Add(name);
+        Emit(new RoData(name, bytes));
+        roArrays.Add(name);
         arraySizes[name] = bytes.Count;
         arrayElemTypes[name] = DataType.UINT8;
 
@@ -821,8 +821,8 @@ public partial class IRGenerator
 
         if (s is AnnAssign ann)
         {
-            // const[T[N]] flash arrays are already injected via pendingFlashData —
-            // including them again would emit a duplicate FlashData instruction.
+            // const[T[N]] flash arrays are already injected via pendingRoData —
+            // including them again would emit a duplicate RoData instruction.
             if (ann.Annotation.StartsWith("const[") && ann.Annotation.EndsWith("]"))
             {
                 string inner = ann.Annotation.Substring(6, ann.Annotation.Length - 7);

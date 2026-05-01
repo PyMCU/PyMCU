@@ -31,7 +31,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, string> _regLayout = new();
     private Dictionary<string, string> _tmpRegLayout = new();
     private readonly HashSet<string> _allTmpRegNames = [];
-    private readonly Dictionary<string, List<int>> _flashArrayPool = new();
+    private readonly Dictionary<string, List<int>> _roDataPool = new();
     // Maps function name → list of parameter sizes (in bytes) for correct call-site arg loading.
     private Dictionary<string, List<int>> _functionParamSizes = new();
     private int _labelCounter;
@@ -285,7 +285,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     public override void Compile(ProgramIR program, TextWriter output)
     {
         _assembly.Clear();
-        _flashArrayPool.Clear();
+        _roDataPool.Clear();
         _allTmpRegNames.Clear();
         _labelCounter = 0;
 
@@ -562,8 +562,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 break;
             case ArrayLoad al: CompileArrayLoad(al); break;
-            case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
-            case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
+            case ArrayLoadRo alf: CompileArrayLoadRo(alf); break;
+            case RoData fd: _roDataPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
         }
     }
@@ -1658,7 +1658,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
     }
 
-    private void CompileArrayLoadFlash(ArrayLoadFlash alf)
+    private void CompileArrayLoadRo(ArrayLoadRo alf)
     {
         // Load one byte from a flash-resident const[uint8[N]] table via LPM Z.
         // Table label in flash byte-address space (same as string pool labels).
@@ -1674,10 +1674,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void EmitFlashArrayPool(TextWriter os)
     {
-        if (_flashArrayPool.Count == 0) return;
+        if (_roDataPool.Count == 0) return;
         os.WriteLine();
         os.WriteLine("; --- Flash Array Pool (LPM lookup tables, const[uint8[N]]) ---");
-        foreach (var (name, bytes) in _flashArrayPool)
+        foreach (var (name, bytes) in _roDataPool)
         {
             var label = "__flash_" + name.Replace('.', '_');
             os.WriteLine($"{label}:");
