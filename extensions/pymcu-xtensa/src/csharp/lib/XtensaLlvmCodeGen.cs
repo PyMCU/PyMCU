@@ -41,6 +41,8 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
     private int _labelCounter;
     private bool _needsTerminator;
     private Dictionary<string, string> _allocas = [];   // var/tmp name → alloca'd name (%v_<name>)
+    // Natural LLVM type for each alloca'd name (i8, i16, or i32).
+    private Dictionary<string, string> _allocaTypes = [];
     private HashSet<string> _declaredFuncs = [];
     // Module-level globals (scalar + array) — bypass alloca, access via @name.
     private HashSet<string> _globals = [];
@@ -135,14 +137,19 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                     _out.WriteLine($"  {tmp} = load {llT}, {llT}* @{safeName}, align 4");
                     return CoerceToI32(tmp, vr.Type);
                 }
-                _out.WriteLine($"  {tmp} = load i32, i32* {AllocaName(vr.Name)}, align 4");
-                return tmp;
+                // Non-global: load from alloca using the natural type then coerce to i32.
+                string allocaT = _allocaTypes.TryGetValue(vr.Name, out var t) ? t : "i32";
+                int    allocaA = allocaT == "i8" ? 1 : allocaT == "i16" ? 2 : 4;
+                _out.WriteLine($"  {tmp} = load {allocaT}, {allocaT}* {AllocaName(vr.Name)}, align {allocaA}");
+                return CoerceToI32(tmp, vr.Type);
             }
             case Temporary tr:
             {
-                string tmp = FreshTmp();
-                _out.WriteLine($"  {tmp} = load i32, i32* {AllocaName(tr.Name)}, align 4");
-                return tmp;
+                string tmp    = FreshTmp();
+                string allocaT = _allocaTypes.TryGetValue(tr.Name, out var t) ? t : "i32";
+                int    allocaA = allocaT == "i8" ? 1 : allocaT == "i16" ? 2 : 4;
+                _out.WriteLine($"  {tmp} = load {allocaT}, {allocaT}* {AllocaName(tr.Name)}, align {allocaA}");
+                return CoerceToI32(tmp, tr.Type);
             }
             default:
                 return "0";
@@ -177,11 +184,34 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
                     _out.WriteLine($"  store {llT} {toStore}, {llT}* @{safeName}, align 4");
                 }
                 else
-                    _out.WriteLine($"  store i32 {valStr}, i32* {AllocaName(vr.Name)}, align 4");
+                {
+                    // Non-global: truncate to natural alloca type before storing.
+                    string allocaT = _allocaTypes.TryGetValue(vr.Name, out var t) ? t : "i32";
+                    int    allocaA = allocaT == "i8" ? 1 : allocaT == "i16" ? 2 : 4;
+                    string toStore = valStr;
+                    if (allocaT != "i32")
+                    {
+                        string trunc = FreshTmp();
+                        _out.WriteLine($"  {trunc} = trunc i32 {valStr} to {allocaT}");
+                        toStore = trunc;
+                    }
+                    _out.WriteLine($"  store {allocaT} {toStore}, {allocaT}* {AllocaName(vr.Name)}, align {allocaA}");
+                }
                 break;
             case Temporary tr:
-                _out.WriteLine($"  store i32 {valStr}, i32* {AllocaName(tr.Name)}, align 4");
+            {
+                string allocaT = _allocaTypes.TryGetValue(tr.Name, out var t) ? t : "i32";
+                int    allocaA = allocaT == "i8" ? 1 : allocaT == "i16" ? 2 : 4;
+                string toStore = valStr;
+                if (allocaT != "i32")
+                {
+                    string trunc = FreshTmp();
+                    _out.WriteLine($"  {trunc} = trunc i32 {valStr} to {allocaT}");
+                    toStore = trunc;
+                }
+                _out.WriteLine($"  store {allocaT} {toStore}, {allocaT}* {AllocaName(tr.Name)}, align {allocaA}");
                 break;
+            }
         }
     }
 
@@ -297,6 +327,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         _labelCounter = 0;
         _needsTerminator = true;
         _allocas = [];
+        _allocaTypes = [];
 
         // Collect all variable/temporary names referenced in the function body.
         CollectAllocas(func);
@@ -308,16 +339,31 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         _out.WriteLine("entry:");
         _needsTerminator = false;
 
-        // Emit alloca for each variable / temp.
+        // Emit alloca for each variable / temp using the natural LLVM type.
         foreach (var (name, allocaName) in _allocas)
-            _out.WriteLine($"  {allocaName} = alloca i32, align 4");
+        {
+            string llT  = _allocaTypes.TryGetValue(name, out var t) ? t : "i32";
+            int    align = llT == "i8" ? 1 : llT == "i16" ? 2 : 4;
+            _out.WriteLine($"  {allocaName} = alloca {llT}, align {align}");
+        }
 
-        // Store incoming parameters into their alloca'd slots.
+        // Store incoming parameters into their alloca'd slots (truncate i32 arg if narrower).
         for (int i = 0; i < func.Params.Count; i++)
         {
             string pName = func.Params[i];
             if (_allocas.ContainsKey(pName))
-                _out.WriteLine($"  store i32 %arg{i}, i32* {AllocaName(pName)}, align 4");
+            {
+                string llT   = _allocaTypes.TryGetValue(pName, out var t) ? t : "i32";
+                int    align = llT == "i8" ? 1 : llT == "i16" ? 2 : 4;
+                string argVal = $"%arg{i}";
+                if (llT != "i32")
+                {
+                    string trunc = FreshTmp();
+                    _out.WriteLine($"  {trunc} = trunc i32 {argVal} to {llT}");
+                    argVal = trunc;
+                }
+                _out.WriteLine($"  store {llT} {argVal}, {llT}* {AllocaName(pName)}, align {align}");
+            }
         }
 
         foreach (var instr in func.Body)
@@ -349,10 +395,14 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
             {
                 case Variable vr:
                     if (!_globals.Contains(vr.Name))
+                    {
                         _allocas.TryAdd(vr.Name, AllocaName(vr.Name));
+                        _allocaTypes.TryAdd(vr.Name, LlvmType(vr.Type));
+                    }
                     break;
                 case Temporary tr:
                     _allocas.TryAdd(tr.Name, AllocaName(tr.Name));
+                    _allocaTypes.TryAdd(tr.Name, LlvmType(tr.Type));
                     break;
             }
         }
@@ -426,12 +476,7 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
             case BitCheck arg:       CompileBitCheck(arg); break;
             case BitWrite arg:       CompileBitWrite(arg); break;
             case AugAssign arg:      CompileAugAssign(arg); break;
-            case InlineAsm arg:
-                // Inline asm is emitted as a module-level asm block comment;
-                // the LLVM IR inline asm syntax requires operand constraints
-                // that cannot be inferred here.
-                _out.WriteLine($"  ; inline asm: {arg.Code}");
-                break;
+            case InlineAsm arg:      CompileLlvmInlineAsm(arg); break;
             case DebugLine arg:
                 _out.WriteLine($"  ; {arg.SourceFile}:{arg.Line}: {arg.Text}");
                 break;
@@ -985,6 +1030,35 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         string ext = FreshTmp();
         _out.WriteLine($"  {ext} = zext {toT} {trunc} to i32");
         EmitStore(ext, arg.Dst);
+    }
+
+    // -------------------------------------------------------------------------
+    // Inline assembly passthrough (Phase 3B)
+    // -------------------------------------------------------------------------
+
+    private void CompileLlvmInlineAsm(InlineAsm arg)
+    {
+        if (arg.Operands == null || arg.Operands.Count == 0)
+        {
+            // No operands: emit as a void asm call with memory side-effect.
+            _out.WriteLine($"  call void asm sideeffect \"{EscapeAsmStr(arg.Code)}\", \"~{{memory}}\"()");
+        }
+        else
+        {
+            // With read-write operands: build "=r,r,r..." constraints.
+            // The first operand receives the output; all are passed in as i32.
+            var constraints = new System.Text.StringBuilder("=r");
+            var argParts = new List<string>();
+            foreach (var op in arg.Operands)
+            {
+                constraints.Append(",r");
+                string v = EmitLoad(op);
+                argParts.Add($"i32 {v}");
+            }
+            string res = FreshTmp();
+            _out.WriteLine($"  {res} = call i32 asm sideeffect \"{EscapeAsmStr(arg.Code)}\", \"{constraints}\"({string.Join(", ", argParts)})");
+            EmitStore(res, arg.Operands[0]);
+        }
     }
 
     private static string EscapeAsmStr(string s) =>
