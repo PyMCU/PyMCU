@@ -56,6 +56,20 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     // Read-only byte arrays collected from FlashData instructions; emitted into .rodata.
     private Dictionary<string, List<int>> _flashArrayPool = [];
 
+    // Xtensa ISA immediate-field limits used across multiple methods.
+    // movi/l32r selection: movi range is a signed 12-bit immediate.
+    private const int MoviMinImm = -2048;
+    private const int MoviMaxImm =  2047;
+    // addi range is a signed 8-bit immediate.
+    private const int AddiMinImm = -128;
+    private const int AddiMaxImm =  127;
+    // Typed-load/store offset field is an unsigned 8-bit immediate (0-255).
+    private const int LoadStoreMaxOffset = 255;
+
+    // Prefix for read-only data labels emitted into .rodata.
+    // Single underscore avoids the double-underscore namespace reserved by the C standard.
+    private const string RodataPrefix = "_rodata_";
+
     // -------------------------------------------------------------------------
     // Emit helpers
     // -------------------------------------------------------------------------
@@ -81,7 +95,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
     // loaded with l32r (PC-relative backward reference).
     private void LoadImmediate(string reg, long value)
     {
-        if (value >= -2048 && value <= 2047)
+        if (value >= MoviMinImm && value <= MoviMaxImm)
         {
             Emit("movi", reg, value.ToString());
         }
@@ -301,7 +315,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             output.WriteLine("\t.align 4");
             foreach (var (name, bytes) in _flashArrayPool)
             {
-                var safeName = "__rodata_" + name.Replace('.', '_');
+                var safeName = RodataPrefix + name.Replace('.', '_');
                 output.WriteLine($"\t.global {safeName}");
                 output.WriteLine($"{safeName}:");
                 output.WriteLine($"\t.byte {string.Join(", ", bytes)}");
@@ -564,7 +578,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
 
         // Use immediate-form instructions where possible (small constant RHS).
         bool usedImmediate = false;
-        if (arg.Src2 is Constant c2 && c2.Value >= -2048 && c2.Value <= 2047)
+        if (arg.Src2 is Constant c2 && c2.Value >= AddiMinImm && c2.Value <= AddiMaxImm)
         {
             int val = c2.Value;
             switch (arg.Op)
@@ -707,7 +721,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         LoadIntoReg(arg.Target, "a8");
 
         bool usedImmediate = false;
-        if (arg.Operand is Constant c2 && c2.Value >= -2048 && c2.Value <= 2047)
+        if (arg.Operand is Constant c2 && c2.Value >= AddiMinImm && c2.Value <= AddiMaxImm)
         {
             int val = c2.Value;
             switch (arg.Op)
@@ -821,7 +835,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
         if (stackLayout.TryGetValue(arrayName, out int baseOff))
         {
             int adjusted = -baseOff;
-            if (adjusted >= -128 && adjusted <= 127)
+            if (adjusted >= AddiMinImm && adjusted <= AddiMaxImm)
                 Emit("addi", baseReg, "a12", adjusted.ToString());
             else
             {
@@ -843,7 +857,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             // Constant-index path: load base, then emit typed load with byte offset.
             if (!LoadArrayBase(al.ArrayName, "a10")) { LoadImmediate("a8", 0); StoreRegInto("a8", al.Dst); return; }
             int byteOff = cidx.Value * elemSize;
-            if (byteOff >= 0 && byteOff <= 255)
+            if (byteOff >= 0 && byteOff <= LoadStoreMaxOffset)
             {
                 EmitTypedLoad("a8", "a10", byteOff, al.ElemType);
             }
@@ -876,7 +890,7 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
             LoadIntoReg(ast.Src, "a8");
             if (!LoadArrayBase(ast.ArrayName, "a10")) return;
             int byteOff = cidx.Value * elemSize;
-            if (byteOff >= 0 && byteOff <= 255)
+            if (byteOff >= 0 && byteOff <= LoadStoreMaxOffset)
             {
                 EmitTypedStore("a8", "a10", byteOff, ast.ElemType);
             }
@@ -911,8 +925,8 @@ public class XtensaCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileArrayLoadFlash(ArrayLoadFlash alf)
     {
-        // The table is placed in .rodata under the label "__rodata_<safeName>".
-        var label = "__rodata_" + alf.ArrayName.Replace('.', '_');
+        // The table is placed in .rodata under the label "_rodata_<safeName>".
+        var label = RodataPrefix + alf.ArrayName.Replace('.', '_');
         // Load index first; base address will then be loaded into a10.
         LoadIntoReg(alf.Index, "a9");
         LoadSymbolAddr("a10", label);

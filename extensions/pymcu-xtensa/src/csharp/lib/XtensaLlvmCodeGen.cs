@@ -27,6 +27,7 @@
 //   xtensa-esp-elf-clang --target=xtensa-esp32-elf -O2 firmware.ll -o firmware.elf \
 //     -nostdlib -nostartfiles -T linker.ld
 
+using System.Text;
 using PyMCU.Backend.Analysis;
 using PyMCU.Common.Models;
 using PyMCU.IR;
@@ -262,8 +263,13 @@ public class XtensaLlvmCodeGen(DeviceConfig cfg) : CodeGen
         foreach (var (name, bytes) in _flashArrays)
         {
             var safeName  = name.Replace('.', '_');
-            var byteInits = string.Join(", ", bytes.Select(b => $"i8 {b}"));
-            _out.WriteLine($"@{safeName} = constant [{bytes.Count} x i8] [{byteInits}]");
+            var sb = new StringBuilder();
+            for (int i = 0; i < bytes.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append("i8 ").Append(bytes[i]);
+            }
+            _out.WriteLine($"@{safeName} = constant [{bytes.Count} x i8] [{sb}]");
         }
 
         bool hasGlobals = program.Globals.Count > 0 || arrayDefs.Count > 0 || _flashArrays.Count > 0;
