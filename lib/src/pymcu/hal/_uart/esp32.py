@@ -18,6 +18,12 @@
 #
 # TX: write byte to FIFO_REG when TXFIFO_CNT < 128.
 # RX: read byte from FIFO_REG when RXFIFO_CNT > 0.
+#
+# Inline asm register convention (call0 ABI):
+#   a2 -- holds the 32-bit value to store or receives the loaded value
+#   a3 -- holds the MMIO register address
+#   MMIO write: s32i a2, a3, 0  -- *(a3+0) = a2
+#   MMIO read:  l32i a2, a3, 0  -- a2 = *(a3+0)
 
 from pymcu.types import uint32, inline, const
 
@@ -42,6 +48,7 @@ def uart_init(baud: const[uint32]):
     else:
         div: uint32 = 694  # default 115200
     clkdiv_addr: uint32 = UART0_CLKDIV
+    # a2=div (divisor value), a3=UART0_CLKDIV: store divisor into CLKDIV register.
     asm("s32i a2, a3, 0")
 
 
@@ -51,11 +58,13 @@ def uart_write(data: uint32):
     status_addr: uint32 = UART0_STATUS
     while True:
         status: uint32 = 0
+        # a3=UART0_STATUS: load status register into a2; result lands in status.
         asm("l32i a2, a3, 0")
         txcnt: uint32 = (status >> UART0_TXFIFO_SHIFT) & UART0_TXFIFO_MASK
         if txcnt < 120:
             break
     fifo_addr: uint32 = UART0_FIFO
+    # a2=data (byte to transmit), a3=UART0_FIFO: write byte into TX FIFO.
     asm("s32i a2, a3, 0")
 
 
@@ -63,6 +72,7 @@ def uart_write(data: uint32):
 def uart_available() -> uint32:
     status_addr: uint32 = UART0_STATUS
     status: uint32 = 0
+    # a3=UART0_STATUS: load status register into a2; result lands in status.
     asm("l32i a2, a3, 0")
     rxcnt: uint32 = status & 0xFF
     return rxcnt
@@ -75,5 +85,6 @@ def uart_read() -> uint32:
         pass
     fifo_addr: uint32 = UART0_FIFO
     data: uint32 = 0
+    # a3=UART0_FIFO: read byte from RX FIFO into a2; result lands in data.
     asm("l32i a2, a3, 0")
     return data & 0xFF
