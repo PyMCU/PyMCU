@@ -82,13 +82,14 @@ Everything below is shipped and covered by integration tests.
 | `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty` |
 | `pymcu.hal.spi` | `SPI` — `with spi:` context; `transfer/write` |
 | `pymcu.hal.i2c` | `I2C` — `with i2c:` context; `ping/write/read_*` |
-| `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)`; ATmega328P, ATmega2560, ATtiny85/45/25 |
-| `pymcu.hal.watchdog` | `Watchdog` — `enable/disable/feed`; ATmega328P, ATmega2560, ATtiny85/45/25 |
+| `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)`; ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 |
+| `pymcu.hal.watchdog` | `Watchdog` — `enable/disable/feed`; ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 |
 | `pymcu.hal.power` | `sleep_idle/adc_noise/power_down/power_save/standby` |
 | `pymcu.drivers.dht11` | `DHT11` — portable temperature/humidity driver |
 | `pymcu.time` | `delay_ms`, `delay_us` |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5`, `LED_BUILTIN` |
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15`, `LED_BUILTIN` |
+| `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5`, `LED_BUILTIN` |
 
 ### Compat Packages
 
