@@ -61,6 +61,12 @@ class PWM:
                 from pymcu.hal._pwm.pic18f45k50 import pwm_init
                 self.pin = pin
                 pwm_init(pin, duty)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._pwm.attiny85 import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
+                pwm_init(pin, duty)
+                self._ocr       = pwm_select_ocr(pin)
+                self._tccr_b    = pwm_select_tccr_b(pin)
+                self._start_val = pwm_select_start_val(pin)
 
     @inline
     def set_duty(self, duty: uint8):
@@ -81,6 +87,8 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_set_duty
                 pwm_set_duty(self.pin, duty)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._ocr.value = duty
 
     @inline
     def start(self):
@@ -101,6 +109,8 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_start
                 pwm_start(self.pin)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._tccr_b.value = self._start_val
 
     @inline
     def stop(self):
@@ -121,3 +131,5 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_stop
                 pwm_stop(self.pin)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._tccr_b.value = 0x00
