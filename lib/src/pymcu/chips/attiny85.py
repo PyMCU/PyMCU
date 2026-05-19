@@ -52,7 +52,8 @@ USIDR:  ptr[uint8] = ptr(0x2F)   # I/O 0x0F
 # EEPROM
 EECR:   ptr[uint8] = ptr(0x3C)   # I/O 0x1C
 EEDR:   ptr[uint8] = ptr(0x3D)   # I/O 0x1D
-EEAR:   ptr[uint8] = ptr(0x3E)   # I/O 0x1E  (9-bit; EEARH at 0x1F not separately mapped)
+EEAR:   ptr[uint8] = ptr(0x3E)   # I/O 0x1E  (EEARL -- low 8 bits of 9-bit address)
+EEARH:  ptr[uint8] = ptr(0x3F)   # I/O 0x1F  (EEARH -- only bit 0 is used, address bit 8)
 
 # Power Reduction
 PRR:    ptr[uint8] = ptr(0x40)   # I/O 0x20
@@ -89,11 +90,13 @@ TCNT0:  ptr[uint8] = ptr(0x52)   # I/O 0x32
 TCCR0B: ptr[uint8] = ptr(0x53)   # I/O 0x33
 
 # Timer/Counter 1 (8-bit, ATtiny85 specific)
-OCR1B:  ptr[uint8] = ptr(0x49)   # shared address region -- Timer1 uses separate bits
+# OCR1B shares the same register as OCR0A (I/O 0x29 = data 0x49).
+# OCR1C shares the same register as OCR0B (I/O 0x28 = data 0x48).
+OCR1B:  ptr[uint8] = ptr(0x49)   # I/O 0x29 -- same physical register as OCR0A
 TCCR1:  ptr[uint8] = ptr(0x50)   # I/O 0x30
-TCNT1:  ptr[uint8] = ptr(0x51)   # I/O 0x31  (shares with OSCCAL in some configs)
+TCNT1:  ptr[uint8] = ptr(0x4F)   # I/O 0x2F
 OCR1A:  ptr[uint8] = ptr(0x4E)   # I/O 0x2E
-OCR1C:  ptr[uint8] = ptr(0x4F)   # I/O 0x2F
+OCR1C:  ptr[uint8] = ptr(0x48)   # I/O 0x28 -- same physical register as OCR0B
 GTCCR:  ptr[uint8] = ptr(0x43)   # I/O 0x23  (General Timer/Counter Control)
 DTPS1:  ptr[uint8] = ptr(0x43)   # shared with GTCCR
 DT1A:   ptr[uint8] = ptr(0x45)   # I/O 0x25  (Dead Time Generator 1A)
