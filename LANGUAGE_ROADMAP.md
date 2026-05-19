@@ -82,13 +82,13 @@ Everything in this section is shipped and tested in the current alpha build.
 |--------|-----------------|---------|-------|
 | `pymcu.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
 | `pymcu.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
-| `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
+| `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535); ATtiny85: PB2/PB3/PB4 |
+| `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow`; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
 | `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
 | `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
 | `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
-| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
-| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
+| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
+| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |

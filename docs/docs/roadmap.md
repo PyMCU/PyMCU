@@ -77,13 +77,13 @@ Everything below is shipped and covered by integration tests.
 |--------|----------|
 | `pymcu.hal.gpio` | `Pin` — `high/low/toggle/value/irq/pulse_in` |
 | `pymcu.hal.uart` | `UART` — `write/read/write_str/println/print_byte` |
-| `pymcu.hal.adc` | `AnalogPin` — `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `pymcu.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified |
+| `pymcu.hal.adc` | `AnalogPin` — `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535); ATtiny85: PB2/PB3/PB4 |
+| `pymcu.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
 | `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty` |
 | `pymcu.hal.spi` | `SPI` — `with spi:` context; `transfer/write` |
 | `pymcu.hal.i2c` | `I2C` — `with i2c:` context; `ping/write/read_*` |
-| `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
-| `pymcu.hal.watchdog` | `Watchdog` — `enable/disable/feed` |
+| `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)`; ATmega328P + ATtiny85/45/25 |
+| `pymcu.hal.watchdog` | `Watchdog` — `enable/disable/feed`; ATmega328P + ATtiny85/45/25 |
 | `pymcu.hal.power` | `sleep_idle/adc_noise/power_down/power_save/standby` |
 | `pymcu.drivers.dht11` | `DHT11` — portable temperature/humidity driver |
 | `pymcu.time` | `delay_ms`, `delay_us` |
