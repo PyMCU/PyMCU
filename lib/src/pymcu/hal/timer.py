@@ -56,7 +56,7 @@ class Timer:  # noqa
         elif n == 2:
             self._id = "t2"
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match n:
                     case 0:
                         from pymcu.hal._timer.atmega328p import timer0_init
@@ -95,7 +95,7 @@ class Timer:  # noqa
     def start(self):
         """Start the timer by connecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_start
@@ -134,7 +134,7 @@ class Timer:  # noqa
     def stop(self):
         """Stop the timer by disconnecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_stop
@@ -173,7 +173,7 @@ class Timer:  # noqa
     def clear(self):
         """Reset the timer counter register to zero."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_clear
@@ -217,7 +217,7 @@ class Timer:  # noqa
         Call start() first, then set_compare() to arm the interrupt.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_set_compare
@@ -243,7 +243,7 @@ class Timer:  # noqa
         value back to zero. Reading this flag does not clear it.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_overflow
@@ -278,7 +278,7 @@ class Timer:  # noqa
         # Use self._id (string member = CT constant) for compile_isr dispatch,
         # not self._n (numeric SRAM) which cannot CT-fold the vector placement.
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560":
                 match self._id:
                     case "t0":
                         if mode == 2:  # IRQ_COMPA
