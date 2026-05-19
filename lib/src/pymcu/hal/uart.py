@@ -29,6 +29,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_init
                 uart_init(baud)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_init
+                uart_init(baud)
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -47,6 +50,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_write
+                uart_write(data)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write
                 uart_write(data)
             case _:
                 match __CHIP__.arch:
@@ -67,6 +73,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_read
                 return uart_read()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_read
+                return uart_read()
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -85,6 +94,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_write_str
+                uart_write_str(s)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write_str
                 uart_write_str(s)
             case _:
                 match __CHIP__.arch:
@@ -121,6 +133,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_write_decimal_u8
                 uart_write_decimal_u8(value)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write_decimal_u8
+                uart_write_decimal_u8(value)
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -138,6 +153,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_read
+                return uart_read()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_read
                 return uart_read()
             case _:
                 match __CHIP__.arch:
@@ -158,6 +176,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_available
                 return uart_available()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_available
+                return uart_available()
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -176,6 +197,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_read_nb
                 return uart_read_nb()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_read_nb
+                return uart_read_nb()
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -193,6 +217,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_read_byte_isr
+                return uart_read_byte_isr()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_read_byte_isr
                 return uart_read_byte_isr()
             case _:
                 match __CHIP__.arch:
@@ -225,6 +252,11 @@ class UART:
                 UCSRB[7] = 1           # RXCIE
                 SREG[7] = 1            # SEI
                 compile_isr(handler, 0x0016)
+            case "atmega32u4":
+                from pymcu.chips.atmega32u4 import UCSR1B, SREG
+                UCSR1B[7] = 1          # RXCIE1
+                SREG[7] = 1            # SEI
+                compile_isr(handler, 0x002C)
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -244,6 +276,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_enable_rx_interrupt
                 uart_enable_rx_interrupt()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_enable_rx_interrupt
+                uart_enable_rx_interrupt()
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -262,6 +297,9 @@ class UART:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_rx_isr
                 uart_rx_isr()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_rx_isr
+                uart_rx_isr()
             case _:
                 match __CHIP__.arch:
                     case "avr":
@@ -277,6 +315,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_rx_available
+                return uart_rx_available()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_rx_available
                 return uart_rx_available()
             case _:
                 match __CHIP__.arch:
@@ -294,6 +335,9 @@ class UART:
         match __CHIP__.name:
             case "attiny2313" | "attiny4313":
                 from pymcu.hal._uart.attiny2313 import uart_rx_read
+                return uart_rx_read()
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_rx_read
                 return uart_rx_read()
             case _:
                 match __CHIP__.arch:
@@ -324,6 +368,9 @@ def uart_rx_isr():
     match __CHIP__.name:
         case "attiny2313" | "attiny4313":
             from pymcu.hal._uart.attiny2313 import uart_rx_isr as _impl
+            _impl()
+        case "atmega32u4":
+            from pymcu.hal._uart.atmega32u4 import uart_rx_isr as _impl
             _impl()
         case _:
             match __CHIP__.arch:
