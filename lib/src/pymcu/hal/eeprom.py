@@ -41,6 +41,9 @@ class EEPROM:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._eeprom.atmega328p import eeprom_write
                 eeprom_write(addr, value)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._eeprom.attiny85 import eeprom_write
+                eeprom_write(addr, value)
 
     @inline
     def read(self, addr: uint16) -> uint8:
@@ -52,6 +55,9 @@ class EEPROM:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._eeprom.atmega328p import eeprom_read
+                return eeprom_read(addr)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._eeprom.attiny85 import eeprom_read
                 return eeprom_read(addr)
 
         return 0
