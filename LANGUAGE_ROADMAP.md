@@ -87,12 +87,13 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
 | `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
 | `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
-| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
-| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
+| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATmega2560, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
+| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATmega2560, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
+| `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
 
 ### Compat Packages
 
