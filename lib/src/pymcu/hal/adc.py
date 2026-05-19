@@ -58,6 +58,10 @@ class AnalogPin:
                 from pymcu.hal._adc.pic18f45k50 import adc_init
                 self.channel = channel
                 adc_init(channel)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_channel_admux, adc_init
+                self._admux = adc_channel_admux(channel)
+                adc_init(self._admux)
 
     @inline
     def start(self):
@@ -79,6 +83,9 @@ class AnalogPin:
             case "pic18f45k50":
                 from pymcu.hal._adc.pic18f45k50 import adc_start
                 adc_start(self.channel)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_start
+                adc_start()
 
     @inline
     def read(self) -> uint16:
@@ -89,6 +96,9 @@ class AnalogPin:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read
+                return adc_read()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_read
                 return adc_read()
 
         return 0
@@ -104,6 +114,9 @@ class AnalogPin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_start_int
                 adc_start_int()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_start_int
+                adc_start_int()
 
     @inline
     def read_result(self) -> uint16:
@@ -115,6 +128,9 @@ class AnalogPin:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read_result
+                return adc_read_result()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_read_result
                 return adc_read_result()
 
         return 0
@@ -135,6 +151,9 @@ class AnalogPin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_irq_setup
                 adc_irq_setup(handler)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_irq_setup
+                adc_irq_setup(handler)
 
     @inline
     def read_u16(self) -> uint16:
@@ -145,6 +164,9 @@ class AnalogPin:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 from pymcu.hal._adc.atmega328p import adc_read_u16
+                return adc_read_u16()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._adc.attiny85 import adc_read_u16
                 return adc_read_u16()
 
         return 0
