@@ -70,7 +70,7 @@ def _pd_wait(mask: uint8, level: uint8) -> uint8:
             if current == 0:
                 return timeout
         else:
-            if current != 0:
+            if current:
                 return timeout
         timeout = timeout - 1
     return 0
@@ -86,7 +86,7 @@ def _pd_byte(mask: uint8) -> uint8:
         if _pd_wait(mask, 1) == 0:
             return 0
         count: uint8 = 0
-        while (PIND.value & mask) != 0:
+        while PIND.value & mask:
             count = count + 1
             if count == 255:
                 break

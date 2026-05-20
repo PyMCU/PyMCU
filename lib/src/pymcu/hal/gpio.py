@@ -116,7 +116,7 @@ class Pin:
                     raise NotImplementedError("Open-drain mode not supported on AVR")
                 if alt != -1:
                     raise NotImplementedError("Alternate functions not supported on AVR")
-                if drive != 0:
+                if drive:
                     raise NotImplementedError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega328p import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
@@ -175,7 +175,7 @@ class Pin:
                     raise NotImplementedError("Open-drain mode not supported on AVR")
                 if alt != -1:
                     raise NotImplementedError("Alternate functions not supported on AVR")
-                if drive != 0:
+                if drive:
                     raise NotImplementedError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
@@ -194,7 +194,7 @@ class Pin:
                     raise NotImplementedError("Open-drain mode not supported on AVR")
                 if alt != -1:
                     raise NotImplementedError("Alternate functions not supported on AVR")
-                if drive != 0:
+                if drive:
                     raise NotImplementedError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
@@ -413,7 +413,7 @@ class Pin:
                 case "pic18f45k50":
                     from pymcu.hal._gpio.pic18f45k50 import pin_write
                     pin_write(self.name, value)
-        if drive != 0:
+        if drive:
             if __CHIP__.arch == "avr":
                 raise NotImplementedError("Drive strength control not supported on AVR")
         if alt != -1:

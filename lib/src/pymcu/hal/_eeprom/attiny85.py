@@ -26,7 +26,7 @@ from pymcu.types import uint8, uint16, inline, asm
 
 @inline
 def eeprom_write(addr: uint16, value: uint8):
-    while EECR[1] == 1:
+    while EECR[1]:
         pass
     EEAR.value = uint8(addr)
     EEARH.value = uint8(addr >> 8) & 0x01
@@ -37,7 +37,7 @@ def eeprom_write(addr: uint16, value: uint8):
 
 @inline
 def eeprom_read(addr: uint16) -> uint8:
-    while EECR[1] == 1:
+    while EECR[1]:
         pass
     EEAR.value = uint8(addr)
     EEARH.value = uint8(addr >> 8) & 0x01

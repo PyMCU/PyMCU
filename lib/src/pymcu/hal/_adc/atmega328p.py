@@ -68,7 +68,7 @@ def adc_irq_setup(handler: Callable):
 @inline
 def adc_read() -> uint16:
     ADCSRA[6] = 1
-    while ADCSRA[6] == 1:
+    while ADCSRA[6]:
         pass
     lo: uint8 = ADCL.value
     hi: uint8 = ADCH.value
@@ -80,7 +80,7 @@ def adc_read() -> uint16:
 @inline
 def adc_read_u16() -> uint16:
     ADCSRA[6] = 1
-    while ADCSRA[6] == 1:
+    while ADCSRA[6]:
         pass
     lo: uint8 = ADCL.value
     hi: uint8 = ADCH.value

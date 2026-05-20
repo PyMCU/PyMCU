@@ -11,7 +11,7 @@ from pymcu.types import uint8, uint16, inline
 @inline
 def eeprom_write(addr: uint16, value: uint8):
     # Wait for any previous EEPROM write to complete (poll EEPE = bit 1)
-    while EECR[1] == 1:
+    while EECR[1]:
         pass
     # Load address into EEAR (10-bit: EEARH[1:0] + EEARL[7:0])
     EEARL.value = uint8(addr)
@@ -28,7 +28,7 @@ def eeprom_write(addr: uint16, value: uint8):
 @inline
 def eeprom_read(addr: uint16) -> uint8:
     # Wait for any pending write to complete
-    while EECR[1] == 1:
+    while EECR[1]:
         pass
     # Set address
     EEARL.value = uint8(addr)

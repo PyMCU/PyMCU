@@ -39,13 +39,13 @@ def i2c_ping(addr: uint8) -> uint8:
     # Probe one address: START + SLA+W, check ACK, then STOP.
     # Returns 1 if device acknowledges, 0 otherwise.
     TWCR.value = 0xA4           # START
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     status: uint8 = TWSR.value & 0xF8
     if status == 0x08:          # START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
-        while TWCR[7] == 0:
+        while not TWCR[7]:
             pass
         ack: uint8 = TWSR.value & 0xF8
         TWCR.value = 0x94       # STOP
@@ -69,7 +69,7 @@ def i2c_init():
 def i2c_start() -> uint8:
     # Transmit START condition: TWINT(7)|TWSTA(5)|TWEN(2) = 0xA4
     TWCR.value = 0xA4
-    while TWCR[7] == 0:   # Wait for TWINT (hardware clears it when operation done)
+    while not TWCR[7]:   # Wait for TWINT (hardware clears it when operation done)
         pass
     status: uint8 = TWSR.value & 0xF8   # Mask prescaler bits - 0x08 = START OK
     return status
@@ -87,7 +87,7 @@ def i2c_write(data: uint8) -> uint8:
     # Load byte into data register then kick off transmission
     TWDR.value = data
     TWCR.value = 0x84   # TWINT(7)|TWEN(2) = clear TWINT, keep TWEN
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     status: uint8 = TWSR.value & 0xF8   # 0x18 = ACK, 0x20 = NACK, 0x28 = data ACK
     return status
@@ -97,7 +97,7 @@ def i2c_write(data: uint8) -> uint8:
 def i2c_read_ack() -> uint8:
     # Read one byte and send ACK (more bytes to follow)
     TWCR.value = 0xC4   # TWINT(7)|TWEA(6)|TWEN(2) - TWEA=1 -- generate ACK
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     result: uint8 = TWDR.value
     return result
@@ -107,7 +107,7 @@ def i2c_read_ack() -> uint8:
 def i2c_read_nack() -> uint8:
     # Read last byte and send NACK (signals end of transfer to slave)
     TWCR.value = 0x84   # TWINT(7)|TWEN(2) - TWEA=0 -- generate NACK
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     last_byte: uint8 = TWDR.value
     return last_byte
@@ -119,19 +119,19 @@ def i2c_write_to(addr: uint8, data: uint8) -> uint8:
     # Returns 1 if ACK received for address, 0 if NACK (no device).
     # Only sends the data byte if the address was acknowledged.
     TWCR.value = 0xA4           # START: TWINT|TWSTA|TWEN
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     start_status: uint8 = TWSR.value & 0xF8
     if start_status == 0x08:    # START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
-        while TWCR[7] == 0:
+        while not TWCR[7]:
             pass
         ack_status: uint8 = TWSR.value & 0xF8
         if ack_status == 0x18:  # ACK received
             TWDR.value = data
             TWCR.value = 0x84
-            while TWCR[7] == 0:
+            while not TWCR[7]:
                 pass
             TWCR.value = 0x94   # STOP
             return 1
@@ -144,13 +144,13 @@ def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:
     # Send START, SLA+W, n bytes from buf[], then STOP.
     # Returns 1 if all bytes were ACK'd, 0 on any NACK or bus error.
     TWCR.value = 0xA4           # START: TWINT|TWSTA|TWEN
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     start_status: uint8 = TWSR.value & 0xF8
     if start_status == 0x08:    # START OK
         TWDR.value = addr << 1  # SLA+W
         TWCR.value = 0x84
-        while TWCR[7] == 0:
+        while not TWCR[7]:
             pass
         ack_status: uint8 = TWSR.value & 0xF8
         if ack_status == 0x18:  # address ACK received
@@ -159,7 +159,7 @@ def i2c_write_bytes(addr: uint8, buf, n: uint8) -> uint8:
             while i < n:
                 TWDR.value = buf[i]
                 TWCR.value = 0x84
-                while TWCR[7] == 0:
+                while not TWCR[7]:
                     pass
                 data_status: uint8 = TWSR.value & 0xF8
                 if data_status != 0x28:  # not DATA ACK
@@ -177,19 +177,19 @@ def i2c_read_from(addr: uint8) -> uint8:
     # Send START, SLA+R, read one byte with NACK, STOP.
     # Returns the byte read, or 0 if address NACK (no device).
     TWCR.value = 0xA4               # START
-    while TWCR[7] == 0:
+    while not TWCR[7]:
         pass
     start_status: uint8 = TWSR.value & 0xF8
     if start_status == 0x08:        # START OK
         sla_r: uint8 = (addr << 1) | 1  # SLA+R
         TWDR.value = sla_r
         TWCR.value = 0x84
-        while TWCR[7] == 0:
+        while not TWCR[7]:
             pass
         ack_status: uint8 = TWSR.value & 0xF8
         if ack_status == 0x40:      # SLA+R ACK received
             TWCR.value = 0x84       # TWINT|TWEN (TWEA=0 -- NACK for last byte)
-            while TWCR[7] == 0:
+            while not TWCR[7]:
                 pass
             rx_byte: uint8 = TWDR.value
             TWCR.value = 0x94       # STOP
