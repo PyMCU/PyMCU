@@ -11,10 +11,10 @@ namespace PyMCU.IntegrationTests.Tests.AVR;
 /// Measures the simulated cycle count consumed by delay_ms(1) at 16 MHz by
 /// bracketing the call with two BREAK checkpoints and computing the delta.
 ///
-/// Expected timing for the AVR delay helper _delay_1ms_avr():
-///   21 outer * 255 inner * ~3 cycles/iter = ~16 065 loop cycles
-///   plus CALL/RET, PUSH/POP, and loop-setup overhead (~80 cycles)
-///   => total ~16 000 – 17 000 cycles
+/// Expected timing for the AVR delay helper _delay_1ms_avr_16mhz():
+///   24 outer * 221 inner * ~3 cycles/iter = 15 983 loop cycles
+///   plus CALL/RET, PUSH/POP, and loop-setup overhead (17 cycles)
+///   => total exactly 16 000 cycles at 16 MHz
 ///
 /// The tests use a generous [14 000, 20 000] window to remain valid across
 /// minor loop-count tweaks while still catching badly wrong implementations.

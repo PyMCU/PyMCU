@@ -10,11 +10,11 @@
 # Uses @inline + match __CHIP__.arch for dead-code-eliminated,
 # architecture-specific tight loops via asm().
 #
-# Accuracy: ~10-20% at ms level (acceptable for most MCU use cases).
-# For precise timing, use hardware timers directly.
+# Accuracy: <0.1% at 1, 8, 12, 16, 20 MHz; defaults to 16 MHz for other
+# AVR frequencies. For precise timing, use hardware timers directly.
 
 from pymcu.types import uint8, uint16, uint32, inline, asm
-from pymcu.chips import __CHIP__
+from pymcu.chips import __CHIP__, __FREQ__
 
 @inline
 def delay_ms(ms: uint16):
@@ -88,32 +88,100 @@ def _delay_ms_pic18(ms: uint8):
         asm("    BRA _dly_outer_18")
         i = i + 1
 
-def _delay_1ms_avr():
-    """AVR 1ms delay subroutine (non-inline; called once per ms by _delay_ms_avr)."""
-    # Non-inline: labels appear exactly once in the assembled output.
-    # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ~ 1ms at 16MHz.
+def _delay_1ms_avr_1mhz():
+    # 1 MHz: outer=2, inner=163 -> 1000 cycles = 1.000 ms (+0.000%)
     asm("    PUSH R24")
     asm("    PUSH R25")
-    asm("    LDI R24, 21")
-    asm("_dly_outer_avr:")
-    asm("    LDI R25, 255")
-    asm("_dly_inner_avr:")
+    asm("    LDI R24, 2")
+    asm("_dly_o1mhz:")
+    asm("    LDI R25, 163")
+    asm("_dly_i1mhz:")
     asm("    DEC R25")
-    asm("    BRNE _dly_inner_avr")
+    asm("    BRNE _dly_i1mhz")
     asm("    DEC R24")
-    asm("    BRNE _dly_outer_avr")
+    asm("    BRNE _dly_o1mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_8mhz():
+    # 8 MHz: outer=11, inner=241 -> 8002 cycles ~ 1ms (+0.025%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 11")
+    asm("_dly_o8mhz:")
+    asm("    LDI R25, 241")
+    asm("_dly_i8mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i8mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o8mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_12mhz():
+    # 12 MHz: outer=17, inner=234 -> 12001 cycles ~ 1ms (+0.008%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 17")
+    asm("_dly_o12mhz:")
+    asm("    LDI R25, 234")
+    asm("_dly_i12mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i12mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o12mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_16mhz():
+    # 16 MHz: outer=24, inner=221 -> 16000 cycles = 1.000 ms (+0.000%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 24")
+    asm("_dly_o16mhz:")
+    asm("    LDI R25, 221")
+    asm("_dly_i16mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i16mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o16mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_20mhz():
+    # 20 MHz: outer=30, inner=221 -> 19996 cycles ~ 1ms (-0.020%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 30")
+    asm("_dly_o20mhz:")
+    asm("    LDI R25, 221")
+    asm("_dly_i20mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i20mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o20mhz")
     asm("    POP R25")
     asm("    POP R24")
 
 @inline
 def _delay_ms_avr(ms: uint16):
-    """Software millisecond delay loop for AVR architecture."""
-    # Calls the non-inline 1ms helper once per ms so labels are not duplicated
-    # across multiple delay_ms() call sites.
+    # Dispatch to the frequency-specific non-inline 1ms helper.
+    # match __FREQ__ is dead-code-eliminated at compile time -- only the
+    # matching branch survives in the assembled output.
     # uint16 counter supports up to 65535ms (~65 seconds).
     i: uint16 = 0
     while i < ms:
-        _delay_1ms_avr()
+        match __FREQ__:
+            case 1_000_000:
+                _delay_1ms_avr_1mhz()
+            case 8_000_000:
+                _delay_1ms_avr_8mhz()
+            case 12_000_000:
+                _delay_1ms_avr_12mhz()
+            case 20_000_000:
+                _delay_1ms_avr_20mhz()
+            case _:
+                _delay_1ms_avr_16mhz()
         i = i + 1
 
 @inline
