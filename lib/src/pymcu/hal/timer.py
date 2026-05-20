@@ -227,7 +227,8 @@ class Timer:  # noqa
                         timer1_set_compare(value)
                     case "t2":
                         from pymcu.hal._timer.atmega328p import timer2_set_compare
-                        timer2_set_compare(value)            case "attiny85" | "attiny45" | "attiny25":
+                        timer2_set_compare(value)
+            case "attiny85" | "attiny45" | "attiny25":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.attiny85 import timer0_set_compare
