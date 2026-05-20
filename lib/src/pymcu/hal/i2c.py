@@ -130,11 +130,7 @@ class I2C:
     @inline
     def end(self):
         """Controller: send a STOP condition. Alias for stop()."""
-        match __CHIP__.arch:
-            case "avr":
-                if self._mode == "c":
-                    from pymcu.hal._i2c.avr import i2c_stop
-                    i2c_stop()
+        self.stop()
 
     @inline
     def write(self, data: uint8) -> uint8:

@@ -150,24 +150,7 @@ class UART:
         Identical to read() but named explicitly to distinguish it from the
         non-blocking read_nb().
         """
-        match __CHIP__.name:
-            case "attiny2313" | "attiny4313":
-                from pymcu.hal._uart.attiny2313 import uart_read
-                return uart_read()
-            case "atmega32u4":
-                from pymcu.hal._uart.atmega32u4 import uart_read
-                return uart_read()
-            case _:
-                match __CHIP__.arch:
-                    case "avr":
-                        from pymcu.hal._uart.avr import uart_read
-                        return uart_read()
-                    case "pic14":
-                        from pymcu.hal._uart.pic14 import uart_read
-                        return uart_read()
-                    case "pic18":
-                        from pymcu.hal._uart.pic18 import uart_read
-                        return uart_read()
+        return self.read()
 
     @inline
     def available(self) -> uint8:
@@ -293,18 +276,7 @@ class UART:
         incoming byte into the 16-byte ring buffer and advances the head
         index. Bytes are dropped silently if the buffer is full.
         """
-        match __CHIP__.name:
-            case "attiny2313" | "attiny4313":
-                from pymcu.hal._uart.attiny2313 import uart_rx_isr
-                uart_rx_isr()
-            case "atmega32u4":
-                from pymcu.hal._uart.atmega32u4 import uart_rx_isr
-                uart_rx_isr()
-            case _:
-                match __CHIP__.arch:
-                    case "avr":
-                        from pymcu.hal._uart.avr import uart_rx_isr
-                        uart_rx_isr()
+        uart_rx_isr()
 
     @inline
     def rx_available(self) -> uint8:
