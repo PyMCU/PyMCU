@@ -105,11 +105,9 @@ class AvrgasToolchain(ExternalToolchain):
             "archive_type": "tar.bz2",
             "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux/bin",
         },
-        "linux-arm64": {
-            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-aarch64-linux.tar.bz2",
-            "archive_type": "tar.bz2",
-            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-aarch64-linux/bin",
-        },
+        # linux-arm64: ZakKemble does not publish an aarch64-linux pre-built release.
+        # On ARM64 Linux, install gcc-avr + binutils-avr from apt (or brew on macOS).
+        # pymcu toolchain install will detect system binaries in PATH and skip download.
         "win32-x86_64": {
             "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows.zip",
             "archive_type": "zip",
@@ -269,8 +267,13 @@ class AvrgasToolchain(ExternalToolchain):
         Download a pre-built avr-gcc toolchain into ~/.pymcu/tools/ so
         no system package manager is required.  The release is fetched from:
         https://github.com/ZakKemble/avr-gcc-build/releases
+
+        If the required binaries are already available on PATH (e.g. installed
+        via apt or brew), this method returns immediately without downloading.
         """
         from pymcu.toolchain.sdk import _is_non_interactive, _tool_lock
+        if self.is_cached():
+            return
         try:
             info = self._platform_info()
         except RuntimeError as exc:
