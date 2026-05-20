@@ -22,18 +22,23 @@ def _millis_ovf_isr():
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----
 
 @inline
+def _prescaler_cs_01(prescaler: uint16) -> uint8:
+    if prescaler == 1:
+        return 0x01
+    elif prescaler == 8:
+        return 0x02
+    elif prescaler == 64:
+        return 0x03
+    elif prescaler == 256:
+        return 0x04
+    elif prescaler == 1024:
+        return 0x05
+    return 0x00
+
+@inline
 def timer0_init(prescaler: uint16):
     TCCR0A.value = 0x00
-    if prescaler == 1:
-        TCCR0B.value = 0x01
-    elif prescaler == 8:
-        TCCR0B.value = 0x02
-    elif prescaler == 64:
-        TCCR0B.value = 0x03
-    elif prescaler == 256:
-        TCCR0B.value = 0x04
-    elif prescaler == 1024:
-        TCCR0B.value = 0x05
+    TCCR0B.value = _prescaler_cs_01(prescaler)
 
 @inline
 def timer0_start():
@@ -76,17 +81,7 @@ def timer0_stop_ctc():
 @inline
 def timer1_init(prescaler: uint16):
     TCCR1A.value = 0x00
-    TCCR1B.value = 0x00
-    if prescaler == 1:
-        TCCR1B.value = 0x01
-    elif prescaler == 8:
-        TCCR1B.value = 0x02
-    elif prescaler == 64:
-        TCCR1B.value = 0x03
-    elif prescaler == 256:
-        TCCR1B.value = 0x04
-    elif prescaler == 1024:
-        TCCR1B.value = 0x05
+    TCCR1B.value = _prescaler_cs_01(prescaler)
 
 @inline
 def timer1_start():
