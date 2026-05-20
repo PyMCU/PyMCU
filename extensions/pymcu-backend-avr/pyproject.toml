@@ -19,5 +19,9 @@ dependencies = [
 [project.entry-points."pymcu.backends"]
 avr = "pymcu.backend.avr:AvrBackendPlugin"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/python/pymcu"]
+artifacts = ["src/python/pymcu/backend/avr/pymcuc-avr*"]
