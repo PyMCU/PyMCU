@@ -22,7 +22,7 @@ class ptr(Generic[T]):
 
     def __set__(self, instance, value):
         raise RuntimeError(
-            "⚠️ Error: You're trying to write to a hardware register "
+            "Error: You're trying to write to a hardware register "
             "while running Python on your computer.\n"
             "This code must be compiled with 'pymcuc' and run on the microcontroller."
         )
@@ -80,7 +80,7 @@ def compile_isr(handler: Callable, vector: int = 0):
     pass
 
 
-# Integer width aliases — defined as TypeAlias so int literals are always
+# Integer width aliases -- defined as TypeAlias so int literals are always
 # assignable (e.g. `x: uint16 = 0` is valid) while still communicating the
 # intended bit width to the pymcuc compiler via the annotation text.
 uint8:  TypeAlias = int

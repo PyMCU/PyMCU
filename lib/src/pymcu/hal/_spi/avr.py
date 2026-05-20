@@ -6,20 +6,20 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# AVR SPI Controller/Peripheral HAL — ATmega328P hardware SPI
+# AVR SPI Controller/Peripheral HAL -- ATmega328P hardware SPI
 #
 # Mode 0 (CPOL=0, CPHA=0), MSB-first.
 #
 # ATmega328P SPI pins (Arduino Uno mapping):
-#   MOSI = PB3  (Arduino pin 11) — Controller: output; Peripheral: input
-#   MISO = PB4  (Arduino pin 12) — Controller: input;  Peripheral: output
-#   SCK  = PB5  (Arduino pin 13) — Controller: output; Peripheral: input
-#   SS   = PB2  (Arduino pin 10) — Controller: output; Peripheral: input
+#   MOSI = PB3  (Arduino pin 11) -- Controller: output; Peripheral: input
+#   MISO = PB4  (Arduino pin 12) -- Controller: input;  Peripheral: output
+#   SCK  = PB5  (Arduino pin 13) -- Controller: output; Peripheral: input
+#   SS   = PB2  (Arduino pin 10) -- Controller: output; Peripheral: input
 #
-# Register map (all in IN/OUT range 0x40-0x5F → I/O offset -0x20):
-#   SPCR = 0x4C  — SPI Control Register
-#   SPSR = 0x4D  — SPI Status Register
-#   SPDR = 0x4E  — SPI Data Register (write → TX, read → RX)
+# Register map (all in IN/OUT range 0x40-0x5F -> I/O offset -0x20):
+#   SPCR = 0x4C  -- SPI Control Register
+#   SPSR = 0x4D  -- SPI Status Register
+#   SPDR = 0x4E  -- SPI Data Register (write -> TX, read -> RX)
 #
 # Note: SPDR.value = data correctly emits OUT 0x2E, Rn (full byte, not BitWrite).
 # -----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ from pymcu.types import uint8, inline, compile_isr, Callable
 
 @inline
 def spi_init():
-    # MOSI (PB3), SCK (PB5), SS (PB2) → output; MISO (PB4) → input (HW-controlled)
+    # MOSI (PB3), SCK (PB5), SS (PB2) -> output; MISO (PB4) -> input (HW-controlled)
     DDRB[3] = 1   # MOSI: output
     DDRB[5] = 1   # SCK:  output
     DDRB[2] = 1   # SS:   output (we drive it manually as chip-select)
@@ -43,21 +43,21 @@ def spi_init():
 
 @inline
 def spi_select():
-    PORTB[2] = 0  # SS low — activate device
+    PORTB[2] = 0  # SS low -- activate device
 
 
 @inline
 def spi_deselect():
-    PORTB[2] = 1  # SS high — deactivate device
+    PORTB[2] = 1  # SS high -- deactivate device
 
 
 @inline
 def spi_transfer(data: uint8) -> uint8:
     # Writing SPDR starts the 8-clock transfer; reading it returns received byte.
-    SPDR.value = data          # OUT 0x2E, Rn  — correct full-byte write
+    SPDR.value = data          # OUT 0x2E, Rn  -- correct full-byte write
     while SPSR[7] == 0:        # Wait for SPIF (Transfer Complete flag, bit 7)
         pass
-    result: uint8 = SPDR.value  # IN Rn, 0x2E  — reading clears SPIF
+    result: uint8 = SPDR.value  # IN Rn, 0x2E  -- reading clears SPIF
     return result
 
 

@@ -6,27 +6,27 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# AVR UART HAL — ATmega328P hardware USART0
+# AVR UART HAL -- ATmega328P hardware USART0
 #
 # ATmega328P UART pins (Arduino Uno mapping):
-#   TX = PD1  (Arduino pin 1) — set as output
-#   RX = PD0  (Arduino pin 0) — set as input
+#   TX = PD1  (Arduino pin 1) -- set as output
+#   RX = PD0  (Arduino pin 0) -- set as input
 #
-# Register map (all > 0x5F → LDS/STS):
-#   UBRR0H = 0xC5  — Baud Rate Register (high byte)
-#   UBRR0L = 0xC4  — Baud Rate Register (low byte)
-#   UCSR0A = 0xC0  — Control/Status A: RXC0(7), UDRE0(5)
-#   UCSR0B = 0xC1  — Control/Status B: RXEN0(4), TXEN0(3)
-#   UCSR0C = 0xC2  — Control/Status C: UCSZ01(2), UCSZ00(1) → 8-bit frame
-#   UDR0   = 0xC6  — UART Data Register (send/receive byte)
+# Register map (all > 0x5F -> LDS/STS):
+#   UBRR0H = 0xC5  -- Baud Rate Register (high byte)
+#   UBRR0L = 0xC4  -- Baud Rate Register (low byte)
+#   UCSR0A = 0xC0  -- Control/Status A: RXC0(7), UDRE0(5)
+#   UCSR0B = 0xC1  -- Control/Status B: RXEN0(4), TXEN0(3)
+#   UCSR0C = 0xC2  -- Control/Status C: UCSZ01(2), UCSZ00(1) -> 8-bit frame
+#   UDR0   = 0xC6  -- UART Data Register (send/receive byte)
 #
 # Pre-computed UBRR values for F_CPU = 16 MHz (U2X=0, 16x oversampling):
 #   UBRR = round(F_CPU / (16 * baud)) - 1
-#   9600   → 103   (0.16% error)
-#   19200  → 51    (0.16% error)
-#   38400  → 25    (0.16% error)
-#   57600  → 16    (2.08% error)
-#   115200 → 8     (3.54% error)
+#   9600   -> 103   (0.16% error)
+#   19200  -> 51    (0.16% error)
+#   38400  -> 25    (0.16% error)
+#   57600  -> 16    (2.08% error)
+#   115200 -> 8     (3.54% error)
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
@@ -47,7 +47,7 @@ def uart_init(baud: const[uint16]):
     DDRD[1] = 1
     DDRD[0] = 0
 
-    # Pre-computed UBRR for 16 MHz — avoids runtime division
+    # Pre-computed UBRR for 16 MHz -- avoids runtime division
     if baud == 9600:
         UBRR0L.value = 103
         UBRR0H.value = 0

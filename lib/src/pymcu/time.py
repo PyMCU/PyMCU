@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-# Software delay functions — no hardware timers, no conflicts.
+# Software delay functions -- no hardware timers, no conflicts.
 # Uses @inline + match __CHIP__.arch for dead-code-eliminated,
 # architecture-specific tight loops via asm().
 #
@@ -37,7 +37,7 @@ def delay_ms(ms: uint16):
 def _delay_ms_pic14(ms: uint8):
     """Software millisecond delay loop for PIC14 architecture."""
     # PIC14: Tcy = 4 clocks. DECFSZ+GOTO = 3 Tcy/iter.
-    # 255 iters × 3 = 765 Tcy ≈ 0.765ms at 4MHz (Tcy=1us)
+    # 255 iters x 3 = 765 Tcy ~ 0.765ms at 4MHz (Tcy=1us)
     # Outer while loop adds ~7 Tcy overhead per ms iteration.
     i: uint8 = 0
     while i < ms:
@@ -53,7 +53,7 @@ def _delay_ms_pic14e(ms: uint8):
     """Software millisecond delay loop for PIC14E architecture."""
     # PIC14E: Same instruction timing as PIC14, often higher Fosc.
     # At 32MHz internal: Tcy = 125ns, 1ms = 8000 Tcy.
-    # Need nested loop: outer 10 × inner 255 × 3 = 7650 Tcy ≈ 0.96ms
+    # Need nested loop: outer 10 x inner 255 x 3 = 7650 Tcy ~ 0.96ms
     i: uint8 = 0
     while i < ms:
         asm("    MOVLW 0x0B")
@@ -73,7 +73,7 @@ def _delay_ms_pic18(ms: uint8):
     """Software millisecond delay loop for PIC18 architecture."""
     # PIC18: Tcy = 4 clocks, DECFSZ+BRA = 3 Tcy/iter (BRA = 2 on taken).
     # Typically 48MHz: Tcy = 83.3ns, 1ms = 12000 Tcy.
-    # Nested: 16 × 255 × 3 = 12240 Tcy ≈ 1.02ms
+    # Nested: 16 x 255 x 3 = 12240 Tcy ~ 1.02ms
     i: uint8 = 0
     while i < ms:
         asm("    MOVLW 0x10")
@@ -91,7 +91,7 @@ def _delay_ms_pic18(ms: uint8):
 def _delay_1ms_avr():
     """AVR 1ms delay subroutine (non-inline; called once per ms by _delay_ms_avr)."""
     # Non-inline: labels appear exactly once in the assembled output.
-    # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ≈ 1ms at 16MHz.
+    # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ~ 1ms at 16MHz.
     asm("    PUSH R24")
     asm("    PUSH R25")
     asm("    LDI R24, 21")
@@ -121,7 +121,7 @@ def _delay_ms_riscv(ms: uint8):
     """Software millisecond delay loop for RISC-V architecture."""
     # RISC-V: ADDI+BNE = ~3-4 cycles/iter depending on pipeline.
     # CH32V003 at 48MHz: 1ms = 48000 cycles.
-    # Nested: 63 × 255 × 3 = 48195 ≈ 1ms
+    # Nested: 63 x 255 x 3 = 48195 ~ 1ms
     i: uint8 = 0
     while i < ms:
         asm("    LI t0, 63")
@@ -169,7 +169,7 @@ def delay_us(us: uint8):
 def _delay_us_pic14(us: uint8):
     """Software microsecond delay loop for PIC14 architecture."""
     # PIC14 at 4MHz: Tcy=1us. 1us ~= 1 NOP.
-    # Loop overhead is ~7 Tcy so each iteration ≈ 8us at 4MHz.
+    # Loop overhead is ~7 Tcy so each iteration ~ 8us at 4MHz.
     # For approximate us-level delays.
     i: uint8 = 0
     while i < us:
