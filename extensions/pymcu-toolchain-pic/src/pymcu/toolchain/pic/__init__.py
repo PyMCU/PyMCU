@@ -2,7 +2,7 @@
 # PyMCU PIC Toolchain Plugin
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # -----------------------------------------------------------------------------
 
 from .plugin import PicToolchainPlugin

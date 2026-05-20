@@ -70,7 +70,7 @@ pulls in the AVR toolchain and backend. Use `[pic]` for PIC targets, `[all]` for
 [project]
 dependencies = ["pymcu", "pymcu-circuitpython"]
 
-[tool.whip]
+[tool.pymcu]
 board = "arduino_uno"
 frequency = 16000000
 ```
@@ -109,13 +109,8 @@ pymcu flash   # → avrdude upload to Arduino Uno
 
 ## Licensing
 
-| Component | License |
-|-----------|---------|
-| Compiler & CLI driver (`src/`) | [AGPL-3.0](LICENSE) with [Commercial Exception](COMMERCIAL_EXCEPTION.md) |
-| Standard library (`lib/`) | [MIT](lib/LICENSE) |
-| Your compiled firmware (output) | Yours — see [COMMERCIAL_EXCEPTION.md](COMMERCIAL_EXCEPTION.md) |
-
-The firmware you produce with PyMCU is **entirely yours** and not subject to the AGPL.
+All components are licensed under the [MIT License](LICENSE).
+Your compiled firmware output is entirely yours.
 
 ---
 
