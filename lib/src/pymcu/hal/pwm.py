@@ -43,7 +43,7 @@ class PWM:
         The timer is left stopped after init; call start() before set_duty().
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
                 pwm_init(pin, duty)
                 self._ocr       = pwm_select_ocr(pin)
@@ -61,6 +61,12 @@ class PWM:
                 from pymcu.hal._pwm.pic18f45k50 import pwm_init
                 self.pin = pin
                 pwm_init(pin, duty)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._pwm.attiny85 import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
+                pwm_init(pin, duty)
+                self._ocr       = pwm_select_ocr(pin)
+                self._tccr_b    = pwm_select_tccr_b(pin)
+                self._start_val = pwm_select_start_val(pin)
 
     @inline
     def set_duty(self, duty: uint8):
@@ -69,7 +75,7 @@ class PWM:
         Compiles to a single register write.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 # Direct OCR write -- single STS instruction.
                 self._ocr.value = duty
             case "pic16f877a":
@@ -81,6 +87,8 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_set_duty
                 pwm_set_duty(self.pin, duty)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._ocr.value = duty
 
     @inline
     def start(self):
@@ -89,7 +97,7 @@ class PWM:
         Must be called once before the first set_duty() takes effect.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 # Restore prescaler value to re-enable the timer.
                 self._tccr_b.value = self._start_val
             case "pic16f877a":
@@ -101,6 +109,8 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_start
                 pwm_start(self.pin)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._tccr_b.value = self._start_val
 
     @inline
     def stop(self):
@@ -109,7 +119,7 @@ class PWM:
         The duty cycle value is preserved; start() resumes at the same level.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 # Clear TCCRxB to stop the timer clock.
                 self._tccr_b.value = 0x00
             case "pic16f877a":
@@ -121,3 +131,5 @@ class PWM:
             case "pic18f45k50":
                 from pymcu.hal._pwm.pic18f45k50 import pwm_stop
                 pwm_stop(self.pin)
+            case "attiny85" | "attiny45" | "attiny25":
+                self._tccr_b.value = 0x00

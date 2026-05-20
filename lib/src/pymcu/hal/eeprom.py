@@ -38,8 +38,11 @@ class EEPROM:
         write, then waits for the new write to finish.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._eeprom.atmega328p import eeprom_write
+                eeprom_write(addr, value)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._eeprom.attiny85 import eeprom_write
                 eeprom_write(addr, value)
 
     @inline
@@ -50,8 +53,11 @@ class EEPROM:
         stored byte.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._eeprom.atmega328p import eeprom_read
+                return eeprom_read(addr)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._eeprom.attiny85 import eeprom_read
                 return eeprom_read(addr)
 
         return 0

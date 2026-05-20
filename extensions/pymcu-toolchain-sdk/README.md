@@ -12,7 +12,7 @@ This package provides the stable API surface that all PyMCU toolchain plugins de
 ## Usage
 
 ```python
-from pymcu_toolchain_sdk import (
+from pymcu.toolchain.sdk import (
     CacheableTool,
     ExternalToolchain,
     HardwareProgrammer,
@@ -24,5 +24,5 @@ Plugin packages register themselves under the `pymcu.toolchains` entry-point gro
 
 ```toml
 [project.entry-points."pymcu.toolchains"]
-avr = "pymcu_toolchain_avr:AvrToolchainPlugin"
+avr = "pymcu.toolchain.avr:AvrToolchainPlugin"
 ```

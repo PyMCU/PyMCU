@@ -14,11 +14,11 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from rich.console import Console
-from pymcu_toolchain_avr.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
-from pymcu_toolchain_pic.gputils import GputilsToolchain
-from pymcu_toolchain_avr.avra import AvraToolchain
-from pymcu_toolchain_avr import AvrToolchainPlugin
-from pymcu_toolchain_pic import PicToolchainPlugin
+from pymcu.toolchain.avr.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
+from pymcu.toolchain.pic.gputils import GputilsToolchain
+from pymcu.toolchain.avr.avra import AvraToolchain
+from pymcu.toolchain.avr import AvrToolchainPlugin
+from pymcu.toolchain.pic import PicToolchainPlugin
 from src.driver.toolchains import get_toolchain_for_chip, discover_plugins
 from src.driver.core.base_tool import CacheableTool, _default_platform_key, _is_non_interactive
 

@@ -27,7 +27,7 @@
 # Compatibility shim: all implementations have moved to pymcu-toolchain-sdk.
 # Internal driver code that imports from here continues to work unchanged.
 
-from pymcu_toolchain_sdk.base_tool import (  # noqa: F401
+from pymcu.toolchain.sdk.base_tool import (  # noqa: F401
     CacheableTool,
     _default_platform_key,
     _is_non_interactive,

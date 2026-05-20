@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.entry-points."pymcu.toolchains"]
-pic = "pymcu_toolchain_pic:PicToolchainPlugin"
+pic = "pymcu.toolchain.pic:PicToolchainPlugin"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu_toolchain_pic"]
+packages = ["src/pymcu"]

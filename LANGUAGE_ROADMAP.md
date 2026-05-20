@@ -82,17 +82,19 @@ Everything in this section is shipped and tested in the current alpha build.
 |--------|-----------------|---------|-------|
 | `pymcu.hal.gpio` | `Pin` | All | `high/low/toggle/value/irq/pulse_in` |
 | `pymcu.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
-| `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535) |
-| `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow` |
+| `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535); ATtiny85: PB2/PB3/PB4 |
+| `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow`; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
 | `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
 | `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
 | `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
-| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P | `write(addr, val)` / `read(addr)` |
-| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P | `enable/disable/feed`; timeout is compile-time const |
+| `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
+| `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
 | `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
+| `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
+| `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants |
 
 ### Compat Packages
 
@@ -348,7 +350,7 @@ These are the highest-value features not yet implemented, in priority order.
 
 | Feature | Effort | Why |
 |---------|--------|-----|
-| Soft float / `fixed16` | ~1 week | Q8.8 fixed-point for sensor math (temperature, percentages) |
+| ~~Soft float~~ / `fixed16` | ~~1 week~~ | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
 | `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
 | `const uint8[N]` (PROGMEM arrays) | ~3h | ✅ Implemented in v0.9 |
 

@@ -119,8 +119,9 @@ When implementing a feature:
   (e.g., `for x in [1,2,3]:`, `for x, y in zip(...):`). Use `acc = acc + x` instead.
   This is a known compiler limitation where constant-variable tracking interacts with
   AugAssign emission.
-- Do not change `avra`-specific assembly output without confirming the change does not
-  break the avra assembler syntax (e.g., avra does not support `.extern`).
+- Do not use `avra`-specific assembly syntax. The AVR toolchain uses `avr-as` (GNU
+  binutils 14.1.0) as the sole assembler. `avra` is deprecated and not included in any
+  build pipeline.
 
 ---
 

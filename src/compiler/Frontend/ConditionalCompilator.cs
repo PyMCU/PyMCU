@@ -53,7 +53,9 @@ public class ConditionalCompilator(DeviceConfig config)
     }
 
     // Moves all statements in a Block into newStmts, routing ImportStmt to prog.Imports.
-    private static void FlushBlock(Statement? body, ProgramNode prog, List<Statement> newStmts)
+    // Recursively applies static evaluation so nested compile-time blocks
+    // (e.g. `match __CHIP__.arch:` inside a `case _:` body) are also eliminated.
+    private void FlushBlock(Statement? body, ProgramNode prog, List<Statement> newStmts)
     {
         if (body is not Block block) return;
 
@@ -61,7 +63,7 @@ public class ConditionalCompilator(DeviceConfig config)
         {
             if (inner is ImportStmt imp)
                 prog.Imports.Add(CloneImport(imp));
-            else
+            else if (!ProcessStatement(inner, prog, newStmts))
                 newStmts.Add(inner);
         }
     }

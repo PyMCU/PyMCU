@@ -14,7 +14,6 @@
  * -----------------------------------------------------------------------------
  */
 
-using PyMCU.Backend.Targets.AVR;
 using PyMCU.Backend.Targets.PIC12;
 using PyMCU.Backend.Targets.PIC14;
 using PyMCU.Backend.Targets.PIO;
@@ -27,8 +26,33 @@ namespace PyMCU.Backend;
 
 public static class CodeGenFactory
 {
+    // Chip/arch prefixes that are handled by the external pymcuc-avr backend.
+    private static readonly string[] AvrPrefixes =
+        ["avr", "avr8", "atmega", "attiny", "at90", "atxmega"];
+
+    private static bool IsAvrArch(string arch)
+    {
+        var a = arch.ToLowerInvariant();
+        foreach (var prefix in AvrPrefixes)
+            if (a == prefix || a.StartsWith(prefix)) return true;
+        return false;
+    }
+
     public static CodeGen Create(string arch, DeviceConfig config)
     {
+        // AVR has moved to an external backend binary (pymcuc-avr).
+        // Direct compilation is no longer supported; use --emit-ir to produce a
+        // .mir file and then invoke pymcuc-avr, or use 'pymcu build' which does
+        // this automatically.
+        if (IsAvrArch(arch))
+        {
+            throw new NotSupportedException(
+                $"AVR codegen ({arch}) is not available in pymcuc directly.\n" +
+                "  Use '--emit-ir output.mir' to produce IR and run:\n" +
+                "    pymcuc-avr output.mir -o firmware.asm --target <chip>\n" +
+                "  Or use 'pymcu build' which handles this automatically.");
+        }
+
         if (arch == "pic12" || arch == "baseline" || arch.StartsWith("pic10f") || arch.StartsWith("pic12f"))
         {
             return new PIC12CodeGen(config);
@@ -42,11 +66,6 @@ public static class CodeGenFactory
         if (arch == "pic18" || arch == "advanced" || arch.StartsWith("pic18f"))
         {
             return new PIC18CodeGen(config);
-        }
-        
-        if (arch == "avr" || arch == "avr8" || arch == "atmega328p")
-        {
-            return new AvrCodeGen(config);
         }
         
         if (arch == "riscv" || arch == "rv32ec" || arch.StartsWith("ch32v"))

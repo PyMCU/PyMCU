@@ -35,13 +35,18 @@ public static class Program
         var moduleLoader = new FileSystemModuleLoader();
         var graphBuilder = new DependencyGraphBuilder(moduleLoader);
 
+        // When --emit-ir is specified, replace the backend phase with the IR serializer.
+        var backendPhase = string.IsNullOrEmpty(options.EmitIrPath)
+            ? (Pipeline.ICompilerPhase)new Pipeline.Phases.BackendPhase()
+            : new Pipeline.Phases.IrSerializerPhase();
+
         var driver = new Pipeline.CompilerDriver()
             .AddPhase(new Pipeline.Phases.InitializationPhase())
             .AddPhase(new Pipeline.Phases.BootstrapPhase())
             .AddPhase(new Pipeline.Phases.ParsingPhase())
             .AddPhase(new Pipeline.Phases.FrontendResolutionPhase(moduleLoader, graphBuilder))
             .AddPhase(new Pipeline.Phases.IrGenerationPhase())
-            .AddPhase(new Pipeline.Phases.BackendPhase());
+            .AddPhase(backendPhase);
 
         return driver.Run(options);
     }

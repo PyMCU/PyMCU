@@ -35,8 +35,12 @@ class Watchdog:
     def enable(self):
         """Enable the watchdog timer with the configured timeout."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._watchdog.atmega328p import wdt_enable, wdt_timeout_wdp
+                wdp: uint8 = wdt_timeout_wdp(self._timeout_ms)
+                wdt_enable(wdp)
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._watchdog.attiny85 import wdt_enable, wdt_timeout_wdp
                 wdp: uint8 = wdt_timeout_wdp(self._timeout_ms)
                 wdt_enable(wdp)
 
@@ -44,8 +48,11 @@ class Watchdog:
     def disable(self):
         """Disable the watchdog timer."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._watchdog.atmega328p import wdt_disable
+                wdt_disable()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._watchdog.attiny85 import wdt_disable
                 wdt_disable()
 
     @inline
@@ -56,6 +63,9 @@ class Watchdog:
         """
         # Reset the watchdog counter. Must be called within the configured timeout.
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 from pymcu.hal._watchdog.atmega328p import wdt_feed
+                wdt_feed()
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._watchdog.attiny85 import wdt_feed
                 wdt_feed()

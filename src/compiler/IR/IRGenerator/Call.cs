@@ -943,7 +943,9 @@ public partial class IRGenerator
             foreach (var arg in expr.Args)
             {
                 Val av = VisitExpression(arg);
-                if (av is Variable v && floatConstantVariables.TryGetValue(v.Name, out double fv))
+                if (av is FloatConstant avFc)
+                    av = new Constant((int)Math.Round(avFc.Value));
+                else if (av is Variable v && floatConstantVariables.TryGetValue(v.Name, out double fv))
                     av = new Constant((int)Math.Round(fv));
                 extArgs.Add(av);
             }

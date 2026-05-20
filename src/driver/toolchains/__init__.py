@@ -38,7 +38,7 @@ from __future__ import annotations
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
 
-from pymcu_toolchain_sdk import ExternalToolchain, ToolchainPlugin
+from pymcu.toolchain.sdk import ExternalToolchain, ToolchainPlugin
 
 if TYPE_CHECKING:
     from rich.console import Console

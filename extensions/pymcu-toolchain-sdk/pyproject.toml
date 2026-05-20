@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu_toolchain_sdk"]
+packages = ["src/pymcu"]

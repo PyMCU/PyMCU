@@ -56,7 +56,7 @@ class Timer:  # noqa
         elif n == 2:
             self._id = "t2"
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match n:
                     case 0:
                         from pymcu.hal._timer.atmega328p import timer0_init
@@ -82,12 +82,20 @@ class Timer:  # noqa
             case "pic18f45k50":
                 from pymcu.hal._timer.pic18f45k50 import timer0_init
                 timer0_init(prescaler)
+            case "attiny85" | "attiny45" | "attiny25":
+                match n:
+                    case 0:
+                        from pymcu.hal._timer.attiny85 import timer0_init
+                        timer0_init(prescaler)
+                    case 1:
+                        from pymcu.hal._timer.attiny85 import timer1_init
+                        timer1_init(prescaler)
 
     @inline
     def start(self):
         """Start the timer by connecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_start
@@ -113,12 +121,20 @@ class Timer:  # noqa
             case "pic18f45k50":
                 from pymcu.hal._timer.pic18f45k50 import timer0_start
                 timer0_start()
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_start
+                        timer0_start()
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_start
+                        timer1_start()
 
     @inline
     def stop(self):
         """Stop the timer by disconnecting its clock source."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_stop
@@ -144,12 +160,20 @@ class Timer:  # noqa
             case "pic18f45k50":
                 from pymcu.hal._timer.pic18f45k50 import timer0_stop
                 timer0_stop()
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_stop
+                        timer0_stop()
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_stop
+                        timer1_stop()
 
     @inline
     def clear(self):
         """Reset the timer counter register to zero."""
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_clear
@@ -175,6 +199,14 @@ class Timer:  # noqa
             case "pic18f45k50":
                 from pymcu.hal._timer.pic18f45k50 import timer0_clear
                 timer0_clear()
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_clear
+                        timer0_clear()
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_clear
+                        timer1_clear()
 
     @inline
     def set_compare(self, value: uint16):
@@ -185,7 +217,7 @@ class Timer:  # noqa
         Call start() first, then set_compare() to arm the interrupt.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_set_compare
@@ -196,7 +228,14 @@ class Timer:  # noqa
                     case "t2":
                         from pymcu.hal._timer.atmega328p import timer2_set_compare
                         timer2_set_compare(value)
-
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_set_compare
+                        timer0_set_compare(value)
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_set_compare
+                        timer1_set_compare(value)
     @inline
     def overflow(self) -> uint8:
         """Return 1 if the timer overflow flag is set, 0 otherwise.
@@ -205,7 +244,7 @@ class Timer:  # noqa
         value back to zero. Reading this flag does not clear it.
         """
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         from pymcu.hal._timer.atmega328p import timer0_overflow
@@ -216,6 +255,14 @@ class Timer:  # noqa
                     case "t2":
                         from pymcu.hal._timer.atmega328p import timer2_overflow
                         return timer2_overflow()
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_overflow
+                        return timer0_overflow()
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_overflow
+                        return timer1_overflow()
         return 0
 
     @inline
@@ -232,7 +279,7 @@ class Timer:  # noqa
         # Use self._id (string member = CT constant) for compile_isr dispatch,
         # not self._n (numeric SRAM) which cannot CT-fold the vector placement.
         match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
                 match self._id:
                     case "t0":
                         if mode == 2:  # IRQ_COMPA
@@ -255,3 +302,19 @@ class Timer:  # noqa
                         else:
                             from pymcu.hal._timer.atmega328p import timer2_irq_setup
                             timer2_irq_setup(handler)
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        if mode == 2:  # IRQ_COMPA
+                            from pymcu.hal._timer.attiny85 import timer0_irq_compa_setup
+                            timer0_irq_compa_setup(handler)
+                        else:
+                            from pymcu.hal._timer.attiny85 import timer0_irq_setup
+                            timer0_irq_setup(handler)
+                    case "t1":
+                        if mode == 2:  # IRQ_COMPA
+                            from pymcu.hal._timer.attiny85 import timer1_irq_compa_setup
+                            timer1_irq_compa_setup(handler)
+                        else:
+                            from pymcu.hal._timer.attiny85 import timer1_irq_setup
+                            timer1_irq_setup(handler)

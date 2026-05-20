@@ -60,7 +60,7 @@ language feature the compiler accepts.
 | | List comprehension (compile-time constant only) | Complete |
 | **Not supported** | Heap allocation, `list.append`, `dict`, `set` | No heap |
 | | `try / except`, `async / await` | No runtime |
-| | `float`, `complex`, `Decimal` | Planned T3 |
+| | `complex`, `Decimal` | No heap / no FPU |
 | | `f"..."` f-strings (runtime) | Planned T3 |
 | | List comprehension (runtime bounds) | No heap |
 
@@ -812,7 +812,7 @@ led = Pin(LED_BUILTIN, Pin.OUT)    # PB5
 | Concept | Python 3 | MicroPython | CircuitPython | PyMCU |
 |---|---|---|---|---|
 | Integer type | `int` (arbitrary precision) | `int` (30-bit on most ports) | `int` (30-bit) | `uint8/16/32`, `int8/16/32` — annotation required |
-| Float | `float` (64-bit IEEE) | `float` (32-bit) | `float` (32-bit) | Not yet (planned T3) |
+| Float | `float` (64-bit IEEE) | `float` (32-bit) | `float` (32-bit) | `float` (32-bit IEEE 754, soft-float on AVR) |
 | Heap / GC | ✅ `malloc` + GC | ✅ small heap + GC | ✅ small heap + GC | No heap at all |
 | GPIO | `RPi.GPIO` or similar | `machine.Pin(13, OUT)` | `digitalio.DigitalInOut(board.D13)` | `Pin("PB5", Pin.OUT)` |
 | GPIO via compat | — | `from machine import Pin` | `import digitalio` | `pymcu-micropython` / `pymcu-circuitpython` |
@@ -868,7 +868,7 @@ while True:
 **Things that still need changes:**
 - Type annotations: add `x: int = 0` (or a specific-width type) where the compiler needs a width.
   Python's built-in `int` works without any import and maps to `int16`.
-- `float` arithmetic: replace with integer or fixed-point.
+- `float` arithmetic: supported natively on AVR via soft-float (IEEE 754 single-precision). No changes needed for `+`, `-`, `*`, `/`, and comparisons.
 - `try / except`: use return codes + `match / case`.
 - `f"..."` format strings: use `uart.write_str()` + `uart.print_byte()`.
 
@@ -909,7 +909,7 @@ The biggest changes when porting generic Python:
 
 1. **Add type annotations everywhere** — the compiler requires them.
 2. **Remove dynamic allocation** — no `list.append()`, no `dict`, no `set`.
-3. **Replace `float`** — use `int16` with manual fixed-point scaling (e.g. `× 100` for 2 decimal places).
+3. **`float` works on AVR** — IEEE 754 single-precision via soft-float. For performance-critical code, consider `int16` with manual fixed-point scaling (e.g. `× 100`) to avoid the ~200-400 cycle overhead per float operation.
 4. **Replace `try/except`** — return sentinel values (`0xFF` for error), use `match / case`.
 5. **Replace `print(f"val={x}")` f-strings** — use `uart.write_str("val="); uart.print_byte(x)`.
 6. **Replace `time.sleep(s)`** — use `delay_ms(n)` or `delay_us(n)`.
