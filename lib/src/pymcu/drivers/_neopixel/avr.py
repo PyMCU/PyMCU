@@ -22,42 +22,45 @@ from pymcu.time import delay_us
 @inline
 def ws2812_init(pin: str):
     # Configure the data pin as output and hold low.
-    if pin == "PB0":
-        DDRB[0] = 1
-        PORTB[0] = 0
-    elif pin == "PB1":
-        DDRB[1] = 1
-        PORTB[1] = 0
-    elif pin == "PB2":
-        DDRB[2] = 1
-        PORTB[2] = 0
-    elif pin == "PB3":
-        DDRB[3] = 1
-        PORTB[3] = 0
-    elif pin == "PB4":
-        DDRB[4] = 1
-        PORTB[4] = 0
-    elif pin == "PB5":
-        DDRB[5] = 1
-        PORTB[5] = 0
-    elif pin == "PD2":
-        DDRD[2] = 1
-        PORTD[2] = 0
-    elif pin == "PD3":
-        DDRD[3] = 1
-        PORTD[3] = 0
-    elif pin == "PD4":
-        DDRD[4] = 1
-        PORTD[4] = 0
-    elif pin == "PD5":
-        DDRD[5] = 1
-        PORTD[5] = 0
-    elif pin == "PD6":
-        DDRD[6] = 1
-        PORTD[6] = 0
-    elif pin == "PD7":
-        DDRD[7] = 1
-        PORTD[7] = 0
+    match pin:
+        case "PB0":
+            DDRB[0] = 1
+            PORTB[0] = 0
+        case "PB1":
+            DDRB[1] = 1
+            PORTB[1] = 0
+        case "PB2":
+            DDRB[2] = 1
+            PORTB[2] = 0
+        case "PB3":
+            DDRB[3] = 1
+            PORTB[3] = 0
+        case "PB4":
+            DDRB[4] = 1
+            PORTB[4] = 0
+        case "PB5":
+            DDRB[5] = 1
+            PORTB[5] = 0
+        case "PD2":
+            DDRD[2] = 1
+            PORTD[2] = 0
+        case "PD3":
+            DDRD[3] = 1
+            PORTD[3] = 0
+        case "PD4":
+            DDRD[4] = 1
+            PORTD[4] = 0
+        case "PD5":
+            DDRD[5] = 1
+            PORTD[5] = 0
+        case "PD6":
+            DDRD[6] = 1
+            PORTD[6] = 0
+        case "PD7":
+            DDRD[7] = 1
+            PORTD[7] = 0
+        case _:
+            pass
 
 
 # Non-inline helper: send one byte (8 bits MSB-first) to PORTB bit `bit`.
@@ -108,50 +111,59 @@ def ws2812_write_byte_portb(val: uint8, bit: uint8):
     byte_copy: uint8 = val
     while counter > 0:
         # Set pin HIGH (start of bit pulse)
-        if bit == 0:
-            PORTB[0] = 1
-        elif bit == 1:
-            PORTB[1] = 1
-        elif bit == 2:
-            PORTB[2] = 1
-        elif bit == 3:
-            PORTB[3] = 1
-        elif bit == 4:
-            PORTB[4] = 1
-        elif bit == 5:
-            PORTB[5] = 1
+        match bit:
+            case 0:
+                PORTB[0] = 1
+            case 1:
+                PORTB[1] = 1
+            case 2:
+                PORTB[2] = 1
+            case 3:
+                PORTB[3] = 1
+            case 4:
+                PORTB[4] = 1
+            case 5:
+                PORTB[5] = 1
+            case _:
+                pass
         # Check MSB: if byte_copy bit7=1 -> 1-bit (HIGH 13 cy), else 0-bit (HIGH 6 cy)
         if byte_copy >= 128:
             # 1-bit: stay high ~800ns more (7 more NOPs after the SBI = ~13 cy total)
             pass
         else:
             # 0-bit: drop LOW after ~400ns (immediately after short high)
-            if bit == 0:
-                PORTB[0] = 0
-            elif bit == 1:
-                PORTB[1] = 0
-            elif bit == 2:
-                PORTB[2] = 0
-            elif bit == 3:
-                PORTB[3] = 0
-            elif bit == 4:
-                PORTB[4] = 0
-            elif bit == 5:
-                PORTB[5] = 0
+            match bit:
+                case 0:
+                    PORTB[0] = 0
+                case 1:
+                    PORTB[1] = 0
+                case 2:
+                    PORTB[2] = 0
+                case 3:
+                    PORTB[3] = 0
+                case 4:
+                    PORTB[4] = 0
+                case 5:
+                    PORTB[5] = 0
+                case _:
+                    pass
         # For 1-bit: set LOW now (after the high period)
         if byte_copy >= 128:
-            if bit == 0:
-                PORTB[0] = 0
-            elif bit == 1:
-                PORTB[1] = 0
-            elif bit == 2:
-                PORTB[2] = 0
-            elif bit == 3:
-                PORTB[3] = 0
-            elif bit == 4:
-                PORTB[4] = 0
-            elif bit == 5:
-                PORTB[5] = 0
+            match bit:
+                case 0:
+                    PORTB[0] = 0
+                case 1:
+                    PORTB[1] = 0
+                case 2:
+                    PORTB[2] = 0
+                case 3:
+                    PORTB[3] = 0
+                case 4:
+                    PORTB[4] = 0
+                case 5:
+                    PORTB[5] = 0
+                case _:
+                    pass
         byte_copy = byte_copy << 1
         counter = counter - 1
 
@@ -171,30 +183,33 @@ def _neo_send_portb_asm(val: uint8, bit: uint8):
 def ws2812_write_byte(pin: str, val: uint8):
     # Dispatch to port-specific implementation by pin name.
     # The compiler folds away all non-matching branches at compile time.
-    if pin == "PB0":
-        _ws2812_b(0, val)
-    elif pin == "PB1":
-        _ws2812_b(1, val)
-    elif pin == "PB2":
-        _ws2812_b(2, val)
-    elif pin == "PB3":
-        _ws2812_b(3, val)
-    elif pin == "PB4":
-        _ws2812_b(4, val)
-    elif pin == "PB5":
-        _ws2812_b(5, val)
-    elif pin == "PD2":
-        _ws2812_d(2, val)
-    elif pin == "PD3":
-        _ws2812_d(3, val)
-    elif pin == "PD4":
-        _ws2812_d(4, val)
-    elif pin == "PD5":
-        _ws2812_d(5, val)
-    elif pin == "PD6":
-        _ws2812_d(6, val)
-    elif pin == "PD7":
-        _ws2812_d(7, val)
+    match pin:
+        case "PB0":
+            _ws2812_b(0, val)
+        case "PB1":
+            _ws2812_b(1, val)
+        case "PB2":
+            _ws2812_b(2, val)
+        case "PB3":
+            _ws2812_b(3, val)
+        case "PB4":
+            _ws2812_b(4, val)
+        case "PB5":
+            _ws2812_b(5, val)
+        case "PD2":
+            _ws2812_d(2, val)
+        case "PD3":
+            _ws2812_d(3, val)
+        case "PD4":
+            _ws2812_d(4, val)
+        case "PD5":
+            _ws2812_d(5, val)
+        case "PD6":
+            _ws2812_d(6, val)
+        case "PD7":
+            _ws2812_d(7, val)
+        case _:
+            pass
 
 
 # Non-inline function: sends one byte MSB-first to PORTB at the given bit index.
@@ -217,50 +232,53 @@ def _ws2812_b(bit: uint8, val: uint8):
     b: uint8 = val
     while i > 0:
         # Set pin HIGH (2 cycles via SBI)
-        if bit == 0:
-            PORTB[0] = 1
-            if b >= 128:
-                # 1-bit: hold high ~13 cycles total (SBI=2, 11 NOPs)
-                pass
-            else:
-                # 0-bit: hold high ~6 cycles total (SBI=2, 4 NOPs, then LOW)
+        match bit:
+            case 0:
+                PORTB[0] = 1
+                if b >= 128:
+                    # 1-bit: hold high ~13 cycles total (SBI=2, 11 NOPs)
+                    pass
+                else:
+                    # 0-bit: hold high ~6 cycles total (SBI=2, 4 NOPs, then LOW)
+                    PORTB[0] = 0
                 PORTB[0] = 0
-            PORTB[0] = 0
-        elif bit == 1:
-            PORTB[1] = 1
-            if b >= 128:
-                pass
-            else:
+            case 1:
+                PORTB[1] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTB[1] = 0
                 PORTB[1] = 0
-            PORTB[1] = 0
-        elif bit == 2:
-            PORTB[2] = 1
-            if b >= 128:
-                pass
-            else:
+            case 2:
+                PORTB[2] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTB[2] = 0
                 PORTB[2] = 0
-            PORTB[2] = 0
-        elif bit == 3:
-            PORTB[3] = 1
-            if b >= 128:
-                pass
-            else:
+            case 3:
+                PORTB[3] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTB[3] = 0
                 PORTB[3] = 0
-            PORTB[3] = 0
-        elif bit == 4:
-            PORTB[4] = 1
-            if b >= 128:
-                pass
-            else:
+            case 4:
+                PORTB[4] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTB[4] = 0
                 PORTB[4] = 0
-            PORTB[4] = 0
-        elif bit == 5:
-            PORTB[5] = 1
-            if b >= 128:
-                pass
-            else:
+            case 5:
+                PORTB[5] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTB[5] = 0
                 PORTB[5] = 0
-            PORTB[5] = 0
+            case _:
+                pass
         b = b << 1
         i = i - 1
 
@@ -270,48 +288,51 @@ def _ws2812_d(bit: uint8, val: uint8):
     i: uint8 = 8
     b: uint8 = val
     while i > 0:
-        if bit == 2:
-            PORTD[2] = 1
-            if b >= 128:
-                pass
-            else:
+        match bit:
+            case 2:
+                PORTD[2] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[2] = 0
                 PORTD[2] = 0
-            PORTD[2] = 0
-        elif bit == 3:
-            PORTD[3] = 1
-            if b >= 128:
-                pass
-            else:
+            case 3:
+                PORTD[3] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[3] = 0
                 PORTD[3] = 0
-            PORTD[3] = 0
-        elif bit == 4:
-            PORTD[4] = 1
-            if b >= 128:
-                pass
-            else:
+            case 4:
+                PORTD[4] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[4] = 0
                 PORTD[4] = 0
-            PORTD[4] = 0
-        elif bit == 5:
-            PORTD[5] = 1
-            if b >= 128:
-                pass
-            else:
+            case 5:
+                PORTD[5] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[5] = 0
                 PORTD[5] = 0
-            PORTD[5] = 0
-        elif bit == 6:
-            PORTD[6] = 1
-            if b >= 128:
-                pass
-            else:
+            case 6:
+                PORTD[6] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[6] = 0
                 PORTD[6] = 0
-            PORTD[6] = 0
-        elif bit == 7:
-            PORTD[7] = 1
-            if b >= 128:
-                pass
-            else:
+            case 7:
+                PORTD[7] = 1
+                if b >= 128:
+                    pass
+                else:
+                    PORTD[7] = 0
                 PORTD[7] = 0
-            PORTD[7] = 0
+            case _:
+                pass
         b = b << 1
         i = i - 1
 
@@ -320,28 +341,31 @@ def _ws2812_d(bit: uint8, val: uint8):
 def ws2812_reset(pin: str):
     # Hold data line LOW for >50 us (reset pulse).
     # Pin is already configured as output.
-    if pin == "PB0":
-        PORTB[0] = 0
-    elif pin == "PB1":
-        PORTB[1] = 0
-    elif pin == "PB2":
-        PORTB[2] = 0
-    elif pin == "PB3":
-        PORTB[3] = 0
-    elif pin == "PB4":
-        PORTB[4] = 0
-    elif pin == "PB5":
-        PORTB[5] = 0
-    elif pin == "PD2":
-        PORTD[2] = 0
-    elif pin == "PD3":
-        PORTD[3] = 0
-    elif pin == "PD4":
-        PORTD[4] = 0
-    elif pin == "PD5":
-        PORTD[5] = 0
-    elif pin == "PD6":
-        PORTD[6] = 0
-    elif pin == "PD7":
-        PORTD[7] = 0
+    match pin:
+        case "PB0":
+            PORTB[0] = 0
+        case "PB1":
+            PORTB[1] = 0
+        case "PB2":
+            PORTB[2] = 0
+        case "PB3":
+            PORTB[3] = 0
+        case "PB4":
+            PORTB[4] = 0
+        case "PB5":
+            PORTB[5] = 0
+        case "PD2":
+            PORTD[2] = 0
+        case "PD3":
+            PORTD[3] = 0
+        case "PD4":
+            PORTD[4] = 0
+        case "PD5":
+            PORTD[5] = 0
+        case "PD6":
+            PORTD[6] = 0
+        case "PD7":
+            PORTD[7] = 0
+        case _:
+            pass
     delay_us(55)
