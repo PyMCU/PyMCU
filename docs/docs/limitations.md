@@ -1,11 +1,12 @@
 # PyMCU Language Limitations
 
-PyMCU compiles a **statically-typed, allocation-free subset of Python** to bare-metal MCU machine
-code. There is no runtime, no heap, no garbage collector, and no interpreter. Many standard Python
-features are therefore incompatible with this model.
+**Read this before writing your first project.** PyMCU compiles a **statically-typed,
+allocation-free subset of Python** to bare-metal MCU machine code. There is no runtime,
+no heap, no garbage collector, and no interpreter. Many standard Python features are
+therefore incompatible with this model.
 
-This document lists every known unsupported feature, explains *why* it cannot be compiled, and
-suggests the idiomatic PyMCU alternative where one exists.
+This document lists every known unsupported feature, explains *why* it cannot be compiled,
+and suggests the idiomatic PyMCU alternative where one exists.
 
 ---
 

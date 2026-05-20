@@ -1,16 +1,28 @@
 # PyMCU
 
-**PyMCU** compiles a statically-typed, allocation-free subset of Python directly to bare-metal
-MCU machine code — no runtime, no heap, no interpreter.
+!!! warning "Alpha software"
+    PyMCU is in early alpha. Core AVR compilation is solid and test-covered, but
+    error messages, tooling, and some language edges are still rough. Feedback
+    welcome — breakage expected.
 
-Write familiar Python. Flash to an ATmega328P (Arduino Uno) in seconds.
+**PyMCU** compiles a **statically-typed, allocation-free subset of Python** directly to
+bare-metal MCU machine code — no runtime, no heap, no interpreter.
+
+!!! important "This is not standard Python"
+    PyMCU accepts Python *syntax* but enforces a strict compile-time type system.
+    The following standard Python features **do not exist** in PyMCU:
+    `list.append`, `dict`, `set`, `try/except`, `f"..."` with runtime values,
+    closures, `*args`, `async/await`, and any heap allocation.
+    See [Language Limitations](limitations.md) for the full list.
+
+What working PyMCU code looks like:
 
 ```python
 from pymcu.hal.gpio import Pin
 from pymcu.time import delay_ms
 
 def main():
-    led = Pin("PB5", Pin.OUT)
+    led = Pin("PB5", Pin.OUT)  # type resolved at compile time
     while True:
         led.toggle()
         delay_ms(500)
@@ -27,11 +39,11 @@ pymcu flash   # → avrdude upload to Arduino Uno
 
 | | Arduino (C++) | MicroPython | CircuitPython | **PyMCU** |
 |---|---|---|---|---|
-| Language | C++ | Python | Python | **Python** |
+| Language | C++ | Python | Python | **Python subset** |
 | Runtime | None | Interpreter | Interpreter | **None** |
 | Heap | None | Yes | Yes | **None** |
 | Flash footprint | Small | ~256 KB | ~256 KB | **Minimal** |
-| Familiar syntax | Partial | Full | Full | **Full** |
+| Python syntax | Partial | Full | Full | **Typed subset** |
 | Static types | No | No | No | **Yes (required)** |
 
 PyMCU occupies the gap between "write C++" and "run MicroPython": you write Python, but the
