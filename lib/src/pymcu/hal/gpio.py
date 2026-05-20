@@ -118,11 +118,12 @@ class Pin:
                     raise NotImplementedError("Alternate functions not supported on AVR")
                 if drive:
                     raise NotImplementedError("Drive strength control not supported on AVR")
-                from pymcu.hal._gpio.atmega328p import select_port, select_ddr, select_pin, select_bit
-                self._port = select_port(name)
-                self._ddr = select_ddr(name)
-                self._pin = select_pin(name)
-                self._bit = select_bit(name)
+                from pymcu.hal._gpio.atmega328p import _PinRegs
+                _r = _PinRegs(name)
+                self._port = _r._port
+                self._ddr  = _r._ddr
+                self._pin  = _r._pin
+                self._bit  = _r._bit
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:

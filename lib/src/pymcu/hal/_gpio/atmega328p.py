@@ -1,63 +1,34 @@
 from pymcu.chips.atmega328p import DDRB, DDRC, DDRD, PORTB, PORTC, PORTD, PINB, PINC, PIND, EICRA, EIMSK, PCICR, PCMSK0, PCMSK1, PCMSK2, SREG
 from pymcu.types import uint8, uint16, inline, ptr, compile_isr, const, asm
 
-@inline
-def select_port(name: str) -> ptr[uint8]:
-    match name:
-        case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
-            return PORTB
-        case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5':
-            return PORTC
-        case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
-            return PORTD
-        case _:
-            raise NotImplementedError('Unsupported Pin')
-
-@inline
-def select_ddr(name: str) -> ptr[uint8]:
-    match name:
-        case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
-            return DDRB
-        case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5':
-            return DDRC
-        case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
-            return DDRD
-        case _:
-            raise NotImplementedError('Unsupported Pin')
-
-@inline
-def select_pin(name: str) -> ptr[uint8]:
-    match name:
-        case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
-            return PINB
-        case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5':
-            return PINC
-        case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
-            return PIND
-        case _:
-            raise NotImplementedError('Unsupported Pin')
-
-@inline
-def select_bit(name: str) -> uint8:
-    match name:
-        case 'PB0' | 'PC0' | 'PD0':
-            return 0
-        case 'PB1' | 'PC1' | 'PD1':
-            return 1
-        case 'PB2' | 'PC2' | 'PD2':
-            return 2
-        case 'PB3' | 'PC3' | 'PD3':
-            return 3
-        case 'PB4' | 'PC4' | 'PD4':
-            return 4
-        case 'PB5' | 'PC5' | 'PD5':
-            return 5
-        case 'PD6':
-            return 6
-        case 'PD7':
-            return 7
-        case _:
-            raise NotImplementedError('Unsupported Pin')
+class _PinRegs:
+    @inline
+    def __init__(self, name: str):
+        match name:
+            case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
+                self._port = PORTB
+                self._ddr  = DDRB
+                self._pin  = PINB
+            case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5':
+                self._port = PORTC
+                self._ddr  = DDRC
+                self._pin  = PINC
+            case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
+                self._port = PORTD
+                self._ddr  = DDRD
+                self._pin  = PIND
+            case _:
+                raise NotImplementedError('Unsupported Pin')
+        match name:
+            case 'PB0' | 'PC0' | 'PD0': self._bit = 0
+            case 'PB1' | 'PC1' | 'PD1': self._bit = 1
+            case 'PB2' | 'PC2' | 'PD2': self._bit = 2
+            case 'PB3' | 'PC3' | 'PD3': self._bit = 3
+            case 'PB4' | 'PC4' | 'PD4': self._bit = 4
+            case 'PB5' | 'PC5' | 'PD5': self._bit = 5
+            case 'PD6':                  self._bit = 6
+            case 'PD7':                  self._bit = 7
+            case _:                      raise NotImplementedError('Unsupported Pin')
 
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
