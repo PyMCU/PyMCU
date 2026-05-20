@@ -79,8 +79,11 @@ jobs:
           uv pip install --python .venv ./extensions/pymcu-toolchain-avr
           uv pip install --python .venv -e .
           uv pip install --python .venv ./lib
-          uv pip install --python .venv ./external/pymcu-micropython
-          uv pip install --python .venv ./external/pymcu-circuitpython
+          if [ "${PYMCU_FLAVOR}" = "micropython" ]; then
+            uv pip install --python .venv ./external/pymcu-micropython
+          elif [ "${PYMCU_FLAVOR}" = "circuitpython" ]; then
+            uv pip install --python .venv ./external/pymcu-circuitpython
+          fi
           uv pip install --python .venv ./extensions/pymcu-backend-sdk
           uv pip install --python .venv ./extensions/pymcu-backend-avr
 
