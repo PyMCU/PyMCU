@@ -28,10 +28,27 @@
 # Extension packages may supplement this at build time via board_chips.py.
 # Both `build` and `flash` commands import from here to avoid drift.
 BOARD_CHIPS: dict[str, str] = {
+    # Arduino AVR boards
     "arduino_uno":   "atmega328p",
     "arduino_nano":  "atmega328p",
     "arduino_mega":  "atmega2560",
     "arduino_micro": "atmega32u4",
+    # ATtiny named dev boards
+    "digispark":          "attiny85",
+    "adafruit_trinket":   "attiny85",
+    # ATtiny bare chips -- 8-pin (PB0-PB5)
+    "attiny85":  "attiny85",
+    "attiny45":  "attiny45",
+    "attiny25":  "attiny25",
+    "attiny13":  "attiny13",
+    "attiny13a": "attiny13a",
+    # ATtiny bare chips -- 14-pin (PA0-PA7 + PB0-PB2)
+    "attiny84":  "attiny84",
+    "attiny44":  "attiny44",
+    "attiny24":  "attiny24",
+    # ATtiny bare chips -- 20-pin (PD0-PD6 + PB0-PB7)
+    "attiny2313":  "attiny2313",
+    "attiny4313":  "attiny4313",
 }
 
 
