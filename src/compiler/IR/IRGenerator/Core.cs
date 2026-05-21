@@ -367,6 +367,21 @@ public partial class IRGenerator
             }
         }
 
+        // Propagate instanceClasses for `from X import Y` imports so that
+        // GetValClass can find the ZCA class when user code uses imported
+        // singletons via subscript (e.g. `from machine import mem8; mem8[addr]`).
+        foreach (var imp in mainAst.Imports)
+        {
+            string modPrefix = imp.ModuleName.Replace('.', '_') + "_";
+            foreach (var sym in imp.Symbols)
+            {
+                string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
+                string importedKey = modPrefix + sym;
+                if (instanceClasses.TryGetValue(importedKey, out var importedClass))
+                    instanceClasses[key] = importedClass;
+            }
+        }
+
         currentModulePrefix = "";
         currentSourceFile = "main.py";
         ScanGlobals(mainAst);
@@ -631,6 +646,16 @@ public partial class IRGenerator
             return new Constant(mgVal);
         if (constantVariables.TryGetValue(name, out int nameVal))
             return new Constant(nameVal);
+
+        // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
+        if (importedAliases.TryGetValue(name, out var importedAliasMod))
+        {
+            var origName = aliasToOriginal.TryGetValue(name, out var origAlias) ? origAlias : name;
+            string importedPrefix = importedAliasMod.Replace('.', '_') + "_";
+            string importedKey = importedPrefix + origName;
+            if (mutableGlobals.TryGetValue(importedKey, out var importedAliasType))
+                return new Variable(importedKey, importedAliasType);
+        }
 
         foreach (var mod in modules)
         {
