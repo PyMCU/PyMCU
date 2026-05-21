@@ -41,7 +41,7 @@ while True:
         print("read error")
         led.low()
     else:
-        print("H: ", sensor.humidity, "  T: ", sensor.temperature, sep="")
+        print("H: ", sensor.humidity(), "  T: ", sensor.temperature(), sep="")
         led.high()
         sleep_ms(100)
         led.low()

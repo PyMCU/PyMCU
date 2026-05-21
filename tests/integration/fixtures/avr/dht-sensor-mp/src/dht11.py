@@ -1,12 +1,12 @@
 # DHT11 temperature and humidity driver (MicroPython style)
 #
-# Pass the DATA pin as a machine.Pin instance:
+# API matches micropython-lib dht.py:
 #   sensor = DHT11(Pin(2, Pin.IN))
-#
-# Call sensor.measure() to read; then check sensor.failed before using:
-#   sensor.humidity     -- integer % RH (20-90)
-#   sensor.temperature  -- integer degrees Celsius (0-50)
-#   sensor.failed       -- True if the read failed or checksum mismatch
+#   sensor.measure()         -- read sensor (updates internal state)
+#   sensor.humidity()        -- integer % RH (20-90)
+#   sensor.temperature()     -- integer degrees Celsius (0-50)
+#   sensor.failed            -- True if read failed or checksum mismatch
+#                               (PyMCU extension: real MicroPython raises Exception)
 #
 # Wiring:
 #   DHT11 DATA -> pin passed in (e.g. D2), with 4.7 kohm pull-up to +5 V
@@ -28,10 +28,18 @@ from pymcu.time import delay_ms, delay_us
 class DHT11:
     @inline
     def __init__(self, pin: _Pin):
-        self._pin        = pin
-        self.failed      = False
-        self.humidity    = 0
-        self.temperature = 0
+        self._pin         = pin
+        self.failed       = False
+        self._humidity    = 0
+        self._temperature = 0
+
+    @inline
+    def humidity(self) -> uint8:
+        return self._humidity
+
+    @inline
+    def temperature(self) -> uint8:
+        return self._temperature
 
     @inline
     def measure(self):
@@ -65,9 +73,9 @@ class DHT11:
             self.failed = True
             return
 
-        self.failed      = False
-        self.humidity    = hum_int
-        self.temperature = temp_int
+        self.failed       = False
+        self._humidity    = hum_int
+        self._temperature = temp_int
 
     @inline
     def _read_byte(self) -> uint8:
