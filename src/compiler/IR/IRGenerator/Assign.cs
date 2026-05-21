@@ -518,6 +518,20 @@ public partial class IRGenerator
                         strConstantVariables[flattenedName] = value1;
                         return;
                     }
+                    else
+                    {
+                        // Virtual (ZCA) instance, non-string constant (e.g. bit
+                        // index assigned in _PinRegs.__init__). Store it so that
+                        // subscript expressions like self._ddr[self._bit] can
+                        // resolve the bit index at compile time.
+                        constantVariables[flattenedName] = c.Value;
+                    }
+                }
+
+                if (value is MemoryAddress ma2)
+                {
+                    constantAddressVariables[flattenedName] = ma2.Address;
+                    return;
                 }
 
                 var folded = value switch
