@@ -1,0 +1,55 @@
+# DHT11 Sensor -- MicroPython style on Arduino Uno
+#
+# Demonstrates:
+#   machine.Pin  -- integer pin numbers (D2 = PD2 sensor, D13 = PB5 LED)
+#   machine.UART -- serial output at 9600 baud
+#   utime        -- sleep_ms() between measurements
+#   local driver -- dht11.DHT11 reads temperature and humidity
+#
+# MicroPython equivalent (runs unmodified on any MicroPython board with DHT):
+#   from machine import Pin, UART
+#   from utime import sleep_ms
+#   from dht11 import DHT11
+#   sensor = DHT11(Pin(2, Pin.IN))
+#
+# Wiring:
+#   DHT11 DATA -> D2  (4.7 kohm pull-up to +5 V recommended)
+#   DHT11 VCC  -> +5 V
+#   DHT11 GND  -> GND
+#   LED:    built-in on D13 (no wiring needed)
+#
+# UART output (9600 baud):
+#   Boot:  "DHT11 ready"
+#   OK:    "H: XX  T: XX"
+#   Error: "read error"
+
+from machine import Pin, UART
+from utime import sleep_ms
+from dht11 import DHT11
+
+
+def main():
+    uart     = UART(0, 9600)
+    led      = Pin(13, Pin.OUT)
+    data_pin = Pin(2, Pin.IN)
+    sensor   = DHT11(data_pin)
+
+    uart.println("DHT11 ready")
+
+    while True:
+        sensor.measure()
+
+        if sensor.failed:
+            uart.println("read error")
+            led.low()
+        else:
+            uart.write_str("H: ")
+            uart.print_byte(sensor.humidity)
+            uart.write_str("  T: ")
+            uart.print_byte(sensor.temperature)
+            uart.write_str("\n")
+            led.high()
+            sleep_ms(100)
+            led.low()
+
+        sleep_ms(2000)
