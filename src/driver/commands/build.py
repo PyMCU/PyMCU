@@ -25,6 +25,7 @@
 # -----------------------------------------------------------------------------
 
 from pathlib import Path
+import re
 import tomlkit
 import typer
 import os
@@ -148,6 +149,54 @@ def _load_extension_board_chips(flavor: str) -> dict[str, str]:
         return dict(getattr(mod, "BOARD_CHIPS", {}))
     except Exception:
         return {}
+
+
+_PRINT_RE = re.compile(r'\bprint\s*\(')
+_UART_RE  = re.compile(r'\bUART\s*\(')
+
+
+def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool]:
+    """Scan .py files in sources_dir.
+
+    Returns (has_print, has_uart):
+      has_print -- True if any file contains a print() call
+      has_uart  -- True if any file explicitly constructs a UART() instance
+    """
+    has_print = False
+    has_uart  = False
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            text = py_file.read_text(encoding="utf-8", errors="ignore")
+            if not has_print and _PRINT_RE.search(text):
+                has_print = True
+            if not has_uart and _UART_RE.search(text):
+                has_uart = True
+        except OSError:
+            pass
+        if has_print and has_uart:
+            break
+    return has_print, has_uart
+
+
+def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
+    """Return a synthetic entry file with a UART-init preamble prepended.
+
+    Mirrors MicroPython's boot behavior where UART 0 is pre-initialized at
+    115200 baud before user code runs, so print() works without an explicit
+    UART() constructor in user code.
+    """
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    synthetic = generated_dir / entry_point.name
+    preamble = (
+        "# Auto-injected by pymcu build: UART 0 initialized for print()\n"
+        "from pymcu.hal.uart import UART as _pymcu_uart_0\n"
+        "_pymcu_uart_0(115200)\n\n"
+    )
+    synthetic.write_text(
+        preamble + entry_point.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return synthetic
 
 
 def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
@@ -327,10 +376,12 @@ def build(
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
+        # Shared generated-files directory (board shim + print preamble).
+        generated_dir = output_dir / "_generated"
+
         # Generate dist/_generated/board.py shim when board= is set.
         # This shim is prepended to -I so `import board` finds it first.
         if board_key:
-            generated_dir = output_dir / "_generated"
             generated_dir.mkdir(parents=True, exist_ok=True)
             board_shim = generated_dir / "board.py"
 
@@ -368,6 +419,25 @@ def build(
             board_shim.write_text(board_shim_content)
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
+
+        # Auto-inject UART preamble when print() is used without an explicit
+        # UART() constructor in user sources.  This mirrors MicroPython's REPL
+        # behaviour where UART 0 is pre-initialized at 115200 baud before user
+        # code runs, so print() works out of the box with no extra imports.
+        _has_print, _has_uart = _detect_print_usage(sources_dir)
+        if _has_print and not _has_uart:
+            entry_point = _inject_print_preamble(entry_point, generated_dir)
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log(
+                "print() detected without UART() — injecting UART preamble at 115200 baud",
+                verbose=is_verbose,
+            )
+            if is_verbose:
+                console.print(
+                    "[debug] print() without UART — UART preamble injected at 115200 baud",
+                    style="dim",
+                )
 
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
