@@ -4,12 +4,12 @@
 #   machine.Pin  -- integer pin numbers (D2 = PD2 sensor, D13 = PB5 LED)
 #   machine.UART -- serial output at 9600 baud
 #   utime        -- sleep_ms() between measurements
-#   local driver -- dht11.DHT11 reads temperature and humidity
+#   local driver -- dht.DHT11 reads temperature and humidity
 #
 # MicroPython equivalent (runs unmodified on any MicroPython board with DHT):
 #   from machine import Pin, UART
 #   from utime import sleep_ms
-#   from dht11 import DHT11
+#   from dht import DHT11
 #   sensor = DHT11(Pin(2, Pin.IN))
 #
 # Wiring:
@@ -25,7 +25,7 @@
 
 from machine import Pin, UART
 from utime import sleep_ms
-from dht11 import DHT11
+from dht import DHT11
 
 
 uart     = UART(0, 9600)

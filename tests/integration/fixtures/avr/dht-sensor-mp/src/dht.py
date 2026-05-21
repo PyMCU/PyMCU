@@ -1,17 +1,20 @@
-# DHT11 temperature and humidity driver (MicroPython style)
+# DHT11/DHT22 temperature and humidity driver (MicroPython style)
 #
 # API matches micropython-lib dht.py:
-#   sensor = DHT11(Pin(2, Pin.IN))
+#   sensor = DHT11(Pin(2, Pin.IN))   # or DHT22(...)
 #   sensor.measure()         -- read sensor (updates internal state)
-#   sensor.humidity()        -- integer % RH (20-90)
-#   sensor.temperature()     -- integer degrees Celsius (0-50)
+#   sensor.humidity()        -- humidity value
+#   sensor.temperature()     -- temperature value
 #   sensor.failed            -- True if read failed or checksum mismatch
 #                               (PyMCU extension: real MicroPython raises Exception)
 #
+# DHT11: humidity() -> integer % RH,  temperature() -> integer C
+# DHT22: humidity() -> float % RH,    temperature() -> float C (signed)
+#
 # Wiring:
-#   DHT11 DATA -> pin passed in (e.g. D2), with 4.7 kohm pull-up to +5 V
-#   DHT11 VCC  -> +5 V
-#   DHT11 GND  -> GND
+#   DATA -> pin passed in (e.g. D2), with 4.7 kohm pull-up to +5 V
+#   VCC  -> +5 V  (DHT11) or +3.3/5 V (DHT22)
+#   GND  -> GND
 #
 # Protocol (single-wire, 40-bit):
 #   1. MCU pulls low >= 18 ms  (start signal)
@@ -25,21 +28,15 @@ from machine import Pin as _Pin, time_pulse_us
 from pymcu.time import delay_ms, delay_us
 
 
-class DHT11:
+class DHTBase:
     @inline
     def __init__(self, pin: _Pin):
-        self._pin         = pin
-        self.failed       = False
-        self._humidity    = 0
-        self._temperature = 0
-
-    @inline
-    def humidity(self) -> uint8:
-        return self._humidity
-
-    @inline
-    def temperature(self) -> uint8:
-        return self._temperature
+        self._pin      = pin
+        self.failed    = False
+        self._hum_int  = 0
+        self._hum_dec  = 0
+        self._temp_int = 0
+        self._temp_dec = 0
 
     @inline
     def measure(self):
@@ -73,9 +70,11 @@ class DHT11:
             self.failed = True
             return
 
-        self.failed       = False
-        self._humidity    = hum_int
-        self._temperature = temp_int
+        self.failed    = False
+        self._hum_int  = hum_int
+        self._hum_dec  = hum_dec
+        self._temp_int = temp_int
+        self._temp_dec = temp_dec
 
     @inline
     def _read_byte(self) -> uint8:
@@ -92,3 +91,26 @@ class DHT11:
                 result = result | 1
             bit = bit + 1
         return result
+
+
+class DHT11(DHTBase):
+    @inline
+    def humidity(self) -> uint8:
+        return self._hum_int
+
+    @inline
+    def temperature(self) -> uint8:
+        return self._temp_int
+
+
+class DHT22(DHTBase):
+    @inline
+    def humidity(self):
+        return (self._hum_int << 8 | self._hum_dec) * 0.1
+
+    @inline
+    def temperature(self):
+        t = ((self._temp_int & 0x7F) << 8 | self._temp_dec) * 0.1
+        if self._temp_int & 0x80:
+            t = 0 - t
+        return t
