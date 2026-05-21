@@ -1,0 +1,63 @@
+/* PyMCU brand colours — PyData Sphinx theme CSS variables */
+
+:root {
+  --pst-color-primary:         #0161ef;
+  --pst-color-secondary:       #0154cf;
+  --pst-color-info:            #2a7cb5;
+  --pst-color-link:            #0161ef;
+  --pst-color-link-hover:      #2a7cb5;
+
+  --pst-font-family-base:      "Inter", -apple-system, BlinkMacSystemFont,
+                                "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --pst-font-family-monospace: "Fira Code", "JetBrains Mono", "Cascadia Code",
+                                Consolas, "Courier New", monospace;
+}
+
+/* Dark-mode overrides */
+html[data-theme="dark"] {
+  --pst-color-primary:         #4c95ff;
+  --pst-color-secondary:       #3a80ee;
+  --pst-color-background:      #030620;
+  --pst-color-on-background:   #e5ecf6;
+  --pst-color-surface:         #0d1736;
+  --pst-color-on-surface:      #e5ecf6;
+  --pst-color-border:          #1e2d5e;
+}
+
+/* Google Fonts */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap");
+
+/* Navigation sidebar — keep it tight */
+.bd-sidebar-primary {
+  font-size: 0.875rem;
+}
+
+/* Larger, bolder page titles */
+.bd-content h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 1.5rem;
+}
+
+/* Highlight "compiled" keyword in admonition titles */
+.admonition.compiled > .admonition-title::before {
+  content: "⚡ ";
+}
+
+/* Compact parameter / constant tables */
+.bd-content table {
+  font-size: 0.875rem;
+}
+
+/* Version badge in navbar */
+.version-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15em 0.5em;
+  border-radius: 0.25em;
+  background-color: var(--pst-color-primary);
+  color: #fff;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}

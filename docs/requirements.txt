@@ -1,2 +1,5 @@
-mkdocs-material>=9.5
-mkdocs-autorefs>=0.5
+sphinx>=7.3
+pydata-sphinx-theme>=0.15
+myst-parser>=3.0
+sphinx-copybutton>=0.5
+sphinx-design>=0.6

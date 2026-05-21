@@ -73,3 +73,6 @@ extensions/jetbrains-pymcu/.gradle/
 extensions/jetbrains-pymcu/.intellijPlatform/
 
 WORK_SUMMARY.md
+
+# Sphinx build output
+docs/_build/

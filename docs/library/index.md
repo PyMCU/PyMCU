@@ -1,0 +1,50 @@
+# PyMCU Libraries
+
+The PyMCU standard library provides hardware abstraction layer (HAL) modules and device drivers.
+All modules compile to tight native machine code — there is no Python runtime on the device.
+
+## HAL modules
+
+| Module | Import path | Description |
+|---|---|---|
+| {doc}`GPIO / Pin <gpio>` | `pymcu.hal.gpio` | Digital I/O, pin interrupts |
+| {doc}`UART <uart>` | `pymcu.hal.uart` | Serial communication |
+| {doc}`ADC <adc>` | `pymcu.hal.adc` | Analog-to-digital conversion |
+| {doc}`Timer <timer>` | `pymcu.hal.timer` | Hardware timers |
+| {doc}`PWM <pwm>` | `pymcu.hal.pwm` | Pulse-width modulation |
+| {doc}`SPI <spi>` | `pymcu.hal.spi` | SPI bus (hardware + soft) |
+| {doc}`I2C <i2c>` | `pymcu.hal.i2c` | I2C bus (hardware + soft) |
+| {doc}`EEPROM <eeprom>` | `pymcu.hal.eeprom` | Non-volatile byte storage |
+| {doc}`Watchdog <watchdog>` | `pymcu.hal.watchdog` | Watchdog timer |
+| {doc}`Power / Sleep <power>` | `pymcu.hal.power` | Sleep modes |
+| {doc}`Time / Delays <time>` | `pymcu.time` | Busy-wait delays |
+
+## Device drivers
+
+| Driver | Import path | Description |
+|---|---|---|
+| {doc}`DHT11 <drivers/dht11>` | `pymcu.drivers.dht11` | Temperature and humidity sensor |
+
+## Design principles
+
+All HAL classes are `@inline` — they have **zero SRAM cost**. Instantiating a `Pin` or `UART`
+compiles to register writes; no struct is allocated on the MCU. See {doc}`../language/type-system`
+for details on the Zero-Cost Abstraction model.
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+
+gpio
+uart
+adc
+timer
+pwm
+spi
+i2c
+eeprom
+watchdog
+power
+time
+drivers/index
+```
