@@ -536,16 +536,33 @@ def build(
 
                         insert_idx = len(lines)  # fallback: append
                         past_vector_table = False
+                        org_line_idx = -1
                         for i, line in enumerate(lines):
                             stripped = line.strip()
                             if stripped.startswith(".org"):
                                 past_vector_table = True
+                                org_line_idx = i
                             elif past_vector_table and stripped and not stripped.startswith(";") \
                                     and not stripped.startswith(".") \
                                     and stripped.endswith(":"):
                                 # First function label after the vector table
                                 insert_idx = i
                                 break
+
+                        # The peephole optimiser removes "RJMP main" when main: is the
+                        # very next label in the compiler's internal list (programs with
+                        # no ISRs).  If we are about to insert the math runtime before
+                        # main: and the reset-vector jump is gone, re-add it so the CPU
+                        # jumps past the runtime to main at reset.
+                        if insert_idx < len(lines):
+                            first_label = lines[insert_idx].strip().rstrip(":")
+                            if first_label == "main" and org_line_idx >= 0:
+                                has_reset_jump = any(
+                                    "RJMP\tmain" in lines[j] or "JMP\tmain" in lines[j]
+                                    for j in range(org_line_idx + 1, insert_idx)
+                                )
+                                if not has_reset_jump:
+                                    math_runtime_text = "\tRJMP\tmain\n" + math_runtime_text
 
                         lines.insert(insert_idx, math_runtime_text + "\n")
                         with open(output_file, "w") as f:
