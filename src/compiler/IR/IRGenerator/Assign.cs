@@ -510,7 +510,25 @@ public partial class IRGenerator
                 {
                     if (baseName != null && !virtualInstances.Contains(baseName))
                     {
-                        constantVariables[flattenedName] = c.Value;
+                        // Only track the constant if this field has not been written
+                        // before. A field written with two different constant values
+                        // at different points is a mutable runtime field (e.g.
+                        // sensor.failed) — tracking it as a compile-time constant
+                        // would cause the compiler to DCE branches incorrectly.
+                        if (!killedConstants.Contains(flattenedName))
+                        {
+                            if (constantVariables.TryGetValue(flattenedName, out int existing) && existing != c.Value)
+                            {
+                                // Second write with a different value → mutable field.
+                                constantVariables.Remove(flattenedName);
+                                killedConstants.Add(flattenedName);
+                            }
+                            else if (!constantVariables.ContainsKey(flattenedName))
+                            {
+                                constantVariables[flattenedName] = c.Value;
+                            }
+                            // If existing == c.Value, keep the existing entry as-is.
+                        }
                     }
                     else if (stringIdToStr.TryGetValue(c.Value, out var value1))
                     {
@@ -524,7 +542,37 @@ public partial class IRGenerator
                         // index assigned in _PinRegs.__init__). Store it so that
                         // subscript expressions like self._ddr[self._bit] can
                         // resolve the bit index at compile time.
-                        constantVariables[flattenedName] = c.Value;
+                        //
+                        // Inline-prefixed temporaries (baseName starts with
+                        // "inline") are short-lived per-call-site objects.  The
+                        // same inline prefix can be reused across multiple call
+                        // sites (e.g. _PinRegs for pin 13 then pin 2 both land
+                        // in "inline2.hal_gpio_Pin_init._r").  Treating the
+                        // second write as a "different-value mutation" would
+                        // incorrectly kill the constant and break codegen.
+                        // For these temporaries always overwrite — they are
+                        // never truly mutable across call sites.
+                        //
+                        // For top-level virtual instances (sensor, data_pin._pin
+                        // etc.) apply the killedConstants guard so that genuinely
+                        // mutable fields (sensor.failed) are not folded away.
+                        bool isInlineTemp = baseName != null && baseName.StartsWith("inline");
+                        if (isInlineTemp)
+                        {
+                            constantVariables[flattenedName] = c.Value;
+                        }
+                        else if (!killedConstants.Contains(flattenedName))
+                        {
+                            if (constantVariables.TryGetValue(flattenedName, out int existingZca) && existingZca != c.Value)
+                            {
+                                constantVariables.Remove(flattenedName);
+                                killedConstants.Add(flattenedName);
+                            }
+                            else if (!constantVariables.ContainsKey(flattenedName))
+                            {
+                                constantVariables[flattenedName] = c.Value;
+                            }
+                        }
                     }
                 }
 
@@ -541,6 +589,18 @@ public partial class IRGenerator
                     _ => false
                 };
                 if (folded) return;
+
+                // Non-constant runtime assignment: if this field was previously
+                // tracked as a compile-time constant (e.g. self.humidity = 0 in
+                // __init__), kill the stale constant so later reads use the
+                // runtime value.  Guard with "value is not Constant" to avoid
+                // incorrectly killing constants like _bit that are set once as a
+                // constant and never reassigned with a runtime value.
+                if (value is not Constant && constantVariables.ContainsKey(flattenedName))
+                {
+                    constantVariables.Remove(flattenedName);
+                    killedConstants.Add(flattenedName);
+                }
 
                 if (value is Variable vVal)
                 {

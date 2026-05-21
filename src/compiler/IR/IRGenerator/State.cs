@@ -61,6 +61,11 @@ public partial class IRGenerator
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+    // Tracks instance fields that have been written with different constant values
+    // (i.e., mutable at runtime). Once a field is killed it is never re-admitted
+    // to constantVariables, preventing incorrect DCE of branches like
+    // "if sensor.failed:".
+    private HashSet<string> killedConstants = new();
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
     private string pendingConstructorTarget = ""; // Target variable for constructor inlining
 
