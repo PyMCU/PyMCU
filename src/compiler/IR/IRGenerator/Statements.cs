@@ -383,6 +383,11 @@ public partial class IRGenerator
                 }
                 else if (val is Variable v)
                 {
+                    // A non-constant return path clears any constant tracked from a prior
+                    // return path (e.g. `return -1` followed by `return result`).  Without
+                    // this, the stale constant propagates through the alias chain and causes
+                    // the comparison to be constant-folded at IR-generation time.
+                    constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = v.Name;
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(v.Name, out string? vsv))
@@ -390,6 +395,7 @@ public partial class IRGenerator
                 }
                 else if (val is Temporary t)
                 {
+                    constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = t.Name;
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(t.Name, out string? tsv))
