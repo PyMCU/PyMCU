@@ -259,6 +259,19 @@ public partial class IRGenerator
                     mutableGlobals[currentModulePrefix + name] = t;
                     if (scope != null) scope.MutableGlobals[name] = t;
                 }
+
+                // Track module-level singleton instances (e.g. `mem8 = _Mem8()`) so
+                // that subscript and method dispatch via GetValClass works when these
+                // singletons are imported by user code.
+                if (initializer is CallExpr ctorCallInst
+                    && ctorCallInst.Callee is VariableExpr ctorVarInst
+                    && classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod)
+                    && classMod != null)
+                {
+                    string fullKey = currentModulePrefix + name;
+                    string fullClassName = classMod + ctorVarInst.Name;
+                    instanceClasses[fullKey] = fullClassName;
+                }
             }
         }
     }
