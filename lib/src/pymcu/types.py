@@ -80,6 +80,14 @@ def compile_isr(handler: Callable, vector: int = 0):
     pass
 
 
+def funcref(fn: Callable) -> int:
+    # Compiler intrinsic: returns the word address of `fn` as a runtime
+    # function pointer (uint16 on AVR).  The result must be stored in a
+    # variable annotated with Callable and can be invoked via ICALL.
+    # At Python simulation time this returns 0 (no-op).
+    return 0
+
+
 # Integer width aliases -- defined as TypeAlias so int literals are always
 # assignable (e.g. `x: uint16 = 0` is valid) while still communicating the
 # intended bit width to the pymcuc compiler via the annotation text.
