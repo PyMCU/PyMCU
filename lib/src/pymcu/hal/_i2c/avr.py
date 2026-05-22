@@ -198,6 +198,96 @@ def i2c_read_from(addr: uint8) -> uint8:
     return 0
 
 
+@inline
+def i2c_writeto_mem(addr: uint8, reg: uint8, data: uint8) -> uint8:
+    # Send START, SLA+W, register byte, data byte, STOP.
+    # Returns 1 if all bytes ACK'd, 0 on any NACK or bus error.
+    TWCR.value = 0xA4               # START: TWINT|TWSTA|TWEN
+    while not TWCR[7]:
+        pass
+    start_status: uint8 = TWSR.value & 0xF8
+    if start_status == 0x08:        # START OK
+        TWDR.value = addr << 1      # SLA+W
+        TWCR.value = 0x84
+        while not TWCR[7]:
+            pass
+        sla_status: uint8 = TWSR.value & 0xF8
+        if sla_status == 0x18:      # SLA+W ACK
+            TWDR.value = reg
+            TWCR.value = 0x84
+            while not TWCR[7]:
+                pass
+            reg_status: uint8 = TWSR.value & 0xF8
+            if reg_status == 0x28:  # data byte ACK
+                TWDR.value = data
+                TWCR.value = 0x84
+                while not TWCR[7]:
+                    pass
+                TWCR.value = 0x94   # STOP
+                return 1
+    TWCR.value = 0x94               # STOP on any failure
+    return 0
+
+
+@inline
+def i2c_readfrom_mem(addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
+    # START, SLA+W, register, repeated START, SLA+R, read n bytes into buf, STOP.
+    # ACK for first n-1 bytes; NACK for the last byte.
+    # Returns 1 on success, 0 on any bus error.
+    TWCR.value = 0xA4               # START
+    while not TWCR[7]:
+        pass
+    st0: uint8 = TWSR.value & 0xF8
+    if st0 != 0x08:                 # START failed
+        TWCR.value = 0x94
+        return 0
+    TWDR.value = addr << 1          # SLA+W
+    TWCR.value = 0x84
+    while not TWCR[7]:
+        pass
+    st1: uint8 = TWSR.value & 0xF8
+    if st1 != 0x18:                 # SLA+W NACK - no device
+        TWCR.value = 0x94
+        return 0
+    TWDR.value = reg                # register address
+    TWCR.value = 0x84
+    while not TWCR[7]:
+        pass
+    st2: uint8 = TWSR.value & 0xF8
+    if st2 != 0x28:                 # register byte NACK
+        TWCR.value = 0x94
+        return 0
+    TWCR.value = 0xA4               # repeated START: TWINT|TWSTA|TWEN
+    while not TWCR[7]:
+        pass
+    st3: uint8 = TWSR.value & 0xF8
+    if st3 != 0x10:                 # repeated START failed
+        TWCR.value = 0x94
+        return 0
+    sla_r: uint8 = (addr << 1) | 1  # SLA+R
+    TWDR.value = sla_r
+    TWCR.value = 0x84
+    while not TWCR[7]:
+        pass
+    st4: uint8 = TWSR.value & 0xF8
+    if st4 != 0x40:                 # SLA+R NACK
+        TWCR.value = 0x94
+        return 0
+    i: uint8 = 0
+    while i < n:
+        remaining: uint8 = n - i
+        if remaining > 1:
+            TWCR.value = 0xC4       # TWINT|TWEA|TWEN -- ACK (more bytes)
+        else:
+            TWCR.value = 0x84       # TWINT|TWEN -- NACK (last byte)
+        while not TWCR[7]:
+            pass
+        buf[i] = TWDR.value
+        i = i + 1
+    TWCR.value = 0x94               # STOP
+    return 1
+
+
 # --- Peripheral (slave) mode -------------------------------------------------
 #
 # TWI peripheral status codes (TWSR & 0xF8):

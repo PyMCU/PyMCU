@@ -218,6 +218,39 @@ class I2C:
                 return 0
         return 0
 
+    @inline
+    def writeto_mem(self, addr: uint8, reg: uint8, data: uint8) -> uint8:
+        """Controller: write one byte to a register on an I2C device.
+
+        Sends START, SLA+W, register byte, data byte, STOP.
+        Returns 1 if all bytes ACK'd, 0 on any NACK or bus error.
+        """
+        match __CHIP__.arch:
+            case "avr":
+                if self._mode == "c":
+                    from pymcu.hal._i2c.avr import i2c_writeto_mem
+                    return i2c_writeto_mem(addr, reg, data)
+            case _:
+                return 0
+        return 0
+
+    @inline
+    def readfrom_mem(self, addr: uint8, reg: uint8, buf, n: uint8) -> uint8:
+        """Controller: read n bytes from a register on an I2C device into buf.
+
+        Protocol: START, SLA+W, reg, repeated-START, SLA+R,
+                  read n-1 bytes (ACK), last byte (NACK), STOP.
+        Returns 1 on success, 0 on any bus error or NACK.
+        """
+        match __CHIP__.arch:
+            case "avr":
+                if self._mode == "c":
+                    from pymcu.hal._i2c.avr import i2c_readfrom_mem
+                    return i2c_readfrom_mem(addr, reg, buf, n)
+            case _:
+                return 0
+        return 0
+
     # ---- Peripheral methods --------------------------------------------------
 
     @inline
