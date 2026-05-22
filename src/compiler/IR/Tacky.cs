@@ -32,6 +32,9 @@ public record MemoryAddress(int Address, DataType Type = DataType.UINT8) : Val;
 
 public record NoneVal() : Val;
 
+// Compile-time resolved function address (for funcref() intrinsic)
+public record FunctionRef(string FunctionName) : Val;
+
 public enum UnaryOp
 {
     Not,
@@ -99,6 +102,9 @@ public record JumpIfGreaterOrEqual(Val Src1, Val Src2, string Target) : Instruct
 public record Label(string Name) : Instruction;
 
 public record Call(string FunctionName, List<Val> Args, Val Dst) : Instruction;
+
+// Indirect call through a function pointer (ICALL on AVR)
+public record IndirectCall(Val FuncAddr, List<Val> Args, Val Dst) : Instruction;
 
 public record BitSet(Val Target, int Bit) : Instruction;
 

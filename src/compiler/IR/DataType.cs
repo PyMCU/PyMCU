@@ -26,7 +26,8 @@ public enum DataType
     INT32,
     FLOAT, // Placeholder for future support
     VOID,
-    UNKNOWN
+    UNKNOWN,
+    FUNCREF  // Function pointer (word address, 2 bytes on AVR)
 }
 
 public static class DataTypeExtensions
@@ -46,6 +47,8 @@ public static class DataTypeExtensions
             case DataType.INT32:
             case DataType.FLOAT:
                 return 4;
+            case DataType.FUNCREF:
+                return 2; // Word address on AVR
             default:
                 return 1; // Default to 1 byte for VOID/UNKNOWN
         }
@@ -87,6 +90,7 @@ public static class DataTypeExtensions
         }
 
         if (typeStr == "void" || typeStr == "None") return DataType.VOID;
+        if (typeStr == "Callable") return DataType.FUNCREF;
 
         // For pointer/register types, extract the inner element type (e.g. ptr[uint8] -> UINT8)
         if (typeStr.StartsWith("ptr[") && typeStr.EndsWith("]"))
