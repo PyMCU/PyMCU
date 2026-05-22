@@ -101,6 +101,7 @@ public enum BinaryOp
 [JsonDerivedType(typeof(ArrayLoadFlash),       "alf")]
 [JsonDerivedType(typeof(FlashData),            "fdata")]
 [JsonDerivedType(typeof(ArrayStore),           "ast")]
+[JsonDerivedType(typeof(Bitcast),              "bitcast")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -110,6 +111,7 @@ public record Unary(UnaryOp Op, Val Src, Val Dst) : Instruction;
 public record Binary(BinaryOp Op, Val Src1, Val Src2, Val Dst) : Instruction;
 
 public record Copy(Val Src, Val Dst) : Instruction;
+public record Bitcast(Val Src, Val Dst) : Instruction;
 
 // Indirect Memory Access (Pointer Dereference)
 public record LoadIndirect(Val SrcPtr, Val Dst) : Instruction;
