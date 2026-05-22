@@ -30,7 +30,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.attiny2313 import UCSRA, UCSRB, UCSRC, UBRRL, UBRRH, UDR, DDRD, SREG
-from pymcu.types import uint8, uint16, inline, const, compile_isr, Callable
+from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 _rx_buf:  uint8[16] = bytearray(16)
@@ -105,6 +105,76 @@ def uart_write_decimal_u8(value: uint8):
         uart_write(units + 48)
     else:
         uart_write(value + 48)
+
+
+def uart_write_decimal_u16(value: uint16):
+    # Print uint16 value as decimal digits (0-65535).
+    if value >= 10000:
+        ten_k: uint8 = uint8(value // 10000)
+        uart_write(ten_k + 48)
+        thousands: uint8 = uint8((value // 1000) % 10)
+        uart_write(thousands + 48)
+        hundreds: uint8 = uint8((value // 100) % 10)
+        uart_write(hundreds + 48)
+        tens: uint8 = uint8((value // 10) % 10)
+        uart_write(tens + 48)
+        units: uint8 = uint8(value % 10)
+        uart_write(units + 48)
+    elif value >= 1000:
+        thousands: uint8 = uint8(value // 1000)
+        uart_write(thousands + 48)
+        hundreds: uint8 = uint8((value // 100) % 10)
+        uart_write(hundreds + 48)
+        tens: uint8 = uint8((value // 10) % 10)
+        uart_write(tens + 48)
+        units: uint8 = uint8(value % 10)
+        uart_write(units + 48)
+    elif value >= 100:
+        hundreds: uint8 = uint8(value // 100)
+        uart_write(hundreds + 48)
+        tens: uint8 = uint8((value // 10) % 10)
+        uart_write(tens + 48)
+        units: uint8 = uint8(value % 10)
+        uart_write(units + 48)
+    elif value >= 10:
+        tens: uint8 = uint8(value // 10)
+        uart_write(tens + 48)
+        units: uint8 = uint8(value % 10)
+        uart_write(units + 48)
+    else:
+        uart_write(uint8(value) + 48)
+
+
+def uart_write_decimal_i16(value: int16):
+    # Print int16 value as decimal digits with optional minus sign (-32768 to 32767).
+    if value < 0:
+        uart_write(45)  # '-'
+        abs_val: uint16 = uint16(0 - value)
+        uart_write_decimal_u16(abs_val)
+    else:
+        uart_write_decimal_u16(uint16(value))
+
+
+def uart_write_decimal_u32(value: uint32):
+    # Print uint32 value as decimal digits (0-4294967295).
+    # Split into high group (value // 100000, printed without leading zeros)
+    # and zero-padded low group (value % 100000, always 5 digits).
+    if value < 100000:
+        uart_write_decimal_u16(uint16(value))
+    else:
+        high: uint16 = uint16(value // 100000)
+        low5: uint16 = uint16(value % 100000)
+        uart_write_decimal_u16(high)
+        d: uint8 = uint8(low5 // 10000)
+        uart_write(d + 48)
+        d = uint8((low5 // 1000) % 10)
+        uart_write(d + 48)
+        d = uint8((low5 // 100) % 10)
+        uart_write(d + 48)
+        d = uint8((low5 // 10) % 10)
+        uart_write(d + 48)
+        d = uint8(low5 % 10)
+        uart_write(d + 48)
 
 
 @inline

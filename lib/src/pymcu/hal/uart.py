@@ -6,7 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, uint16, inline, const, compile_isr, Callable
+from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.chips import __CHIP__
 
 class UART:
@@ -141,6 +141,54 @@ class UART:
                     case "avr":
                         from pymcu.hal._uart.avr import uart_write_decimal_u8
                         uart_write_decimal_u8(value)
+        self.write(10)  # '\n'
+
+    @inline
+    def print_uint16(self, value: uint16):
+        match __CHIP__.name:
+            case "attiny2313" | "attiny4313":
+                from pymcu.hal._uart.attiny2313 import uart_write_decimal_u16
+                uart_write_decimal_u16(value)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write_decimal_u16
+                uart_write_decimal_u16(value)
+            case _:
+                match __CHIP__.arch:
+                    case "avr":
+                        from pymcu.hal._uart.avr import uart_write_decimal_u16
+                        uart_write_decimal_u16(value)
+        self.write(10)  # '\n'
+
+    @inline
+    def print_int16(self, value: int16):
+        match __CHIP__.name:
+            case "attiny2313" | "attiny4313":
+                from pymcu.hal._uart.attiny2313 import uart_write_decimal_i16
+                uart_write_decimal_i16(value)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write_decimal_i16
+                uart_write_decimal_i16(value)
+            case _:
+                match __CHIP__.arch:
+                    case "avr":
+                        from pymcu.hal._uart.avr import uart_write_decimal_i16
+                        uart_write_decimal_i16(value)
+        self.write(10)  # '\n'
+
+    @inline
+    def print_uint32(self, value: uint32):
+        match __CHIP__.name:
+            case "attiny2313" | "attiny4313":
+                from pymcu.hal._uart.attiny2313 import uart_write_decimal_u32
+                uart_write_decimal_u32(value)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_write_decimal_u32
+                uart_write_decimal_u32(value)
+            case _:
+                match __CHIP__.arch:
+                    case "avr":
+                        from pymcu.hal._uart.avr import uart_write_decimal_u32
+                        uart_write_decimal_u32(value)
         self.write(10)  # '\n'
 
     @inline
