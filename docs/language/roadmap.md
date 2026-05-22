@@ -70,6 +70,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `in` / `not in` operator | Compile-time fold on constant list; runtime equality chain |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
+| `bitcast(T, v)` | Reinterpret raw bytes as `T`; float↔uint32 via register swap; compile-time constant folding |
 | `hex(n)` / `bin(n)` | Compile-time: `hex(255)` → `"0xff"` |
 | `sum(iterable)` | Compile-time fold or unrolled additions |
 | `any(iterable)` / `all(iterable)` | Compile-time fold or OR/AND chain |

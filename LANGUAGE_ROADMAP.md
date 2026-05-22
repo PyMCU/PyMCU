@@ -114,6 +114,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `in` / `not in` operator | Compile-time fold on constant list; runtime OR/AND chain |
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
 | `divmod(a, b)` built-in | Returns `(quotient, remainder)`; compile-time fold or `__div8`/`__mod8` |
+| `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
 | `hex(n)` / `bin(n)` (compile-time) | Fold to `"0xff"` / `"0b101"` string constant |
 | `sum(iterable)` | Compile-time fold or unrolled additions over fixed-size array |
 | `any(iterable)` / `all(iterable)` | Compile-time fold or OR/AND chain |
