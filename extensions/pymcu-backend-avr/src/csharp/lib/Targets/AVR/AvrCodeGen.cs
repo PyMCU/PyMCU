@@ -68,6 +68,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Variable v => v.Type,
         Temporary t => t.Type,
         MemoryAddress m => m.Type.SizeOf() > 1 ? m.Type : DataType.UINT8,
+        FunctionRef => DataType.UINT16,  // Function word address is 2 bytes
         Constant { Value: > 255 or < -128 } => DataType.UINT16,
         _ => DataType.UINT8,
     };
@@ -337,6 +338,13 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 Emit("LDI", reg, $"{c.Value & 0xFF}");
                 if (size >= 2) Emit("LDI", regH, $"{(c.Value >> 8) & 0xFF}");
                 if (size == 4) { Emit("LDI", regB2, $"{(c.Value >> 16) & 0xFF}"); Emit("LDI", regB3, $"{(c.Value >> 24) & 0xFF}"); }
+                return;
+            }
+            case FunctionRef fr:
+            {
+                // Load function word address (gs() modifier) into register pair.
+                Emit("LDI", reg, $"lo8(gs({fr.FunctionName}))");
+                if (size >= 2) Emit("LDI", regH, $"hi8(gs({fr.FunctionName}))");
                 return;
             }
             case MemoryAddress mem:
@@ -830,6 +838,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfGreaterThan jgt: CompileGreaterThan(jgt); break;
             case JumpIfGreaterOrEqual jge: CompileCompareJump(jge.Src1, jge.Src2, IsSignedComparison(jge.Src1, jge.Src2) ? "BRGE" : "BRSH", jge.Target); break;
             case Call c: CompileCall(c); break;
+            case IndirectCall ic: CompileIndirectCall(ic); break;
             case Copy cp: CompileCopy(cp); break;
             case Bitcast bc: CompileBitcast(bc); break;
             case LoadIndirect li: CompileLoadIndirect(li); break;
@@ -1053,6 +1062,28 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             StoreFloatFromRegs(call.Dst);
         else
             StoreRegInto("R24", call.Dst, dstType);
+    }
+
+    // Indirect call through a function pointer (ICALL Z on AVR).
+    // FuncAddr must be a FUNCREF-typed variable or a FunctionRef Val.
+    // The function address is loaded into Z (R30:R31) and ICALL is emitted.
+    private void CompileIndirectCall(IndirectCall call)
+    {
+        // Set up arguments into standard registers (same ABI as direct Call).
+        string[] argRegs = ["R24", "R22", "R20", "R18"];
+        for (var k = 0; k < call.Args.Count && k < 4; k++)
+        {
+            var argType = GetValType(call.Args[k]);
+            LoadIntoReg(call.Args[k], argRegs[k], argType);
+        }
+
+        // Load function address into Z register (R30:R31).
+        LoadIntoReg(call.FuncAddr, "R30", DataType.UINT16);
+
+        Emit("ICALL");
+
+        var dstType = GetValType(call.Dst);
+        StoreRegInto("R24", call.Dst, dstType);
     }
 
     private void CompileCopy(Copy cp)
