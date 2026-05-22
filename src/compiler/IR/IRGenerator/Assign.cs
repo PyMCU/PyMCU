@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Frontend;
+using PyMCU.IR;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -29,6 +30,15 @@ public partial class IRGenerator
                 string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
                 if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
                     qualified = ve.Name;
+
+                // Bytearray parameter: indirect store through pointer.
+                if (bytearrayParams.Contains(qualified))
+                {
+                    Val idxVal = VisitExpression(indexExpr.Index);
+                    Val srcVal = VisitExpression(stmt.Value);
+                    Emit(new BytearrayStore(qualified, idxVal, srcVal));
+                    return;
+                }
 
                 if (arraySizes.ContainsKey(qualified))
                 {

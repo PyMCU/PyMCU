@@ -76,6 +76,7 @@ public static class DataTypeExtensions
         if (typeStr == "int") return DataType.INT16;
         if (typeStr == "int8") return DataType.INT8;
         if (typeStr == "uint16") return DataType.UINT16;
+        if (typeStr == "bytearray") return DataType.UINT16; // pointer-sized
         if (typeStr == "int16") return DataType.INT16;
         if (typeStr == "uint32") return DataType.UINT32;
         if (typeStr == "int32") return DataType.INT32;

@@ -352,6 +352,11 @@ private static Function CloneFunction(Function f)
                 case Label:
                     varConsts.Clear();
                     break;
+                // A call with ArrayBase args may modify variables through the pointer;
+                // conservatively invalidate all tracked variable constants.
+                case Call callInstr when callInstr.Args.Any(a => a is ArrayBase):
+                    varConsts.Clear();
+                    break;
             }
         }
 
@@ -663,6 +668,7 @@ private static Function CloneFunction(Function f)
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
         ArrayLoadFlash alf => alf.Dst,
+        BytearrayLoad bld => bld.Dst,
         _ => null,
     };
 
@@ -677,6 +683,7 @@ private static Function CloneFunction(Function f)
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
         ArrayLoadFlash alf => alf with { Dst = newDst },
+        BytearrayLoad bld => bld with { Dst = newDst },
         _ => instr,
     };
 
@@ -752,6 +759,13 @@ private static Function CloneFunction(Function f)
                 register(ast.Index);
                 register(ast.Src);
                 break;
+            case BytearrayStore bst:
+                register(bst.Index);
+                register(bst.Src);
+                break;
+            case BytearrayLoad bld:
+                register(bld.Index);
+                break;
         }
     }
 
@@ -786,6 +800,8 @@ private static Function CloneFunction(Function f)
             ArrayLoadFlash alf => alf with { Index = replace(alf.Index) },
             InlineAsm ia when ia.Operands != null => ia with { Operands = ia.Operands.Select(replace).ToList() },
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
+            BytearrayStore bst => bst with { Index = replace(bst.Index), Src = replace(bst.Src) },
+            BytearrayLoad bld => bld with { Index = replace(bld.Index) },
             _ => instr,
         };
     }

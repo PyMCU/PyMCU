@@ -21,7 +21,7 @@
 # duty: 0-255 (0 = 0%, 255 = 100%). Timer is left stopped after init;
 # call start() before the first set_duty().
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, uint16, inline
 
 
 # noinspection PyProtectedMember
@@ -36,19 +36,28 @@ class PWM:
         pwm.set_duty(128)    # 50% duty cycle
     """
 
-    def __init__(self, pin: str, duty: uint8):
+    def __init__(self, pin: str, duty: uint8, freq: uint16 = 0):
         """Initialize a hardware PWM channel from a port-pin name string.
 
         duty: initial duty cycle, 0-255 (0 = 0%, 255 = 100%).
+        freq: target PWM frequency in Hz (0 = use hardware default).
+              Only 5 discrete frequencies are available per timer; the
+              smallest prescaler whose frequency is >= freq is chosen.
         The timer is left stopped after init; call start() before set_duty().
         """
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                from pymcu.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
-                pwm_init(pin, duty)
+                from pymcu.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val, pwm_prescaler_for_freq
+                prescaler: uint8 = 0
+                if freq == 0:
+                    prescaler = pwm_select_start_val(pin)
+                else:
+                    prescaler = pwm_prescaler_for_freq(pin, freq)
+                self._pin       = pin
+                pwm_init(pin, duty, prescaler)
                 self._ocr       = pwm_select_ocr(pin)
                 self._tccr_b    = pwm_select_tccr_b(pin)
-                self._start_val = pwm_select_start_val(pin)
+                self._start_val = prescaler
             case "pic16f877a":
                 from pymcu.hal._pwm.pic16f877a import pwm_init
                 self.pin = pin
@@ -62,11 +71,17 @@ class PWM:
                 self.pin = pin
                 pwm_init(pin, duty)
             case "attiny85" | "attiny45" | "attiny25":
-                from pymcu.hal._pwm.attiny85 import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val
-                pwm_init(pin, duty)
+                from pymcu.hal._pwm.attiny85 import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val, pwm_prescaler_for_freq
+                prescaler: uint8 = 0
+                if freq == 0:
+                    prescaler = pwm_select_start_val(pin)
+                else:
+                    prescaler = pwm_prescaler_for_freq(pin, freq)
+                self._pin       = pin
+                pwm_init(pin, duty, prescaler)
                 self._ocr       = pwm_select_ocr(pin)
                 self._tccr_b    = pwm_select_tccr_b(pin)
-                self._start_val = pwm_select_start_val(pin)
+                self._start_val = prescaler
 
     @inline
     def set_duty(self, duty: uint8):
@@ -133,3 +148,18 @@ class PWM:
                 pwm_stop(self.pin)
             case "attiny85" | "attiny45" | "attiny25":
                 self._tccr_b.value = 0x00
+
+    @inline
+    def set_freq(self, freq: uint16):
+        # Change PWM frequency by recomputing the prescaler and writing TCCRxB.
+        match __CHIP__.name:
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
+                from pymcu.hal._pwm.atmega328p import pwm_prescaler_for_freq
+                self._start_val = pwm_prescaler_for_freq(self._pin, freq)
+                self._tccr_b.value = self._start_val
+            case "attiny85" | "attiny45" | "attiny25":
+                from pymcu.hal._pwm.attiny85 import pwm_prescaler_for_freq
+                self._start_val = pwm_prescaler_for_freq(self._pin, freq)
+                self._tccr_b.value = self._start_val
+            case _:
+                pass

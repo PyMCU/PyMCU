@@ -32,6 +32,9 @@ public record MemoryAddress(int Address, DataType Type = DataType.UINT8) : Val;
 
 public record NoneVal() : Val;
 
+// Address-of a local or module-level array (passed as pointer to a bytearray param).
+public record ArrayBase(string ArrayName) : Val;
+
 // Compile-time resolved function address (for funcref() intrinsic)
 public record FunctionRef(string FunctionName) : Val;
 
@@ -134,6 +137,12 @@ public record DebugLine(int Line, string Text, string SourceFile) : Instruction;
 
 // Variable-index array load: dst = array_name[index]
 public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType, int Count) : Instruction;
+
+// Indexed load through a bytearray pointer parameter (ptr stored in stack slot PtrName).
+public record BytearrayLoad(string PtrName, Val Index, Val Dst) : Instruction;
+
+// Indexed store through a bytearray pointer parameter.
+public record BytearrayStore(string PtrName, Val Index, Val Src) : Instruction;
 
 // ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
 public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;

@@ -100,6 +100,27 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void LoadIntoReg(Val val, string reg, DataType type = DataType.UINT8)
     {
+        // ArrayBase: load the 16-bit base address of an array into reg:regH.
+        if (val is ArrayBase ab)
+        {
+            string regH2 = GetHighReg(reg);
+            if (_stackLayout.TryGetValue(ab.ArrayName, out int abOffset))
+            {
+                // Stack array: absolute SRAM address = 0x0100 + stack offset.
+                int absAddr = 0x0100 + abOffset;
+                Emit("LDI", reg,   $"lo8(0x{absAddr:X4})");
+                Emit("LDI", regH2, $"hi8(0x{absAddr:X4})");
+            }
+            else
+            {
+                // Module-level (SRAM) array: use the assembly label.
+                string label = ab.ArrayName.Replace('.', '_');
+                Emit("LDI", reg,   $"lo8({label})");
+                Emit("LDI", regH2, $"hi8({label})");
+            }
+            return;
+        }
+
         int size = type.SizeOf();
         var regH  = size >= 2 ? GetHighReg(reg) : "";
         // For 32-bit: byte2=R22, byte3=R23 (AVR-GCC uint32 convention when base=R24)
@@ -576,6 +597,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
             case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
+            case BytearrayLoad bl: CompileBytearrayLoad(bl); break;
+            case BytearrayStore bs2: CompileBytearrayStore(bs2); break;
         }
     }
 
@@ -1835,6 +1858,102 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("ADC", "R31", "R16"); // Z_high = Z_high + 0 + Carry
             Emit("ST", "Z", "R18");
             if (is16) Emit("STD", "Z+1", "R19");
+        }
+    }
+
+    // Load one byte from a bytearray pointer parameter: R24 = ptr[index].
+    // The pointer is a 16-bit value stored in the callee's stack frame.
+    private void CompileBytearrayLoad(BytearrayLoad bl)
+    {
+        // Load the pointer (base address) from the stack slot into Z.
+        if (_stackLayout.TryGetValue(bl.PtrName, out int ptrOffset))
+        {
+            Emit("LDD", "R30", $"Y+{ptrOffset}");
+            Emit("LDD", "R31", $"Y+{ptrOffset + 1}");
+        }
+        else
+        {
+            // Pointer is in a register pair (e.g. R24:R25 as function parameter).
+            if (_regLayout.TryGetValue(bl.PtrName, out string baseReg))
+            {
+                Emit("MOV", "R30", baseReg);
+                Emit("MOV", "R31", GetHighReg(baseReg));
+            }
+            else
+            {
+                EmitComment("BytearrayLoad: pointer location unknown -- skip");
+                return;
+            }
+        }
+
+        // Add index to Z, then load the byte.
+        if (bl.Index is Constant cIdx && cIdx.Value == 0)
+        {
+            Emit("LD", "R24", "Z");
+        }
+        else if (bl.Index is Constant cIdx2)
+        {
+            Emit("LDI", "R16", $"{cIdx2.Value}");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("LD", "R24", "Z");
+        }
+        else
+        {
+            LoadIntoReg(bl.Index, "R16");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("LD", "R24", "Z");
+        }
+
+        StoreRegInto("R24", bl.Dst, DataType.UINT8);
+    }
+
+    // Store one byte to a bytearray pointer parameter: ptr[index] = src.
+    private void CompileBytearrayStore(BytearrayStore bs)
+    {
+        // Load source value.
+        LoadIntoReg(bs.Src, "R18", DataType.UINT8);
+
+        // Load the pointer (base address) from the stack slot into Z.
+        if (_stackLayout.TryGetValue(bs.PtrName, out int ptrOffset))
+        {
+            Emit("LDD", "R30", $"Y+{ptrOffset}");
+            Emit("LDD", "R31", $"Y+{ptrOffset + 1}");
+        }
+        else if (_regLayout.TryGetValue(bs.PtrName, out string baseReg))
+        {
+            Emit("MOV", "R30", baseReg);
+            Emit("MOV", "R31", GetHighReg(baseReg));
+        }
+        else
+        {
+            EmitComment("BytearrayStore: pointer location unknown -- skip");
+            return;
+        }
+
+        // Add index to Z, then store.
+        if (bs.Index is Constant cIdx && cIdx.Value == 0)
+        {
+            Emit("ST", "Z", "R18");
+        }
+        else if (bs.Index is Constant cIdx2)
+        {
+            Emit("LDI", "R16", $"{cIdx2.Value}");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("ST", "Z", "R18");
+        }
+        else
+        {
+            LoadIntoReg(bs.Index, "R16");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("ST", "Z", "R18");
         }
     }
 

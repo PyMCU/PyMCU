@@ -117,6 +117,10 @@ public partial class IRGenerator
     private Dictionary<string, int> arraySizes = new(); // qualified_name → element count
     private Dictionary<string, DataType> arrayElemTypes = new(); // qualified_name → element DataType
 
+    // Function parameters declared as bytearray (passed as pointer, no length).
+    // The parameter name is stored as qualified_name (funcname_paramname).
+    private HashSet<string> bytearrayParams = new();
+
     // Arrays that are subscripted with at least one non-constant index anywhere in the current function.
     private HashSet<string> arraysWithVariableIndex = new();
 

@@ -5,6 +5,56 @@ from pymcu.chips.atmega328p import DDRD, DDRB
 from pymcu.types import uint8, uint16, inline, ptr
 
 
+# Compile-time (pin, freq) -> TCCRxB CS value.
+# Selects the smallest prescaler whose resulting frequency is >= freq.
+# Five discrete frequencies at 16 MHz:
+#   prescaler  1 ->  62500 Hz
+#   prescaler  8 ->   7812 Hz
+#   prescaler 64 ->    976 Hz  (default)
+#   prescaler 256->    244 Hz
+#   prescaler 1024->    61 Hz
+# Timer2 uses a different CS encoding from Timer0/Timer1.
+@inline
+def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
+    match pin:
+        case "PD6" | "PD5":
+            # Timer0: CS[2:0] = 001/010/011/100/101
+            if freq > 7812:
+                return 0x01
+            elif freq > 976:
+                return 0x02
+            elif freq > 244:
+                return 0x03
+            elif freq > 61:
+                return 0x04
+            else:
+                return 0x05
+        case "PB1" | "PB2":
+            # Timer1 Fast PWM 8-bit: WGM12 must stay set (bit3); CS in bits 2:0
+            if freq > 7812:
+                return 0x09
+            elif freq > 976:
+                return 0x0A
+            elif freq > 244:
+                return 0x0B
+            elif freq > 61:
+                return 0x0C
+            else:
+                return 0x0D
+        case "PB3" | "PD3":
+            # Timer2: CS encoding 001(1) 010(8) 100(64) 110(256) 111(1024)
+            if freq > 7812:
+                return 0x01
+            elif freq > 976:
+                return 0x02
+            elif freq > 244:
+                return 0x04
+            elif freq > 61:
+                return 0x06
+            else:
+                return 0x07
+
+
 # Compile-time pin -> OCR register pointer.
 # The result is stored as self._ocr so set_duty() is a single register write.
 @inline
@@ -49,41 +99,41 @@ def pwm_select_start_val(pin: str) -> uint8:
 
 
 @inline
-def pwm_init(pin: str, duty: uint8):
+def pwm_init(pin: str, duty: uint8, prescaler: uint8):
     match pin:
         case "PD6":
             # Timer0 OC0A: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x83
             DDRD[6] = 1
             OCR0A.value = duty
             TCCR0A.value = 0x83
-            TCCR0B.value = 0x03
+            TCCR0B.value = prescaler
         case "PD5":
             # Timer0 OC0B: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x23
             DDRD[5] = 1
             OCR0B.value = duty
             TCCR0A.value = 0x23
-            TCCR0B.value = 0x03
+            TCCR0B.value = prescaler
         case "PB1":
             # Timer1 OC1A: Fast PWM 8-bit (WGM=0101), COM1A1=1
             DDRB[1] = 1
             OCR1AL.value = duty
             TCCR1A.value = 0x82
-            TCCR1B.value = 0x0A
+            TCCR1B.value = prescaler
         case "PB2":
             # Timer1 OC1B: Fast PWM 8-bit, COM1B1=1
             DDRB[2] = 1
             OCR1BL.value = duty
             TCCR1A.value = 0x22
-            TCCR1B.value = 0x0A
+            TCCR1B.value = prescaler
         case "PB3":
             # Timer2 OC2A: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x83
             DDRB[3] = 1
             OCR2A.value = duty
             TCCR2A.value = 0x83
-            TCCR2B.value = 0x04
+            TCCR2B.value = prescaler
         case "PD3":
             # Timer2 OC2B: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x23
             DDRD[3] = 1
             OCR2B.value = duty
             TCCR2A.value = 0x23
-            TCCR2B.value = 0x04
+            TCCR2B.value = prescaler

@@ -333,6 +333,25 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         switch (val)
         {
+            case ArrayBase ab:
+            {
+                string regH2 = GetHighReg(reg);
+                // Try the array base name first (registered via ArrayStore), then fall back
+                // to the first element "__0" (registered via individual Copy instructions).
+                int abOffset;
+                bool found = _stackLayout.TryGetValue(ab.ArrayName, out abOffset)
+                          || _stackLayout.TryGetValue(ab.ArrayName + "__0", out abOffset);
+                if (found) {
+                    int absAddr = 0x0100 + abOffset;
+                    Emit("LDI", reg,   $"lo8(0x{absAddr:X4})");
+                    Emit("LDI", regH2, $"hi8(0x{absAddr:X4})");
+                } else {
+                    string label = ab.ArrayName.Replace('.', '_');
+                    Emit("LDI", reg,   $"lo8({label})");
+                    Emit("LDI", regH2, $"hi8({label})");
+                }
+                return;
+            }
             case Constant c:
             {
                 Emit("LDI", reg, $"{c.Value & 0xFF}");
@@ -866,6 +885,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case ArrayLoadFlash alf: CompileArrayLoadFlash(alf); break;
             case FlashData fd: _flashArrayPool[fd.Name] = fd.Bytes; break;
             case ArrayStore ast: CompileArrayStore(ast); break;
+            case BytearrayLoad bl: CompileBytearrayLoad(bl); break;
+            case BytearrayStore bs2: CompileBytearrayStore(bs2); break;
         }
     }
 
@@ -2114,6 +2135,113 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("ADC", "R31", "R16"); // Z_high = Z_high + 0 + Carry
             Emit("ST", "Z", "R18");
             if (is16) Emit("STD", "Z+1", "R19");
+        }
+    }
+
+    // Load one byte from a bytearray pointer parameter: dst = ptr[index].
+    private void CompileBytearrayLoad(BytearrayLoad bl)
+    {
+        // Load the 16-bit pointer into Z.
+        // Prefer register-allocated location (higher priority than stack).
+        if (_regLayout.TryGetValue(bl.PtrName, out string? baseRegL) && baseRegL != null)
+        {
+            Emit("MOV", "R30", baseRegL);
+            Emit("MOV", "R31", GetHighReg(baseRegL));
+        }
+        else if (_stackLayout.TryGetValue(bl.PtrName, out int ptrOffset))
+        {
+            Emit("LDD", "R30", $"Y+{ptrOffset}");
+            Emit("LDD", "R31", $"Y+{ptrOffset + 1}");
+        }
+        else
+        {
+            EmitComment("BytearrayLoad: pointer location unknown -- skip");
+            return;
+        }
+
+        // Add index to Z, then load the byte.
+        // Use ADIW for constant indices 1-63 to avoid using R16/R17 as scratch
+        // (which would clobber register-allocated temporaries).
+        if (bl.Index is Constant cIdx && cIdx.Value == 0)
+        {
+            Emit("LD", "R24", "Z");
+        }
+        else if (bl.Index is Constant cIdx2 && cIdx2.Value is >= 1 and <= 63)
+        {
+            Emit("ADIW", "R30", $"{cIdx2.Value}");
+            Emit("LD", "R24", "Z");
+        }
+        else if (bl.Index is Constant cIdx3)
+        {
+            Emit("LDI", "R16", $"{cIdx3.Value}");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("LD", "R24", "Z");
+        }
+        else
+        {
+            LoadIntoReg(bl.Index, "R16");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("LD", "R24", "Z");
+        }
+
+        StoreRegInto("R24", bl.Dst, DataType.UINT8);
+    }
+
+    // Store one byte to a bytearray pointer parameter: ptr[index] = src.
+    private void CompileBytearrayStore(BytearrayStore bs)
+    {
+        // Load source value into R18 (scratch, safe across Z setup).
+        LoadIntoReg(bs.Src, "R18", DataType.UINT8);
+
+        // Load the 16-bit pointer into Z.
+        // Prefer register-allocated location (higher priority than stack).
+        if (_regLayout.TryGetValue(bs.PtrName, out string? baseRegS) && baseRegS != null)
+        {
+            Emit("MOV", "R30", baseRegS);
+            Emit("MOV", "R31", GetHighReg(baseRegS));
+        }
+        else if (_stackLayout.TryGetValue(bs.PtrName, out int ptrOffset))
+        {
+            Emit("LDD", "R30", $"Y+{ptrOffset}");
+            Emit("LDD", "R31", $"Y+{ptrOffset + 1}");
+        }
+        else
+        {
+            EmitComment("BytearrayStore: pointer location unknown -- skip");
+            return;
+        }
+
+        // Add index to Z, then store.
+        // Use ADIW for constant indices 1-63 to avoid using R16/R17 as scratch
+        // (which would clobber register-allocated temporaries).
+        if (bs.Index is Constant cIdx && cIdx.Value == 0)
+        {
+            Emit("ST", "Z", "R18");
+        }
+        else if (bs.Index is Constant cIdx2 && cIdx2.Value is >= 1 and <= 63)
+        {
+            Emit("ADIW", "R30", $"{cIdx2.Value}");
+            Emit("ST", "Z", "R18");
+        }
+        else if (bs.Index is Constant cIdx3)
+        {
+            Emit("LDI", "R16", $"{cIdx3.Value}");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("ST", "Z", "R18");
+        }
+        else
+        {
+            LoadIntoReg(bs.Index, "R16");
+            Emit("CLR", "R17");
+            Emit("ADD", "R30", "R16");
+            Emit("ADC", "R31", "R17");
+            Emit("ST", "Z", "R18");
         }
     }
 

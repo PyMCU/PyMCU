@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Frontend;
+using PyMCU.IR;
 using AstBinOp = PyMCU.Frontend.BinaryOp;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
 
@@ -634,6 +635,16 @@ public partial class IRGenerator
         {
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
+
+            // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
+            if (bytearrayParams.Contains(qualified))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary tmp = MakeTemp(DataType.UINT8);
+                Emit(new BytearrayLoad(qualified, idxVal, tmp));
+                return tmp;
+            }
+
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
                 if (flashArrays.Contains(qualified))

@@ -97,6 +97,8 @@ public partial class IRGenerator
             irFunc.Params.Add(qualifiedParam);
             DataType paramDt = DataTypeExtensions.StringToDataType(param.Type);
             variableTypes[qualifiedParam] = paramDt;
+            if (param.Type == "bytearray")
+                bytearrayParams.Add(qualifiedParam);
         }
 
         arraysWithVariableIndex.Clear();

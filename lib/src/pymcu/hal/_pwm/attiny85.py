@@ -46,10 +46,72 @@ def pwm_select_start_val(pin: str) -> uint8:
         case "PB0" | "PB1":
             return 0x03   # Timer0 prescaler 64
         case "PB4":
-            return 0x07   # Timer1 prescaler 64
+            return 0x67   # Timer1 PWM1B|COM1B1|prescaler 64
+
+
+# ATtiny85 prescaler lookup (8 MHz internal oscillator assumed).
+# Five discrete PWM frequencies per timer:
+#   Timer0 (8 MHz / prescaler / 256):
+#     /1   ->  31250 Hz   CS=0x01
+#     /8   ->   3906 Hz   CS=0x02
+#     /64  ->    488 Hz   CS=0x03
+#     /256 ->    122 Hz   CS=0x04
+#     /1024->     30 Hz   CS=0x05
+#   Timer1 (TCCR1 layout, PWM1B|COM1B1 = 0x60, CS1 in bits 3:0):
+#     /1   ->  31250 Hz   0x61
+#     /2   ->  15625 Hz   0x62
+#     /4   ->   7812 Hz   0x63
+#     /8   ->   3906 Hz   0x64
+#     /16  ->   1953 Hz   0x65
+#     /32  ->    976 Hz   0x66
+#     /64  ->    488 Hz   0x67 (default)
+#     /128 ->    244 Hz   0x68
+#     /256 ->    122 Hz   0x69
+#     /512 ->     61 Hz   0x6A
+#     /1024->     30 Hz   0x6B
+@inline
+def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
+    match pin:
+        case "PB0" | "PB1":
+            # Timer0: CS[2:0] in TCCR0B
+            if freq > 3906:
+                return 0x01
+            elif freq > 488:
+                return 0x02
+            elif freq > 122:
+                return 0x03
+            elif freq > 30:
+                return 0x04
+            else:
+                return 0x05
+        case "PB4":
+            # Timer1: TCCR1 = PWM1B(0x40)|COM1B1(0x20)|CS1[3:0]
+            if freq > 15625:
+                return 0x61
+            elif freq > 7812:
+                return 0x62
+            elif freq > 3906:
+                return 0x63
+            elif freq > 1953:
+                return 0x64
+            elif freq > 976:
+                return 0x65
+            elif freq > 488:
+                return 0x66
+            elif freq > 244:
+                return 0x67
+            elif freq > 122:
+                return 0x68
+            elif freq > 61:
+                return 0x69
+            elif freq > 30:
+                return 0x6A
+            else:
+                return 0x6B
+
 
 @inline
-def pwm_init(pin: str, duty: uint8):
+def pwm_init(pin: str, duty: uint8, prescaler: uint8):
     match pin:
         case "PB0":
             # Timer0 OC0A: Fast PWM non-inverting
@@ -57,18 +119,17 @@ def pwm_init(pin: str, duty: uint8):
             DDRB[0] = 1
             OCR0A.value = duty
             TCCR0A.value = 0x83
-            TCCR0B.value = 0x03   # prescaler 64
+            TCCR0B.value = prescaler
         case "PB1":
             # Timer0 OC0B: Fast PWM non-inverting
             # TCCR0A = COM0B1 | WGM01 | WGM00 = 0x23
             DDRB[1] = 1
             OCR0B.value = duty
             TCCR0A.value = 0x23
-            TCCR0B.value = 0x03   # prescaler 64
+            TCCR0B.value = prescaler
         case "PB4":
             # Timer1 OC1B: Fast PWM mode via PWM1B bit and COM1B1
             # TCCR1: PWM1B=bit6, COM1B1=bit5, COM1B0=bit4, CS1[3:0]=prescaler
-            # COM1B1:COM1B0 = 10 -> 0x20; PWM1B=0x40; CS1=0x07 (prescaler 64)
             DDRB[4] = 1
             OCR0A.value = duty   # OCR1B shares physical register with OCR0A
-            TCCR1.value = 0x67   # PWM1B | COM1B1 | prescaler 64 (CS1=0111)
+            TCCR1.value = prescaler

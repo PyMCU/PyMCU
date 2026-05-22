@@ -16,6 +16,7 @@
 
 using PyMCU.Common;
 using PyMCU.Frontend;
+using PyMCU.IR;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -1400,7 +1401,30 @@ public partial class IRGenerator
         }
 
         var argValuesL = new List<Val>();
-        foreach (var arg in expr.Args) argValuesL.Add(VisitExpression(arg));
+        foreach (var arg in expr.Args)
+        {
+            // If the argument is a bare variable name that refers to a local array,
+            // pass its base address rather than trying to load it as a scalar.
+            if (arg is VariableExpr argVe)
+            {
+                string argQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix
+                    : currentFunction + ".") + argVe.Name;
+                if (!arraySizes.ContainsKey(argQualified))
+                {
+                    // Fall back to unqualified / module-level name
+                    string altQ = currentModulePrefix + argVe.Name;
+                    if (arraySizes.ContainsKey(altQ)) argQualified = altQ;
+                    else if (arraySizes.ContainsKey(argVe.Name)) argQualified = argVe.Name;
+                }
+                if (arraySizes.ContainsKey(argQualified))
+                {
+                    argValuesL.Add(new ArrayBase(argQualified));
+                    continue;
+                }
+            }
+            argValuesL.Add(VisitExpression(arg));
+        }
 
         int dotPos2 = callee.IndexOf('.');
         if (dotPos2 != -1)

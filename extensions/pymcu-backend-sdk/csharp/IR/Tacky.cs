@@ -27,6 +27,7 @@ namespace PyMCU.IR;
 [JsonDerivedType(typeof(MemoryAddress), "mem")]
 [JsonDerivedType(typeof(NoneVal),       "none")]
 [JsonDerivedType(typeof(FunctionRef),   "fref")]
+[JsonDerivedType(typeof(ArrayBase),     "abase")]
 public abstract record Val;
 
 public record Constant(int Value) : Val;
@@ -41,6 +42,9 @@ public record Temporary(string Name, DataType Type = DataType.UINT8) : Val;
 public record MemoryAddress(int Address, DataType Type = DataType.UINT8) : Val;
 
 public record NoneVal() : Val;
+
+// Address-of a local or module-level array (passed as pointer to a bytearray param).
+public record ArrayBase(string ArrayName) : Val;
 
 // Compile-time resolved function address (for funcref() intrinsic)
 public record FunctionRef(string FunctionName) : Val;
@@ -105,6 +109,8 @@ public enum BinaryOp
 [JsonDerivedType(typeof(ArrayLoadFlash),       "alf")]
 [JsonDerivedType(typeof(FlashData),            "fdata")]
 [JsonDerivedType(typeof(ArrayStore),           "ast")]
+[JsonDerivedType(typeof(BytearrayLoad),        "bald")]
+[JsonDerivedType(typeof(BytearrayStore),       "bast")]
 [JsonDerivedType(typeof(Bitcast),              "bitcast")]
 [JsonDerivedType(typeof(IndirectCall),         "icall")]
 public abstract record Instruction;
@@ -187,6 +193,12 @@ public record FlashData(string Name, List<int> Bytes) : Instruction;
 
 // Variable-index array store: array_name[index] = src
 public record ArrayStore(string ArrayName, Val Index, Val Src, DataType ElemType, int Count) : Instruction;
+
+// Indexed load through a bytearray pointer parameter (ptr stored in stack slot PtrName).
+public record BytearrayLoad(string PtrName, Val Index, Val Dst) : Instruction;
+
+// Indexed store through a bytearray pointer parameter.
+public record BytearrayStore(string PtrName, Val Index, Val Src) : Instruction;
 
 // --- Function Definition ---
 public class Function

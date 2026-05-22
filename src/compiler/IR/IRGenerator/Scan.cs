@@ -671,7 +671,24 @@ public partial class IRGenerator
                 else if (call.Callee is VariableExpr callVe)
                 {
                     // Direct function call.
-                    inlineFunctions.TryGetValue(ResolveCallee(callVe.Name), out resolvedFunc);
+                    string resolvedCallee = ResolveCallee(callVe.Name);
+                    inlineFunctions.TryGetValue(resolvedCallee, out resolvedFunc);
+
+                    // For non-inline functions: if an argument is a local array passed to a
+                    // bytearray parameter (UINT16 pointer type), mark it as needing SRAM storage
+                    // so it is allocated contiguously and not constant-folded away.
+                    if (resolvedFunc == null && functionParamTypes.TryGetValue(resolvedCallee, out var calleeParamTypes))
+                    {
+                        for (int ai = 0; ai < call.Args.Count && ai < calleeParamTypes.Count; ai++)
+                        {
+                            if (calleeParamTypes[ai] == DataType.UINT16 && call.Args[ai] is VariableExpr argVe2)
+                            {
+                                string actualName = prefix + argVe2.Name;
+                                if (localArrays.Contains(actualName))
+                                    arraysWithVariableIndex.Add(actualName);
+                            }
+                        }
+                    }
                 }
 
                 if (resolvedFunc != null)
