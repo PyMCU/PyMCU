@@ -469,9 +469,93 @@ public partial class IRGenerator
         }
     }
 
+    // Returns the set of parameter names (excluding "self") that are accessed with a
+    // variable (non-constant) index inside the given inline function body, including
+    // parameters that are forwarded to nested inline function calls whose own parameters
+    // are also variable-indexed.
+    private HashSet<string> GetInlineVarIndexedParams(FunctionDef func, HashSet<FunctionDef> visiting)
+    {
+        if (!visiting.Add(func)) return new HashSet<string>(); // cycle guard
+
+        var paramNames = new HashSet<string>(func.Params.Select(p => p.Name));
+        var result = new HashSet<string>();
+
+        void ScanIExpr(Expression? expr)
+        {
+            if (expr == null) return;
+            if (expr is IndexExpr idx && idx.Target is VariableExpr ve && !(idx.Index is IntegerLiteral))
+            {
+                if (paramNames.Contains(ve.Name))
+                    result.Add(ve.Name);
+            }
+
+            if (expr is CallExpr ic)
+            {
+                ScanIExpr(ic.Callee);
+                foreach (var a in ic.Args) ScanIExpr(a);
+
+                // Resolve direct calls (non-method) to inline functions and propagate.
+                string nestedKey = "";
+                if (ic.Callee is VariableExpr icVe)
+                    nestedKey = ResolveCallee(icVe.Name);
+
+                if (!string.IsNullOrEmpty(nestedKey) && inlineFunctions.TryGetValue(nestedKey, out var nested))
+                {
+                    var nestedVarIdx = GetInlineVarIndexedParams(nested, visiting);
+                    if (nestedVarIdx.Count > 0)
+                    {
+                        int argPos = 0;
+                        foreach (var np in nested.Params)
+                        {
+                            if (np.Name == "self") continue;
+                            if (nestedVarIdx.Contains(np.Name) && argPos < ic.Args.Count)
+                            {
+                                if (ic.Args[argPos] is VariableExpr argVe && paramNames.Contains(argVe.Name))
+                                    result.Add(argVe.Name);
+                            }
+                            argPos++;
+                        }
+                    }
+                }
+            }
+
+            if (expr is BinaryExpr ib) { ScanIExpr(ib.Left); ScanIExpr(ib.Right); }
+            if (expr is UnaryExpr iu) ScanIExpr(iu.Operand);
+            if (expr is MemberAccessExpr ima) ScanIExpr(ima.Object);
+        }
+
+        void ScanIStmt(Statement? s)
+        {
+            if (s == null) return;
+            if (s is AssignStmt ia) { ScanIExpr(ia.Target); ScanIExpr(ia.Value); }
+            else if (s is AnnAssign ia2) ScanIExpr(ia2.Value);
+            else if (s is ReturnStmt ir) ScanIExpr(ir.Value);
+            else if (s is ExprStmt ie) ScanIExpr(ie.Expr);
+            else if (s is IfStmt iif)
+            {
+                ScanIExpr(iif.Condition);
+                ScanIStmt(iif.ThenBranch);
+                foreach (var b in iif.ElifBranches) { ScanIExpr(b.Condition); ScanIStmt(b.Body); }
+                ScanIStmt(iif.ElseBranch);
+            }
+            else if (s is WhileStmt iwh) { ScanIExpr(iwh.Condition); ScanIStmt(iwh.Body); }
+            else if (s is Block ib2) foreach (var cs in ib2.Statements) ScanIStmt(cs);
+            else if (s is AugAssignStmt iaug) { ScanIExpr(iaug.Target); ScanIExpr(iaug.Value); }
+        }
+
+        foreach (var s in func.Body.Statements) ScanIStmt(s);
+        visiting.Remove(func);
+        return result;
+    }
+
     private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix)
     {
         var localArrays = new HashSet<string>();
+
+        // Pre-scan: collect local variable → class name for constructor calls, so we can
+        // resolve method calls to inline functions without needing instanceClasses (which
+        // is not yet populated at this point in compilation).
+        var localVarTypes = new Dictionary<string, string>();
 
         void CollectArrayDecls(Statement? stmt)
         {
@@ -513,6 +597,43 @@ public partial class IRGenerator
 
         foreach (var s in stmts) CollectArrayDecls(s);
 
+        // Pre-scan statements to collect variable → class name from constructor calls.
+        void CollectLocalTypes(Statement? stmt)
+        {
+            if (stmt == null) return;
+
+            void TryRecordType(string varName, Expression? value)
+            {
+                if (value is not CallExpr ctorCall) return;
+                string cls = "";
+                if (ctorCall.Callee is VariableExpr cv)
+                    cls = ResolveCallee(cv.Name);
+                else if (ctorCall.Callee is MemberAccessExpr cm && cm.Object is VariableExpr modVe
+                         && modules.ContainsKey(modVe.Name))
+                    cls = modVe.Name.Replace('.', '_') + "_" + cm.Member;
+                if (!string.IsNullOrEmpty(cls) &&
+                    (inlineFunctions.ContainsKey(cls + "___init__") ||
+                     overloadedFunctions.Contains(cls + "___init__")))
+                    localVarTypes[prefix + varName] = cls;
+            }
+
+            if (stmt is AssignStmt asn && asn.Target is VariableExpr asv)
+                TryRecordType(asv.Name, asn.Value);
+            else if (stmt is AnnAssign aan && aan.Value != null)
+                TryRecordType(aan.Target, aan.Value);
+            else if (stmt is Block blk)
+                foreach (var s in blk.Statements) CollectLocalTypes(s);
+            else if (stmt is IfStmt ifs)
+            {
+                CollectLocalTypes(ifs.ThenBranch);
+                foreach (var b in ifs.ElifBranches) CollectLocalTypes(b.Body);
+                CollectLocalTypes(ifs.ElseBranch);
+            }
+            else if (stmt is WhileStmt whs) CollectLocalTypes(whs.Body);
+        }
+
+        foreach (var s in stmts) CollectLocalTypes(s);
+
         void ScanExpr(Expression? expr)
         {
             if (expr == null) return;
@@ -534,6 +655,47 @@ public partial class IRGenerator
             {
                 ScanExpr(call.Callee);
                 foreach (var arg in call.Args) ScanExpr(arg);
+
+                // Propagate variable-index array info from inline function parameters
+                // to the actual arguments at this call site.
+                FunctionDef? resolvedFunc = null;
+                if (call.Callee is MemberAccessExpr memAcc && memAcc.Object is VariableExpr objVe)
+                {
+                    // Method call: resolve object type via pre-collected localVarTypes.
+                    string objKey = prefix + objVe.Name;
+                    if (localVarTypes.TryGetValue(objKey, out string cls))
+                    {
+                        inlineFunctions.TryGetValue(cls + "_" + memAcc.Member, out resolvedFunc);
+                    }
+                }
+                else if (call.Callee is VariableExpr callVe)
+                {
+                    // Direct function call.
+                    inlineFunctions.TryGetValue(ResolveCallee(callVe.Name), out resolvedFunc);
+                }
+
+                if (resolvedFunc != null)
+                {
+                    var varIdxParams = GetInlineVarIndexedParams(resolvedFunc, new HashSet<FunctionDef>());
+                    if (varIdxParams.Count > 0)
+                    {
+                        int argPos = 0;
+                        foreach (var param in resolvedFunc.Params)
+                        {
+                            if (param.Name == "self") continue;
+                            if (varIdxParams.Contains(param.Name) && argPos < call.Args.Count)
+                            {
+                                if (call.Args[argPos] is VariableExpr argVe)
+                                {
+                                    string actualName = prefix + argVe.Name;
+                                    if (localArrays.Contains(actualName))
+                                        arraysWithVariableIndex.Add(actualName);
+                                }
+                            }
+                            argPos++;
+                        }
+                    }
+                }
             }
             else if (expr is BinaryExpr bin)
             {
