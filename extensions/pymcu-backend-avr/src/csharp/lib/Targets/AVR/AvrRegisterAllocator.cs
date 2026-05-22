@@ -22,7 +22,7 @@ public static class AvrRegisterAllocator
 {
     private static int SizeOfType(DataType t) => t switch
     {
-        DataType.UINT32 or DataType.INT32 => 4,
+        DataType.UINT32 or DataType.INT32 or DataType.FLOAT => 4,
         DataType.UINT16 or DataType.INT16 => 2,
         _ => 1,
     };

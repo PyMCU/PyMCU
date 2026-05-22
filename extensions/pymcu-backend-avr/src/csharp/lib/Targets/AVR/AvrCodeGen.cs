@@ -134,6 +134,18 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         var name = val switch { Variable v => v.Name, Temporary t => t.Name, _ => "" };
+
+        // If the variable is register-allocated, load from those registers.
+        if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out string? regBase))
+        {
+            int rn = int.Parse(regBase[1..]);
+            Emit("MOV", "R22", $"R{rn}");
+            Emit("MOV", "R23", $"R{rn + 1}");
+            Emit("MOV", "R24", $"R{rn + 2}");
+            Emit("MOV", "R25", $"R{rn + 3}");
+            return;
+        }
+
         if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
         {
             if (offset + 3 < 64)
@@ -166,6 +178,18 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void StoreFloatFromRegs(Val dst)
     {
         var name = dst switch { Variable v => v.Name, Temporary t => t.Name, _ => "" };
+
+        // If the destination is register-allocated, move into those registers.
+        if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out string? regBase))
+        {
+            int rn = int.Parse(regBase[1..]);
+            Emit("MOV", $"R{rn}", "R22");
+            Emit("MOV", $"R{rn + 1}", "R23");
+            Emit("MOV", $"R{rn + 2}", "R24");
+            Emit("MOV", $"R{rn + 3}", "R25");
+            return;
+        }
+
         if (!string.IsNullOrEmpty(name) && _stackLayout.TryGetValue(name, out int offset))
         {
             if (offset + 3 < 64)
