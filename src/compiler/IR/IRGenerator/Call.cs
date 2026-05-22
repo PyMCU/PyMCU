@@ -198,6 +198,28 @@ public partial class IRGenerator
             }
         }
 
+        // Indirect call via FUNCREF-typed variable (function pointer via funcref() intrinsic).
+        // After the lambda check so lambdas take priority; before all intrinsics/inline expansion.
+        if (expr.Callee is VariableExpr fvExpr)
+        {
+            // Build qualified key matching Assign.cs (currentFunction + "." + name when not inline)
+            string fvKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + fvExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fvExpr.Name : fvExpr.Name);
+            for (int d = 0; d < 20; ++d)
+                if (variableAliases.TryGetValue(fvKey, out string nx)) fvKey = nx;
+                else break;
+            if (variableTypes.TryGetValue(fvKey, out DataType fvType) && fvType == DataType.FUNCREF)
+            {
+                var indArgs = new List<Val>();
+                foreach (var a in expr.Args)
+                    indArgs.Add(VisitExpression(a));
+                Temporary indDst = MakeTemp();
+                Emit(new IndirectCall(new Variable(fvKey, DataType.FUNCREF), indArgs, indDst));
+                return indDst;
+            }
+        }
+
         if (inlineFunctions.ContainsKey(callee + "___init__") || overloadedFunctions.Contains(callee + "___init__"))
         {
             callee += "___init__";
@@ -935,6 +957,27 @@ public partial class IRGenerator
             Val argVal = VisitExpression(expr.Args[0]);
             if (argVal is Constant) return argVal;
             throw new Exception("const() argument must be a compile-time constant expression");
+        }
+
+        if ((callee == "funcref" || callee == "pymcu_types_funcref") && intrinsicNames.Contains("funcref"))
+        {
+            if (expr.Args.Count != 1)
+                throw new Exception("funcref() expects exactly one argument: a function name");
+            if (expr.Args[0] is not VariableExpr fnRefExpr)
+                throw new Exception("funcref() argument must be a function name identifier");
+
+            // Resolve alias chain (same as compile_isr) to find the canonical function name.
+            string key = currentInlinePrefix + fnRefExpr.Name;
+            for (int d = 0; d < 20; ++d)
+                if (variableAliases.TryGetValue(key, out string nx)) key = nx;
+                else break;
+
+            string resolvedName = key;
+            int lastDot = resolvedName.LastIndexOf('.');
+            if (lastDot >= 0) resolvedName = resolvedName.Substring(lastDot + 1);
+            string fnName = ResolveCallee(resolvedName);
+
+            return new FunctionRef(fnName);
         }
 
         if (callee == "compile_isr" && intrinsicNames.Contains("compile_isr"))

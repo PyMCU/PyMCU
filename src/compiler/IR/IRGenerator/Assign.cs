@@ -714,6 +714,20 @@ public partial class IRGenerator
 
         if (stmt.Init != null)
         {
+            // Callable-typed variable: auto-wrap bare function name as FunctionRef
+            if (dt == DataType.FUNCREF && stmt.Init is VariableExpr fnExpr)
+            {
+                string rhsKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + fnExpr.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fnExpr.Name : fnExpr.Name);
+                bool isAlreadyFuncref = variableTypes.TryGetValue(rhsKey, out DataType rhsDt) && rhsDt == DataType.FUNCREF;
+                if (!isAlreadyFuncref)
+                {
+                    string fnName = ResolveCallee(fnExpr.Name);
+                    Emit(new Copy(new FunctionRef(fnName), new Variable(q2, DataType.FUNCREF)));
+                    return;
+                }
+            }
             Val val = VisitExpression(stmt.Init);
             Val target = ResolveBinding(stmt.Name);
             if (target is Variable v) target = v with { Type = dt };
@@ -938,6 +952,7 @@ public partial class IRGenerator
         else if (stmt.Annotation.Contains("ptr[uint32]")) type = DataType.UINT16; // ptr var holds a 16-bit address on AVR
         else if (stmt.Annotation.Contains("uint16")) type = DataType.UINT16;
         else if (stmt.Annotation.Contains("uint32")) type = DataType.UINT32;
+        else if (stmt.Annotation == "Callable") type = DataType.FUNCREF;
 
         string qualified2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target

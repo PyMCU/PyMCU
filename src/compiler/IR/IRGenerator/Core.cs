@@ -214,6 +214,7 @@ public partial class IRGenerator
                 intrinsicNames.Add("interrupt");
                 intrinsicNames.Add("asm");
                 intrinsicNames.Add("compile_isr");
+                intrinsicNames.Add("funcref");
             }
 
             if (imp.Symbols.Count == 0)
