@@ -41,6 +41,12 @@ public static class Optimizer
             foreach (var instr in func.Body)
             {
                 if (instr is Call call) callees.Add(call.FunctionName);
+                // Also treat FunctionRef values as call-graph edges so that
+                // functions captured as Callable pointers survive DFE.
+                RegisterUses(instr, val =>
+                {
+                    if (val is FunctionRef fref) callees.Add(fref.FunctionName);
+                });
             }
 
             callGraph[func.Name] = callees;
@@ -690,6 +696,10 @@ private static Function CloneFunction(Function f)
             case JumpIfNotZero j: register(j.Condition); break;
             case Call cl:
                 foreach (var a in cl.Args) register(a);
+                break;
+            case IndirectCall ic:
+                register(ic.FuncAddr);
+                foreach (var a in ic.Args) register(a);
                 break;
             case BitCheck bc: register(bc.Source); break;
             case BitWrite bw:
