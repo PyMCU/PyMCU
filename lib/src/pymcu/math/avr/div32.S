@@ -55,10 +55,6 @@ __div32_core_next:
     sec                 ; Quotient bit = 1
     rjmp __div32_core_loop
 __div32_core_done:
-    rol r24             ; Capture last quotient bit
-    rol r25
-    rol r22
-    rol r23
     ret
 
 __div32:
