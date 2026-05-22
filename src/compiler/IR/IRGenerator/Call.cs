@@ -707,6 +707,33 @@ public partial class IRGenerator
             return dst;
         }
 
+        if (callee == "bitcast")
+        {
+            if (expr.Args.Count != 2) throw new Exception("bitcast() expects exactly two arguments: bitcast(type, value)");
+            string typeName = (expr.Args[0] as VariableExpr)?.Name
+                ?? throw new Exception("bitcast() first argument must be a type name");
+            DataType bcDstType;
+            if (typeName == "float")
+                bcDstType = DataType.FLOAT;
+            else if (!castTypes.TryGetValue(typeName, out bcDstType))
+                throw new Exception($"bitcast(): unknown type '{typeName}'");
+
+            Val srcVal = VisitExpression(expr.Args[1]);
+
+            // Compile-time constant folding
+            if (bcDstType == DataType.UINT32 && srcVal is FloatConstant fcBc)
+            {
+                uint bits = BitConverter.SingleToUInt32Bits((float)fcBc.Value);
+                return new Constant((int)bits);
+            }
+            if (bcDstType == DataType.FLOAT && srcVal is Constant cBc)
+                return new FloatConstant(BitConverter.Int32BitsToSingle(cBc.Value));
+
+            Temporary bcDst = MakeTemp(bcDstType);
+            Emit(new Bitcast(srcVal, bcDst));
+            return bcDst;
+        }
+
         if (callee == "asm")
         {
             // asm("code")                  — bare inline assembly (no constraints)
@@ -817,6 +844,19 @@ public partial class IRGenerator
                 }
             }
 
+            string floatWriteFn = ResolveCallee("uart_write_float");
+            if (floatWriteFn == "uart_write_float")
+            {
+                foreach (var fnName in functionReturnTypes.Keys)
+                {
+                    if (fnName.EndsWith("uart_write_float"))
+                    {
+                        floatWriteFn = fnName;
+                        break;
+                    }
+                }
+            }
+
             void EmitPrintArg(Expression arg)
             {
                 if (arg is StringLiteral lit)
@@ -843,6 +883,16 @@ public partial class IRGenerator
                 }
 
                 Val val = VisitExpression(arg);
+                bool isFloat = val is FloatConstant ||
+                               (val is Variable vf && vf.Type == DataType.FLOAT) ||
+                               (val is Temporary tf && tf.Type == DataType.FLOAT);
+                if (isFloat)
+                {
+                    Temporary ftmp = MakeTemp(DataType.FLOAT);
+                    Emit(new Copy(val, ftmp));
+                    Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
+                    return;
+                }
                 Temporary tmp = MakeTemp();
                 Emit(new Copy(val, tmp));
                 Emit(new Call(decimalWriteFn, new List<Val> { tmp }, tmp));

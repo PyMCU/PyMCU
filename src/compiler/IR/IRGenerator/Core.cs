@@ -195,6 +195,7 @@ public partial class IRGenerator
         intrinsicNames.Add("zip");
         intrinsicNames.Add("reversed");
         intrinsicNames.Add("divmod");
+        intrinsicNames.Add("bitcast");
 
         if (config.Frequency > 0)
         {

@@ -336,6 +336,9 @@ private static Function CloneFunction(Function f)
                 case Unary un:
                     InvalidateVar(un.Dst);
                     break;
+                case Bitcast bc:
+                    InvalidateVar(bc.Dst);
+                    break;
                 // InlineAsm with operands may modify variables; invalidate them.
                 case InlineAsm { Operands: not null } ia:
                     foreach (var op in ia.Operands) InvalidateVar(op);
@@ -648,8 +651,9 @@ private static Function CloneFunction(Function f)
         Binary b => b.Dst,
         Unary u => u.Dst,
         Copy c => c.Dst,
+        Bitcast bc => bc.Dst,
         Call cl => cl.Dst,
-        BitCheck bc => bc.Dst,
+        BitCheck bck => bck.Dst,
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
         ArrayLoadFlash alf => alf.Dst,
@@ -661,8 +665,9 @@ private static Function CloneFunction(Function f)
         Binary b => b with { Dst = newDst },
         Unary u => u with { Dst = newDst },
         Copy c => c with { Dst = newDst },
+        Bitcast bc => bc with { Dst = newDst },
         Call cl => cl with { Dst = newDst },
-        BitCheck bc => bc with { Dst = newDst },
+        BitCheck bck => bck with { Dst = newDst },
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
         ArrayLoadFlash alf => alf with { Dst = newDst },
@@ -680,6 +685,7 @@ private static Function CloneFunction(Function f)
                 register(b.Src2);
                 break;
             case Copy c: register(c.Src); break;
+            case Bitcast bc: register(bc.Src); break;
             case JumpIfZero j: register(j.Condition); break;
             case JumpIfNotZero j: register(j.Condition); break;
             case Call cl:
@@ -747,6 +753,7 @@ private static Function CloneFunction(Function f)
             Unary u => u with { Src = replace(u.Src) },
             Binary b => b with { Src1 = replace(b.Src1), Src2 = replace(b.Src2) },
             Copy c => c with { Src = replace(c.Src) },
+            Bitcast bc => bc with { Src = replace(bc.Src) },
             JumpIfZero j => j with { Condition = replace(j.Condition) },
             JumpIfNotZero j => j with { Condition = replace(j.Condition) },
             Call cl => cl with { Args = cl.Args.Select(replace).ToList() },

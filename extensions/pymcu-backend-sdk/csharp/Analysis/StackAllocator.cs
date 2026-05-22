@@ -103,6 +103,10 @@ public class StackAllocator
                         RegisterVar(c.Src);
                         RegisterVar(c.Dst);
                         break;
+                    case Bitcast bc2:
+                        RegisterVar(bc2.Src);
+                        RegisterVar(bc2.Dst);
+                        break;
                     case Binary b:
                         RegisterVar(b.Src1);
                         RegisterVar(b.Src2);

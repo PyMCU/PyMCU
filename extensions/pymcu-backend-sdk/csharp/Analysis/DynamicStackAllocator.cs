@@ -36,6 +36,10 @@ public class DynamicStackAllocator(int wordSize = 4, int reservedTop = 8)
                     CheckVal(c.Src);
                     CheckVal(c.Dst);
                     break;
+                case Bitcast bc2:
+                    CheckVal(bc2.Src);
+                    CheckVal(bc2.Dst);
+                    break;
                 case Binary b:
                     CheckVal(b.Src1);
                     CheckVal(b.Src2);
