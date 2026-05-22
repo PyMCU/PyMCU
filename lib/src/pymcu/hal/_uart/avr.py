@@ -108,6 +108,21 @@ def uart_write_decimal_u8(value: uint8):
         uart_write(value + 48)
 
 
+def uart_write_float(value: float):
+    # Print a float with one decimal place (e.g. 23.5, -5.0).
+    # Precision: one decimal digit, sufficient for DHT22 sensor values.
+    # Uses __fp_* soft-float routines and __div16/__mod16 from the AVR math runtime.
+    if value < 0.0:
+        uart_write(45)
+        value = 0.0 - value
+    tenths: uint16 = uint16(value * 10.0)
+    int_part: uint8 = uint8(tenths // 10)
+    frac: uint8 = uint8(tenths % 10)
+    uart_write_decimal_u8(int_part)
+    uart_write(46)
+    uart_write(frac + 48)
+
+
 @inline
 def uart_write_str(s: const[str]):
     # s is a compile-time string constant. The compiler interns it as FlashData
