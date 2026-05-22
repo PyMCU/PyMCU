@@ -30,6 +30,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, string> _regLayout = new();
     private Dictionary<string, string> _tmpRegLayout = new();
     private readonly HashSet<string> _allTmpRegNames = [];
+    private HashSet<string> _varIsFloat = new();
     private readonly Dictionary<string, List<int>> _flashArrayPool = new();
     // Maps function name → list of parameter sizes (in bytes) for correct call-site arg loading.
     private Dictionary<string, List<int>> _functionParamSizes = new();
@@ -85,6 +86,50 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("LDI", "R23", $"{(bits >> 8) & 0xFF}");
             Emit("LDI", "R24", $"{(bits >> 16) & 0xFF}");
             Emit("LDI", "R25", $"{(bits >> 24) & 0xFF}");
+            return;
+        }
+
+        // If the source is an integer type, load it as int and convert to float.
+        DataType srcType = GetValType(val);
+        if (srcType != DataType.FLOAT)
+        {
+            // GCC __floatsisf: input int32 in R25:R24:R23:R22 (R22=LSB), result float in R25:R24:R23:R22.
+            if (srcType.SizeOf() == 1)
+            {
+                LoadIntoReg(val, "R22", DataType.UINT8);
+                if (IsSignedType(srcType))
+                {
+                    Emit("MOV", "R23", "R22");
+                    Emit("LSL", "R23");
+                    Emit("SBC", "R23", "R23"); // sign-extend: R23 = 0xFF if negative, 0x00 if positive
+                    Emit("MOV", "R24", "R23");
+                    Emit("MOV", "R25", "R23");
+                }
+                else
+                {
+                    Emit("CLR", "R23");
+                    Emit("CLR", "R24");
+                    Emit("CLR", "R25");
+                }
+            }
+            else
+            {
+                // uint16 or int16: load into R22 (lo) : R23 (hi), sign/zero-extend R24:R25.
+                LoadIntoReg(val, "R22", DataType.UINT16);
+                if (IsSignedType(srcType))
+                {
+                    Emit("MOV", "R24", "R23");
+                    Emit("LSL", "R24");
+                    Emit("SBC", "R24", "R24"); // sign-extend: R24 = 0xFF if negative, 0x00 if positive
+                    Emit("MOV", "R25", "R24");
+                }
+                else
+                {
+                    Emit("CLR", "R24");
+                    Emit("CLR", "R25");
+                }
+            }
+            Emit("CALL", "__floatsisf");
             return;
         }
 
@@ -151,8 +196,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     // Compile a binary operation where at least one operand is FLOAT.
     private void CompileFloatBinary(Binary b)
     {
-        // Load arg0 into R22:R25, preserve on stack, load arg1 into R22:R25,
-        // move arg1 to R18:R21, restore arg0 to R22:R25, call routine.
+        // Load arg0 (Src1) into R22:R25, push onto stack, load arg1 (Src2) into R22:R25,
+        // move arg1 to R18:R21 (GCC arg1 slot), restore arg0 to R22:R25 (GCC arg0 slot).
+        // GCC AVR float ABI: arg0 in R25:R24:R23:R22, arg1 in R21:R20:R19:R18, result in R25:R24:R23:R22.
         LoadFloatIntoRegs(b.Src1);
         Emit("PUSH", "R25");
         Emit("PUSH", "R24");
@@ -168,28 +214,61 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("POP", "R24");
         Emit("POP", "R25");
 
-        string routine = b.Op switch
-        {
-            IrBinOp.Add          => "__fp_add",
-            IrBinOp.Sub          => "__fp_sub",
-            IrBinOp.Mul          => "__fp_mul",
-            IrBinOp.Div or IrBinOp.FloorDiv => "__fp_div",
-            IrBinOp.Equal        => "__fp_eq",
-            IrBinOp.NotEqual     => "__fp_ne",
-            IrBinOp.LessThan     => "__fp_lt",
-            IrBinOp.LessEqual    => "__fp_le",
-            IrBinOp.GreaterThan  => "__fp_gt",
-            IrBinOp.GreaterEqual => "__fp_ge",
-            _ => throw new NotSupportedException($"Float binary op {b.Op} not supported")
-        };
-        Emit("CALL", routine);
-
         bool isArith = b.Op is IrBinOp.Add or IrBinOp.Sub or IrBinOp.Mul
                        or IrBinOp.Div or IrBinOp.FloorDiv;
         if (isArith)
-            StoreFloatFromRegs(b.Dst);
+        {
+            string routine = b.Op switch
+            {
+                IrBinOp.Add                     => "__addsf3",
+                IrBinOp.Sub                     => "__subsf3",
+                IrBinOp.Mul                     => "__mulsf3",
+                IrBinOp.Div or IrBinOp.FloorDiv => "__divsf3",
+                _ => throw new NotSupportedException($"Float arith op {b.Op} not supported")
+            };
+            Emit("CALL", routine);
+            var dstType = GetValType(b.Dst);
+            if (dstType == DataType.FLOAT)
+                StoreFloatFromRegs(b.Dst);
+            else
+            {
+                // Result is float in R22:R25; __fixsfsi converts to int32 (R22=LSB).
+                Emit("CALL", "__fixsfsi");
+                Emit("MOV", "R24", "R22");
+                Emit("MOV", "R25", "R23");
+                StoreRegInto("R24", b.Dst, dstType);
+            }
+        }
         else
+        {
+            // Float comparison via GCC __cmpsf2.
+            // Returns in R24: 0xFF if arg0<arg1, 0x00 if arg0==arg1, 0x01 if arg0>arg1.
+            Emit("CALL", "__cmpsf2");
+            string trueLabel = MakeLabel("L_FCMP_T");
+            string doneLabel = MakeLabel("L_FCMP_D");
+            switch (b.Op)
+            {
+                case IrBinOp.Equal:        // true when R24 == 0x00
+                    Emit("CPI", "R24", "0x00"); Emit("BREQ", trueLabel); break;
+                case IrBinOp.NotEqual:     // true when R24 != 0x00
+                    Emit("CPI", "R24", "0x00"); Emit("BRNE", trueLabel); break;
+                case IrBinOp.LessThan:     // true when R24 == 0xFF (a < b)
+                    Emit("CPI", "R24", "0xFF"); Emit("BREQ", trueLabel); break;
+                case IrBinOp.LessEqual:    // true when R24 != 0x01 (covers 0x00 and 0xFF)
+                    Emit("CPI", "R24", "0x01"); Emit("BRNE", trueLabel); break;
+                case IrBinOp.GreaterThan:  // true when R24 == 0x01 (a > b)
+                    Emit("CPI", "R24", "0x01"); Emit("BREQ", trueLabel); break;
+                case IrBinOp.GreaterEqual: // true when R24 != 0xFF (covers 0x00 and 0x01)
+                    Emit("CPI", "R24", "0xFF"); Emit("BRNE", trueLabel); break;
+                default: throw new NotSupportedException($"Float comparison op {b.Op} not supported");
+            }
+            Emit("CLR", "R24");
+            Emit("RJMP", doneLabel);
+            EmitLabel(trueLabel);
+            Emit("LDI", "R24", "1");
+            EmitLabel(doneLabel);
             StoreRegInto("R24", b.Dst, DataType.UINT8);
+        }
     }
 
     private static bool IsSignedType(DataType t) => t.IsSigned();
@@ -254,9 +333,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         {
             DataType sourceType = GetValType(val);
             bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+            bool needZeroExt = size > sourceType.SizeOf() && !IsSignedType(sourceType) && !needSignExt;
 
             if (srcReg != reg) Emit("MOV", reg, srcReg);
-            else if (!needSignExt && srcReg == reg)
+            else if (!needSignExt && !needZeroExt && srcReg == reg)
             {
                 // Source already in target reg; still need to populate high bytes if multi-byte
                 if (size >= 2) Emit("MOV", regH, GetHighReg(srcReg));
@@ -264,8 +344,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 return;
             }
 
-            if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(srcReg));
-            if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(srcReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(srcReg[1..]) + 3}"); }
+            if (needZeroExt)
+            {
+                if (size >= 2) Emit("CLR", regH);
+                if (size == 4) { Emit("CLR", regB2); Emit("CLR", regB3); }
+            }
+            else
+            {
+                if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(srcReg));
+                if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(srcReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(srcReg[1..]) + 3}"); }
+            }
 
             if (needSignExt)
             {
@@ -280,10 +368,19 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         {
             DataType sourceType = GetValType(val);
             bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+            bool needZeroExt = size > sourceType.SizeOf() && !IsSignedType(sourceType) && !needSignExt;
 
             if (tmpReg != reg) Emit("MOV", reg, tmpReg);
-            if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(tmpReg));
-            if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(tmpReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(tmpReg[1..]) + 3}"); }
+            if (needZeroExt)
+            {
+                if (size >= 2) Emit("CLR", regH);
+                if (size == 4) { Emit("CLR", regB2); Emit("CLR", regB3); }
+            }
+            else
+            {
+                if (size >= 2 && !needSignExt) Emit("MOV", regH, GetHighReg(tmpReg));
+                if (size == 4) { Emit("MOV", regB2, $"R{int.Parse(tmpReg[1..]) + 2}"); Emit("MOV", regB3, $"R{int.Parse(tmpReg[1..]) + 3}"); }
+            }
 
             if (needSignExt)
             {
@@ -299,19 +396,36 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             bool nearY = offset + (size - 1) < 64;
             DataType sourceType = GetValType(val);
             bool needSignExt = size == 2 && sourceType.SizeOf() == 1 && IsSignedType(sourceType);
+            bool needZeroExt = size > sourceType.SizeOf() && !IsSignedType(sourceType) && !needSignExt;
 
             if (nearY)
             {
                 Emit("LDD", reg, $"Y+{offset}");
-                if (size >= 2 && !needSignExt) Emit("LDD", regH,  $"Y+{offset + 1}");
-                if (size == 4) { Emit("LDD", regB2, $"Y+{offset + 2}"); Emit("LDD", regB3, $"Y+{offset + 3}"); }
+                if (needZeroExt)
+                {
+                    if (size >= 2) Emit("CLR", regH);
+                    if (size == 4) { Emit("CLR", regB2); Emit("CLR", regB3); }
+                }
+                else
+                {
+                    if (size >= 2 && !needSignExt) Emit("LDD", regH,  $"Y+{offset + 1}");
+                    if (size == 4) { Emit("LDD", regB2, $"Y+{offset + 2}"); Emit("LDD", regB3, $"Y+{offset + 3}"); }
+                }
             }
             else
             {
                 var abs = 0x0100 + offset;
                 Emit("LDS", reg, $"0x{abs:X4}");
-                if (size >= 2 && !needSignExt) Emit("LDS", regH,  $"0x{abs + 1:X4}");
-                if (size == 4) { Emit("LDS", regB2, $"0x{abs + 2:X4}"); Emit("LDS", regB3, $"0x{abs + 3:X4}"); }
+                if (needZeroExt)
+                {
+                    if (size >= 2) Emit("CLR", regH);
+                    if (size == 4) { Emit("CLR", regB2); Emit("CLR", regB3); }
+                }
+                else
+                {
+                    if (size >= 2 && !needSignExt) Emit("LDS", regH,  $"0x{abs + 1:X4}");
+                    if (size == 4) { Emit("LDS", regB2, $"0x{abs + 2:X4}"); Emit("LDS", regB3, $"0x{abs + 3:X4}"); }
+                }
             }
 
             if (needSignExt)
@@ -327,10 +441,19 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (string.IsNullOrEmpty(addr)) return;
         DataType srcType = GetValType(val);
         bool signExt = size == 2 && srcType.SizeOf() == 1 && IsSignedType(srcType);
+        bool zeroExt = size > srcType.SizeOf() && !IsSignedType(srcType) && !signExt;
 
         Emit("LDS", reg, addr);
-        if (size >= 2 && !signExt) Emit("LDS", regH, addr + "+1");
-        if (size == 4) { Emit("LDS", regB2, addr + "+2"); Emit("LDS", regB3, addr + "+3"); }
+        if (zeroExt)
+        {
+            if (size >= 2) Emit("CLR", regH);
+            if (size == 4) { Emit("CLR", regB2); Emit("CLR", regB3); }
+        }
+        else
+        {
+            if (size >= 2 && !signExt) Emit("LDS", regH, addr + "+1");
+            if (size == 4) { Emit("LDS", regB2, addr + "+2"); Emit("LDS", regB3, addr + "+3"); }
+        }
 
         if (signExt)
         {
@@ -415,6 +538,26 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         _stackLayout = offsets;
         _varSizes = allocator.VariableSizes;
         _regLayout = AvrRegisterAllocator.Allocate(program);
+
+        // Build set of float-typed variable names for correct register assignment.
+        _varIsFloat = [];
+        foreach (var func in program.Functions)
+            foreach (var instr in func.Body)
+            {
+                var valsToCheck = instr switch
+                {
+                    Binary b => new[] { b.Src1, b.Src2, b.Dst },
+                    Copy c => new[] { c.Src, c.Dst },
+                    Return { Value: not null } r => new[] { r.Value! },
+                    Call cl => [.. cl.Args, cl.Dst],
+                    _ => Array.Empty<Val>()
+                };
+                foreach (var v in valsToCheck)
+                {
+                    if (v is Variable vv && vv.Type == DataType.FLOAT) _varIsFloat.Add(vv.Name);
+                    if (v is Temporary tt && tt.Type == DataType.FLOAT) _varIsFloat.Add(tt.Name);
+                }
+            }
 
         // Build function parameter size map for correct call-site arg loading.
         _functionParamSizes.Clear();
@@ -570,18 +713,21 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 var pname = func.Params[k];
                 bool p16 = _varSizes.TryGetValue(pname, out int psz) && psz == 2;
                 bool p32 = _varSizes.TryGetValue(pname, out int psz32) && psz32 == 4;
-                // For uint32, param k=0 occupies R24:R25:R22:R23 (not argRegs[k] alone).
-                // argRegs array is for separate parameters; a uint32 first arg spans R24-R23.
-                string aR = argRegs[k];
+                bool pFloat = p32 && _varIsFloat.Contains(pname);
+                // Float ABI: first float arg is in R22(byte0):R23(byte1):R24(byte2):R25(byte3).
+                // uint32 ABI: first arg is in R24(byte0):R25(byte1):R22(byte2):R23(byte3).
+                // For floats, use R22 as base; for uint32, use R24 as base.
+                string aR = pFloat && k == 0 ? "R22" : argRegs[k];
                 if (_regLayout.TryGetValue(pname, out var r))
                 {
                     if (aR != r) Emit("MOV", r, aR);
                     if (p16 || p32) Emit("MOV", GetHighReg(r), GetHighReg(aR));
                     if (p32)
                     {
-                        // bytes 2 and 3 are in R22 and R23 when k==0 (first arg)
-                        string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
-                        string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                        // For float k==0: bytes 2 and 3 are in R24 and R25.
+                        // For uint32 k==0: bytes 2 and 3 are in R22 and R23.
+                        string aR2 = pFloat && k == 0 ? "R24" : (k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}");
+                        string aR3 = pFloat && k == 0 ? "R25" : (k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}");
                         Emit("MOV", $"R{int.Parse(r[1..]) + 2}", aR2);
                         Emit("MOV", $"R{int.Parse(r[1..]) + 3}", aR3);
                     }
@@ -596,8 +742,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                         if (p16 || p32) Emit("STD", $"Y+{off + 1}", GetHighReg(aR));
                         if (p32)
                         {
-                            string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
-                            string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                            string aR2 = pFloat && k == 0 ? "R24" : (k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}");
+                            string aR3 = pFloat && k == 0 ? "R25" : (k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}");
                             Emit("STD", $"Y+{off + 2}", aR2);
                             Emit("STD", $"Y+{off + 3}", aR3);
                         }
@@ -609,8 +755,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                         if (p16 || p32) Emit("STS", $"0x{abs + 1:X4}", GetHighReg(aR));
                         if (p32)
                         {
-                            string aR2 = k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}";
-                            string aR3 = k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}";
+                            string aR2 = pFloat && k == 0 ? "R24" : (k == 0 ? "R22" : $"R{int.Parse(aR[1..]) + 2}");
+                            string aR3 = pFloat && k == 0 ? "R25" : (k == 0 ? "R23" : $"R{int.Parse(aR[1..]) + 3}");
                             Emit("STS", $"0x{abs + 2:X4}", aR2);
                             Emit("STS", $"0x{abs + 3:X4}", aR3);
                         }
@@ -756,6 +902,40 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileCompareJump(Val src1, Val src2, string branch, string target)
     {
         var type = GetValType(src1);
+        if (type == DataType.FLOAT)
+        {
+            // __fp_cmp(arg0=R22:R25, arg1=R18:R21): returns 0xFF if <, 0x00 if =, 0x01 if >
+            LoadFloatIntoRegs(src1);
+            Emit("PUSH", "R25");
+            Emit("PUSH", "R24");
+            Emit("PUSH", "R23");
+            Emit("PUSH", "R22");
+            LoadFloatIntoRegs(src2);
+            Emit("MOV", "R18", "R22");
+            Emit("MOV", "R19", "R23");
+            Emit("MOV", "R20", "R24");
+            Emit("MOV", "R21", "R25");
+            Emit("POP", "R22");
+            Emit("POP", "R23");
+            Emit("POP", "R24");
+            Emit("POP", "R25");
+            Emit("CALL", "__cmpsf2");
+            // Map branch to __cmpsf2 result: 0xFF=lt, 0x00=eq, 0x01=gt
+            switch (branch)
+            {
+                case "BRGE": case "BRSH":
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BRNE", target); break;
+                case "BRLT": case "BRLO":
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BREQ", target); break;
+                case "BREQ":
+                    Emit("CPI", "R24", "0x00"); EmitBranch("BREQ", target); break;
+                case "BRNE":
+                    Emit("CPI", "R24", "0x00"); EmitBranch("BRNE", target); break;
+                default:
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BRNE", target); break;
+            }
+            return;
+        }
         EmitCompare(src1, src2, type);
         EmitBranch(branch, target);
     }
@@ -854,6 +1034,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         var srcType = GetValType(cp.Src);
         var dstType = GetValType(cp.Dst);
+        if (srcType == DataType.FLOAT && dstType != DataType.FLOAT)
+        {
+            // Float → integer: load float into R22:R25, __fixsfsi converts to int32 (R22=LSB).
+            LoadFloatIntoRegs(cp.Src);
+            Emit("CALL", "__fixsfsi");
+            Emit("MOV", "R24", "R22");
+            Emit("MOV", "R25", "R23");
+            StoreRegInto("R24", cp.Dst, dstType);
+            return;
+        }
         if (srcType == DataType.FLOAT || dstType == DataType.FLOAT)
         {
             LoadFloatIntoRegs(cp.Src);
@@ -972,9 +1162,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             CompileFloatBinary(b);
             return;
         }
-        bool is16 = type.SizeOf() == 2;
-        bool is32 = type.SizeOf() == 4;
-        LoadIntoReg(b.Src1, "R24", type);
+        // For Div/Mod, the operation width is determined by the source operand size,
+        // not the destination size (e.g. uint16 / 10 -> uint8 must divide as 16-bit).
+        var src1Type = GetValType(b.Src1);
+        var opType = b.Op is IrBinOp.Div or IrBinOp.FloorDiv or IrBinOp.Mod
+                     && src1Type.SizeOf() > type.SizeOf()
+            ? src1Type
+            : type;
+        bool is16 = opType.SizeOf() == 2;
+        bool is32 = opType.SizeOf() == 4;
+        LoadIntoReg(b.Src1, "R24", opType);
 
         bool usedImm = false;
         if (b.Src2 is Constant c2)
@@ -1111,7 +1308,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             }
         }
 
-        if (!usedImm) LoadIntoReg(b.Src2, "R18", type);
+        if (!usedImm) LoadIntoReg(b.Src2, "R18", opType);
 
         switch (b.Op)
         {
