@@ -551,6 +551,7 @@ class AvrgasToolchain(ExternalToolchain):
             "-T", str(linker_script),
             str(firmware_obj),
             *[str(o) for o in c_objects],
+            "-lm",
             "-o", str(elf_out),
         ]
 
