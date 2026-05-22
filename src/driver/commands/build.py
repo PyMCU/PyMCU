@@ -573,7 +573,7 @@ def build(
                     # List of runtime functions to check
                     runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32"]
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
-                    
+
                     if needed_funcs:
                         # Build the math runtime text
                         func_map = {
@@ -587,7 +587,7 @@ def build(
                         }
                         math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
                         included_files = set()
-                        for func in needed_funcs:
+                        for func in [f for f in needed_funcs if not f.startswith("__fp")]:
                             fname = func_map.get(func)
                             if fname and fname not in included_files:
                                 src_path = avr_math_path / fname
@@ -597,7 +597,6 @@ def build(
                                     included_files.add(fname)
                                 else:
                                     console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
-
                         # Insert math runtime BEFORE the first function label so that
                         # __div8/__mod8 are at a low word address, within RCALL range
                         # (±2047 words) of any call site in large firmware images.
