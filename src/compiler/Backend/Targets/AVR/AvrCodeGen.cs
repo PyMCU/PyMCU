@@ -595,7 +595,14 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         var type = GetValType(jz.Condition);
         LoadIntoReg(jz.Condition, "R24", type);
 
-        if (type.SizeOf() == 2)
+        if (type.SizeOf() == 4)
+        {
+            Emit("OR", "R24", "R25");
+            Emit("OR", "R24", "R22");
+            Emit("OR", "R24", "R23");
+            EmitBranch("BREQ", jz.Target);
+        }
+        else if (type.SizeOf() == 2)
         {
             Emit("OR", "R24", "R25"); // Combine low and high, this sets the Z flag
             EmitBranch("BREQ", jz.Target);
@@ -611,8 +618,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         var type = GetValType(jnz.Condition);
         LoadIntoReg(jnz.Condition, "R24", type);
+        if (type.SizeOf() == 4) { Emit("OR", "R24", "R25"); Emit("OR", "R24", "R22"); Emit("OR", "R24", "R23"); }
         // OR R24, R25 already sets the Z flag for 16-bit values; no separate TST needed.
-        if (type.SizeOf() == 2) Emit("OR", "R24", "R25");
+        else if (type.SizeOf() == 2) Emit("OR", "R24", "R25");
         else Emit("TST", "R24");
         EmitBranch("BRNE", jnz.Target);
     }
@@ -623,7 +631,18 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (src2 is Constant c)
         {
             var val = c.Value;
-            if (type.SizeOf() == 2)
+            if (type.SizeOf() == 4)
+            {
+                Emit("LDI", "R18", $"{val & 0xFF}");
+                Emit("LDI", "R19", $"{(val >> 8) & 0xFF}");
+                Emit("LDI", "R20", $"{(val >> 16) & 0xFF}");
+                Emit("LDI", "R21", $"{(val >> 24) & 0xFF}");
+                Emit("CP",  "R24", "R18");
+                Emit("CPC", "R25", "R19");
+                Emit("CPC", "R22", "R20");
+                Emit("CPC", "R23", "R21");
+            }
+            else if (type.SizeOf() == 2)
             {
                 Emit("LDI", "R18", $"{val & 0xFF}");
                 Emit("LDI", "R19", $"{(val >> 8) & 0xFF}");
@@ -637,6 +656,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             LoadIntoReg(src2, "R18", type);
             Emit("CP", "R24", "R18");
             if (type.SizeOf() == 2) Emit("CPC", "R25", "R19");
+            if (type.SizeOf() == 4) { Emit("CPC", "R25", "R19"); Emit("CPC", "R22", "R20"); Emit("CPC", "R23", "R21"); }
         }
     }
 
@@ -687,6 +707,25 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (jgt.Src2 is Constant c)
         {
             int val = c.Value;
+            if (type.SizeOf() == 4)
+            {
+                // For uint32: a > val rewrites as a >= val+1.
+                // Guard against overflow: val+1 must fit in a non-negative int.
+                if (val < int.MaxValue)
+                {
+                    long cmpVal = (long)val + 1;
+                    Emit("LDI", "R18", $"{cmpVal & 0xFF}");
+                    Emit("LDI", "R19", $"{(cmpVal >> 8) & 0xFF}");
+                    Emit("LDI", "R20", $"{(cmpVal >> 16) & 0xFF}");
+                    Emit("LDI", "R21", $"{(cmpVal >> 24) & 0xFF}");
+                    Emit("CP",  "R24", "R18");
+                    Emit("CPC", "R25", "R19");
+                    Emit("CPC", "R22", "R20");
+                    Emit("CPC", "R23", "R21");
+                    EmitBranch(signed ? "BRGE" : "BRSH", jgt.Target);
+                }
+                return;
+            }
             int maxVal = type.SizeOf() == 2 ? (signed ? 0x7FFF : 0xFFFF) : (signed ? 0x7F : 0xFF);
             if (val < maxVal)
             {
@@ -709,6 +748,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         LoadIntoReg(jgt.Src2, "R18", type);
         Emit("CP", "R24", "R18");
         if (type.SizeOf() == 2) Emit("CPC", "R25", "R19");
+        if (type.SizeOf() == 4) { Emit("CPC", "R25", "R19"); Emit("CPC", "R22", "R20"); Emit("CPC", "R23", "R21"); }
         var skip = MakeLabel("L_BRHI_SKIP");
         Emit("BREQ", skip);
         EmitBranch(signed ? "BRGE" : "BRSH", jgt.Target);
