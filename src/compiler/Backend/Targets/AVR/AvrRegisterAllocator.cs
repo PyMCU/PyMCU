@@ -40,6 +40,10 @@ public static class AvrRegisterAllocator
                     CountVal(c.Src);
                     CountVal(c.Dst);
                     break;
+                case Bitcast bc2:
+                    CountVal(bc2.Src);
+                    CountVal(bc2.Dst);
+                    break;
                 case Binary b:
                     CountVal(b.Src1);
                     CountVal(b.Src2);

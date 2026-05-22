@@ -807,6 +807,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfGreaterOrEqual jge: CompileCompareJump(jge.Src1, jge.Src2, IsSignedComparison(jge.Src1, jge.Src2) ? "BRGE" : "BRSH", jge.Target); break;
             case Call c: CompileCall(c); break;
             case Copy cp: CompileCopy(cp); break;
+            case Bitcast bc: CompileBitcast(bc); break;
             case LoadIndirect li: CompileLoadIndirect(li); break;
             case StoreIndirect si: CompileStoreIndirect(si); break;
             case Unary u: CompileUnary(u); break;
@@ -1097,6 +1098,46 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("ST", "X",  "R25");
         }
         else Emit("ST", "X", "R24");
+    }
+
+    private void CompileBitcast(Bitcast bc)
+    {
+        var srcType = GetValType(bc.Src);
+        var dstType = GetValType(bc.Dst);
+        bool srcIsFloat = srcType == DataType.FLOAT;
+        bool dstIsFloat = dstType == DataType.FLOAT;
+
+        if (srcIsFloat && !dstIsFloat)
+        {
+            // float → intN: float reg layout: R22=b0, R23=b1, R24=b2, R25=b3
+            // uint32 reg layout:              R24=b0, R25=b1, R22=b2, R23=b3
+            LoadFloatIntoRegs(bc.Src);
+            Emit("PUSH", "R24");        // save b2
+            Emit("PUSH", "R25");        // save b3
+            Emit("MOV", "R24", "R22"); // R24 = b0
+            Emit("MOV", "R25", "R23"); // R25 = b1
+            Emit("POP", "R23");        // R23 = b3
+            Emit("POP", "R22");        // R22 = b2
+            StoreRegInto("R24", bc.Dst, dstType);
+        }
+        else if (!srcIsFloat && dstIsFloat)
+        {
+            // intN → float: uint32 reg layout: R24=b0, R25=b1, R22=b2, R23=b3
+            // float reg layout:                R22=b0, R23=b1, R24=b2, R25=b3
+            LoadIntoReg(bc.Src, "R24", srcType);
+            Emit("PUSH", "R22");        // save b2
+            Emit("PUSH", "R23");        // save b3
+            Emit("MOV", "R22", "R24"); // R22 = b0
+            Emit("MOV", "R23", "R25"); // R23 = b1
+            Emit("POP", "R25");        // R25 = b3
+            Emit("POP", "R24");        // R24 = b2
+            StoreFloatFromRegs(bc.Dst);
+        }
+        else
+        {
+            // No float involved: same byte layout, just type reinterpretation
+            CompileCopy(new Copy(bc.Src, bc.Dst));
+        }
     }
 
     private void CompileUnary(Unary u)

@@ -67,6 +67,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Variable v => v.Type,
         Temporary t => t.Type,
         MemoryAddress m => m.Type.SizeOf() > 1 ? m.Type : DataType.UINT8,
+        FloatConstant => DataType.FLOAT,
         Constant { Value: > 255 or < -128 } => DataType.UINT16,
         _ => DataType.UINT8,
     };
@@ -108,6 +109,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         switch (val)
         {
+            case FloatConstant fc:
+            {
+                // IEEE 754 single bits, stored in R24=B0(LSB), R25=B1, R22=B2, R23=B3(MSB)
+                uint bits = BitConverter.SingleToUInt32Bits((float)fc.Value);
+                Emit("LDI", reg,   $"0x{bits & 0xFF:X2}");
+                Emit("LDI", regH,  $"0x{(bits >> 8) & 0xFF:X2}");
+                Emit("LDI", regB2, $"0x{(bits >> 16) & 0xFF:X2}");
+                Emit("LDI", regB3, $"0x{(bits >> 24) & 0xFF:X2}");
+                return;
+            }
             case Constant c:
             {
                 Emit("LDI", reg, $"{c.Value & 0xFF}");
@@ -632,6 +643,28 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileCompareJump(Val src1, Val src2, string branch, string target)
     {
         var type = GetValType(src1);
+        if (type == DataType.FLOAT)
+        {
+            // __fp_cmp(arg0, arg1): returns 0xFF if arg0 < arg1, 0x00 if equal, 0x01 if arg0 > arg1
+            LoadFloatArg(src1, false);  // arg0 → R22:R23:R24:R25
+            LoadFloatArg(src2, true);   // arg1 → R18:R19:R20:R21
+            Emit("CALL", "__fp_cmp");
+            // Map AVR integer branch to __fp_cmp result check
+            switch (branch)
+            {
+                case "BRGE": case "BRSH":
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BRNE", target); break;
+                case "BRLT": case "BRLO":
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BREQ", target); break;
+                case "BREQ":
+                    Emit("CPI", "R24", "0x00"); EmitBranch("BREQ", target); break;
+                case "BRNE":
+                    Emit("CPI", "R24", "0x00"); EmitBranch("BRNE", target); break;
+                default:
+                    Emit("CPI", "R24", "0xFF"); EmitBranch("BRNE", target); break;
+            }
+            return;
+        }
         EmitCompare(src1, src2, type);
         EmitBranch(branch, target);
     }
@@ -706,13 +739,139 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         StoreRegInto("R24", call.Dst, dstType);
     }
 
+    // Load a value into float.S calling-convention registers.
+    // isArg1=false: arg0 → R22=B0, R23=B1, R24=B2, R25=B3
+    // isArg1=true:  arg1 → R18=B0, R19=B1, R20=B2, R21=B3
+    private void LoadFloatArg(Val v, bool isArg1)
+    {
+        DataType srcType = GetValType(v);
+
+        if (v is FloatConstant fc)
+        {
+            uint bits = BitConverter.SingleToUInt32Bits((float)fc.Value);
+            (string b0, string b1, string b2, string b3) = isArg1
+                ? ("R18", "R19", "R20", "R21")
+                : ("R22", "R23", "R24", "R25");
+            Emit("LDI", b0, $"0x{bits & 0xFF:X2}");
+            Emit("LDI", b1, $"0x{(bits >> 8) & 0xFF:X2}");
+            Emit("LDI", b2, $"0x{(bits >> 16) & 0xFF:X2}");
+            Emit("LDI", b3, $"0x{(bits >> 24) & 0xFF:X2}");
+            return;
+        }
+
+        if (srcType != DataType.FLOAT)
+        {
+            // Integer → float: load int into R24(lo):R25(hi) then call __fp_int_to_float
+            // Result lands in R22:R23:R24:R25 (float.S convention)
+            LoadIntoReg(v, "R24", srcType);
+            if (srcType.SizeOf() == 1)
+            {
+                if (IsSignedType(srcType)) { Emit("MOV", "R25", "R24"); Emit("LSL", "R25"); Emit("SBC", "R25", "R25"); }
+                else Emit("CLR", "R25");
+            }
+            Emit("CALL", "__fp_int_to_float");
+            if (isArg1)
+            {
+                Emit("MOV", "R18", "R22");
+                Emit("MOV", "R19", "R23");
+                Emit("MOV", "R20", "R24");
+                Emit("MOV", "R21", "R25");
+            }
+            return;
+        }
+
+        // Float variable: load with existing convention (R24=B0, R25=B1, R22=B2, R23=B3)
+        LoadIntoReg(v, "R24", DataType.FLOAT);
+        if (!isArg1)
+        {
+            // XOR-swap R24↔R22 and R25↔R23 to get float.S arg0 layout
+            Emit("EOR", "R24", "R22"); Emit("EOR", "R22", "R24"); Emit("EOR", "R24", "R22");
+            Emit("EOR", "R25", "R23"); Emit("EOR", "R23", "R25"); Emit("EOR", "R25", "R23");
+        }
+        else
+        {
+            // Move to arg1 registers: R18=B0, R19=B1, R20=B2, R21=B3
+            Emit("MOV", "R18", "R24");
+            Emit("MOV", "R19", "R25");
+            Emit("MOV", "R20", "R22");
+            Emit("MOV", "R21", "R23");
+        }
+    }
+
+    // Store the float.S result (R22=B0, R23=B1, R24=B2, R25=B3) into dst
+    // using the compiler's normal memory convention (R24=B0).
+    private void StoreFloatResult(Val dst)
+    {
+        Emit("EOR", "R24", "R22"); Emit("EOR", "R22", "R24"); Emit("EOR", "R24", "R22");
+        Emit("EOR", "R25", "R23"); Emit("EOR", "R23", "R25"); Emit("EOR", "R25", "R23");
+        StoreRegInto("R24", dst, DataType.FLOAT);
+    }
+
+    private void CompileFloatBinary(Binary b)
+    {
+        LoadFloatArg(b.Src1, false);  // arg0 → R22:R23:R24:R25
+        LoadFloatArg(b.Src2, true);   // arg1 → R18:R19:R20:R21
+
+        string fpFunc = b.Op switch
+        {
+            IrBinOp.Add                => "__fp_add",
+            IrBinOp.Sub                => "__fp_sub",
+            IrBinOp.Mul                => "__fp_mul",
+            IrBinOp.Div or
+            IrBinOp.FloorDiv           => "__fp_div",
+            IrBinOp.Equal              => "__fp_eq",
+            IrBinOp.NotEqual           => "__fp_ne",
+            IrBinOp.LessThan           => "__fp_lt",
+            IrBinOp.LessEqual          => "__fp_le",
+            IrBinOp.GreaterThan        => "__fp_gt",
+            IrBinOp.GreaterEqual       => "__fp_ge",
+            _ => throw new NotSupportedException($"Float binary op {b.Op} not supported")
+        };
+
+        Emit("CALL", fpFunc);
+
+        bool isCompare = b.Op is IrBinOp.Equal or IrBinOp.NotEqual
+            or IrBinOp.LessThan or IrBinOp.LessEqual
+            or IrBinOp.GreaterThan or IrBinOp.GreaterEqual;
+
+        if (isCompare)
+            StoreRegInto("R24", b.Dst, DataType.UINT8);
+        else
+            StoreFloatResult(b.Dst);
+    }
+
     private void CompileCopy(Copy cp)
     {
-        // When src is a typeless constant, use the destination's declared type
-        // to ensure e.g. `i: uint16 = 0` initialises both bytes.
         var srcType = GetValType(cp.Src);
         var dstType = GetValType(cp.Dst);
-        // Use destination type for size, but LoadIntoReg will check source type for sign-extension
+
+        // Float → int conversion
+        if (srcType == DataType.FLOAT && dstType != DataType.FLOAT)
+        {
+            LoadFloatArg(cp.Src, false);          // float in R22:R23:R24:R25
+            Emit("CALL", "__fp_float_to_int");    // result int16 in R24(lo):R25(hi)
+            StoreRegInto("R24", cp.Dst, dstType.SizeOf() == 1 ? DataType.UINT8 : DataType.UINT16);
+            return;
+        }
+
+        // Int → float conversion
+        if (srcType != DataType.FLOAT && dstType == DataType.FLOAT && cp.Src is not FloatConstant)
+        {
+            LoadIntoReg(cp.Src, "R24", srcType);
+            if (srcType.SizeOf() == 1)
+            {
+                if (IsSignedType(srcType)) { Emit("MOV", "R25", "R24"); Emit("LSL", "R25"); Emit("SBC", "R25", "R25"); }
+                else Emit("CLR", "R25");
+            }
+            Emit("CALL", "__fp_int_to_float");
+            // Result in R22:R23:R24:R25; swap to R24=B0 convention before storing
+            Emit("EOR", "R24", "R22"); Emit("EOR", "R22", "R24"); Emit("EOR", "R24", "R22");
+            Emit("EOR", "R25", "R23"); Emit("EOR", "R23", "R25"); Emit("EOR", "R25", "R23");
+            StoreRegInto("R24", cp.Dst, DataType.FLOAT);
+            return;
+        }
+
+        // Default path (includes FloatConstant → float variable)
         var loadType = cp.Src is Constant ? dstType : dstType;
         LoadIntoReg(cp.Src, "R24", loadType);
         StoreRegInto("R24", cp.Dst, dstType);
@@ -815,6 +974,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileBinary(Binary b)
     {
         DataType type = GetValType(b.Dst);
+
+        // Dispatch float operations to the soft-float runtime
+        bool srcIsFloat = GetValType(b.Src1) == DataType.FLOAT || GetValType(b.Src2) == DataType.FLOAT
+            || b.Src1 is FloatConstant || b.Src2 is FloatConstant;
+        if (type == DataType.FLOAT || srcIsFloat)
+        {
+            CompileFloatBinary(b);
+            return;
+        }
+
         bool is16 = type.SizeOf() == 2;
         bool is32 = type.SizeOf() == 4;
         LoadIntoReg(b.Src1, "R24", type);

@@ -54,6 +54,10 @@ public static class AvrLinearScan
                     VisitVal(c.Src, i);
                     VisitVal(c.Dst, i);
                     break;
+                case Bitcast bc2:
+                    VisitVal(bc2.Src, i);
+                    VisitVal(bc2.Dst, i);
+                    break;
                 case Binary b:
                     VisitVal(b.Src1, i);
                     VisitVal(b.Src2, i);
