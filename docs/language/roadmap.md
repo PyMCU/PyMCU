@@ -193,6 +193,8 @@ This page tracks which language and HAL features have been implemented, and what
 | Internal temperature sensor (ADC ch 8) | ✅ Implemented (`pymcu.hal.adc`) |
 | Programmer plugin system | ✅ Implemented (`pymcu.programmers` entry-point group) |
 | `uint16 >> n → uint8` widening shift | ✅ Compiler fix — source type used for shift/bitwise narrowing ops |
+| `busio.SPI` / `busio.I2C` (CircuitPython compat) | ✅ Implemented |
+| `neopixel` driver (CP flavor) | ✅ Implemented |
 
 ---
 
@@ -200,8 +202,7 @@ This page tracks which language and HAL features have been implemented, and what
 
 | Feature | Status |
 |---|---|
-| `busio.SPI` / `busio.I2C` (CircuitPython compat) | Planned |
-| `neopixel` driver (CP flavor) | Planned |
+| **MicroPython/CircuitPython API Alignment** | Planned - High Priority |
 | `fixed16` (Q8.8 fixed-point) | Planned |
 
 ---

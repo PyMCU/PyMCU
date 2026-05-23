@@ -6,6 +6,14 @@ PyMCU compiles a statically-typed, allocation-free subset of Python to bare-meta
 There is no runtime, no heap, no garbage collector, and no interpreter. Many standard Python
 features are therefore incompatible with this model.
 
+:::{admonition} Standard Library Philosophy
+:class: note
+
+Because of the architectural differences between a PC and a bare-metal microcontroller, PyMCU **does not attempt to replicate the CPython standard library 1:1**.
+
+Instead, PyMCU adopts the philosophy and API design of **MicroPython and CircuitPython** (specifically the `machine` and `board` modules) as its official user-facing standard library. This ensures that code written for PyMCU looks familiar to developers coming from the broader Python-on-hardware ecosystem, even though it executes entirely differently.
+:::
+
 This page lists every known unsupported feature, explains *why* it cannot be compiled, and
 suggests the idiomatic PyMCU alternative where one exists.
 

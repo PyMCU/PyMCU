@@ -333,6 +333,16 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## v0.12 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; GC-managed; `append()`, `len()`, `x[i]`, `for v in x:`. Overflow triggers automatic realloc (capacity × 2). |
+
+---
+
 ## v0.11 — Implemented
 
 ### CLI / Driver
@@ -369,8 +379,8 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | Feature | Notes |
 |---------|-------|
 | `machine.Timer(id, period, callback)` | ✅ Implemented — CTC mode on Timer1; period in ms; callback as ISR |
-| `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API names |
-| `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
+| `busio.SPI` / `busio.I2C` for CP flavor | ✅ Implemented | Wraps existing HAL under CircuitPython API names |
+| `neopixel` driver (CP flavor) | ✅ Implemented | WS2812 bit-bang via `neopixel.NeoPixel` API |
 
 ---
 
@@ -378,6 +388,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Effort | Why |
 |---------|--------|-----|
+| **MicroPython/CircuitPython API Alignment** | High Priority | Standardize the user-facing API for portability and ease of use. This is the main focus. |
 | `fixed16` (Q8.8 fixed-point) | ~1 week | Float-like sensor math without FPU |
 | PIC18 codegen | ~2 weeks | Extend backend for PIC18Fxxxx family |
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
