@@ -5,7 +5,9 @@ from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH, SREG
 @inline
 def adc_channel_admux(channel: str) -> uint8:
     # Returns the ADMUX register value for the given AVR pin name.
-    # Bits 7:6 = REFS1:0 = 01 (AVcc reference); bits 3:0 = MUX3:0 = channel.
+    # External channels: bits 7:6 = REFS1:0 = 01 (AVcc reference);
+    #                    bits 3:0 = MUX3:0 = channel number.
+    # Internal temp sensor (ch8): REFS1:0 = 11 (internal 1.1V); MUX = 1000.
     # Folded at compile time when channel is a const[str].
     match channel:
         case "PC0":
@@ -20,6 +22,12 @@ def adc_channel_admux(channel: str) -> uint8:
             return 0x44
         case "PC5":
             return 0x45
+        case "TEMP":
+            # Internal temperature sensor: REFS1:0=11 (1.1V), MUX=1000 (ch8)
+            # ADMUX = 0b11001000 = 0xC8
+            return 0xC8
+        case "ADC8":
+            return 0xC8
         case _:
             return 0x40
 
