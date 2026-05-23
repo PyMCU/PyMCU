@@ -28,6 +28,7 @@ firmware that should remain runnable on a real MicroPython board.
 | {ref}`mp-uart-echo` | `machine.UART`, `machine.Pin` |
 | {ref}`mp-adc-read` | `machine.ADC`, `machine.UART` |
 | {ref}`mp-dht-sensor` | `machine.Pin`, local DHT11 driver |
+| {ref}`mp-ticks-ms` | `utime.ticks_ms`, `utime.ticks_diff` |
 | {ref}`mp-signal-led` | `machine.Signal`, active-low logic |
 | {ref}`mp-pwm-fade` | `machine.PWM` (hardware) + soft PWM |
 

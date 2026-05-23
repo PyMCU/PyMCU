@@ -439,42 +439,35 @@ The value is a compile-time constant derived from `f_cpu` in `pyproject.toml`.
 
 ```python
 from utime import sleep_ms, sleep_us, sleep, ticks_ms, ticks_diff
+from pymcu.types import uint32
 
 sleep_ms(500)       # busy-wait 500 ms  (uses _delay_ms loop)
 sleep_us(100)       # busy-wait 100 µs
 sleep(1)            # 1 second (integer only — no float on AVR)
 
-t0: uint16 = ticks_ms()              # returns 0 (see note below)
-elapsed: uint16 = ticks_diff(ticks_ms(), t0)
+t0: uint32 = ticks_ms()
+sleep_ms(200)
+elapsed: uint32 = ticks_diff(ticks_ms(), t0)   # elapsed ≈ 200
 ```
 
 :::{note}
-`ticks_ms()` returns 0 — there is no free-running millisecond counter by default.
-To maintain a real `millis()` counter, set up a Timer interrupt and increment a global:
+`ticks_ms()` requires the **millis counter** to be running. The `pymcu build` driver
+detects `ticks_ms()` usage and automatically injects `millis_init()` before your code
+runs — no manual setup needed. This is the same auto-injection pattern used for
+`print()` / UART initialisation.
 
-```python
-from machine import Timer
-from pymcu.types import uint32, interrupt
-
-_ms: uint32 = 0
-
-@interrupt(0x001A)    # TIMER1_COMPA
-def _tick():
-    global _ms
-    _ms += 1
-
-Timer(1, prescaler=64).irq(_tick, Timer.IRQ_COMPA)
-Timer(1, prescaler=64).start()
-```
+`millis_init()` configures **Timer0** in normal overflow mode at prescaler 64 (~1 ms
+resolution at 16 MHz). Do not use Timer0 for PWM or CTC in the same project when
+`ticks_ms()` is active. `delay_ms()` / `delay_us()` are unaffected (software busy-loop).
 :::
 
-| Function | Equivalent |
+| Function | Notes |
 |---|---|
-| `sleep_ms(n)` | `delay_ms(n)` |
-| `sleep_us(n)` | `delay_us(n)` |
-| `sleep(n)` | `delay_ms(n * 1000)` |
-| `ticks_ms()` | Returns 0 (stub) |
-| `ticks_diff(a, b)` | `a - b` |
+| `sleep_ms(n)` | Busy-wait via `_delay_ms` loop |
+| `sleep_us(n)` | Busy-wait via `_delay_us` loop |
+| `sleep(n)` | Integer seconds (`delay_ms(n * 1000)`) |
+| `ticks_ms()` | Milliseconds since boot — Timer0 counter |
+| `ticks_diff(a, b)` | `a - b` with uint32 wrap-around |
 
 ---
 
@@ -683,7 +676,7 @@ tim.start()
 | RAM overhead | ~10–40 KB | ~0 bytes (ZCA, compile-time expansion) |
 | `Pin.irq(handler=cb)` | Supported | Hardware config only — use `@interrupt` for ISR |
 | `Timer(period=ms, callback=cb)` | Supported | Use `Timer.irq(fn, trigger)` + `Timer.start()` |
-| `ticks_ms()` | Hardware free-running counter | Returns 0 — set up Timer ISR for real `millis` |
+| `ticks_ms()` | Hardware free-running counter | Timer0 counter via auto-injected `millis_init()` |
 | `float` arithmetic | Full support | Soft-float (~200–400 cycles per op) |
 | `f"..."` runtime format | Supported | Compile-time string constants only |
 | `try / except` | Supported | Not available — use sentinel return values |

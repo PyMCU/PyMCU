@@ -168,6 +168,47 @@ driver is compiled to a ~30-instruction timing loop with no heap allocation.
 
 ---
 
+(mp-ticks-ms)=
+## Elapsed time with `ticks_ms()`
+
+Measure elapsed time using `ticks_ms()` and `ticks_diff()`. The build driver
+automatically initialises the Timer0 millisecond counter when `ticks_ms()` is
+detected — no manual setup required.
+
+```python
+from machine import Pin, UART
+from utime import ticks_ms, ticks_diff
+from pymcu.types import uint32
+
+def main():
+    uart = UART(0, 9600)
+    led  = Pin(13, Pin.OUT)
+
+    uart.println("TICKS DEMO")
+
+    while True:
+        t0: uint32 = ticks_ms()
+        led.high()
+        # Simulate some work
+        busy: uint32 = 0
+        while busy < 10000:
+            busy = busy + 1
+        led.low()
+        elapsed: uint32 = ticks_diff(ticks_ms(), t0)
+        uart.write_str("ms=")
+        uart.write_hex(elapsed & 0xFF)
+        uart.write('\n')
+```
+
+:::{note}
+`millis_init()` is auto-injected by `pymcu build` when `ticks_ms()` usage is
+detected — identical to how UART is pre-initialised for `print()`. Timer0 is
+used as the free-running counter. Do not use Timer0 for PWM or CTC in the
+same project when `ticks_ms()` is active.
+:::
+
+---
+
 (mp-signal-led)=
 ## Signal (active-low LED)
 
