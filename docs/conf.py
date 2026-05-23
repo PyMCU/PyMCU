@@ -39,11 +39,15 @@ myst_heading_anchors = 4
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 html_css_files = ["css/custom.css"]
-html_logo = "_static/images/logo.svg"
 html_favicon = "_static/images/favicon.svg"
 html_title = "PyMCU"
 
 html_theme_options = {
+    "logo": {
+        "image_light": "_static/images/logo-light.svg",
+        "image_dark": "_static/images/logo-dark.svg",
+        "alt_text": "PyMCU",
+    },
     "github_url": "https://github.com/pymcu/pymcu",
     "navbar_align": "left",
     "navbar_end": ["navbar-icon-links", "theme-switcher"],
