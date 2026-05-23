@@ -49,4 +49,7 @@ public class CompilationContext(CompilerOptions options)
     public bool IsTargetEstablished { get; set; }
 
     public List<ProgramNode> LinearImports { get; } = [];
+
+    // Set by GcAnalysisPhase when GC_REF values are found in the IR.
+    public bool ProgramNeedsGc { get; set; } = false;
 }

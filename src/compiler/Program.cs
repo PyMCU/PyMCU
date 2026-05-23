@@ -46,6 +46,7 @@ public static class Program
             .AddPhase(new Pipeline.Phases.ParsingPhase())
             .AddPhase(new Pipeline.Phases.FrontendResolutionPhase(moduleLoader, graphBuilder))
             .AddPhase(new Pipeline.Phases.IrGenerationPhase())
+            .AddPhase(new Pipeline.Phases.GcAnalysisPhase())
             .AddPhase(backendPhase);
 
         return driver.Run(options);
