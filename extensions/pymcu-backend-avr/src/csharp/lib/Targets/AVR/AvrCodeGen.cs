@@ -1317,10 +1317,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             CompileFloatBinary(b);
             return;
         }
-        // For Div/Mod, the operation width is determined by the source operand size,
-        // not the destination size (e.g. uint16 / 10 -> uint8 must divide as 16-bit).
+        // For Div/Mod and shift ops the source may be wider than the destination
+        // (e.g. uint16 >> 8 → uint8 must operate as 16-bit to read the high byte).
         var src1Type = GetValType(b.Src1);
-        var opType = b.Op is IrBinOp.Div or IrBinOp.FloorDiv or IrBinOp.Mod
+        var opType = (b.Op is IrBinOp.Div or IrBinOp.FloorDiv or IrBinOp.Mod
+                             or IrBinOp.RShift or IrBinOp.LShift or IrBinOp.BitAnd
+                             or IrBinOp.BitOr or IrBinOp.BitXor)
                      && src1Type.SizeOf() > type.SizeOf()
             ? src1Type
             : type;
@@ -1459,6 +1461,35 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                         else { Emit("SUBI", "R24", $"{(byte)(val & 0xFF)}"); Emit("SBCI", "R25", $"{(byte)((val >> 8) & 0xFF)}"); }
                         usedImm = true;
                         break;
+                    case IrBinOp.RShift:
+                    {
+                        int byteShift = val / 8;
+                        int bitShift  = val % 8;
+                        bool s16 = IsSignedType(opType);
+                        if (byteShift >= 2)
+                        {
+                            if (s16) { Emit("MOV","R24","R25"); Emit("LSL","R24"); Emit("SBC","R24","R24"); Emit("CLR","R25"); }
+                            else { Emit("CLR","R24"); Emit("CLR","R25"); }
+                        }
+                        else if (byteShift == 1) { Emit("MOV","R24","R25"); Emit("CLR","R25"); }
+                        for (int i = 0; i < bitShift; i++)
+                        {
+                            if (s16) Emit("ASR","R25"); else Emit("LSR","R25");
+                            Emit("ROR","R24");
+                        }
+                        usedImm = true;
+                        break;
+                    }
+                    case IrBinOp.LShift:
+                    {
+                        int byteShift = val / 8;
+                        int bitShift  = val % 8;
+                        if (byteShift >= 2) { Emit("CLR","R24"); Emit("CLR","R25"); }
+                        else if (byteShift == 1) { Emit("MOV","R25","R24"); Emit("CLR","R24"); }
+                        for (int i = 0; i < bitShift; i++) { Emit("LSL","R24"); Emit("ROL","R25"); }
+                        usedImm = true;
+                        break;
+                    }
                 }
             }
         }
