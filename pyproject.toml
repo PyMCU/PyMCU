@@ -36,6 +36,10 @@ pymcu-backend-avr = {path = "extensions/pymcu-backend-avr", editable = true}
 [project.scripts]
 pymcu = "driver.main:run_cli"
 
+[project.entry-points."pymcu.programmers"]
+avrdude = "driver.programmers.avrdude:AvrdudeProgrammer"
+pk2cmd  = "driver.programmers.pk2cmd:Pk2cmdProgrammer"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/driver"]
 # Include the native binary as a non-Python artifact

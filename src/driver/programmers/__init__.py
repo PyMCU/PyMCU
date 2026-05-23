@@ -26,20 +26,32 @@
 
 from typing import Optional
 from rich.console import Console
+from importlib.metadata import entry_points
 from .base import HardwareProgrammer
 from .pk2cmd import Pk2cmdProgrammer
 from .avrdude import AvrdudeProgrammer
 
 def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
     """
-    Factory method to return the appropriate programmer instance.
-    Currently supports:
-    - pk2cmd (PICKit 2)
-    - avrdude (AVR/Arduino)
+    Return the programmer instance for the given name.
+
+    Discovery order:
+    1. Entry-point plugins registered under the ``pymcu.programmers`` group.
+       Third-party packages register via pyproject.toml:
+           [project.entry-points."pymcu.programmers"]
+           my-prog = "my_package.programmer:MyProgrammer"
+    2. Built-in programmers bundled with the pymcu driver (avrdude, pk2cmd).
     """
+    eps = entry_points(group="pymcu.programmers")
+    for ep in eps:
+        if ep.name == name:
+            cls = ep.load()
+            return cls(console)
+
     if name == "pk2cmd":
         return Pk2cmdProgrammer(console)
     elif name == "avrdude":
         return AvrdudeProgrammer(console)
-    
+
     return None
+
