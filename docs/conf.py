@@ -4,8 +4,8 @@ import sys
 project = "PyMCU"
 copyright = "2024, PyMCU Contributors"
 author = "PyMCU Contributors"
-release = "0.10"
-version = "0.10"
+release = "0.1"
+version = "0.1"
 
 extensions = [
     "myst_parser",

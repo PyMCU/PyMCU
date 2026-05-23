@@ -56,7 +56,7 @@ def main():
 
 ## `millis()` and `micros()`
 
-For elapsed-time measurements (available from v0.9), use `millis()` and `micros()`:
+For elapsed-time measurements, use `millis()` and `micros()`:
 
 ```python
 from pymcu.time import millis, micros

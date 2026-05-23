@@ -82,7 +82,7 @@ def main():
 
 ---
 
-## Internal temperature sensor *(v0.11)*
+## Internal temperature sensor
 
 The ATmega328P has a built-in temperature sensor connected to ADC channel 8. No external
 components are required.

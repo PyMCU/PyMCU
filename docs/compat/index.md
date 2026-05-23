@@ -17,7 +17,7 @@ AVR machine code, with zero interpreter overhead.
 `machine`, `utime`, `micropython` modules. Compatible with MicroPython scripts targeting
 GPIO, UART, SPI, I2C, ADC, Timer, WDT, and power management.
 
-**Status:** v0.11 — production ready
+**Status:** Available — production ready
 :::
 
 :::{grid-item-card} CircuitPython
@@ -27,7 +27,7 @@ GPIO, UART, SPI, I2C, ADC, Timer, WDT, and power management.
 `board`, `digitalio`, `analogio`, `pwmio`, `busio`, `time` modules. Compatible with
 CircuitPython scripts targeting Arduino Uno pin names.
 
-**Status:** v0.11 — GPIO, ADC, PWM complete; SPI/I2C v0.12
+**Status:** GPIO, ADC, PWM complete; SPI/I2C planned
 :::
 ::::
 

@@ -112,7 +112,7 @@ def main():
             uart.write(b)
 ```
 
-### Read a line of text *(v0.11)*
+### Read a line of text
 
 ```python
 from pymcu.hal.uart import UART

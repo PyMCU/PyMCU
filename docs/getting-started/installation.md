@@ -97,7 +97,7 @@ Verify:
 
 ```bash
 pymcu --version
-# pymcu, version 0.11.0
+# pymcu, version 0.1.0
 ```
 
 ---

@@ -45,7 +45,7 @@ pymcu flash
 
 ---
 
-## Supported modules — v0.11
+## Supported modules
 
 | Module | API surface | Status |
 |---|---|---|
@@ -58,9 +58,9 @@ pymcu flash
 | `busio.UART` | `write`, `read`, `baudrate` | ✅ Complete |
 | `pwmio.PWMOut` | `duty_cycle`, `frequency`, `deinit` | ✅ Complete |
 | `time` | `sleep_ms`, `sleep_us`, `sleep` (integer) | ✅ Complete |
-| `busio.SPI` | Full SPI bus | 🔜 Planned v0.12 |
-| `busio.I2C` | Full I2C bus | 🔜 Planned v0.12 |
-| `neopixel.NeoPixel` | WS2812 driver | 🔜 Planned v0.12 |
+| `busio.SPI` | Full SPI bus | 🔜 Planned |
+| `busio.I2C` | Full I2C bus | 🔜 Planned |
+| `neopixel.NeoPixel` | WS2812 driver | 🔜 Planned |
 
 ---
 
@@ -240,8 +240,8 @@ if val == -32768:    # driver-specific error sentinel
 | `float` arithmetic | Full support | Soft-float (AVR, ~200–400 cycles/op) |
 | `f"..."` runtime format | Supported | Compile-time constants only |
 | `try / except` | Supported | Not available — use error-sentinel return values |
-| `busio.SPI` / `busio.I2C` | Supported | 🔜 Planned v0.12 |
-| `neopixel` | Supported | 🔜 Planned v0.12 |
+| `busio.SPI` / `busio.I2C` | Supported | 🔜 Planned |
+| `neopixel` | Supported | 🔜 Planned |
 | `supervisor`, `storage` | Supported | Not planned |
 | Dynamic pin assignment | Supported | Compile-time constant required |
 | Target hardware | SAMD21, RP2040, ESP32, … | ATmega328P (Arduino Uno) |

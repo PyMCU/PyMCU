@@ -1,65 +1,68 @@
 # Changelog
 
-## v0.11 *(unreleased)*
-
-### Standard Library
-
-- **`UART.read_line(buf, max_len)`** — Read until `\n` or `max_len` bytes into a fixed-size `uint8[N]` buffer; returns byte count
-- **`DS18B20` driver** (`pymcu.drivers.ds18b20`) — 1-Wire temperature sensor; returns raw 12-bit value in 1/16 °C units
-- **`machine.Timer`** (`pymcu.compat.micropython`) — MicroPython-compatible timer IRQ API (`timer.irq(handler, trigger)`)
-- **`adc_read_temp_raw()`** (`pymcu.hal.adc`) — ATmega328P internal temperature sensor on ADC channel 8 (no external component)
-- **LM35 driver** (`pymcu.drivers.lm35`) — Analog temperature sensor over ADC; returns centidegrees
-
-### Compiler
-
-- **`uint16 >> n → uint8` widening shift fix** — right-shift result no longer widens to `uint16` when the rhs forces a one-byte result; fixes truncation in packed-data routines
-
-### Toolchain
-
-- **Programmer plugin system** — custom programmer backends can be registered via `pymcu.plugins`; no longer requires patching the built-in flash command
-
----
-
-## Unreleased — v0.2 (alpha)
+## v0.1 — First Public Alpha
 
 ### Language
 
-- `for i in range(n)` loop with runtime or compile-time bound
-- `for x in array` iteration over fixed-size arrays
-- `for i, x in enumerate(iterable)` with compile-time index counter
-- `match / case` OR patterns (`case 1 | 2:`)
-- Single-quoted string literals
-- `import X as Y` alias
-- `//` floor division operator
-- Fixed-size arrays `arr: uint8[N]`, constant-index and variable-index access
-- Tuple literals and tuple unpacking `a, b = func()`
-- Multi-return functions `def f() -> (uint8, uint8): return (q, r)`
-- `@property` / `@name.setter` decorators
-- Single-level ZCA class inheritance
-- `None` literal (folds to `Constant{-1}`)
+- `if / elif / else`, `while`, `for`, `match / case`, `def`, `class`, `return`, `pass`, `global`, `with`, `assert`, `raise`
+- `for i in range(n)`, `for x in array`, `for i, x in enumerate(iterable)`, `for x, y in zip(a, b)`
+- Fixed-size arrays `arr: uint8[N]`, constant and variable indexing, slice indexing
+- Tuple literals, tuple unpacking, multi-return functions
+- `match / case` OR patterns, guard `if cond`, sequence patterns, capture patterns
+- `@property` / `@name.setter`, single-level ZCA class inheritance, `super()`, `class Foo(Enum)`
+- `with obj:` / `with a as x, b as y:`, `lambda x: expr` (no capture), `nonlocal` in `@inline`
+- `in` / `not in`, `is` / `is not`, `divmod`, `bitcast`, `hex`, `bin`, `sum`, `any`, `all`
+- `bytes` literal `b"\x00"`, `bytearray`, `int.from_bytes`
+- Raw strings `r"\n"`, `str(n)` compile-time, `pow` / `**`
+- Extended unpacking `first, *rest = tup`, nested list comprehensions, `if` filter in comprehensions
+- `__name__` guard (`if __name__ == "__main__":`)
+- Dunder operator overloading (`__add__`, `__sub__`, comparisons, bitwise, `__len__`, etc.)
+- `@extern("symbol")` — external C symbol interop with AVR ABI
 
-### Compiler
+### MCU extensions
 
-- Variable→Constant propagation in optimizer
-- Fixed inline parameter scope shadowing in `resolve_binding`
-- Inline multi-return result variables use 1-dot names
+- `uint8 / int8 / uint16 / int16 / uint32 / int32` typed annotations (required)
+- `int` built-in maps to `int16`
+- `ptr[T]` / `const[T]`, `asm("instr")`, `@inline`, `@interrupt(vector)`
+- `delay_ms(n)` / `delay_us(n)`, `millis()` / `micros()`
+- `__CHIP__` / `__FREQ__` compile-time constants
 
-### Standard Library
+### HAL (ATmega328P)
 
-- `Pin.pulse_in(state, timeout_us)` for pulse measurement
-- `UART.print_byte(value)` for decimal uint8 output
-- `DHT11` driver (`pymcu.drivers.dht11`)
-- `arduino_uno` board pin definitions (`pymcu.boards.arduino_uno`)
+- `pymcu.hal.gpio` — `Pin`: high/low/toggle/value/irq/pulse_in
+- `pymcu.hal.uart` — `UART`: write/read/read_line/write_str/println/print_byte/available + RX interrupt
+- `pymcu.hal.adc` — `AnalogPin`: poll + interrupt; `adc_read_temp_raw()` internal sensor
+- `pymcu.hal.timer` — `Timer(n, prescaler)`, Timer0/1/2, CTC mode
+- `pymcu.hal.pwm` — `PWM`: start/stop/set_duty/set_freq
+- `pymcu.hal.spi` — `SPI` + `SoftSPI`
+- `pymcu.hal.i2c` — `I2C` + `SoftI2C`, `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem_into`
+- `pymcu.hal.eeprom` — `EEPROM`: write/read
+- `pymcu.hal.watchdog` — `Watchdog`: enable/disable/feed
+- `pymcu.hal.power` — sleep_idle / adc_noise / power_down / power_save / standby
 
----
+### Drivers
 
-## v0.1 — Initial Release
+- `pymcu.drivers.dht11` — DHT11 temperature + humidity
+- `pymcu.drivers.ds18b20` — DS18B20 1-Wire precision temperature (12-bit)
+- `pymcu.drivers.lm35` — LM35 analog temperature (ADC)
+- `pymcu.drivers.hd44780` — HD44780 LCD (4-bit parallel)
+- `pymcu.drivers.ssd1306` — SSD1306 OLED (I2C, 128×64)
+- `pymcu.drivers.max7219` — MAX7219 7-segment display (SPI)
+- `pymcu.drivers.bmp280` — BMP280 barometer (I2C)
+- `pymcu.drivers.neopixel` — WS2812 NeoPixel
 
-- AVR (ATmega328P) backend
-- Core language: `if/elif/else`, `while`, `match/case`, `def`, `class`, `return`
-- GPIO, UART, ADC, Timer, PWM, SPI, I2C HAL modules
-- `@inline`, `@interrupt` decorators
-- `ptr[T]` and `const[T]` type system
-- `delay_ms` / `delay_us` busy-wait delays
-- 31 example projects
-- 154 integration tests (AVR8Sharp simulator)
+### Compatibility layers
+
+- `pymcu.compat.micropython` — `machine`, `utime`, `micropython` modules
+- `pymcu.compat.circuitpython` — `board`, `digitalio`, `analogio`, `pwmio`, `time` modules
+
+### Boards
+
+- `pymcu.boards.arduino_uno` — D0–D13, A0–A5, LED_BUILTIN
+- `pymcu.boards.arduino_mega` — D0–D53, A0–A15, LED_BUILTIN
+- `pymcu.boards.arduino_leonardo` — D0–D13, A0–A5, LED_BUILTIN
+
+### Toolchain
+
+- Programmer plugin system — custom backends via `pymcu.plugins` entry-point group
+- `[tool.pymcu.ffi]` — C/C++ interop: sources, include_dirs, cflags

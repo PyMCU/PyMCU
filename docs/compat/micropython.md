@@ -47,7 +47,7 @@ compiler — no need to add `if __name__ == "__main__":`.
 
 ---
 
-## Supported modules — v0.11
+## Supported modules
 
 | Module | API surface | Status |
 |---|---|---|
@@ -57,7 +57,7 @@ compiler — no need to add `if __name__ == "__main__":`.
 | `machine.PWM` | `freq`, `duty_u16`, `duty`, `init`, `deinit` | ✅ Complete |
 | `machine.SPI` | `write`, `read`, `write_readinto` | ✅ Complete |
 | `machine.I2C` | `scan`, `writeto`, `readfrom` | ✅ Complete |
-| `machine.Timer` | `__init__`, `init`, `deinit`, `start`, `irq` | ✅ v0.11 |
+| `machine.Timer` | `__init__`, `init`, `deinit`, `start`, `irq` | ✅ |
 | `machine.WDT` | `__init__`, `feed` | ✅ Complete |
 | `machine.Signal` | `on`, `off`, `value` | ✅ Complete |
 | `machine.mem8` / `machine.mem16` | `[]` get/set | ✅ Complete |
@@ -154,7 +154,7 @@ val: uint16 = adc.read_u16()   # 0–65472 (scaled ×64 to approximate 0–65535
 
 ---
 
-### `machine.PWM` *(v0.11 — frequency control)*
+### `machine.PWM`
 
 ```python
 from machine import PWM, Pin
@@ -174,7 +174,7 @@ OC0A (D6) and OC0B (D5) simultaneously since they share Timer0.
 
 ---
 
-### `machine.Timer` *(v0.11)*
+### `machine.Timer`
 
 ```python
 from machine import Timer
