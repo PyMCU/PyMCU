@@ -118,6 +118,9 @@ public partial class IRGenerator
     private Dictionary<string, int> arraySizes = new(); // qualified_name → element count
     private Dictionary<string, DataType> arrayElemTypes = new(); // qualified_name → element DataType
 
+    // Heap-allocated list[T] support: maps qualified_name → element DataType (GC_REF variables)
+    private Dictionary<string, DataType> listVarElemTypes = new();
+
     // Function parameters declared as bytearray (passed as pointer, no length).
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();

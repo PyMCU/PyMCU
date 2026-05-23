@@ -97,6 +97,12 @@ public partial class IRGenerator
                         }
                     }
                 }
+                else if (type.StartsWith("list[") && type.EndsWith("]"))
+                {
+                    string elemTypeName = type.Substring(5, type.Length - 6);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+                    listVarElemTypes[name] = elemDt;
+                }
                 else
                 {
                     int bracket = type.IndexOf('[');
@@ -563,17 +569,27 @@ public partial class IRGenerator
             if (stmt == null) return;
             if (stmt is AnnAssign ann)
             {
-                int br = ann.Annotation.IndexOf('[');
-                int cl = ann.Annotation.LastIndexOf(']');
-                if (br != -1 && cl != -1)
+                if (ann.Annotation.StartsWith("list[") && ann.Annotation.EndsWith("]"))
                 {
-                    string inner = ann.Annotation.Substring(br + 1, cl - br - 1);
-                    if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                    string elemTypeName = ann.Annotation.Substring(5, ann.Annotation.Length - 6);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+                    listVarElemTypes[prefix + ann.Target] = elemDt;
+                    // list variables are NOT fixed-size arrays; do not add to localArrays
+                }
+                else
+                {
+                    int br = ann.Annotation.IndexOf('[');
+                    int cl = ann.Annotation.LastIndexOf(']');
+                    if (br != -1 && cl != -1)
+                    {
+                        string inner = ann.Annotation.Substring(br + 1, cl - br - 1);
+                        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                            localArrays.Add(prefix + ann.Target);
+                    }
+
+                    if (ann.Annotation == "bytearray")
                         localArrays.Add(prefix + ann.Target);
                 }
-
-                if (ann.Annotation == "bytearray")
-                    localArrays.Add(prefix + ann.Target);
             }
             else if (stmt is VarDecl vd)
             {
