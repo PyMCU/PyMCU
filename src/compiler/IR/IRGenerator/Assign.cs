@@ -40,6 +40,23 @@ public partial class IRGenerator
                     return;
                 }
 
+                // list[T] index assignment: x[i] = val → store at GC heap offset 2 + i*elemSize
+                {
+                    string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                                 : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                                 : "";
+                    if (!string.IsNullOrEmpty(listQ))
+                    {
+                        DataType elemDt = listVarElemTypes[listQ];
+                        Val listPtr = new Variable(listQ, DataType.GC_REF);
+                        Val idxVal = VisitExpression(indexExpr.Index);
+                        Val srcVal = VisitExpression(stmt.Value);
+                        Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                        Emit(new StoreIndirect(srcVal, elemAddr));
+                        return;
+                    }
+                }
+
                 if (arraySizes.ContainsKey(qualified))
                 {
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
@@ -832,6 +849,59 @@ public partial class IRGenerator
             return;
         }
 
+        // list[T] annotation → heap-allocated GC list
+        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
+        {
+            string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
+            DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+            int elemSize = elemDt.SizeOf();
+
+            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.Target
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+
+            listVarElemTypes[qualified] = elemDt;
+            variableTypes[qualified] = DataType.GC_REF;
+
+            if (stmt.Value != null)
+            {
+                int capacity = 8;
+                List<Val>? initElements = null;
+
+                if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
+                    calleeV.Name == "list")
+                {
+                    if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                        capacity = capLit.Value;
+                }
+                else if (stmt.Value is ListExpr le)
+                {
+                    initElements = new List<Val>();
+                    foreach (var e in le.Elements)
+                        initElements.Add(VisitExpression(e));
+                    if (le.Elements.Count > capacity) capacity = le.Elements.Count;
+                }
+
+                int allocSize = 2 + capacity * elemSize;
+                Temporary tmpPtr = MakeTemp(DataType.GC_REF);
+                Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
+
+                int initCount = initElements?.Count ?? 0;
+                EmitListStore(tmpPtr, 0, new Constant(initCount));
+                EmitListStore(tmpPtr, 1, new Constant(capacity));
+
+                if (initElements != null)
+                {
+                    for (int k = 0; k < initElements.Count; k++)
+                        EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
+                }
+
+                Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
+            }
+
+            return;
+        }
+
         int bracket = stmt.Annotation.IndexOf('[');
         int close = stmt.Annotation.LastIndexOf(']');
         if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1)
@@ -1249,6 +1319,43 @@ public partial class IRGenerator
 
             Emit(new BitWrite(tgtVal, bit, result));
         }
+    }
+
+    // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
+    // For offset > 0, emits a Binary ADD to compute the address then StoreIndirect.
+    internal void EmitListStore(Val basePtr, int offset, Val value)
+    {
+        if (offset == 0)
+        {
+            Emit(new StoreIndirect(value, basePtr));
+            return;
+        }
+
+        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                       : basePtr;
+        Temporary addrTmp = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        Emit(new StoreIndirect(value, addrTmp));
+    }
+
+    // Loads a UINT8 value from `basePtr + offset` into a new Temporary.
+    internal Temporary EmitListLoad(Val basePtr, int offset, DataType elemType = DataType.UINT8)
+    {
+        Temporary dst = MakeTemp(elemType);
+        if (offset == 0)
+        {
+            Emit(new LoadIndirect(basePtr, dst));
+            return dst;
+        }
+
+        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                       : basePtr;
+        Temporary addrTmp = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        Emit(new LoadIndirect(addrTmp, dst));
+        return dst;
     }
 
     private void VisitExprStmt(ExprStmt stmt) => VisitExpression(stmt.Expr);
