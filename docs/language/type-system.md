@@ -1,3 +1,4 @@
+(language-type-system)=
 # Type System
 
 PyMCU's type system maps directly to MCU register widths and memory layout. Every variable

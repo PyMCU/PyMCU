@@ -668,6 +668,10 @@ buf: uint8[8] = [0,0,0,0,0,0,0,0]   # PyMCU — SRAM fixed array
 
 ### Replace `machine.mem8` with typed `ptr` (optional but safer)
 
+`machine.mem8[addr]` works in PyMCU, but the {ref}`ptr[T] type <language-type-system>`
+is preferred for memory-mapped I/O — it is compile-time checked and documents the intent
+of each register access.
+
 ```python
 machine.mem8[0x25] = 0xFF          # works in PyMCU — raw mem access
 from pymcu.types import ptr, uint8
@@ -697,20 +701,18 @@ The `Timer(period=ms, callback=fn)` syntax is otherwise identical to MicroPython
 
 ## Differences from real MicroPython
 
-| Feature | MicroPython | PyMCU compat layer |
+These are the **actual gaps and trade-offs** — things that work differently or are
+unavailable. Anything not listed here behaves identically to standard MicroPython.
+
+| Feature | MicroPython | PyMCU |
 |---|---|---|
-| Execution model | Bytecode interpreter (~256 KB flash) | **Native compiler — zero runtime** |
-| RAM overhead | ~10–40 KB | ~0 bytes (ZCA, compile-time expansion) |
-| `Pin.irq(handler=cb)` | Supported | ✅ Supported — `Pin.irq(handler=cb, trigger=Pin.IRQ_FALLING)` |
-| `Timer(period=ms, callback=cb)` | Supported | ✅ Supported — `Timer(1, period=100, callback=fn)` |
-| `ticks_ms()` | Hardware free-running counter | ✅ Timer0 counter via auto-injected `millis_init()` |
-| `float` arithmetic | Full support | Soft-float (~200–400 cycles per op) |
-| `f"..."` runtime format | Supported | Compile-time string constants only |
-| `try / except` | Supported | Not available — use sentinel return values |
-| `bytearray` | Dynamic heap | Fixed-size `uint8[N]` SRAM arrays |
-| `I2C.scan()` | Returns list of addresses | Returns count (no heap) |
-| `machine.mem8[addr]` | Supported | ✅ Supported (shim over `ptr`) |
-| `avr.EEPROM` | Not in MicroPython core | ✅ AVR-specific extension |
-| `avr.SoftSPI` / `avr.SoftI2C` | Not in MicroPython core | ✅ AVR-specific extension |
-| Target hardware | STM32, RP2040, ESP32, … | ATmega328P (Arduino Uno) |
+| Execution model | Bytecode interpreter | **Native compiled — zero runtime overhead** |
+| RAM overhead | ~10–40 KB for the VM | ~0 bytes (static dispatch, no GC) |
+| `float` arithmetic | Full hardware/soft-float | Soft-float (~200–400 cycles per op) |
+| `f"..."` format strings | Runtime evaluation | Compile-time constants only |
+| `try / except` | Supported | ❌ Not available — use sentinel return values |
+| `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
+| `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
+| Lambda expressions | Supported | ❌ Not available — use named functions |
+| Target hardware | STM32, RP2040, ESP32, … | ATmega328P (Arduino Uno / Nano) |
 
