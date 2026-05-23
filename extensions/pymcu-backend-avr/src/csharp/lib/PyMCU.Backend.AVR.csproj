@@ -12,4 +12,8 @@
     <ProjectReference Include="..\..\..\..\..\extensions\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\asm\gc_runtime.S" LogicalName="gc_runtime.S" />
+  </ItemGroup>
+
 </Project>
