@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, const, inline, Callable
+from pymcu.types import uint8, uint16, uint32, const, inline, Callable
 
 # ---- Unified Timer ZCA ----
 # IRQ mode constants (Timer.IRQ_OVF, Timer.IRQ_COMPA) select the interrupt
@@ -318,3 +318,70 @@ class Timer:  # noqa
                         else:
                             from pymcu.hal._timer.attiny85 import timer1_irq_setup
                             timer1_irq_setup(handler)
+
+    @inline
+    def reinit(self, prescaler: uint16):
+        # Re-apply the clock prescaler without stopping the timer first.
+        # Use this to change the prescaler after construction (e.g. from
+        # Timer.init(period=ms) auto-selection logic).
+        match __CHIP__.name:
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.atmega328p import timer0_init
+                        timer0_init(prescaler)
+                    case "t1":
+                        from pymcu.hal._timer.atmega328p import timer1_init
+                        timer1_init(prescaler)
+                    case "t2":
+                        from pymcu.hal._timer.atmega328p import timer2_init
+                        timer2_init(prescaler)
+            case "pic16f877a":
+                from pymcu.hal._timer.pic16f877a import timer0_init
+                timer0_init(prescaler)
+            case "pic16f18877":
+                from pymcu.hal._timer.pic16f18877 import timer0_init
+                timer0_init(prescaler)
+            case "pic16f84a":
+                from pymcu.hal._timer.pic16f84a import timer0_init
+                timer0_init(prescaler)
+            case "pic10f200":
+                from pymcu.hal._timer.pic10f200 import timer0_init
+                timer0_init(prescaler)
+            case "pic18f45k50":
+                from pymcu.hal._timer.pic18f45k50 import timer0_init
+                timer0_init(prescaler)
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_init
+                        timer0_init(prescaler)
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_init
+                        timer1_init(prescaler)
+
+
+# ---- Module-level millis / millis_init (free-running millisecond counter) ----
+# millis_init() must be called once at startup (or auto-injected by the build
+# driver when ticks_ms() usage is detected).  It configures Timer0 in normal
+# overflow mode and registers the ISR that increments the counter.
+#
+# Conflict: millis_init() owns Timer0.  Do NOT use Timer0 for PWM or other
+# purposes when millis / ticks_ms is active.  delay_ms() is unaffected
+# (it uses a software busy-loop, not a hardware timer).
+
+@inline
+def millis_init():
+    match __CHIP__.name:
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
+            from pymcu.hal._timer.atmega328p import millis_init as _mi
+            _mi()
+
+
+@inline
+def millis() -> uint32:
+    match __CHIP__.name:
+        case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
+            from pymcu.hal._timer.atmega328p import millis as _m
+            return _m()
+    return 0
