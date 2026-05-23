@@ -128,25 +128,37 @@ v = led()   # same as led.value()
 | `Pin.IRQ_FALLING` | 1 | Falling edge trigger |
 | `Pin.IRQ_RISING` | 2 | Rising edge trigger |
 
-Hardware interrupt configuration via `Pin.irq()` sets the trigger mode in the `EICRA`/`EIMSK`
-hardware registers. The ISR itself must be declared with `@interrupt`:
+Hardware interrupt configuration via `Pin.irq()`. Pass a `handler` directly — the
+build driver registers it as the hardware ISR for the corresponding INT vector.
 
 ```python
 from machine import Pin
-from pymcu.types import interrupt
+from pymcu.types import uint8
 
-count: int = 0
+count: uint8 = 0
 
-@interrupt(0x0002)           # INT0 vector — Arduino D2
 def on_press():
     global count
     count += 1
 
 def main():
     btn = Pin(2, Pin.IN, Pin.PULL_UP)
-    btn.irq(Pin.IRQ_FALLING)  # configures EICRA/EIMSK only
+    btn.irq(handler=on_press, trigger=Pin.IRQ_FALLING)   # INT0, falling edge
     while True:
         pass
+```
+
+The `handler` is passed as a keyword argument (MicroPython style) or positional.
+Under the hood, `Pin.irq()` calls `pymcu.hal.gpio.Pin.irq(trigger, handler)` which
+configures `EICRA`/`EIMSK` and registers the ISR at the correct AVR vector.
+
+`@interrupt` is still available for low-level control, but `Pin.irq(handler=cb)` is
+the idiomatic MicroPython-compatible form.
+
+```python
+# Both forms produce identical firmware:
+btn.irq(handler=on_press, trigger=Pin.IRQ_FALLING)   # MicroPython style
+btn.irq(Pin.IRQ_FALLING, on_press)                    # positional (HAL order)
 ```
 
 ---
@@ -275,22 +287,35 @@ for dynamic lists. Use `pymcu.hal.i2c.I2C` for `ping(addr)` to probe specific ad
 
 ```python
 from machine import Timer
-from pymcu.types import uint8, interrupt
+from pymcu.types import uint8
 
 ticks: uint8 = 0
 
-@interrupt(0x001A)    # TIMER1_COMPA vector address
 def on_tick():
     global ticks
     ticks += 1
 
 def main():
-    t = Timer(1, prescaler=64)    # Timer1, /64 prescaler → ~1 kHz tick at 16 MHz
-    t.irq(on_tick, Timer.IRQ_COMPA)
-    t.start()
+    # MicroPython style: period in ms, callback registered in one call
+    t = Timer(1, period=100, callback=on_tick)   # fires every 100 ms
+
+    # Low-level style (still works):
+    # t = Timer(1, prescaler=64)
+    # t.irq(on_tick, Timer.IRQ_COMPA)
+    # t.start()
+
     while True:
         pass
 ```
+
+`Timer(id, period=ms, callback=fn)` auto-selects a prescaler and OCR value for the
+requested period and registers the callback in one step — identical to the MicroPython
+API. Under the hood, `Timer.init(period=ms)` maps to:
+
+| `period` (ms) | Prescaler | OCR formula |
+|---|---|---|
+| ≤ 262 | 64 | `250 × period − 1` (exact at 16 MHz) |
+| ≤ 4194 | 1024 | `15 × period` (~0.6 ms error per step) |
 
 | Constant | Value | Description |
 |---|---|---|
@@ -650,21 +675,23 @@ PORTB: ptr[uint8] = ptr(0x25)      # typed, compile-time checked
 PORTB.value = 0xFF
 ```
 
-### Replace `Timer` callback lambdas with `@interrupt`
+### Replace `Timer` callback lambdas with named functions
 
 ```python
-# MicroPython
+# MicroPython — lambdas work here
 tim = Timer(period=100, mode=Timer.PERIODIC, callback=lambda t: led.toggle())
 
-# PyMCU — use @interrupt + irq() method
-@interrupt(0x001A)    # TIMER1_COMPA vector
+# PyMCU — named function required (no lambda support)
 def on_tick():
     led.toggle()
 
-tim = Timer(1, prescaler=64)
-tim.irq(on_tick, Timer.IRQ_COMPA)
-tim.start()
+tim = Timer(1, period=100, callback=on_tick)   # identical API otherwise
 ```
+
+:::{note}
+Lambda expressions are not supported in PyMCU. Use a named function instead.
+The `Timer(period=ms, callback=fn)` syntax is otherwise identical to MicroPython.
+:::
 
 ---
 
@@ -674,9 +701,9 @@ tim.start()
 |---|---|---|
 | Execution model | Bytecode interpreter (~256 KB flash) | **Native compiler — zero runtime** |
 | RAM overhead | ~10–40 KB | ~0 bytes (ZCA, compile-time expansion) |
-| `Pin.irq(handler=cb)` | Supported | Hardware config only — use `@interrupt` for ISR |
-| `Timer(period=ms, callback=cb)` | Supported | Use `Timer.irq(fn, trigger)` + `Timer.start()` |
-| `ticks_ms()` | Hardware free-running counter | Timer0 counter via auto-injected `millis_init()` |
+| `Pin.irq(handler=cb)` | Supported | ✅ Supported — `Pin.irq(handler=cb, trigger=Pin.IRQ_FALLING)` |
+| `Timer(period=ms, callback=cb)` | Supported | ✅ Supported — `Timer(1, period=100, callback=fn)` |
+| `ticks_ms()` | Hardware free-running counter | ✅ Timer0 counter via auto-injected `millis_init()` |
 | `float` arithmetic | Full support | Soft-float (~200–400 cycles per op) |
 | `f"..."` runtime format | Supported | Compile-time string constants only |
 | `try / except` | Supported | Not available — use sentinel return values |
