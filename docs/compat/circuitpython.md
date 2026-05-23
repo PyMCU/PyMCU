@@ -338,10 +338,10 @@ alarm.light_sleep_until_alarms(t)
 
 ```python
 import microcontroller
-from pymcu.types import uint32
+from pymcu.types import uint8, uint32
 
 freq: uint32 = microcontroller.cpu.frequency   # compile-time constant (e.g. 16000000)
-vcc: uint8   = microcontroller.cpu.voltage     # always 5 on 5 V AVR boards
+vcc:  uint8  = microcontroller.cpu.voltage     # always 5 on 5 V AVR boards
 microcontroller.delay_us(50)                   # busy-wait 50 µs
 microcontroller.reset()                        # watchdog reset
 ```
@@ -378,11 +378,16 @@ functionally implemented on ATmega328P (no factory temperature sensor or UID).
 |---|---|---|
 | `arduino_uno` | ATmega328P | ✅ Full support |
 | `arduino_nano` | ATmega328P | ✅ Same pins as Uno |
-| `attiny85` | ATtiny85 | ✅ 6-pin board definition |
-| `attiny84` | ATtiny84 | ✅ 12-pin board definition |
-| `attiny44` / `attiny24` / `attiny45` / `attiny25` | ATtiny family | ✅ Board definitions |
+| `arduino_mega` | ATmega2560 | ✅ D0–D53, A0–A15 |
+| `arduino_micro` | ATmega32U4 | ✅ Board definition |
+| `attiny85` | ATtiny85 | ✅ 8-pin DIP |
+| `attiny45` / `attiny25` | ATtiny45 / ATtiny25 | ✅ 8-pin DIP (smaller flash) |
+| `attiny84` | ATtiny84 | ✅ 14-pin DIP |
+| `attiny44` / `attiny24` | ATtiny44 / ATtiny24 | ✅ 14-pin DIP (smaller flash) |
+| `attiny2313` / `attiny4313` | ATtiny2313 / ATtiny4313 | ✅ 20-pin DIP |
+| `attiny13` / `attiny13a` | ATtiny13 / ATtiny13A | ✅ 8-pin DIP (1 KB flash) |
 | `digispark` | ATtiny85 | ✅ Digispark pin aliases |
-| `attiny2313` / `attiny4313` | ATtiny family | ✅ Board definitions |
+| `adafruit_trinket` | ATtiny85 | ✅ Trinket pin aliases |
 
 ---
 
@@ -438,7 +443,8 @@ if val == -32768:    # driver-specific error sentinel
 
 ```python
 # CircuitPython — lambdas work here
-timer = timer.Timer(period=100, callback=lambda t: led.toggle())
+from machine import Timer
+t = Timer(period=100, mode=Timer.PERIODIC, callback=lambda t: None)
 
 # PyMCU — named function required
 def on_tick():

@@ -24,10 +24,11 @@ GPIO, UART, SPI, I2C, ADC, Timer, WDT, and power management.
 :link: circuitpython
 :link-type: doc
 
-`board`, `digitalio`, `analogio`, `pwmio`, `busio`, `time` modules. Compatible with
-CircuitPython scripts targeting Arduino Uno pin names.
+`board`, `digitalio`, `analogio`, `pwmio`, `busio`, `neopixel`, `time`, `supervisor`,
+`alarm`, and `microcontroller` modules. Compatible with CircuitPython scripts targeting
+Arduino Uno, Arduino Mega, and ATtiny boards.
 
-**Status:** GPIO, ADC, PWM complete; SPI/I2C planned
+**Status:** Available — all core modules complete
 :::
 ::::
 
