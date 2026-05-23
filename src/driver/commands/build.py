@@ -151,8 +151,9 @@ def _load_extension_board_chips(flavor: str) -> dict[str, str]:
         return {}
 
 
-_PRINT_RE = re.compile(r'\bprint\s*\(')
-_UART_RE  = re.compile(r'\bUART\s*\(')
+_PRINT_RE    = re.compile(r'\bprint\s*\(')
+_UART_RE     = re.compile(r'\bUART\s*\(')
+_TICKS_MS_RE = re.compile(r'\bticks_ms\s*\(')
 
 
 def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool]:
@@ -178,6 +179,18 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool]:
     return has_print, has_uart
 
 
+def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
+    """Return True if any .py file in sources_dir calls ticks_ms()."""
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            text = py_file.read_text(encoding="utf-8", errors="ignore")
+            if _TICKS_MS_RE.search(text):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
     """Return a synthetic entry file with a UART-init preamble prepended.
 
@@ -196,6 +209,29 @@ def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
         preamble + entry_point.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    return synthetic
+
+
+def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> Path:
+    """Return a synthetic entry file with a millis_init() preamble prepended.
+
+    Called when ticks_ms() is detected in user sources and no explicit
+    millis_init() call is present.  Mirrors the print() / UART preamble
+    injection pattern: the build driver owns the setup, user code stays clean.
+
+    Note: millis_init() configures Timer0 in normal overflow mode at prescaler
+    64 (~1 ms resolution at 16 MHz).  Do not use Timer0 for PWM or CTC in the
+    same project when ticks_ms() is active.
+    """
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    synthetic = generated_dir / entry_point.name
+    preamble = (
+        "# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n"
+        "from pymcu.hal.timer import millis_init as _pymcu_millis_init\n"
+        "_pymcu_millis_init()\n\n"
+    )
+    existing = entry_point.read_text(encoding="utf-8")
+    synthetic.write_text(preamble + existing, encoding="utf-8")
     return synthetic
 
 
@@ -436,6 +472,23 @@ def build(
             if is_verbose:
                 console.print(
                     "[debug] print() without UART — UART preamble injected at 115200 baud",
+                    style="dim",
+                )
+
+        # Auto-inject millis_init() preamble when ticks_ms() is used.
+        # millis_init() must run before any ticks_ms() call; injecting it here
+        # mirrors how UART is set up for print().
+        if _detect_ticks_ms_usage(sources_dir):
+            entry_point = _inject_ticks_ms_preamble(entry_point, generated_dir)
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log(
+                "ticks_ms() detected — injecting millis_init() preamble (Timer0 OVF @ prescaler 64)",
+                verbose=is_verbose,
+            )
+            if is_verbose:
+                console.print(
+                    "[debug] ticks_ms() detected — millis_init() preamble injected",
                     style="dim",
                 )
 
