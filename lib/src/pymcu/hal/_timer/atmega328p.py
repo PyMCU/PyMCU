@@ -1,5 +1,5 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, TCNT0, TIMSK0, TIFR0, OCR0A
-from pymcu.chips.atmega328p import TCCR1A, TCCR1B, TCNT1L, TCNT1H, TIMSK1, TIFR1, OCR1A
+from pymcu.chips.atmega328p import TCCR1A, TCCR1B, TCNT1L, TCNT1H, TIMSK1, TIFR1, OCR1A, OCR1AL, OCR1AH
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, TCNT2, TIMSK2, TIFR2, OCR2A
 from pymcu.chips.atmega328p import SREG
 from pymcu.types import uint8, uint16, uint32, inline, asm, compile_isr, Callable
@@ -106,7 +106,13 @@ def timer1_overflow() -> uint8:
 # CTC vector: TIMER1_COMPA word 0x0B (byte 0x0016).
 @inline
 def timer1_set_compare(value: uint16):
-    OCR1A = value
+    # AVR 16-bit write rule: HIGH byte first (into TEMP register), then LOW byte.
+    # Writing OCR1AL (0x88) triggers the atomic 16-bit update using _highByteTemp.
+    # The high byte was placed into TEMP by writing OCR1AH (0x89).
+    hi: uint8 = uint8(value >> 8)
+    OCR1AH = hi
+    lo: uint8 = uint8(value)
+    OCR1AL = lo
     TCCR1B.value = TCCR1B.value | 0x08   # WGM12 = 1 (CTC mode)
     TIMSK1[1] = 1                          # OCIE1A
 
