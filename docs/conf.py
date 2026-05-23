@@ -39,7 +39,7 @@ myst_heading_anchors = 4
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 html_css_files = ["css/custom.css"]
-html_favicon = "_static/images/favicon.svg"
+html_favicon = "_static/images/favicon.ico"
 html_title = "PyMCU"
 
 html_theme_options = {
