@@ -40,8 +40,8 @@ pymcu flash   # → avrdude upload to Arduino Uno
 Most Python-on-microcontrollers systems (MicroPython, CircuitPython) embed a full Python
 interpreter in flash, consuming 200–300 KB and running bytecode at runtime.
 
-PyMCU is different: the **compiler** runs on your PC and produces tight AVR/PIC/RISC-V
-assembly. The MCU receives only the resulting machine code — no interpreter, no garbage
+PyMCU is different: the **compiler** runs on your PC and produces tight AVR assembly for the
+ATmega328P. The MCU receives only the resulting machine code — no interpreter, no garbage
 collector, no runtime.
 
 ::::{grid} 1 2 2 3
@@ -78,14 +78,62 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 
 ## Supported hardware
 
-| Architecture | Chips | Status |
-|---|---|---|
-| AVR | ATmega328P (Arduino Uno) | Complete |
-| PIC14/14E | PIC16F84A, PIC16F877A, PIC16F18877 | Complete |
-| PIC18 | PIC18F45K50 | Complete |
-| PIC12 | PIC10F200 | Complete |
-| RISC-V | CH32V003 | Partial |
-| RP2040 PIO | PIO state machine | Partial |
+PyMCU targets the **ATmega328P** (Arduino Uno, Arduino Nano). It compiles directly to AVR
+machine code — no external assembler required.
+
+| Board | Chip | Flash | SRAM |
+|---|---|---|---|
+| Arduino Uno | ATmega328P @ 16 MHz | 32 KB | 2 KB |
+| Arduino Nano | ATmega328P @ 16 MHz | 32 KB | 2 KB |
+
+---
+
+## MicroPython & CircuitPython compatible
+
+Already know MicroPython or CircuitPython? PyMCU ships compatibility shims that let you write
+firmware using the APIs you already know — and compile it to native machine code.
+
+::::{grid} 1 2 2 2
+:gutter: 3
+
+:::{grid-item-card} MicroPython compat
+:link: compat/micropython
+:link-type: doc
+
+Use `machine.Pin`, `machine.UART`, `machine.Timer`, `machine.ADC`, `machine.SPI`,
+`machine.I2C` and `utime` — compiled to zero-overhead AVR code.
+
+```python
+from machine import Pin
+import utime
+
+led = Pin(13, Pin.OUT)
+while True:
+    led.toggle()
+    utime.sleep_ms(500)
+```
+:::
+
+:::{grid-item-card} CircuitPython compat
+:link: compat/circuitpython
+:link-type: doc
+
+Use `board`, `digitalio.DigitalInOut`, `analogio.AnalogIn`, `pwmio.PWMOut` and `time`
+— the same API you'd use on a Circuit Playground or Feather, compiled to AVR.
+
+```python
+import board
+import digitalio
+import time
+
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
+while True:
+    led.value = not led.value
+    time.sleep(0.5)
+```
+:::
+::::
 
 ---
 
@@ -95,6 +143,14 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 :caption: Getting Started
 
 getting-started/index
+```
+
+```{toctree}
+:maxdepth: 1
+:hidden:
+:caption: Compatibility Layers
+
+compat/index
 ```
 
 ```{toctree}
@@ -111,14 +167,6 @@ language/index
 :caption: PyMCU Libraries
 
 library/index
-```
-
-```{toctree}
-:maxdepth: 1
-:hidden:
-:caption: Compatibility Layers
-
-compat/index
 ```
 
 ```{toctree}

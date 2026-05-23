@@ -94,10 +94,6 @@ Download from the [AVRDUDE releases page](https://github.com/avrdudes/avrdude/re
 :::
 ::::
 
-### PIC
-
-PyMCU will prompt you to download `pk2cmd` (PICKit 2) automatically on first use.
-
 ---
 
 ## Next steps

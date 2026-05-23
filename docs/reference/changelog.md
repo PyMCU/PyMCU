@@ -56,7 +56,6 @@
 ## v0.1 — Initial Release
 
 - AVR (ATmega328P) backend
-- PIC14/14E/18 backend
 - Core language: `if/elif/else`, `while`, `match/case`, `def`, `class`, `return`
 - GPIO, UART, ADC, Timer, PWM, SPI, I2C HAL modules
 - `@inline`, `@interrupt` decorators

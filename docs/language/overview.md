@@ -14,8 +14,8 @@ This distinction shapes every design decision in PyMCU.
 | Execution speed | Bytecode (slow) | **Native machine code** |
 
 When you run `pymcu build`, the **compiler** (running on your PC) reads your Python source,
-type-checks it, and emits native AVR/PIC/RISC-V assembly. The MCU never sees Python syntax —
-only machine instructions.
+type-checks it, and emits native AVR assembly for the ATmega328P. The MCU never sees Python
+syntax — only machine instructions.
 
 ---
 
@@ -140,14 +140,10 @@ automatically.
 
 ## Conditional compilation
 
-`__CHIP__` and `__FREQ__` are compile-time string/integer constants that enable
-architecture-specific code paths:
+`__CHIP__` and `__FREQ__` are compile-time string/integer constants. Dead branches are
+eliminated before code generation — no runtime cost:
 
 ```python
 if __CHIP__.arch == "avr":
-    asm("nop")
-elif __CHIP__.arch == "pic":
-    asm("nop")
+    asm("nop")    # only emitted; dead branches removed at compile time
 ```
-
-Dead branches are eliminated at compile time — no runtime cost.
