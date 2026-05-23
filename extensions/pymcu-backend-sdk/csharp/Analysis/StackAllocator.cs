@@ -162,6 +162,22 @@ public class StackAllocator
                         RegisterVar(ast.Index);
                         RegisterVar(ast.Src);
                         break;
+                    case LoadIndirect li:
+                        RegisterVar(li.SrcPtr);
+                        RegisterVar(li.Dst);
+                        break;
+                    case StoreIndirect si:
+                        RegisterVar(si.Src);
+                        RegisterVar(si.DstPtr);
+                        break;
+                    case AugAssign aa:
+                        RegisterVar(aa.Target);
+                        RegisterVar(aa.Operand);
+                        break;
+                    case GcAlloc ga:
+                        RegisterVar(ga.Size);
+                        RegisterVar(ga.Dst);
+                        break;
                 }
             }
 
