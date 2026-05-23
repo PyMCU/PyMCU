@@ -56,7 +56,7 @@ html_theme_options = {
     "pygments_dark_style": "monokai",
     "header_links_before_dropdown": 6,
     "navigation_depth": 3,
-    "show_nav_level": 2,
+    "show_nav_level": 1,
     "icon_links": [
         {
             "name": "GitHub",

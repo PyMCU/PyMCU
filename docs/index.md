@@ -90,7 +90,7 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 ---
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: Getting Started
 
@@ -98,7 +98,7 @@ getting-started/index
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: PyMCU Language
 
@@ -106,7 +106,7 @@ language/index
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: PyMCU Libraries
 
@@ -114,7 +114,7 @@ library/index
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: Compatibility Layers
 
@@ -122,7 +122,7 @@ compat/index
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: Examples
 
@@ -130,7 +130,7 @@ examples/index
 ```
 
 ```{toctree}
-:maxdepth: 2
+:maxdepth: 1
 :hidden:
 :caption: Reference
 
