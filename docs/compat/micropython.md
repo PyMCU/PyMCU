@@ -227,24 +227,7 @@ or D11 (Timer2) via the HAL directly.
 ### `machine.SPI`
 
 Hardware SPI on the ATmega328P uses fixed pins: D13 (SCK), D11 (MOSI), D12 (MISO).
-
-**Context manager (recommended)** — pass a CS pin at construction and use `with spi:`.
-The `__enter__` / `__exit__` methods drive CS low/high automatically:
-
-```python
-from pymcu.hal.spi import SPI
-from pymcu.hal.gpio import Pin as _Pin
-
-cs  = _Pin("PB2", 0)           # D10 as output chip-select
-spi = SPI(cs=cs)
-
-with spi:                       # CS asserted (low)
-    spi.write(0x9F)             # send command
-    device_id = spi.transfer(0xFF)   # full-duplex byte
-                                # CS released (high) on exit
-```
-
-**Manual CS** (via `machine.SPI`) — explicit `select()` / `deselect()`:
+The chip-select pin must be managed manually — this matches standard MicroPython behaviour.
 
 ```python
 from machine import SPI, Pin
@@ -253,16 +236,10 @@ spi = SPI()
 cs  = Pin(10, Pin.OUT)
 
 cs.low()
-spi.write(0x9F)
-device_id = spi.read(0xFF)     # send dummy 0xFF, return MISO byte
+spi.write(0x9F)                 # send command byte
+device_id = spi.read(0xFF)      # send dummy 0xFF, return MISO byte
 cs.high()
 ```
-
-:::{note}
-`machine.SPI` wraps the HAL and is sufficient for simple transfers. For `with spi:`
-context-manager support (auto CS assertion), import `pymcu.hal.spi.SPI` directly and
-pass the CS pin at construction — this works side-by-side with `machine` imports.
-:::
 
 | Method | Description |
 |---|---|
@@ -270,7 +247,7 @@ pass the CS pin at construction — this works side-by-side with `machine` impor
 | `read(write_byte)` | Send `write_byte`, return received byte |
 | `write_readinto(out, in_val)` | Full-duplex single-byte transfer |
 
-For bit-bang SPI with arbitrary pins, use `avr.SoftSPI` (see below).
+For bit-bang SPI with arbitrary GPIO pins, use `avr.SoftSPI` (see below).
 
 ---
 
