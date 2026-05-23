@@ -436,6 +436,61 @@ public partial class IRGenerator
                 }
             }
 
+            // for v in x: where x is a list[T] variable → runtime loop with heap load per iteration
+            if (iter is VariableExpr listVarExpr)
+            {
+                string listQ = ResolveListVarQualified(listVarExpr.Name);
+                if (!string.IsNullOrEmpty(listQ))
+                {
+                    DataType elemDt = listVarElemTypes[listQ];
+                    Variable listPtr = new Variable(listQ, DataType.GC_REF);
+
+                    // load length
+                    Temporary listLen = MakeTemp(DataType.UINT8);
+                    Emit(new LoadIndirect(listPtr, listLen));
+
+                    // loop index
+                    string idxVarName = string.IsNullOrEmpty(currentInlinePrefix)
+                        ? (string.IsNullOrEmpty(currentFunction)
+                            ? "__list_i" + tempCounter
+                            : currentFunction + ".__list_i" + tempCounter)
+                        : currentInlinePrefix + "__list_i" + tempCounter;
+                    tempCounter++;
+                    Variable idxVar = new Variable(idxVarName, DataType.UINT8);
+                    variableTypes[idxVarName] = DataType.UINT8;
+                    Emit(new Copy(new Constant(0), idxVar));
+
+                    // loop variable (the element)
+                    string elemVarName = string.IsNullOrEmpty(currentInlinePrefix)
+                        ? (string.IsNullOrEmpty(currentFunction) ? stmt.VarName : currentFunction + "." + stmt.VarName)
+                        : currentInlinePrefix + stmt.VarName;
+                    Variable elemVar = new Variable(elemVarName, elemDt);
+                    variableTypes[elemVarName] = elemDt;
+
+                    string loopStart = MakeLabel();
+                    string loopEnd = MakeLabel();
+                    loopStack.Add(new LoopLabels { ContinueLabel = loopStart, BreakLabel = loopEnd });
+
+                    Emit(new Label(loopStart));
+                    Temporary cmpTmp = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(PyMCU.IR.BinaryOp.GreaterEqual, idxVar, listLen, cmpTmp));
+                    Emit(new JumpIfNotZero(cmpTmp, loopEnd));
+
+                    Temporary elemAddr = EmitElemAddr(listPtr, idxVar, elemDt.SizeOf());
+                    Temporary elemTmp = MakeTemp(elemDt);
+                    Emit(new LoadIndirect(elemAddr, elemTmp));
+                    Emit(new Copy(elemTmp, elemVar));
+
+                    VisitStatement(stmt.Body);
+
+                    Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, idxVar, new Constant(1)));
+                    Emit(new Jump(loopStart));
+                    Emit(new Label(loopEnd));
+                    loopStack.RemoveAt(loopStack.Count - 1);
+                    return;
+                }
+            }
+
             throw new Exception(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), or reversed(iterable). Use 'const[str]' type annotation for string parameters.");
         }
