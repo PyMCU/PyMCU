@@ -113,6 +113,9 @@ public enum BinaryOp
 [JsonDerivedType(typeof(BytearrayStore),       "bast")]
 [JsonDerivedType(typeof(Bitcast),              "bitcast")]
 [JsonDerivedType(typeof(IndirectCall),         "icall")]
+[JsonDerivedType(typeof(GcAlloc),              "galloc")]
+[JsonDerivedType(typeof(GcRoot),               "groot")]
+[JsonDerivedType(typeof(GcUnroot),             "gunroot")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -200,6 +203,15 @@ public record BytearrayLoad(string PtrName, Val Index, Val Dst) : Instruction;
 // Indexed store through a bytearray pointer parameter.
 public record BytearrayStore(string PtrName, Val Index, Val Src) : Instruction;
 
+// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0x0000 on OOM)
+public record GcAlloc(Val Size, Val Dst) : Instruction;
+
+// GC: register a live GC_REF local as a root (shadow-stack push in prologue)
+public record GcRoot(Val Var) : Instruction;
+
+// GC: deregister a GC_REF root (shadow-stack pop before Return)
+public record GcUnroot(Val Var) : Instruction;
+
 // --- Function Definition ---
 public class Function
 {
@@ -220,4 +232,7 @@ public class ProgramIR
 
     // C symbols declared via @extern("name") in the source.
     public List<string> ExternSymbols { get; set; } = new();
+
+    // True when the program uses GC_REF values; the backend injects the GC runtime.
+    public bool NeedsGc { get; set; } = false;
 }

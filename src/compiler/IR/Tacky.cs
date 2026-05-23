@@ -154,6 +154,17 @@ public record FlashData(string Name, List<int> Bytes) : Instruction;
 // Variable-index array store: array_name[index] = src
 public record ArrayStore(string ArrayName, Val Index, Val Src, DataType ElemType, int Count) : Instruction;
 
+// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0x0000 on OOM)
+public record GcAlloc(Val Size, Val Dst) : Instruction;
+
+// GC: register a live GC_REF local as a root for the duration of the containing function.
+// The backend emits a shadow-stack push in the function prologue for each GcRoot.
+public record GcRoot(Val Var) : Instruction;
+
+// GC: deregister a GC_REF root (shadow-stack pop). Emitted before every Return in a
+// function that contains GC_REF locals.
+public record GcUnroot(Val Var) : Instruction;
+
 // --- Function Definition ---
 public class Function
 {
@@ -174,4 +185,7 @@ public class ProgramIR
 
     // C symbols declared via @extern("name") in the source.
     public List<string> ExternSymbols { get; set; } = new();
+
+    // True when the program uses GC_REF values; the backend injects the GC runtime.
+    public bool NeedsGc { get; set; } = false;
 }
