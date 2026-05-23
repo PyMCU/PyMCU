@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.11 *(unreleased)*
+
+### Standard Library
+
+- **`UART.read_line(buf, max_len)`** — Read until `\n` or `max_len` bytes into a fixed-size `uint8[N]` buffer; returns byte count
+- **`DS18B20` driver** (`pymcu.drivers.ds18b20`) — 1-Wire temperature sensor; returns raw 12-bit value in 1/16 °C units
+- **`machine.Timer`** (`pymcu.compat.micropython`) — MicroPython-compatible timer IRQ API (`timer.irq(handler, trigger)`)
+- **`adc_read_temp_raw()`** (`pymcu.hal.adc`) — ATmega328P internal temperature sensor on ADC channel 8 (no external component)
+- **LM35 driver** (`pymcu.drivers.lm35`) — Analog temperature sensor over ADC; returns centidegrees
+
+### Compiler
+
+- **`uint16 >> n → uint8` widening shift fix** — right-shift result no longer widens to `uint16` when the rhs forces a one-byte result; fixes truncation in packed-data routines
+
+### Toolchain
+
+- **Programmer plugin system** — custom programmer backends can be registered via `pymcu.plugins`; no longer requires patching the built-in flash command
+
+---
+
 ## Unreleased — v0.2 (alpha)
 
 ### Language

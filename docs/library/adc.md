@@ -82,6 +82,42 @@ def main():
 
 ---
 
+## Internal temperature sensor *(v0.11)*
+
+The ATmega328P has a built-in temperature sensor connected to ADC channel 8. No external
+components are required.
+
+```python
+from pymcu.hal.adc import adc_read_temp_raw
+from pymcu.types import uint16
+
+def main():
+    raw: uint16 = adc_read_temp_raw()
+    # Factory calibration: ~314 counts at 25 °C, ~1 count per degree
+    # No EEPROM calibration data — accuracy is ±10 °C typical
+```
+
+| Item | Detail |
+|---|---|
+| Import | `from pymcu.hal.adc import adc_read_temp_raw` |
+| Return type | `uint16` — raw ADC count (channel 8, internal 1.1 V reference) |
+| Typical value | ~314 at 25 °C |
+| Scale | ~1 count / °C (uncalibrated) |
+| Accuracy | ±10 °C typical (factory), ±2 °C with calibration |
+
+For a rough Celsius estimate (calibration-free):
+
+```python
+temp_c: int = raw - 289    # offset for 25 °C baseline — adjust per chip
+```
+
+:::{note}
+For accurate temperature readings use a calibrated external sensor such as
+{doc}`DS18B20 <drivers/ds18b20>` or {doc}`DHT11 <drivers/dht11>`.
+:::
+
+---
+
 ## ATmega328P ADC register map
 
 | Register | Address | Description |

@@ -36,6 +36,7 @@ Initializes the hardware UART peripheral. On AVR, configures USART0.
 | `write_str(s: const[str])` | Send a flash string via LPM loop |
 | `println(s: const[str])` | `write_str(s)` + newline (0x0A) |
 | `print_byte(value: uint8)` | Print `value` as decimal digits + newline |
+| `read_line(buf: uint8[N], max_len: uint8) -> uint8` | Read until `\n` or `max_len` bytes into a fixed-size buffer; returns number of bytes read |
 | `enable_rx_interrupt()` | Enable RXC interrupt (RXCIE0 in UCSR0B) |
 | `rx_isr()` | ISR body: reads UDR0 into ring buffer |
 
@@ -110,3 +111,24 @@ def main():
             b: uint8 = uart.read_nb()
             uart.write(b)
 ```
+
+### Read a line of text *(v0.11)*
+
+```python
+from pymcu.hal.uart import UART
+from pymcu.types import uint8
+
+uart = UART(9600)
+buf: uint8[64] = [0] * 64
+
+def main():
+    uart.println("send a line:")
+    while True:
+        n: uint8 = uart.read_line(buf, 64)   # blocks until '\n' or 64 bytes
+        for i in range(n):
+            uart.write(buf[i])               # echo line back
+```
+
+`read_line` reads bytes until a `\n` (0x0A) is received or `max_len` bytes have been
+stored — whichever comes first. The newline is **not** stored in the buffer. Returns the
+number of bytes written.
