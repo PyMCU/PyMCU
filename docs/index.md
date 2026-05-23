@@ -78,13 +78,17 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 
 ## Supported hardware
 
-PyMCU targets the **ATmega328P** (Arduino Uno, Arduino Nano). It compiles directly to AVR
-machine code — no external assembler required.
+PyMCU currently targets **AVR microcontrollers**. The primary supported board is the
+**Arduino Uno / ATmega328P** — all integration tests run against this target.
 
 | Board | Chip | Flash | SRAM |
 |---|---|---|---|
 | Arduino Uno | ATmega328P @ 16 MHz | 32 KB | 2 KB |
 | Arduino Nano | ATmega328P @ 16 MHz | 32 KB | 2 KB |
+| Arduino Mega 2560 | ATmega2560 @ 16 MHz | 256 KB | 8 KB |
+| ATtiny85 / 84 / 45 / 44 / 25 / 24 | ATtiny family | 2–8 KB | 256–512 B |
+| ATtiny2313 / 4313 | ATtiny family | 2–4 KB | 128–256 B |
+| Digispark | ATtiny85 @ 16 MHz | 8 KB | 512 B |
 
 ---
 
@@ -118,19 +122,20 @@ while True:
 :link: compat/circuitpython
 :link-type: doc
 
-Use `board`, `digitalio.DigitalInOut`, `analogio.AnalogIn`, `pwmio.PWMOut` and `time`
-— the same API you'd use on a Circuit Playground or Feather, compiled to AVR.
+Use `board`, `digitalio`, `analogio`, `busio`, `pwmio`, `neopixel`, `time`,
+`supervisor`, `alarm`, and `microcontroller` — the same API you'd use on a
+Circuit Playground or Feather, compiled to bare-metal AVR.
 
 ```python
 import board
-import digitalio
-import time
+from digitalio import DigitalInOut, Direction
+from time import sleep_ms
 
-led = digitalio.DigitalInOut(board.LED)
-led.direction = digitalio.Direction.OUTPUT
+led = DigitalInOut(board.LED)
+led.direction = Direction.OUTPUT
 while True:
     led.value = not led.value
-    time.sleep(0.5)
+    sleep_ms(500)
 ```
 :::
 ::::
