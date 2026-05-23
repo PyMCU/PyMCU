@@ -1,9 +1,17 @@
 # PyMCU Libraries
 
-The PyMCU standard library provides hardware abstraction layer (HAL) modules and device drivers.
+:::{admonition} Architectural Shift: MicroPython Compatibility
+:class: important
+
+PyMCU's standard library is being restructured. The official user-facing API will soon be aligned with the **MicroPython / CircuitPython `machine` and `board` modules**.
+
+The modules documented below (`pymcu.hal.*` and `pymcu.drivers.*`) are considered **internal foundations (HAL)**. While they work perfectly, they are designed to be wrapped by the upcoming compatibility layers. Users are strongly encouraged to use the `machine` module (when available) for better portability across different hardware.
+:::
+
+The PyMCU internal library provides hardware abstraction layer (HAL) modules and device drivers.
 All modules compile to tight native machine code — there is no Python runtime on the device.
 
-## HAL modules
+## Internal HAL modules
 
 | Module | Import path | Description |
 |---|---|---|

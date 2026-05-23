@@ -28,7 +28,7 @@ pymcu/
 ## Building the compiler
 
 ```bash
-dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
+dotnet publish src/compiler/PyMCU.Compiler.csproj -c Release -o build/bin --nologo
 ```
 
 ---
@@ -44,14 +44,17 @@ compiler or HAL feature.
 
 ---
 
-## Adding a stdlib module
+## Adding a stdlib module / Driver
 
-1. Add the implementation in `lib/src/pymcu/hal/` (or `drivers/`).
-2. Use `@inline` for all public methods (zero-cost abstraction rule).
-3. Use `match __CHIP__.arch:` for architecture dispatch.
-4. No non-ASCII characters — the compiler lexer is ASCII-only.
-5. No multiline docstrings with code examples — use `# comments` instead.
-6. After editing stdlib, sync to the local virtualenv:
+When contributing to the standard library or adding new drivers, please adhere to the following principles:
+
+1. **MicroPython/CircuitPython Compatibility (Crucial):** If you are writing a driver for a sensor or exposing an API, **it must match the corresponding MicroPython or CircuitPython API** if one exists. Do not invent your own API names (e.g., use `machine.Pin`, not `pymcu.hal.gpio.Pin` for user-facing code). The internal HAL in `lib/src/pymcu/hal` is meant to be wrapped by these compatibility layers.
+2. Add the implementation in `lib/src/pymcu/hal/` (or `drivers/`).
+3. Use `@inline` for all public methods (zero-cost abstraction rule).
+4. Use `match __CHIP__.arch:` for architecture dispatch.
+5. No non-ASCII characters — the compiler lexer is ASCII-only.
+6. No multiline docstrings with code examples — use `# comments` instead.
+7. After editing stdlib, sync to the local virtualenv:
 
 ```bash
 rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/

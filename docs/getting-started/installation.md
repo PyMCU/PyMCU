@@ -1,31 +1,71 @@
 # Installation
 
+:::{admonition} Alpha Software: Local Build Required
+:class: warning
+
+PyMCU is in early alpha and does not have a stable, packaged release. You must build it from source.
+:::
+
 ## Requirements
 
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 - Python 3.11 or newer
-- A supported programmer for your target hardware (e.g. avrdude for Arduino)
+- `uv` (recommended for virtual environment setup)
+- A supported programmer for your target hardware (e.g. `avrdude` for Arduino)
 
-## Install with pipx (recommended)
-
-```bash
-pipx install pymcu
-```
-
-`pipx` installs PyMCU in an isolated environment and puts the `pymcu` command on your PATH.
-
-## Install with pip
+## 1. Clone the repository
 
 ```bash
-pip install pymcu
+git clone https://github.com/pymcu/pymcu.git
+cd pymcu
 ```
 
-## Verify the installation
+## 2. Build the compiler
+
+The PyMCU compiler (`pymcuc`) is written in C#. Build it using the .NET SDK:
+
+```bash
+dotnet build src/compiler/PyMCU.Compiler.csproj
+```
+
+This creates the compiler executable at `src/compiler/bin/Debug/net8.0/pymcuc`.
+
+## 3. Set up the Python environment
+
+The `pymcu` command-line driver and the standard library are Python-based.
+
+### Create a virtual environment (with `uv`)
+
+```bash
+uv venv
+source .venv/bin/activate
+```
+
+### Sync the standard library
+
+The PyMCU standard library (`lib/src/pymcu`) must be available in your environment. Use `rsync` to link it:
+
+```bash
+rsync -av lib/src/pymcu/ .venv/lib/python3.11/site-packages/pymcu/
+```
+
+### Install the driver
+
+Install the `pymcu` driver in editable mode:
+
+```bash
+pip install -e src/driver
+```
+
+## 4. Verify the installation
+
+Check that the `pymcu` command is available and can find the compiler:
 
 ```bash
 pymcu --version
 ```
 
-Expected output: `pymcu 0.10.x`
+Expected output: `pymcu, version 0.10.0` (or similar)
 
 ---
 
@@ -57,19 +97,6 @@ Download from the [AVRDUDE releases page](https://github.com/avrdudes/avrdude/re
 ### PIC
 
 PyMCU will prompt you to download `pk2cmd` (PICKit 2) automatically on first use.
-
----
-
-## IDE integration
-
-### VS Code
-
-`pymcu new` generates a `.vscode/tasks.json` with **Build** and **Flash** tasks. Open the
-project folder in VS Code and run tasks with **Terminal → Run Task**.
-
-### PyCharm / other
-
-Add `pymcu build` and `pymcu flash` as External Tools (File → Settings → Tools → External Tools).
 
 ---
 

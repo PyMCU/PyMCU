@@ -1,5 +1,13 @@
 # Welcome to PyMCU
 
+:::{admonition} Alpha Software
+:class: warning
+
+PyMCU is currently in **early alpha**. It is under active development and requires a local source build.
+The standard library is being aligned with the MicroPython/CircuitPython APIs for compatibility,
+which means major breaking changes are expected.
+:::
+
 **PyMCU** compiles a **statically-typed, allocation-free subset of Python** directly to
 bare-metal microcontroller machine code — no runtime, no heap, no interpreter.
 
@@ -68,18 +76,6 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 
 ---
 
-## Quick start
-
-```bash
-pipx install pymcu
-pymcu new my_project
-cd my_project
-pymcu build
-pymcu flash --port /dev/cu.usbmodem*
-```
-
----
-
 ## Supported hardware
 
 | Architecture | Chips | Status |
@@ -90,13 +86,6 @@ pymcu flash --port /dev/cu.usbmodem*
 | PIC12 | PIC10F200 | Complete |
 | RISC-V | CH32V003 | Partial |
 | RP2040 PIO | PIO state machine | Partial |
-
----
-
-:::{warning} Alpha software
-PyMCU is in early alpha. Core AVR compilation is solid and test-covered, but error messages,
-tooling, and some language edges are still rough. Feedback welcome.
-:::
 
 ---
 
