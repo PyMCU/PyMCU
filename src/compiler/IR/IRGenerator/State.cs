@@ -44,6 +44,7 @@ public partial class IRGenerator
     private Dictionary<string, ModuleScope> modules = new();
 
     private HashSet<string> classNames = new(); // Tracks known class names for callee resolution
+    private HashSet<string> valueClasses = new(); // @value-decorated classes: always use ZCA path, never heap-allocated
 
     // Maps "ClassName.property_name" -> qualified setter inline function key.
     // Populated by scan_functions when a @name.setter method is encountered.

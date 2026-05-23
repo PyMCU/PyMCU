@@ -342,6 +342,7 @@ public partial class IRGenerator
                 if (classDef.Body != null)
                 {
                     classNames.Add(classDef.Name);
+                    if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
                     var classPrefix = currentModulePrefix + classDef.Name + "_";
                     currentModulePrefix = classPrefix;

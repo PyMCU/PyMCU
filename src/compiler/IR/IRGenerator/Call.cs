@@ -757,6 +757,15 @@ public partial class IRGenerator
             return bcDst;
         }
 
+        if (callee == "gc_alloc")
+        {
+            if (expr.Args.Count != 1) throw new Exception("gc_alloc() expects exactly one argument: gc_alloc(size)");
+            Val sizeVal = VisitExpression(expr.Args[0]);
+            Temporary gcDst = MakeTemp(DataType.GC_REF);
+            Emit(new GcAlloc(sizeVal, gcDst));
+            return gcDst;
+        }
+
         if (callee == "asm")
         {
             // asm("code")                  — bare inline assembly (no constraints)

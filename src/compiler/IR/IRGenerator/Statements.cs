@@ -111,6 +111,37 @@ public partial class IRGenerator
             Emit(new Return(new NoneVal()));
         }
 
+        // Collect unique GC_REF named locals; inject GcRoot at prologue and GcUnroot before each Return.
+        // Only track named Variables (not Temporaries): gc_alloc returns a Temporary that is immediately
+        // Copy'd to a named Variable, and that Variable is what needs shadow-stack tracking.
+        // Temporaries may live only in registers (_tmpRegLayout) and have no SRAM slot for GetGcRefSramAddr.
+        var gcRefs = new List<Val>();
+        var gcRefNames = new HashSet<string>();
+        foreach (var instr in currentInstructions)
+        {
+            if (instr is Copy cp && cp.Dst is Variable vd && vd.Type == DataType.GC_REF)
+            {
+                if (gcRefNames.Add(vd.Name)) gcRefs.Add(vd);
+            }
+        }
+
+        if (gcRefs.Count > 0)
+        {
+            var annotated = new List<Instruction>();
+            // Prologue: push each GC_REF local onto the shadow stack.
+            foreach (var gcRef in gcRefs)
+                annotated.Add(new GcRoot(gcRef));
+            // Body: insert GcUnroot before every Return.
+            foreach (var instr in currentInstructions)
+            {
+                if (instr is Return)
+                    foreach (var gcRef in gcRefs)
+                        annotated.Add(new GcUnroot(gcRef));
+                annotated.Add(instr);
+            }
+            currentInstructions = annotated;
+        }
+
         irFunc.Body = new List<Instruction>(currentInstructions);
         arraysWithVariableIndex.Clear();
         return irFunc;
