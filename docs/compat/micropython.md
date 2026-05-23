@@ -227,7 +227,24 @@ or D11 (Timer2) via the HAL directly.
 ### `machine.SPI`
 
 Hardware SPI on the ATmega328P uses fixed pins: D13 (SCK), D11 (MOSI), D12 (MISO).
-The chip-select (CS) pin must be driven manually or via `avr.SoftSPI` for flexibility.
+
+**Context manager (recommended)** — pass a CS pin at construction and use `with spi:`.
+The `__enter__` / `__exit__` methods drive CS low/high automatically:
+
+```python
+from pymcu.hal.spi import SPI
+from pymcu.hal.gpio import Pin as _Pin
+
+cs  = _Pin("PB2", 0)           # D10 as output chip-select
+spi = SPI(cs=cs)
+
+with spi:                       # CS asserted (low)
+    spi.write(0x9F)             # send command
+    device_id = spi.transfer(0xFF)   # full-duplex byte
+                                # CS released (high) on exit
+```
+
+**Manual CS** (via `machine.SPI`) — explicit `select()` / `deselect()`:
 
 ```python
 from machine import SPI, Pin
@@ -236,14 +253,20 @@ spi = SPI()
 cs  = Pin(10, Pin.OUT)
 
 cs.low()
-spi.write(0x9F)                   # send command byte
-device_id = spi.read(0xFF)        # send dummy 0xFF, receive response
+spi.write(0x9F)
+device_id = spi.read(0xFF)     # send dummy 0xFF, return MISO byte
 cs.high()
 ```
 
+:::{note}
+`machine.SPI` wraps the HAL and is sufficient for simple transfers. For `with spi:`
+context-manager support (auto CS assertion), import `pymcu.hal.spi.SPI` directly and
+pass the CS pin at construction — this works side-by-side with `machine` imports.
+:::
+
 | Method | Description |
 |---|---|
-| `write(byte)` | Send one byte (full-duplex, discard MISO) |
+| `write(byte)` | Send one byte (discard MISO) |
 | `read(write_byte)` | Send `write_byte`, return received byte |
 | `write_readinto(out, in_val)` | Full-duplex single-byte transfer |
 
@@ -622,29 +645,6 @@ structures. Use `ping(addr)` to probe a known address directly.
 `freq` is converted to a bit-bang half-period: `half_us = 500_000 // freq`.
 At 100 kHz this gives 5 µs half-period; at 400 kHz ("fast mode"), 1 µs.
 :::
-
----
-
-## Drivers (pymcu-micropython)
-
-### `LM35` — analog temperature sensor
-
-```python
-from pymcu_micropython.lm35 import LM35
-from pymcu.types import uint16
-
-sensor = LM35("A0")                   # LM35 VOUT → Arduino A0
-raw:  uint16 = sensor.read()          # 0–1023 raw ADC count
-temp: float  = sensor.temperature()  # degrees Celsius (e.g. 24.8)
-```
-
-| Property | Detail |
-|---|---|
-| Import | `from pymcu_micropython.lm35 import LM35` |
-| Supply voltage | 5 V |
-| Output | 10 mV/°C |
-| Measurement range | 2 °C – 150 °C |
-| Resolution | ~0.49 °C per ADC count (10-bit, 5 V ref) |
 
 ---
 
