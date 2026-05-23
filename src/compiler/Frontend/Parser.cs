@@ -41,6 +41,10 @@ public class Parser
             {
                 prog.Imports.Add(ParseImportStatement());
             }
+            else if (Check(TokenType.At) && DecoratorsLeadToClass())
+            {
+                prog.GlobalStatements.Add(ParseClassDefinitionWithDecorators());
+            }
             else if (Check(TokenType.Def) || Check(TokenType.At))
             {
                 prog.Functions.Add(ParseFunction());
@@ -69,6 +73,12 @@ public class Parser
     {
         int next = pos + 1;
         return next >= tokens.Count ? tokens[^1] : tokens[next];
+    }
+
+    private Token PeekAt(int offset)
+    {
+        int idx = pos + offset;
+        return idx >= tokens.Count ? tokens[^1] : tokens[idx];
     }
 
     private Token Previous() => pos == 0 ? tokens[0] : tokens[pos - 1];
@@ -316,6 +326,24 @@ public class Parser
         return func;
     }
 
+    private ClassDef ParseClassDefinitionWithDecorators()
+    {
+        bool isValue = false;
+        while (Check(TokenType.At))
+        {
+            Advance(); // consume @
+            var dec = Consume(TokenType.Identifier, "Expected decorator name after '@'");
+            if (dec.Value == "value")
+                isValue = true;
+            else
+                Error("Unknown class decorator: @" + dec.Value);
+            Consume(TokenType.Newline, "Expected newline after class decorator");
+        }
+        var classDef = ParseClassDefinition();
+        classDef.IsValue = isValue;
+        return classDef;
+    }
+
     private ClassDef ParseClassDefinition()
     {
         Consume(TokenType.Class, "Expected 'class'");
@@ -386,12 +414,29 @@ public class Parser
         return block;
     }
 
+    // Returns true if the current @ sequence (one or more @identifier\n pairs) leads to 'class'.
+    private bool DecoratorsLeadToClass()
+    {
+        int offset = 0;
+        while (PeekAt(offset).Type == TokenType.At)
+        {
+            offset++; // skip @
+            if (PeekAt(offset).Type != TokenType.Identifier) return false;
+            offset++; // skip decorator name
+            if (PeekAt(offset).Type != TokenType.Newline) return false;
+            offset++; // skip newline
+        }
+        return PeekAt(offset).Type == TokenType.Class;
+    }
+
     private Statement ParseStatement()
     {
         if (Check(TokenType.If)) return ParseIfStatement();
         if (Check(TokenType.Match)) return ParseMatchStatement();
         if (Check(TokenType.While)) return ParseWhileStatement();
         if (Check(TokenType.For)) return ParseForStatement();
+        if (Check(TokenType.At) && DecoratorsLeadToClass())
+            return ParseClassDefinitionWithDecorators();
         if (Check(TokenType.Def) || Check(TokenType.At))
         {
             if (functionDepth > 0)

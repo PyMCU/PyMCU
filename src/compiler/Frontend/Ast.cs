@@ -72,6 +72,7 @@ public class ClassDef : Statement
     public Statement Body { get; }
     public bool IsStatic { get; set; } = false;
     public bool IsDataclass { get; set; } = false;
+    public bool IsValue { get; set; } = false;
 
     public ClassDef(string name, List<string> bases, Statement body)
     {
