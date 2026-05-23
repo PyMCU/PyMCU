@@ -183,15 +183,26 @@ This page tracks which language and HAL features have been implemented, and what
 
 ---
 
-## Next — v0.11
+## v0.11 — Implemented
 
 | Feature | Status |
 |---|---|
-| `UART.read_line(buf, max_len)` | Planned |
-| `DS18B20` 1-Wire driver | Planned |
-| `machine.Timer(id, period, callback)` | Planned (MicroPython compat) |
+| `UART.read_line(buf, max_len)` | ✅ Implemented |
+| `DS18B20` 1-Wire driver | ✅ Implemented (`pymcu.drivers.ds18b20`) |
+| `machine.Timer(id, period, callback)` | ✅ Implemented (MicroPython compat) |
+| Internal temperature sensor (ADC ch 8) | ✅ Implemented (`pymcu.hal.adc`) |
+| Programmer plugin system | ✅ Implemented (`pymcu.programmers` entry-point group) |
+| `uint16 >> n → uint8` widening shift | ✅ Compiler fix — source type used for shift/bitwise narrowing ops |
+
+---
+
+## Next — v0.12
+
+| Feature | Status |
+|---|---|
 | `busio.SPI` / `busio.I2C` (CircuitPython compat) | Planned |
-| Plugin-based toolchain system | Planned |
+| `neopixel` driver (CP flavor) | Planned |
+| `fixed16` (Q8.8 fixed-point) | Planned |
 
 ---
 

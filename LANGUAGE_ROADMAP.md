@@ -333,44 +333,42 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
-## v0.11 — Next Tier
-
-These are the highest-value features not yet implemented, in priority order.
+## v0.11 — Implemented
 
 ### CLI / Driver
 
-| Feature | Effort | Notes |
-|---------|--------|-------|
+| Feature | Notes |
+|---------|-------|
 | Plugin-based toolchain system | ✅ Implemented | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
 | `pymcu-toolchain-sdk` | ✅ Implemented | Standalone SDK package; base classes + `ToolchainPlugin` ABC |
 | `pymcu-toolchain-avr` | ✅ Implemented | AVR plugin (GNU AVR binutils); independent of core `pymcu` |
 | `pymcu-toolchain-pic` | ✅ Implemented | PIC plugin (GNU PIC Utilities); independent of core `pymcu` |
-| Programmer plugin system | ~1 week | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
+| Programmer plugin system | ✅ Implemented | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
 
 ### Language
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| ~~Soft float~~ / `fixed16` | ~~1 week~~ | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
-| `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
-| `const uint8[N]` (PROGMEM arrays) | ~3h | ✅ Implemented in v0.9 |
+| Feature | Notes |
+|---------|-------|
+| ~~Soft float~~ / `fixed16` | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
+| `const uint8[N]` (PROGMEM arrays) | ✅ Implemented in v0.9 |
+| `uint16 >> n → uint8` widening shift | ✅ Compiler correctly loads wider source type for shift/bitwise ops narrowing to uint8 |
 
 ### HAL
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| `SoftI2C` bit-bang | ~3h | ✅ Implemented in v0.9 |
-| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | ✅ Implemented in v0.9 as `I2C.write_bytes` |
-| `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| Timer `millis()` / `micros()` | ~4h | ✅ Implemented in v0.9 |
-| Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
-| `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |
+| Feature | Notes |
+|---------|-------|
+| `SoftI2C` bit-bang | ✅ Implemented in v0.9 |
+| `I2C.write_to(addr, buf, n)` multi-byte | ✅ Implemented in v0.9 as `I2C.write_bytes` |
+| `UART.read_line(buf, max_len)` | ✅ Implemented — reads until `\n` or max_len into fixed-size `uint8[N]` buffer |
+| Timer `millis()` / `micros()` | ✅ Implemented in v0.9 |
+| Internal temperature sensor | ✅ Implemented — ATmega328P ADC channel 8; `adc_read_temp_raw()` in `pymcu.hal.adc` |
+| `DS18B20` 1-Wire driver | ✅ Implemented — `pymcu.drivers.ds18b20`; `DS18B20(pin)` / `read_temp_raw()` / `read_temp_celsius()` |
 
 ### Compat
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| `machine.Timer(id, period, callback)` | ~3h | Requires `Pin.irq` (now available) |
+| Feature | Notes |
+|---------|-------|
+| `machine.Timer(id, period, callback)` | ✅ Implemented — CTC mode on Timer1; period in ms; callback as ISR |
 | `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API names |
 | `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
 
