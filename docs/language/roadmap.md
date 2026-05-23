@@ -111,8 +111,18 @@ This page tracks which language and HAL features have been implemented, and what
 
 ## Planned
 
+The current focus is **ATmega328P** (Arduino Uno). The next major milestone is
+**RP2040** (Raspberry Pi Pico).
+
+The reason is philosophical: the RP2040 is the most popular MicroPython target today.
+PyMCU's promise is *prototype fast in MicroPython, bring to the metal with PyMCU* — the
+same source file that runs on a Pico under MicroPython should compile to bare-metal
+firmware with zero runtime when you are ready to ship. RP2040 closes that loop for the
+largest audience of MicroPython users.
+
 | Feature | Notes |
 |---|---|
+| **RP2040 backend** | Next architecture target — ARM Cortex-M0+ codegen, PIO support |
 | `fixed16` (Q8.8 fixed-point) | Fixed-point arithmetic without floats |
 | `busio.SPI` / `busio.I2C` (CircuitPython compat) | Expand compat layer coverage |
 | `neopixel` (CircuitPython flavor) | `neopixel.NeoPixel` wrapper |
