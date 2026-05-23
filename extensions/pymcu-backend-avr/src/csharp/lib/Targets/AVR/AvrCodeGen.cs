@@ -36,6 +36,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, List<int>> _functionParamSizes = new();
     private int _labelCounter;
     private Function? _currentFunction;
+    private int _maxStaticUsage; // total static SRAM used by StackAllocator; set in Compile()
+    private bool _needsGc;      // mirrors program.NeedsGc for use in CompileFunction
 
     private string MakeLabel(string prefix = ".L") => $"{prefix}_{_labelCounter++}";
     private static string GetHighReg(string reg) => "R" + (int.Parse(reg[1..]) + 1);
@@ -585,8 +587,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         _labelCounter = 0;
 
         var allocator = new StackAllocator();
-        var (offsets, _) = allocator.Allocate(program);
+        var (offsets, maxStack) = allocator.Allocate(program);
         _stackLayout = offsets;
+        _maxStaticUsage = maxStack;
+        _needsGc = program.NeedsGc;
         _varSizes = allocator.VariableSizes;
         _regLayout = AvrRegisterAllocator.Allocate(program);
 
@@ -636,6 +640,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             var safeName = name.Replace('.', '_');
             EmitRaw($".equ {safeName}, _stack_base + {offset}");
         }
+
+        if (program.NeedsGc)
+            EmitGcSramLayout();
 
         EmitRaw("");
 
@@ -693,6 +700,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             output.WriteLine(line.ToString());
 
         EmitFlashArrayPool(output);
+        if (program.NeedsGc) EmitGcRuntime(output);
     }
 
     public override void EmitContextSave()
@@ -754,6 +762,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("OUT", "0x3D", "R16");
             Emit("LDI", "R28", "lo8(_stack_base)");
             Emit("LDI", "R29", "hi8(_stack_base)");
+            if (_needsGc) Emit("CALL", "gc_init");
         }
 
         if (!func.IsInterrupt && func.Name != "main" && func.Params.Count > 0)
@@ -887,6 +896,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case ArrayStore ast: CompileArrayStore(ast); break;
             case BytearrayLoad bl: CompileBytearrayLoad(bl); break;
             case BytearrayStore bs2: CompileBytearrayStore(bs2); break;
+            case GcAlloc ga:  CompileGcAlloc(ga);  break;
+            case GcRoot gr:   CompileGcRoot(gr);   break;
+            case GcUnroot gu: CompileGcUnroot(gu); break;
         }
     }
 
@@ -2331,5 +2343,133 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             os.WriteLine("\t.byte " + string.Join(", ", bytes));
             os.WriteLine("\t.balign 2");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // GC SRAM Layout
+    // Emits .equ directives for shadow stack, heap-top pointer, and heap bounds.
+    // Called from Compile() when program.NeedsGc is true, after all static
+    // variable .equ directives have been emitted.
+    //
+    // Layout immediately after static variables (at _stack_base + _maxStaticUsage):
+    //   _gc_ss_base       : 128 bytes  (64 shadow-stack slots x 2 bytes each)
+    //   _gc_ss_top_addr   : 1 byte     (current shadow-stack depth)
+    //   _gc_heap_top_lo   : 1 byte     (lo byte of GC heap write pointer)
+    //   _gc_heap_top_hi   : 1 byte     (hi byte of GC heap write pointer)
+    //   _heap_start       : start of GC-managed heap
+    //   _heap_end         : 0x0880 (leaves ~127 bytes for hardware SP call stack)
+    // -------------------------------------------------------------------------
+    private void EmitGcSramLayout()
+    {
+        int ssBase = _maxStaticUsage;   // offset from _stack_base
+        int ssTopAddr = ssBase + 128;   // 1 byte after 64-entry shadow stack
+        int heapTopLo = ssTopAddr + 1;
+        int heapTopHi = heapTopLo + 1;
+        int heapStart = heapTopHi + 1;
+
+        EmitRaw($"; --- GC Runtime SRAM Layout ---");
+        EmitRaw($".equ _gc_ss_base,     _stack_base + {ssBase}");
+        EmitRaw($".equ _gc_ss_top_addr, _stack_base + {ssTopAddr}");
+        EmitRaw($".equ _gc_heap_top_lo, _stack_base + {heapTopLo}");
+        EmitRaw($".equ _gc_heap_top_hi, _stack_base + {heapTopHi}");
+        EmitRaw($".equ _heap_start,     _stack_base + {heapStart}");
+        EmitRaw($".equ _heap_end,       0x0880");
+        EmitRaw($"; Shadow stack: {ssBase}..{ssBase + 127} ({128} bytes)");
+        EmitRaw($"; GC heap: {heapStart}..0x07FF (~{0x0880 - (0x0100 + heapStart)} bytes available)");
+        EmitRaw("");
+    }
+
+    // -------------------------------------------------------------------------
+    // GC Instruction Handlers
+    // -------------------------------------------------------------------------
+
+    // GcAlloc: call gc_alloc(size); store result GC_REF in Dst.
+    // size is passed in R24 (lo) : R25 (hi) per AVR calling convention.
+    // Result user_ptr is returned in R24:R25.
+    private void CompileGcAlloc(GcAlloc ga)
+    {
+        EmitComment("gc_alloc");
+        LoadIntoReg(ga.Size, "R24", DataType.UINT16);   // load size lo into R24 (hi stays R25)
+        CLR_R25IfNeeded(ga.Size);                        // R25 = 0 for 1-byte sizes
+        Emit("CALL", "gc_alloc");
+        StoreRegInto("R24", ga.Dst, DataType.GC_REF);   // store returned user_ptr (R24:R25)
+    }
+
+    // Ensure R25 = 0 when the size operand is an 8-bit constant or UINT8 variable.
+    private void CLR_R25IfNeeded(Val sizeVal)
+    {
+        bool is8bit = sizeVal switch
+        {
+            Constant c   => c.Value >= 0 && c.Value <= 255,
+            Variable v   => v.Type is DataType.UINT8 or DataType.INT8,
+            Temporary t  => t.Type is DataType.UINT8 or DataType.INT8,
+            _            => false
+        };
+        if (is8bit) Emit("CLR", "R25");
+    }
+
+    // Emit the gc_runtime.S content (embedded resource) into the output .asm file.
+    private static void EmitGcRuntime(TextWriter os)
+    {
+        os.WriteLine();
+        os.WriteLine("; --- PyMCU GC Runtime (gc_runtime.S) ---");
+        var asm = System.Reflection.Assembly.GetExecutingAssembly();
+        using var stream = asm.GetManifestResourceStream("gc_runtime.S")
+            ?? throw new Exception("gc_runtime.S embedded resource not found in assembly");
+        using var reader = new System.IO.StreamReader(stream);
+        os.Write(reader.ReadToEnd());
+    }
+
+    // GcRoot: push the SRAM address of the GC_REF variable onto the shadow stack.
+    // After the push, the shadow stack depth (_gc_ss_top_addr) is incremented.
+    // The shadow-stack entry holds the absolute SRAM address of the local variable
+    // so the GC can load and update the GC_REF value stored there.
+    private void CompileGcRoot(GcRoot gr)
+    {
+        string varName = gr.Var switch
+        {
+            Variable v  => v.Name,
+            Temporary t => t.Name,
+            _           => throw new Exception("GcRoot: expected Variable or Temporary")
+        };
+
+        int sramAddr = GetGcRefSramAddr(varName);
+        EmitComment($"gc_root push: {varName} @ 0x{sramAddr:X4}");
+
+        // X = _gc_ss_base; index = _gc_ss_top_addr (1 byte); X += index*2
+        // Then store sramAddr as 2 bytes at X; increment _gc_ss_top_addr.
+        Emit("LDS",  "R16", "_gc_ss_top_addr");    // R16 = current depth
+        Emit("MOV",  "R17", "R16");
+        Emit("LSL",  "R17");                        // R17 = depth * 2
+        Emit("LDI",  "R26", "lo8(_gc_ss_base)");
+        Emit("LDI",  "R27", "hi8(_gc_ss_base)");
+        Emit("CLR",  "R18");
+        Emit("ADD",  "R26", "R17");
+        Emit("ADC",  "R27", "R18");                 // X = _gc_ss_base + depth*2
+
+        Emit("LDI",  "R17", $"lo8(0x{sramAddr:X4})");
+        Emit("LDI",  "R18", $"hi8(0x{sramAddr:X4})");
+        Emit("ST",   "X+",  "R17");                 // store sramAddr lo
+        Emit("ST",   "X",   "R18");                 // store sramAddr hi
+
+        Emit("INC",  "R16");
+        Emit("STS",  "_gc_ss_top_addr", "R16");     // depth++
+    }
+
+    // GcUnroot: pop one entry from the shadow stack (decrement depth counter).
+    private void CompileGcUnroot(GcUnroot gu)
+    {
+        EmitComment($"gc_unroot pop: {(gu.Var is Variable v ? v.Name : ((Temporary)gu.Var).Name)}");
+        Emit("LDS", "R16", "_gc_ss_top_addr");
+        Emit("DEC", "R16");
+        Emit("STS", "_gc_ss_top_addr", "R16");
+    }
+
+    // Resolve the absolute SRAM address of a GC_REF local variable.
+    private int GetGcRefSramAddr(string varName)
+    {
+        if (_stackLayout.TryGetValue(varName, out int offset))
+            return 0x0100 + offset;
+        throw new Exception($"GcRoot: variable '{varName}' not found in stack layout");
     }
 }
