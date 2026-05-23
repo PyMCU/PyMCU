@@ -129,6 +129,18 @@ public partial class IRGenerator
                 Val objVal = VisitExpression(memC.Object);
                 if (objVal is Variable vObj)
                 {
+                    // list[T] method dispatch
+                    if (listVarElemTypes.ContainsKey(vObj.Name))
+                    {
+                        switch (memC.Member)
+                        {
+                            case "append" when expr.Args.Count == 1:
+                                return EmitListAppend(vObj, expr.Args[0]);
+                            default:
+                                throw new Exception($"list.{memC.Member}(): method not supported");
+                        }
+                    }
+
                     if (instanceClasses.TryGetValue(vObj.Name, out string clsC))
                     {
                         callee = clsC + "_" + memC.Member;
@@ -329,6 +341,17 @@ public partial class IRGenerator
                 {
                     string selfName = argVal is Variable v ? v.Name : (argVal is Temporary t ? t.Name : "");
                     return EmitDunderCall(selfName, cls, funcKey, new List<Val>());
+                }
+            }
+
+            // Handle list[T] variable: len(x) → load length from offset 0 of heap header
+            if (expr.Args[0] is VariableExpr vListLen)
+            {
+                string listQual = ResolveListVarQualified(vListLen.Name);
+                if (!string.IsNullOrEmpty(listQual))
+                {
+                    Val listPtr = new Variable(listQual, DataType.GC_REF);
+                    return EmitListLoad(listPtr, 0, DataType.UINT8);
                 }
             }
 
@@ -1477,5 +1500,136 @@ public partial class IRGenerator
         Temporary dstC = MakeTemp();
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
+    }
+
+    // Resolves a short variable name to its fully qualified list variable name,
+    // or returns "" if the variable is not a list[T].
+    private string ResolveListVarQualified(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string k = currentInlinePrefix + name;
+            if (listVarElemTypes.ContainsKey(k)) return k;
+        }
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            string k = currentFunction + "." + name;
+            if (listVarElemTypes.ContainsKey(k)) return k;
+        }
+        if (listVarElemTypes.ContainsKey(name)) return name;
+        return "";
+    }
+
+    // Computes basePtr + 2 + index * elemSize as a UINT16 address Temporary.
+    private Temporary EmitElemAddr(Val basePtr, Val index, int elemSize)
+    {
+        Val ptrU16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                   : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                   : basePtr;
+
+        Temporary finalAddr = MakeTemp(DataType.UINT16);
+        if (elemSize == 1)
+        {
+            Temporary idxPlusTwo = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, index, new Constant(2), idxPlusTwo));
+            Emit(new Binary(BinaryOp.Add, ptrU16, idxPlusTwo, finalAddr));
+        }
+        else
+        {
+            Temporary scaled = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Mul, index, new Constant(elemSize), scaled));
+            Temporary scaledPlusTwo = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, scaled, new Constant(2), scaledPlusTwo));
+            Emit(new Binary(BinaryOp.Add, ptrU16, scaledPlusTwo, finalAddr));
+        }
+        return finalAddr;
+    }
+
+    // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
+    private Val EmitListAppend(Variable listVar, Expression valExpr)
+    {
+        DataType elemDt = listVarElemTypes[listVar.Name];
+        int elemSize = elemDt.SizeOf();
+
+        // Load current length (offset 0) and capacity (offset 1)
+        Temporary tmpLen = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(listVar, tmpLen));
+        Temporary tmpCap = EmitListLoad(listVar, 1, DataType.UINT8);
+
+        string fastLabel = MakeLabel();
+
+        // if len < cap: skip realloc
+        Temporary ltCap = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.LessThan, tmpLen, tmpCap, ltCap));
+        Emit(new JumpIfNotZero(ltCap, fastLabel));
+
+        // === SLOW PATH: realloc to double capacity ===
+
+        // new_cap = cap * 2
+        Temporary newCap = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.Mul, tmpCap, new Constant(2), newCap));
+
+        // new_alloc_size = 2 + new_cap * elemSize
+        Temporary newCapScaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, newCap, new Constant(elemSize), newCapScaled));
+        Temporary newAllocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newCapScaled, new Constant(2), newAllocSize));
+
+        // Save old pointer, allocate new buffer
+        Temporary oldPtr = MakeTemp(DataType.GC_REF);
+        Emit(new Copy(listVar, oldPtr));
+        Temporary newPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(newAllocSize, newPtr));
+
+        // Write new header
+        EmitListStore(newPtr, 0, tmpLen);
+        EmitListStore(newPtr, 1, newCap);
+
+        // Copy existing elements byte-by-byte
+        // Compute base pointers outside the loop
+        Val oldPtrU16 = oldPtr with { Type = DataType.UINT16 };
+        Val newPtrU16 = newPtr with { Type = DataType.UINT16 };
+        Temporary totalBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, tmpLen, new Constant(elemSize), totalBytes));
+        Temporary oldBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, oldPtrU16, new Constant(2), oldBase));
+        Temporary newBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newPtrU16, new Constant(2), newBase));
+
+        Temporary byteOff = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), byteOff));
+        string copyLoopLabel = MakeLabel();
+        string copyLoopEnd = MakeLabel();
+        Emit(new Label(copyLoopLabel));
+        Temporary cmpDone = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, byteOff, totalBytes, cmpDone));
+        Emit(new JumpIfNotZero(cmpDone, copyLoopEnd));
+        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, oldBase, byteOff, srcAddr));
+        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newBase, byteOff, dstAddr));
+        Temporary byteTmp = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcAddr, byteTmp));
+        Emit(new StoreIndirect(byteTmp, dstAddr));
+        Emit(new AugAssign(BinaryOp.Add, byteOff, new Constant(1)));
+        Emit(new Jump(copyLoopLabel));
+        Emit(new Label(copyLoopEnd));
+
+        // Update listVar → newPtr; shadow stack slot already tracks SRAM addr of listVar
+        Emit(new Copy(newPtr, listVar));
+
+        // === FAST PATH: write element at offset 2 + len * elemSize ===
+        Emit(new Label(fastLabel));
+
+        Val elemVal = VisitExpression(valExpr);
+        Temporary appendAddr = EmitElemAddr(listVar, tmpLen, elemSize);
+        Emit(new StoreIndirect(elemVal, appendAddr));
+
+        // length += 1
+        Temporary newLen = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.Add, tmpLen, new Constant(1), newLen));
+        Emit(new StoreIndirect(newLen, listVar));
+
+        return new NoneVal();
     }
 }

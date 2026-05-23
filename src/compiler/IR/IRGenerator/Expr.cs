@@ -645,6 +645,23 @@ public partial class IRGenerator
                 return tmp;
             }
 
+            // list[T] indexing: x[i] → load element from GC heap list at offset 2 + i*elemSize
+            {
+                string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                             : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                             : "";
+                if (!string.IsNullOrEmpty(listQ))
+                {
+                    DataType elemDt = listVarElemTypes[listQ];
+                    Val listPtr = new Variable(listQ, DataType.GC_REF);
+                    Val idxVal = VisitExpression(expr.Index);
+                    Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                    Temporary result = MakeTemp(elemDt);
+                    Emit(new LoadIndirect(elemAddr, result));
+                    return result;
+                }
+            }
+
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
                 if (flashArrays.Contains(qualified))
