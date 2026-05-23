@@ -89,6 +89,25 @@ def uart_read() -> uint8:
     return result
 
 
+@inline
+def uart_read_line(buf: bytearray, max_len: uint8) -> uint8:
+    # Read bytes into buf until '\n' (10) or max_len-1 bytes received.
+    # CR ('\r' = 13) is silently discarded.
+    # A null byte is appended at buf[count] if count < max_len.
+    # Returns the number of bytes stored (not counting the newline or null).
+    count: uint8 = 0
+    while count < max_len - 1:
+        b: uint8 = uart_read()
+        if b == 10:
+            break
+        if b != 13:
+            buf[count] = b
+            count = count + 1
+    if count < max_len:
+        buf[count] = 0
+    return count
+
+
 def uart_write_decimal_u8(value: uint8):
     # Print uint8 value as decimal digits (0-255).
     if value >= 100:

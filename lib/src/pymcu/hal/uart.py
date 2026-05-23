@@ -201,6 +201,29 @@ class UART:
         return self.read()
 
     @inline
+    def read_line(self, buf: bytearray, max_len: uint8) -> uint8:
+        """Read bytes into buf until newline or max_len-1 bytes received.
+
+        CR (carriage-return, 13) is silently discarded so that CRLF line
+        endings from terminal emulators are handled transparently.
+        A null byte is appended at buf[count] when count < max_len.
+        Returns the number of bytes stored (not counting the newline or null).
+        """
+        match __CHIP__.name:
+            case "attiny2313" | "attiny4313":
+                from pymcu.hal._uart.attiny2313 import uart_read_line
+                return uart_read_line(buf, max_len)
+            case "atmega32u4":
+                from pymcu.hal._uart.atmega32u4 import uart_read_line
+                return uart_read_line(buf, max_len)
+            case _:
+                match __CHIP__.arch:
+                    case "avr":
+                        from pymcu.hal._uart.avr import uart_read_line
+                        return uart_read_line(buf, max_len)
+        return 0
+
+    @inline
     def available(self) -> uint8:
         """Return 1 if a byte is waiting in the receive buffer, 0 otherwise."""
         match __CHIP__.name:
