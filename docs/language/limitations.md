@@ -143,6 +143,17 @@ nested list comprehensions, `if`-filtered list comprehensions.
 **Supported:** `@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for
 external pin interrupts, atomic flag patterns via `GPIOR0`.
 
+:::{admonition} Timer0 and millis / ticks_ms
+:class: warning
+
+`millis_init()` (auto-injected when `ticks_ms()` is detected) configures **Timer0** in
+normal overflow mode.  Do **not** use Timer0 for PWM, CTC, or other purposes when
+`ticks_ms()` / `millis()` is active in the same program.
+
+`delay_ms()` and `delay_us()` are unaffected — they use a software busy-loop with no
+hardware timer dependency.
+:::
+
 ---
 
 ## Imports and modules
