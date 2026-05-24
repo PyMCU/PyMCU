@@ -134,6 +134,37 @@ jobs:
           path: extensions/pymcu-backend-sdk/dist/*
           retention-days: 15
 
+  # Pure-Python toolchain extensions (avrgas driver, toolchain SDK).
+  # Not built anywhere else in this workflow; needed for supply-chain installs.
+  build-toolchain-extensions:
+    name: Build toolchain extension wheels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build toolchain-sdk wheel
+        working-directory: extensions/pymcu-toolchain-sdk
+        run: uv build
+
+      - name: Build toolchain-avr wheel
+        working-directory: extensions/pymcu-toolchain-avr
+        run: uv build
+
+      - name: Upload toolchain extension artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-toolchain-extensions
+          path: |
+            extensions/pymcu-toolchain-sdk/dist/*
+            extensions/pymcu-toolchain-avr/dist/*
+          retention-days: 15
+
   # AVR codegen backend — AOT-compiled .NET binary, one wheel per platform.
   # Same matrix as build-wheels: macos-x64 is cross-compiled from the arm64 runner.
   build-backend-avr:
@@ -213,7 +244,7 @@ jobs:
   # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr]
+    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr, build-toolchain-extensions]
     if: needs.check-tag.outputs.is_stable == 'true'
     runs-on: ubuntu-latest
     environment: release
@@ -236,7 +267,7 @@ jobs:
   # Runs only on a pre-release tag (any v* tag that is not vX.Y.Z).
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr]
+    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr, build-toolchain-extensions]
     if: needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: prerelease
@@ -255,3 +286,37 @@ jobs:
 
       - name: Publish to TestPyPI
         run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
+
+  # Publishes all wheels to the private Gitea index on every tag push or
+  # manual workflow_dispatch. Requires a GITEA_TOKEN secret in the 'gitea'
+  # GitHub Actions environment with package write permissions.
+  publish-gitea:
+    name: Publish to Gitea (private index)
+    needs:
+      - build-stdlib
+      - build-wheels
+      - build-backend-sdk
+      - build-backend-avr
+      - build-toolchain-extensions
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: gitea
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Publish to Gitea
+        env:
+          UV_PUBLISH_URL: https://gitea.begeistert.dev/api/packages/begeistert/pypi/
+          UV_PUBLISH_USERNAME: begeistert
+          UV_PUBLISH_PASSWORD: ${{ secrets.GITEA_TOKEN }}
+        run: uv publish dist/*
