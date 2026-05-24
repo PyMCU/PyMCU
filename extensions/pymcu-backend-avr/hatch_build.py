@@ -2,9 +2,17 @@
 # Custom hatchling build hook: compiles the pymcuc-avr AOT binary and places
 # it at src/python/pymcu/backend/avr/pymcuc-avr before wheel packaging.
 #
-# Set PYMCU_SKIP_DOTNET_BUILD=1 to skip the dotnet publish step when the
-# binary has already been placed at build/bin/pymcuc-avr.
-# Set DOTNET_RID to override the target Runtime Identifier (e.g. linux-x64).
+# Environment variables:
+#   PYMCU_SKIP_DOTNET_BUILD=1
+#       Skip dotnet publish and use an existing binary at build/bin/pymcuc-avr.
+#       When no binary exists there (e.g. sdist-only builds), the hook returns
+#       early and produces a source-only package.
+#   DOTNET_RID
+#       Override the target Runtime Identifier (e.g. linux-x64, osx-arm64).
+#       Defaults to the host platform if not set.
+#   WHEEL_PLATFORM_TAG
+#       Override the wheel platform tag for cross-compilation.
+#       Example: manylinux_2_28_x86_64, win_amd64, macosx_14_0_arm64
 
 from __future__ import annotations
 
@@ -13,6 +21,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
@@ -30,11 +39,19 @@ class CustomBuildHook(BuildHookInterface):
         # Source: dotnet publish output dir
         src = root / "build" / "bin" / binary_name
 
-        if os.environ.get("PYMCU_SKIP_DOTNET_BUILD") == "1" and src.exists():
-            self.app.display_info(
-                f"[hatch-hook] Skipping dotnet publish (PYMCU_SKIP_DOTNET_BUILD=1). "
-                f"Using existing binary: {src}"
-            )
+        if os.environ.get("PYMCU_SKIP_DOTNET_BUILD") == "1":
+            if src.exists():
+                self.app.display_info(
+                    f"[hatch-hook] Skipping dotnet publish (PYMCU_SKIP_DOTNET_BUILD=1). "
+                    f"Using existing binary: {src}"
+                )
+            else:
+                # No binary available — source-only build (e.g. sdist).
+                self.app.display_info(
+                    "[hatch-hook] PYMCU_SKIP_DOTNET_BUILD=1 and no prebuilt binary found; "
+                    "building source-only package (no binary included)."
+                )
+                return
         else:
             csproj = (
                 root / "src" / "csharp" / "cli" / "PyMCU.Backend.AVR.Cli.csproj"
@@ -73,6 +90,12 @@ class CustomBuildHook(BuildHookInterface):
 
         build_data["artifacts"].append(str(dst.relative_to(root)))
 
+        # Override wheel platform tag (supports cross-compilation via env var).
+        plat_tag = _get_wheel_platform_tag()
+        build_data["pure_python"] = False
+        build_data["tag"] = f"py3-none-{plat_tag}"
+        self.app.display_info(f"[hatch-hook] Wheel tag: py3-none-{plat_tag}")
+
 
 def _get_rid() -> str | None:
     override = os.environ.get("DOTNET_RID")
@@ -89,3 +112,13 @@ def _get_rid() -> str | None:
         ("windows", "x86"):     "win-x86",
     }
     return table.get((s, m))
+
+
+def _get_wheel_platform_tag() -> str:
+    override = os.environ.get("WHEEL_PLATFORM_TAG")
+    if override:
+        return override
+    if sys.platform.startswith("linux"):
+        arch = platform.machine().lower()
+        return f"manylinux_2_28_{arch}"
+    return sysconfig.get_platform().replace("-", "_").replace(".", "_")
