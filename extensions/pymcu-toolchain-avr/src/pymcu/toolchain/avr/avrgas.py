@@ -49,6 +49,7 @@ If the user already has avr-gcc on PATH (Homebrew, apt, WinAVR), it is used
 directly without any download.
 """
 
+import platform
 import re
 import shutil
 import subprocess
@@ -202,6 +203,13 @@ class AvrgasToolchain(ExternalToolchain):
         found = shutil.which(name)
         if found:
             return found
+        if sys.platform == "darwin" and platform.machine() == "x86_64":
+            raise RuntimeError(
+                f"{name} not found.\n"
+                "Install the AVR toolchain via Homebrew:\n\n"
+                "  brew tap osx-cross/avr\n"
+                "  brew install avr-gcc avr-binutils\n"
+            )
         raise RuntimeError(
             f"{name} not found. Run 'pymcu build' to install the AVR toolchain."
         )
@@ -231,12 +239,24 @@ class AvrgasToolchain(ExternalToolchain):
         If the wheel is already installed (or binaries are on PATH), returns
         immediately.  In non-interactive mode (CI=true / PYMCU_NO_INTERACTIVE=1)
         the install runs without prompting.
+
+        On macOS x86_64 (Intel Mac) no pip wheel is published; the user is
+        directed to install via Homebrew instead.
         """
         from pymcu.toolchain.sdk import _is_non_interactive
         if self.is_cached():
             return
 
         self.console.print("[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
+
+        if sys.platform == "darwin" and platform.machine() == "x86_64":
+            raise RuntimeError(
+                "The AVR toolchain pip wheel is not available for macOS Intel (x86_64).\n"
+                "Install via Homebrew and re-run:\n\n"
+                "  brew tap osx-cross/avr\n"
+                "  brew install avr-gcc avr-binutils\n"
+            )
+
         self.console.print(
             "The AVR toolchain (avr-gcc, avr-as, avr-objcopy) was not found.\n"
             f"Install [bold]{_WHEEL_PKG}[/bold] from PyPI to continue.\n"
