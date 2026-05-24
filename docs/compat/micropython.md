@@ -56,7 +56,7 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | Module | API surface | Status |
 |---|---|---|
 | `machine.Pin` | `__init__`, `high/low/on/off/toggle`, `value`, `irq`, `mode`, `init`, `__call__` | ✅ Complete |
-| `machine.UART` | `write`, `read`, `write_str`, `println`, `print_byte` | ✅ Complete |
+| `machine.UART` | `write`, `read`, `write_str`, `println`, `print_byte`, `any`, `init` | ✅ Complete |
 | `machine.ADC` | `read` (10-bit), `read_u16` (16-bit scaled) | ✅ Complete |
 | `machine.PWM` | `freq`, `duty_u16`, `duty`, `init`, `deinit` | ✅ Complete |
 | `machine.SPI` | `write`, `read`, `write_readinto` | ✅ Complete |
@@ -74,6 +74,8 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | `avr.EEPROM` | `read`, `write` | ✅ Complete |
 | `avr.SoftSPI` | `transfer`, `write`, `select`, `deselect` | ✅ Complete |
 | `avr.SoftI2C` | `scan`, `writeto`, `readfrom`, `ping` | ✅ Complete |
+| `print()` | UART output — auto-injects UART init | ✅ Complete |
+| `input()` | UART input — reads line from UART | ✅ Complete |
 | `machine.RTC` | Real-time clock | ✗ Not planned |
 
 ---
@@ -165,7 +167,16 @@ btn.irq(Pin.IRQ_FALLING, on_press)                    # positional (HAL order)
 
 ### `machine.UART`
 
+**Constructor:**
+
+```python
+UART(id, baudrate=9600, *, bits=8, parity=None, stop=1)
+```
+
 The ATmega328P has one hardware UART (USART0). `id=0` is the only valid value.
+The `baudrate` is resolved at compile time against `f_cpu` in `pyproject.toml`;
+only standard baud rates (9600, 19200, 38400, 57600, 115200) are guaranteed
+to produce exact UBRR values with less than 0.5% error.
 
 ```python
 from machine import UART
@@ -178,15 +189,27 @@ uart.println("ready")          # write_str + newline
 
 b: uint8 = uart.read()         # blocking read — waits for RXC flag
 uart.print_byte(42)            # sends "42\n" as decimal ASCII digits
+
+if uart.any():
+    b = uart.read()            # non-blocking: check RXC flag first
 ```
 
-| Method | Description |
-|---|---|
-| `write(byte)` | Send a single byte |
-| `write_str(s)` | Send a compile-time string constant |
-| `println(s)` | Send string + `\r\n` |
-| `read()` | Blocking read — spins until RXC is set |
-| `print_byte(n)` | Print uint8 as decimal ASCII |
+| Method | Signature | Description |
+|---|---|---|
+| `write(byte)` | `(byte: uint8)` | Send a single byte |
+| `write_str(s)` | `(s: str)` | Send a compile-time string constant from PROGMEM |
+| `println(s)` | `(s: str)` | `write_str(s)` + `\r\n` |
+| `read()` | `() -> uint8` | Blocking read — spins until RXC flag is set |
+| `print_byte(n)` | `(n: uint8)` | Print uint8 as decimal ASCII digits + newline |
+| `any()` | `() -> uint8` | Returns 1 if a byte is waiting in the receive buffer |
+| `init(baudrate)` | `(baudrate: uint32)` | Re-initialise UART with a new baud rate |
+
+:::{note}
+`print()` — the Python built-in — is the simplest way to write to the UART from
+MicroPython-style code. The build driver detects `print(` in your source and
+automatically injects `uart_init()` before `main()`. No manual `UART(0, ...)` required.
+See [Built-in functions](#built-in-functions) below.
+:::
 
 ---
 
@@ -238,26 +261,43 @@ or D11 (Timer2) via the HAL directly.
 
 ### `machine.SPI`
 
+**Constructor:**
+
+```python
+SPI(id=0, baudrate=4000000, *, polarity=0, phase=0, bits=8, firstbit=SPI.MSB)
+```
+
 Hardware SPI on the ATmega328P uses fixed pins: D13 (SCK), D11 (MOSI), D12 (MISO).
 The chip-select pin must be managed manually — this matches standard MicroPython behaviour.
 
 ```python
 from machine import SPI, Pin
+from pymcu.types import uint8
 
-spi = SPI()
+spi = SPI(0, baudrate=1000000)    # 1 MHz; prescaler auto-selected
 cs  = Pin(10, Pin.OUT)
 
 cs.low()
-spi.write(0x9F)                 # send command byte
-device_id = spi.read(0xFF)      # send dummy 0xFF, return MISO byte
+spi.write(0x9F)                   # send command byte (discard MISO)
+device_id: uint8 = spi.read(0xFF) # send 0xFF dummy, return MISO byte
 cs.high()
+
+# context manager (resets CS on exit)
+with spi:
+    spi.write(0x06)               # WREN command
 ```
 
-| Method | Description |
-|---|---|
-| `write(byte)` | Send one byte (discard MISO) |
-| `read(write_byte)` | Send `write_byte`, return received byte |
-| `write_readinto(out, in_val)` | Full-duplex single-byte transfer |
+| Constant | Value | Description |
+|---|---|---|
+| `SPI.MSB` | 0 | Send MSB first (default) |
+| `SPI.LSB` | 1 | Send LSB first |
+
+| Method | Signature | Description |
+|---|---|---|
+| `write(byte)` | `(byte: uint8)` | Send one byte, discard MISO |
+| `read(write_byte)` | `(write_byte: uint8) -> uint8` | Send `write_byte`, return MISO |
+| `write_readinto(out, in_val)` | `(out: uint8, in_val: uint8) -> uint8` | Full-duplex byte |
+| `init(baudrate)` | `(baudrate: uint32)` | Re-initialise with new baud rate |
 
 For bit-bang SPI with arbitrary GPIO pins, use `avr.SoftSPI` (see below).
 
@@ -265,21 +305,43 @@ For bit-bang SPI with arbitrary GPIO pins, use `avr.SoftSPI` (see below).
 
 ### `machine.I2C`
 
+**Constructor:**
+
+```python
+I2C(id=0, *, freq=400000)
+```
+
 Hardware I2C (TWI) uses fixed pins: A4 (SDA = PC4) and A5 (SCL = PC5).
+Requires 4.7 kΩ external pull-up resistors on both lines.
 
 ```python
 from machine import I2C
+from pymcu.types import uint8
 
-i2c = I2C()
-count = i2c.scan()          # returns number of responding devices (not a list)
-i2c.writeto(0x3C, 0x00)     # write single byte to address 0x3C
-val = i2c.readfrom(0x3C)    # read single byte from 0x3C
+i2c = I2C(0, freq=100000)          # 100 kHz standard mode
+count: uint8 = i2c.scan()          # count of responding devices (not a list — no heap)
+i2c.writeto(0x3C, 0x00)            # write command byte to SSD1306
+val: uint8 = i2c.readfrom(0x3C)    # read one byte
+
+# context manager
+with i2c:
+    i2c.writeto(0x48, 0x00)        # ADS1115 — pointer register
+    raw: uint8 = i2c.readfrom(0x48)
 ```
+
+| Method | Signature | Description |
+|---|---|---|
+| `scan()` | `() -> uint8` | Count of responding devices (not a list) |
+| `writeto(addr, data)` | `(addr: uint8, data: uint8) -> uint8` | Write one byte to address |
+| `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte from address |
+| `init(freq)` | `(freq: uint32)` | Re-initialise with new clock frequency |
 
 :::{note}
 `scan()` returns a device *count* rather than a list of addresses — the MCU has no heap
 for dynamic lists. Use `pymcu.hal.i2c.I2C` for `ping(addr)` to probe specific addresses.
 :::
+
+For bit-bang I2C with arbitrary GPIO pins, use `avr.SoftI2C` (see below).
 
 ---
 
@@ -341,6 +403,15 @@ general-purpose periodic interrupts.
 
 ### `machine.WDT`
 
+**Constructor:**
+
+```python
+WDT(id=0, timeout=2000)
+```
+
+Configures the ATmega328P hardware watchdog. The MCU resets if `feed()` is not called
+within the configured window. Useful as a fault-recovery safety net.
+
 ```python
 from machine import WDT
 
@@ -350,8 +421,24 @@ while True:
     do_work()
 ```
 
-The `timeout` value is in milliseconds. Internally it maps to the nearest ATmega328P
-watchdog prescaler value (16 ms to 8 s in binary steps).
+The `timeout` is in milliseconds and is rounded to the nearest ATmega328P prescaler step:
+
+| `timeout` (ms) | Prescaler | Actual window |
+|---|---|---|
+| ≤ 16 | WDP0 | 16 ms |
+| ≤ 32 | WDP1 | 32 ms |
+| ≤ 64 | WDP2 | 64 ms |
+| ≤ 125 | WDP1+WDP0 | 125 ms |
+| ≤ 250 | WDP2+WDP0 | 250 ms |
+| ≤ 500 | WDP2+WDP1 | 500 ms |
+| ≤ 1000 | WDP2+WDP1+WDP0 | 1 s |
+| ≤ 2000 | WDP3 | 2 s |
+| ≤ 4000 | WDP3+WDP0 | 4 s |
+| ≤ 8000 | WDP3+WDP1 | 8 s |
+
+| Method | Description |
+|---|---|
+| `feed()` | Reset the watchdog counter (must be called periodically) |
 
 ---
 
@@ -396,9 +483,9 @@ compile time. `mem8` / `mem16` exist purely for MicroPython source compatibility
 | `0x23` | `PINB` | Port B input pins |
 | `0x24` | `DDRB` | Port B direction |
 | `0x25` | `PORTB` | Port B output |
-| `0x29` | `PINC` | Port C input pins |
-| `0x2A` | `DDRC` | Port C direction |
-| `0x2B` | `PORTC` | Port C output |
+| `0x26` | `PINC` | Port C input pins |
+| `0x27` | `DDRC` | Port C direction |
+| `0x28` | `PORTC` | Port C output |
 | `0x29` | `PIND` | Port D input pins |
 | `0x2A` | `DDRD` | Port D direction |
 | `0x2B` | `PORTD` | Port D output |
@@ -514,6 +601,109 @@ def also_fast():
 
 `micropython.const()` is an identity function at the PyMCU level. All integer literals
 annotated as `const[T]` are already compile-time folded by the optimizer.
+
+---
+
+(built-in-functions)=
+## Built-in functions
+
+PyMCU supports a subset of Python's built-in functions. Functions that require dynamic
+memory allocation or a runtime type system are not available, but the two most common
+I/O built-ins — `print()` and `input()` — are fully supported via the UART.
+
+---
+
+### `print()`
+
+```python
+print("hello, world")      # sends "hello, world\n" to UART0
+print("value:", 42)        # multiple arguments — space-separated
+```
+
+`print()` is the simplest way to emit text to the serial monitor. It behaves identically
+to Python's built-in `print()` for string and integer arguments.
+
+**Auto-injection:** The `pymcu build` driver scans your source for `print(` and
+automatically injects `uart_init(baud)` before `main()` runs. You do not need to
+initialise the UART manually when `print()` is the only UART user.
+
+| Behaviour | Python / MicroPython | PyMCU |
+|---|---|---|
+| `print("s")` | `s\n` to stdout | `s\n` to UART0 |
+| `print("a", "b")` | `a b\n` | `a b\n` to UART0 |
+| `print(42)` | `42\n` | `42\n` to UART0 |
+| `print("n =", n)` | runtime format | compile-time if both constant |
+| `print()` (no args) | empty line | empty `\n` |
+| keyword args (`end`, `sep`, `file`) | supported | ❌ not supported |
+
+---
+
+### `input()`
+
+Reads a line of text from UART0. The line is terminated by a newline character (`\n`).
+Windows-style CRLF sequences (`\r\n`) are handled transparently — the `\r` is silently
+stripped.
+
+**Syntax:**
+
+```python
+line: bytearray = input()
+line: bytearray = input("prompt")
+line: bytearray = input("prompt", maxlen)
+```
+
+- `prompt` — optional compile-time string literal, sent to UART before reading
+- `maxlen` — optional integer; default 64. The buffer is allocated as `uint8[maxlen]`
+  on the stack — it is a compile-time constant, not a heap allocation.
+- Return type **must** be annotated as `bytearray`.
+
+```python
+from pymcu.types import uint8
+
+def main():
+    name: bytearray = input("Enter name: ")    # prints prompt, reads until newline
+    print("Hello, ")
+    print(name)
+
+    # Read with explicit buffer limit
+    cmd: bytearray = input("> ", 16)           # max 16 characters
+```
+
+**Auto-injection:** Like `print()`, the driver detects `input(` and injects
+`uart_init()` automatically. The UART baud rate is taken from `pyproject.toml`
+(`[tool.pymcu] baud = 9600`).
+
+**Under the hood:** `input("prompt")` lowers to:
+
+1. `uart_write_str("prompt")` — sends the prompt string from PROGMEM
+2. `uart_read_line(buf, maxlen)` — reads bytes until `\n` or `maxlen−1` bytes consumed
+3. Returns a `bytearray` pointing to the stack buffer
+
+:::{note}
+`input()` is a **blocking call** — execution pauses until the user presses Enter.
+There is no timeout. If your application must remain responsive, poll `UART.any()`
+in your own loop and accumulate bytes manually with `machine.UART`.
+:::
+
+:::{warning}
+The buffer lives on the AVR stack frame. Do not let `maxlen` exceed the available
+stack space (typically ~200–400 bytes on an ATmega328P with the default 2 KB SRAM).
+:::
+
+**Example — UART command loop:**
+
+```python
+from pymcu.types import uint8
+
+def handle(cmd: bytearray) -> uint8:
+    # compare against known commands
+    return 0
+
+def main():
+    while True:
+        cmd: bytearray = input("> ", 32)
+        handle(cmd)
+```
 
 ---
 
