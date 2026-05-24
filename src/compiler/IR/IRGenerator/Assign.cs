@@ -31,6 +31,19 @@ public partial class IRGenerator
                 if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
                     qualified = ve.Name;
 
+                // When inside an inline expansion, the target may be a parameter aliased to a
+                // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
+                // array-store path fires instead of falling through to the bit-subscript path.
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                    && !string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string inlineQ = currentInlinePrefix + ve.Name;
+                    if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                        qualified = resolvedQ;
+                    else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                        qualified = inlineQ;
+                }
+
                 // Bytearray parameter: indirect store through pointer.
                 if (bytearrayParams.Contains(qualified))
                 {
@@ -685,26 +698,51 @@ public partial class IRGenerator
         {
             int count = 0;
             var initVals = new List<int>();
+            bool isInput = false;
+            string inputPrompt = "";
+            int inputMaxLen = 64;
 
             if (stmt.Init != null)
             {
-                if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee && callee.Name == "bytearray" &&
-                    call.Args.Count > 0)
+                if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee)
                 {
-                    Expression arg0 = call.Args[0];
-                    if (arg0 is IntegerLiteral il)
+                    if (callee.Name == "bytearray" && call.Args.Count > 0)
                     {
-                        count = il.Value;
-                        initVals.AddRange(Enumerable.Repeat(0, count));
-                    }
-                    else if (arg0 is ListExpr le)
-                    {
-                        count = le.Elements.Count;
-                        foreach (var e in le.Elements)
+                        Expression arg0 = call.Args[0];
+                        if (arg0 is IntegerLiteral il)
                         {
-                            if (e is IntegerLiteral il2) initVals.Add(il2.Value);
-                            else initVals.Add(0);
+                            count = il.Value;
+                            initVals.AddRange(Enumerable.Repeat(0, count));
                         }
+                        else if (arg0 is ListExpr le)
+                        {
+                            count = le.Elements.Count;
+                            foreach (var e in le.Elements)
+                            {
+                                if (e is IntegerLiteral il2) initVals.Add(il2.Value);
+                                else initVals.Add(0);
+                            }
+                        }
+                    }
+                    else if (callee.Name == "input")
+                    {
+                        isInput = true;
+                        foreach (var arg in call.Args)
+                        {
+                            if (arg is StringLiteral inputSl)
+                                inputPrompt = inputSl.Value;
+                            else if (arg is IntegerLiteral inputIl)
+                                inputMaxLen = inputIl.Value;
+                            else if (arg is KeywordArgExpr kw)
+                            {
+                                if (kw.Key == "prompt" && kw.Value is StringLiteral ksl) inputPrompt = ksl.Value;
+                                else if (kw.Key == "maxlen" && kw.Value is IntegerLiteral kil) inputMaxLen = kil.Value;
+                            }
+                            else
+                                throw new Exception("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
+                        }
+                        count = inputMaxLen;
+                        initVals.AddRange(Enumerable.Repeat(0, count));
                     }
                 }
             }
@@ -725,6 +763,40 @@ public partial class IRGenerator
 
             for (int k = 0; k < count; ++k)
                 Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), DataType.UINT8, count));
+
+            if (isInput)
+            {
+                // Emit prompt via uart_write_str (same resolution as print)
+                if (!string.IsNullOrEmpty(inputPrompt))
+                {
+                    string writeStrFn = ResolveCallee("uart_write_str");
+                    if (writeStrFn == "uart_write_str")
+                    {
+                        foreach (var fnName in inlineFunctions.Keys)
+                        {
+                            if (fnName.EndsWith("_uart_write_str")) { writeStrFn = fnName; break; }
+                        }
+                    }
+                    VisitCall(new CallExpr(
+                        new VariableExpr(writeStrFn),
+                        new List<Expression> { new StringLiteral(inputPrompt) }));
+                }
+
+                // Emit uart_read_line(buf, maxlen) via VisitCall so that the inline
+                // expansion runs, instead of emitting a bare Call IR node.
+                string readLineFn = ResolveCallee("uart_read_line");
+                if (readLineFn == "uart_read_line")
+                {
+                    foreach (var fnName in inlineFunctions.Keys)
+                    {
+                        if (fnName.EndsWith("_uart_read_line")) { readLineFn = fnName; break; }
+                    }
+                }
+                VisitCall(new CallExpr(
+                    new VariableExpr(readLineFn),
+                    new List<Expression> { new VariableExpr(stmt.Name), new IntegerLiteral(inputMaxLen) }));
+            }
+
             return;
         }
 

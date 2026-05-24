@@ -182,6 +182,7 @@ public partial class IRGenerator
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
         intrinsicNames.Add("print");
+        intrinsicNames.Add("input");
         intrinsicNames.Add("sleep_ms");
         intrinsicNames.Add("sleep_us");
         intrinsicNames.Add("len");

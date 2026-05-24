@@ -636,6 +636,17 @@ public partial class IRGenerator
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
 
+            // Inside an inline expansion, the target may be an aliased bytearray parameter.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !string.IsNullOrEmpty(currentInlinePrefix))
+            {
+                string inlineQ = currentInlinePrefix + ve.Name;
+                if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                    qualified = resolvedQ;
+                else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                    qualified = inlineQ;
+            }
+
             // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
             if (bytearrayParams.Contains(qualified))
             {
