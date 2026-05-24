@@ -43,11 +43,12 @@ selects the correct BFD emulation and libgcc path for any supported chip.
 Both .c and .cpp/.cc/.cxx sources are supported in [tool.pymcu.ffi] sources.
 This enables use of Arduino libraries and other C++ AVR libraries.
 
-Auto-install is supported on macOS (Homebrew) and Linux (apt).
-On Windows, WinAVR or the Arduino IDE toolchain directory must be on PATH.
+The toolchain is distributed as a pip package (pymcu-avr-toolchain on PyPI).
+If not installed, `pymcu build` will prompt the user to install it via pip.
+If the user already has avr-gcc on PATH (Homebrew, apt, WinAVR), it is used
+directly without any download.
 """
 
-import platform
 import re
 import shutil
 import subprocess
@@ -61,20 +62,12 @@ from rich.prompt import Confirm
 from pymcu.toolchain.sdk import ExternalToolchain
 
 
-# Pre-built avr-gcc toolchain by Zak Kemble (MIT-compatible, self-contained)
-# https://github.com/ZakKemble/avr-gcc-build/releases
-_TOOLCHAIN_VERSION = "14.1.0"
-_RELEASE_TAG = "v14.1.0-1"
-_BASE_URL = (
-    "https://github.com/ZakKemble/avr-gcc-build/releases/download"
-    f"/{_RELEASE_TAG}"
-)
-
 # Required binaries (avr-g++ is optional: needed only when .cpp sources are present)
 # avr-ld is NOT listed: we invoke avr-gcc as the linker driver, which calls avr-ld
 # internally with the correct chip-specific flags.
 _REQUIRED_BINS = ["avr-as", "avr-objcopy", "avr-gcc"]
 _CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".C"}
+_WHEEL_PKG = "pymcu-avr-toolchain"
 
 
 class AvrgasToolchain(ExternalToolchain):
@@ -86,34 +79,6 @@ class AvrgasToolchain(ExternalToolchain):
     Pre-built releases are sourced from Zak Kemble's avr-gcc-build project:
     https://github.com/ZakKemble/avr-gcc-build
     """
-
-    # Platform -> download metadata for ZakKemble pre-built avr-gcc releases.
-    # Key: "{sys.platform}-{machine}" where machine is normalised to x86_64/arm64.
-    METADATA: dict[str, dict] = {
-        "darwin-arm64": {
-            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-arm64-macos.tar.bz2",
-            "archive_type": "tar.bz2",
-            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-arm64-macos/bin",
-        },
-        "darwin-x86_64": {
-            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-macos.tar.bz2",
-            "archive_type": "tar.bz2",
-            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-macos/bin",
-        },
-        "linux-x86_64": {
-            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux.tar.bz2",
-            "archive_type": "tar.bz2",
-            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-linux/bin",
-        },
-        # linux-arm64: ZakKemble does not publish an aarch64-linux pre-built release.
-        # On ARM64 Linux, install gcc-avr + binutils-avr from apt (or brew on macOS).
-        # pymcu toolchain install will detect system binaries in PATH and skip download.
-        "win32-x86_64": {
-            "url": f"{_BASE_URL}/avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows.zip",
-            "archive_type": "zip",
-            "bin_dir": f"avr-gcc-{_TOOLCHAIN_VERSION}-x64-windows/bin",
-        },
-    }
 
     # RAMSTART per chip family (byte offset of first SRAM byte in AVR data space).
     # ELF .data section VMA = 0x800000 + RAMSTART.
@@ -181,64 +146,64 @@ class AvrgasToolchain(ExternalToolchain):
         return "avr-as"
 
     # ------------------------------------------------------------------
-    # Platform detection and binary resolution
+    # Binary resolution
     # ------------------------------------------------------------------
 
-    def _platform_key(self) -> str:
-        """Return a platform key like 'darwin-arm64' or 'linux-x86_64'."""
-        machine = platform.machine().lower()
-        # Normalise common aliases
-        if machine in ("amd64", "x86_64"):
-            arch = "x86_64"
-        elif machine in ("arm64", "aarch64"):
-            arch = "arm64"
-        else:
-            arch = machine
+    # Cached result of wheel usability check (None = not yet tested).
+    _wheel_usable: "Optional[bool]" = None
 
-        plat = sys.platform if not sys.platform.startswith("linux") else "linux"
-        return f"{plat}-{arch}"
-
-    def _platform_info(self) -> dict:
-        """Return download metadata for the current platform, or raise."""
-        key = self._platform_key()
-        if key not in self.METADATA:
-            raise RuntimeError(
-                f"No pre-built avr-gcc {_TOOLCHAIN_VERSION} for platform: {key}.\n"
-                f"Install avr-gcc manually and ensure it is on PATH."
-            )
-        return self.METADATA[key]
-
-    def _cached_bin_dir(self) -> Optional[Path]:
+    def _find_bin_from_wheel(self, name: str) -> "Optional[str]":
         """
-        Return the bin/ directory of the locally cached toolchain, or None if
-        the cache does not exist yet.
+        Return the binary path from pymcu-avr-toolchain wheel if installed
+        AND if the wheel's avr-gcc is self-contained (portable across locations).
+        Homebrew binaries have hardcoded prefixes and fail when moved, so this
+        check filters them out; the existing PATH detection picks up Homebrew.
         """
         try:
-            info = self._platform_info()
-        except RuntimeError:
+            import pymcu_avr_toolchain as _whl  # noqa: PLC0415
+            if AvrgasToolchain._wheel_usable is None:
+                AvrgasToolchain._wheel_usable = self._validate_wheel_gcc(
+                    str(_whl.get_tool("avr-gcc"))
+                )
+            if not AvrgasToolchain._wheel_usable:
+                return None
+            return str(_whl.get_tool(name))
+        except (ImportError, FileNotFoundError):
             return None
-        d = self._get_tool_dir() / info["bin_dir"]
-        return d if d.is_dir() else None
+
+    @staticmethod
+    def _validate_wheel_gcc(gcc_path: str) -> bool:
+        """
+        Return True if the wheel's avr-gcc can resolve device-specific specs.
+        Uses --print-libgcc-file-name which requires device-specs to be readable
+        (unlike -dumpspecs which only dumps built-in specs and always succeeds).
+        Homebrew binaries seeded outside /opt/homebrew fail this check because
+        their device-specs path is hardcoded to the Homebrew prefix.
+        """
+        try:
+            result = subprocess.run(
+                [gcc_path, "-mmcu=atmega328p", "--print-libgcc-file-name"],
+                capture_output=True, timeout=5,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
     def _find_bin(self, name: str) -> str:
         """
-        Resolve a binary path, checking the local cache first then PATH.
+        Resolve a binary path.  Resolution order:
+          0. pymcu-avr-toolchain wheel (if installed via pip, self-contained)
+          1. System PATH (Homebrew, apt, WinAVR, etc.)
         Raises RuntimeError if the binary cannot be found.
         """
-        exe = (name + ".exe") if sys.platform == "win32" else name
-        # 1. Local cache
-        cached = self._cached_bin_dir()
-        if cached is not None:
-            candidate = cached / exe
-            if candidate.exists():
-                return str(candidate)
-        # 2. System PATH
+        from_wheel = self._find_bin_from_wheel(name)
+        if from_wheel is not None:
+            return from_wheel
         found = shutil.which(name)
         if found:
             return found
         raise RuntimeError(
-            f"{name} not found in local cache or on PATH.\n"
-            f"Run 'pymcu build' to trigger automatic installation."
+            f"{name} not found. Run 'pymcu build' to install the AVR toolchain."
         )
 
     # ------------------------------------------------------------------
@@ -247,90 +212,58 @@ class AvrgasToolchain(ExternalToolchain):
 
     def is_cached(self) -> bool:
         """
-        Returns True if all required binaries are available either in the
-        local ~/.pymcu/tools/ cache (at the correct version) or on PATH.
+        Returns True if all required binaries are available via:
+          0. pymcu-avr-toolchain wheel (installed via pip, self-contained)
+          1. System PATH (Homebrew, apt, WinAVR, etc.)
         """
-        cached = self._cached_bin_dir()
-        if cached is not None:
-            exe_suffix = ".exe" if sys.platform == "win32" else ""
-            if all((cached / (b + exe_suffix)).exists() for b in _REQUIRED_BINS):
-                if self._read_cached_version() == _TOOLCHAIN_VERSION:
-                    return True
+        if all(self._find_bin_from_wheel(b) is not None for b in _REQUIRED_BINS):
+            return True
         return all(shutil.which(b) is not None for b in _REQUIRED_BINS)
 
     # ------------------------------------------------------------------
-    # Auto-install: download pre-built release to local cache
+    # Install: prompt user to pip-install the toolchain wheel
     # ------------------------------------------------------------------
 
     def install(self) -> None:
         """
-        Download a pre-built avr-gcc toolchain into ~/.pymcu/tools/ so
-        no system package manager is required.  The release is fetched from:
-        https://github.com/ZakKemble/avr-gcc-build/releases
+        Prompt the user to install pymcu-avr-toolchain from PyPI.
 
-        If the required binaries are already available on PATH (e.g. installed
-        via apt or brew), this method returns immediately without downloading.
+        If the wheel is already installed (or binaries are on PATH), returns
+        immediately.  In non-interactive mode (CI=true / PYMCU_NO_INTERACTIVE=1)
+        the install runs without prompting.
         """
-        from pymcu.toolchain.sdk import _is_non_interactive, _tool_lock
+        from pymcu.toolchain.sdk import _is_non_interactive
         if self.is_cached():
             return
-        try:
-            info = self._platform_info()
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"Cannot auto-install: {exc}\n"
-                f"Download manually from "
-                f"https://github.com/ZakKemble/avr-gcc-build/releases"
-            ) from exc
-
-        url = info["url"]
-        archive_type = info["archive_type"]
 
         self.console.print("[bold cyan]PyMCU Toolchain Manager[/bold cyan]")
         self.console.print(
-            f"The AVR GNU toolchain (avr-as, avr-objcopy, avr-gcc "
-            f"v{_TOOLCHAIN_VERSION}) is required but was not found.\n"
-            f"A pre-built release will be downloaded from:\n"
-            f"  [green]{url}[/green]"
+            "The AVR toolchain (avr-gcc, avr-as, avr-objcopy) was not found.\n"
+            f"Install [bold]{_WHEEL_PKG}[/bold] from PyPI to continue.\n"
+            f"  [dim]pip install {_WHEEL_PKG}[/dim]"
         )
-        if _is_non_interactive():
-            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
-        elif not Confirm.ask("Download and install to local cache?", default=True):
-            raise RuntimeError("avr-gcc installation aborted by user.")
+        if not _is_non_interactive():
+            if not Confirm.ask(f"Run: pip install {_WHEEL_PKG}?", default=True):
+                raise RuntimeError("AVR toolchain installation aborted by user.")
 
-        tool_dir = self._get_tool_dir()
-        tool_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = url.split("/")[-1]
-        download_path = tool_dir / filename
-
-        with _tool_lock(self._lock_file()):
-            if self.is_cached():
-                return
-
-            self._download_file(url, download_path, f"Downloading avr-gcc {_TOOLCHAIN_VERSION}...")
-            self.console.print("[green]Download complete.[/green]")
-
-            self._extract_archive(download_path, tool_dir, archive_type)
-
-            # Ensure all binaries are executable on Unix
-            if sys.platform != "win32":
-                bin_dir = tool_dir / info["bin_dir"]
-                if bin_dir.is_dir():
-                    for entry in bin_dir.iterdir():
-                        if entry.is_file():
-                            entry.chmod(entry.stat().st_mode | 0o111)
-
-            # Remove downloaded archive to save space
-            if download_path.exists():
-                download_path.unlink()
-
-            self._write_cached_version(_TOOLCHAIN_VERSION)
-
-        self.console.print(
-            f"[bold green]avr-gcc {_TOOLCHAIN_VERSION} installed to "
-            f"{tool_dir}[/bold green]"
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", _WHEEL_PKG],
+            check=False,
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"`pip install {_WHEEL_PKG}` failed (exit {result.returncode}).\n"
+                f"Try manually: pip install {_WHEEL_PKG}"
+            )
+
+        AvrgasToolchain._wheel_usable = None  # force re-validation of new install
+
+        if not self.is_cached():
+            raise RuntimeError(
+                f"{_WHEEL_PKG} was installed but no usable binaries were found.\n"
+                f"The wheel may not yet support your platform. "
+                f"Install avr-gcc manually and ensure it is on PATH."
+            )
 
     # ------------------------------------------------------------------
     # AVRA → GNU AS syntax translation

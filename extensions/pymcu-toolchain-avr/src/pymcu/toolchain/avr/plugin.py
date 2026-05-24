@@ -36,7 +36,7 @@ from typing import Optional
 from rich.console import Console
 from pymcu.toolchain.sdk import ExternalToolchain, ToolchainPlugin
 
-from .avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
+from .avrgas import AvrgasToolchain, _WHEEL_PKG
 
 
 class AvrToolchainPlugin(ToolchainPlugin):
@@ -49,7 +49,7 @@ class AvrToolchainPlugin(ToolchainPlugin):
 
     family = "avr"
     description = "GNU AVR binutils (avr-as, avr-gcc, avr-objcopy)"
-    version = _TOOLCHAIN_VERSION
+    version = _WHEEL_PKG
     default_chip = "atmega328p"
 
     @classmethod
