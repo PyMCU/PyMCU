@@ -36,6 +36,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `pow(x, n)` / `x ** n` | Compile-time constant fold |
 | `bytes` literal `b"\x00\xFF"` | Treated as `uint8[N]`; works in `for`, array init, `len()` |
 | `bytearray` | Mutable SRAM buffer |
+| `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART init preamble |
 | `int.from_bytes(b, 'little'/'big')` | Compile-time fold or runtime |
 | Raw strings `r"\n"` | No escape processing |
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |

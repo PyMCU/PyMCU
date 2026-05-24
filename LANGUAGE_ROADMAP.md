@@ -56,6 +56,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
+| `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
 | F-strings `f"text={var}"` | Compile-time constant only; all `{expr}` must resolve to string or integer constants |
 
 ### MCU-Specific Extensions

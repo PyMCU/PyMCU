@@ -192,7 +192,7 @@ relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` a
 | `int.from_bytes(b, e)` | ✅ Supported | Compile-time fold or runtime |
 | `sorted()` | ❌ Not supported | No dynamic allocation |
 | `map()` / `filter()` | ❌ Not supported | Use explicit `for` loops |
-| `input()` | ❌ Not supported | Use `uart.read()` |
+| `input()` | ✅ Supported | `line: bytearray = input("prompt")` — reads until newline from UART; prompt is optional compile-time string; max length is optional integer (default 64); UART preamble auto-injected |
 | `open()` / file I/O | ❌ Not supported | No filesystem |
 | `exec()` / `eval()` | ❌ Not supported | Interpreter required |
 
