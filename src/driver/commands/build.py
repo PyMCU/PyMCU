@@ -154,29 +154,37 @@ def _load_extension_board_chips(flavor: str) -> dict[str, str]:
 _PRINT_RE    = re.compile(r'\bprint\s*\(')
 _UART_RE     = re.compile(r'\bUART\s*\(')
 _TICKS_MS_RE = re.compile(r'\bticks_ms\s*\(')
+_INPUT_RE    = re.compile(r'\binput\s*\(')
 
 
-def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool]:
+def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     """Scan .py files in sources_dir.
 
-    Returns (has_print, has_uart):
+    Returns (has_print, has_uart, has_input):
       has_print -- True if any file contains a print() call
       has_uart  -- True if any file explicitly constructs a UART() instance
+      has_input -- True if any file contains an input() call
     """
     has_print = False
     has_uart  = False
+    has_input = False
     for py_file in sources_dir.rglob("*.py"):
         try:
-            text = py_file.read_text(encoding="utf-8", errors="ignore")
-            if not has_print and _PRINT_RE.search(text):
+            # Strip inline comments from each line before matching to avoid
+            # false positives from comment text (e.g. "# Output on UART (9600 baud)")
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if not has_print and _PRINT_RE.search(code):
                 has_print = True
-            if not has_uart and _UART_RE.search(text):
+            if not has_uart and _UART_RE.search(code):
                 has_uart = True
+            if not has_input and _INPUT_RE.search(code):
+                has_input = True
         except OSError:
             pass
-        if has_print and has_uart:
+        if has_print and has_uart and has_input:
             break
-    return has_print, has_uart
+    return has_print, has_uart, has_input
 
 
 def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
@@ -456,22 +464,25 @@ def build(
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
-        # Auto-inject UART preamble when print() is used without an explicit
-        # UART() constructor in user sources.  This mirrors MicroPython's REPL
-        # behaviour where UART 0 is pre-initialized at 115200 baud before user
-        # code runs, so print() works out of the box with no extra imports.
-        _has_print, _has_uart = _detect_print_usage(sources_dir)
-        if _has_print and not _has_uart:
+        # Auto-inject UART preamble when print() or input() is used without an
+        # explicit UART() constructor in user sources.  This mirrors MicroPython's
+        # REPL behaviour where UART 0 is pre-initialized at 115200 baud before user
+        # code runs, so print()/input() work out of the box with no extra imports.
+        _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
+        if (_has_print or _has_input) and not _has_uart:
             entry_point = _inject_print_preamble(entry_point, generated_dir)
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
+            _trigger = "print()" if _has_print else "input()"
+            if _has_print and _has_input:
+                _trigger = "print() and input()"
             _diag_log(
-                "print() detected without UART() — injecting UART preamble at 115200 baud",
+                f"{_trigger} detected without UART() — injecting UART preamble at 115200 baud",
                 verbose=is_verbose,
             )
             if is_verbose:
                 console.print(
-                    "[debug] print() without UART — UART preamble injected at 115200 baud",
+                    f"[debug] {_trigger} without UART — UART preamble injected at 115200 baud",
                     style="dim",
                 )
 
