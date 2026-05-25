@@ -31,7 +31,7 @@ def main():
     DDRB[5] = 1    # PB5 as output
     PORTB[5] = 0   # start LOW
 
-    tim = Timer(1, 100, on_timer)
+    tim = Timer(1, period=100, callback=on_timer)
 
     while True:
         pass
