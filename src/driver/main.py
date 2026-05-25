@@ -101,6 +101,7 @@ from .commands.sync import sync
 from .commands.version import version
 from .commands.toolchain import toolchain_app
 from .commands.backend import backend_app
+from .commands.profile import profile
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -122,6 +123,7 @@ app.command()(build)
 app.command()(clean)
 app.command()(flash)
 app.command()(sync)
+app.command()(profile)
 app.add_typer(toolchain_app)
 app.add_typer(backend_app)
 

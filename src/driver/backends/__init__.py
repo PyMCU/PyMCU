@@ -128,6 +128,7 @@ def run_backend(
     interrupt_vector: int | None = None,
     verbose: bool = False,
     on_output=None,
+    emit_symbols_path: Path | None = None,
 ) -> None:
     """
     Invoke an external backend binary (e.g. pymcuc-avr) to translate a .mir
@@ -158,6 +159,8 @@ def run_backend(
         cmd.extend(["--config", f"{key}={val}"])
     if verbose:
         cmd.append("--verbose")
+    if emit_symbols_path is not None:
+        cmd.extend(["--emit-symbols", str(emit_symbols_path)])
 
     try:
         with subprocess.Popen(
