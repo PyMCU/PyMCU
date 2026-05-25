@@ -14,6 +14,8 @@
  * -----------------------------------------------------------------------------
  */
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using PyMCU.Backend.Analysis;
 using PyMCU.Common.Models;
 using PyMCU.IR;
@@ -701,6 +703,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         EmitFlashArrayPool(output);
         if (program.NeedsGc) EmitGcRuntime(output);
+        WriteSymbolsIfRequested(optimized, program);
     }
 
     public override void EmitContextSave()
@@ -2471,5 +2474,56 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (_stackLayout.TryGetValue(varName, out int offset))
             return 0x0100 + offset;
         throw new Exception($"GcRoot: variable '{varName}' not found in stack layout");
+    }
+
+    // ── Symbol map (--emit-symbols) ───────────────────────────────────────────
+
+    /// <summary>
+    /// When set, a symbols JSON file is written to this path after compilation.
+    /// Format: [{"Name":"main","WordAddr":4}, ...]
+    /// </summary>
+    public string? EmitSymbolsPath { get; set; }
+
+    private void WriteSymbolsIfRequested(List<AvrAsmLine> optimized, ProgramIR program)
+    {
+        if (string.IsNullOrEmpty(EmitSymbolsPath)) return;
+        var symbols = ComputeSymbolMap(optimized, program);
+        File.WriteAllText(EmitSymbolsPath,
+            JsonSerializer.Serialize(symbols, AvrSymbolsJsonContext.Default.ListSymbolEntry));
+    }
+
+    private static List<SymbolEntry> ComputeSymbolMap(List<AvrAsmLine> lines, ProgramIR program)
+    {
+        var funcNames = program.Functions
+            .Where(f => !f.IsInline)
+            .Select(f => f.Name)
+            .ToHashSet();
+
+        uint word = 0;
+        var result = new List<SymbolEntry>();
+
+        foreach (var line in lines)
+        {
+            switch (line.Type)
+            {
+                case AvrAsmLine.LineType.Raw:
+                    if (line.Content.StartsWith(".org ", StringComparison.Ordinal))
+                    {
+                        var raw = line.Content[5..].Trim();
+                        word = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                            ? Convert.ToUInt32(raw[2..], 16)
+                            : uint.Parse(raw);
+                    }
+                    break;
+                case AvrAsmLine.LineType.Label:
+                    if (funcNames.Contains(line.LabelText))
+                        result.Add(new SymbolEntry(line.LabelText, word));
+                    break;
+                case AvrAsmLine.LineType.Instruction:
+                    word += line.Mnemonic is "CALL" or "JMP" or "LDS" or "STS" ? 2u : 1u;
+                    break;
+            }
+        }
+        return result;
     }
 }
