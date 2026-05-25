@@ -424,17 +424,29 @@ public partial class IRGenerator
 
                         if (arrSize > 0)
                         {
+                            DataType elemDt = arrayElemTypes.TryGetValue(@base, out var edt) ? edt : DataType.UINT8;
+                            // Use the fully-qualified key so the optimizer's copy-propagation
+                            // maps "main.v" correctly when the body resolves the loop variable.
+                            string qValKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                                ? valKey
+                                : (!string.IsNullOrEmpty(currentFunction)
+                                    ? currentFunction + "." + stmt.VarName
+                                    : valKey);
+                            variableTypes[qValKey] = elemDt;
                             for (int k = arrSize - 1; k >= 0; --k)
                             {
                                 string elemKey = @base + "__" + k;
-                                if (constantVariables.TryGetValue(elemKey, out int cv)) constantVariables[valKey] = cv;
+                                if (constantVariables.TryGetValue(elemKey, out int cv))
+                                    constantVariables[valKey] = cv;
+                                else if (instanceClasses.ContainsKey(elemKey) ||
+                                         instanceClasses.Keys.Any(x => x.StartsWith(elemKey + ".")))
+                                    PropagateCtState(elemKey, qValKey);
                                 else
-                                    throw new Exception(
-                                        "reversed() array elements must be compile-time integer constants.");
+                                    Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
+                                CleanCtState(qValKey);
+                                constantVariables.Remove(valKey);
                             }
-
-                            constantVariables.Remove(valKey);
                             return;
                         }
                     }
