@@ -258,7 +258,13 @@ public partial class IRGenerator
                                 else
                                 {
                                     string elemKey = @base + "__" + k;
-                                    if (constantVariables.TryGetValue(elemKey, out int cv))
+                                    bool elemIsZca = instanceClasses.ContainsKey(elemKey) ||
+                                                     instanceClasses.Keys.Any(x => x.StartsWith(elemKey + "."));
+                                    if (elemIsZca)
+                                    {
+                                        PropagateCtState(elemKey, valKey);
+                                    }
+                                    else if (constantVariables.TryGetValue(elemKey, out int cv))
                                     {
                                         constantVariables[valKey] = cv;
                                     }
@@ -271,6 +277,7 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
+                                CleanCtState(valKey);
                                 constantVariables.Remove(valKey);
                             }
 
@@ -487,6 +494,51 @@ public partial class IRGenerator
                     Emit(new Jump(loopStart));
                     Emit(new Label(loopEnd));
                     loopStack.RemoveAt(loopStack.Count - 1);
+                    return;
+                }
+            }
+
+            // for v in ct_array: — unroll over compile-time array (scalars or ZCA instances)
+            if (iter is VariableExpr forVarExpr2)
+            {
+                string forBase = "";
+                int forSize = -1;
+                if (!string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string fk = currentInlinePrefix + forVarExpr2.Name;
+                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
+                }
+                if (forSize < 0 && !string.IsNullOrEmpty(currentFunction))
+                {
+                    string fk = currentFunction + "." + forVarExpr2.Name;
+                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
+                }
+                if (forSize < 0 && arraySizes.TryGetValue(forVarExpr2.Name, out int fs2))
+                { forSize = fs2; forBase = forVarExpr2.Name; }
+
+                if (forSize > 0)
+                {
+                    string forVarKey = currentInlinePrefix + stmt.VarName;
+                    DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
+                    variableTypes[forVarKey] = elemDt2;
+
+                    for (int fk = 0; fk < forSize; fk++)
+                    {
+                        string elemKey2 = forBase + "__" + fk;
+                        bool isZca = instanceClasses.ContainsKey(elemKey2) ||
+                                     instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
+                        if (isZca)
+                            PropagateCtState(elemKey2, forVarKey);
+                        else if (constantVariables.TryGetValue(elemKey2, out int cv2))
+                            constantVariables[forVarKey] = cv2;
+                        else
+                            Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
+
+                        VisitStatement(stmt.Body);
+
+                        CleanCtState(forVarKey);
+                        constantVariables.Remove(forVarKey);
+                    }
                     return;
                 }
             }
