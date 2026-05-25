@@ -4,7 +4,8 @@
 // Usage:
 //   pymcuc-avr <ir-file.mir> --output <firmware.asm> --target <chip> --freq <hz>
 //                             [--config KEY=VALUE]... [--reset-vector N]
-//                             [--interrupt-vector N] [--verbose]
+//                             [--interrupt-vector N] [--emit-symbols <path>]
+//                             [--verbose]
 //
 // Exit codes:
 //   0  — success
@@ -65,6 +66,12 @@ var verboseOpt = new Option<bool>("--verbose", "-v")
     DefaultValueFactory = _ => false
 };
 
+var emitSymbolsOpt = new Option<string?>("--emit-symbols")
+{
+    Description = "Write function symbol map JSON to this path (for profiler use)",
+    DefaultValueFactory = _ => null
+};
+
 var rootCmd = new RootCommand("pymcuc-avr — PyMCU AVR backend runner");
 rootCmd.Arguments.Add(irFileArg);
 rootCmd.Options.Add(outputOpt);
@@ -74,17 +81,19 @@ rootCmd.Options.Add(configOpt);
 rootCmd.Options.Add(resetVecOpt);
 rootCmd.Options.Add(intVecOpt);
 rootCmd.Options.Add(verboseOpt);
+rootCmd.Options.Add(emitSymbolsOpt);
 
 rootCmd.SetAction(pr =>
 {
-    var irFile   = pr.GetValue(irFileArg) ?? "";
-    var output   = pr.GetValue(outputOpt) ?? "";
-    var target   = pr.GetValue(targetOpt) ?? "";
-    var freq     = pr.GetValue(freqOpt);
-    var configs  = pr.GetValue(configOpt) ?? [];
-    var resetVec = pr.GetValue(resetVecOpt);
-    var intVec   = pr.GetValue(intVecOpt);
-    var verbose  = pr.GetValue(verboseOpt);
+    var irFile      = pr.GetValue(irFileArg) ?? "";
+    var output      = pr.GetValue(outputOpt) ?? "";
+    var target      = pr.GetValue(targetOpt) ?? "";
+    var freq        = pr.GetValue(freqOpt);
+    var configs     = pr.GetValue(configOpt) ?? [];
+    var resetVec    = pr.GetValue(resetVecOpt);
+    var intVec      = pr.GetValue(intVecOpt);
+    var verbose     = pr.GetValue(verboseOpt);
+    var emitSymbols = pr.GetValue(emitSymbolsOpt);
 
     // Derive output path from IR file path when not specified.
     if (string.IsNullOrEmpty(output) && !string.IsNullOrEmpty(irFile))
@@ -131,10 +140,13 @@ rootCmd.SetAction(pr =>
     // Run codegen.
     try
     {
-        var codegen = provider.Create(cfg);
+        var codegen = (AvrCodeGen)provider.Create(cfg);
+        codegen.EmitSymbolsPath = emitSymbols;
         using var writer = new StreamWriter(output);
         codegen.Compile(ir, writer);
         Console.WriteLine($"[BUILD_OK] {output}");
+        if (!string.IsNullOrEmpty(emitSymbols))
+            Console.WriteLine($"[SYMBOLS] {emitSymbols}");
     }
     catch (Exception ex)
     {
