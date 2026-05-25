@@ -1,19 +1,53 @@
 # Installation
 
-:::{admonition} Alpha Software — pip package coming soon
-:class: warning
+## Option 1 — pip (recommended)
 
-PyMCU is in early alpha. A `pip`-installable release of the `pymcu` CLI is under active
-development. For now, the recommended path is the **Docker image from GitHub Container
-Registry** — no local toolchain required.
+`pymcu-compiler` is distributed on PyPI. Install it with `pip` or `uv`:
+
+::::{tab-set}
+:::{tab-item} uv (recommended)
+```bash
+uv tool install pymcu-compiler
+```
+
+`uv tool install` places the `pymcu` command on your PATH globally, isolated in its own
+virtual environment. No activation step needed.
 :::
+:::{tab-item} pip / pipx
+```bash
+pipx install pymcu-compiler   # isolated install (recommended over plain pip)
+# — or —
+pip install pymcu-compiler    # install into the active environment
+```
+:::
+::::
+
+Verify:
+
+```bash
+pymcu --version
+# pymcu, version 0.12.0
+```
+
+### Compat layer extras
+
+Install optional MicroPython or CircuitPython compatibility packages alongside
+`pymcu-compiler`:
+
+```bash
+# MicroPython compat (machine, utime, micropython modules)
+pip install pymcu-micropython
+
+# CircuitPython compat (board, digitalio, busio, neopixel, …)
+pip install pymcu-circuitpython
+```
 
 ---
 
-## Option 1 — Docker image from GitHub (recommended)
+## Option 2 — Docker image
 
-Pre-built images are published to GitHub Container Registry for every release. Pull the
-flavor that matches your workflow:
+Pre-built images are published to GitHub Container Registry for every release.
+Docker is useful for CI pipelines or environments where you cannot install Python tools.
 
 | Flavor | Image | Stdlib included |
 |---|---|---|
@@ -22,15 +56,10 @@ flavor that matches your workflow:
 | `circuitpython` | `ghcr.io/pymcu/pymcu:circuitpython` | + `board`, `digitalio`, `analogio`, `pwmio` compat |
 
 ```bash
-# Pull once
-docker pull ghcr.io/pymcu/pymcu:latest          # base
-docker pull ghcr.io/pymcu/pymcu:micropython      # MicroPython compat
-docker pull ghcr.io/pymcu/pymcu:circuitpython    # CircuitPython compat
+docker pull ghcr.io/pymcu/pymcu:latest
 ```
 
-### Compile your project
-
-Mount your project directory and run `pymcu build`:
+Mount your project and run `pymcu build`:
 
 ```bash
 docker run --rm \
@@ -39,41 +68,15 @@ docker run --rm \
     sh -c "cd /workspace && pymcu build"
 ```
 
-This writes `dist/firmware.hex` to your project folder on the host. Flash it with
-`avrdude` — see [Flash the firmware](#flash-the-firmware).
-
 ---
 
-## Option 2 — Build the Docker image locally
+## Option 3 — Build from source
 
-If you prefer to build from the repository instead of pulling:
-
-```bash
-git clone https://github.com/pymcu/pymcu.git
-cd pymcu
-
-# Base image
-docker build -t pymcu .
-
-# With MicroPython compat
-docker build --build-arg FLAVOR=micropython -t pymcu:micropython .
-
-# With CircuitPython compat
-docker build --build-arg FLAVOR=circuitpython -t pymcu:circuitpython .
-```
-
-Then use the same `docker run` pattern shown above, replacing the image name with your
-local tag (e.g. `pymcu` instead of `ghcr.io/pymcu/pymcu:latest`).
-
----
-
-## Option 3 — Local install from source
-
-For contributors or anyone who wants a native install without Docker.
+For contributors or anyone who wants to run the latest development build.
 
 ### Requirements
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - Python 3.11 or newer
 - `uv` (recommended)
 - `avrdude` (for flashing — see below)
@@ -84,12 +87,14 @@ For contributors or anyone who wants a native install without Docker.
 git clone https://github.com/pymcu/pymcu.git
 cd pymcu
 
-# Build the C# compiler
-dotnet build src/compiler/PyMCU.Compiler.csproj
+# Build the C# compiler and AVR backend
+dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
+dotnet publish extensions/pymcu-avr/src/csharp/cli/PyMCU.AVR.csproj -c Release -o build/bin --nologo
 
 # Set up Python environment
 uv venv && source .venv/bin/activate
-rsync -av lib/src/pymcu/ .venv/lib/python3.11/site-packages/pymcu/
+uv sync
+rsync -av lib/src/pymcu/ .venv/lib/python3.*/site-packages/pymcu/
 pip install -e src/driver
 ```
 
@@ -97,7 +102,7 @@ Verify:
 
 ```bash
 pymcu --version
-# pymcu, version 0.1.0
+# pymcu, version 0.12.0-dev
 ```
 
 ---

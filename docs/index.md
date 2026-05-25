@@ -3,9 +3,9 @@
 :::{admonition} Alpha Software
 :class: warning
 
-PyMCU is currently in **early alpha**. It is under active development and requires a local source build.
-The standard library is being aligned with the MicroPython/CircuitPython APIs for compatibility,
-which means major breaking changes are expected.
+PyMCU is currently in **early alpha**. The standard library is being aligned with the
+MicroPython/CircuitPython APIs for compatibility — breaking changes are expected between
+releases.
 :::
 
 **PyMCU** compiles a **statically-typed, allocation-free subset of Python** directly to
@@ -16,6 +16,10 @@ PyMCU accepts Python *syntax* but enforces a strict compile-time type system. It
 **compiler**, not an interpreter. Code runs at native MCU speed with zero runtime overhead.
 Heap allocation, exceptions, closures, and dynamic features do not exist.
 :::
+
+```bash
+pip install pymcu-compiler   # one-line install — no Docker, no local build
+```
 
 ```python
 from pymcu.hal.gpio import Pin
