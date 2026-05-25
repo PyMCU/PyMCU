@@ -134,10 +134,9 @@ jobs:
           path: extensions/pymcu-backend-sdk/dist/*
           retention-days: 15
 
-  # Pure-Python toolchain extensions (avrgas driver, toolchain SDK).
-  # Not built anywhere else in this workflow; needed for supply-chain installs.
-  build-toolchain-extensions:
-    name: Build toolchain extension wheels
+  # Pure-Python toolchain SDK (shared base for all toolchain drivers).
+  build-toolchain-sdk:
+    name: Build pymcu-toolchain-sdk wheel
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -152,23 +151,18 @@ jobs:
         working-directory: extensions/pymcu-toolchain-sdk
         run: uv build
 
-      - name: Build toolchain-avr wheel
-        working-directory: extensions/pymcu-toolchain-avr
-        run: uv build
-
-      - name: Upload toolchain extension artifacts
+      - name: Upload toolchain-sdk artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-toolchain-extensions
-          path: |
-            extensions/pymcu-toolchain-sdk/dist/*
-            extensions/pymcu-toolchain-avr/dist/*
+          name: dist-toolchain-sdk
+          path: extensions/pymcu-toolchain-sdk/dist/*
           retention-days: 15
 
-  # AVR codegen backend — AOT-compiled .NET binary, one wheel per platform.
-  # Same matrix as build-wheels: macos-x64 is cross-compiled from the arm64 runner.
-  build-backend-avr:
-    name: Build backend-avr (${{ matrix.name }})
+  # pymcu-avr — merged AVR extension: codegen backend (.NET AOT) + toolchain driver (Python).
+  # One binary wheel per platform; same matrix as build-wheels.
+  # macos-x64 is cross-compiled from the arm64 runner using DOTNET_RID.
+  build-avr:
+    name: Build pymcu-avr (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -211,8 +205,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Build backend-avr wheel
-        working-directory: extensions/pymcu-backend-avr
+      - name: Build pymcu-avr wheel
+        working-directory: extensions/pymcu-avr
         env:
           DOTNET_RID: ${{ matrix.dotnet_rid }}
           WHEEL_PLATFORM_TAG: ${{ matrix.wheel_tag }}
@@ -221,7 +215,7 @@ jobs:
       - name: Smoke test (Linux x64 only)
         if: matrix.name == 'linux-x64'
         run: |
-          WHEEL=$(ls extensions/pymcu-backend-avr/dist/pymcu_backend_avr-*.whl | head -1)
+          WHEEL=$(ls extensions/pymcu-avr/dist/pymcu_avr-*.whl | head -1)
           pip install "$WHEEL" --no-deps
           python -c "
           from pymcu.backend.avr import AvrBackendPlugin
@@ -234,17 +228,17 @@ jobs:
           print('Smoke test passed.')
           "
 
-      - name: Upload backend-avr wheel artifacts
+      - name: Upload pymcu-avr wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-backend-avr-${{ matrix.name }}
-          path: extensions/pymcu-backend-avr/dist/*.whl
+          name: dist-avr-${{ matrix.name }}
+          path: extensions/pymcu-avr/dist/*.whl
           retention-days: 15
 
   # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr, build-toolchain-extensions]
+    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-avr, build-toolchain-sdk]
     if: needs.check-tag.outputs.is_stable == 'true'
     runs-on: ubuntu-latest
     environment: release
@@ -267,7 +261,7 @@ jobs:
   # Runs only on a pre-release tag (any v* tag that is not vX.Y.Z).
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-backend-avr, build-toolchain-extensions]
+    needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-avr, build-toolchain-sdk]
     if: needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: prerelease
@@ -296,8 +290,8 @@ jobs:
       - build-stdlib
       - build-wheels
       - build-backend-sdk
-      - build-backend-avr
-      - build-toolchain-extensions
+      - build-avr
+      - build-toolchain-sdk
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: gitea

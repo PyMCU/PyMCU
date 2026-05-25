@@ -3,7 +3,7 @@ requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pymcu"
+name = "pymcu-compiler"
 version = "0.1.0a1"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
@@ -21,17 +21,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-avr = ["pymcu-toolchain-avr>=0.1.0a1", "pymcu-backend-avr>=0.1.0a1"]
+avr = ["pymcu-avr>=0.1.0a1"]
 pic = ["pymcu-toolchain-pic>=0.1.0a1"]
-all = ["pymcu-toolchain-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1", "pymcu-backend-avr>=0.1.0a1"]
+all = ["pymcu-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
 pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
-pymcu-toolchain-avr = {path = "extensions/pymcu-toolchain-avr", editable = true}
 pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
 pymcu-backend-sdk = {path = "extensions/pymcu-backend-sdk", editable = true}
-pymcu-backend-avr = {path = "extensions/pymcu-backend-avr", editable = true}
+pymcu-avr = {path = "extensions/pymcu-avr", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
@@ -55,9 +54,8 @@ include = ["src/", "hatch_build.py"]
 pythonpath = [
     ".",
     "extensions/pymcu-toolchain-sdk/src",
-    "extensions/pymcu-toolchain-avr/src",
     "extensions/pymcu-toolchain-pic/src",
     "extensions/pymcu-backend-sdk/src",
-    "extensions/pymcu-backend-avr/src",
+    "extensions/pymcu-avr/src/python",
 ]
 addopts = ["--import-mode=importlib"]

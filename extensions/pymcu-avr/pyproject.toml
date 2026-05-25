@@ -3,18 +3,22 @@ requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pymcu-backend-avr"
+name = "pymcu-avr"
 version = "0.1.0a1"
-description = "AVR codegen backend plugin for PyMCU (free, open source)"
+description = "AVR support for pymcu-compiler: codegen backend + toolchain driver"
 readme = "README.md"
 authors = [
-    { name = "Ivan Montiel Cardona", email = "developer@begeistert.dev" }
+    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
 ]
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "pymcu-backend-sdk>=0.1.0a1",
+    "pymcu-toolchain-sdk>=0.1.0a1",
 ]
+
+[project.entry-points."pymcu.toolchains"]
+avr = "pymcu.toolchain.avr:AvrToolchainPlugin"
 
 [project.entry-points."pymcu.backends"]
 avr = "pymcu.backend.avr:AvrBackendPlugin"
