@@ -76,7 +76,6 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv ./extensions/pymcu-toolchain-sdk
-          uv pip install --python .venv ./extensions/pymcu-toolchain-avr
           uv pip install --python .venv -e .
           uv pip install --python .venv ./lib
           if [ "${PYMCU_FLAVOR}" = "micropython" ]; then
@@ -85,7 +84,7 @@ jobs:
             uv pip install --python .venv ./external/pymcu-circuitpython
           fi
           uv pip install --python .venv ./extensions/pymcu-backend-sdk
-          uv pip install --python .venv ./extensions/pymcu-backend-avr
+          uv pip install --python .venv ./extensions/pymcu-avr
 
       - name: Configure environment
         run: |
@@ -99,7 +98,7 @@ jobs:
 
       - name: Build pymcuc-avr backend CLI
         run: |
-          dotnet publish extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
+          dotnet publish extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
             -c Release -o build/bin --nologo
 
       - name: Add pymcuc to PATH
@@ -151,7 +150,7 @@ jobs:
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer
           pip install ./extensions/pymcu-toolchain-sdk
-          pip install ./extensions/pymcu-toolchain-avr
+          pip install ./extensions/pymcu-avr --no-deps
           pip install ./extensions/pymcu-toolchain-pic
 
       - name: Run driver tests
