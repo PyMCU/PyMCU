@@ -17,14 +17,11 @@
 from pymcu.types import uint8
 from pymcu.hal.spi import SPI
 from pymcu.hal.uart import UART
-from pymcu.hal.gpio import Pin
-
 
 
 def main():
     uart = UART(9600)
-    cs_pin = Pin("PB0", Pin.OUT)
-    spi = SPI(cs=cs_pin)
+    spi = SPI(cs="PB0")
 
     uart.println("SCS")
 

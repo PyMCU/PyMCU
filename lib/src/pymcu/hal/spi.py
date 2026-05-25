@@ -6,9 +6,8 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from pymcu.types import uint8, inline, Callable
+from pymcu.types import uint8, inline, Callable, const
 from pymcu.chips import __CHIP__
-from pymcu.hal.gpio import Pin
 
 
 # noinspection PyProtectedMember
@@ -28,7 +27,7 @@ class SPI:
 
     Controller context-manager support::
 
-        with SPI(cs=cs_pin):
+        with SPI(cs="PB0"):
             spi.write(0xFF)
 
     Peripheral use::
@@ -44,12 +43,12 @@ class SPI:
     CONTROLLER = 0
     PERIPHERAL = 1
 
-    def __init__(self, mode: uint8 = 0, cs: Pin = None):
+    def __init__(self, mode: uint8 = 0, cs: const[str] = ""):
         """Initialize SPI.
 
         mode: SPI.CONTROLLER (0, default) or SPI.PERIPHERAL (1).
-        cs:   optional chip-select Pin for controller mode (idle high).
-              Ignored in peripheral mode.
+        cs:   optional chip-select pin name for controller mode (idle high),
+              e.g. "PB0".  Ignored in peripheral mode.
         """
         match __CHIP__.arch:
             case "avr":
@@ -58,14 +57,14 @@ class SPI:
                         from pymcu.hal._spi.avr import spi_init
                         spi_init()
                         self._mode = "c"
-                        if cs is not None:
-                            from pymcu.hal._gpio.atmega328p import select_port, select_ddr, select_bit
-                            _cs_ddr = select_ddr(cs.name)
-                            _cs_ddr[select_bit(cs.name)] = 1
-                            self._cs_port = select_port(cs.name)
-                            self._cs_bit  = select_bit(cs.name)
+                        if cs != "":
+                            from pymcu.hal._gpio.atmega328p import _PinRegs
+                            _r = _PinRegs(cs)
+                            _r._ddr[_r._bit] = 1
+                            self._cs_port = _r._port
+                            self._cs_bit  = _r._bit
                             self._cs_port[self._cs_bit] = 1
-                            self._cs = cs.name
+                            self._cs = cs
                         else:
                             self._cs = ""
                     case 1:
