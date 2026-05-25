@@ -36,7 +36,7 @@ def _get_profiler_binary() -> Path:
         return adjacent
 
     # 2. build/bin/ — dotnet publish output (primary dev path)
-    repo_root = Path(__file__).parents[4]
+    repo_root = Path(__file__).parents[3]
     dev_path = repo_root / "build" / "bin" / binary_name
     if dev_path.exists():
         return dev_path
@@ -78,10 +78,10 @@ def profile(
         cfg = tomlkit.load(f)
 
     pymcu_cfg = cfg.get("tool", {}).get("pymcu", {})
-    chip: str = pymcu_cfg.get("target", "atmega328p")
-    freq: int = freq_override or int(pymcu_cfg.get("freq", 16_000_000))
-    entry_point = Path(pymcu_cfg.get("entry", "main.py"))
-    sources_dir = Path(pymcu_cfg.get("src", "."))
+    chip: str = pymcu_cfg.get("chip") or pymcu_cfg.get("target", "atmega328p")
+    freq: int = freq_override or int(pymcu_cfg.get("frequency", pymcu_cfg.get("freq", 16_000_000)))
+    sources_dir = Path(pymcu_cfg.get("sources", pymcu_cfg.get("src", ".")))
+    entry_point = sources_dir / Path(pymcu_cfg.get("entry", "main.py"))
 
     if chip.lower() in BOARD_CHIPS:
         chip = BOARD_CHIPS[chip.lower()]
@@ -96,7 +96,7 @@ def profile(
     asm_path = dist / "firmware.asm"
     ir_path = dist / "firmware.mir"
 
-    compiler = PyMCUCompiler()
+    compiler = PyMCUCompiler(console)
     backend_plugin = get_backend_for_chip(chip)
     if backend_plugin is None:
         console.print(f"[red]No backend found for chip '{chip}'. Is pymcu-avr installed?[/red]")
@@ -127,15 +127,20 @@ def profile(
         console.print(f"[red]Build failed:[/red] {ex}")
         raise typer.Exit(1)
 
-    # ── 3. Assemble to HEX ────────────────────────────────────────────────────
+    # ── 3. Assemble to HEX (avr-as pipeline) ─────────────────────────────────
     from ..toolchains import get_toolchain_for_chip
-    toolchain = get_toolchain_for_chip(chip)
-    if toolchain is None:
-        console.print(f"[red]No toolchain for chip '{chip}'.[/red]")
+    try:
+        toolchain = get_toolchain_for_chip(chip, console)
+    except ValueError as ex:
+        console.print(f"[red]{ex}[/red]")
         raise typer.Exit(1)
 
     try:
-        toolchain.assemble(asm_path, hex_path, chip, freq, verbose=verbose)
+        obj = toolchain.assemble(asm_path)
+        elf = toolchain.link(obj, [], dist)
+        result_hex = toolchain.elf_to_hex(elf)
+        if result_hex.resolve() != hex_path.resolve():
+            shutil.copy(result_hex, hex_path)
     except Exception as ex:
         console.print(f"[red]Assembly failed:[/red] {ex}")
         raise typer.Exit(1)
