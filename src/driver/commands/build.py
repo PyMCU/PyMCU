@@ -187,6 +187,37 @@ def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
     return False
 
 
+_MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
+
+
+def _inject_preamble(
+    entry_point: Path,
+    generated_dir: Path,
+    comment: str,
+    import_line: str,
+    call_line: str,
+) -> Path:
+    """Write a synthetic entry file injecting import_line + call_line.
+
+    When the source has an explicit ``def main():``, the import is placed at
+    the top of the file and the call is inserted as the first statement inside
+    ``def main():``.  Otherwise both are prepended at the top level.  This
+    avoids the compiler error that fires when top-level executable statements
+    coexist with an explicit ``def main()``.
+    """
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    synthetic = generated_dir / entry_point.name
+    existing = entry_point.read_text(encoding="utf-8")
+    m = _MAIN_DEF_RE.search(existing)
+    if m:
+        modified = existing[:m.end()] + "\n    " + call_line + existing[m.end():]
+        synthetic.write_text(comment + import_line + "\n" + modified, encoding="utf-8")
+    else:
+        preamble = comment + import_line + call_line + "\n\n"
+        synthetic.write_text(preamble + existing, encoding="utf-8")
+    return synthetic
+
+
 def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
     """Return a synthetic entry file with a UART-init preamble prepended.
 
@@ -194,18 +225,13 @@ def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
     115200 baud before user code runs, so print() works without an explicit
     UART() constructor in user code.
     """
-    generated_dir.mkdir(parents=True, exist_ok=True)
-    synthetic = generated_dir / entry_point.name
-    preamble = (
-        "# Auto-injected by pymcu build: UART 0 initialized for print()\n"
-        "from pymcu.hal.uart import UART as _pymcu_uart_0\n"
-        "_pymcu_uart_0(115200)\n\n"
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: UART 0 initialized for print()\n",
+        import_line="from pymcu.hal.uart import UART as _pymcu_uart_0\n",
+        call_line="_pymcu_uart_0(115200)",
     )
-    synthetic.write_text(
-        preamble + entry_point.read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    return synthetic
 
 
 def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> Path:
@@ -219,16 +245,13 @@ def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> Path:
     64 (~1 ms resolution at 16 MHz).  Do not use Timer0 for PWM or CTC in the
     same project when ticks_ms() is active.
     """
-    generated_dir.mkdir(parents=True, exist_ok=True)
-    synthetic = generated_dir / entry_point.name
-    preamble = (
-        "# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n"
-        "from pymcu.hal.timer import millis_init as _pymcu_millis_init\n"
-        "_pymcu_millis_init()\n\n"
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n",
+        import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
+        call_line="_pymcu_millis_init()",
     )
-    existing = entry_point.read_text(encoding="utf-8")
-    synthetic.write_text(preamble + existing, encoding="utf-8")
-    return synthetic
 
 
 def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
