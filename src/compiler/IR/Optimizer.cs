@@ -105,6 +105,19 @@ private static Function CloneFunction(Function f)
             func.Body = cfg.Blocks.SelectMany(b => b.Instructions).ToList();
         }
 
+        if (UnrollConstantLoops(func))
+        {
+            for (var i = 0; i < 3; ++i)
+            {
+                PropagateCopies(func);
+                FoldConstants(func);
+                CoalesceInstructions(func);
+                var cfg2 = BuildCfg(func);
+                EliminateDeadCodeCfg(cfg2);
+                func.Body = cfg2.Blocks.SelectMany(b => b.Instructions).ToList();
+            }
+        }
+
         CollapseBoolJumps(func);
         CollapseBitChecks(func);
 
@@ -802,6 +815,109 @@ private static Function CloneFunction(Function f)
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
             BytearrayStore bst => bst with { Index = replace(bst.Index), Src = replace(bst.Src) },
             BytearrayLoad bld => bld with { Index = replace(bld.Index) },
+            _ => instr,
+        };
+    }
+
+    private const int MaxUnrollTripCount = 16;
+
+    private static bool UnrollConstantLoops(Function func)
+    {
+        bool anyUnrolled = false;
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            var body = func.Body;
+            for (int i = 0; i < body.Count - 1; i++)
+            {
+                if (body[i] is not Label { Name: var lStart }) continue;
+                if (body[i + 1] is not JumpIfGreaterOrEqual {
+                    Src1: Variable { Name: var loopVar },
+                    Src2: Constant { Value: var tripN },
+                    Target: var lEnd }) continue;
+                if (tripN <= 0 || tripN > MaxUnrollTripCount) continue;
+
+                int backJumpIdx = -1, endLabelIdx = -1;
+                for (int j = i + 2; j < body.Count - 1; j++)
+                {
+                    if (body[j] is Jump { Target: var jt } && jt == lStart &&
+                        body[j + 1] is Label { Name: var lt } && lt == lEnd)
+                    { backJumpIdx = j; endLabelIdx = j + 1; break; }
+                }
+                if (backJumpIdx < 0) continue;
+
+                var loopBody = body.GetRange(i + 2, backJumpIdx - (i + 2));
+
+                if (loopBody.Any(instr => instr is Jump { Target: var t } && t == lEnd)) continue;
+                if (loopBody.Any(instr => instr is Jump { Target: var t2 } && t2 == lStart)) continue;
+
+                // The increment must be the last non-DebugLine instruction in the loop body.
+                // This prevents matching conditional increments inside if-blocks.
+                int incrIdx = -1;
+                for (int bi = loopBody.Count - 1; bi >= 0; bi--)
+                {
+                    if (loopBody[bi] is DebugLine) continue;
+                    if (loopBody[bi] is AugAssign { Op: BinaryOp.Add, Target: Variable { Name: var tv }, Operand: Constant { Value: 1 } }
+                        && tv == loopVar)
+                        incrIdx = bi;
+                    break;
+                }
+                if (incrIdx < 0) continue;
+
+                int initValue = -1;
+                for (int j = i - 1; j >= Math.Max(0, i - 20); j--)
+                {
+                    if (body[j] is Copy { Src: Constant { Value: var cv }, Dst: Variable { Name: var dv } } && dv == loopVar)
+                    { initValue = cv; break; }
+                    if (body[j] is Label) break;
+                }
+                if (initValue < 0) continue;
+
+                int tripCount = tripN - initValue;
+                if (tripCount <= 0 || tripCount > MaxUnrollTripCount) continue;
+
+                var bodyLabels = new HashSet<string>(loopBody.OfType<Label>().Select(l => l.Name));
+                var unrolled = new List<Instruction>();
+                for (int k = initValue; k < tripN; k++)
+                {
+                    unrolled.Add(new Copy(new Constant(k), new Variable(loopVar)));
+                    for (int bi = 0; bi < loopBody.Count; bi++)
+                    {
+                        if (bi == incrIdx) continue;
+                        unrolled.Add(RenameBodyLabels(loopBody[bi], bodyLabels, k));
+                    }
+                }
+                unrolled.Add(new Copy(new Constant(tripN), new Variable(loopVar)));
+
+                body.RemoveRange(i, endLabelIdx - i + 1);
+                body.InsertRange(i, unrolled);
+                func.Body = body;
+                anyUnrolled = true;
+                changed = true;
+                break;
+            }
+        }
+        return anyUnrolled;
+    }
+
+    private static Instruction RenameBodyLabels(Instruction instr, HashSet<string> bodyLabels, int iteration)
+    {
+        string R(string lbl) => bodyLabels.Contains(lbl) ? $"{lbl}_u{iteration}" : lbl;
+        return instr switch
+        {
+            Label l when bodyLabels.Contains(l.Name) => new Label($"{l.Name}_u{iteration}"),
+            Jump j => new Jump(R(j.Target)),
+            JumpIfZero j => new JumpIfZero(j.Condition, R(j.Target)),
+            JumpIfNotZero j => new JumpIfNotZero(j.Condition, R(j.Target)),
+            JumpIfEqual j => new JumpIfEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfNotEqual j => new JumpIfNotEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfLessThan j => new JumpIfLessThan(j.Src1, j.Src2, R(j.Target)),
+            JumpIfLessOrEqual j => new JumpIfLessOrEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfGreaterThan j => new JumpIfGreaterThan(j.Src1, j.Src2, R(j.Target)),
+            JumpIfGreaterOrEqual j => new JumpIfGreaterOrEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfBitSet j => new JumpIfBitSet(j.Source, j.Bit, R(j.Target)),
+            JumpIfBitClear j => new JumpIfBitClear(j.Source, j.Bit, R(j.Target)),
             _ => instr,
         };
     }
