@@ -282,8 +282,8 @@ jobs:
         run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
 
   # Publishes all wheels to the private Gitea index on every tag push or
-  # manual workflow_dispatch. Requires a GITEA_TOKEN secret in the 'gitea'
-  # GitHub Actions environment with package write permissions.
+  # manual workflow_dispatch. The Gitea instance is only reachable via the
+  # Headscale network — the Tailscale action connects the runner before publishing.
   publish-gitea:
     name: Publish to Gitea (private index)
     needs:
@@ -305,12 +305,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Connect to Headscale network
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.HEADSCALE_AUTH_KEY }}
+          args: --login-server ${{ secrets.HEADSCALE_URL }}
+
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
       - name: Publish to Gitea
-        env:
-          UV_PUBLISH_URL: https://gitea.begeistert.dev/api/packages/begeistert/pypi/
-          UV_PUBLISH_USERNAME: begeistert
-          UV_PUBLISH_PASSWORD: ${{ secrets.GITEA_TOKEN }}
-        run: uv publish dist/*
+        run: |
+          uv publish \
+            --publish-url "${{ secrets.PRIVATE_PYPI_URL }}" \
+            --username "${{ secrets.PRIVATE_PYPI_USERNAME }}" \
+            --password "${{ secrets.PRIVATE_PYPI_TOKEN }}" \
+            dist/*
