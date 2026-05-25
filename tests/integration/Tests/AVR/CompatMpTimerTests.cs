@@ -31,8 +31,8 @@ public class CompatMpTimerTests
     public void Led_IsHighAfterFirstTick()
     {
         var uno = Sim();
-        // First tick at ~100 ms sets PB5 HIGH; run 500 ms to be safe
-        uno.RunMilliseconds(500);
+        // First tick at ~100 ms sets PB5 HIGH; stop at 150 ms (before second tick at ~200 ms)
+        uno.RunMilliseconds(150);
         uno.PortB.Should().HavePinHigh(5, "callback sets PB5 HIGH on first tick (~100 ms)");
     }
 
