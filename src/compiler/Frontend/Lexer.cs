@@ -139,14 +139,14 @@ public ref struct Lexer
         if (spaces > currentIndent)
         {
             indentStack.Add(spaces);
-            tokenQueue.Enqueue(new Token(TokenType.Indent, "", line, column));
+            tokenQueue.Enqueue(new Token(TokenType.Indent, "", line, column, 1));
         }
         else if (spaces < currentIndent)
         {
             while (spaces < indentStack[^1])
             {
                 indentStack.RemoveAt(indentStack.Count - 1);
-                tokenQueue.Enqueue(new Token(TokenType.Dedent, "", line, column));
+                tokenQueue.Enqueue(new Token(TokenType.Dedent, "", line, column, 1));
             }
 
             if (indentStack[^1] != spaces)
@@ -173,6 +173,7 @@ public ref struct Lexer
 
     private Token Number()
     {
+        int startCol = column;
         StringBuilder text = new();
         int b = 10;
 
@@ -243,11 +244,12 @@ public ref struct Lexer
             Error($"invalid suffix '{bad}' on integer literal");
         }
 
-        return new Token(TokenType.Number, textStr, line, column);
+        return new Token(TokenType.Number, textStr, line, startCol, column - startCol);
     }
 
     private Token Identifier()
     {
+        int startCol = column;
         StringBuilder text = new();
         while (char.IsLetterOrDigit(Peek()) || Peek() == '_')
         {
@@ -304,7 +306,7 @@ public ref struct Lexer
 
             if (Peek() == (char)0) Error("Unterminated bytes literal");
             Advance();
-            return new Token(TokenType.BytesLiteral, encoded.ToString(), line, column);
+            return new Token(TokenType.BytesLiteral, encoded.ToString(), line, startCol, column - startCol);
         }
 
         if (textStr == "r" && (Peek() == (char)34 || Peek() == (char)39))
@@ -319,7 +321,7 @@ public ref struct Lexer
 
             if (Peek() == (char)0) Error("Unterminated raw string literal");
             Advance();
-            return new Token(TokenType.String, raw.ToString(), line, column);
+            return new Token(TokenType.String, raw.ToString(), line, startCol, column - startCol);
         }
 
         if (textStr == "f" && (Peek() == (char)34 || Peek() == (char)39))
@@ -342,18 +344,18 @@ public ref struct Lexer
 
             if (Peek() == (char)0) Error("Unterminated f-string literal");
             Advance();
-            return new Token(TokenType.FString, raw.ToString(), line, column);
+            return new Token(TokenType.FString, raw.ToString(), line, startCol, column - startCol);
         }
 
         if (Keywords.TryGetValue(textStr, out TokenType type))
         {
-            return new Token(type, textStr, line, column);
+            return new Token(type, textStr, line, startCol, textStr.Length);
         }
 
-        return new Token(TokenType.Identifier, textStr, line, column);
+        return new Token(TokenType.Identifier, textStr, line, startCol, textStr.Length);
     }
 
-    private Token StringLiteral(char quote)
+    private Token StringLiteral(char quote, int startCol)
     {
         StringBuilder text = new();
         while (Peek() != quote && Peek() != (char)0)
@@ -390,7 +392,7 @@ public ref struct Lexer
 
         if (Peek() == (char)0) Error("Unterminated string literal");
         Advance();
-        return new Token(TokenType.String, text.ToString(), line, column);
+        return new Token(TokenType.String, text.ToString(), line, startCol, column - startCol);
     }
 
     private Token ScanToken()
@@ -398,7 +400,7 @@ public ref struct Lexer
         SkipWhitespace();
         SkipComment();
 
-        if (pos >= src.Length) return new Token(TokenType.EndOfFile, "", line, column);
+        if (pos >= src.Length) return new Token(TokenType.EndOfFile, "", line, column, 1);
 
         char c = Peek();
 
@@ -408,44 +410,45 @@ public ref struct Lexer
             line++;
             column = 1;
             atLineStart = true;
-            return new Token(TokenType.Newline, ((char)92).ToString() + "n", line - 1, column);
+            return new Token(TokenType.Newline, ((char)92).ToString() + "n", line - 1, 1, 1);
         }
 
         if (char.IsAsciiLetter(c) || c == '_') return Identifier();
         if (char.IsDigit(c)) return Number();
 
+        int startCol = column;
         Advance();
 
         switch (c)
         {
             case '(':
                 parenDepth++;
-                return new Token(TokenType.LParen, "(", line, column);
+                return new Token(TokenType.LParen, "(", line, startCol, column - startCol);
             case ')':
                 if (parenDepth > 0) parenDepth--;
-                return new Token(TokenType.RParen, ")", line, column);
+                return new Token(TokenType.RParen, ")", line, startCol, column - startCol);
             case '[':
                 parenDepth++;
-                return new Token(TokenType.LBracket, "[", line, column);
+                return new Token(TokenType.LBracket, "[", line, startCol, column - startCol);
             case ']':
                 if (parenDepth > 0) parenDepth--;
-                return new Token(TokenType.RBracket, "]", line, column);
+                return new Token(TokenType.RBracket, "]", line, startCol, column - startCol);
             case ':':
-                if (Match('=')) return new Token(TokenType.Walrus, ":=", line, column);
-                return new Token(TokenType.Colon, ":", line, column);
+                if (Match('=')) return new Token(TokenType.Walrus, ":=", line, startCol, column - startCol);
+                return new Token(TokenType.Colon, ":", line, startCol, column - startCol);
             case ';':
-                return new Token(TokenType.Semicolon, ";", line, column);
+                return new Token(TokenType.Semicolon, ";", line, startCol, column - startCol);
             case ',':
-                return new Token(TokenType.Comma, ",", line, column);
+                return new Token(TokenType.Comma, ",", line, startCol, column - startCol);
             case '.':
-                return new Token(TokenType.Dot, ".", line, column);
+                return new Token(TokenType.Dot, ".", line, startCol, column - startCol);
             case '@':
-                return new Token(TokenType.At, "@", line, column);
+                return new Token(TokenType.At, "@", line, startCol, column - startCol);
 
             case '-':
-                if (Match('>')) return new Token(TokenType.Arrow, "->", line, column);
-                if (Match('=')) return new Token(TokenType.MinusEqual, "-=", line, column);
-                return new Token(TokenType.Minus, "-", line, column);
+                if (Match('>')) return new Token(TokenType.Arrow, "->", line, startCol, column - startCol);
+                if (Match('=')) return new Token(TokenType.MinusEqual, "-=", line, startCol, column - startCol);
+                return new Token(TokenType.Minus, "-", line, startCol, column - startCol);
             case (char)34:
                 if (Peek() == (char)34 && PeekNext() == (char)34)
                 {
@@ -469,10 +472,10 @@ public ref struct Lexer
                         }
                     }
 
-                    return new Token(TokenType.String, "", line, column);
+                    return new Token(TokenType.String, "", line, startCol, 1);
                 }
 
-                return StringLiteral((char)34);
+                return StringLiteral((char)34, startCol);
             case (char)39:
                 if (Peek() == (char)39 && PeekNext() == (char)39)
                 {
@@ -496,67 +499,67 @@ public ref struct Lexer
                         }
                     }
 
-                    return new Token(TokenType.String, "", line, column);
+                    return new Token(TokenType.String, "", line, startCol, 1);
                 }
 
-                return StringLiteral((char)39);
+                return StringLiteral((char)39, startCol);
             case '+':
-                if (Match('=')) return new Token(TokenType.PlusEqual, "+=", line, column);
-                return new Token(TokenType.Plus, "+", line, column);
+                if (Match('=')) return new Token(TokenType.PlusEqual, "+=", line, startCol, column - startCol);
+                return new Token(TokenType.Plus, "+", line, startCol, column - startCol);
             case '*':
-                if (Match('*')) return new Token(TokenType.DoubleStar, "**", line, column);
-                if (Match('=')) return new Token(TokenType.StarEqual, "*=", line, column);
-                return new Token(TokenType.Star, "*", line, column);
+                if (Match('*')) return new Token(TokenType.DoubleStar, "**", line, startCol, column - startCol);
+                if (Match('=')) return new Token(TokenType.StarEqual, "*=", line, startCol, column - startCol);
+                return new Token(TokenType.Star, "*", line, startCol, column - startCol);
             case '/':
-                if (Match('=')) return new Token(TokenType.SlashEqual, "/=", line, column);
+                if (Match('=')) return new Token(TokenType.SlashEqual, "/=", line, startCol, column - startCol);
                 if (Match('/'))
                 {
-                    if (Match('=')) return new Token(TokenType.FloorDivEqual, "//=", line, column);
-                    return new Token(TokenType.FloorDiv, "//", line, column);
+                    if (Match('=')) return new Token(TokenType.FloorDivEqual, "//=", line, startCol, column - startCol);
+                    return new Token(TokenType.FloorDiv, "//", line, startCol, column - startCol);
                 }
 
-                return new Token(TokenType.Slash, "/", line, column);
+                return new Token(TokenType.Slash, "/", line, startCol, column - startCol);
             case '%':
-                if (Match('=')) return new Token(TokenType.PercentEqual, "%=", line, column);
-                return new Token(TokenType.Percent, "%", line, column);
+                if (Match('=')) return new Token(TokenType.PercentEqual, "%=", line, startCol, column - startCol);
+                return new Token(TokenType.Percent, "%", line, startCol, column - startCol);
 
             case '=':
-                if (Match('=')) return new Token(TokenType.EqualEqual, "==", line, column);
-                return new Token(TokenType.Equal, "=", line, column);
+                if (Match('=')) return new Token(TokenType.EqualEqual, "==", line, startCol, column - startCol);
+                return new Token(TokenType.Equal, "=", line, startCol, column - startCol);
             case '!':
-                if (Match('=')) return new Token(TokenType.BangEqual, "!=", line, column);
+                if (Match('=')) return new Token(TokenType.BangEqual, "!=", line, startCol, column - startCol);
                 Error("Invalid syntax. Did you mean 'not' or '!='?");
                 break;
             case '<':
                 if (Match('<'))
                 {
-                    if (Match('=')) return new Token(TokenType.LShiftEqual, "<<=", line, column);
-                    return new Token(TokenType.LShift, "<<", line, column);
+                    if (Match('=')) return new Token(TokenType.LShiftEqual, "<<=", line, startCol, column - startCol);
+                    return new Token(TokenType.LShift, "<<", line, startCol, column - startCol);
                 }
 
-                if (Match('=')) return new Token(TokenType.LessEqual, "<=", line, column);
-                return new Token(TokenType.Less, "<", line, column);
+                if (Match('=')) return new Token(TokenType.LessEqual, "<=", line, startCol, column - startCol);
+                return new Token(TokenType.Less, "<", line, startCol, column - startCol);
             case '>':
                 if (Match('>'))
                 {
-                    if (Match('=')) return new Token(TokenType.RShiftEqual, ">>=", line, column);
-                    return new Token(TokenType.RShift, ">>", line, column);
+                    if (Match('=')) return new Token(TokenType.RShiftEqual, ">>=", line, startCol, column - startCol);
+                    return new Token(TokenType.RShift, ">>", line, startCol, column - startCol);
                 }
 
-                if (Match('=')) return new Token(TokenType.GreaterEqual, ">=", line, column);
-                return new Token(TokenType.Greater, ">", line, column);
+                if (Match('=')) return new Token(TokenType.GreaterEqual, ">=", line, startCol, column - startCol);
+                return new Token(TokenType.Greater, ">", line, startCol, column - startCol);
 
             case '&':
-                if (Match('=')) return new Token(TokenType.AmpEqual, "&=", line, column);
-                return new Token(TokenType.Ampersand, "&", line, column);
+                if (Match('=')) return new Token(TokenType.AmpEqual, "&=", line, startCol, column - startCol);
+                return new Token(TokenType.Ampersand, "&", line, startCol, column - startCol);
             case '|':
-                if (Match('=')) return new Token(TokenType.PipeEqual, "|=", line, column);
-                return new Token(TokenType.Pipe, "|", line, column);
+                if (Match('=')) return new Token(TokenType.PipeEqual, "|=", line, startCol, column - startCol);
+                return new Token(TokenType.Pipe, "|", line, startCol, column - startCol);
             case '^':
-                if (Match('=')) return new Token(TokenType.CaretEqual, "^=", line, column);
-                return new Token(TokenType.Caret, "^", line, column);
+                if (Match('=')) return new Token(TokenType.CaretEqual, "^=", line, startCol, column - startCol);
+                return new Token(TokenType.Caret, "^", line, startCol, column - startCol);
             case '~':
-                return new Token(TokenType.Tilde, "~", line, column);
+                return new Token(TokenType.Tilde, "~", line, startCol, column - startCol);
 
             default:
                 Error($"invalid character '{c}'");
@@ -613,16 +616,16 @@ public ref struct Lexer
 
         if (tokens.Count > 0 && tokens[^1].Type != TokenType.Newline)
         {
-            tokens.Add(new Token(TokenType.Newline, ((char)92).ToString() + "n", line, column));
+            tokens.Add(new Token(TokenType.Newline, ((char)92).ToString() + "n", line, column, 1));
         }
 
         while (indentStack.Count > 1)
         {
             indentStack.RemoveAt(indentStack.Count - 1);
-            tokens.Add(new Token(TokenType.Dedent, "", line, column));
+            tokens.Add(new Token(TokenType.Dedent, "", line, column, 1));
         }
 
-        tokens.Add(new Token(TokenType.EndOfFile, "", line, column));
+        tokens.Add(new Token(TokenType.EndOfFile, "", line, column, 1));
         return tokens;
     }
 }
