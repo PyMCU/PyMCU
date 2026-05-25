@@ -195,6 +195,7 @@ Everything in this section is shipped and tested in the current alpha build.
 |---------|-------|
 | Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
+| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 
 ---

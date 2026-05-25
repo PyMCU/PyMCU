@@ -41,6 +41,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Raw strings `r"\n"` | No escape processing |
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
 | Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
+| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported |
 | Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function |
 | Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, comparisons, bitwise |

@@ -128,7 +128,9 @@ zero; NaN and Inf propagate correctly.
 **Supported:** `for i in range(N)` (runtime or constant N), `for x in array`,
 `for x in [...]`, `for i, x in enumerate(iterable)`, `for x, y in zip(list1, list2)`,
 `for x in reversed([...])`, list comprehensions with compile-time constant bounds,
-nested list comprehensions, `if`-filtered list comprehensions.
+nested list comprehensions, `if`-filtered list comprehensions,
+`for pin in [DigitalInOut(p) for p in (...)]` and
+`for bit, pin in enumerate([DigitalInOut(p) for p in (...)])` (CT unroll of ZCA instance arrays).
 
 ---
 
