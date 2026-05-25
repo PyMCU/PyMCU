@@ -701,7 +701,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_add", asm);
+        Assert.Contains("CALL\t__addsf3", asm);
     }
 
     [Fact]
@@ -715,7 +715,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_sub", asm);
+        Assert.Contains("CALL\t__subsf3", asm);
     }
 
     [Fact]
@@ -729,7 +729,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_mul", asm);
+        Assert.Contains("CALL\t__mulsf3", asm);
     }
 
     [Fact]
@@ -743,7 +743,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_div", asm);
+        Assert.Contains("CALL\t__divsf3", asm);
     }
 
     [Fact]
@@ -757,7 +757,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_lt", asm);
+        Assert.Contains("CALL\t__cmpsf2", asm);
     }
 
     [Fact]
@@ -771,7 +771,7 @@ public class AVRCodeGenTests
 
         var asm = Compile(prog);
 
-        Assert.Contains("CALL\t__fp_gt", asm);
+        Assert.Contains("CALL\t__cmpsf2", asm);
     }
 
     [Fact]
