@@ -128,14 +128,14 @@ public class Parser
     {
         var t = Peek();
         if (t.Type == TokenType.EndOfFile)
-            throw new SyntaxError("Unexpected EOF while parsing", t.Line, t.Column);
-        throw new SyntaxError(message, t.Line, t.Column);
+            throw new SyntaxError("Unexpected EOF while parsing", t.Line, t.Column, 1);
+        throw new SyntaxError(message, t.Line, t.Column, t.Length);
     }
 
     private void IndentError(string message)
     {
         var t = Peek();
-        throw new IndentationError(message, t.Line, t.Column);
+        throw new IndentationError(message, t.Line, t.Column, t.Length);
     }
 
     private string ParseTypeAnnotation()
