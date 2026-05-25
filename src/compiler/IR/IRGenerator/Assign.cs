@@ -1298,6 +1298,8 @@ public partial class IRGenerator
                 string elemName = qualifiedName + "__" + k;
                 variableTypes[elemName] = elemDt;
                 Emit(new Copy(entries[k], new Variable(elemName, elemDt)));
+                if (entries[k] is Variable srcVar)
+                    PropagateCtState(srcVar.Name, elemName);
             }
         }
     }

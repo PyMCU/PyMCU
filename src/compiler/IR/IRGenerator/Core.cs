@@ -153,6 +153,39 @@ public partial class IRGenerator
         currentInstructions.Add(inst);
     }
 
+    private void PropagateCtState(string src, string dst)
+    {
+        if (instanceClasses.TryGetValue(src, out var cls))
+        {
+            instanceClasses[dst] = cls;
+            virtualInstances.Add(dst);
+        }
+        string srcPfx = src + ".";
+        string dstPfx = dst + ".";
+        foreach (var kv in constantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
+            constantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
+        foreach (var kv in strConstantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
+            strConstantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
+        foreach (var kv in floatConstantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
+            floatConstantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
+        foreach (var kv in instanceClasses.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
+            instanceClasses[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
+    }
+
+    private void CleanCtState(string dst)
+    {
+        instanceClasses.Remove(dst);
+        string dstPfx = dst + ".";
+        foreach (var k in constantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
+            constantVariables.Remove(k);
+        foreach (var k in strConstantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
+            strConstantVariables.Remove(k);
+        foreach (var k in floatConstantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
+            floatConstantVariables.Remove(k);
+        foreach (var k in instanceClasses.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
+            instanceClasses.Remove(k);
+    }
+
     public ProgramIR Generate(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
