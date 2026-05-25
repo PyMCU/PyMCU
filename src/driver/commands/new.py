@@ -1,21 +1,7 @@
 # -----------------------------------------------------------------------------
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
-#
 # SPDX-License-Identifier: MIT
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -24,38 +10,60 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
-from pathlib import Path
-import typer
-from typing import Optional, List
-import tomlkit
 import json
+import shutil
 import subprocess
 import sys
+from pathlib import Path
+from typing import List, Optional
+
+import tomlkit
+import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
 
+from ..core.boards import BOARD_CHIPS, default_programmer
 from ..toolchains import get_toolchain_for_chip
-from ..core.boards import default_programmer
 
 console = Console()
 
+# Default CPU frequencies by board name.  ATtinys not listed here default to
+# 8 MHz (internal RC oscillator).  The digispark/trinket ship a 16.5 MHz
+# crystal used by V-USB, so they get their own entry.
+BOARD_FREQUENCIES: dict[str, int] = {
+    "arduino_uno":      16_000_000,
+    "arduino_nano":     16_000_000,
+    "arduino_mega":     16_000_000,
+    "arduino_micro":    16_000_000,
+    "digispark":        16_500_000,
+    "adafruit_trinket": 16_500_000,
+}
+_DEFAULT_FREQ = 8_000_000
+
+_COMPAT_FLAVORS = ("micropython", "circuitpython")
+
+
+def _detect_pkg_manager() -> str | None:
+    """Return the first available package manager found in PATH, or None."""
+    if shutil.which("uv"):
+        return "uv"
+    if shutil.which("poetry"):
+        return "poetry"
+    return None
+
 
 def get_available_chips() -> List[str]:
-    """
-    Dynamically scans the installed 'pymcu-stdlib' package for chip definitions.
-    Returns a list of chip names (e.g., ['pic16f84a', 'pic16f877a']).
-    """
+    """Dynamically scan the installed pymcu-stdlib package for chip definitions."""
     try:
         import pymcu
         for p in pymcu.__path__:
             chips_dir = Path(p) / "chips"
             if chips_dir.is_dir():
-                chips = [
+                return sorted(
                     f.stem for f in chips_dir.glob("*.py")
                     if f.name != "__init__.py"
-                ]
-                return sorted(chips)
+                )
     except ImportError:
         pass
     except Exception as e:
@@ -64,10 +72,7 @@ def get_available_chips() -> List[str]:
 
 
 def _discover_stdlib_flavors() -> List[str]:
-    """
-    Return a list of installed pymcu extension packages (pymcu-<flavor>).
-    Scans importlib.metadata for installed packages starting with 'pymcu-'.
-    """
+    """Return installed pymcu extension packages (pymcu-<flavor>)."""
     try:
         from importlib.metadata import packages_distributions
         flavors = []
@@ -75,19 +80,15 @@ def _discover_stdlib_flavors() -> List[str]:
             v for vals in packages_distributions().values() for v in vals
         ):
             if dist_name.startswith("pymcu-") and dist_name != "pymcu-stdlib":
-                flavor = dist_name[len("pymcu-"):]
-                flavors.append(flavor)
+                flavors.append(dist_name[len("pymcu-"):])
         return sorted(flavors)
     except Exception:
         return []
 
 
 def _chip_imports(chip: str, flavor: str | None) -> str:
-    """
-    Generate the import block and a minimal main() body for the given chip
-    and optional stdlib flavor.  No star imports — only the symbols actually
-    used in the template are imported explicitly.
-    """
+    """Generate the import block and a minimal main() body for the given chip
+    and optional stdlib flavor.  No star imports."""
     chip_lower = chip.lower()
     is_avr = chip_lower.startswith("at")
     is_pic = chip_lower.startswith("pic")
@@ -123,9 +124,7 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
             "        delay_ms(500)"
         )
     elif is_pic:
-        imports = (
-            f"from pymcu.chips.{chip} import TRISB, PORTB, RB0"
-        )
+        imports = f"from pymcu.chips.{chip} import TRISB, PORTB, RB0"
         body = (
             "    TRISB[RB0] = 0\n"
             "    PORTB[RB0] = 1"
@@ -134,20 +133,28 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
         imports = f"from pymcu.chips.{chip} import PORTB"
         body = "    PORTB[0] = 1"
 
-    return (
-        f"{imports}\n\n\n"
-        f"def main():\n"
-        f"{body}\n"
-    )
+    return f"{imports}\n\n\ndef main():\n{body}\n"
 
 
 def new(
     name: str,
-    chip: Optional[str] = typer.Option(None, "--chip", help="Target MCU chip identifier."),
-    freq: Optional[int] = typer.Option(None, "--freq", help="Target CPU frequency in Hz."),
+    board: Optional[str] = typer.Option(
+        None, "--board",
+        help="Target development board (e.g. arduino_uno, arduino_nano, arduino_mega).",
+    ),
+    chip: Optional[str] = typer.Option(
+        None, "--chip",
+        hidden=True,
+        help="Advanced: target MCU chip identifier (bypasses board selection).",
+    ),
+    freq: Optional[int] = typer.Option(
+        None, "--freq",
+        hidden=True,
+        help="Advanced: target CPU frequency in Hz.",
+    ),
     stdlib: Optional[List[str]] = typer.Option(
         None, "--stdlib",
-        help="stdlib flavor to add (e.g. micropython). Repeatable.",
+        help="Compat layer to use (micropython or circuitpython). Repeatable.",
     ),
     pkg_manager: Optional[str] = typer.Option(
         None, "--pkg-manager",
@@ -156,89 +163,161 @@ def new(
     no_git: bool = typer.Option(False, "--no-git", help="Skip git init."),
     no_src: bool = typer.Option(False, "--no-src", help="Use flat layout instead of src/."),
 ):
-    console.print(Panel(f"[bold blue]Scaffolding new pymcu project: [green]{name}[/green][/bold blue]"))
+    console.print(Panel(
+        f"[bold blue]Scaffolding new pymcu project: [green]{name}[/green][/bold blue]"
+    ))
 
     project_path = Path(name)
     if project_path.exists():
         console.print(f"[red]Error: Directory '{name}' already exists.[/red]")
         raise typer.Exit(code=1)
 
-    # ── Chip selection ────────────────────────────────────────────────────────
-    if chip is None:
-        available_chips = get_available_chips()
-        if available_chips:
-            chip = Prompt.ask("Target MCU", choices=available_chips, default="pic16f84a")
-        else:
-            chip = Prompt.ask("Target MCU", default="pic16f84a")
+    # Early frequency validation (CLI-supplied value, applies to advanced mode).
+    if freq is not None and freq <= 0:
+        console.print("[red]Invalid frequency — must be a positive integer.[/red]")
+        raise typer.Exit(code=1)
 
-    # ── Frequency ─────────────────────────────────────────────────────────────
-    if freq is None:
-        raw = Prompt.ask("Target frequency (Hz)", default="4000000")
-        try:
-            freq = int(raw.replace("_", "").replace(",", ""))
-            if freq <= 0:
-                raise ValueError
-        except ValueError:
-            console.print("[red]Invalid frequency — must be a positive integer.[/red]")
-            raise typer.Exit(code=1)
+    # ------------------------------------------------------------------
+    # Mode detection
+    # ------------------------------------------------------------------
+    # advanced_mode: --chip was explicitly supplied (hidden flag).
+    # Standard mode (default): board-first compat flow.
+    advanced_mode = chip is not None
 
-    # ── stdlib flavors ────────────────────────────────────────────────────────
-    if stdlib is None:
-        discovered = _discover_stdlib_flavors()
-        if discovered:
-            console.print(
-                f"[dim]Installed stdlib flavors: {', '.join(discovered)}[/dim]"
+    if not advanced_mode:
+        # ── Standard compat flow ──────────────────────────────────────
+
+        # 1. Compat flavor — mandatory (micropython or circuitpython)
+        if stdlib is None:
+            discovered = _discover_stdlib_flavors()
+            compat_options = [f for f in discovered if f in _COMPAT_FLAVORS]
+            if not compat_options:
+                compat_options = list(_COMPAT_FLAVORS)
+            flavor_choice = Prompt.ask(
+                "Compatibility layer",
+                choices=compat_options,
+                default="micropython",
             )
-        none_label = "none"
-        flavor_choice = Prompt.ask(
-            "stdlib flavor (none / micropython / circuitpython / ...)",
-            default=none_label,
-        )
-        stdlib = [flavor_choice] if flavor_choice and flavor_choice != none_label else []
+            stdlib = [flavor_choice]
 
-    # ── Package manager ───────────────────────────────────────────────────────
+        # 2. Board selection — drives chip and frequency
+        if board is None:
+            board_names = sorted(BOARD_CHIPS.keys())
+            board = Prompt.ask(
+                "Target board",
+                choices=board_names,
+                default="arduino_uno",
+            )
+
+        chip = BOARD_CHIPS.get(board)
+        if chip is None:
+            console.print(
+                f"[red]Unknown board '{board}'. "
+                "Use --chip to specify a custom target.[/red]"
+            )
+            raise typer.Exit(code=1)
+        freq = BOARD_FREQUENCIES.get(board, _DEFAULT_FREQ)
+
+    else:
+        # ── Advanced chip mode (hidden --chip flag) ───────────────────
+
+        if freq is None:
+            raw = Prompt.ask("Target frequency (Hz)", default="4000000")
+            try:
+                freq = int(raw.replace("_", "").replace(",", ""))
+                if freq <= 0:
+                    raise ValueError
+            except ValueError:
+                console.print("[red]Invalid frequency — must be a positive integer.[/red]")
+                raise typer.Exit(code=1)
+
+        if stdlib is None:
+            discovered = _discover_stdlib_flavors()
+            if discovered:
+                console.print(
+                    f"[dim]Installed stdlib flavors: {', '.join(discovered)}[/dim]"
+                )
+            none_label = "none"
+            flavor_choice = Prompt.ask(
+                "stdlib flavor (none / micropython / circuitpython / ...)",
+                default=none_label,
+            )
+            stdlib = (
+                [flavor_choice]
+                if flavor_choice and flavor_choice != none_label
+                else []
+            )
+
+    # ------------------------------------------------------------------
+    # Package manager — auto-detect, then ask if none found
+    # ------------------------------------------------------------------
     if pkg_manager is None:
-        pkg_manager = Prompt.ask(
-            "Which package manager would you like to use?",
-            choices=["uv", "pip", "poetry"],
-            default="uv",
-        )
+        detected = _detect_pkg_manager()
+        if detected:
+            console.print(f"[dim]Detected package manager: {detected}[/dim]")
+            pkg_manager = detected
+        else:
+            console.print(
+                "[yellow]No package manager (uv or poetry) found in PATH.[/yellow]"
+            )
+            install_uv = Confirm.ask("Install uv? (recommended)", default=True)
+            if install_uv:
+                with console.status("[bold green]Installing uv via pip..."):
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "uv"],
+                        capture_output=True,
+                    )
+                if result.returncode == 0:
+                    pkg_manager = "uv"
+                else:
+                    console.print(
+                        "[yellow]uv installation failed, falling back to pip.[/yellow]"
+                    )
+                    pkg_manager = "pip"
+            else:
+                pkg_manager = "pip"
 
-    # ── Layout ────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
     use_src = not no_src
     sources_dir = "src" if use_src else "."
     entry_file = "main.py" if use_src else "app.py"
 
-    # ── Toolchain detection ───────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Toolchain + programmer
+    # ------------------------------------------------------------------
     try:
         toolchain_instance = get_toolchain_for_chip(chip, console)
         toolchain_name = toolchain_instance.get_name()
     except ValueError:
-        console.print(f"[yellow]Warning: No specific toolchain known for '{chip}'. Defaulting to 'gputils'.[/yellow]")
+        console.print(
+            f"[yellow]Warning: No specific toolchain known for '{chip}'. "
+            "Defaulting to 'gputils'.[/yellow]"
+        )
         toolchain_name = "gputils"
 
-    # ── Programmer selection ──────────────────────────────────────────────────
     programmer_name = default_programmer(chip)
 
-    # ── Pin versions for dependency reproducibility ───────────────────────────
     def _pin_version(pkg_name: str, fallback: str) -> str:
         try:
             from importlib.metadata import version
-            ver = version(pkg_name)
-            return f"{pkg_name}>={ver}"
+            return f"{pkg_name}>={version(pkg_name)}"
         except Exception:
             return fallback
 
+    # ------------------------------------------------------------------
+    # File generation
+    # ------------------------------------------------------------------
     try:
         project_path.mkdir(parents=True)
         if use_src:
             (project_path / sources_dir).mkdir(parents=True)
 
-        # ── Select template flavor ────────────────────────────────────────────
         primary_flavor = stdlib[0] if stdlib else None
         main_content = _chip_imports(chip, primary_flavor)
 
-        # ── pyproject.toml ────────────────────────────────────────────────────
+        # ── pyproject.toml ────────────────────────────────────────────
         doc = tomlkit.document()
 
         if pkg_manager in ("uv", "poetry", "pip"):
@@ -255,6 +334,8 @@ def new(
             doc.add("project", project_tbl)
 
         pymcu_tool = tomlkit.table()
+        if not advanced_mode:
+            pymcu_tool.add("board", board)
         pymcu_tool.add("target", chip)
         pymcu_tool.add("frequency", freq)
         pymcu_tool.add("sources", sources_dir)
@@ -283,15 +364,32 @@ def new(
         with open(project_path / "pyproject.toml", "w") as f:
             f.write(tomlkit.dumps(doc))
 
+        # ── requirements.txt (pip only) ───────────────────────────────
         if pkg_manager == "pip":
-            requirements_content = _pin_version("pymcu-stdlib", "pymcu-stdlib") + "\n"
-            requirements_content += _pin_version("pymcuc", "pymcuc") + "\n"
+            lines = [
+                _pin_version("pymcu-stdlib", "pymcu-stdlib"),
+                _pin_version("pymcuc", "pymcuc"),
+            ]
             for flavor in stdlib:
-                requirements_content += _pin_version(f"pymcu-{flavor}", f"pymcu-{flavor}") + "\n"
+                lines.append(_pin_version(f"pymcu-{flavor}", f"pymcu-{flavor}"))
             with open(project_path / "requirements.txt", "w") as f:
-                f.write(requirements_content)
+                f.write("\n".join(lines) + "\n")
 
-        # ── VS Code Tasks ─────────────────────────────────────────────────────
+        # ── Makefile ──────────────────────────────────────────────────
+        if pkg_manager == "uv":
+            makefile_content = ".PHONY: sync\n\nsync:\n\tuv sync && pymcu sync\n"
+        elif pkg_manager == "poetry":
+            makefile_content = ".PHONY: install\n\ninstall:\n\tpoetry install && pymcu sync\n"
+        else:
+            makefile_content = (
+                ".PHONY: install\n\n"
+                "install:\n"
+                "\tpip install -r requirements.txt && pymcu sync\n"
+            )
+        with open(project_path / "Makefile", "w") as f:
+            f.write(makefile_content)
+
+        # ── VS Code tasks ─────────────────────────────────────────────
         vscode_dir = project_path / ".vscode"
         vscode_dir.mkdir()
         tasks_json = {
@@ -303,6 +401,13 @@ def new(
                     "command": "pymcu build",
                     "group": {"kind": "build", "isDefault": True},
                     "problemMatcher": ["$pymcuc"],
+                },
+                {
+                    "label": "pymcu: sync",
+                    "type": "shell",
+                    "command": "pymcu sync",
+                    "runOptions": {"runOn": "folderOpen"},
+                    "problemMatcher": [],
                 },
                 {
                     "label": "pymcu: clean",
@@ -321,7 +426,7 @@ def new(
         with open(vscode_dir / "tasks.json", "w") as f:
             json.dump(tasks_json, f, indent=4)
 
-        # ── .gitignore ────────────────────────────────────────────────────────
+        # ── .gitignore ────────────────────────────────────────────────
         gitignore_content = (
             "__pycache__/\n"
             "dist/\n"
@@ -334,34 +439,62 @@ def new(
         with open(project_path / ".gitignore", "w") as f:
             f.write(gitignore_content)
 
-        # ── Entry point ───────────────────────────────────────────────────────
+        # ── Entry point ───────────────────────────────────────────────
         entry_dir = project_path / sources_dir if use_src else project_path
         with open(entry_dir / entry_file, "w") as f:
             f.write(main_content)
 
-        # ── Git init ──────────────────────────────────────────────────────────
+        # ── Git init + hooks ──────────────────────────────────────────
+        git_inited = False
         if not no_git and Confirm.ask("Initialize git repository?", default=True):
             try:
-                subprocess.run(["git", "init"], cwd=project_path, check=True, capture_output=True)
+                subprocess.run(
+                    ["git", "init"], cwd=project_path, check=True, capture_output=True
+                )
+                git_inited = True
             except subprocess.CalledProcessError as e:
                 console.print(f"[red]Failed to initialize git repository:[/red] {e}")
 
-        # ── Install dependencies ──────────────────────────────────────────────
+        if git_inited:
+            hooks_dir = project_path / ".git" / "hooks"
+            hook_script = (
+                "#!/bin/sh\n"
+                "# Regenerate board shims if pyproject.toml changed.\n"
+                "git diff --name-only HEAD@{1} HEAD 2>/dev/null"
+                " | grep -q 'pyproject.toml' && pymcu sync\n"
+            )
+            for hook_name in ("post-merge", "post-checkout"):
+                hook_file = hooks_dir / hook_name
+                hook_file.write_text(hook_script)
+                hook_file.chmod(0o755)
+
+        # ── Install dependencies ──────────────────────────────────────
         if Confirm.ask(f"Install dependencies with {pkg_manager} now?", default=True):
-            with console.status(f"[bold green]Installing dependencies via {pkg_manager}..."):
+            with console.status(
+                f"[bold green]Installing dependencies via {pkg_manager}..."
+            ):
                 if pkg_manager == "uv":
                     subprocess.run(["uv", "sync"], cwd=project_path, check=True)
                 elif pkg_manager == "poetry":
-                    subprocess.run(["poetry", "install"], cwd=project_path, check=True)
+                    subprocess.run(
+                        ["poetry", "install"], cwd=project_path, check=True
+                    )
                 elif pkg_manager == "pip":
-                    subprocess.run([sys.executable, "-m", "venv", ".venv"], cwd=project_path)
+                    subprocess.run(
+                        [sys.executable, "-m", "venv", ".venv"], cwd=project_path
+                    )
                     pip_cmd = [
                         str(project_path / ".venv" / "bin" / "pip"),
                         "install", "-r", "requirements.txt",
                     ]
                     subprocess.run(pip_cmd, cwd=project_path, check=True)
 
-        console.print(f"[bold green]+[/bold green] Project '[bold]{name}[/bold]' created successfully!")
+        # ── Summary ───────────────────────────────────────────────────
+        console.print(
+            f"[bold green]+[/bold green] Project '[bold]{name}[/bold]' created successfully!"
+        )
+        if not advanced_mode:
+            console.print(f"[blue]Board:[/blue]          {board}")
         console.print(f"[blue]Target MCU:[/blue]     {chip}")
         console.print(f"[blue]Frequency:[/blue]      {freq:,} Hz")
         console.print(f"[blue]Toolchain:[/blue]      {toolchain_name}")
@@ -376,4 +509,3 @@ def new(
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
-
