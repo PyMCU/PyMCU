@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -65,6 +66,7 @@ def profile(
     output: str = typer.Option("profile.speedscope.json", "-o", help="Output Speedscope JSON path"),
     open_browser: bool = typer.Option(False, "--open", help="Open speedscope.app after profiling"),
     freq_override: Optional[int] = typer.Option(None, "--freq", help="Override clock frequency (Hz)"),
+    assert_cycles_lt: Optional[int] = typer.Option(None, "--assert-cycles-lt", help="Fail (exit 1) if total simulated cycles >= N (CI regression guard)"),
     verbose: bool = typer.Option(False, "-v", "--verbose"),
 ):
     """Compile the project and generate a Speedscope flamegraph from AVR simulation."""
@@ -193,7 +195,35 @@ def profile(
         console.print(result.stdout)
 
     # ── 5. Report ─────────────────────────────────────────────────────────────
-    console.print(f"[green]Profile written:[/green] {output}")
+    try:
+        with open(output) as f:
+            profile_data = json.load(f)
+        events = profile_data["profiles"][0]["events"]
+        depth = max_depth = 0
+        for ev in events:
+            if ev["type"] == "O":
+                depth += 1
+                if depth > max_depth:
+                    max_depth = depth
+            elif ev["type"] == "C":
+                depth -= 1
+        end_value = int(profile_data["profiles"][0]["endValue"])
+        total_ms = end_value / freq * 1000
+        console.print(
+            f"[green]Profile written:[/green] {output}  "
+            f"[dim]({total_ms:.1f} ms, max stack depth: {max_depth})[/dim]"
+        )
+        if assert_cycles_lt is not None and end_value >= assert_cycles_lt:
+            console.print(
+                f"[red]FAIL:[/red] {end_value:,} cycles >= {assert_cycles_lt:,} "
+                f"(--assert-cycles-lt {assert_cycles_lt})"
+            )
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception:
+        console.print(f"[green]Profile written:[/green] {output}")
+
     console.print("  Drag the file to [link=https://speedscope.app]https://speedscope.app[/link] to view the flamegraph.")
 
     if open_browser:
