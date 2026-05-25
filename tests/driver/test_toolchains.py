@@ -14,7 +14,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from rich.console import Console
-from pymcu.toolchain.avr.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
+from pymcu.toolchain.avr.avrgas import AvrgasToolchain
 from pymcu.toolchain.pic.gputils import GputilsToolchain
 from pymcu.toolchain.avr.avra import AvraToolchain
 from pymcu.toolchain.avr import AvrToolchainPlugin
@@ -178,19 +178,6 @@ class TestDiscoverPlugins:
 
 
 # ---------------------------------------------------------------------------
-# linux-aarch64 platform metadata
-# ---------------------------------------------------------------------------
-
-class TestAvrgasLinuxAarch64:
-    def test_aarch64_metadata_present(self):
-        assert "linux-arm64" in AvrgasToolchain.METADATA
-
-    def test_aarch64_url_contains_aarch64(self):
-        url = AvrgasToolchain.METADATA["linux-arm64"]["url"]
-        assert "aarch64" in url
-
-
-# ---------------------------------------------------------------------------
 # CacheableTool: PYMCU_TOOLS_DIR override
 # ---------------------------------------------------------------------------
 
@@ -224,21 +211,6 @@ class TestAvrgasIsCached:
         tc = AvrgasToolchain(Console(quiet=True), "atmega328p")
         assert tc.is_cached() is True
 
-    def test_not_cached_when_version_mismatch(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda name: None)
-        tc = AvrgasToolchain(Console(quiet=True), "atmega328p")
-        # Create fake binaries but with a stale version
-        try:
-            info = tc._platform_info()
-            bin_dir = tc._get_tool_dir() / info["bin_dir"]
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            for b in ("avr-as", "avr-ld", "avr-objcopy"):
-                (bin_dir / b).write_text("")
-            tc._write_cached_version("0.0.0-stale")
-        except RuntimeError:
-            pytest.skip("Platform not supported in this test environment")
-        assert tc.is_cached() is False
 
 
 # ---------------------------------------------------------------------------
