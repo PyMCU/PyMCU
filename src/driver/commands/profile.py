@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -86,6 +87,15 @@ def profile(
     if chip.lower() in BOARD_CHIPS:
         chip = BOARD_CHIPS[chip.lower()]
 
+    # Resolve stdlib compat packages (e.g. micropython)
+    extra_includes: list[str] = []
+    for flavor in pymcu_cfg.get("stdlib", []):
+        spec = importlib.util.find_spec(f"pymcu_{flavor}")
+        if spec and spec.submodule_search_locations:
+            pkg_dir = Path(list(spec.submodule_search_locations)[0])
+            extra_includes.append(str(pkg_dir.parent))
+            extra_includes.append(str(pkg_dir))
+
     console.print(f"[cyan]Profiling[/cyan] {entry_point} → {chip} @ {freq:,} Hz")
 
     # ── 2. Build with --emit-symbols ──────────────────────────────────────────
@@ -112,6 +122,7 @@ def profile(
             search_path=sources_dir,
             verbose=verbose,
             emit_ir_path=str(ir_path),
+            extra_includes=extra_includes or None,
         )
         run_backend(
             backend_binary=backend_plugin.get_backend_binary(),

@@ -17,6 +17,14 @@ public sealed class CallStackTracker
     private readonly Dictionary<string, int> _frameIndex = new();
     private readonly Stack<string> _callStack = new();
 
+    // Hardware interrupt detection: ISR entry is NOT a CALL, it's a hardware PC jump
+    // to the vector table [0x0001..0x0019]. Detect by PC discontinuity pointing to
+    // that range, then decode the RJMP at the vector slot to find the ISR handler.
+    private uint _prevExpectedNextPc;
+    private bool _initialized;
+    private const uint VectorMin = 0x0001u;
+    private const uint VectorMax = 0x0019u;
+
     public CallStackTracker(SymbolMap symbols, Cpu cpu, string rootFrame = "main")
     {
         _symbols = symbols;
@@ -40,6 +48,22 @@ public sealed class CallStackTracker
 
     public void OnInstruction(uint pc, ulong cycles)
     {
+        // Hardware ISR detection: if PC jumped to the vector table without a CALL,
+        // a hardware interrupt fired. Decode the RJMP at that vector slot to get
+        // the handler address and synthesize an Open event.
+        if (_initialized && pc != _prevExpectedNextPc
+            && pc >= VectorMin && pc <= VectorMax)
+        {
+            var vecOp = _cpu.ProgramMemory[(int)pc];
+            if ((vecOp & 0xF000) == 0xC000) // RJMP at vector slot
+            {
+                var k = (int)(vecOp & 0x0FFF);
+                if ((k & 0x0800) != 0) k -= 0x1000; // sign-extend 12-bit
+                var isrAddr = (uint)((int)(pc + 1) + k);
+                PushFrame(_symbols.Resolve(isrAddr), cycles);
+            }
+        }
+
         var op = _cpu.ProgramMemory[(int)pc];
 
         if ((op & 0xFE0E) == 0x940E)                         // CALL (abs, 2-word)
@@ -63,6 +87,17 @@ public sealed class CallStackTracker
         {
             PopFrame(cycles);
         }
+
+        _prevExpectedNextPc = pc + GetInstructionWords(op);
+        _initialized = true;
+    }
+
+    private static uint GetInstructionWords(uint op)
+    {
+        if ((op & 0xFE0E) == 0x940Cu) return 2u; // JMP
+        if ((op & 0xFE0E) == 0x940Eu) return 2u; // CALL
+        if ((op & 0xFC0F) == 0x9000u) return 2u; // LDS / STS
+        return 1u;
     }
 
     private void PushFrame(string name, ulong cycles)
