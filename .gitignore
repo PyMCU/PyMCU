@@ -87,3 +87,9 @@ extensions/pymcu-avr/src/python/pymcu/backend/avr/*.pdb
 extensions/pymcu-avr/src/python/pymcu/backend/avr/*.deps.json
 extensions/pymcu-avr/src/python/pymcu/backend/avr/*.runtimeconfig.json
 extensions/pymcu-avr/src/python/pymcu/backend/avr/createdump
+
+# AVR backend intermediate publish artifacts
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.dll
+
+# Test runner output
+tests/integration/TestResults/
