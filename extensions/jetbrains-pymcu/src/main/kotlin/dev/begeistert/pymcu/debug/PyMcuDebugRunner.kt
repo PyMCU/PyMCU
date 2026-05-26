@@ -104,6 +104,8 @@ class PyMcuDebugRunner : GenericProgramRunner<RunnerSettings>() {
                             } else {
                                 log.warn("PyMCU debug: session already stopped, ignoring onStopped")
                             }
+                            // Refresh Peripherals panel with the current I/O register snapshot.
+                            debugProcess?.peripheralsPanel?.refresh()
                         },
                         onTerminated = {
                             log.info("PyMCU debug: onTerminated called")
