@@ -47,16 +47,13 @@ class PyMcuDebugProcess(
 
     override fun startStepOver(context: XSuspendContext?) {
         log.info("PyMCU[process] startStepOver() called")
-        if (client.currentTopFrameFile.isEmpty()) {
-            log.info("PyMCU[process] disassembly mode — stepOver ignored")
-            return
-        }
         client.send("type" to "stepOver")
     }
 
     override fun startStepInto(context: XSuspendContext?) {
         log.info("PyMCU[process] startStepInto() called")
         if (client.currentTopFrameFile.isEmpty()) {
+            // Already in disassembly mode — step-into has nowhere to go. Ignore it.
             log.info("PyMCU[process] disassembly mode — stepInto ignored")
             return
         }
