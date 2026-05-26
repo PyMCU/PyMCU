@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.begeistert.pymcu.debug
 
+import com.intellij.execution.ui.RunnerLayoutUi
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.fileTypes.PlainTextFileType
@@ -13,6 +14,7 @@ import com.intellij.xdebugger.evaluation.EvaluationMode
 import com.intellij.xdebugger.evaluation.XDebuggerEditorsProvider
 import com.intellij.xdebugger.XExpression
 import com.intellij.xdebugger.frame.XSuspendContext
+import com.intellij.xdebugger.ui.XDebugTabLayouter
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 
 class PyMcuDebugProcess(
@@ -22,6 +24,9 @@ class PyMcuDebugProcess(
 ) : XDebugProcess(session) {
 
     private val log = Logger.getInstance(PyMcuDebugProcess::class.java)
+
+    // Created once in createTabLayouter(); refreshed on each stop.
+    internal var peripheralsPanel: PyMcuPeripheralsPanel? = null
 
     private val breakpointHandler = run {
         val basePath   = session.project.basePath ?: ""
@@ -48,6 +53,26 @@ class PyMcuDebugProcess(
     override fun startStepInto(context: XSuspendContext?) {
         log.info("PyMCU[process] startStepInto() called")
         client.send("type" to "stepInto")
+    }
+
+    fun stepInstruction() {
+        log.info("PyMCU[process] stepInstruction() called")
+        client.send("type" to "stepInstruction")
+    }
+
+    override fun createTabLayouter(): XDebugTabLayouter {
+        return object : XDebugTabLayouter() {
+            override fun registerAdditionalContent(ui: RunnerLayoutUi) {
+                val panel = PyMcuPeripheralsPanel(client)
+                peripheralsPanel = panel
+                val content = ui.createContent(
+                    "PyMcuPeripherals", panel,
+                    "Peripherals", null, null
+                )
+                content.isCloseable = false
+                ui.addContent(content)
+            }
+        }
     }
 
     override fun startPausing() {

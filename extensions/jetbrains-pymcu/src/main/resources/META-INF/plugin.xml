@@ -76,4 +76,17 @@
             topic="com.intellij.openapi.project.ProjectManagerListener"/>
     </applicationListeners>
 
+    <actions>
+        <action id="PyMcuStepInstruction"
+                class="dev.begeistert.pymcu.debug.PyMcuStepInstructionAction"
+                text="Step Instruction"
+                description="Execute one AVR machine instruction (instruction-level step)"
+                icon="/icons/step_instruction.svg">
+            <keyboard-shortcut keymap="$default" first-keystroke="shift F7"/>
+            <add-to-group group-id="XDebugger.ToolWindow.TopToolbar"
+                          anchor="after"
+                          relative-to-action="Debug.StepInto"/>
+        </action>
+    </actions>
+
 </idea-plugin>
