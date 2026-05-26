@@ -45,7 +45,11 @@ class PyMcuDebugRunner : GenericProgramRunner<RunnerSettings>() {
                 "Build it: dotnet publish extensions/pymcu-avr/src/csharp/debugserver/"
             )
 
-        // Step 3 — kill any zombie from a previous session, then launch the debug server.
+        // Step 3 — ensure the server binary is code-signed (required on macOS for native AOT
+        //           binaries; ad-hoc signing is sufficient and safe to repeat on every launch).
+        ensureSigned(serverBin)
+
+        // Step 3b — kill any zombie from a previous session, then launch the debug server.
         log.info("PyMCU debug: killing any existing pymcuc-avr-debugserver on port ${config.serverPort}")
         runCatching {
             val killer = ProcessBuilder("sh", "-c", "lsof -ti :${config.serverPort} | xargs kill -9 2>/dev/null || true")
@@ -214,5 +218,24 @@ class PyMcuDebugRunner : GenericProgramRunner<RunnerSettings>() {
                 "import pymcu.backend.avr as m, pathlib; print(pathlib.Path(m.__file__).parent)")
                 .start().inputStream.bufferedReader().readText().trim().ifBlank { null }
         }.getOrNull()
+    }
+
+    /**
+     * On macOS, applies an ad-hoc code signature to [binaryPath] if needed.
+     * Native AOT .NET binaries are unsigned by default and macOS kills them on launch.
+     * Ad-hoc signing (`codesign -s -`) is a no-op when the binary is already signed.
+     */
+    private fun ensureSigned(binaryPath: String) {
+        if (!System.getProperty("os.name", "").lowercase().contains("mac")) return
+        log.info("PyMCU debug: applying ad-hoc codesign to $binaryPath")
+        runCatching {
+            val proc = ProcessBuilder("codesign", "-s", "-", "--force", binaryPath)
+                .redirectErrorStream(true)
+                .start()
+            val out  = proc.inputStream.bufferedReader().readText()
+            val exit = proc.waitFor()
+            if (exit == 0) log.info("PyMCU debug: codesign succeeded")
+            else           log.warn("PyMCU debug: codesign exit=$exit output=$out")
+        }.onFailure { log.warn("PyMCU debug: codesign failed (codesign not available?): ${it.message}") }
     }
 }

@@ -45,10 +45,11 @@ class AvrBackendPlugin(BackendPlugin):
         """
         package_dir = Path(__file__).parent
 
-        # 1. Wheel layout: binary sits next to the Python package.
+        # 1. Wheel layout: binary sits next to the Python module.
         binary_name = "pymcuc-avr.exe" if sys.platform == "win32" else "pymcuc-avr"
         adjacent = package_dir / binary_name
         if adjacent.exists():
+            cls._ensure_signed(adjacent)
             return adjacent
 
         # 2. Development fallback: dotnet publish output.
@@ -57,6 +58,7 @@ class AvrBackendPlugin(BackendPlugin):
         repo_root = package_dir.parents[6]
         dev_path = repo_root / "build" / "bin" / binary_name
         if dev_path.exists():
+            cls._ensure_signed(dev_path)
             return dev_path
 
         # 3. extensions/pymcu-backend-avr/src/csharp/cli built output (dev shortcut).
@@ -66,6 +68,7 @@ class AvrBackendPlugin(BackendPlugin):
             / "bin" / "Debug" / "net10.0" / binary_name
         )
         if runner_debug.exists():
+            cls._ensure_signed(runner_debug)
             return runner_debug
 
         # 4. System PATH.
@@ -75,7 +78,24 @@ class AvrBackendPlugin(BackendPlugin):
             return Path(which_result)
 
         # Return the expected path (caller will get FileNotFoundError on invoke).
-        return package_dir / binary_name
+        result = package_dir / binary_name
+        cls._ensure_signed(result)
+        return result
+
+    @classmethod
+    def _ensure_signed(cls, binary: Path) -> None:
+        """Ad-hoc sign the binary on macOS (no-op on other platforms or if already signed).
+        Native AOT .NET binaries are unsigned by default; macOS kills unsigned executables."""
+        if sys.platform != "darwin" or not binary.exists():
+            return
+        import subprocess
+        try:
+            subprocess.run(
+                ["codesign", "-s", "-", "--force", str(binary)],
+                check=False, capture_output=True
+            )
+        except FileNotFoundError:
+            pass
 
     @classmethod
     def validate_license(cls, key: str | None = None) -> LicenseStatus:
