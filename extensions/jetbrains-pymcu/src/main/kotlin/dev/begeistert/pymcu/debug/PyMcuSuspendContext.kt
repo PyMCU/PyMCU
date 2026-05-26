@@ -14,6 +14,8 @@ import com.intellij.xdebugger.frame.XSuspendContext
 import com.intellij.xdebugger.frame.XValueChildrenList
 import com.intellij.xdebugger.frame.XValueNode
 import com.intellij.xdebugger.frame.XValuePlace
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.xdebugger.frame.presentation.XValuePresentation
 import com.intellij.xdebugger.impl.XSourcePositionImpl
 
 class PyMcuSuspendContext(
@@ -151,13 +153,20 @@ class PyMcuStackFrame(
                 val declLine = scope.varLines[varName] ?: scope.startLine
                 val inScope  = varName.startsWith(prefix)
                 log.info("PyMCU[frame]   reg var '$varName' → $reg (declLine=$declLine, inScope=$inScope, currentLine=$line)")
-                if (!inScope || line < declLine) continue
+                // Skip compiler-internal variables (declLine before function start = wrong attribution)
+                // Skip until we have passed the declaration line (show AFTER, not on or before)
+                if (!inScope || declLine < scope.startLine || line <= declLine) continue
                 val displayName = varName.removePrefix(prefix)
                 // INT16 uses a register pair: reg (lo) + reg+1 (hi).
                 val lo      = regs[reg] ?: 0
                 val hi      = regs[regPlusOne(reg)] ?: 0
                 val rawValue = (hi shl 8) or (lo and 0xFF)
-                list.add(NamedVarVal(displayName, rawValue))
+                val raw    = rawValue and 0xFFFF
+                val signed = if (raw >= 0x8000) raw - 0x10000 else raw
+                val prevVal = client.previousValues[varName]
+                val changed = prevVal != null && prevVal != signed
+                client.previousValues[varName] = signed
+                list.add(NamedVarVal(displayName, rawValue, changed))
             }
 
             // --- Stack-spilled variables ---
@@ -180,14 +189,21 @@ class PyMcuStackFrame(
                     val declLine = scope.stackVarLines[varName] ?: scope.startLine
                     val inScope  = varName.startsWith(prefix)
                     log.info("PyMCU[frame]   stack var '$varName' → 0x${addr.toString(16)} (declLine=$declLine, inScope=$inScope, currentLine=$line)")
-                    if (!inScope || line < declLine) continue
+                    // Skip compiler-internal variables (declLine before function start = wrong attribution)
+                    // Skip until we have passed the declaration line (show AFTER, not on or before)
+                    if (!inScope || declLine < scope.startLine || line <= declLine) continue
                     val offset = addr - minAddr
                     // Read 2 bytes little-endian (INT16). For 1-byte vars the high byte is 0.
                     val lo    = if (offset < bytes.size)     (bytes[offset].toInt() and 0xFF) else 0
                     val hi    = if (offset + 1 < bytes.size) (bytes[offset + 1].toInt() and 0xFF) else 0
-                    val value = (hi shl 8) or lo
+                    val rawValue = (hi shl 8) or lo
                     val displayName = varName.removePrefix(prefix)
-                    list.add(NamedVarVal(displayName, value))
+                    val raw    = rawValue and 0xFFFF
+                    val signed = if (raw >= 0x8000) raw - 0x10000 else raw
+                    val prevVal = client.previousValues[varName]
+                    val changed = prevVal != null && prevVal != signed
+                    client.previousValues[varName] = signed
+                    list.add(NamedVarVal(displayName, rawValue, changed))
                 }
                 if (list.size() == 0)
                     log.warn("PyMCU[frame] 0 variables visible after memory read — varmap completeness issue (fn=${scope.function})")
@@ -207,11 +223,24 @@ private fun regPlusOne(reg: String): String {
 }
 
 // Shows a named variable with its 16-bit signed integer value.
-private class NamedVarVal(name: String, private val value: Int) : XNamedValue(name) {
+// If `changed` is true, renders the value with the IDE's standard "changed value" highlight color.
+private val CHANGED_VALUE_KEY = TextAttributesKey.createTextAttributesKey("CHANGED_DEBUGGER_VALUE")
+
+private class NamedVarVal(name: String, private val value: Int, private val changed: Boolean = false) : XNamedValue(name) {
     override fun computePresentation(node: XValueNode, place: XValuePlace) {
         val raw    = value and 0xFFFF
         val signed = if (raw >= 0x8000) raw - 0x10000 else raw
-        node.setPresentation(null, "int", "$signed  (0x%04X)".format(raw), false)
+        val text   = "$signed  (0x%04X)".format(raw)
+        if (changed) {
+            node.setPresentation(null, object : XValuePresentation() {
+                override fun getType() = "int"
+                override fun renderValue(renderer: XValueTextRenderer) {
+                    renderer.renderValue(text, CHANGED_VALUE_KEY)
+                }
+            }, false)
+        } else {
+            node.setPresentation(null, "int", text, false)
+        }
     }
 }
 
