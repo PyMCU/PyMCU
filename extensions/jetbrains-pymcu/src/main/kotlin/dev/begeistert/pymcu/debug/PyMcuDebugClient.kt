@@ -55,6 +55,13 @@ class PyMcuDebugClient(
      */
     val previousValues: java.util.concurrent.ConcurrentHashMap<String, Int> = java.util.concurrent.ConcurrentHashMap()
 
+    /**
+     * Source file of the current top stack frame. Empty string means we're stopped inside
+     * code that has no Python source mapping (stdlib, runtime stubs → disassembly mode).
+     */
+    @Volatile
+    var currentTopFrameFile: String = ""
+
     // ── Disassembly ──────────────────────────────────────────────────────────
 
     /**
@@ -123,6 +130,8 @@ class PyMcuDebugClient(
                 val pc     = SimpleJson.getInt(json,    "pc")     ?: 0
                 val frames = SimpleJson.getFrameArray(json, "frames")
                 log.info("PyMCU[client] STOPPED reason=$reason file=$file line=$line pc=$pc frames=${frames.size}")
+                // Track the top frame's source file so callers can detect disassembly mode.
+                currentTopFrameFile = frames.firstOrNull()?.file ?: file
                 onStopped(StoppedEvent(reason, file, line, pc, frames))
             }
             "registers" -> {
