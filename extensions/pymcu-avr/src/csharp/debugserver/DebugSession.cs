@@ -239,5 +239,31 @@ public sealed class DebugSession : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Disassembles the loaded program and annotates each instruction with its
+    /// source position (from the linemap) where available.
+    /// Returns list of (wordAddr, mnemonic, sourceAnnotation) tuples.
+    /// sourceAnnotation is "file:line" or "" when no mapping exists.
+    /// </summary>
+    public List<(uint pc, string mnemonic, string source)> GetProgramDisassembly()
+    {
+        var progMem = _sim.Cpu.ProgramMemory;
+        // Determine effective size: scan backwards for last non-0xFFFF word.
+        int wordCount = progMem.Length;
+        while (wordCount > 0 && progMem[wordCount - 1] == 0xFFFF)
+            wordCount--;
+        if (wordCount == 0) return [];
+
+        var instructions = AvrDisassembler.Disassemble(progMem, wordCount);
+        var result = new List<(uint, string, string)>(instructions.Count);
+        foreach (var instr in instructions)
+        {
+            var pos = _lineMap.GetSourcePos(instr.Pc);
+            string src = pos.HasValue ? $"{pos.Value.file}:{pos.Value.line}" : "";
+            result.Add((instr.Pc, instr.Mnemonic, src));
+        }
+        return result;
+    }
+
     public void Dispose() => _resumeSignal.Dispose();
 }

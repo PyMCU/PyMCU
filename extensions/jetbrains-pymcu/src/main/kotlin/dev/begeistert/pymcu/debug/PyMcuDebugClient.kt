@@ -1,6 +1,8 @@
 package dev.begeistert.pymcu.debug
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileTypes.PlainTextFileType
+import com.intellij.testFramework.LightVirtualFile
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.PrintWriter
@@ -52,6 +54,25 @@ class PyMcuDebugClient(
      * Reset on each new session launch.
      */
     val previousValues: java.util.concurrent.ConcurrentHashMap<String, Int> = java.util.concurrent.ConcurrentHashMap()
+
+    // ── Disassembly ──────────────────────────────────────────────────────────
+
+    /**
+     * In-memory virtual file populated once after session launch with the full
+     * disassembly of the loaded program. Used as a synthetic "source file" when
+     * the PC is in code without a Python source mapping (stdlib functions, runtime).
+     */
+    @Volatile
+    var disasmVf: LightVirtualFile? = null
+
+    /**
+     * Maps AVR word address → 0-based line index in [disasmVf].
+     * Built at the same time as [disasmVf].
+     */
+    @Volatile
+    var disasmPcToLine: Map<Int, Int> = emptyMap()
+
+    private val pendingDisasmCallback = AtomicReference<((LightVirtualFile, Map<Int, Int>) -> Unit)?>(null)
 
     /** Connect and start the background reader thread. */
     fun connect() {
@@ -132,6 +153,7 @@ class PyMcuDebugClient(
                 log.info("PyMCU[client] server is READY — releasing latch")
                 readyLatch.countDown()
             }
+            "disassembly" -> handleDisassembly(json)
             "terminated" -> {
                 log.info("PyMCU[client] server TERMINATED")
                 onTerminated()
@@ -184,6 +206,70 @@ class PyMcuDebugClient(
     fun close() {
         log.info("PyMCU[client] closing socket")
         try { socket?.close() } catch (_: Exception) {}
+    }
+
+    /**
+     * Requests a full program disassembly from the server. The response is built into
+     * a [LightVirtualFile] and a pc→line map, then [cb] is called on the reader thread.
+     * If disassembly was already loaded, [cb] is called immediately with the cached result.
+     */
+    fun requestProgramDisassembly(cb: (LightVirtualFile, Map<Int, Int>) -> Unit) {
+        val cached = disasmVf
+        if (cached != null) {
+            cb(cached, disasmPcToLine)
+            return
+        }
+        pendingDisasmCallback.set(cb)
+        send("type" to "getProgramDisassembly")
+    }
+
+    private fun handleDisassembly(json: String) {
+        // Parse instructions array: [{"pc":N,"m":"MNEMONIC","s":"file:line"},...}]
+        val instrRe = Regex("""\{"pc":(\d+),"m":"([^"]*)","s":"([^"]*)"\}""")
+        val instrs  = instrRe.findAll(json).map { m ->
+            Triple(m.groupValues[1].toInt(), m.groupValues[2], m.groupValues[3])
+        }.toList()
+
+        if (instrs.isEmpty()) {
+            log.warn("PyMCU[client] disassembly response contained 0 instructions")
+            return
+        }
+
+        // Build the text content and pc→line map.
+        val sb = StringBuilder()
+        sb.appendLine("; AVR Disassembly — PyMCU / ATmega328P")
+        sb.appendLine("; Stepping into library code? Use Step Instruction (→|) to advance one AVR opcode.")
+        sb.appendLine(";")
+        val pcToLine = mutableMapOf<Int, Int>()
+        var lineIdx  = 3  // 0-based; lines 0-2 are the header above
+
+        var lastSrc = ""
+        for ((pc, mnemonic, source) in instrs) {
+            // Emit source annotation when it changes (groups instructions by Python line).
+            if (source.isNotEmpty() && source != lastSrc) {
+                sb.appendLine("; ── $source ──────────────────────────")
+                lineIdx++
+                lastSrc = source
+            } else if (source.isEmpty() && lastSrc.isNotEmpty()) {
+                sb.appendLine("; ── <library / runtime> ────────────────")
+                lineIdx++
+                lastSrc = ""
+            }
+            // Unescape mnemonic (server escapes backslash and quote).
+            val mn = mnemonic.replace("\\\\", "\\").replace("\\\"", "\"")
+            sb.appendLine("  0x%04X  %s".format(pc, mn))
+            pcToLine[pc] = lineIdx
+            lineIdx++
+        }
+
+        val text = sb.toString()
+        val vf   = LightVirtualFile("AVR Disassembly.avrdisasm", PlainTextFileType.INSTANCE, text)
+        vf.isWritable = false
+        disasmVf      = vf
+        disasmPcToLine = pcToLine
+        log.info("PyMCU[client] disassembly ready: ${instrs.size} instructions, ${pcToLine.size} pc→line entries")
+
+        pendingDisasmCallback.getAndSet(null)?.invoke(vf, pcToLine)
     }
 
     /** Blocks until the server sends {"type":"ready"}, or throws after [timeoutMs] ms. */

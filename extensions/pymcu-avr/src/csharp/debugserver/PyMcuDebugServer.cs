@@ -112,6 +112,18 @@ public static class PyMcuDebugServer
             sb.Append("]}");
             return sb.ToString();
         }
+        static string MsgDisassembly(List<(uint pc, string mnemonic, string source)> instrs)
+        {
+            var sb = new System.Text.StringBuilder("{\"type\":\"disassembly\",\"instructions\":[");
+            for (int i = 0; i < instrs.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var (pc, mn, src) = instrs[i];
+                sb.Append($"{{\"pc\":{pc},\"m\":\"{Esc(mn)}\",\"s\":\"{Esc(src)}\"}}");
+            }
+            sb.Append("]}");
+            return sb.ToString();
+        }
 
         try
         {
@@ -229,6 +241,14 @@ public static class PyMcuDebugServer
                         var length  = msg["length"]?.GetValue<int>()   ?? 32;
                         var bytes   = session.GetMemory(address, length);
                         Send(MsgMemory(address, bytes));
+                        break;
+                    }
+
+                    case "getProgramDisassembly":
+                    {
+                        if (session is null) { Send(MsgErr("Session not launched.")); break; }
+                        var instrs = session.GetProgramDisassembly();
+                        Send(MsgDisassembly(instrs));
                         break;
                     }
 

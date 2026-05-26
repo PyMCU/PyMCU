@@ -105,6 +105,11 @@ class PyMcuDebugProcess(
         breakpointHandler.flushAll()
         log.info("PyMCU[process] breakpoints flushed — auto-continuing to start simulation")
         client.send("type" to "continue")
+        // Request full program disassembly in background — used when stepping into
+        // stdlib functions that have no Python source mapping.
+        client.requestProgramDisassembly { _, _ ->
+            log.info("PyMCU[process] program disassembly loaded")
+        }
     }
 }
 

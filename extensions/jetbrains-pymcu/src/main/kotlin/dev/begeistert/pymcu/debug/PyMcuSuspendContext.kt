@@ -81,7 +81,15 @@ class PyMcuStackFrame(
         log.info("PyMCU[frame] getSourcePosition: file='$file' line=$line isTop=$isTopFrame")
 
         if (file.isEmpty()) {
-            log.warn("PyMCU[frame] file is empty — cannot resolve source position")
+            // PC is in code with no Python source mapping (stdlib, runtime).
+            // Navigate to the disassembly virtual file at the line for this PC.
+            val vf      = client.disasmVf
+            val lineIdx = client.disasmPcToLine[pc]
+            if (vf != null && lineIdx != null) {
+                log.info("PyMCU[frame] navigating to disassembly at line $lineIdx (pc=0x${pc.toString(16)})")
+                return XSourcePositionImpl.create(vf, lineIdx)
+            }
+            log.warn("PyMCU[frame] file is empty — disassembly not yet loaded or pc=0x${pc.toString(16)} not in map")
             return null
         }
         val basePath = project.basePath ?: run {
@@ -118,6 +126,22 @@ class PyMcuStackFrame(
             // only the current frame. Show an empty variable list for caller frames.
             log.info("PyMCU[frame] computeChildren: caller frame ($file:$line) — skipping registers")
             node.addChildren(XValueChildrenList(), true)
+            return
+        }
+
+        // If we're in disassembly mode (no Python source), show AVR CPU registers.
+        if (file.isEmpty()) {
+            client.requestRegisters { regs ->
+                val list = XValueChildrenList()
+                list.add(RegVal("PC",   pc,                   byteWidth = 2, isHex = true))
+                for (i in 0..31) {
+                    val v = regs["R$i"] ?: 0
+                    list.add(RegVal("R$i", v))
+                }
+                list.add(RegVal("SP",   regs["SP"]   ?: 0, byteWidth = 2, isHex = true))
+                list.add(SregVal(regs["SREG"] ?: 0))
+                node.addChildren(list, true)
+            }
             return
         }
 
