@@ -59,6 +59,10 @@ def timer0_clear():
     TCNT0.value = 0
 
 @inline
+def timer0_counter() -> uint8:
+    return TCNT0.value
+
+@inline
 def timer0_overflow() -> uint8:
     return TIFR[1]   # TOV0 = bit 1
 
@@ -131,6 +135,11 @@ def timer1_stop():
 @inline
 def timer1_clear():
     TCNT1.value = 0
+
+@inline
+def timer1_counter() -> uint8:
+    # ATtiny85 Timer1 is 8-bit (unlike ATmega328P Timer1 which is 16-bit).
+    return TCNT1.value
 
 @inline
 def timer1_overflow() -> uint8:

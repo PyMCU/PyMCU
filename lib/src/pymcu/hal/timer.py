@@ -266,6 +266,36 @@ class Timer:  # noqa
         return 0
 
     @inline
+    def counter(self) -> uint16:
+        """Read the current hardware timer counter register.
+
+        Returns the raw counter value: uint16 for 16-bit timers (Timer1 on AVR),
+        zero-extended to uint16 for 8-bit timers (Timer0, Timer2).
+        Reading Timer1 uses the AVR atomic 16-bit read sequence (LOW byte first).
+        """
+        match __CHIP__.name:
+            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.atmega328p import timer0_counter
+                        return timer0_counter()
+                    case "t1":
+                        from pymcu.hal._timer.atmega328p import timer1_counter
+                        return timer1_counter()
+                    case "t2":
+                        from pymcu.hal._timer.atmega328p import timer2_counter
+                        return timer2_counter()
+            case "attiny85" | "attiny45" | "attiny25":
+                match self._id:
+                    case "t0":
+                        from pymcu.hal._timer.attiny85 import timer0_counter
+                        return timer0_counter()
+                    case "t1":
+                        from pymcu.hal._timer.attiny85 import timer1_counter
+                        return timer1_counter()
+        return 0
+
+    @inline
     def irq(self, handler: Callable, mode: const = 1):
         """Register an interrupt handler for this timer.
 

@@ -54,6 +54,10 @@ def timer0_clear():
     TCNT0.value = 0
 
 @inline
+def timer0_counter() -> uint8:
+    return TCNT0.value
+
+@inline
 def timer0_overflow() -> uint8:
     return TIFR0[0]   # TOV0
 
@@ -96,6 +100,14 @@ def timer1_stop():
 def timer1_clear():
     TCNT1L.value = 0
     TCNT1H.value = 0
+
+@inline
+def timer1_counter() -> uint16:
+    # AVR 16-bit read rule: read LOW byte first (latches HIGH into TEMP register),
+    # then read HIGH byte. Opposite of the write order.
+    lo: uint8 = TCNT1L.value
+    hi: uint8 = TCNT1H.value
+    return lo + hi * 256
 
 @inline
 def timer1_overflow() -> uint8:
@@ -159,6 +171,10 @@ def timer2_stop():
 @inline
 def timer2_clear():
     TCNT2.value = 0
+
+@inline
+def timer2_counter() -> uint8:
+    return TCNT2.value
 
 @inline
 def timer2_overflow() -> uint8:
