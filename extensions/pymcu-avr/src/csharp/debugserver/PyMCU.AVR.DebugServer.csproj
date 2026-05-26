@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>pymcuc-avr-debugserver</AssemblyName>
+    <RootNamespace>PyMCU.AVR.DebugServer</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishAot>true</PublishAot>
+    <TrimmerRootDescriptor>TrimmerRoots.xml</TrimmerRootDescriptor>
+    <!-- SPDX-License-Identifier: MIT -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avr8Sharp.TestKit" Version="1.1.0-beta1" />
+    <PackageReference Include="System.CommandLine" Version="2.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\lib\PyMCU.Backend.AVR.csproj" />
+  </ItemGroup>
+</Project>
