@@ -30,7 +30,7 @@
             id="PyMCU"
             anchor="right"
             factoryClass="dev.begeistert.pymcu.toolwindow.PyMcuToolWindowFactory"
-            icon="/icons/pymcu.svg"/>
+            icon="/icons/pymcu.png"/>
 
         <configurationType
             implementation="dev.begeistert.pymcu.run.PyMcuRunConfigurationType"/>
