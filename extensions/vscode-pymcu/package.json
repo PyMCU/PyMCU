@@ -1,13 +1,14 @@
 {
   "name": "pymcu-vscode",
   "displayName": "PyMCU Development Tools",
-  "description": "Development tools for PyMCU projects, including build and flash commands.",
-  "version": "0.0.1",
+  "description": "Full-featured development tools for PyMCU projects: build, flash, debug (AVR), board browser, serial monitor, and more.",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.109.0"
   },
   "categories": [
     "Programming Languages",
+    "Debuggers",
     "Other"
   ],
   "activationEvents": [
@@ -15,6 +16,28 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pymcu",
+          "title": "PyMCU",
+          "icon": "resources/pymcu.svg"
+        }
+      ]
+    },
+    "views": {
+      "pymcu": [
+        {
+          "id": "pymcu-project-tasks",
+          "name": "Project Tasks",
+          "when": "pymcu:active"
+        },
+        {
+          "id": "pymcu-boards",
+          "name": "Board Browser"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "pymcu.build",
@@ -36,7 +59,7 @@
       },
       {
         "command": "pymcu.new",
-        "title": "New Project",
+        "title": "New Project...",
         "category": "PyMCU",
         "icon": "$(new-folder)"
       },
@@ -45,6 +68,36 @@
         "title": "Configure Project...",
         "category": "PyMCU",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "pymcu.serialMonitor",
+        "title": "Serial Monitor",
+        "category": "PyMCU",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "pymcu.debugBuild",
+        "title": "Build (Debug)",
+        "category": "PyMCU",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "pymcu.startDebug",
+        "title": "Start Debugging",
+        "category": "PyMCU",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "pymcu.selectBoard",
+        "title": "Select Board",
+        "category": "PyMCU",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "pymcu.refreshBoards",
+        "title": "Refresh Boards",
+        "category": "PyMCU",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -53,13 +106,28 @@
         "pymcu.executablePath": {
           "type": "string",
           "default": "pymcu",
-          "description": "Path to the PyMCU executable. If 'pymcu' is in your PATH, leave this as is."
+          "description": "Path to the PyMCU CLI executable. Leave as 'pymcu' if it is on your PATH."
         },
         "pymcu.packageManager": {
           "type": "string",
           "default": "uv",
           "enum": ["uv", "pip", "poetry", "pipenv"],
-          "description": "Package manager used to install project dependencies (e.g. uv sync, pip install -e .)."
+          "description": "Package manager used to sync project dependencies."
+        },
+        "pymcu.debugServerPort": {
+          "type": "number",
+          "default": 4712,
+          "description": "TCP port used by pymcuc-avr-debugserver for the AVR debug adapter."
+        },
+        "pymcu.serialBaudRate": {
+          "type": "number",
+          "default": 9600,
+          "description": "Default baud rate for the PyMCU serial monitor."
+        },
+        "pymcu.serialPort": {
+          "type": "string",
+          "default": "",
+          "description": "Serial port for the monitor (e.g. /dev/cu.usbmodem… or COM3). Leave empty for auto-detect."
         }
       }
     },
@@ -68,10 +136,7 @@
         "name": "pymcuc",
         "owner": "pymcu",
         "source": "pymcuc",
-        "fileLocation": [
-          "autoDetect",
-          "${workspaceFolder}"
-        ],
+        "fileLocation": ["autoDetect", "${workspaceFolder}"],
         "severity": "error",
         "pattern": {
           "regexp": "^(.+):(\\d+):(\\d+):\\s+(error|warning|info):\\s+(.+)$",
@@ -86,23 +151,76 @@
     "debuggers": [
       {
         "type": "pymcu",
-        "label": "PyMCU",
-        "languages": [
-          "python"
+        "label": "PyMCU AVR",
+        "languages": ["python"],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "workspaceRoot": {
+                "type": "string",
+                "description": "Root of the PyMCU project (defaults to current workspace folder)."
+              },
+              "sourcesDir": {
+                "type": "string",
+                "default": "src",
+                "description": "Directory containing PyMCU source files (relative to workspaceRoot)."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "pymcu",
+            "request": "launch",
+            "name": "PyMCU: Debug AVR",
+            "sourcesDir": "src"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "PyMCU: Debug AVR (AVR8Sharp simulation)",
+            "description": "Build the project in debug mode and start the AVR simulator with source-level debugging.",
+            "body": {
+              "type": "pymcu",
+              "request": "launch",
+              "name": "PyMCU: Debug AVR",
+              "sourcesDir": "src"
+            }
+          }
         ]
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "pymcu.refreshBoards",
+          "when": "view == pymcu-boards",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pymcu.selectBoard",
+          "when": "view == pymcu-boards && viewItem == board",
+          "group": "inline"
+        }
+      ],
       "editor/title/run": [
         {
           "command": "pymcu.build",
           "when": "resourceLangId == python && pymcu:active",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "pymcu.startDebug",
+          "when": "resourceLangId == python && pymcu:active",
+          "group": "navigation@2"
         },
         {
           "command": "pymcu.configureProject",
           "when": "pymcu:active",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ]
     }

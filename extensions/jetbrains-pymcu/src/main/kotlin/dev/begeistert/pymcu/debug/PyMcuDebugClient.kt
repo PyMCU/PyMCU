@@ -43,6 +43,13 @@ class PyMcuDebugClient(
     @Volatile
     var varMap: VarMap? = null
 
+    /**
+     * Tracks the last-seen value for each variable (keyed by full varName like "fibonacci.a").
+     * Used to highlight variables whose value changed since the previous stop.
+     * Reset on each new session launch.
+     */
+    val previousValues: java.util.concurrent.ConcurrentHashMap<String, Int> = java.util.concurrent.ConcurrentHashMap()
+
     /** Connect and start the background reader thread. */
     fun connect() {
         log.info("PyMCU[client] connecting to 127.0.0.1:$port")
