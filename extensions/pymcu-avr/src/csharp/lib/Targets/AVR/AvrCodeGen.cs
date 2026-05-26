@@ -2519,6 +2519,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                             ? Convert.ToUInt32(raw[2..], 16)
                             : uint.Parse(raw);
                     }
+                    else
+                    {
+                        // asm() blocks are emitted as Raw lines but still consume flash words.
+                        // Count any Raw line that looks like an instruction (not a directive or comment).
+                        word += RawLineInstructionWords(line.Content);
+                    }
                     break;
                 case AvrAsmLine.LineType.Label:
                     if (funcNames.Contains(line.LabelText))
@@ -2530,6 +2536,32 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             }
         }
         return result;
+    }
+
+    // 2-word AVR instructions (by mnemonic prefix, case-insensitive).
+    private static readonly HashSet<string> TwoWordMnemonics =
+        new(StringComparer.OrdinalIgnoreCase) { "CALL", "JMP", "LDS", "STS" };
+
+    private static uint RawLineInstructionWords(string content)
+    {
+        // Strip leading whitespace and inline comments.
+        var trimmed = content.TrimStart();
+        if (trimmed.Length == 0) return 0;
+
+        // Directives start with '.' or ';' (comment), sub-labels end with ':'.
+        var firstChar = trimmed[0];
+        if (firstChar == '.' || firstChar == ';') return 0;
+
+        // A local label like "_dly_o16mhz:" — no instruction words.
+        var spaceIdx = trimmed.IndexOf(' ');
+        var mnemonic = spaceIdx >= 0 ? trimmed[..spaceIdx] : trimmed;
+        if (mnemonic.EndsWith(':')) return 0;
+
+        // Strip trailing comment from mnemonic if needed.
+        var semicolonIdx = mnemonic.IndexOf(';');
+        if (semicolonIdx >= 0) mnemonic = mnemonic[..semicolonIdx].TrimEnd();
+
+        return TwoWordMnemonics.Contains(mnemonic) ? 2u : 1u;
     }
 
     // ── Line map (--emit-linemap) ─────────────────────────────────────────────
