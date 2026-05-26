@@ -447,5 +447,45 @@ public class OptimizerPassTests
         optimized.Functions.Select(f => f.Name)
             .Should().BeEquivalentTo(["main", "a", "b"]);
     }
+
+    // ─── Dead Variable Store Elimination ─────────────────────────────────────
+
+    [Fact]
+    public void DVSE_RemovesCopyToVariable_WhenNeverRead()
+    {
+        // main.x = 5, but x is never read — the Copy must be eliminated.
+        var body = Optimize(
+            new Copy(new Constant(5), new Variable("main.x", DataType.UINT8)),
+            new Return(new Constant(0)));
+
+        Assert.DoesNotContain(body, i =>
+            i is Copy { Dst: Variable { Name: "main.x" } });
+    }
+
+    [Fact]
+    public void DVSE_KeepsCopyToVariable_WhenRead()
+    {
+        // main.x = 5, then return x — the assignment (or its propagated constant) must survive.
+        var body = Optimize(
+            new Copy(new Constant(5), new Variable("main.x", DataType.INT16)),
+            new Return(new Variable("main.x", DataType.INT16)));
+
+        var hasCopyOrPropagated =
+            body.Any(i => i is Copy { Dst: Variable { Name: "main.x" } }) ||
+            body.OfType<Return>().Any(r => r.Value is Constant { Value: 5 });
+        Assert.True(hasCopyOrPropagated,
+            "live write to main.x (or propagated constant) must survive");
+    }
+
+    [Fact]
+    public void DVSE_DoesNotRemoveMemoryAddressWrite()
+    {
+        // Writes to MemoryAddress (MMIO) must never be eliminated.
+        var body = Optimize(
+            new Copy(new Constant(1), new MemoryAddress(0x25)),
+            new Return(new Constant(0)));
+
+        Assert.Contains(body, i => i is Copy { Dst: MemoryAddress { Address: 0x25 } });
+    }
 }
 

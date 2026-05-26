@@ -97,6 +97,7 @@ private static Function CloneFunction(Function f)
         {
             PropagateCopies(func);
             FoldConstants(func);
+            EliminateDeadVariableStores(func);
             CoalesceInstructions(func);
 
             var cfg = BuildCfg(func);
@@ -111,6 +112,7 @@ private static Function CloneFunction(Function f)
             {
                 PropagateCopies(func);
                 FoldConstants(func);
+                EliminateDeadVariableStores(func);
                 CoalesceInstructions(func);
                 var cfg2 = BuildCfg(func);
                 EliminateDeadCodeCfg(cfg2);
@@ -124,6 +126,28 @@ private static Function CloneFunction(Function f)
         var finalCfg = BuildCfg(func);
         EliminateDeadCodeCfg(finalCfg);
         func.Body = finalCfg.Blocks.SelectMany(b => b.Instructions).ToList();
+    }
+
+    /// <summary>
+    /// Removes Copy instructions whose destination is a Variable that is never
+    /// read anywhere in the function body. This catches dead stores that arise
+    /// from @inline expansion (e.g. compiler-generated bit-number temporaries
+    /// like "main.led__bit") after PropagateCopies has replaced all reads with
+    /// the folded constant.
+    ///
+    /// Only Copy-to-Variable is considered: MemoryAddress targets represent
+    /// hardware I/O and must never be removed. AugAssign targets appear as
+    /// uses in RegisterUses so they are never mistakenly eliminated.
+    /// </summary>
+    private static void EliminateDeadVariableStores(Function func)
+    {
+        var readVars = new HashSet<string>();
+        foreach (var instr in func.Body)
+            RegisterUses(instr, v => { if (v is Variable vr) readVars.Add(vr.Name); });
+
+        func.Body = func.Body
+            .Where(instr => instr is not Copy { Dst: Variable vDst } || readVars.Contains(vDst.Name))
+            .ToList();
     }
 
     private static int? GetConstant(Val val) => val is Constant c ? c.Value : null;
