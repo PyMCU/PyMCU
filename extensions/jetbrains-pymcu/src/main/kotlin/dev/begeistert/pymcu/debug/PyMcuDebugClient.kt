@@ -35,8 +35,11 @@ class PyMcuDebugClient(
     private var readerThread: Thread? = null
 
     private val readyLatch = CountDownLatch(1)
-    private val pendingRegsCallback   = AtomicReference<((Map<String, Int>) -> Unit)?>(null)
-    private val pendingMemoryCallback = AtomicReference<((Int, ByteArray) -> Unit)?>(null)
+    private val pendingRegsCallback = AtomicReference<((Map<String, Int>) -> Unit)?>(null)
+    // Queue of pending memory callbacks — FIFO so responses are matched in order.
+    // Using a queue rather than a single AtomicReference allows the variables panel
+    // and the peripherals panel to both issue getMemory requests concurrently.
+    private val pendingMemoryCallbacks = java.util.concurrent.ConcurrentLinkedQueue<(Int, ByteArray) -> Unit>()
     private val pendingMessages = java.util.concurrent.CopyOnWriteArrayList<String>()
 
     /** Loaded after build; maps (file, line) → variable name → register. */
@@ -115,7 +118,12 @@ class PyMcuDebugClient(
                 val bytes = SimpleJson.getByteArray(json, "data")
                 if (bytes != null) {
                     log.info("PyMCU[client] MEMORY received: addr=0x${addr.toString(16)} len=${bytes.size}")
-                    pendingMemoryCallback.getAndSet(null)?.invoke(addr, bytes)
+                    val cb = pendingMemoryCallbacks.poll()
+                    if (cb != null) {
+                        cb.invoke(addr, bytes)
+                    } else {
+                        log.warn("PyMCU[client] MEMORY received but no pending callback (addr=0x${addr.toString(16)})")
+                    }
                 } else {
                     log.warn("PyMCU[client] MEMORY message missing 'data' array")
                 }
@@ -142,10 +150,10 @@ class PyMcuDebugClient(
     /**
      * Request a memory read at [address] (absolute AVR data-space address) for [length] bytes.
      * Invokes [cb] on the reader thread when received.
-     * Note: Only one pending memory request is supported at a time (AtomicReference semantics).
+     * Multiple requests can be queued; responses are dispatched FIFO.
      */
     fun requestMemory(address: Int, length: Int, cb: (Int, ByteArray) -> Unit) {
-        pendingMemoryCallback.set(cb)
+        pendingMemoryCallbacks.add(cb)
         send("type" to "getMemory", "address" to address, "length" to length)
     }
 
