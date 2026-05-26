@@ -2712,11 +2712,15 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             // variables are stack-spilled. Without this, functions like fibonacci (whose
             // locals all fall below the register-allocation threshold) are invisible to the
             // debugger entirely, which prevents the scope from even appearing.
+            var paramNames = func.Params
+                .Where(p => p.StartsWith(prefix, StringComparison.Ordinal))
+                .ToList();
             entries.Add(new VarMapEntry(
                 func.Name, firstDebug.SourceFile, firstDebug.Line,
                 vars, varLines,
                 stackVars.Count > 0 ? stackVars : null,
-                stackVarLines.Count > 0 ? stackVarLines : null));
+                stackVarLines.Count > 0 ? stackVarLines : null,
+                paramNames.Count > 0 ? paramNames : null));
         }
 
         File.WriteAllText(EmitVarMapPath,
@@ -2733,6 +2737,7 @@ internal partial class AvrLineMapJsonContext : JsonSerializerContext { }
 
 // StackVars/StackVarLines hold variables that are stack-spilled (not in registers).
 // The int value is the absolute AVR data-space address (0x0100 + stack offset).
+// Params lists parameter names so the debugger can distinguish them from first-line locals.
 public record VarMapEntry(
     string Function,
     string File,
@@ -2740,7 +2745,8 @@ public record VarMapEntry(
     Dictionary<string, string> Vars,
     Dictionary<string, int> VarLines,
     Dictionary<string, int>? StackVars = null,
-    Dictionary<string, int>? StackVarLines = null);
+    Dictionary<string, int>? StackVarLines = null,
+    List<string>? Params = null);
 
 [JsonSerializable(typeof(List<VarMapEntry>))]
 internal partial class AvrVarMapJsonContext : JsonSerializerContext { }

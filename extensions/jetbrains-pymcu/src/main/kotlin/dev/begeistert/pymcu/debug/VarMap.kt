@@ -10,7 +10,8 @@ data class VarScope(
     val vars: Map<String, String>,       // register vars: varName -> "R4"
     val varLines: Map<String, Int>,      // varName -> source line of first assignment
     val stackVars: Map<String, Int>,     // spilled vars: varName -> absolute SRAM address
-    val stackVarLines: Map<String, Int>  // varName -> source line of first assignment (spilled)
+    val stackVarLines: Map<String, Int>, // varName -> source line of first assignment (spilled)
+    val params: Set<String>             // parameter variable names (never empty-guarded — empty = no params)
 )
 
 class VarMap(val scopes: List<VarScope>) {
@@ -51,7 +52,7 @@ class VarMap(val scopes: List<VarScope>) {
         }
 
         // Parses: [{"Function":"...","File":"...","StartLine":N,"Vars":{...},"VarLines":{...},
-        //           "StackVars":{...},"StackVarLines":{...}},...]
+        //           "StackVars":{...},"StackVarLines":{...},"Params":[...]},...]
         private fun parseVarMapJson(json: String): List<VarScope> {
             return splitTopLevelObjects(json).mapNotNull { obj ->
                 val function  = SimpleJson.getString(obj, "Function")      ?: return@mapNotNull null
@@ -61,7 +62,8 @@ class VarMap(val scopes: List<VarScope>) {
                 val varLines  = SimpleJson.getIntMap(obj,   "VarLines")    ?: emptyMap()
                 val stackVars = SimpleJson.getIntMap(obj,   "StackVars")   ?: emptyMap()
                 val stackVarLines = SimpleJson.getIntMap(obj, "StackVarLines") ?: emptyMap()
-                VarScope(function, file, startLine, vars, varLines, stackVars, stackVarLines)
+                val params    = SimpleJson.getStringArray(obj, "Params").toSet()
+                VarScope(function, file, startLine, vars, varLines, stackVars, stackVarLines, params)
             }
         }
     }

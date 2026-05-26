@@ -215,7 +215,18 @@ internal object SimpleJson {
     }
 
     /**
-     * Parses a JSON integer array `"key":[b0,b1,...]` and returns it as a ByteArray.
+     * Parses a JSON string array `"key":["a","b",...]` and returns it as a List<String>.
+     * Returns an empty list if the key is absent or the array is malformed.
+     */
+    fun getStringArray(json: String, key: String): List<String> {
+        val arrayRe = Regex(""""${Regex.escape(key)}"\s*:\s*\[([^\]]*)\]""")
+        val inner   = arrayRe.find(json)?.groupValues?.get(1) ?: return emptyList()
+        val trimmed = inner.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return Regex(""""([^"]*)"""").findAll(trimmed).map { it.groupValues[1] }.toList()
+    }
+
+    /**
      * Returns null if the key is absent or the array is malformed.
      */
     fun getByteArray(json: String, key: String): ByteArray? {

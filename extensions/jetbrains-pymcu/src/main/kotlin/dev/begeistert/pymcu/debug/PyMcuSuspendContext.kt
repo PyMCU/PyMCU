@@ -148,16 +148,23 @@ class PyMcuStackFrame(
             val prefix = "${scope.function}."
             log.info("PyMCU[frame] matched scope '${scope.function}' (startLine=${scope.startLine}) for $file:$line")
 
+            // On fresh function entry, clear seen-state for all variables in this scope so
+            // a re-entry (second call to the same function) starts visibility from scratch.
+            if (line == scope.startLine) {
+                (scope.vars.keys + scope.stackVars.keys).forEach { client.previousValues.remove(it) }
+            }
+
             // --- Register-allocated variables ---
             for ((varName, reg) in scope.vars) {
                 val declLine = scope.varLines[varName] ?: scope.startLine
                 val inScope  = varName.startsWith(prefix)
                 log.info("PyMCU[frame]   reg var '$varName' → $reg (declLine=$declLine, inScope=$inScope, currentLine=$line)")
                 // Skip compiler-internal variables (declLine before function start = wrong attribution).
-                // Parameters (declLine == startLine) appear from the first line of the function.
-                // Local variables appear only after the declaration line (not on it).
-                val isParam = declLine == scope.startLine
-                val skipByLine = if (isParam) line < declLine else line <= declLine
+                // Parameters show from first line of function; locals show after declaration,
+                // but remain visible on subsequent loop iterations ("sticky once seen").
+                val isParam     = varName in scope.params
+                val alreadySeen = client.previousValues.containsKey(varName)
+                val skipByLine  = if (isParam) line < declLine else (!alreadySeen && line <= declLine)
                 if (!inScope || declLine < scope.startLine || skipByLine) continue
                 val displayName = varName.removePrefix(prefix)
                 // INT16 uses a register pair: reg (lo) + reg+1 (hi).
@@ -192,11 +199,10 @@ class PyMcuStackFrame(
                     val declLine = scope.stackVarLines[varName] ?: scope.startLine
                     val inScope  = varName.startsWith(prefix)
                     log.info("PyMCU[frame]   stack var '$varName' → 0x${addr.toString(16)} (declLine=$declLine, inScope=$inScope, currentLine=$line)")
-                    // Skip compiler-internal variables (declLine before function start = wrong attribution).
-                    // Parameters (declLine == startLine) appear from the first line of the function.
-                    // Local variables appear only after the declaration line (not on it).
-                    val isParam = declLine == scope.startLine
-                    val skipByLine = if (isParam) line < declLine else line <= declLine
+                    // Same visibility rules as register vars above.
+                    val isParam     = varName in scope.params
+                    val alreadySeen = client.previousValues.containsKey(varName)
+                    val skipByLine  = if (isParam) line < declLine else (!alreadySeen && line <= declLine)
                     if (!inScope || declLine < scope.startLine || skipByLine) continue
                     val offset = addr - minAddr
                     // Read 2 bytes little-endian (INT16). For 1-byte vars the high byte is 0.
