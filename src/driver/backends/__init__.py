@@ -129,6 +129,8 @@ def run_backend(
     verbose: bool = False,
     on_output=None,
     emit_symbols_path: Path | None = None,
+    emit_linemap_path: Path | None = None,
+    emit_varmap_path: Path | None = None,
 ) -> None:
     """
     Invoke an external backend binary (e.g. pymcuc-avr) to translate a .mir
@@ -161,6 +163,10 @@ def run_backend(
         cmd.append("--verbose")
     if emit_symbols_path is not None:
         cmd.extend(["--emit-symbols", str(emit_symbols_path)])
+    if emit_linemap_path is not None:
+        cmd.extend(["--emit-linemap", str(emit_linemap_path)])
+    if emit_varmap_path is not None:
+        cmd.extend(["--emit-varmap", str(emit_varmap_path)])
 
     try:
         with subprocess.Popen(

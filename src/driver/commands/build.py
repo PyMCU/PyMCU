@@ -13,6 +13,7 @@
 # -----------------------------------------------------------------------------
 
 from pathlib import Path
+import json
 import re
 import tomlkit
 import typer
@@ -196,7 +197,7 @@ def _inject_preamble(
     comment: str,
     import_line: str,
     call_line: str,
-) -> Path:
+) -> tuple[Path, int]:
     """Write a synthetic entry file injecting import_line + call_line.
 
     When the source has an explicit ``def main():``, the import is placed at
@@ -204,21 +205,31 @@ def _inject_preamble(
     ``def main():``.  Otherwise both are prepended at the top level.  This
     avoids the compiler error that fires when top-level executable statements
     coexist with an explicit ``def main()``.
+
+    Returns (synthetic_path, preamble_line_count) so callers can correct
+    linemap line numbers that were shifted by the injected preamble.
     """
     generated_dir.mkdir(parents=True, exist_ok=True)
     synthetic = generated_dir / entry_point.name
     existing = entry_point.read_text(encoding="utf-8")
     m = _MAIN_DEF_RE.search(existing)
     if m:
+        header = comment + import_line + "\n"
         modified = existing[:m.end()] + "\n    " + call_line + existing[m.end():]
-        synthetic.write_text(comment + import_line + "\n" + modified, encoding="utf-8")
+        synthetic.write_text(header + modified, encoding="utf-8")
+        # Lines before def main() shifted by header_lines; lines inside def main()
+        # shifted by header_lines + 1 (the inserted call_line).  Use the larger
+        # value so breakpoints inside the function body (the common case) resolve
+        # correctly.
+        preamble_lines = header.count("\n") + 1
     else:
         preamble = comment + import_line + call_line + "\n\n"
         synthetic.write_text(preamble + existing, encoding="utf-8")
-    return synthetic
+        preamble_lines = preamble.count("\n")
+    return synthetic, preamble_lines
 
 
-def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
+def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
     """Return a synthetic entry file with a UART-init preamble prepended.
 
     Mirrors MicroPython's boot behavior where UART 0 is pre-initialized at
@@ -234,7 +245,7 @@ def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> Path:
     )
 
 
-def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> Path:
+def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
     """Return a synthetic entry file with a millis_init() preamble prepended.
 
     Called when ticks_ms() is detected in user sources and no explicit
@@ -252,6 +263,25 @@ def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> Path:
         import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
         call_line="_pymcu_millis_init()",
     )
+
+
+def _correct_linemap(linemap_path: Path, filename: str, offset: int) -> None:
+    """Subtract *offset* from every linemap entry whose File == *filename*.
+
+    Entries that would have a corrected line number <= 0 (i.e. they point into
+    the injected preamble itself) are dropped — they have no counterpart in the
+    original source file.
+    """
+    entries = json.loads(linemap_path.read_text(encoding="utf-8"))
+    corrected = []
+    for e in entries:
+        if e.get("File") == filename:
+            new_line = e["Line"] - offset
+            if new_line > 0:
+                corrected.append({**e, "Line": new_line})
+        else:
+            corrected.append(e)
+    linemap_path.write_text(json.dumps(corrected), encoding="utf-8")
 
 
 def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
@@ -287,6 +317,7 @@ def build(
         help="Override stdlib flavor(s) from pyproject.toml (e.g. --stdlib micropython). "
              "Can be specified multiple times.",
     ),
+    debug: bool = typer.Option(False, "--debug", help="Emit debug symbols and line map for the emulator debugger"),
 ):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
     _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
@@ -479,9 +510,12 @@ def build(
         # explicit UART() constructor in user sources.  This mirrors MicroPython's
         # REPL behaviour where UART 0 is pre-initialized at 115200 baud before user
         # code runs, so print()/input() work out of the box with no extra imports.
+        _linemap_preamble_offset = 0
+
         _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
         if (_has_print or _has_input) and not _has_uart:
-            entry_point = _inject_print_preamble(entry_point, generated_dir)
+            entry_point, _n = _inject_print_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
             _trigger = "print()" if _has_print else "input()"
@@ -501,7 +535,8 @@ def build(
         # millis_init() must run before any ticks_ms() call; injecting it here
         # mirrors how UART is set up for print().
         if _detect_ticks_ms_usage(sources_dir):
-            entry_point = _inject_ticks_ms_preamble(entry_point, generated_dir)
+            entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
             _diag_log(
@@ -579,6 +614,13 @@ def build(
                         emit_ir_path=str(ir_file),
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
+                    linemap_path: Path | None = None
+                    varmap_path: Path | None = None
+                    if debug:
+                        debug_dir = output_dir / "_debug"
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        linemap_path = debug_dir / "linemap.json"
+                        varmap_path  = debug_dir / "varmap.json"
                     run_backend(
                         backend_binary=backend_plugin.get_backend_binary(),
                         ir_file=ir_file,
@@ -590,7 +632,14 @@ def build(
                         interrupt_vector=interrupt_vector,
                         verbose=verbose,
                         on_output=compiler_handler,
+                        emit_linemap_path=linemap_path,
+                        emit_varmap_path=varmap_path,
                     )
+                    # Correct linemap line numbers when preamble was injected.
+                    # The compiler saw the synthetic file (with prepended lines),
+                    # so all recorded line numbers are shifted by the preamble size.
+                    if linemap_path and linemap_path.exists() and _linemap_preamble_offset > 0:
+                        _correct_linemap(linemap_path, "main.py", _linemap_preamble_offset)
                 else:
                     compiler.compile(
                         input_file=entry_point,

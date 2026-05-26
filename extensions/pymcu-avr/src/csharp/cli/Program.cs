@@ -6,6 +6,7 @@
 //                             [--config KEY=VALUE]... [--reset-vector N]
 //                             [--interrupt-vector N] [--emit-symbols <path>]
 //                             [--verbose]
+//   pymcuc-avr debug --port <PORT> --hex <HEX_FILE> --linemap <LINEMAP_FILE>
 //
 // Exit codes:
 //   0  — success
@@ -13,6 +14,7 @@
 //   2  — license error (should not occur for AVR since it is free)
 
 using System.CommandLine;
+using System.Diagnostics;
 using PyMCU.Backend.License;
 using PyMCU.Backend.Serialization;
 using PyMCU.Backend.Targets.AVR;
@@ -72,6 +74,18 @@ var emitSymbolsOpt = new Option<string?>("--emit-symbols")
     DefaultValueFactory = _ => null
 };
 
+var emitLineMapOpt = new Option<string?>("--emit-linemap")
+{
+    Description = "Write source line→flash address map JSON to this path (for debugger use)",
+    DefaultValueFactory = _ => null
+};
+
+var emitVarMapOpt = new Option<string?>("--emit-varmap")
+{
+    Description = "Write function variable→register map JSON to this path (for debugger variable display)",
+    DefaultValueFactory = _ => null
+};
+
 var rootCmd = new RootCommand("pymcuc-avr — PyMCU AVR backend runner");
 rootCmd.Arguments.Add(irFileArg);
 rootCmd.Options.Add(outputOpt);
@@ -82,6 +96,8 @@ rootCmd.Options.Add(resetVecOpt);
 rootCmd.Options.Add(intVecOpt);
 rootCmd.Options.Add(verboseOpt);
 rootCmd.Options.Add(emitSymbolsOpt);
+rootCmd.Options.Add(emitLineMapOpt);
+rootCmd.Options.Add(emitVarMapOpt);
 
 rootCmd.SetAction(pr =>
 {
@@ -93,7 +109,9 @@ rootCmd.SetAction(pr =>
     var resetVec    = pr.GetValue(resetVecOpt);
     var intVec      = pr.GetValue(intVecOpt);
     var verbose     = pr.GetValue(verboseOpt);
-    var emitSymbols = pr.GetValue(emitSymbolsOpt);
+    var emitSymbols  = pr.GetValue(emitSymbolsOpt);
+    var emitLineMap  = pr.GetValue(emitLineMapOpt);
+    var emitVarMap   = pr.GetValue(emitVarMapOpt);
 
     // Derive output path from IR file path when not specified.
     if (string.IsNullOrEmpty(output) && !string.IsNullOrEmpty(irFile))
@@ -142,11 +160,15 @@ rootCmd.SetAction(pr =>
     {
         var codegen = (AvrCodeGen)provider.Create(cfg);
         codegen.EmitSymbolsPath = emitSymbols;
+        codegen.EmitLineMapPath = emitLineMap;
+        codegen.EmitVarMapPath  = emitVarMap;
         using var writer = new StreamWriter(output);
         codegen.Compile(ir, writer);
         Console.WriteLine($"[BUILD_OK] {output}");
         if (!string.IsNullOrEmpty(emitSymbols))
             Console.WriteLine($"[SYMBOLS] {emitSymbols}");
+        if (!string.IsNullOrEmpty(emitLineMap))
+            Console.WriteLine($"[LINEMAP] {emitLineMap}");
     }
     catch (Exception ex)
     {
@@ -155,5 +177,58 @@ rootCmd.SetAction(pr =>
         Environment.ExitCode = 1;
     }
 });
+
+// ── debug subcommand — delegates to pymcuc-avr-debugserver (non-AOT) ────────
+
+var debugPortOpt = new Option<int>("--port")
+{
+    Description = "TCP port for the debug server",
+    DefaultValueFactory = _ => 57000
+};
+var debugHexOpt = new Option<string>("--hex")
+{
+    Description = "Path to the compiled .hex firmware file"
+};
+var debugLmOpt = new Option<string>("--linemap")
+{
+    Description = "Path to the linemap.json file produced by pymcuc-avr --emit-linemap"
+};
+
+var debugCmd = new Command("debug", "Launch the PyMCU AVR emulator debug server");
+debugCmd.Options.Add(debugPortOpt);
+debugCmd.Options.Add(debugHexOpt);
+debugCmd.Options.Add(debugLmOpt);
+
+debugCmd.SetAction(pr =>
+{
+    var port    = pr.GetValue(debugPortOpt);
+    var hex     = pr.GetValue(debugHexOpt) ?? "";
+    var linemap = pr.GetValue(debugLmOpt)  ?? "";
+
+    // pymcuc-avr-debugserver lives next to this binary.
+    var selfDir    = Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? "";
+    var serverBin  = Path.Combine(selfDir, "pymcuc-avr-debugserver");
+    if (!File.Exists(serverBin))
+    {
+        Console.Error.WriteLine($"[pymcuc-avr] Debug server not found: {serverBin}");
+        Console.Error.WriteLine("  Build it with: dotnet publish extensions/pymcu-avr/src/csharp/debugserver/");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    using var proc = new Process();
+    proc.StartInfo = new ProcessStartInfo(serverBin)
+    {
+        Arguments       = $"--port {port}" +
+                          (string.IsNullOrEmpty(hex)     ? "" : $" --hex \"{hex}\"") +
+                          (string.IsNullOrEmpty(linemap) ? "" : $" --linemap \"{linemap}\""),
+        UseShellExecute = false,
+    };
+    proc.Start();
+    proc.WaitForExit();
+    Environment.ExitCode = proc.ExitCode;
+});
+
+rootCmd.Subcommands.Add(debugCmd);
 
 rootCmd.Parse(args).Invoke();

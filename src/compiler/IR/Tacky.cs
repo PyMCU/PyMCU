@@ -133,7 +133,7 @@ public record AugAssign(BinaryOp Op, Val Target, Val Operand) : Instruction;
 public record InlineAsm(string Code, IList<Val>? Operands = null) : Instruction;
 
 // Debugging
-public record DebugLine(int Line, string Text, string SourceFile) : Instruction;
+public record DebugLine(int Line, string Text, string SourceFile, bool IsInline = false) : Instruction;
 
 // Variable-index array load: dst = array_name[index]
 public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType, int Count) : Instruction;

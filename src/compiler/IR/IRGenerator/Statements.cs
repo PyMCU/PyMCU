@@ -176,7 +176,7 @@ public partial class IRGenerator
 
             if (stmt.Line <= linesPtr.Count)
             {
-                Emit(new DebugLine(stmt.Line, linesPtr[stmt.Line - 1], currentSourceFile));
+                Emit(new DebugLine(stmt.Line, linesPtr[stmt.Line - 1], currentSourceFile, !string.IsNullOrEmpty(currentInlinePrefix)));
                 lastLine = stmt.Line;
             }
         }

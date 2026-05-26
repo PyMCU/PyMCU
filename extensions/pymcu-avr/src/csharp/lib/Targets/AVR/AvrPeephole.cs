@@ -24,7 +24,9 @@ public class AvrAsmLine
         Label,
         Comment,
         Raw,
-        Empty
+        Empty,
+        /// <summary>Carries source file + line for linemap generation. Not emitted to .asm output.</summary>
+        DebugMarker
     }
 
     public LineType Type;
@@ -33,6 +35,8 @@ public class AvrAsmLine
     public string Op1 = "";
     public string Op2 = "";
     public string Content = "";
+    public string DebugFile = "";
+    public int    DebugLine;
 
     public static AvrAsmLine MakeInstruction(string m, string o1 = "", string o2 = "")
         => new() { Type = LineType.Instruction, Mnemonic = m, Op1 = o1, Op2 = o2 };
@@ -48,6 +52,9 @@ public class AvrAsmLine
 
     public static AvrAsmLine MakeEmpty()
         => new() { Type = LineType.Empty };
+
+    public static AvrAsmLine MakeDebugMarker(string file, int line)
+        => new() { Type = LineType.DebugMarker, DebugFile = file, DebugLine = line };
 
     public override string ToString()
     {
