@@ -28,7 +28,7 @@
 
         <toolWindow
             id="PyMCU"
-            anchor="left"
+            anchor="right"
             factoryClass="dev.begeistert.pymcu.toolwindow.PyMcuToolWindowFactory"
             icon="/icons/pymcu.svg"/>
 
