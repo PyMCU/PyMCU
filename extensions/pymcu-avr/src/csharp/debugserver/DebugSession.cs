@@ -103,6 +103,13 @@ public sealed class DebugSession : IDisposable
 
     private void RunUntilStop(CancellationToken ct)
     {
+        // Safety limit for step modes: if we haven't stopped at a new source line
+        // after this many instructions, force a pause. Prevents infinite busy-wait
+        // loops (e.g. polling peripherals that are not simulated) from hanging the
+        // debugger. 2M instructions ≈ 125 ms of simulated time at 16 MHz.
+        const long StepSafetyLimit = 2_000_000;
+        long stepInstructions = 0;
+
         while (!ct.IsCancellationRequested)
         {
             if (_pauseRequested)
@@ -127,6 +134,15 @@ public sealed class DebugSession : IDisposable
                 {
                     _stepMode = StepMode.None;
                     ReportStopped("instruction");
+                    return;
+                }
+
+                // Safety: if a step-into/over runs too long without a source-line
+                // change, auto-pause so the user isn't left with a frozen debugger.
+                if (++stepInstructions >= StepSafetyLimit)
+                {
+                    _stepMode = StepMode.None;
+                    ReportStopped("pause");
                     return;
                 }
 
