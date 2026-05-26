@@ -150,8 +150,8 @@ class PyMcuStackFrame(
             for ((varName, reg) in scope.vars) {
                 val declLine = scope.varLines[varName] ?: scope.startLine
                 val inScope  = varName.startsWith(prefix)
-                log.info("PyMCU[frame]   reg var '$varName' → $reg (declLine=$declLine, inScope=$inScope)")
-                if (!inScope) continue
+                log.info("PyMCU[frame]   reg var '$varName' → $reg (declLine=$declLine, inScope=$inScope, currentLine=$line)")
+                if (!inScope || line < declLine) continue
                 val displayName = varName.removePrefix(prefix)
                 // INT16 uses a register pair: reg (lo) + reg+1 (hi).
                 val lo      = regs[reg] ?: 0
@@ -179,8 +179,8 @@ class PyMcuStackFrame(
                 for ((varName, addr) in relevantStackVars) {
                     val declLine = scope.stackVarLines[varName] ?: scope.startLine
                     val inScope  = varName.startsWith(prefix)
-                    log.info("PyMCU[frame]   stack var '$varName' → 0x${addr.toString(16)} (declLine=$declLine, inScope=$inScope)")
-                    if (!inScope) continue
+                    log.info("PyMCU[frame]   stack var '$varName' → 0x${addr.toString(16)} (declLine=$declLine, inScope=$inScope, currentLine=$line)")
+                    if (!inScope || line < declLine) continue
                     val offset = addr - minAddr
                     // Read 2 bytes little-endian (INT16). For 1-byte vars the high byte is 0.
                     val lo    = if (offset < bytes.size)     (bytes[offset].toInt() and 0xFF) else 0

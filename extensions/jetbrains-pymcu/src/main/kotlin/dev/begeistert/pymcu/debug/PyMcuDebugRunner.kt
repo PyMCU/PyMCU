@@ -95,14 +95,14 @@ class PyMcuDebugRunner : GenericProgramRunner<RunnerSettings>() {
                     val client = PyMcuDebugClient(
                         port         = config.serverPort,
                         onStopped    = { event ->
-                            log.info("PyMCU debug: onStopped event received: $event — scheduling positionReached")
-                            ApplicationManager.getApplication().invokeLater {
-                                if (!session.isStopped) {
-                                    log.info("PyMCU debug: calling session.positionReached")
-                                    session.positionReached(PyMcuSuspendContext(session, event, debugProcess!!.client))
-                                } else {
-                                    log.warn("PyMCU debug: session already stopped, ignoring onStopped")
-                                }
+                            // positionReached must be called from a background thread — XDebugger
+                            // internally marshals to EDT. Calling it from invokeLater (EDT) causes
+                            // the frames panel to not refresh on subsequent stops.
+                            log.info("PyMCU debug: onStopped event: $event — calling positionReached")
+                            if (!session.isStopped) {
+                                session.positionReached(PyMcuSuspendContext(session, event, debugProcess!!.client))
+                            } else {
+                                log.warn("PyMCU debug: session already stopped, ignoring onStopped")
                             }
                         },
                         onTerminated = {
