@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Chip body -->
+  <rect x="4" y="4" width="8" height="8" rx="1" ry="1" fill="#5A8FC3" stroke="#7AAED9" stroke-width="0.5"/>
+  <!-- Center mark -->
+  <rect x="6.5" y="6.5" width="3" height="3" rx="0.5" fill="#AFD4F8"/>
+  <!-- Left pins -->
+  <rect x="1" y="5.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <rect x="1" y="7.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <rect x="1" y="9.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <!-- Right pins -->
+  <rect x="12.5" y="5.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <rect x="12.5" y="7.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <rect x="12.5" y="9.5" width="2.5" height="1" fill="#5A8FC3"/>
+  <!-- Top pins -->
+  <rect x="5.5" y="1" width="1" height="2.5" fill="#5A8FC3"/>
+  <rect x="7.5" y="1" width="1" height="2.5" fill="#5A8FC3"/>
+  <rect x="9.5" y="1" width="1" height="2.5" fill="#5A8FC3"/>
+  <!-- Bottom pins -->
+  <rect x="5.5" y="12.5" width="1" height="2.5" fill="#5A8FC3"/>
+  <rect x="7.5" y="12.5" width="1" height="2.5" fill="#5A8FC3"/>
+  <rect x="9.5" y="12.5" width="1" height="2.5" fill="#5A8FC3"/>
+</svg>
