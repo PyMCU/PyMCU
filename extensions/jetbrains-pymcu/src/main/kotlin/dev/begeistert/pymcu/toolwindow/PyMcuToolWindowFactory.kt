@@ -16,7 +16,11 @@ import com.intellij.util.ui.JBUI
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.settings.PyMcuSettings
 import java.awt.BorderLayout
+import java.awt.Desktop
 import java.awt.Font
+import java.net.URI
+import java.nio.file.Path
+import java.util.Base64
 import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
@@ -209,6 +213,7 @@ private class PyMcuTaskPanel(private val project: Project) : JPanel(BorderLayout
 
     private fun runCommand(cmd: TaskNode.Command) {
         if (cmd.isSync) { runSync(); return }
+        if (cmd.cmd == "profile") { runProfile(); return }
 
         val settings = PyMcuSettings.getInstance()
         val basePath  = project.basePath ?: run {
@@ -234,6 +239,58 @@ private class PyMcuTaskPanel(private val project: Project) : JPanel(BorderLayout
                 SwingUtilities.invokeLater { appendOutput("Error: ${e.message}\n") }
                 log.error("PyMCU toolwindow command error", e)
             }
+        }
+    }
+
+    private fun runProfile() {
+        val settings = PyMcuSettings.getInstance()
+        val basePath  = project.basePath ?: run {
+            appendOutput("Error: cannot determine project base directory.\n"); return
+        }
+        val outFile = "profile.speedscope.json"
+        appendOutput("\n$ ${settings.executablePath} profile -o $outFile\n")
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val proc = ProcessBuilder(settings.executablePath, "profile", "-o", outFile)
+                    .directory(java.io.File(basePath))
+                    .redirectErrorStream(true)
+                    .start()
+
+                proc.inputStream.bufferedReader().forEachLine { line ->
+                    SwingUtilities.invokeLater { appendOutput("$line\n") }
+                }
+                val exit = proc.waitFor()
+                SwingUtilities.invokeLater {
+                    if (exit == 0) {
+                        appendOutput("✓ Done\n")
+                        openSpeedscope(Path.of(basePath, outFile))
+                    } else {
+                        appendOutput("✗ Exited with code $exit\n")
+                    }
+                }
+            } catch (e: Exception) {
+                SwingUtilities.invokeLater { appendOutput("Error: ${e.message}\n") }
+                log.error("PyMCU profile error", e)
+            }
+        }
+    }
+
+    private fun openSpeedscope(profilePath: Path) {
+        try {
+            val jsonBytes = profilePath.toFile().readBytes()
+            val encoded   = Base64.getEncoder().encodeToString(jsonBytes)
+            val dataUrl   = "data:application/json;base64,$encoded"
+            val url       = "https://speedscope.app#profileURL=${java.net.URLEncoder.encode(dataUrl, "UTF-8")}"
+            appendOutput("Opening flamegraph in browser…\n")
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(URI(url))
+            } else {
+                appendOutput("  (Cannot open browser — drag $profilePath to https://speedscope.app)\n")
+            }
+        } catch (e: Exception) {
+            appendOutput("Could not open speedscope: ${e.message}\n")
+            log.warn("openSpeedscope failed", e)
         }
     }
 
