@@ -153,9 +153,12 @@ class PyMcuStackFrame(
                 val declLine = scope.varLines[varName] ?: scope.startLine
                 val inScope  = varName.startsWith(prefix)
                 log.info("PyMCU[frame]   reg var '$varName' → $reg (declLine=$declLine, inScope=$inScope, currentLine=$line)")
-                // Skip compiler-internal variables (declLine before function start = wrong attribution)
-                // Skip until we have passed the declaration line (show AFTER, not on or before)
-                if (!inScope || declLine < scope.startLine || line <= declLine) continue
+                // Skip compiler-internal variables (declLine before function start = wrong attribution).
+                // Parameters (declLine == startLine) appear from the first line of the function.
+                // Local variables appear only after the declaration line (not on it).
+                val isParam = declLine == scope.startLine
+                val skipByLine = if (isParam) line < declLine else line <= declLine
+                if (!inScope || declLine < scope.startLine || skipByLine) continue
                 val displayName = varName.removePrefix(prefix)
                 // INT16 uses a register pair: reg (lo) + reg+1 (hi).
                 val lo      = regs[reg] ?: 0
@@ -189,9 +192,12 @@ class PyMcuStackFrame(
                     val declLine = scope.stackVarLines[varName] ?: scope.startLine
                     val inScope  = varName.startsWith(prefix)
                     log.info("PyMCU[frame]   stack var '$varName' → 0x${addr.toString(16)} (declLine=$declLine, inScope=$inScope, currentLine=$line)")
-                    // Skip compiler-internal variables (declLine before function start = wrong attribution)
-                    // Skip until we have passed the declaration line (show AFTER, not on or before)
-                    if (!inScope || declLine < scope.startLine || line <= declLine) continue
+                    // Skip compiler-internal variables (declLine before function start = wrong attribution).
+                    // Parameters (declLine == startLine) appear from the first line of the function.
+                    // Local variables appear only after the declaration line (not on it).
+                    val isParam = declLine == scope.startLine
+                    val skipByLine = if (isParam) line < declLine else line <= declLine
+                    if (!inScope || declLine < scope.startLine || skipByLine) continue
                     val offset = addr - minAddr
                     // Read 2 bytes little-endian (INT16). For 1-byte vars the high byte is 0.
                     val lo    = if (offset < bytes.size)     (bytes[offset].toInt() and 0xFF) else 0
