@@ -16,6 +16,7 @@ namespace PyMCU.AVR.DebugServer;
 ///   {"type":"continue"}
 ///   {"type":"stepOver"}
 ///   {"type":"stepInto"}
+///   {"type":"stepInstruction"}
 ///   {"type":"pause"}
 ///   {"type":"getRegisters"}
 ///   {"type":"getMemory","address":256,"length":32}
@@ -200,6 +201,12 @@ public static class PyMcuDebugServer
                     case "stepInto":
                         if (session is null) { Send(MsgErr("Session not launched.")); break; }
                         session.StepInto();
+                        Send(MsgRunning());
+                        break;
+
+                    case "stepInstruction":
+                        if (session is null) { Send(MsgErr("Session not launched.")); break; }
+                        session.StepInstruction();
                         Send(MsgRunning());
                         break;
 

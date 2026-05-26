@@ -4,7 +4,7 @@ using Avr8Sharp.TestKit.Boards;
 
 namespace PyMCU.AVR.DebugServer;
 
-public enum StepMode { None, Into, Over }
+public enum StepMode { None, Into, Over, Instruction }
 
 /// <summary>
 /// Manages a single AVR debug session: loads firmware, steps the simulation
@@ -122,6 +122,14 @@ public sealed class DebugSession : IDisposable
             // Check step-mode completion.
             if (_stepMode != StepMode.None)
             {
+                // Single-instruction step: stop after executing exactly one opcode.
+                if (_stepMode == StepMode.Instruction)
+                {
+                    _stepMode = StepMode.None;
+                    ReportStopped("instruction");
+                    return;
+                }
+
                 var pos = _lineMap.GetSourcePos(nextPc);
                 if (pos.HasValue && pos != _stepBaseLine)
                 {
@@ -170,6 +178,12 @@ public sealed class DebugSession : IDisposable
     {
         _stepMode     = StepMode.Into;
         _stepBaseLine = _lineMap.GetSourcePos(_sim.Cpu.Pc);
+        TryRelease();
+    }
+
+    public void StepInstruction()
+    {
+        _stepMode = StepMode.Instruction;
         TryRelease();
     }
 
