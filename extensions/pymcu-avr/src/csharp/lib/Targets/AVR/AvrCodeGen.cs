@@ -704,6 +704,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         EmitFlashArrayPool(output);
         if (program.NeedsGc) EmitGcRuntime(output);
         WriteSymbolsIfRequested(optimized, program);
+        WriteLineMapIfRequested(optimized);
+        WriteVarMapIfRequested(program);
     }
 
     public override void EmitContextSave()
@@ -861,7 +863,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case DebugLine d:
                 EmitComment(string.IsNullOrEmpty(d.SourceFile)
                     ? $"Line {d.Line}: {d.Text}"
-                    : $"{d.SourceFile}:{d.Line}: {d.Text}"); break;
+                    : $"{d.SourceFile}:{d.Line}: {d.Text}");
+                if (!string.IsNullOrEmpty(d.SourceFile) && !d.IsInline)
+                    _assembly.Add(AvrAsmLine.MakeDebugMarker(d.SourceFile, d.Line));
+                break;
             case JumpIfEqual je: CompileCompareJump(je.Src1, je.Src2, "BREQ", je.Target); break;
             case JumpIfNotEqual jne: CompileCompareJump(jne.Src1, jne.Src2, "BRNE", jne.Target); break;
             case JumpIfLessThan jlt: CompileCompareJump(jlt.Src1, jlt.Src2, IsSignedComparison(jlt.Src1, jlt.Src2) ? "BRLT" : "BRLO", jlt.Target); break;
@@ -2526,4 +2531,216 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
         return result;
     }
+
+    // ── Line map (--emit-linemap) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// When set, a linemap JSON file is written to this path after compilation.
+    /// Format: [{"File":"src/main.py","Line":42,"WordAddr":128}, ...]
+    /// Used by the debug server to map breakpoints to flash addresses.
+    /// </summary>
+    public string? EmitLineMapPath { get; set; }
+
+    /// <summary>
+    /// When set, a varmap JSON file is written to this path after compilation.
+    /// Format: [{"Function":"fibonacci","File":"main.py","StartLine":22,"Vars":{"a":"R4","b":"R5",...}}, ...]
+    /// Used by the debugger plugin to display named variables instead of raw registers.
+    /// </summary>
+    public string? EmitVarMapPath { get; set; }
+
+    private void WriteLineMapIfRequested(List<AvrAsmLine> optimized)
+    {
+        if (string.IsNullOrEmpty(EmitLineMapPath)) return;
+        var entries = ComputeLineMap(optimized);
+        File.WriteAllText(EmitLineMapPath,
+            JsonSerializer.Serialize(entries, AvrLineMapJsonContext.Default.ListLineMapEntry));
+    }
+
+    private static List<LineMapEntry> ComputeLineMap(List<AvrAsmLine> lines)
+    {
+        uint word = 0;
+        var seen   = new HashSet<(string, int)>();
+        var result = new List<LineMapEntry>();
+
+        // Pending debug marker: set when a DebugMarker line is encountered, overridden by
+        // subsequent markers before any instruction, flushed when the first real instruction
+        // at the current word is reached. This ensures loop headers that generate only a
+        // label (e.g. "while True:") never create a spurious entry that collides with the
+        // first body instruction; only the innermost/last marker wins.
+        (string file, int line)? pending = null;
+
+        void Flush()
+        {
+            if (pending is not (var f, var l)) return;
+            if (seen.Add((f, l))) result.Add(new LineMapEntry(f, l, word));
+            pending = null;
+        }
+
+        foreach (var asmLine in lines)
+        {
+            switch (asmLine.Type)
+            {
+                case AvrAsmLine.LineType.Raw:
+                    if (asmLine.Content.StartsWith(".org ", StringComparison.Ordinal))
+                    {
+                        var raw = asmLine.Content[5..].Trim();
+                        word = raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                            ? Convert.ToUInt32(raw[2..], 16)
+                            : uint.Parse(raw);
+                    }
+                    else
+                    {
+                        var w = CountRawWords(asmLine.Content);
+                        if (w > 0) { Flush(); word += w; }
+                    }
+                    break;
+
+                case AvrAsmLine.LineType.DebugMarker:
+                    // Later markers override earlier ones at the same word position.
+                    pending = (asmLine.DebugFile, asmLine.DebugLine);
+                    break;
+
+                case AvrAsmLine.LineType.Instruction:
+                    Flush();
+                    word += asmLine.Mnemonic is "CALL" or "JMP" or "LDS" or "STS" ? 2u : 1u;
+                    break;
+            }
+        }
+        return result;
+    }
+
+    // Counts AVR word(s) consumed by a single Raw assembly line.
+    // Used by ComputeLineMap to account for inline asm bodies (asm() calls)
+    // that are emitted as Raw lines instead of Instruction lines.
+    private static uint CountRawWords(string content)
+    {
+        var trimmed = content.Trim();
+        if (trimmed.Length == 0 || trimmed[0] == '.' || trimmed[0] == ';')
+            return 0;
+        // Strip optional "label:" prefix to isolate the instruction part.
+        var colonIdx = trimmed.IndexOf(':');
+        var instruction = colonIdx >= 0 ? trimmed[(colonIdx + 1)..].TrimStart() : trimmed;
+        if (instruction.Length == 0) return 0;
+        var spaceIdx = instruction.IndexOfAny(new[] { ' ', '\t' });
+        var mnemonic = spaceIdx < 0 ? instruction : instruction[..spaceIdx];
+        if (mnemonic.Length == 0 || !char.IsLetter(mnemonic[0])) return 0;
+        return string.Equals(mnemonic, "CALL", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mnemonic, "JMP",  StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mnemonic, "LDS",  StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mnemonic, "STS",  StringComparison.OrdinalIgnoreCase)
+            ? 2u : 1u;
+    }
+
+    // SRAM base address on AVR (ATmega328P and compatible): data space starts at 0x0100.
+    private const int SramBase = 0x0100;
+
+    private void WriteVarMapIfRequested(ProgramIR program)
+    {
+        if (string.IsNullOrEmpty(EmitVarMapPath)) return;
+        var entries = new List<VarMapEntry>();
+
+        foreach (var func in program.Functions.Where(f => !f.IsInline))
+        {
+            var firstDebug = func.Body
+                .OfType<DebugLine>()
+                .FirstOrDefault(d => !d.IsInline && !string.IsNullOrEmpty(d.SourceFile));
+            if (firstDebug is null) continue;
+
+            var prefix       = func.Name + ".";
+            var vars         = new Dictionary<string, string>(StringComparer.Ordinal);
+            var varLines     = new Dictionary<string, int>(StringComparer.Ordinal);
+            var stackVars    = new Dictionary<string, int>(StringComparer.Ordinal);
+            var stackVarLines = new Dictionary<string, int>(StringComparer.Ordinal);
+            int curLine      = firstDebug.Line;
+
+            // --- Parameters: live from function entry. Use startLine as their VarLines
+            //     entry so the debugger shows them immediately when entering the function.
+            foreach (var pname in func.Params)
+            {
+                if (!pname.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                if (_regLayout.TryGetValue(pname, out var pReg))
+                {
+                    vars.TryAdd(pname, pReg);
+                    varLines.TryAdd(pname, firstDebug.Line);
+                }
+                else if (_stackLayout.TryGetValue(pname, out int pOff))
+                {
+                    stackVars.TryAdd(pname, SramBase + pOff);
+                    stackVarLines.TryAdd(pname, firstDebug.Line);
+                }
+            }
+
+            // --- Locals: discovered when they first appear as an instruction destination.
+            foreach (var instr in func.Body)
+            {
+                if (instr is DebugLine dl && !dl.IsInline && dl.Line > 0)
+                    curLine = dl.Line;
+
+                IEnumerable<Val> dsts = instr switch
+                {
+                    Binary b         => [b.Dst],
+                    Copy c           => [c.Dst],
+                    Unary u          => [u.Dst],
+                    Call cl          => [cl.Dst],
+                    LoadIndirect li  => [li.Dst],
+                    BitCheck bc      => [bc.Dst],
+                    ArrayLoad al     => [al.Dst],
+                    BytearrayLoad bl => [bl.Dst],
+                    _                => []
+                };
+                foreach (var v in dsts)
+                {
+                    if (v is not Variable vv) continue;
+                    // Only include variables that belong to this function (not call-argument
+                    // staging writes like "count_bits.v = main.n" appearing in main's body).
+                    if (!vv.Name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+
+                    if (_regLayout.TryGetValue(vv.Name, out var reg))
+                    {
+                        vars.TryAdd(vv.Name, reg);
+                        varLines.TryAdd(vv.Name, curLine);
+                    }
+                    else if (_stackLayout.TryGetValue(vv.Name, out int off))
+                    {
+                        stackVars.TryAdd(vv.Name, SramBase + off);
+                        stackVarLines.TryAdd(vv.Name, curLine);
+                    }
+                }
+            }
+
+            // Emit an entry for every function that has a source location, even when all
+            // variables are stack-spilled. Without this, functions like fibonacci (whose
+            // locals all fall below the register-allocation threshold) are invisible to the
+            // debugger entirely, which prevents the scope from even appearing.
+            entries.Add(new VarMapEntry(
+                func.Name, firstDebug.SourceFile, firstDebug.Line,
+                vars, varLines,
+                stackVars.Count > 0 ? stackVars : null,
+                stackVarLines.Count > 0 ? stackVarLines : null));
+        }
+
+        File.WriteAllText(EmitVarMapPath,
+            JsonSerializer.Serialize(entries, AvrVarMapJsonContext.Default.ListVarMapEntry));
+    }
 }
+
+public record LineMapEntry(string File, int Line, uint WordAddr);
+
+[JsonSerializable(typeof(List<LineMapEntry>))]
+internal partial class AvrLineMapJsonContext : JsonSerializerContext { }
+
+// ── Var map (--emit-varmap) ───────────────────────────────────────────────────────────────────
+
+// StackVars/StackVarLines hold variables that are stack-spilled (not in registers).
+// The int value is the absolute AVR data-space address (0x0100 + stack offset).
+public record VarMapEntry(
+    string Function,
+    string File,
+    int StartLine,
+    Dictionary<string, string> Vars,
+    Dictionary<string, int> VarLines,
+    Dictionary<string, int>? StackVars = null,
+    Dictionary<string, int>? StackVarLines = null);
+
+[JsonSerializable(typeof(List<VarMapEntry>))]
+internal partial class AvrVarMapJsonContext : JsonSerializerContext { }
