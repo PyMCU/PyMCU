@@ -246,6 +246,7 @@ public partial class IRGenerator
                 intrinsicNames.Add("const");
                 intrinsicNames.Add("device_info");
                 intrinsicNames.Add("inline");
+                intrinsicNames.Add("naked");
                 intrinsicNames.Add("interrupt");
                 intrinsicNames.Add("asm");
                 intrinsicNames.Add("compile_isr");
@@ -279,6 +280,7 @@ public partial class IRGenerator
                     intrinsicNames.Add("const");
                     intrinsicNames.Add("device_info");
                     intrinsicNames.Add("inline");
+                    intrinsicNames.Add("naked");
                     intrinsicNames.Add("interrupt");
                     intrinsicNames.Add("asm");
                     intrinsicNames.Add("compile_isr");

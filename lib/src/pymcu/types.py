@@ -63,6 +63,10 @@ def inline(f):
     return f
 
 
+def naked(f):
+    return f
+
+
 def asm(instruction: str):
     pass
 

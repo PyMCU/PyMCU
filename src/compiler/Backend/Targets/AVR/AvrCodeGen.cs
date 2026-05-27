@@ -461,7 +461,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         EmitLabel(func.Name);
 
-        if (func.IsInterrupt) EmitContextSave();
+        if (func.IsInterrupt && !func.IsNaked) EmitContextSave();
 
         if (func.Name == "main")
         {
@@ -533,7 +533,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         bool emittedEpilogue = false;
         foreach (var instr in func.Body)
         {
-            if (func.IsInterrupt && instr is Return)
+            if (func.IsInterrupt && !func.IsNaked && instr is Return)
             {
                 EmitContextRestore();
                 Emit("RETI");
@@ -544,7 +544,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             CompileInstruction(instr);
         }
 
-        if (func.IsInterrupt && !emittedEpilogue)
+        if (func.IsInterrupt && !func.IsNaked && !emittedEpilogue)
         {
             EmitContextRestore();
             Emit("RETI");

@@ -221,6 +221,7 @@ public class Function
     public List<Instruction> Body { get; set; } = new();
     public bool IsInline { get; set; } = false;
     public bool IsInterrupt { get; set; } = false;
+    public bool IsNaked { get; set; } = false;
     public int InterruptVector { get; set; } = 0;
     public string? OriginalName { get; set; }
 }

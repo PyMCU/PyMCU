@@ -557,6 +557,8 @@ public class FunctionDef : Statement
     public bool IsPropertySetter { get; set; } = false;
     public string PropertyName { get; set; } = "";
 
+    public bool IsNaked { get; set; } = false;
+
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
 

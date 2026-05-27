@@ -198,6 +198,7 @@ public class Parser
         bool isPropertyGetter = false;
         bool isPropertySetter = false;
         string propSetterOf = "";
+        bool isNaked = false;
         bool isExtern = false;
         string externSymbol = "";
 
@@ -320,6 +321,7 @@ public class Parser
             IsPropertyGetter = isPropertyGetter,
             IsPropertySetter = isPropertySetter,
             PropertyName = propSetterOf,
+            IsNaked = isNaked,
             IsExtern = isExtern,
             ExternSymbol = externSymbol
         };

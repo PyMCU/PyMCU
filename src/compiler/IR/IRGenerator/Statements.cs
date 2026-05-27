@@ -84,6 +84,7 @@ public partial class IRGenerator
 
         irFunc.IsInline = funcNode.IsInline;
         irFunc.IsInterrupt = funcNode.IsInterrupt;
+        irFunc.IsNaked = funcNode.IsNaked;
         irFunc.InterruptVector = funcNode.InterruptVector;
         irFunc.ReturnType = DataTypeExtensions.StringToDataType(funcNode.ReturnType);
 

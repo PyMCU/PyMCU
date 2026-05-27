@@ -88,6 +88,7 @@ private static Function CloneFunction(Function f)
         Body = [..f.Body],
         IsInline = f.IsInline,
         IsInterrupt = f.IsInterrupt,
+        IsNaked = f.IsNaked,
         InterruptVector = f.InterruptVector,
     };
 }
