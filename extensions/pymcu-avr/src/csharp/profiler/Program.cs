@@ -15,7 +15,7 @@ var hexArg = new Argument<string>("hex-file") { Description = "Intel HEX firmwar
 
 var symbolsOpt = new Option<string>("--symbols") { Description = "Symbols JSON from --emit-symbols" };
 var cyclesOpt  = new Option<ulong?>("--cycles")  { Description = "Number of cycles to simulate" };
-var msOpt      = new Option<double?>("--ms")     { Description = "Simulated milliseconds (default: 100)" };
+var msOpt      = new Option<double?>("--ms")     { Description = "Simulated milliseconds (default: 5000)" };
 var freqOpt    = new Option<uint>("--freq")      { Description = "Clock frequency Hz", DefaultValueFactory = _ => 16_000_000U };
 var nameOpt    = new Option<string>("--name")    { Description = "Profile label", DefaultValueFactory = _ => "firmware (ATmega328P)" };
 var outputOpt  = new Option<string>("-o")        { Description = "Output Speedscope JSON path", DefaultValueFactory = _ => "profile.speedscope.json" };
@@ -52,7 +52,7 @@ root.SetAction(pr =>
         cyclesToRun = cycles.Value;
     else
     {
-        var simMs = ms ?? 100.0;
+        var simMs = ms ?? 5000.0;
         cyclesToRun = (ulong)(simMs / 1000.0 * freq);
     }
 

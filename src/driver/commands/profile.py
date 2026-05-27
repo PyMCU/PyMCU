@@ -62,7 +62,7 @@ def _get_profiler_binary() -> Path:
 
 def profile(
     cycles: Optional[int] = typer.Option(None, "--cycles", help="Cycles to simulate"),
-    ms: Optional[float] = typer.Option(None, "--ms", help="Simulated milliseconds (default: 100)"),
+    ms: Optional[float] = typer.Option(None, "--ms", help="Simulated milliseconds (default: 5000)"),
     output: str = typer.Option("profile.speedscope.json", "-o", help="Output Speedscope JSON path"),
     open_browser: bool = typer.Option(False, "--open", help="Open speedscope.app after profiling"),
     freq_override: Optional[int] = typer.Option(None, "--freq", help="Override clock frequency (Hz)"),
@@ -182,7 +182,7 @@ def profile(
     elif ms is not None:
         cmd += ["--ms", str(ms)]
     else:
-        cmd += ["--ms", "100"]
+        cmd += ["--ms", "5000"]
 
     console.print(f"[cyan]Simulating...[/cyan]")
     result = subprocess.run(cmd, text=True, capture_output=not verbose)
