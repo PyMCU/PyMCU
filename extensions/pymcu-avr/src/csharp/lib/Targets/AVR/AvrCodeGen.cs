@@ -2499,10 +2499,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private static List<SymbolEntry> ComputeSymbolMap(List<AvrAsmLine> lines, ProgramIR program)
     {
-        var funcNames = program.Functions
-            .Where(f => !f.IsInline)
-            .Select(f => f.Name)
-            .ToHashSet();
+        var nonInline = program.Functions.Where(f => !f.IsInline).ToList();
+        var funcNames = nonInline.Select(f => f.Name).ToHashSet();
+        var funcByName = nonInline.ToDictionary(f => f.Name);
 
         uint word = 0;
         var result = new List<SymbolEntry>();
@@ -2528,7 +2527,11 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     break;
                 case AvrAsmLine.LineType.Label:
                     if (funcNames.Contains(line.LabelText))
-                        result.Add(new SymbolEntry(line.LabelText, word));
+                    {
+                        var func = funcByName[line.LabelText];
+                        var displayName = !string.IsNullOrEmpty(func.OriginalName) ? func.OriginalName : line.LabelText;
+                        result.Add(new SymbolEntry(displayName, word));
+                    }
                     break;
                 case AvrAsmLine.LineType.Instruction:
                     word += line.Mnemonic is "CALL" or "JMP" or "LDS" or "STS" ? 2u : 1u;
