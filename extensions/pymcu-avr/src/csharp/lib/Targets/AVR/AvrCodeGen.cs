@@ -921,7 +921,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 LoadIntoReg(r.Value, "R24", returnType);
         }
 
-        Emit("RET");
+        if (!(_currentFunction?.IsNaked ?? false))
+            Emit("RET");
     }
 
     private void CompileJumpIfZero(JumpIfZero jz)

@@ -277,6 +277,10 @@ public class Parser
             {
                 // Ignored
             }
+            else if (decorator.Value == "naked")
+            {
+                isNaked = true;
+            }
             else
             {
                 Error("Unknown decorator: " + decorator.Value);
