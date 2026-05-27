@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,40 @@ from ..core.compiler import PyMCUCompiler
 console = Console()
 
 
+def _extract_elf_symbols(elf_path: Path) -> list[dict]:
+    """Extract text-section symbols from ELF via avr-nm with correct byte→word addresses.
+
+    The --emit-symbols backend counts IR-level instructions, not assembled words, so
+    the naked ISR's large asm block shifts all subsequent addresses.  avr-nm reads the
+    final linked ELF and always returns the correct byte addresses.
+    """
+    # Matches internal asm labels: _word_suffix (e.g. _dly_i16mhz, _systick_restore).
+    # A real ISR function like _systick has NO second underscore in the name.
+    _internal_label_re = re.compile(r'^_[^_]+_.+')
+
+    for nm in ["avr-nm", "/opt/homebrew/bin/avr-nm", "/usr/local/bin/avr-nm"]:
+        try:
+            result = subprocess.run(
+                [nm, "--format=bsd", str(elf_path)],
+                capture_output=True, text=True, check=True,
+            )
+            symbols = []
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) != 3 or parts[1] not in ("t", "T"):
+                    continue
+                name = parts[2]
+                if name.startswith("L_") or name.startswith("_L_"):
+                    continue
+                if _internal_label_re.match(name):
+                    continue
+                symbols.append({"Name": name, "WordAddr": int(parts[0], 16) // 2})
+            return symbols
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return []
+
+
 def _get_profiler_binary() -> Path:
     """Locate pymcuc-avr-profiler using the same search order as get_backend_binary."""
     binary_name = "pymcuc-avr-profiler.exe" if sys.platform == "win32" else "pymcuc-avr-profiler"
@@ -37,13 +72,18 @@ def _get_profiler_binary() -> Path:
     if adjacent.exists():
         return adjacent
 
-    # 2. build/bin/ — dotnet publish output (primary dev path)
+    # 2. extensions/pymcu-avr/build-profiler/bin/ — self-contained publish output
     repo_root = Path(__file__).parents[3]
+    avr_profiler_path = repo_root / "extensions" / "pymcu-avr" / "build-profiler" / "bin" / binary_name
+    if avr_profiler_path.exists():
+        return avr_profiler_path
+
+    # 3. build/bin/ — legacy dev path
     dev_path = repo_root / "build" / "bin" / binary_name
     if dev_path.exists():
         return dev_path
 
-    # 3. profiler Debug build output (fast iteration)
+    # 4. profiler Debug build output (fast iteration)
     profiler_debug = (
         Path(__file__).parents[4]
         / "extensions" / "pymcu-avr" / "src" / "csharp" / "profiler"
@@ -57,7 +97,7 @@ def _get_profiler_binary() -> Path:
     if which_result:
         return Path(which_result)
 
-    return dev_path  # caller will get FileNotFoundError
+    return avr_profiler_path  # caller will get FileNotFoundError
 
 
 def profile(
@@ -155,6 +195,10 @@ def profile(
         result_hex = toolchain.elf_to_hex(elf)
         if result_hex.resolve() != hex_path.resolve():
             shutil.copy(result_hex, hex_path)
+        # Override --emit-symbols addresses with avr-nm ELF addresses (correct).
+        elf_syms = _extract_elf_symbols(elf)
+        if elf_syms:
+            symbols_path.write_text(json.dumps(elf_syms, indent=2))
     except Exception as ex:
         console.print(f"[red]Assembly failed:[/red] {ex}")
         raise typer.Exit(1)
@@ -199,20 +243,14 @@ def profile(
     try:
         with open(output) as f:
             profile_data = json.load(f)
-        events = profile_data["profiles"][0]["events"]
-        depth = max_depth = 0
-        for ev in events:
-            if ev["type"] == "O":
-                depth += 1
-                if depth > max_depth:
-                    max_depth = depth
-            elif ev["type"] == "C":
-                depth -= 1
-        end_value = int(profile_data["profiles"][0]["endValue"])
+        p = profile_data["profiles"][0]
+        end_value = int(p["endValue"])
         total_ms = end_value / freq * 1000
+        samples = p.get("samples", [])
+        max_depth = max((len(s) for s in samples), default=0)
         console.print(
             f"[green]Profile written:[/green] {output}  "
-            f"[dim]({total_ms:.1f} ms, max stack depth: {max_depth})[/dim]"
+            f"[dim]({total_ms:.1f} ms, {len(samples):,} samples, max depth: {max_depth})[/dim]"
         )
         if assert_cycles_lt is not None and end_value >= assert_cycles_lt:
             console.print(
