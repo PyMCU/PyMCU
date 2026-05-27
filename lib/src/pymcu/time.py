@@ -16,7 +16,6 @@
 from pymcu.types import uint8, uint16, uint32, inline, asm
 from pymcu.chips import __CHIP__, __FREQ__
 
-@inline
 def delay_ms(ms: uint16):
     """Delay for approximately the given number of milliseconds."""
     match __CHIP__.arch:
