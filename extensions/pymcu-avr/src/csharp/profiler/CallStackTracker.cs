@@ -15,7 +15,11 @@ public sealed class CallStackTracker
     private readonly List<SpeedscopeEvent> _events = new();
     private readonly List<string> _frames = new();
     private readonly Dictionary<string, int> _frameIndex = new();
-    private readonly Stack<string> _callStack = new();
+
+    // Each entry: (name, isTracked). Untracked frames (private helpers starting
+    // with '_') don't get their own speedscope events; their cycles are attributed
+    // to the nearest tracked ancestor.
+    private readonly Stack<(string Name, bool Tracked)> _callStack = new();
 
     // Hardware interrupt detection: ISR entry is NOT a CALL, it's a hardware PC jump
     // to the vector table [0x0001..0x0019]. Detect by PC discontinuity pointing to
@@ -34,7 +38,7 @@ public sealed class CallStackTracker
         // Synthesize an open event at cycle 0 so the flamegraph has a root.
         var idx = GetOrAddFrame(rootFrame);
         _events.Add(new SpeedscopeEvent("O", idx, 0));
-        _callStack.Push(rootFrame);
+        _callStack.Push((rootFrame, Tracked: true));
     }
 
     private int GetOrAddFrame(string name)
@@ -102,25 +106,36 @@ public sealed class CallStackTracker
 
     private void PushFrame(string name, ulong cycles)
     {
-        var idx = GetOrAddFrame(name);
-        _events.Add(new SpeedscopeEvent("O", idx, (long)cycles));
-        _callStack.Push(name);
+        // Private helpers (names starting with '_') are implementation details;
+        // suppress them as separate speedscope frames so their cycles roll up to
+        // the nearest user-visible ancestor.
+        bool tracked = !name.StartsWith('_');
+        _callStack.Push((name, tracked));
+        if (tracked)
+        {
+            var idx = GetOrAddFrame(name);
+            _events.Add(new SpeedscopeEvent("O", idx, (long)cycles));
+        }
     }
 
     private void PopFrame(ulong cycles)
     {
         if (_callStack.Count == 0) return;
-        var name = _callStack.Pop();
-        var idx = GetOrAddFrame(name);
-        _events.Add(new SpeedscopeEvent("C", idx, (long)cycles));
+        var (name, tracked) = _callStack.Pop();
+        if (tracked)
+        {
+            var idx = GetOrAddFrame(name);
+            _events.Add(new SpeedscopeEvent("C", idx, (long)cycles));
+        }
     }
 
     public SpeedscopeDocument Finalize(ulong endCycles)
     {
-        // Close any still-open frames (main + any tail that didn't return)
+        // Close any still-open tracked frames (main + any tail that didn't return)
         while (_callStack.Count > 0)
         {
-            var name = _callStack.Pop();
+            var (name, tracked) = _callStack.Pop();
+            if (!tracked) continue;
             var idx = GetOrAddFrame(name);
             _events.Add(new SpeedscopeEvent("C", idx, (long)endCycles));
         }

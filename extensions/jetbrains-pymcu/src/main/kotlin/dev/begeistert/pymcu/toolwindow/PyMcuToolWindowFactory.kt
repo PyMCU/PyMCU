@@ -13,14 +13,17 @@ import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.content.ContentFactory
 import com.intellij.util.ui.JBUI
+import com.sun.net.httpserver.HttpServer
 import dev.begeistert.pymcu.config.PyMcuConfigReader
 import dev.begeistert.pymcu.settings.PyMcuSettings
 import java.awt.BorderLayout
 import java.awt.Desktop
 import java.awt.Font
+import java.net.InetSocketAddress
 import java.net.URI
 import java.nio.file.Path
-import java.util.Base64
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
@@ -279,9 +282,38 @@ private class PyMcuTaskPanel(private val project: Project) : JPanel(BorderLayout
     private fun openSpeedscope(profilePath: Path) {
         try {
             val jsonBytes = profilePath.toFile().readBytes()
-            val encoded   = Base64.getEncoder().encodeToString(jsonBytes)
-            val dataUrl   = "data:application/json;base64,$encoded"
-            val url       = "https://speedscope.app#profileURL=${java.net.URLEncoder.encode(dataUrl, "UTF-8")}"
+
+            // Start a one-shot local HTTP server so speedscope.app can fetch the
+            // profile via a plain http://localhost URL (data: URLs are blocked by
+            // speedscope.app's Content-Security-Policy).
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val port = (server.address as InetSocketAddress).port
+
+            server.createContext("/profile.speedscope.json") { exchange ->
+                exchange.responseHeaders.apply {
+                    set("Content-Type", "application/json")
+                    set("Access-Control-Allow-Origin", "*")
+                    set("Access-Control-Allow-Methods", "GET, OPTIONS")
+                }
+                if (exchange.requestMethod.equals("OPTIONS", ignoreCase = true)) {
+                    exchange.sendResponseHeaders(204, -1)
+                } else {
+                    exchange.sendResponseHeaders(200, jsonBytes.size.toLong())
+                    exchange.responseBody.use { it.write(jsonBytes) }
+                }
+            }
+            server.executor = Executors.newSingleThreadExecutor()
+            server.start()
+
+            // Auto-shutdown after 60 s — plenty of time for the browser to fetch.
+            Executors.newSingleThreadScheduledExecutor().also { ex ->
+                ex.schedule({
+                    server.stop(0)
+                    ex.shutdown()
+                }, 60, TimeUnit.SECONDS)
+            }
+
+            val url = "https://www.speedscope.app/#profileURL=http://localhost:$port/profile.speedscope.json"
             appendOutput("Opening flamegraph in browser…\n")
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                 Desktop.getDesktop().browse(URI(url))
@@ -290,6 +322,7 @@ private class PyMcuTaskPanel(private val project: Project) : JPanel(BorderLayout
             }
         } catch (e: Exception) {
             appendOutput("Could not open speedscope: ${e.message}\n")
+            appendOutput("  Drag $profilePath to https://speedscope.app\n")
             log.warn("openSpeedscope failed", e)
         }
     }
