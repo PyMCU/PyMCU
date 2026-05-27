@@ -80,6 +80,7 @@ def profile(
     with pyproject_path.open() as f:
         cfg = tomlkit.load(f)
 
+    project_name: str = cfg.get("project", {}).get("name", "firmware")
     pymcu_cfg = cfg.get("tool", {}).get("pymcu", {})
     chip: str = pymcu_cfg.get("chip") or pymcu_cfg.get("target", "atmega328p")
     freq: int = freq_override or int(pymcu_cfg.get("frequency", pymcu_cfg.get("freq", 16_000_000)))
@@ -175,7 +176,7 @@ def profile(
         "--symbols", str(symbols_path),
         "-o", output,
         "--freq", str(freq),
-        "--name", f"firmware ({chip} @ {freq // 1_000_000}MHz)",
+        "--name", f"{project_name} ({chip} @ {freq // 1_000_000}MHz)",
     ]
     if cycles is not None:
         cmd += ["--cycles", str(cycles)]
