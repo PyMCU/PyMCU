@@ -222,6 +222,7 @@ public class Function
     public bool IsInline { get; set; } = false;
     public bool IsInterrupt { get; set; } = false;
     public int InterruptVector { get; set; } = 0;
+    public string? OriginalName { get; set; }
 }
 
 public class ProgramIR

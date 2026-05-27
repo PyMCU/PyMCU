@@ -79,6 +79,7 @@ public partial class IRGenerator
         var irFunc = new Function();
         string fullName = currentModulePrefix + funcNode.Name;
         irFunc.Name = fullName;
+        irFunc.OriginalName = funcNode.Name;
         currentFunction = fullName;
 
         irFunc.IsInline = funcNode.IsInline;

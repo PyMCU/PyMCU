@@ -82,6 +82,7 @@ private static Function CloneFunction(Function f)
     return new Function
     {
         Name = f.Name,
+        OriginalName = f.OriginalName,
         Params = [..f.Params],
         ReturnType = f.ReturnType,
         Body = [..f.Body],
