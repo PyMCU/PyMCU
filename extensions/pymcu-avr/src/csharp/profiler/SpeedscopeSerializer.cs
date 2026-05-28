@@ -4,15 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace PyMCU.AVR.Profiler;
 
-public record SpeedscopeEvent(string Type, int Frame, long At);
 public record SpeedscopeFrame(string Name);
 
-// ── Serialization model ───────────────────────────────────────────────────────
-
-internal record SpeedscopeEventDto(
-    [property: JsonPropertyName("type")]  string Type,
-    [property: JsonPropertyName("frame")] int Frame,
-    [property: JsonPropertyName("at")]    long At);
+// ── Serialization model (sampled format) ─────────────────────────────────────
 
 internal record SpeedscopeFrameDto(
     [property: JsonPropertyName("name")] string Name);
@@ -26,7 +20,8 @@ internal record SpeedscopeProfileDto(
     [property: JsonPropertyName("unit")]       string Unit,
     [property: JsonPropertyName("startValue")] long StartValue,
     [property: JsonPropertyName("endValue")]   long EndValue,
-    [property: JsonPropertyName("events")]     List<SpeedscopeEventDto> Events);
+    [property: JsonPropertyName("samples")]    List<int[]> Samples,
+    [property: JsonPropertyName("weights")]    List<long> Weights);
 
 internal record SpeedscopeRootDto(
     [property: JsonPropertyName("$schema")]  string Schema,
@@ -41,13 +36,19 @@ internal partial class SpeedscopeJsonContext : JsonSerializerContext { }
 public sealed class SpeedscopeDocument
 {
     public List<SpeedscopeFrame> Frames { get; }
-    public List<SpeedscopeEvent> Events { get; }
+    public List<int[]> Samples { get; }
+    public List<long> Weights { get; }
     public long EndValue { get; }
 
-    public SpeedscopeDocument(List<SpeedscopeFrame> frames, List<SpeedscopeEvent> events, long endValue)
+    public SpeedscopeDocument(
+        List<SpeedscopeFrame> frames,
+        List<int[]> samples,
+        List<long> weights,
+        long endValue)
     {
         Frames = frames;
-        Events = events;
+        Samples = samples;
+        Weights = weights;
         EndValue = endValue;
     }
 
@@ -58,12 +59,13 @@ public sealed class SpeedscopeDocument
             Profiles:
             [
                 new SpeedscopeProfileDto(
-                    Type: "evented",
+                    Type: "sampled",
                     Name: profileName,
                     Unit: "none",
                     StartValue: 0L,
                     EndValue: EndValue,
-                    Events: Events.Select(e => new SpeedscopeEventDto(e.Type, e.Frame, e.At)).ToList())
+                    Samples: Samples,
+                    Weights: Weights)
             ],
             Shared: new SpeedscopeSharedDto(
                 Frames: Frames.Select(f => new SpeedscopeFrameDto(f.Name)).ToList()));
