@@ -160,6 +160,30 @@ public partial class IRGenerator
                 }
             }
         }
+        else if (expr.Callee is IndexExpr idxCallee0 && idxCallee0.Target is VariableExpr idxArrVe0)
+        {
+            // Callable[N] array call: _tasks[i]() — load function address from SRAM, then ICALL.
+            string arrKey0 = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + idxArrVe0.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + idxArrVe0.Name : idxArrVe0.Name);
+            if (!arraySizes.ContainsKey(arrKey0) && arraySizes.ContainsKey(idxArrVe0.Name))
+                arrKey0 = idxArrVe0.Name;
+            if (arraySizes.TryGetValue(arrKey0, out int arrSz0)
+                && arrayElemTypes.TryGetValue(arrKey0, out DataType arrElemDt0)
+                && arrElemDt0 == DataType.FUNCREF)
+            {
+                Val idxVal0 = VisitExpression(idxCallee0.Index);
+                Temporary tmpFn0 = MakeTemp(DataType.FUNCREF);
+                Emit(new ArrayLoad(arrKey0, idxVal0, tmpFn0, DataType.FUNCREF, arrSz0));
+                var indArgs0 = new List<Val>();
+                foreach (var a in expr.Args)
+                    indArgs0.Add(VisitExpression(a));
+                Val indDst0 = new NoneVal();
+                Emit(new IndirectCall(tmpFn0, indArgs0, indDst0));
+                return indDst0;
+            }
+            throw new Exception($"Callable array '{idxArrVe0.Name}' not found or element type is not Callable");
+        }
         else
         {
             throw new Exception("Indirect calls not yet supported");
@@ -232,6 +256,10 @@ public partial class IRGenerator
                 return indDst;
             }
         }
+
+        // Indirect call via Callable[N] array: _tasks[i]()
+        // Note: this path is unreachable now since the IndexExpr case above handles
+        // it and returns early. Kept here as dead code guard in case of future refactoring.
 
         if (inlineFunctions.ContainsKey(callee + "___init__") || overloadedFunctions.Contains(callee + "___init__"))
         {

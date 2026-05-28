@@ -261,6 +261,12 @@ public partial class IRGenerator
                 }
                 catch
                 {
+                    // SRAM arrays (already in moduleSramArrays) must not be added to
+                    // mutableGlobals here — their size is determined by ArrayStore/ArrayLoad
+                    // instructions in the StackAllocator, which uses count * elemSize.
+                    // Adding them with StringToDataType("T[N]") → UNKNOWN (1 byte) would
+                    // under-allocate SRAM and cause layout corruption.
+                    if (moduleSramArrays.Contains(name)) continue;
                     DataType t = DataTypeExtensions.StringToDataType(type);
                     mutableGlobals[currentModulePrefix + name] = t;
                     if (scope != null) scope.MutableGlobals[name] = t;

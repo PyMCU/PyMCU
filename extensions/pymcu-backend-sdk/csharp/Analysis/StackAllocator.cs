@@ -162,6 +162,12 @@ public class StackAllocator
                         RegisterVar(ast.Index);
                         RegisterVar(ast.Src);
                         break;
+                    case IndirectCall ic:
+                        RegisterVar(ic.FuncAddr);
+                        foreach (var icArg in ic.Args)
+                            RegisterVar(icArg);
+                        RegisterVar(ic.Dst);
+                        break;
                     case LoadIndirect li:
                         RegisterVar(li.SrcPtr);
                         RegisterVar(li.Dst);

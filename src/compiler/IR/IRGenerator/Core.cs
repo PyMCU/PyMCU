@@ -463,6 +463,22 @@ public partial class IRGenerator
                 throw new Exception(
                     "Top-level executable statements cannot coexist with an explicit def main(): function. " +
                     "Either remove def main() and use top-level code, or move all logic inside def main().");
+
+            // Inject module-level SRAM array initializations at the start of main().
+            // These are AnnAssign declarations (e.g. `_tasks: Callable[2] = [f1, f2]`)
+            // that need runtime initialization but are not compile-time constants.
+            // They are not injected in the synthesized-main path (handled there as
+            // executable top-level statements), only for the explicit def main() path.
+            var mainFuncDef = mainAst.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFuncDef != null)
+            {
+                var sramInits = mainAst.GlobalStatements
+                    .OfType<AnnAssign>()
+                    .Where(a => moduleSramArrays.Contains(a.Target) && !globals.ContainsKey(a.Target))
+                    .ToList();
+                for (int i = sramInits.Count - 1; i >= 0; i--)
+                    mainFuncDef.Body.Statements.Insert(0, sramInits[i]);
+            }
         }
 
         foreach (var imp in mainAst.Imports)

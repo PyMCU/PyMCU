@@ -993,6 +993,47 @@ public partial class IRGenerator
                 arrayElemTypes[qualified] = elemDt;
                 variableTypes[qualified] = elemDt;
 
+                // Callable[N]: array of function references stored in SRAM.
+                if (elemDt == DataType.FUNCREF)
+                {
+                    bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
+                    if (stmt.Value is ListExpr callableList)
+                    {
+                        for (int k = 0; k < count; ++k)
+                        {
+                            Val fnVal;
+                            if (k < callableList.Elements.Count)
+                            {
+                                var elem = callableList.Elements[k];
+                                if (elem is VariableExpr fnVe)
+                                    fnVal = new FunctionRef(fnVe.Name);
+                                else if (elem is CallExpr funcrefCall
+                                         && funcrefCall.Callee is VariableExpr funcrefCallee
+                                         && funcrefCallee.Name == "funcref"
+                                         && funcrefCall.Args.Count == 1
+                                         && funcrefCall.Args[0] is VariableExpr refVe)
+                                    fnVal = new FunctionRef(refVe.Name);
+                                else
+                                    fnVal = new Constant(0);
+                            }
+                            else
+                            {
+                                fnVal = new Constant(0);
+                            }
+
+                            if (isSramCallable)
+                                Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
+                            else
+                            {
+                                string elemName = qualified + "__" + k;
+                                variableTypes[elemName] = DataType.FUNCREF;
+                                Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
+                            }
+                        }
+                    }
+                    return;
+                }
+
                 var initVals = new List<int>(Enumerable.Repeat(0, count));
                 if (stmt.Value != null)
                 {
