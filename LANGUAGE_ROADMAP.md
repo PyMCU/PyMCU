@@ -335,6 +335,16 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## v0.13 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| Triple-quoted strings (`"""..."""` / `'''...'''`) | ✅ Implemented — lexer captures content including embedded newlines; leading newline after opening quote is stripped. Enables readable multi-line `asm()` blocks. |
+
+---
+
 ## v0.12 — Implemented
 
 ### Language
