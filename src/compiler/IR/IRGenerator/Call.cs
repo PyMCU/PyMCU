@@ -1506,7 +1506,29 @@ public partial class IRGenerator
             {
                 string paramVarName = callee + "." + paramNames[i];
                 DataType ptype = i < paramTypes.Count ? paramTypes[i] : DataType.UINT8;
-                Emit(new Copy(argValuesL[i], new Variable(paramVarName, ptype)));
+                Val argVal = argValuesL[i];
+
+                // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
+                // (which resolves as a UINT8 Variable rather than a FunctionRef), create the
+                // FunctionRef so DCE treats the function as reachable and the backend emits
+                // the correct lo8/hi8 address load rather than a SRAM load.
+                if (ptype == DataType.FUNCREF && argVal is Variable argVar && argVar.Type != DataType.FUNCREF)
+                {
+                    string rawName = argVar.Name.Contains('.')
+                        ? argVar.Name.Substring(argVar.Name.LastIndexOf('.') + 1)
+                        : argVar.Name;
+                    string resolvedFn = ResolveCallee(rawName);
+                    if (functionParams.ContainsKey(resolvedFn) || functionReturnTypes.ContainsKey(resolvedFn))
+                    {
+                        argVal = new FunctionRef(resolvedFn);
+                        // Update the arg list so the CALL instruction also passes the FunctionRef.
+                        // Without this the backend would emit a 1-byte UINT8 load into R24 and
+                        // leave R25 (the hi byte of the word address) undefined.
+                        argValuesL[i] = argVal;
+                    }
+                }
+
+                Emit(new Copy(argVal, new Variable(paramVarName, ptype)));
             }
         }
 
