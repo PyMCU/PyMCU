@@ -1257,9 +1257,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
         else if (!srcIsFloat && dstIsFloat)
         {
-            // intN → float: uint32 reg layout: R24=b0, R25=b1, R22=b2, R23=b3
-            // float reg layout:                R22=b0, R23=b1, R24=b2, R25=b3
-            LoadIntoReg(bc.Src, "R24", srcType);
+            // intN → float: always treat source as 32-bit (float is 4 bytes).
+            // GetValType(Constant) only returns UINT8/UINT16; force UINT32 so all
+            // 4 bytes of the constant are loaded into R24:R25:R22:R23.
+            // uint32 reg layout: R24=b0, R25=b1, R22=b2, R23=b3
+            // float reg layout:  R22=b0, R23=b1, R24=b2, R25=b3
+            LoadIntoReg(bc.Src, "R24", DataType.UINT32);
             Emit("PUSH", "R22");        // save b2
             Emit("PUSH", "R23");        // save b3
             Emit("MOV", "R22", "R24"); // R22 = b0

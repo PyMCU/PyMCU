@@ -217,9 +217,16 @@ public static class AvrPeephole
                             aliases[regIdx] = "ldi_0";
                         break;
                     }
+                    case "MUL" or "MULS" or "MULSU" or "FMUL" or "FMULS" or "FMULSU":
+                    {
+                        // MUL family writes to R1:R0, NOT to its operands.
+                        aliases[0] = $"mod_{modCtr++}";
+                        aliases[1] = $"mod_{modCtr++}";
+                        break;
+                    }
                     case "ADD" or "SUB" or "INC" or "DEC" or "NEG" or "COM" or
                          "ORI" or "ANDI" or "EOR" or "AND" or "OR" or "ADC" or "SBC" or "LSR" or
-                         "ASR" or "ROR" or "LSL" or "ROL" or "MUL" or "MULS" or "CPC" or "CPI":
+                         "ASR" or "ROR" or "LSL" or "ROL" or "CPC" or "CPI":
                     {
                         int regIdx = ParseReg(current.Op1);
                         if (regIdx is >= 0 and < 32)
