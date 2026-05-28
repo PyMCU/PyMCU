@@ -67,15 +67,19 @@ public class StackAllocator
             CalculateOffsets(func.Name, globalOffset);
         }
 
-        // Allocate locals for functions referenced via FunctionRef (e.g. RTOS task entry
-        // points entered via IJMP rather than CALL). These survive DFE but are not reachable
-        // via the main call tree, so CalculateOffsets would never visit them otherwise.
-        // Each such function gets its own non-overlapping region starting after all
-        // previously-allocated space, so concurrent task locals don't alias each other.
+        // Allocate locals for functions whose address was taken via FunctionRef (Callable).
+        // Such functions are entered via IJMP rather than CALL, so they never appear in the
+        // main call-graph DFS and would otherwise have no SRAM region for their locals.
+        // Each one gets its own non-overlapping region so concurrent executions don't alias.
+        var funcRefTargets = new HashSet<string>();
+        foreach (var func in program.Functions)
+            foreach (var instr in func.Body)
+                if (instr is Copy { Src: FunctionRef fr }) funcRefTargets.Add(fr.FunctionName);
+
         var taskBase = _maxStackUsage;
         foreach (var func in program.Functions)
         {
-            if (!func.IsInterrupt && func.Name != "main" && _callGraph.ContainsKey(func.Name))
+            if (funcRefTargets.Contains(func.Name) && _callGraph.ContainsKey(func.Name))
             {
                 CalculateOffsets(func.Name, taskBase);
                 taskBase = _maxStackUsage;
