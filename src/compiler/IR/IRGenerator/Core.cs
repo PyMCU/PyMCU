@@ -702,6 +702,18 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(name, out int nameVal))
             return new Constant(nameVal);
 
+        // Resolve bare names that refer to mutable globals in the current module
+        // (e.g. `_num_tasks` inside rtos.py functions, where the IR key is `rtos__num_tasks`).
+        if (!string.IsNullOrEmpty(currentModulePrefix))
+        {
+            string modKey2 = currentModulePrefix + name;
+            string localFnKey = string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + "." + name;
+            bool hasLocalDecl = !string.IsNullOrEmpty(localFnKey) &&
+                                (variableTypes.ContainsKey(localFnKey) || constantVariables.ContainsKey(localFnKey));
+            if (!hasLocalDecl && mutableGlobals.TryGetValue(modKey2, out var modType2))
+                return new Variable(modKey2, modType2);
+        }
+
         // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
         if (importedAliases.TryGetValue(name, out var importedAliasMod))
         {
