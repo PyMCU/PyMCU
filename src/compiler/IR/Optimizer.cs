@@ -147,8 +147,25 @@ private static Function CloneFunction(Function f)
         foreach (var instr in func.Body)
             RegisterUses(instr, v => { if (v is Variable vr) readVars.Add(vr.Name); });
 
+        // If the function contains inline asm with no IR operands, float results may be
+        // read via the AVR register convention (R22:R25) without any IR-level use.
+        // Conservatively keep all Copy-to-Variable instructions whose source is a float
+        // Temporary so that the preceding float computation (CALL __mulsf3 etc.) is not
+        // eliminated by the subsequent dead-code pass.
+        bool hasNakedAsm = func.Body.Any(i => i is InlineAsm { Operands: null or { Count: 0 } });
+
         func.Body = func.Body
-            .Where(instr => instr is not Copy { Dst: Variable vDst } || readVars.Contains(vDst.Name))
+            .Where(instr =>
+            {
+                if (instr is not Copy { Dst: Variable vDst }) return true;
+                if (readVars.Contains(vDst.Name)) return true;
+                if (hasNakedAsm && instr is Copy { Src: Temporary { Type: DataType.FLOAT } }) return true;
+                // Never eliminate stores to FUNCREF variables — function pointer assignments
+                // are observable side effects read by asm or cross-function via SRAM.
+                if (instr is Copy cp2 && cp2.Dst is Variable dv2 && dv2.Type == DataType.FUNCREF)
+                    return true;
+                return false;
+            })
             .ToList();
     }
 
