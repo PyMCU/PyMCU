@@ -395,6 +395,70 @@ public ref struct Lexer
         return new Token(TokenType.String, text.ToString(), line, startCol, column - startCol);
     }
 
+    // Parses """...""" or '''...''' triple-quoted strings.
+    // The two opening quotes have already been peeked; this method consumes them
+    // plus all content up to and including the matching closing triple-quote.
+    // A single leading newline is stripped so the common Python idiom
+    //   asm("""
+    //       push r0
+    //   """)
+    // produces "    push r0\n" rather than "\n    push r0\n".
+    private Token TripleQuotedStringLiteral(char quote, int startCol)
+    {
+        Advance(); // consume second opening quote
+        Advance(); // consume third opening quote
+
+        // Strip a single optional leading newline (CR+LF or LF).
+        if (Peek() == (char)13 && PeekNext() == (char)10) { Advance(); line++; Advance(); }
+        else if (Peek() == (char)10) { line++; Advance(); }
+
+        StringBuilder text = new();
+        for (;;)
+        {
+            if (Peek() == (char)0)
+            {
+                Error("Unterminated triple-quoted string");
+                break;
+            }
+
+            // Handle backslash escapes the same way as single-quoted strings.
+            if (Peek() == (char)92)
+            {
+                Advance(); // consume backslash
+                char esc = Advance();
+                switch (esc)
+                {
+                    case 'n': text.Append((char)10); break;
+                    case 't': text.Append((char)9); break;
+                    case 'r': text.Append((char)13); break;
+                    case '0': text.Append((char)0); break;
+                    default:
+                        if (esc == (char)92) text.Append((char)92);
+                        else if (esc == (char)39) text.Append((char)39);
+                        else if (esc == (char)34) text.Append((char)34);
+                        else { text.Append((char)92); text.Append(esc); }
+                        break;
+                }
+                continue;
+            }
+
+            char ch = Advance();
+
+            // Check for closing triple-quote: ch == quote, next two also == quote.
+            if (ch == quote && Peek() == quote && PeekNext() == quote)
+            {
+                Advance(); // second closing quote
+                Advance(); // third closing quote
+                break;
+            }
+
+            if (ch == (char)10) line++;
+            text.Append(ch);
+        }
+
+        return new Token(TokenType.String, text.ToString(), line, startCol, column - startCol);
+    }
+
     private Token ScanToken()
     {
         SkipWhitespace();
@@ -451,57 +515,11 @@ public ref struct Lexer
                 return new Token(TokenType.Minus, "-", line, startCol, column - startCol);
             case (char)34:
                 if (Peek() == (char)34 && PeekNext() == (char)34)
-                {
-                    Advance();
-                    Advance();
-                    for (;;)
-                    {
-                        if (Peek() == (char)0)
-                        {
-                            Error("Unterminated docstring");
-                            break;
-                        }
-
-                        if (Peek() == (char)10) line++;
-                        char ch = Advance();
-                        if (ch == (char)34 && Peek() == (char)34 && PeekNext() == (char)34)
-                        {
-                            Advance();
-                            Advance();
-                            break;
-                        }
-                    }
-
-                    return new Token(TokenType.String, "", line, startCol, 1);
-                }
-
+                    return TripleQuotedStringLiteral((char)34, startCol);
                 return StringLiteral((char)34, startCol);
             case (char)39:
                 if (Peek() == (char)39 && PeekNext() == (char)39)
-                {
-                    Advance();
-                    Advance();
-                    for (;;)
-                    {
-                        if (Peek() == (char)0)
-                        {
-                            Error("Unterminated docstring");
-                            break;
-                        }
-
-                        if (Peek() == (char)10) line++;
-                        char ch = Advance();
-                        if (ch == (char)39 && Peek() == (char)39 && PeekNext() == (char)39)
-                        {
-                            Advance();
-                            Advance();
-                            break;
-                        }
-                    }
-
-                    return new Token(TokenType.String, "", line, startCol, 1);
-                }
-
+                    return TripleQuotedStringLiteral((char)39, startCol);
                 return StringLiteral((char)39, startCol);
             case '+':
                 if (Match('=')) return new Token(TokenType.PlusEqual, "+=", line, startCol, column - startCol);
