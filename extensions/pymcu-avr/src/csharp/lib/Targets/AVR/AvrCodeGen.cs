@@ -16,6 +16,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using PyMCU.Backend.Analysis;
 using PyMCU.Common.Models;
 using PyMCU.IR;
@@ -891,7 +892,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case InlineAsm asm2:
                 if (asm2.Operands == null || asm2.Operands.Count == 0)
                 {
-                    _assembly.Add(AvrAsmLine.MakeRaw(asm2.Code));
+                    _assembly.Add(AvrAsmLine.MakeRaw(InterpolateAsmSymbols(asm2.Code)));
                 }
                 else
                 {
@@ -2298,6 +2299,77 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("ADC", "R31", "R17");
             Emit("ST", "Z", "R18");
         }
+    }
+
+    private static readonly Regex _asmInterpPattern =
+        new(@"\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
+
+    // Replace {varname} placeholders in an asm() string with the actual .equ symbol
+    // emitted for that Python variable. _stackLayout keys use the mangled form that is
+    // already the asm symbol name: module prefix + "_" + varname (e.g. "rtos__cur_task").
+    // Function names use the same scheme: "rtos__systick". We find the variable by looking
+    // for a key that ends with the identifier and whose prefix is a prefix of the current
+    // function name. If not found the placeholder is left unchanged (asm label, etc.).
+    private string InterpolateAsmSymbols(string code)
+    {
+        var funcName = _currentFunction?.Name ?? "";
+
+        return _asmInterpPattern.Replace(code, m =>
+        {
+            var id = m.Groups[1].Value;
+
+            // 1. Bare lookup — main-module globals have no prefix in key
+            if (_stackLayout.ContainsKey(id))
+                return id;
+            if (_regLayout.ContainsKey(id))
+                throw new InvalidOperationException(
+                    $"asm() interpolation: '{id}' is register-allocated; use a Python local to copy it first");
+
+            // 2. Prefixed lookup — key = modulePrefix + id, e.g. "rtos_" + "_cur_task"
+            //    The module prefix of the current function is the part of funcName before
+            //    the function's own name, i.e. the prefix shared with the variable key.
+            string? moduleMatch = null;
+            string? crossModuleMatch = null;
+            bool crossModuleAmbiguous = false;
+
+            foreach (var key in _stackLayout.Keys)
+            {
+                if (!key.EndsWith(id, StringComparison.Ordinal)) continue;
+                if (key.Length == id.Length) continue; // bare — already handled above
+
+                var prefix = key.Substring(0, key.Length - id.Length); // e.g. "rtos_"
+                if (funcName.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    moduleMatch = key;
+                    break; // module match takes priority
+                }
+                if (crossModuleMatch == null)
+                    crossModuleMatch = key;
+                else
+                    crossModuleAmbiguous = true;
+            }
+
+            if (moduleMatch != null)
+                return moduleMatch;
+
+            // Also check regLayout for same-module variables (give clear error)
+            foreach (var key in _regLayout.Keys)
+            {
+                if (!key.EndsWith(id, StringComparison.Ordinal)) continue;
+                if (key.Length == id.Length) continue;
+                var prefix = key.Substring(0, key.Length - id.Length);
+                if (funcName.StartsWith(prefix, StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        $"asm() interpolation: '{id}' is register-allocated; use a Python local to copy it first");
+            }
+
+            // 3. Unambiguous cross-module match
+            if (crossModuleMatch != null && !crossModuleAmbiguous)
+                return crossModuleMatch;
+
+            // 4. Not found — leave unchanged (ASM label, forward reference, etc.)
+            return m.Value;
+        });
     }
 
     private void CompileInlineAsmWithConstraints(InlineAsm ia)
