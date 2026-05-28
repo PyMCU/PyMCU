@@ -67,6 +67,21 @@ public class StackAllocator
             CalculateOffsets(func.Name, globalOffset);
         }
 
+        // Allocate locals for functions referenced via FunctionRef (e.g. RTOS task entry
+        // points entered via IJMP rather than CALL). These survive DFE but are not reachable
+        // via the main call tree, so CalculateOffsets would never visit them otherwise.
+        // Each such function gets its own non-overlapping region starting after all
+        // previously-allocated space, so concurrent task locals don't alias each other.
+        var taskBase = _maxStackUsage;
+        foreach (var func in program.Functions)
+        {
+            if (!func.IsInterrupt && func.Name != "main" && _callGraph.ContainsKey(func.Name))
+            {
+                CalculateOffsets(func.Name, taskBase);
+                taskBase = _maxStackUsage;
+            }
+        }
+
         return (_offsets, _maxStackUsage);
     }
 
@@ -183,6 +198,18 @@ public class StackAllocator
                     case GcAlloc ga:
                         RegisterVar(ga.Size);
                         RegisterVar(ga.Dst);
+                        break;
+                    case BytearrayLoad bl:
+                        // bytearray pointer params are UINT16 (2-byte address); must be sized explicitly
+                        // because PtrName is a string, not a Val, so RegisterVar never sees it.
+                        VariableSizes[bl.PtrName] = 2;
+                        RegisterVar(bl.Index);
+                        RegisterVar(bl.Dst);
+                        break;
+                    case BytearrayStore bs:
+                        VariableSizes[bs.PtrName] = 2;
+                        RegisterVar(bs.Index);
+                        RegisterVar(bs.Src);
                         break;
                 }
             }
