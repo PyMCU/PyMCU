@@ -190,11 +190,62 @@ public sealed class CallStackTracker
 
     private void PushFrame(string name, uint pc)
     {
-        bool tracked = !name.StartsWith('_');
+        // Untracked: ISR helpers (_-prefixed symbols) and private stdlib functions
+        // (double underscore separates module from private function, e.g.
+        // pymcu_time__delay_1ms_avr_16mhz = pymcu.time._delay_1ms_avr_16mhz).
+        // Untracked frames are still pushed so PopFrame stays balanced, but their
+        // cycles roll up to the nearest tracked ancestor in RecordSample.
+        bool tracked = !name.StartsWith('_') && !name.Contains("__");
         _callStack.Push((name, tracked));
         if (DebugTrace)
-            Console.Error.WriteLine($"[PUSH] pc={pc:x4} name={name} task={_activeTask} depth={_callStack.Count}");
+            Console.Error.WriteLine($"[PUSH] pc={pc:x4} name={name} tracked={tracked} task={_activeTask} depth={_callStack.Count}");
     }
+
+    /// <summary>
+    /// Converts a PyMCU mangled symbol name to a human-readable display name.
+    /// <list type="bullet">
+    ///   <item>Private stdlib: <c>pymcu_time__delay_1ms</c> → <c>pymcu.time._delay_1ms</c></item>
+    ///   <item>Public stdlib: <c>pymcu_time_delay_ms</c> → <c>pymcu.time.delay_ms</c> (best-effort via known module prefixes)</item>
+    ///   <item>User functions: returned unchanged.</item>
+    /// </list>
+    /// </summary>
+    private static string Demangle(string name)
+    {
+        // Private stdlib: split at first "__" → module part uses dots, func preserves leading _
+        var dbl = name.IndexOf("__", StringComparison.Ordinal);
+        if (dbl > 0)
+        {
+            var module = name[..dbl].Replace('_', '.');
+            var func   = "_" + name[(dbl + 2)..];
+            return $"{module}.{func}";
+        }
+
+        // Public stdlib (starts with "pymcu_"): best-effort split using known module prefixes.
+        // The longest matching known prefix wins; the remainder is the function name.
+        if (name.StartsWith("pymcu_", StringComparison.Ordinal))
+        {
+            foreach (var mod in KnownStdlibModules)
+            {
+                var prefix = mod.Replace('.', '_') + "_";
+                if (name.StartsWith(prefix, StringComparison.Ordinal))
+                    return mod + "." + name[prefix.Length..];
+            }
+        }
+
+        return name;
+    }
+
+    // Ordered longest-first so the most specific match wins.
+    private static readonly string[] KnownStdlibModules = [
+        "pymcu.hal.uart",
+        "pymcu.hal.i2c",
+        "pymcu.hal.spi",
+        "pymcu.hal",
+        "pymcu.time",
+        "pymcu.io",
+        "pymcu.types",
+        "pymcu",
+    ];
 
     private void PopFrame(uint pc)
     {
@@ -221,7 +272,7 @@ public sealed class CallStackTracker
         var stack = _callStack
             .Where(f => f.Tracked)
             .Reverse()
-            .Select(f => GetOrAddFrame(f.Name))
+            .Select(f => GetOrAddFrame(Demangle(f.Name)))
             .ToArray();
 
         if (stack.Length > 0 && weight > 0)
