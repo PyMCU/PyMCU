@@ -630,6 +630,10 @@ public partial class IRGenerator
             return new Constant(symInfo.Value);
         }
 
+        // Loop variable bound to a function reference (zip() over a function list).
+        if (loopFunctionAliases.TryGetValue(name, out string? fnAliasName))
+            return new FunctionRef(fnAliasName);
+
         if (mutableGlobals.ContainsKey(name))
         {
             if (!string.IsNullOrEmpty(currentFunction))

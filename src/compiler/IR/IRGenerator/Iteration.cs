@@ -303,8 +303,20 @@ public partial class IRGenerator
                             var vals = new List<int>();
                             foreach (var elem in le2.Elements)
                             {
-                                if (elem is IntegerLiteral il) vals.Add(il.Value);
-                                else throw new Exception("zip() list elements must be compile-time integer constants.");
+                                if (elem is IntegerLiteral il)
+                                {
+                                    vals.Add(il.Value);
+                                }
+                                else
+                                {
+                                    // Try resolving as a compile-time constant expression
+                                    // (e.g. enum member like Priority.IDLE, or BooleanLiteral).
+                                    Val resolved = VisitExpression(elem);
+                                    if (resolved is Constant rc)
+                                        vals.Add(rc.Value);
+                                    else
+                                        throw new Exception("zip() list elements must be compile-time integer constants.");
+                                }
                             }
 
                             return vals;
@@ -359,18 +371,76 @@ public partial class IRGenerator
                         throw new Exception("zip() arguments must be constant list literals or constant arrays.");
                     }
 
-                    var vals0 = CollectInts(arg0);
-                    var vals1 = CollectInts(arg1);
-                    int len = Math.Min(vals0.Count, vals1.Count);
-                    for (int k = 0; k < len; ++k)
+                    // Try to interpret a list expression as a list of function references.
+                    // Returns null if any element is not a known function name.
+                    List<string>? TryCollectFuncRefs(Expression e)
                     {
-                        constantVariables[key1] = vals0[k];
-                        constantVariables[key2] = vals1[k];
-                        VisitStatement(stmt.Body);
+                        if (e is not ListExpr le3) return null;
+                        var names = new List<string>();
+                        foreach (var elem in le3.Elements)
+                        {
+                            if (elem is VariableExpr ve)
+                            {
+                                string resolved = ResolveCallee(ve.Name);
+                                if (functionParams.ContainsKey(resolved) || functionReturnTypes.ContainsKey(resolved)
+                                    || inlineFunctions.ContainsKey(resolved))
+                                {
+                                    names.Add(resolved);
+                                    continue;
+                                }
+                            }
+                            return null;
+                        }
+                        return names;
                     }
 
-                    constantVariables.Remove(key1);
-                    constantVariables.Remove(key2);
+                    List<string>? funcRefs0 = TryCollectFuncRefs(arg0);
+                    List<string>? funcRefs1 = TryCollectFuncRefs(arg1);
+
+                    if (funcRefs0 != null)
+                    {
+                        // First list is function references; second must be integer constants.
+                        var vals1 = CollectInts(arg1);
+                        int len = Math.Min(funcRefs0.Count, vals1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            loopFunctionAliases[key1] = funcRefs0[k];
+                            constantVariables[key2] = vals1[k];
+                            VisitStatement(stmt.Body);
+                        }
+                        loopFunctionAliases.Remove(key1);
+                        constantVariables.Remove(key2);
+                    }
+                    else if (funcRefs1 != null)
+                    {
+                        // First list is integer constants; second is function references.
+                        var vals0 = CollectInts(arg0);
+                        int len = Math.Min(vals0.Count, funcRefs1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            constantVariables[key1] = vals0[k];
+                            loopFunctionAliases[key2] = funcRefs1[k];
+                            VisitStatement(stmt.Body);
+                        }
+                        constantVariables.Remove(key1);
+                        loopFunctionAliases.Remove(key2);
+                    }
+                    else
+                    {
+                        // Both lists are integer constants (original behaviour).
+                        var vals0 = CollectInts(arg0);
+                        var vals1 = CollectInts(arg1);
+                        int len = Math.Min(vals0.Count, vals1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            constantVariables[key1] = vals0[k];
+                            constantVariables[key2] = vals1[k];
+                            VisitStatement(stmt.Body);
+                        }
+
+                        constantVariables.Remove(key1);
+                        constantVariables.Remove(key2);
+                    }
                     return;
                 }
                 else if (calleeVar.Name == "reversed" && call.Args.Count == 1)
