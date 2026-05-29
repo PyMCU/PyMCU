@@ -29,6 +29,46 @@ from ..core.compiler import PyMCUCompiler
 console = Console()
 
 
+def _build_pretty_names_from_mir(mir_path: Path, entry_module: str = "main.py") -> dict[str, str]:
+    """Derive human-readable Python names for user-module functions from the MIR.
+
+    For each function that is NOT in the entry module and NOT a stdlib symbol,
+    the mangled name ``module_function`` is converted to ``module.function``.
+    Symbols that already contain ``__`` (private helpers) or start with ``pymcu_``
+    (stdlib, handled by the C# demangler) are left unchanged.
+
+    Returns a dict mapping mangled name → pretty name.
+    """
+    if not mir_path.exists():
+        return {}
+    try:
+        with open(mir_path) as fh:
+            mir = json.load(fh)
+    except Exception:
+        return {}
+
+    result: dict[str, str] = {}
+    for fn in mir.get("functions", []):
+        mangled: str = fn.get("name", "")
+        if not mangled:
+            continue
+        # Private helpers and stdlib handled elsewhere.
+        if "__" in mangled or mangled.startswith("pymcu_"):
+            continue
+        # Determine source file from first debug node in function body.
+        src = next(
+            (n.get("sourceFile", "") for n in fn.get("body", []) if n.get("$t") == "dbg"),
+            "",
+        )
+        if not src or src == entry_module:
+            continue  # entry-module functions keep their bare names
+        module = src.removesuffix(".py")
+        prefix = module + "_"
+        if mangled.startswith(prefix):
+            result[mangled] = f"{module}.{mangled[len(prefix):]}"
+    return result
+
+
 def _extract_elf_symbols(elf_path: Path) -> list[dict]:
     """Extract text-section symbols from ELF via avr-nm with correct byte→word addresses.
 
@@ -198,6 +238,14 @@ def profile(
         # Override --emit-symbols addresses with avr-nm ELF addresses (correct).
         elf_syms = _extract_elf_symbols(elf)
         if elf_syms:
+            # Enrich symbol names: convert user-module mangled names to dotted Python names
+            # (e.g. sensor_compute_crc8 → sensor.compute_crc8) using sourceFile info in the MIR.
+            # Stdlib symbols (pymcu_*) and private helpers (__) are left for the C# demangler.
+            entry_module = Path(entry_point).name
+            pretty = _build_pretty_names_from_mir(ir_path, entry_module=entry_module)
+            for sym in elf_syms:
+                if sym["Name"] in pretty:
+                    sym["Name"] = pretty[sym["Name"]]
             symbols_path.write_text(json.dumps(elf_syms, indent=2))
     except Exception as ex:
         console.print(f"[red]Assembly failed:[/red] {ex}")
