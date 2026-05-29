@@ -13,13 +13,14 @@ using PyMCU.AVR.Profiler;
 
 var hexArg = new Argument<string>("hex-file") { Description = "Intel HEX firmware file" };
 
-var symbolsOpt = new Option<string>("--symbols") { Description = "Symbols JSON from --emit-symbols" };
-var cyclesOpt  = new Option<ulong?>("--cycles")  { Description = "Number of cycles to simulate" };
-var msOpt      = new Option<double?>("--ms")     { Description = "Simulated milliseconds (default: 5000)" };
-var freqOpt    = new Option<uint>("--freq")      { Description = "Clock frequency Hz", DefaultValueFactory = _ => 16_000_000U };
-var nameOpt    = new Option<string>("--name")    { Description = "Profile label", DefaultValueFactory = _ => "firmware (ATmega328P)" };
-var outputOpt  = new Option<string>("-o")        { Description = "Output Speedscope JSON path", DefaultValueFactory = _ => "profile.speedscope.json" };
-var debugOpt   = new Option<bool>("--debug")     { Description = "Emit call-stack trace to stderr for diagnostics" };
+var symbolsOpt    = new Option<string>("--symbols")       { Description = "Symbols JSON from --emit-symbols" };
+var cyclesOpt     = new Option<ulong?>("--cycles")        { Description = "Number of cycles to simulate" };
+var msOpt         = new Option<double?>("--ms")           { Description = "Simulated milliseconds (default: 5000)" };
+var freqOpt       = new Option<uint>("--freq")            { Description = "Clock frequency Hz", DefaultValueFactory = _ => 16_000_000U };
+var nameOpt       = new Option<string>("--name")          { Description = "Profile label", DefaultValueFactory = _ => "firmware (ATmega328P)" };
+var outputOpt     = new Option<string>("-o")              { Description = "Output Speedscope JSON path", DefaultValueFactory = _ => "profile.speedscope.json" };
+var debugOpt      = new Option<bool>("--debug")           { Description = "Emit call-stack trace to stderr for diagnostics" };
+var taskIdAddrOpt = new Option<uint?>("--task-id-addr")   { Description = "SRAM byte address of the current-task-index variable (enables N-task RTOS support)" };
 
 var root = new RootCommand("pymcuc-avr-profiler — AVR firmware cycle profiler");
 root.Arguments.Add(hexArg);
@@ -30,6 +31,7 @@ root.Options.Add(freqOpt);
 root.Options.Add(nameOpt);
 root.Options.Add(outputOpt);
 root.Options.Add(debugOpt);
+root.Options.Add(taskIdAddrOpt);
 
 root.SetAction(pr =>
 {
@@ -41,6 +43,7 @@ root.SetAction(pr =>
     var name        = pr.GetValue(nameOpt)!;
     var output      = pr.GetValue(outputOpt)!;
     var debug       = pr.GetValue(debugOpt);
+    var taskIdAddr  = pr.GetValue(taskIdAddrOpt);
 
     if (string.IsNullOrEmpty(symbolsPath))
     {
@@ -70,7 +73,7 @@ root.SetAction(pr =>
     Console.WriteLine($"[PROFILER] Simulating {cyclesToRun:N0} cycles @ {freq:N0} Hz...");
 
     SpeedscopeDocument doc;
-    try { doc = ProfilerRunner.Run(hexContent, symbols, cyclesToRun, name, debug); }
+    try { doc = ProfilerRunner.Run(hexContent, symbols, cyclesToRun, name, debug, taskIdAddr); }
     catch (Exception ex) { Console.Error.WriteLine($"[ERROR] Simulation failed: {ex.Message}"); Environment.ExitCode = 1; return; }
 
     try { File.WriteAllText(output, doc.ToJson(name)); }

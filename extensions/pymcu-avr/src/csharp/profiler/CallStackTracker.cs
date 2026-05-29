@@ -12,10 +12,10 @@ namespace PyMCU.AVR.Profiler;
 /// cannot create cyclic frame relationships (which caused infinite recursion in
 /// speedscope's internal sort when using the evented format).
 ///
-/// Per-task stacks: each RETI-from-ISR (hardware interrupt) saves the interrupted
-/// task's stack and restores the next task's saved stack by toggling between two
-/// stack slots.  This ensures pending RET instructions from the interrupted task
-/// do not corrupt the resumed task's call depth.
+/// Per-task stacks: each RETI-from-ISR (hardware interrupt) identifies which
+/// task is being resumed by reading the return PC from the hardware stack and
+/// finding which existing task stack contains that function.  This supports any
+/// number of RTOS tasks without needing prior knowledge of how many tasks exist.
 /// </summary>
 public sealed class CallStackTracker
 {
@@ -26,17 +26,22 @@ public sealed class CallStackTracker
     private readonly List<string> _frames = new();
     private readonly Dictionary<string, int> _frameIndex = new();
 
-    // Per-task call stacks.  On each RETI-from-ISR we toggle _activeTask to
-    // restore the other task's saved stack (up to 2 RTOS tasks supported).
+    // Per-task call stacks.  The list grows on demand as the profiler discovers
+    // new RTOS tasks (each RETI-from-ISR that resumes an unknown function creates
+    // a new slot).  Any number of tasks is supported.
     // Each entry: (name, isTracked). Untracked frames (private helpers whose
     // mangled name starts with '_') are excluded from stack snapshots; their
     // cycles roll up to the nearest user-visible ancestor.
-    private readonly Stack<(string Name, bool Tracked)>[] _taskStacks = [
-        new Stack<(string Name, bool Tracked)>(),
-        new Stack<(string Name, bool Tracked)>(),
+    private readonly List<Stack<(string Name, bool Tracked)>> _taskStacks = [
+        new Stack<(string Name, bool Tracked)>(),   // slot 0 = initial task (main)
     ];
     private int _activeTask = 0;
     private Stack<(string Name, bool Tracked)> _callStack => _taskStacks[_activeTask];
+
+    // Optional SRAM byte address of the RTOS "current task index" variable.
+    // When provided, the exact task ID is read from RAM on every RETI-from-ISR,
+    // enabling correct N-task context switching without any call-graph heuristics.
+    private readonly uint? _taskIdAddr;
 
     // Sampled profile data: parallel lists of stack snapshots and their weights.
     private readonly List<int[]> _samples = new();
@@ -55,10 +60,11 @@ public sealed class CallStackTracker
     private const uint VectorMin = 0x0001u;
     private const uint VectorMax = 0x0019u;
 
-    public CallStackTracker(SymbolMap symbols, Cpu cpu, string rootFrame = "main")
+    public CallStackTracker(SymbolMap symbols, Cpu cpu, string rootFrame = "main", uint? taskIdAddr = null)
     {
         _symbols = symbols;
         _cpu = cpu;
+        _taskIdAddr = taskIdAddr;
         // main is entered via RJMP from the reset vector, not via CALL.
         _taskStacks[0].Push((rootFrame, Tracked: true));
     }
@@ -148,21 +154,23 @@ public sealed class CallStackTracker
             if (op == 0x9518 && _inIsr)
             {
                 // RETI from hardware ISR: context switch to the next RTOS task.
+                // Read the return PC from the hardware stack (the CPU has already
+                // restored the new task's SP and registers during portRESTORE_CONTEXT,
+                // so SP+1:SP+2 now contains the new task's saved program counter).
+                var spl = _cpu.Mmio.Data[0x5D];
+                var sph = _cpu.Mmio.Data[0x5E];
+                var sp  = (uint)(spl | (sph << 8));
+                var pch = _cpu.Mmio.Data[sp + 1];
+                var pcl = _cpu.Mmio.Data[sp + 2];
+                var retPc = (uint)((pch << 8) | pcl);
+
                 if (DebugTrace)
-                {
-                    var spl = _cpu.Mmio.Data[0x5D];
-                    var sph = _cpu.Mmio.Data[0x5E];
-                    var sp = (uint)(spl | (sph << 8));
-                    // RETI reads: Pc = (Data[SP+1] << 8) + Data[SP+2]
-                    // so SP+1 = PCH (high byte), SP+2 = PCL (low byte)
-                    var pch = _cpu.Mmio.Data[sp + 1];
-                    var pcl = _cpu.Mmio.Data[sp + 2];
-                    var retPc = (uint)((pch << 8) | pcl);
-                    Console.Error.WriteLine($"[RETI] pc={pc:x4} task={_activeTask}→{_activeTask ^ 1} isr_popped={(_callStack.Count > 0 ? _callStack.Peek().Name : "<empty>")} SP=0x{sp:X4} [SP+1]=PCH=0x{pch:X2} [SP+2]=PCL=0x{pcl:X2} ret_pc=0x{retPc:X4}");
-                }
+                    Console.Error.WriteLine($"[RETI] pc={pc:x4} task={_activeTask} isr_popped={(_callStack.Count > 0 ? _callStack.Peek().Name : "<empty>")} SP=0x{sp:X4} retPc=0x{retPc:X4} resumeFn={_symbols.ResolveContaining(retPc)}");
+
                 PopFrame(pc); // pop ISR frame (_systick etc.)
-                _activeTask ^= 1;
+                _activeTask = FindOrCreateTaskSlot(retPc);
                 _inIsr = false;
+
                 if (DebugTrace)
                     Console.Error.WriteLine($"[TOGGLE] now task={_activeTask} depth={_callStack.Count} top={(_callStack.Count > 0 ? _callStack.Peek().Name : "<empty>")}");
             }
@@ -186,6 +194,57 @@ public sealed class CallStackTracker
         if ((op & 0xFE0E) == 0x940Eu) return 2u; // CALL
         if ((op & 0xFC0F) == 0x9000u) return 2u; // LDS / STS
         return 1u;
+    }
+
+    /// <summary>
+    /// Determines which task slot to activate after a RETI-from-ISR context switch.
+    ///
+    /// When a <see cref="_taskIdAddr"/> is configured (recommended), the exact task
+    /// index is read directly from the RTOS's "current task" variable in SRAM.
+    /// Slots are created on demand the first time each task ID is encountered.
+    ///
+    /// Without a task-ID address the call-graph heuristic is used as a fallback:
+    /// the resume PC is resolved to a containing function and matched against
+    /// existing task stacks.  This works for tasks with disjoint call graphs but
+    /// may misidentify tasks when the same function appears in multiple task stacks.
+    /// </summary>
+    private int FindOrCreateTaskSlot(uint retPc)
+    {
+        // ── Preferred: read task ID directly from the RTOS variable in SRAM ──────
+        if (_taskIdAddr.HasValue)
+        {
+            var taskId = (int)_cpu.Mmio.Data[_taskIdAddr.Value];
+            // Grow the slot list to accommodate this task ID.
+            while (_taskStacks.Count <= taskId)
+                _taskStacks.Add(new Stack<(string Name, bool Tracked)>());
+            return taskId;
+        }
+
+        // ── Fallback: call-graph heuristic (works for tasks with unique functions) ─
+        var resumeFn = _symbols.ResolveContaining(retPc);
+        if (!resumeFn.StartsWith("["))
+        {
+            // Check the ACTIVE slot first — handles self-switch (same task appears
+            // in consecutive schedule slots) without creating a spurious new slot.
+            foreach (var (name, _) in _taskStacks[_activeTask])
+                if (name == resumeFn) return _activeTask;
+
+            // Search all other slots.
+            for (int i = 0; i < _taskStacks.Count; i++)
+            {
+                if (i == _activeTask) continue;
+                foreach (var (name, _) in _taskStacks[i])
+                    if (name == resumeFn) return i;
+            }
+        }
+
+        // No existing stack owns this PC — new task or shared function.
+        // Reuse the first empty non-active slot, or allocate a new one.
+        for (int i = 0; i < _taskStacks.Count; i++)
+            if (i != _activeTask && _taskStacks[i].Count == 0) return i;
+
+        _taskStacks.Add(new Stack<(string Name, bool Tracked)>());
+        return _taskStacks.Count - 1;
     }
 
     private void PushFrame(string name, uint pc)

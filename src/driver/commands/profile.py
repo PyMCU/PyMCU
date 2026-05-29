@@ -69,6 +69,35 @@ def _build_pretty_names_from_mir(mir_path: Path, entry_module: str = "main.py") 
     return result
 
 
+def _find_cur_task_addr(elf_path: Path) -> int | None:
+    """Return the SRAM byte address of the RTOS current-task-index variable, or None.
+
+    Looks for any symbol of type ``a`` (absolute) or ``b/B`` (BSS) whose name ends
+    with ``__cur_task`` (PyMCU mangling for a ``_cur_task`` variable in any module).
+    The address is used by the profiler to read the active task ID at each RETI,
+    enabling correct N-task context-switch tracking.
+    """
+    for nm in ["avr-nm", "/opt/homebrew/bin/avr-nm", "/usr/local/bin/avr-nm"]:
+        try:
+            result = subprocess.run(
+                [nm, "--format=bsd", str(elf_path)],
+                capture_output=True, text=True, check=True,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) != 3:
+                    continue
+                sym_type, name = parts[1], parts[2]
+                if sym_type not in ("a", "A", "b", "B", "d", "D"):
+                    continue
+                if name.endswith("__cur_task") or name == "_cur_task":
+                    return int(parts[0], 16)
+            return None
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
 def _extract_elf_symbols(elf_path: Path) -> list[dict]:
     """Extract text-section symbols from ELF via avr-nm with correct byte→word addresses.
 
@@ -229,6 +258,7 @@ def profile(
         console.print(f"[red]{ex}[/red]")
         raise typer.Exit(1)
 
+    cur_task_addr: int | None = None
     try:
         obj = toolchain.assemble(asm_path)
         elf = toolchain.link(obj, [], dist)
@@ -247,6 +277,8 @@ def profile(
                 if sym["Name"] in pretty:
                     sym["Name"] = pretty[sym["Name"]]
             symbols_path.write_text(json.dumps(elf_syms, indent=2))
+        # Find the RTOS current-task-index variable for N-task context switch tracking.
+        cur_task_addr = _find_cur_task_addr(elf)
     except Exception as ex:
         console.print(f"[red]Assembly failed:[/red] {ex}")
         raise typer.Exit(1)
@@ -276,6 +308,8 @@ def profile(
         cmd += ["--ms", str(ms)]
     else:
         cmd += ["--ms", "5000"]
+    if cur_task_addr is not None:
+        cmd += ["--task-id-addr", str(cur_task_addr)]
 
     console.print(f"[cyan]Simulating...[/cyan]")
     result = subprocess.run(cmd, text=True, capture_output=not verbose)

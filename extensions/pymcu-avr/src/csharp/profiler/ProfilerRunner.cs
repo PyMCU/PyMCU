@@ -11,12 +11,13 @@ public static class ProfilerRunner
         SymbolMap symbols,
         ulong cyclesToRun,
         string profileName = "firmware (ATmega328P @ 16MHz)",
-        bool debug = false)
+        bool debug = false,
+        uint? taskIdAddr = null)
     {
         var sim = new ArduinoUnoSimulation();
         sim.WithHex(hexContent);
 
-        var tracker = new CallStackTracker(symbols, sim.Cpu) { DebugTrace = debug };
+        var tracker = new CallStackTracker(symbols, sim.Cpu, taskIdAddr: taskIdAddr) { DebugTrace = debug };
         var decoder = new ProfilingDecoder(tracker.OnInstruction);
         sim.RunCyclesProfiled((long)cyclesToRun, decoder);
 
