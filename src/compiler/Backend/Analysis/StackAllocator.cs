@@ -55,6 +55,17 @@ public class StackAllocator
             globalOffset += VariableSizes[globalVar.Name];
         }
 
+        // Module-level SRAM arrays: allocate after scalars, before any function locals.
+        // Adding to _globalNames prevents the overlay algorithm from treating them as
+        // function locals and aliasing different arrays at the same SRAM address.
+        foreach (var kvp in program.GlobalArrays)
+        {
+            VariableSizes[kvp.Key] = kvp.Value;
+            _offsets[kvp.Key] = globalOffset;
+            _globalNames.Add(kvp.Key);
+            globalOffset += kvp.Value;
+        }
+
         if (globalOffset > _maxStackUsage) _maxStackUsage = globalOffset;
 
         BuildGraph(program);

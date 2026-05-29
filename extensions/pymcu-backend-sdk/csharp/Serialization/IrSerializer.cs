@@ -49,5 +49,6 @@ public static class IrSerializer
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ProgramIR))]
+[JsonSerializable(typeof(Dictionary<string, int>))]
 [JsonSerializable(typeof(PyMCU.Common.Models.DeviceConfig))]
 internal partial class PymcuIrContext : JsonSerializerContext { }

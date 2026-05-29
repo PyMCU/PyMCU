@@ -182,6 +182,12 @@ public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
 
+    // Module-level SRAM arrays (e.g. `_task_fns: Callable[4]`).
+    // Stored separately because array types cannot be represented as a single DataType.
+    // The StackAllocator allocates these in the global section (before any function locals)
+    // so the overlay algorithm never aliases them with function-local arrays.
+    public Dictionary<string, int> GlobalArrays { get; set; } = new();
+
     public List<Function> Functions { get; set; } = new();
 
     // C symbols declared via @extern("name") in the source.

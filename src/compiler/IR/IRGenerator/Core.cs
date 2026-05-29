@@ -607,6 +607,15 @@ public partial class IRGenerator
             irProgram.Globals.Add(new Variable(kvp.Key, kvp.Value));
         }
 
+        // Module-level SRAM arrays must be allocated as globals so the overlay
+        // algorithm never aliases them with function-local arrays across sibling calls.
+        foreach (var name in moduleSramArrays)
+        {
+            int count = arraySizes.TryGetValue(name, out int c) ? c : 1;
+            DataType elemType = arrayElemTypes.TryGetValue(name, out DataType dt) ? dt : DataType.UINT8;
+            irProgram.GlobalArrays[name] = count * elemType.SizeOf();
+        }
+
         var seenExtern = new HashSet<string>();
         foreach (var kvp in externFunctionMap)
         {

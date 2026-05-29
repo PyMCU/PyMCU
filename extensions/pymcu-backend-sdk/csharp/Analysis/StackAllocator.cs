@@ -55,6 +55,14 @@ public class StackAllocator
             globalOffset += VariableSizes[globalVar.Name];
         }
 
+        foreach (var kvp in program.GlobalArrays)
+        {
+            VariableSizes[kvp.Key] = kvp.Value;
+            _offsets[kvp.Key] = globalOffset;
+            _globalNames.Add(kvp.Key);
+            globalOffset += kvp.Value;
+        }
+
         if (globalOffset > _maxStackUsage) _maxStackUsage = globalOffset;
 
         BuildGraph(program);

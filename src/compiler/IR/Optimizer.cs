@@ -25,6 +25,7 @@ public static class Optimizer
         var optimized = new ProgramIR
         {
             Globals = [..program.Globals],
+            GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
             Functions = program.Functions.Select(CloneFunction).ToList(),
             ExternSymbols = new List<string>(program.ExternSymbols),
         };
