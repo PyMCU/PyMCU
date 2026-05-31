@@ -47,6 +47,8 @@ This page tracks which language and HAL features have been implemented, and what
 | Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, comparisons, bitwise |
 | `@extern("symbol")` | External C/C++ symbol interop with AVR ABI |
 | `__name__` / `if __name__ == "__main__":` | Compile-time guard; body promoted in main, eliminated in libs |
+| Triple-quoted strings `"""..."""` / `'''...'''` | Multiline string literals; leading newline after opening quote stripped; useful for multiline `asm()` |
+| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; `append()`, `len()`, `x[i]`, `for v in x:`; bounded bump allocator + GC; suitable for ATmega328P (2 KB SRAM) and larger |
 
 ### MCU extensions
 
@@ -65,6 +67,9 @@ This page tracks which language and HAL features have been implemented, and what
 | `__CHIP__` | Conditional compilation by chip name / architecture |
 | `__FREQ__` | Compile-time clock frequency in Hz |
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
+| `float` (soft-float) | IEEE 754 single-precision; AVR only; uses `__fp_add/sub/mul/div/cmp` intrinsics; annotation `x: float = 3.14` supported |
+| `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
+| `@staticmethod` | Silently ignored — all class methods in PyMCU are effectively static |
 
 ### HAL (ATmega328P)
 
@@ -96,10 +101,10 @@ This page tracks which language and HAL features have been implemented, and what
 
 ### Compatibility layers
 
-| Module | Status |
-|---|---|
-| `pymcu.compat.micropython` | `machine`, `utime`, `micropython` — GPIO, UART, ADC, PWM, Timer |
-| `pymcu.compat.circuitpython` | `board`, `digitalio`, `analogio`, `pwmio`, `time` — GPIO, UART, ADC, PWM |
+| Package | Activation | Coverage |
+|---------|-----------|----------|
+| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin, UART, ADC, PWM, SPI, I2C, `Timer(id, period, callback)`), `utime`, `micropython` |
+| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `analogio`, `busio` (SPI + I2C), `pwmio`, `time`, `neopixel.NeoPixel` |
 
 ### Boards
 
@@ -125,11 +130,14 @@ largest audience of MicroPython users.
 | Feature | Notes |
 |---|---|
 | **RP2040 backend** | Next architecture target — ARM Cortex-M0+ codegen, PIO support |
-| `fixed16` (Q8.8 fixed-point) | Fixed-point arithmetic without floats |
-| `busio.SPI` / `busio.I2C` (CircuitPython compat) | Expand compat layer coverage |
-| `neopixel` (CircuitPython flavor) | `neopixel.NeoPixel` wrapper |
-| MicroPython/CircuitPython API alignment | Broaden module coverage |
-| `pymcu` pip package | Distribute CLI toolchain via PyPI |
+| `fixed16` (Q8.8 fixed-point) | Fixed-point arithmetic without soft-float overhead; `Q8.8` format |
+| MicroPython/CircuitPython API alignment | Broaden compat module coverage; close remaining API gaps |
+| PIC18 codegen | Extend backend for PIC18Fxxxx family |
+| RISC-V 32-bit codegen | CH32V003, ESP32-C3 targets |
+| RP2040 PIO backend | Programmable I/O state machine output |
+| Over-the-air (OTA) support | Bootloader + `pymcu flash` over UART |
+| LLVM IR backend | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
+| ARM Cortex-M0/M4 codegen | STM32, nRF52; via LLVM or direct codegen |
 
 ---
 
@@ -137,8 +145,8 @@ largest audience of MicroPython users.
 
 | Feature | Reason |
 |---|---|
-| Heap allocation / `list.append` / `dict` / `set` | No heap; 32–2048 bytes SRAM |
-| Garbage collection | No runtime |
+| `dict` / `set` | Dynamic hash tables require heap; no runtime |
+| Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `try` / `except` | No runtime |
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `f"..."` runtime interpolation | Use `uart.write_str()` / `uart.print_byte()` |
