@@ -890,16 +890,22 @@ public partial class IRGenerator
                 else posArgs.Add(arg);
             }
 
-            // Resolve uart_write_str inline function for string output
-            string writeStrFn = ResolveCallee("uart_write_str");
-            if (writeStrFn == "uart_write_str")
+            // Resolve the string-output function.  Prefer the arch-dispatched
+            // console.print_str injected by the build driver; fall back to
+            // uart_write_str for projects that initialise UART manually.
+            string writeStrFn = ResolveCallee("print_str");
+            if (writeStrFn == "print_str")
             {
-                foreach (var fnName in inlineFunctions.Keys)
+                writeStrFn = ResolveCallee("uart_write_str");
+                if (writeStrFn == "uart_write_str")
                 {
-                    if (fnName.EndsWith("_uart_write_str"))
+                    foreach (var fnName in inlineFunctions.Keys)
                     {
-                        writeStrFn = fnName;
-                        break;
+                        if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
+                        {
+                            writeStrFn = fnName;
+                            break;
+                        }
                     }
                 }
             }
@@ -913,29 +919,38 @@ public partial class IRGenerator
                 VisitCall(synthCall);
             }
 
-            string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
-            if (decimalWriteFn == "uart_write_decimal_u8")
+            // Prefer console.print_u8; fall back to uart_write_decimal_u8.
+            string decimalWriteFn = ResolveCallee("print_u8");
+            if (decimalWriteFn == "print_u8")
             {
-                string decSuffix = "uart_write_decimal_u8";
-                foreach (var fnName in functionReturnTypes.Keys)
+                decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
+                if (decimalWriteFn == "uart_write_decimal_u8")
                 {
-                    if (fnName.EndsWith(decSuffix))
+                    foreach (var fnName in functionReturnTypes.Keys)
                     {
-                        decimalWriteFn = fnName;
-                        break;
+                        if (fnName.EndsWith("_print_u8") || fnName.EndsWith("uart_write_decimal_u8"))
+                        {
+                            decimalWriteFn = fnName;
+                            break;
+                        }
                     }
                 }
             }
 
-            string floatWriteFn = ResolveCallee("uart_write_float");
-            if (floatWriteFn == "uart_write_float")
+            // Prefer console.print_float; fall back to uart_write_float.
+            string floatWriteFn = ResolveCallee("print_float");
+            if (floatWriteFn == "print_float")
             {
-                foreach (var fnName in functionReturnTypes.Keys)
+                floatWriteFn = ResolveCallee("uart_write_float");
+                if (floatWriteFn == "uart_write_float")
                 {
-                    if (fnName.EndsWith("uart_write_float"))
+                    foreach (var fnName in functionReturnTypes.Keys)
                     {
-                        floatWriteFn = fnName;
-                        break;
+                        if (fnName.EndsWith("_print_float") || fnName.EndsWith("uart_write_float"))
+                        {
+                            floatWriteFn = fnName;
+                            break;
+                        }
                     }
                 }
             }
@@ -1532,16 +1547,8 @@ public partial class IRGenerator
             }
         }
 
-        if (callee == "pull") callee = "__pio_pull";
-        else if (callee == "push") callee = "__pio_push";
-        else if (callee == "out") callee = "__pio_out";
-        else if (callee == "in_") callee = "__pio_in";
-        else if (callee == "wait") callee = "__pio_wait";
-
-        var isPioIntrinsic = callee.StartsWith("__pio_") || callee == "delay";
-
-        if (isPioIntrinsic || (functionReturnTypes.TryGetValue(callee, out string? rType) &&
-                               (rType == "void" || rType == "None")))
+        if (functionReturnTypes.TryGetValue(callee, out string? rType) &&
+            (rType == "void" || rType == "None"))
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
             return new NoneVal();

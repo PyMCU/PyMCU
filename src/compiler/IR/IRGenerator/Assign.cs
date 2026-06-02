@@ -766,15 +766,20 @@ public partial class IRGenerator
 
             if (isInput)
             {
-                // Emit prompt via uart_write_str (same resolution as print)
+                // Emit prompt via print_str (console) or uart_write_str (fallback).
                 if (!string.IsNullOrEmpty(inputPrompt))
                 {
-                    string writeStrFn = ResolveCallee("uart_write_str");
-                    if (writeStrFn == "uart_write_str")
+                    string writeStrFn = ResolveCallee("print_str");
+                    if (writeStrFn == "print_str")
                     {
-                        foreach (var fnName in inlineFunctions.Keys)
+                        writeStrFn = ResolveCallee("uart_write_str");
+                        if (writeStrFn == "uart_write_str")
                         {
-                            if (fnName.EndsWith("_uart_write_str")) { writeStrFn = fnName; break; }
+                            foreach (var fnName in inlineFunctions.Keys)
+                            {
+                                if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
+                                { writeStrFn = fnName; break; }
+                            }
                         }
                     }
                     VisitCall(new CallExpr(
