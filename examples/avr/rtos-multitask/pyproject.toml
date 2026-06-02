@@ -1,0 +1,19 @@
+[project]
+name = "rtos-multitask"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pymcu-stdlib>=0.1.0",
+    "pymcu-compiler>=0.1.0",
+    "pymcu-avr>=0.1.0",
+]
+
+[tool.pymcu]
+chip = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"
+
+[tool.pymcu.flash]
+programmer = "avrdude"
+port = "/dev/cu.usbmodem14101"
