@@ -216,8 +216,6 @@ public partial class IRGenerator
             intrinsicNames.Add(t);
         intrinsicNames.Add("print");
         intrinsicNames.Add("input");
-        intrinsicNames.Add("sleep_ms");
-        intrinsicNames.Add("sleep_us");
         intrinsicNames.Add("len");
         intrinsicNames.Add("sum");
         intrinsicNames.Add("any");
