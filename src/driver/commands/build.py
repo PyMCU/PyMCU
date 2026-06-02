@@ -229,19 +229,42 @@ def _inject_preamble(
     return synthetic, preamble_lines
 
 
-def _inject_print_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
-    """Return a synthetic entry file with a UART-init preamble prepended.
+def _get_stdout_config(pymcu_config: dict) -> tuple[str, int]:
+    """Return (device, baud) for the configured stdout output device.
 
-    Mirrors MicroPython's boot behavior where UART 0 is pre-initialized at
-    115200 baud before user code runs, so print() works without an explicit
-    UART() constructor in user code.
+    Reads optional ``stdout`` and ``stdout_baud`` keys from [tool.pymcu].
+    Defaults to uart0 at 115200 baud when not specified.
+    """
+    device = str(pymcu_config.get("stdout", "uart0"))
+    baud   = int(pymcu_config.get("stdout_baud", 115200))
+    return device, baud
+
+
+def _inject_print_preamble(
+    entry_point: Path,
+    generated_dir: Path,
+    device: str = "uart0",
+    baud: int = 115200,
+) -> tuple[Path, int]:
+    """Return a synthetic entry file with a stdout-init preamble prepended.
+
+    Mirrors MicroPython's boot behavior: the configured output device is
+    pre-initialized before user code runs, so print() works without an
+    explicit UART() constructor in user code.
+
+    Also imports the abstract console interface (print_str, print_u8,
+    print_float) so the IRGenerator resolves print() via the arch-dispatched
+    console functions rather than uart-specific names.
     """
     return _inject_preamble(
         entry_point,
         generated_dir,
-        comment="# Auto-injected by pymcu build: UART 0 initialized for print()\n",
-        import_line="from pymcu.hal.uart import UART as _pymcu_uart_0\n",
-        call_line="_pymcu_uart_0(115200)",
+        comment=f"# Auto-injected by pymcu build: stdout={device} at {baud} baud for print()\n",
+        import_line=(
+            "from pymcu.hal.uart import UART as _pymcu_stdout\n"
+            "from pymcu.hal.console import print_str, print_u8, print_float\n"
+        ),
+        call_line=f"_pymcu_stdout({baud})",
     )
 
 
@@ -506,15 +529,19 @@ def build(
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
-        # Auto-inject UART preamble when print() or input() is used without an
+        # Auto-inject stdout preamble when print() or input() is used without an
         # explicit UART() constructor in user sources.  This mirrors MicroPython's
-        # REPL behaviour where UART 0 is pre-initialized at 115200 baud before user
+        # REPL behaviour where the output device is pre-initialized before user
         # code runs, so print()/input() work out of the box with no extra imports.
+        # The output device is configurable via [tool.pymcu] stdout / stdout_baud.
         _linemap_preamble_offset = 0
 
         _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
         if (_has_print or _has_input) and not _has_uart:
-            entry_point, _n = _inject_print_preamble(entry_point, generated_dir)
+            _stdout_device, _stdout_baud = _get_stdout_config(pymcu_config)
+            entry_point, _n = _inject_print_preamble(
+                entry_point, generated_dir, _stdout_device, _stdout_baud
+            )
             _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
@@ -522,12 +549,14 @@ def build(
             if _has_print and _has_input:
                 _trigger = "print() and input()"
             _diag_log(
-                f"{_trigger} detected without UART() — injecting UART preamble at 115200 baud",
+                f"{_trigger} detected without UART() — injecting stdout preamble "
+                f"({_stdout_device} at {_stdout_baud} baud)",
                 verbose=is_verbose,
             )
             if is_verbose:
                 console.print(
-                    f"[debug] {_trigger} without UART — UART preamble injected at 115200 baud",
+                    f"[debug] {_trigger} without UART — stdout preamble injected "
+                    f"({_stdout_device} at {_stdout_baud} baud)",
                     style="dim",
                 )
 
