@@ -12,8 +12,10 @@
 from pymcu.types import uint8, uint16
 from pymcu.hal.uart import UART
 from pymcu.math import map_range, constrain
+from pymcu.types import inline
 
 
+@inline
 def print_hex(uart: UART, prefix: str, val: uint8):
     uart.write_str(prefix)
     hi: uint8 = (val >> 4) & 0x0F

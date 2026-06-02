@@ -24,10 +24,17 @@ public class RandomPrngTests
         return uno;
     }
 
+    // Wait until prefix + 2 hex digits appear in the serial buffer.
+    private static bool HasHexLine(string text, string prefix)
+    {
+        var idx = text.IndexOf(prefix, StringComparison.Ordinal);
+        return idx >= 0 && idx + prefix.Length + 2 <= text.Length;
+    }
+
     private static int ParseHexLine(string text, string prefix)
     {
         var idx = text.IndexOf(prefix, StringComparison.Ordinal);
-        if (idx < 0) return -1;
+        if (idx < 0 || idx + prefix.Length + 2 > text.Length) return -1;
         var hex = text.Substring(idx + prefix.Length, 2);
         return Convert.ToInt32(hex, 16);
     }
@@ -40,7 +47,7 @@ public class RandomPrngTests
     public void RandomN_FirstValue_InRange()
     {
         var uno = Boot();
-        uno.RunUntilSerial(uno.Serial, s => s.Contains("A:"), maxMs: 300);
+        uno.RunUntilSerial(uno.Serial, s => HasHexLine(s, "A:"), maxMs: 300);
         var a = ParseHexLine(uno.Serial.Text, "A:");
         a.Should().BeInRange(0, 99, "random(100) must return a value in [0, 100)");
     }
@@ -49,7 +56,7 @@ public class RandomPrngTests
     public void RandomN_ConsecutiveCalls_AreDifferent()
     {
         var uno = Boot();
-        uno.RunUntilSerial(uno.Serial, s => s.Contains("B:"), maxMs: 300);
+        uno.RunUntilSerial(uno.Serial, s => HasHexLine(s, "B:"), maxMs: 300);
         var a = ParseHexLine(uno.Serial.Text, "A:");
         var b = ParseHexLine(uno.Serial.Text, "B:");
         a.Should().NotBe(b, "consecutive random(100) calls with the same seed should differ");
@@ -59,7 +66,7 @@ public class RandomPrngTests
     public void Random2_InBoundedRange()
     {
         var uno = Boot();
-        uno.RunUntilSerial(uno.Serial, s => s.Contains("C:"), maxMs: 300);
+        uno.RunUntilSerial(uno.Serial, s => HasHexLine(s, "C:"), maxMs: 300);
         var c = ParseHexLine(uno.Serial.Text, "C:");
         c.Should().BeInRange(10, 49, "random2(10, 50) must return a value in [10, 50)");
     }
@@ -68,7 +75,7 @@ public class RandomPrngTests
     public void RandomSeed_SameSeed_GivesSameFirstValue()
     {
         var uno = Boot();
-        uno.RunUntilSerial(uno.Serial, s => s.Contains("D:"), maxMs: 300);
+        uno.RunUntilSerial(uno.Serial, s => HasHexLine(s, "D:"), maxMs: 300);
         var a = ParseHexLine(uno.Serial.Text, "A:");
         var d = ParseHexLine(uno.Serial.Text, "D:");
         d.Should().Be(a, "re-seeding with the same value must reproduce the same sequence");

@@ -11,11 +11,12 @@
 #   "B:XX\n"      -- random(100)  second call:    in 0..99, != A
 #   "C:XX\n"      -- random2(10,50) after seed(42): in 10..49
 #   "D:XX\n"      -- random(100)  after re-seed(42): must equal A (determinism check)
-from pymcu.types import uint8, uint16
+from pymcu.types import uint8, uint16, inline
 from pymcu.hal.uart import UART
 from pymcu.random import randomSeed, random, random2
 
 
+@inline
 def print_hex(uart: UART, prefix: str, val: uint8):
     uart.write_str(prefix)
     hi: uint8 = (val >> 4) & 0x0F
