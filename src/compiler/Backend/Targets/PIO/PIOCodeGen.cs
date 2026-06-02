@@ -278,27 +278,27 @@ public class PIOCodeGen : CodeGen
     {
         switch (arg.FunctionName)
         {
-            case "__pio_pull":
+            case "pull":
             {
                 string block = "BLOCK";
                 if (arg.Args.Count > 0 && arg.Args[0] is Constant c && c.Value == 0) block = "NOBLOCK";
                 Emit("PULL", block);
                 break;
             }
-            case "__pio_push":
+            case "push":
             {
                 string block = "BLOCK";
                 if (arg.Args.Count > 0 && arg.Args[0] is Constant c && c.Value == 0) block = "NOBLOCK";
                 Emit("PUSH", block);
                 break;
             }
-            case "__pio_out":
+            case "out":
                 Emit("OUT", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]));
                 break;
-            case "__pio_in":
+            case "in_":
                 Emit("IN", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]));
                 break;
-            case "__pio_wait":
+            case "wait":
                 Emit("WAIT", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]), ResolveOperand(arg.Args[2]));
                 break;
             case "delay":
