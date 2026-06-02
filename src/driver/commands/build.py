@@ -252,9 +252,11 @@ def _inject_print_preamble(
     pre-initialized before user code runs, so print() works without an
     explicit UART() constructor in user code.
 
-    Also imports the abstract console interface (print_str, print_u8,
-    print_float) so the IRGenerator resolves print() via the arch-dispatched
-    console functions rather than uart-specific names.
+    Imports print_str from console.py so the IRGenerator resolves string
+    output via the arch-dispatched console function rather than the
+    uart-specific name.  Integer and float write functions (uart_write_decimal_u8,
+    uart_write_float) are kept as-is because they are non-inline and the
+    print() handler emits them via direct IR Call nodes rather than VisitCall.
     """
     return _inject_preamble(
         entry_point,
@@ -262,7 +264,7 @@ def _inject_print_preamble(
         comment=f"# Auto-injected by pymcu build: stdout={device} at {baud} baud for print()\n",
         import_line=(
             "from pymcu.hal.uart import UART as _pymcu_stdout\n"
-            "from pymcu.hal.console import print_str, print_u8, print_float\n"
+            "from pymcu.hal.console import print_str\n"
         ),
         call_line=f"_pymcu_stdout({baud})",
     )

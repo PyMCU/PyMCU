@@ -919,38 +919,33 @@ public partial class IRGenerator
                 VisitCall(synthCall);
             }
 
-            // Prefer console.print_u8; fall back to uart_write_decimal_u8.
-            string decimalWriteFn = ResolveCallee("print_u8");
-            if (decimalWriteFn == "print_u8")
+            // Integer output: uart_write_decimal_u8 is non-inline and works with direct Emit.
+            // print_u8 from console.py is @inline and requires VisitCall; deferred to a
+            // future refactor of EmitPrintArg to use VisitCall for all write functions.
+            string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
+            if (decimalWriteFn == "uart_write_decimal_u8")
             {
-                decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
-                if (decimalWriteFn == "uart_write_decimal_u8")
+                string decSuffix = "uart_write_decimal_u8";
+                foreach (var fnName in functionReturnTypes.Keys)
                 {
-                    foreach (var fnName in functionReturnTypes.Keys)
+                    if (fnName.EndsWith(decSuffix))
                     {
-                        if (fnName.EndsWith("_print_u8") || fnName.EndsWith("uart_write_decimal_u8"))
-                        {
-                            decimalWriteFn = fnName;
-                            break;
-                        }
+                        decimalWriteFn = fnName;
+                        break;
                     }
                 }
             }
 
-            // Prefer console.print_float; fall back to uart_write_float.
-            string floatWriteFn = ResolveCallee("print_float");
-            if (floatWriteFn == "print_float")
+            // Float output: same rationale — use the non-inline uart function.
+            string floatWriteFn = ResolveCallee("uart_write_float");
+            if (floatWriteFn == "uart_write_float")
             {
-                floatWriteFn = ResolveCallee("uart_write_float");
-                if (floatWriteFn == "uart_write_float")
+                foreach (var fnName in functionReturnTypes.Keys)
                 {
-                    foreach (var fnName in functionReturnTypes.Keys)
+                    if (fnName.EndsWith("uart_write_float"))
                     {
-                        if (fnName.EndsWith("_print_float") || fnName.EndsWith("uart_write_float"))
-                        {
-                            floatWriteFn = fnName;
-                            break;
-                        }
+                        floatWriteFn = fnName;
+                        break;
                     }
                 }
             }
