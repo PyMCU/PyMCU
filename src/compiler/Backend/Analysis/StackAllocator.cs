@@ -155,6 +155,12 @@ public class StackAllocator
                     case JumpIfNotZero jnz: RegisterVar(jnz.Condition); break;
                     case JumpIfBitSet jbs: RegisterVar(jbs.Source); break;
                     case JumpIfBitClear jbc: RegisterVar(jbc.Source); break;
+                    case JumpIfEqual je: RegisterVar(je.Src1); RegisterVar(je.Src2); break;
+                    case JumpIfNotEqual jne: RegisterVar(jne.Src1); RegisterVar(jne.Src2); break;
+                    case JumpIfLessThan jlt: RegisterVar(jlt.Src1); RegisterVar(jlt.Src2); break;
+                    case JumpIfLessOrEqual jle: RegisterVar(jle.Src1); RegisterVar(jle.Src2); break;
+                    case JumpIfGreaterThan jgt: RegisterVar(jgt.Src1); RegisterVar(jgt.Src2); break;
+                    case JumpIfGreaterOrEqual jge: RegisterVar(jge.Src1); RegisterVar(jge.Src2); break;
                     case ArrayLoad al:
                         if (!_globalNames.Contains(al.ArrayName) && node.Locals.Add(al.ArrayName))
                         {
