@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = ["pymcu-stdlib"]
 
 [tool.pymcu]
-chip = "pic18f45k50"
+target = "pic18f45k50"
 frequency = 48000000
 sources = "src"
 entry = "main.py"

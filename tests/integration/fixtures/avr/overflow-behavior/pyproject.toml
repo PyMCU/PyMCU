@@ -3,5 +3,5 @@ name = "overflow-behavior"
 version = "0.1.0"
 
 [tool.pymcu]
-chip = "atmega328p"
+target = "atmega328p"
 

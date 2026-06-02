@@ -8,7 +8,7 @@ dependencies = [
 ]
 
 [tool.pymcu]
-chip = "atmega328p"
+target = "atmega328p"
 frequency = 16000000
 sources = "src"
 entry = "main.py"
