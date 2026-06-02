@@ -9,5 +9,6 @@ Python, and what the compiler guarantees.
 overview
 type-system
 limitations
+vs-arduino
 roadmap
 ```
