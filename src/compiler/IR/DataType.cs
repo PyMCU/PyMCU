@@ -27,12 +27,21 @@ public enum DataType
     FLOAT, // Placeholder for future support
     VOID,
     UNKNOWN,
-    FUNCREF, // Function pointer (word address, 2 bytes on AVR)
-    GC_REF   // Managed heap reference (16-bit pointer into GC heap, 2 bytes on AVR)
+    FUNCREF, // Function pointer (architecture-native pointer size)
+    GC_REF   // Managed heap reference (architecture-native pointer size)
 }
 
 public static class DataTypeExtensions
 {
+    // Set by IrGenerationPhase from DeviceConfig.PointerWidth before IR generation.
+    // Determines SizeOf(FUNCREF), SizeOf(GC_REF), and the concrete type returned for
+    // pointer-typed annotations (bytearray, bare ptr).
+    private static int _ptrWidth = 2;
+    public static void SetPointerWidth(int width) => _ptrWidth = width;
+
+    // Returns the pointer-sized concrete DataType for the current target.
+    private static DataType PointerType() => _ptrWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+
     /// Returns the byte count for a given DataType.
     public static int SizeOf(this DataType type)
     {
@@ -50,7 +59,7 @@ public static class DataTypeExtensions
                 return 4;
             case DataType.FUNCREF:
             case DataType.GC_REF:
-                return 2; // 16-bit pointer on AVR
+                return _ptrWidth; // architecture-native pointer size
             default:
                 return 1; // Default to 1 byte for VOID/UNKNOWN
         }
@@ -78,7 +87,6 @@ public static class DataTypeExtensions
         if (typeStr == "int") return DataType.INT16;
         if (typeStr == "int8") return DataType.INT8;
         if (typeStr == "uint16") return DataType.UINT16;
-        if (typeStr == "bytearray") return DataType.UINT16; // pointer-sized
         if (typeStr == "int16") return DataType.INT16;
         if (typeStr == "uint32") return DataType.UINT32;
         if (typeStr == "int32") return DataType.INT32;
@@ -102,9 +110,12 @@ public static class DataTypeExtensions
             string inner = typeStr.Substring(4, typeStr.Length - 5);
             return StringToDataType(inner);
         }
-        // Bare ptr (no inner type) or PIORegister — address-level default
-        if (typeStr == "ptr" || typeStr.Contains("PIORegister"))
-            return DataType.UINT16;
+        // Bare ptr (no inner type) — architecture-native pointer width
+        if (typeStr == "ptr") return PointerType();
+        // bytearray — passed as pointer; size is architecture-native
+        if (typeStr == "bytearray") return PointerType();
+        // PIORegister — RP2040 PIO MMIO registers are always 32-bit
+        if (typeStr.Contains("PIORegister")) return DataType.UINT32;
 
         return DataType.UNKNOWN;
     }

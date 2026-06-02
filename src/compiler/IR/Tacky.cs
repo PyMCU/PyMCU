@@ -106,7 +106,7 @@ public record Label(string Name) : Instruction;
 
 public record Call(string FunctionName, List<Val> Args, Val Dst) : Instruction;
 
-// Indirect call through a function pointer (ICALL on AVR)
+// Indirect call through a function pointer
 public record IndirectCall(Val FuncAddr, List<Val> Args, Val Dst) : Instruction;
 
 public record BitSet(Val Target, int Bit) : Instruction;
@@ -144,17 +144,17 @@ public record BytearrayLoad(string PtrName, Val Index, Val Dst) : Instruction;
 // Indexed store through a bytearray pointer parameter.
 public record BytearrayStore(string PtrName, Val Index, Val Src) : Instruction;
 
-// ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
+// ArrayLoad for ROM-resident byte arrays (e.g. PROGMEM on AVR, XIP flash on RP2040).
 public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;
 
-// Flash-resident read-only byte array (placed in .text / PROGMEM via const[uint8[N]]).
-// Bytes holds the literal initializer values; AVR codegen emits a .db table in flash.
+// ROM-resident read-only byte array (placed in read-only memory via const[uint8[N]]).
+// Bytes holds the literal initializer values; backends emit this in their ROM section.
 public record FlashData(string Name, List<int> Bytes) : Instruction;
 
 // Variable-index array store: array_name[index] = src
 public record ArrayStore(string ArrayName, Val Index, Val Src, DataType ElemType, int Count) : Instruction;
 
-// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0x0000 on OOM)
+// GC: allocate Size bytes on the managed heap; Dst receives a GC_REF (null=0 on OOM)
 public record GcAlloc(Val Size, Val Dst) : Instruction;
 
 // GC: register a live GC_REF local as a root for the duration of the containing function.

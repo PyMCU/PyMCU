@@ -33,6 +33,8 @@ public class IrGenerationPhase : CompilerPhaseBase
 
     protected override void Run(CompilationContext context)
     {
+        DataTypeExtensions.SetPointerWidth(context.DeviceConfig.PointerWidth);
+
         var irGen = new IRGenerator();
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines);
