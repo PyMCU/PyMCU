@@ -115,6 +115,55 @@ zero; NaN and Inf propagate correctly.
 
 ---
 
+## Pointer arithmetic
+
+`ptr[T]` in PyMCU is a **compile-time constant address alias**, not a runtime pointer.
+It is equivalent to a C volatile register macro:
+
+```c
+// C: compile-time constant pointer — what ptr[T] models
+volatile uint8_t* const PINB = (volatile uint8_t*)0x36;
+```
+
+This means the following operations are **not supported**:
+
+| Operation | Example | Why it fails |
+|---|---|---|
+| Pointer advance | `p = p + 1` | `ptr` has no runtime address value |
+| Variable-index dereference | `p[i]` where `i` is a runtime variable | `ptr` address is baked in at compile time |
+| Pointer as function parameter | `def f(p: ptr[uint8])` | No `ptr` variable type in ABI |
+| Pointer difference | `p - q` | Not in IR |
+
+**Idiomatic alternative — fixed arrays with variable index:**
+
+```python
+buf: uint8[16] = [0] * 16
+i: uint8 = 0
+while i < 16:
+    buf[i] = compute(i)   # compiles to: LDD / STD with Y+offset
+    i = i + 1
+```
+
+`uint8[N]` arrays with a runtime index already compile to efficient `ld`/`st` with
+Y+offset addressing on AVR — no pointer arithmetic needed.
+
+**For performance-critical pointer walks in asm:** use the Z register (`r30:r31`)
+with `ld r24, Z+` / `st Z+, r24` for auto-increment through a buffer.
+
+```python
+asm("""
+ldi  r30, lo8(my_buf)
+ldi  r31, hi8(my_buf)
+ldi  r18, 16          ; length
+_loop:
+    ld   r24, Z+      ; load byte and advance pointer
+    ...
+    dec  r18
+    brne _loop
+""")
+
+---
+
 ## Iterators and comprehensions
 
 | Feature | Why it fails | Alternative |

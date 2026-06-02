@@ -76,7 +76,7 @@ root.SetAction(pr =>
     try { doc = ProfilerRunner.Run(hexContent, symbols, cyclesToRun, name, debug, taskIdAddr); }
     catch (Exception ex) { Console.Error.WriteLine($"[ERROR] Simulation failed: {ex.Message}"); Environment.ExitCode = 1; return; }
 
-    try { File.WriteAllText(output, doc.ToJson(name)); }
+    try { File.WriteAllText(output, doc.ToJson(name, freq)); }
     catch (Exception ex) { Console.Error.WriteLine($"[ERROR] Cannot write output: {ex.Message}"); Environment.ExitCode = 1; return; }
 
     Console.WriteLine($"[DONE] {output}  ({doc.Samples.Count} samples, {doc.Frames.Count} frames)");

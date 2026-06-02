@@ -325,9 +325,21 @@ def profile(
     try:
         with open(output) as f:
             profile_data = json.load(f)
-        p = profile_data["profiles"][0]
+        # Use the last profile (merged) for the summary — per-task profiles come first.
+        p = profile_data["profiles"][-1]
         end_value = int(p["endValue"])
-        total_ms = end_value / freq * 1000
+        unit = p.get("unit", "none")
+        if unit == "nanoseconds":
+            total_ms = end_value / 1_000_000
+        elif unit == "microseconds":
+            total_ms = end_value / 1_000
+        elif unit == "milliseconds":
+            total_ms = end_value
+        elif unit == "seconds":
+            total_ms = end_value * 1_000
+        else:
+            # Legacy "none" — endValue was in cycles
+            total_ms = end_value / freq * 1000
         samples = p.get("samples", [])
         max_depth = max((len(s) for s in samples), default=0)
         console.print(

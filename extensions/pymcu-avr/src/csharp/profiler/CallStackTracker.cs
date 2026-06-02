@@ -43,10 +43,14 @@ public sealed class CallStackTracker
     // enabling correct N-task context switching without any call-graph heuristics.
     private readonly uint? _taskIdAddr;
 
-    // Sampled profile data: parallel lists of stack snapshots and their weights.
+    // Sampled profile data: parallel lists of stack snapshots, weights, and task IDs.
     private readonly List<int[]> _samples = new();
     private readonly List<long> _weights = new();
+    private readonly List<int> _sampleTaskIds = new();    // which task owns each sample
     private ulong _lastSampleCycles = 0;
+
+    // Per-task display name (root frame name for each task slot).
+    private readonly Dictionary<int, string> _taskNames = new();
 
     // Sample every 500 cycles (~31 µs at 16 MHz). For a 5-second simulation this
     // yields ~160 000 samples, which is well within speedscope's capacity.
@@ -81,20 +85,31 @@ public sealed class CallStackTracker
     public void OnInstruction(uint pc, ulong cycles)
     {
         // Hardware ISR detection: PC jumped to the vector table without a CALL.
-        if (_initialized && pc != _prevExpectedNextPc
-            && pc >= VectorMin && pc <= VectorMax)
+        if (_initialized && pc >= VectorMin && pc <= VectorMax)
         {
-            var vecOp = _cpu.ProgramMemory[(int)pc];
-            if ((vecOp & 0xF000) == 0xC000) // RJMP at vector slot
+            if (pc != _prevExpectedNextPc)
             {
-                var k = (int)(vecOp & 0x0FFF);
-                if ((k & 0x0800) != 0) k -= 0x1000; // sign-extend 12-bit
-                var isrAddr = (uint)((int)(pc + 1) + k);
-                var isrName = _symbols.Resolve(isrAddr);
-                if (DebugTrace)
-                    Console.Error.WriteLine($"[ISR]  pc={pc:x4} → isrAddr={isrAddr:x4} name={isrName} task={_activeTask} depth_before={_callStack.Count}");
-                PushFrame(isrName, pc);
-                _inIsr = true;
+                var vecOp = _cpu.ProgramMemory[(int)pc];
+                if ((vecOp & 0xF000) == 0xC000) // RJMP at vector slot
+                {
+                    var k = (int)(vecOp & 0x0FFF);
+                    if ((k & 0x0800) != 0) k -= 0x1000; // sign-extend 12-bit
+                    var isrAddr = (uint)((int)(pc + 1) + k);
+                    var isrName = _symbols.Resolve(isrAddr);
+                    if (DebugTrace)
+                        Console.Error.WriteLine($"[ISR]  pc={pc:x4} → isrAddr={isrAddr:x4} name={isrName} task={_activeTask} depth_before={_callStack.Count}");
+                    PushFrame(isrName, pc);
+                    _inIsr = true;
+                }
+                else if (DebugTrace)
+                {
+                    var vecOp2 = _cpu.ProgramMemory[(int)pc];
+                    Console.Error.WriteLine($"[VEC?] pc={pc:x4} op=0x{vecOp2:X4} prevExpected={_prevExpectedNextPc:x4} — vector entry without RJMP (null-ISR or RETI at vector)");
+                }
+            }
+            else if (DebugTrace)
+            {
+                Console.Error.WriteLine($"[VEC-SEQ] pc={pc:x4} — vector table reached sequentially (prevExpected=={pc:x4}), ISR detection skipped");
             }
         }
         // Tail-call / RJMP-to-function detection: PC discontinuity outside the vector
@@ -173,6 +188,16 @@ public sealed class CallStackTracker
 
                 if (DebugTrace)
                     Console.Error.WriteLine($"[TOGGLE] now task={_activeTask} depth={_callStack.Count} top={(_callStack.Count > 0 ? _callStack.Peek().Name : "<empty>")}");
+            }
+            else if (op == 0x9518 && pc >= VectorMin && pc <= VectorMax)
+            {
+                // Null-ISR: a RETI directly in the vector table (unused vector slot
+                // filled with RETI as a safety handler).  The hardware interrupt fired
+                // but no frame was pushed for it (the ISR-detection code requires an
+                // RJMP at the slot); ignore this RETI entirely so the task stacks are
+                // not corrupted by spurious interrupt-vector activity.
+                if (DebugTrace)
+                    Console.Error.WriteLine($"[NULL-ISR] pc={pc:x4} spurious RETI in vector table — ignored");
             }
             else
             {
@@ -338,16 +363,49 @@ public sealed class CallStackTracker
         {
             _samples.Add(stack);
             _weights.Add(weight);
+            _sampleTaskIds.Add(_activeTask);
+
+            // Record the first tracked root frame seen for this task slot as its display name.
+            if (!_taskNames.ContainsKey(_activeTask))
+                _taskNames[_activeTask] = _frames[stack[0]];
         }
     }
 
     public SpeedscopeDocument Finalize(ulong endCycles)
     {
         RecordSample(endCycles);
+
+        // Build per-task sample/weight lists so each task gets its own profile.
+        var perTask = new Dictionary<int, (List<int[]> Samples, List<long> Weights)>();
+        for (int i = 0; i < _samples.Count; i++)
+        {
+            var tid = _sampleTaskIds[i];
+            if (!perTask.TryGetValue(tid, out var pair))
+            {
+                pair = (new List<int[]>(), new List<long>());
+                perTask[tid] = pair;
+            }
+            pair.Samples.Add(_samples[i]);
+            pair.Weights.Add(_weights[i]);
+        }
+
+        var taskProfiles = perTask
+            .OrderBy(kv => kv.Key)
+            .Select(kv =>
+            {
+                _taskNames.TryGetValue(kv.Key, out var name);
+                return new TaskProfile(
+                    Name: name ?? $"task{kv.Key}",
+                    Samples: kv.Value.Samples,
+                    Weights: kv.Value.Weights);
+            })
+            .ToList();
+
         return new SpeedscopeDocument(
             frames: _frames.Select(n => new SpeedscopeFrame(n)).ToList(),
             samples: _samples,
             weights: _weights,
-            endValue: (long)endCycles);
+            endCycles: (long)endCycles,
+            taskProfiles: taskProfiles);
     }
 }

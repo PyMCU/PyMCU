@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 namespace PyMCU.AVR.Profiler;
 
 public record SpeedscopeFrame(string Name);
+public record TaskProfile(string Name, List<int[]> Samples, List<long> Weights);
 
 // ── Serialization model (sampled format) ─────────────────────────────────────
 
@@ -37,36 +38,68 @@ public sealed class SpeedscopeDocument
 {
     public List<SpeedscopeFrame> Frames { get; }
     public List<int[]> Samples { get; }
+    // Weights are stored in CPU cycles; ToJson converts them to nanoseconds.
     public List<long> Weights { get; }
-    public long EndValue { get; }
+    public long EndCycles { get; }
+    public List<TaskProfile> TaskProfiles { get; }
 
     public SpeedscopeDocument(
         List<SpeedscopeFrame> frames,
         List<int[]> samples,
         List<long> weights,
-        long endValue)
+        long endCycles,
+        List<TaskProfile>? taskProfiles = null)
     {
         Frames = frames;
         Samples = samples;
         Weights = weights;
-        EndValue = endValue;
+        EndCycles = endCycles;
+        TaskProfiles = taskProfiles ?? [];
     }
 
-    public string ToJson(string profileName = "firmware (ATmega328P @ 16MHz)")
+    public string ToJson(string profileName = "firmware (ATmega328P @ 16MHz)", uint freq = 16_000_000)
     {
+        // Convert cycle-based weights and endValue to nanoseconds so speedscope
+        // displays a real-time axis in the Time Order / Left Heavy views.
+        static long CyclesToNs(long cycles, uint hz) => cycles * 1_000_000_000L / hz;
+
+        var nsEndValue = CyclesToNs(EndCycles, freq);
+
+        // Per-task profiles: each task gets its own tab in speedscope.
+        // endValue = sum of that task's active weights so the timeline represents
+        // only the CPU time this task actually consumed.
+        var profiles = new List<SpeedscopeProfileDto>();
+        foreach (var tp in TaskProfiles)
+        {
+            var nsWeights  = tp.Weights.Select(w => CyclesToNs(w, freq)).ToList();
+            var taskEndNs  = nsWeights.Sum();
+            profiles.Add(new SpeedscopeProfileDto(
+                Type: "sampled",
+                Name: tp.Name,
+                Unit: "nanoseconds",
+                StartValue: 0L,
+                EndValue: taskEndNs,
+                Samples: tp.Samples,
+                Weights: nsWeights));
+        }
+
+        // Merged profile last (shows combined CPU usage across all tasks).
+        if (Samples.Count > 0)
+        {
+            var mergedWeights = Weights.Select(w => CyclesToNs(w, freq)).ToList();
+            profiles.Add(new SpeedscopeProfileDto(
+                Type: "sampled",
+                Name: profileName,
+                Unit: "nanoseconds",
+                StartValue: 0L,
+                EndValue: nsEndValue,
+                Samples: Samples,
+                Weights: mergedWeights));
+        }
+
         var dto = new SpeedscopeRootDto(
             Schema: "https://www.speedscope.app/file-format-schema.json",
-            Profiles:
-            [
-                new SpeedscopeProfileDto(
-                    Type: "sampled",
-                    Name: profileName,
-                    Unit: "none",
-                    StartValue: 0L,
-                    EndValue: EndValue,
-                    Samples: Samples,
-                    Weights: Weights)
-            ],
+            Profiles: profiles,
             Shared: new SpeedscopeSharedDto(
                 Frames: Frames.Select(f => new SpeedscopeFrameDto(f.Name)).ToList()));
 
