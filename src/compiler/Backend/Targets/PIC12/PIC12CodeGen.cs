@@ -175,11 +175,11 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfLessOrEqual arg: CompileJumpIfLessOrEqual(arg); break;
             case JumpIfGreaterThan arg: CompileJumpIfGreaterThan(arg); break;
             case JumpIfGreaterOrEqual arg: CompileJumpIfGreaterOrEqual(arg); break;
-            case AugAssign: throw new NotSupportedException("PIC12: AugAssign is not yet implemented");
+            case AugAssign arg: CompileAugAssign(arg); break;
             case LoadIndirect:
-                throw new NotSupportedException("PIC12: pointer dereference (LoadIndirect) is not supported");
+                throw new NotSupportedException("PIC12: LoadIndirect not supported — PIC12 baseline has no indirect-addressing register");
             case StoreIndirect:
-                throw new NotSupportedException("PIC12: pointer dereference (StoreIndirect) is not supported");
+                throw new NotSupportedException("PIC12: StoreIndirect not supported — PIC12 baseline has no indirect-addressing register");
             case InlineAsm arg: _assembly.Add(PIC12AsmLine.MakeRaw(arg.Code)); break;
             case DebugLine arg:
                 if (!string.IsNullOrEmpty(arg.SourceFile))
@@ -605,5 +605,20 @@ public class PIC12CodeGen(DeviceConfig cfg) : CodeGen
         Emit("SUBWF", s1, "W");
         Emit("BTFSC", "STATUS", "0");
         Emit("GOTO", arg.Target);
+    }
+
+    private void CompileAugAssign(AugAssign aa)
+    {
+        string addr = ResolveAddress(aa.Target);
+        LoadIntoW(aa.Operand);
+        switch (aa.Op)
+        {
+            case PyMCU.IR.BinaryOp.Add:    Emit("ADDWF", addr, "F"); break;
+            case PyMCU.IR.BinaryOp.Sub:    Emit("SUBWF", addr, "F"); break;
+            case PyMCU.IR.BinaryOp.BitAnd: Emit("ANDWF", addr, "F"); break;
+            case PyMCU.IR.BinaryOp.BitOr:  Emit("IORWF", addr, "F"); break;
+            case PyMCU.IR.BinaryOp.BitXor: Emit("XORWF", addr, "F"); break;
+            default: throw new NotSupportedException($"PIC12: AugAssign {aa.Op} not supported on PIC12 baseline");
+        }
     }
 }
