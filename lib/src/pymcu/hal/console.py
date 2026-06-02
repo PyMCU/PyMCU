@@ -30,3 +30,14 @@ def print_u8(value: uint8):
             uart_write_decimal_u8(value)
         case _:
             pass
+
+
+@inline
+def print_float(value: float):
+    # Arch-dispatched float output (one decimal place).
+    match __CHIP__.arch:
+        case "avr":
+            from pymcu.hal._uart.avr import uart_write_float
+            uart_write_float(value)
+        case _:
+            pass
