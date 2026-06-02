@@ -30,8 +30,14 @@ public static class Optimizer
             ExternSymbols = new List<string>(program.ExternSymbols),
         };
 
+        // Build the set of global variable names so EliminateDeadVariableStores
+        // never removes stores to module-level globals (they are read by other functions).
+        var globalNames = new HashSet<string>(optimized.Globals.Select(g => g.Name));
+        foreach (var arrName in optimized.GlobalArrays.Keys)
+            globalNames.Add(arrName);
+
         foreach (var func in optimized.Functions)
-            OptimizeFunction(func);
+            OptimizeFunction(func, globalNames);
 
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
@@ -94,13 +100,13 @@ private static Function CloneFunction(Function f)
     };
 }
 
-    private static void OptimizeFunction(Function func)
+    private static void OptimizeFunction(Function func, HashSet<string>? globalNames = null)
     {
         for (var i = 0; i < 10; ++i)
         {
             PropagateCopies(func);
             FoldConstants(func);
-            EliminateDeadVariableStores(func);
+            EliminateDeadVariableStores(func, globalNames);
             CoalesceInstructions(func);
 
             var cfg = BuildCfg(func);
@@ -115,7 +121,7 @@ private static Function CloneFunction(Function f)
             {
                 PropagateCopies(func);
                 FoldConstants(func);
-                EliminateDeadVariableStores(func);
+                EliminateDeadVariableStores(func, globalNames);
                 CoalesceInstructions(func);
                 var cfg2 = BuildCfg(func);
                 EliminateDeadCodeCfg(cfg2);
@@ -142,7 +148,7 @@ private static Function CloneFunction(Function f)
     /// hardware I/O and must never be removed. AugAssign targets appear as
     /// uses in RegisterUses so they are never mistakenly eliminated.
     /// </summary>
-    private static void EliminateDeadVariableStores(Function func)
+    private static void EliminateDeadVariableStores(Function func, HashSet<string>? globalNames = null)
     {
         var readVars = new HashSet<string>();
         foreach (var instr in func.Body)
@@ -165,6 +171,10 @@ private static Function CloneFunction(Function f)
                 // are observable side effects read by asm or cross-function via SRAM.
                 if (instr is Copy cp2 && cp2.Dst is Variable dv2 && dv2.Type == DataType.FUNCREF)
                     return true;
+                // Never eliminate stores to module-level globals — they are observable
+                // side effects read by other functions in the program (e.g. randomSeed
+                // writing to _state which is read by random()).
+                if (globalNames != null && globalNames.Contains(vDst.Name)) return true;
                 return false;
             })
             .ToList();
