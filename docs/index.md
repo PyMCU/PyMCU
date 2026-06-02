@@ -77,6 +77,8 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 | Heap | None | Yes | Yes | **None** |
 | Flash footprint | Small | Large | Large | **Minimal** |
 | Static types | No | No | No | **Yes (required)** |
+| Source debugger | — | serial only | serial only | **VS Code DAP** |
+| CPU profiler | — | — | — | **Speedscope flamegraph** |
 
 ---
 

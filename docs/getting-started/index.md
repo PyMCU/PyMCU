@@ -7,4 +7,5 @@ Get PyMCU installed and compile your first firmware in under five minutes.
 
 installation
 quickstart
+debugging
 ```
