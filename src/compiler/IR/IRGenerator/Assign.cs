@@ -430,7 +430,10 @@ public partial class IRGenerator
                             {
                                 if (value is Temporary tmp) type = tmp.Type;
                                 else if (value is Variable vv) type = vv.Type;
+                                else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
                                 variableTypes[qualifiedName] = type;
+                                if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
+                                    Console.Error.WriteLine($"[infer] '{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
                             }
 
                             target = new Variable(qualifiedName, type);
