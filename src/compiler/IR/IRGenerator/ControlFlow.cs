@@ -17,6 +17,7 @@
 using PyMCU.Frontend;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
 using PyMCU.IR;
+using PyMCU.Common;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -659,6 +660,11 @@ public partial class IRGenerator
 
     private void VisitRaise(RaiseStmt stmt)
     {
+        if (stmt.ErrorType == "CompileError")
+        {
+            string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
+            throw new ArchitectureError(msg, stmt.Line, 0);
+        }
         Val code = ResolveBinding(stmt.ErrorType);
         exnExterns.Add("longjmp");
         Emit(new RaiseExn(code));
@@ -668,6 +674,8 @@ public partial class IRGenerator
     {
         exnExterns.Add("setjmp");
         exnExterns.Add("longjmp");
+        bool hasFinally = stmt.Finally != null && stmt.Finally.Count > 0;
+
         string catchLabel = MakeLabel();
         string afterLabel = MakeLabel();
 
@@ -685,29 +693,49 @@ public partial class IRGenerator
         foreach (var s in stmt.Body)
             VisitStatement(s);
 
+        // Normal (no exception) exit: run finally block (if any), then skip catch section.
+        EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
+
         Emit(new Label(catchLabel));
 
         // Dispatch to the matching handler by comparing exnCode.
         for (int i = 0; i < stmt.Handlers.Count; i++)
         {
             var (exnType, handlerBody) = stmt.Handlers[i];
-            string nextLabel = i + 1 < stmt.Handlers.Count ? MakeLabel() : afterLabel;
+            string skipLabel = MakeLabel();
 
             Val expectedCode = ResolveBinding(exnType);
             Val matchTemp = MakeTemp(DataType.UINT8);
             Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
-            Emit(new JumpIfZero(matchTemp, nextLabel));
+            Emit(new JumpIfZero(matchTemp, skipLabel));
 
             foreach (var s in handlerBody)
                 VisitStatement(s);
 
+            EmitFinallyBody(stmt);
             Emit(new Jump(afterLabel));
 
-            if (i + 1 < stmt.Handlers.Count)
-                Emit(new Label(nextLabel));
+            Emit(new Label(skipLabel));
         }
 
+        // Unmatched exception path (no handler matched, or try/finally with no handlers):
+        // if finally exists, run it first, then call __pymcu_unhandled_exn.
+        // Clear active jmpbuf before calling so a nested raise doesn't loop back here.
+        if (hasFinally)
+        {
+            EmitFinallyBody(stmt);
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+        }
+        // else: fall through to afterLabel (v1: unmatched exception silently ignored)
+
         Emit(new Label(afterLabel));
+    }
+
+    private void EmitFinallyBody(TryStmt stmt)
+    {
+        if (stmt.Finally == null) return;
+        foreach (var s in stmt.Finally)
+            VisitStatement(s);
     }
 }

@@ -33,3 +33,6 @@ public class IndentationError(string message, int line, int column, int length =
 
 public class LexicalError(string message, int line, int column, int length = 1)
     : CompilerError("LexicalError", message, line, column, length);
+
+public class ArchitectureError(string message, int line, int column, int length = 1)
+    : CompilerError("CompileError", message, line, column, length);
