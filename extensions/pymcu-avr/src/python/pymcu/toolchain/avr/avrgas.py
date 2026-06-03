@@ -286,17 +286,17 @@ class AvrgasToolchain(ExternalToolchain):
             )
 
     # ------------------------------------------------------------------
-    # AVRA → GNU AS syntax translation
+    # Compiler output → GNU AS syntax translation
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _avra_to_gnuas(src: str) -> str:
+    def _preprocess_asm(src: str) -> str:
         """
-        Translate AVRA-specific directives to GNU AS (avr-as) equivalents.
+        Translate compiler output directives to GNU AS (avr-as) equivalents.
 
         Key differences:
           .equ LABEL = VALUE   →  .equ LABEL, VALUE
-          .org WORD_ADDR       →  .org BYTE_ADDR  (multiply by 2: AVRA is word-addressed)
+          .org WORD_ADDR       →  .org BYTE_ADDR  (multiply by 2: compiler uses word addresses)
           high(EXPR)           →  hi8(EXPR)
           low(EXPR)            →  lo8(EXPR)
           .db BYTES            →  .byte BYTES
@@ -395,7 +395,7 @@ class AvrgasToolchain(ExternalToolchain):
 
         # Translate AVRA-specific syntax to GNU AS before assembling
         src = asm_file.read_text()
-        translated = self._avra_to_gnuas(src)
+        translated = self._preprocess_asm(src)
         asm_file.write_text(translated)
 
         cmd = [

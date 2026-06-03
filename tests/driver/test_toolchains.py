@@ -16,7 +16,6 @@ import pytest
 from rich.console import Console
 from pymcu.toolchain.avr.avrgas import AvrgasToolchain
 from pymcu.toolchain.pic.gputils import GputilsToolchain
-from pymcu.toolchain.avr.avra import AvraToolchain
 from pymcu.toolchain.avr import AvrToolchainPlugin
 from pymcu.toolchain.pic import PicToolchainPlugin
 from src.driver.toolchains import get_toolchain_for_chip, discover_plugins
@@ -130,11 +129,6 @@ class TestGetToolchainForChip:
         with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
             tc = get_toolchain_for_chip("pic16f84a", Console(quiet=True))
         assert isinstance(tc, GputilsToolchain)
-
-    def test_avra_not_in_factory(self):
-        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
-            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
-        assert not isinstance(tc, AvraToolchain)
 
     def test_unknown_chip_raises(self):
         with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):

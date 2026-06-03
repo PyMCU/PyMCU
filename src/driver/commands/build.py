@@ -587,7 +587,7 @@ def build(
 
         # 1. Factory: Get the appropriate toolchain strategy.
         # When [tool.pymcu.ffi] sources are declared the GNU binutils pipeline
-        # (avr-as + avr-ld + avr-objcopy) is used instead of avra.
+        # (avr-as + avr-ld + avr-objcopy) is used.
         if use_ffi:
             try:
                 toolchain = get_ffi_toolchain_for_chip(target, console)
@@ -717,11 +717,10 @@ def build(
                         console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {pic_arch}")
 
                 # AVR Math Runtime Injection
-                # If we are targeting AVR, we need to assemble and link the math runtime
-                # Since AVRA doesn't support linking multiple objects easily like ld,
-                # we will append the math assembly source directly to the output file
+                # If we are targeting AVR, we need to assemble and link the math runtime.
+                # Append the math assembly source directly to the output file
                 # if the compiler emitted calls to __div8, __mod8, etc.
-                if toolchain.get_name() in ("avra", "avr-as"):
+                if toolchain.get_name() == "avr-as":
                     progress.update(build_task, description="Injecting AVR Math Runtime...")
                     avr_math_path = math_lib_path / "avr"
                     
@@ -866,43 +865,12 @@ def build(
                         firmware_obj.unlink()
 
                 else:
-                    # ── Standard avra pipeline with linker-relaxation ─────────────────
-                    import re as _re
+                    # ── Generic toolchain assembly (e.g. gputils/PIC) ──────────────────
                     last_exc = None
-                    # Linker-relaxation loop: start with RJMP/RCALL (1 word, ±2047 range).
-                    # If AVRA reports out-of-range errors at specific lines, upgrade only
-                    # those instructions to JMP/CALL (2 words, full 22-bit range) and retry.
-                    for _pass in range(8):
-                        try:
-                            hex_file = toolchain.assemble(output_file)
-                            _diag_log(f"avra: Generated hex_file on pass {_pass}: {hex_file}", verbose=is_verbose)
-                            _diag_log(f"avra: hex_file exists: {hex_file.exists() if hex_file else 'None'}", verbose=is_verbose)
-                            if hex_file and hex_file.exists():
-                                _diag_log(f"avra: hex_file size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
-                            break
-                        except RuntimeError as e:
-                            err_str = str(e)
-                            if "out of range" not in err_str.lower() or toolchain.get_name() != "avra":
-                                last_exc = e
-                                break
-                            bad_lines = set(
-                                int(m) - 1
-                                for m in _re.findall(r"\((\d+)\)", err_str)
-                            )
-                            if not bad_lines:
-                                last_exc = e
-                                break
-                            with open(output_file, "r") as f:
-                                asm_lines = f.readlines()
-                            for idx in bad_lines:
-                                if 0 <= idx < len(asm_lines):
-                                    ln = asm_lines[idx]
-                                    ln = ln.replace("\tRCALL\t", "\tCALL\t")
-                                    ln = ln.replace("\tRJMP\t",  "\tJMP\t")
-                                    asm_lines[idx] = ln
-                            with open(output_file, "w") as f:
-                                f.writelines(asm_lines)
-                            last_exc = e
+                    try:
+                        hex_file = toolchain.assemble(output_file)
+                    except RuntimeError as e:
+                        last_exc = e
                     if hex_file is None:
                         progress.stop()
                         console.print(f"[bold red]Assembly Error:[/bold red] {last_exc}")
@@ -917,31 +885,8 @@ def build(
 
             progress.update(build_task, completed=90)
 
-            # Step 2.5: Flash size report (HEX parse) + optional ELF generation
-            if toolchain.get_name() == "avra":
-                progress.update(build_task, description="Reporting size...")
-                flash_bytes = _parse_hex_flash_bytes(hex_file)
-                if flash_bytes > 0:
-                    flash_total = FLASH_SIZES.get(target.lower(), 0)
-                    if flash_total:
-                        pct = flash_bytes * 100 // flash_total
-                        console.print(
-                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
-                            f"({pct}% of program storage)"
-                        )
-                    else:
-                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
-
-                # Optional ELF conversion for debug tooling (avr-objcopy)
-                link_result = toolchain.link(hex_file, target, output_dir)
-                if link_result:
-                    elf_path, _ = link_result
-                    debug_dir = output_dir / "debug"
-                    if not debug_dir.exists():
-                        debug_dir.mkdir(parents=True)
-                    shutil.move(str(elf_path), str(debug_dir / elf_path.name))
-            elif hex_file is not None:
-                # Flash size report for avr-as builds (FFI or non-FFI).
+            # Step 2.5: Flash size report (HEX parse)
+            if hex_file is not None:
                 progress.update(build_task, description="Reporting size...")
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:
