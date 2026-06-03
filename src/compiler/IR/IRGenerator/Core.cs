@@ -236,6 +236,12 @@ public partial class IRGenerator
             constantVariables["__FREQUENCY__"] = (int)config.Frequency;
         }
 
+        constantVariables["ValueError"]          = 1;
+        constantVariables["TypeError"]           = 2;
+        constantVariables["IndexError"]          = 3;
+        constantVariables["KeyError"]            = 4;
+        constantVariables["NotImplementedError"] = 5;
+
         foreach (var imp in mainAst.Imports)
         {
             if (imp.ModuleName == "pymcu.types")

@@ -1,5 +1,6 @@
-# Exception type codes (uint8 constants).
-# Used with try/except and raise in PyMCU programs.
+# Exception type codes -- builtins, no import required.
+# These are pre-defined by the compiler identically to True/False/None.
+# Kept here only for IDEs and explicit imports from library code.
 ValueError: const = 1
 TypeError: const = 2
 IndexError: const = 3
