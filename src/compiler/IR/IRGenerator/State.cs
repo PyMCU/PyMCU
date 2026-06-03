@@ -99,6 +99,9 @@ public partial class IRGenerator
     // @extern("symbol") registrations: Whipsnake function name -> C symbol name.
     private Dictionary<string, string?> externFunctionMap = new();
 
+    // Exception-related extern symbols to add to the program (e.g. _setjmp, longjmp).
+    private HashSet<string> exnExterns = new();
+
     private List<FunctionEntry> functionsToCompile = new();
     private Dictionary<string, int> stringLiteralIds = new();
     private Dictionary<int, string?> stringIdToStr = new(); // reverse map: id → string value

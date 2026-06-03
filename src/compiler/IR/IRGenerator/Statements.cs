@@ -339,7 +339,11 @@ public partial class IRGenerator
         }
         else if (stmt is RaiseStmt raiseStmt)
         {
-            throw new Exception($"{raiseStmt.ErrorType}: {raiseStmt.Message}");
+            VisitRaise(raiseStmt);
+        }
+        else if (stmt is TryStmt tryStmt)
+        {
+            VisitTry(tryStmt);
         }
         else
         {

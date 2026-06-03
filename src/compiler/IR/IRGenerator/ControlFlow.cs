@@ -16,6 +16,7 @@
 
 using PyMCU.Frontend;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
+using PyMCU.IR;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -654,5 +655,59 @@ public partial class IRGenerator
     {
         if (loopStack.Count == 0) throw new Exception("Continue statement outside of loop");
         Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).ContinueLabel));
+    }
+
+    private void VisitRaise(RaiseStmt stmt)
+    {
+        Val code = ResolveBinding(stmt.ErrorType);
+        exnExterns.Add("longjmp");
+        Emit(new RaiseExn(code));
+    }
+
+    private void VisitTry(TryStmt stmt)
+    {
+        exnExterns.Add("setjmp");
+        exnExterns.Add("longjmp");
+        string catchLabel = MakeLabel();
+        string afterLabel = MakeLabel();
+
+        // Allocate a 22-byte jmpbuf and exception-code variable in the function frame.
+        string jmpBufName = currentFunction + ".__jmpbuf__";
+        variableTypes[jmpBufName] = DataType.UINT8;
+        string exnCodeName = currentFunction + ".__exn_code__";
+        variableTypes[exnCodeName] = DataType.UINT8;
+
+        Val jmpBuf = new Variable(jmpBufName, DataType.UINT8);
+        Val exnCode = new Variable(exnCodeName, DataType.UINT8);
+
+        Emit(new TryBegin(jmpBuf, catchLabel, exnCode));
+
+        foreach (var s in stmt.Body)
+            VisitStatement(s);
+
+        Emit(new Jump(afterLabel));
+        Emit(new Label(catchLabel));
+
+        // Dispatch to the matching handler by comparing exnCode.
+        for (int i = 0; i < stmt.Handlers.Count; i++)
+        {
+            var (exnType, handlerBody) = stmt.Handlers[i];
+            string nextLabel = i + 1 < stmt.Handlers.Count ? MakeLabel() : afterLabel;
+
+            Val expectedCode = ResolveBinding(exnType);
+            Val matchTemp = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+            Emit(new JumpIfZero(matchTemp, nextLabel));
+
+            foreach (var s in handlerBody)
+                VisitStatement(s);
+
+            Emit(new Jump(afterLabel));
+
+            if (i + 1 < stmt.Handlers.Count)
+                Emit(new Label(nextLabel));
+        }
+
+        Emit(new Label(afterLabel));
     }
 }

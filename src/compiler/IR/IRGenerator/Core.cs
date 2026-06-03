@@ -623,8 +623,19 @@ public partial class IRGenerator
             }
         }
 
+        foreach (var sym in exnExterns)
+            if (seenExtern.Add(sym))
+                irProgram.ExternSymbols.Add(sym);
+
+        // If any try/raise was emitted, allocate the global 2-byte active-jmpbuf pointer.
+        if (exnExterns.Count > 0)
+        {
+            irProgram.Globals.Add(new Variable("__pymcu_active_jmpbuf", DataType.UINT16));
+        }
+
         loopStack.Clear();
         externFunctionMap.Clear();
+        exnExterns.Clear();
         return irProgram;
     }
 
