@@ -26,6 +26,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return |
 | `pass` / `raise` | `raise ExnType` emits `longjmp` to active handler; see `pymcu.exceptions` |
+| `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
 | `global` | Cross-function variable access |
 
@@ -419,7 +420,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 |---------|--------|
 | Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32-2048 bytes SRAM |
 | Garbage collection | No runtime |
-| `try` / `except` / `raise` / `finally` | ✅ Implemented (AVR — avr-libc setjmp/longjmp; `pymcu.exceptions` constants; single nesting level per function) |
+| `try` / `except` / `raise` / `finally` | ✅ Implemented (AVR — avr-libc setjmp/longjmp; `pymcu.exceptions` constants; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts — only emitted for exception types actually raised) |
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `float` / `complex` / `Decimal` | Use `fixed16` when available |
 | `f"..."` runtime interpolation | Compile-time only (constants only) |

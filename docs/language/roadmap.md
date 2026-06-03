@@ -26,6 +26,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `global` / `nonlocal` | Cross-function variable access; `nonlocal` in `@inline` |
+| `try / except / raise / finally` | AVR only; `setjmp`/`longjmp`; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
@@ -70,6 +71,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `float` (soft-float) | IEEE 754 single-precision; AVR only; uses `__fp_add/sub/mul/div/cmp` intrinsics; annotation `x: float = 3.14` supported |
 | `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
 | `@staticmethod` | Silently ignored — all class methods in PyMCU are effectively static |
+| `CompileError` intrinsic | `raise CompileError("msg")` aborts compilation with a `CompileError:` diagnostic; never generates `RaiseExn` IR; used in all HAL modules for unsupported arch/chip guards; cannot be caught by `try/except` |
 
 ### HAL (ATmega328P)
 

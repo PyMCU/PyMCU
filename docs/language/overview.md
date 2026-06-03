@@ -28,7 +28,11 @@ PyMCU accepts a statically-typed, allocation-free subset of Python 3. The guidin
 ### Supported statements
 
 `if / elif / else`, `while`, `for`, `match / case`, `def`, `class`, `return`, `pass`,
-`import`, `from … import`, `global`, `with`, `assert` (compile-time), `raise` (compile-time).
+`import`, `from … import`, `global`, `with`, `assert` (compile-time),
+`try / except / finally`, `raise`.
+
+`raise CompileError("msg")` aborts compilation with a diagnostic — it never generates runtime
+code and cannot be caught by `try / except`.
 
 ### Supported expressions
 

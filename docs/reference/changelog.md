@@ -1,6 +1,42 @@
 # Changelog
 
-## v0.1 — First Public Alpha
+## Unreleased
+
+### Language
+
+- `try / except / raise / finally` — AVR targets via avr-libc `setjmp`/`longjmp`; single
+  nesting level per function; exception codes imported from `pymcu.exceptions`
+- `CompileError` intrinsic — `raise CompileError("msg")` aborts compilation with a
+  `CompileError:` diagnostic; never generates runtime code; used in HAL modules for
+  unsupported arch/chip guards; cannot be caught by `try/except`
+- `NotImplementedError` added to `pymcu.exceptions` (code 5)
+
+### Compiler
+
+- HAL ZCA configuration parameters typed as `const` — `Pin(name, mode)` now requires
+  `mode: const[uint8]`; `if mode == 2:` branches fold at compile time; open-drain mode
+  on unsupported targets aborts with `CompileError: Open-drain mode not supported on AVR`
+- `ArchitectureError` C# class — maps `raise CompileError(...)` in Python source to a
+  compiler diagnostic with `TypeName = "CompileError"`; emitted by all HAL modules for
+  unsupported arch/chip combinations
+
+### AVR backend
+
+- Unhandled exception UART output — when a `raise` reaches `__pymcu_unhandled_exn` with no
+  active `except` handler, the runtime prints `"E:<TypeName>\r\n"` to UART0 (if initialized)
+  then halts with `cli; rjmp .-2`; only exception types actually raised in the program have
+  their name strings emitted in flash; no overhead when no `raise` is present in the program;
+  chips without standard UART0 (attiny85 etc.) emit only the halt loop
+
+### HAL
+
+- `pymcu.hal.spi`, `pymcu.hal.eeprom`, `pymcu.hal.watchdog`, `pymcu.hal.power` — all
+  unsupported arch/chip fallbacks now raise `CompileError` (replaces silent `return 0` /
+  missing defaults); all `match __CHIP__` blocks have `case _:` guards
+
+---
+
+
 
 ### Language
 

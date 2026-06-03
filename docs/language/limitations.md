@@ -52,14 +52,63 @@ compile-time constants, `const[str]` runtime subscript (reads byte from flash).
 
 ## Exception handling
 
-| Feature | Why it fails | Alternative |
-|---|---|---|
-| `try / except` | Exception table + unwinding stack | Return error codes; `match/case` |
-| `raise` (runtime) | No exception runtime | `return ERROR_CODE` |
-| `finally` | Requires exception unwinding | Restructure control flow |
+`try / except / raise / finally` are **supported** on AVR targets via avr-libc
+`setjmp` / `longjmp`. No stack unwinding — the handler is a simple `longjmp` destination.
+
+```python
+from pymcu.exceptions import ValueError
+
+try:
+    if val > 255:
+        raise ValueError
+except ValueError:
+    handle_error()
+finally:
+    cleanup()
+```
+
+**Limitations:**
+
+| Limitation | Notes |
+|---|---|
+| Single nesting level per function | No nested `try` blocks within the same function scope |
+| AVR only | PIC18 and other backends: use return error codes instead |
+| Exception types are integer codes | Import from `pymcu.exceptions`; no message strings at runtime |
+
+**`CompileError` — compile-time intrinsic:**
+
+`raise CompileError("msg")` is intercepted by the compiler and **aborts compilation** with a
+`CompileError:` diagnostic. It never generates any runtime code or `longjmp`. Used in all
+HAL modules to reject unsupported configurations at compile time:
+
+```python
+from pymcu.exceptions import CompileError
+
+match __CHIP__.arch:
+    case "avr":
+        ...
+    case _:
+        raise CompileError("SPI not supported on this architecture")
+```
+
+`CompileError` **cannot be caught** by `try / except` — compilation aborts before any binary
+is produced.
+
+**Unhandled exception output (AVR with UART0):**
+
+When a `raise` has no active `except` handler, PyMCU prints `"E:<TypeName>\r\n"` to UART0
+(if initialized) then halts with `cli; rjmp .-2`. Useful for debugging from a serial monitor:
+
+```
+E:ValueError
+```
+
+Only exception types actually raised in the program have their name strings emitted in flash
+— no overhead for unused exception codes. Chips without UART0 (attiny85 etc.) skip output
+and go directly to the halt loop.
 
 **Supported:** `assert condition, msg` as a compile-time check — a statically false assertion
-is a `CompileError`; a true or runtime assertion is stripped. Compile-time `raise` is supported.
+is a `CompileError`; a true or runtime assertion is stripped.
 
 ---
 
