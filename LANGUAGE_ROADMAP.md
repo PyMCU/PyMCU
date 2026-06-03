@@ -25,7 +25,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return |
-| `pass` / `raise` | `raise` is compile-time only |
+| `pass` / `raise` | `raise ExnType` emits `longjmp` to active handler; see `pymcu.exceptions` |
 | `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
 | `global` | Cross-function variable access |
 
@@ -419,7 +419,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 |---------|--------|
 | Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32-2048 bytes SRAM |
 | Garbage collection | No runtime |
-| `try` / `except` | No runtime; use return-code error handling |
+| `try` / `except` / `raise` / `finally` | ✅ Implemented (AVR — avr-libc setjmp/longjmp; `pymcu.exceptions` constants; single nesting level per function) |
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `float` / `complex` / `Decimal` | Use `fixed16` when available |
 | `f"..."` runtime interpolation | Compile-time only (constants only) |
