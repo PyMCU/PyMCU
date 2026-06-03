@@ -165,6 +165,15 @@ public record GcRoot(Val Var) : Instruction;
 // function that contains GC_REF locals.
 public record GcUnroot(Val Var) : Instruction;
 
+// Exception handling: install a setjmp-based handler. JmpBufVar is a 22-byte local
+// array. At runtime calls _setjmp(jmpbuf); jumps to CatchLabel if longjmp fires.
+// ExnCodeVar receives the exception code passed to longjmp.
+public record TryBegin(Val JmpBufVar, string CatchLabel, Val ExnCodeVar) : Instruction;
+
+// Exception handling: raise an exception. Calls longjmp(active_jmpbuf, code).
+// If no handler is active calls __pymcu_unhandled_exn(code).
+public record RaiseExn(Val Code) : Instruction;
+
 // --- Function Definition ---
 public class Function
 {

@@ -116,6 +116,8 @@ public enum BinaryOp
 [JsonDerivedType(typeof(GcAlloc),              "galloc")]
 [JsonDerivedType(typeof(GcRoot),               "groot")]
 [JsonDerivedType(typeof(GcUnroot),             "gunroot")]
+[JsonDerivedType(typeof(TryBegin),             "trybegin")]
+[JsonDerivedType(typeof(RaiseExn),             "raise")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -211,6 +213,14 @@ public record GcRoot(Val Var) : Instruction;
 
 // GC: deregister a GC_REF root (shadow-stack pop before Return)
 public record GcUnroot(Val Var) : Instruction;
+
+// Exception handling: install a setjmp-based handler. JmpBufVar is a 22-byte local.
+// _setjmp(jmpbuf) == 0 → normal; != 0 → longjmp fired, jump to CatchLabel.
+// ExnCodeVar receives the exception code passed to longjmp.
+public record TryBegin(Val JmpBufVar, string CatchLabel, Val ExnCodeVar) : Instruction;
+
+// Exception handling: call longjmp(active_jmpbuf, code) or __pymcu_unhandled_exn(code).
+public record RaiseExn(Val Code) : Instruction;
 
 // --- Function Definition ---
 public class Function
