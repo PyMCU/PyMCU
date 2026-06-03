@@ -46,6 +46,8 @@ public ref struct Lexer
         { "and", TokenType.And }, { "not", TokenType.Not },
         { "global", TokenType.Global }, { "class", TokenType.Class },
         { "yield", TokenType.Yield }, { "raise", TokenType.Raise },
+        { "try", TokenType.Try }, { "except", TokenType.Except },
+        { "finally", TokenType.Finally },
         { "with", TokenType.With }, { "assert", TokenType.Assert },
         { "is", TokenType.Is }, { "lambda", TokenType.Lambda },
         { "nonlocal", TokenType.Nonlocal },

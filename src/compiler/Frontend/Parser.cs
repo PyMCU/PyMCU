@@ -482,6 +482,7 @@ public class Parser
         }
 
         if (Check(TokenType.Raise)) return ParseRaiseStatement();
+        if (Check(TokenType.Try)) return ParseTryStatement();
         if (Check(TokenType.With)) return ParseWithStatement();
         if (Check(TokenType.Assert)) return ParseAssertStatement();
 
@@ -507,16 +508,40 @@ public class Parser
         int line = Peek().Line;
         Consume(TokenType.Raise, "Expected 'raise'");
         string errorType = Consume(TokenType.Identifier, "Expected error type after 'raise'").Value;
-        Consume(TokenType.LParen, "Expected '(' after error type");
         string message = "";
-        if (Check(TokenType.String))
+        if (Check(TokenType.LParen))
         {
-            message = Advance().Value;
+            Advance();
+            if (Check(TokenType.String))
+                message = Advance().Value;
+            Consume(TokenType.RParen, "Expected ')' after error message");
         }
 
-        Consume(TokenType.RParen, "Expected ')' after error message");
         ConsumeStatementEnd();
         return new RaiseStmt(errorType, message) { Line = line };
+    }
+
+    private Statement ParseTryStatement()
+    {
+        int line = Peek().Line;
+        Consume(TokenType.Try, "Expected 'try'");
+        Consume(TokenType.Colon, "Expected ':' after 'try'");
+        ConsumeStatementEnd();
+        var tryBlock = ParseBlock();
+        var body = tryBlock.Statements;
+
+        var handlers = new List<(string, List<Statement>)>();
+        while (Check(TokenType.Except))
+        {
+            Consume(TokenType.Except, "Expected 'except'");
+            string exnType = Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+            Consume(TokenType.Colon, "Expected ':' after exception type");
+            ConsumeStatementEnd();
+            var handlerBlock = ParseBlock();
+            handlers.Add((exnType, handlerBlock.Statements));
+        }
+
+        return new TryStmt(body, handlers) { Line = line };
     }
 
     private Statement ParseWithStatement()

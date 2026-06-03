@@ -517,6 +517,18 @@ public class RaiseStmt : Statement
     }
 }
 
+public class TryStmt : Statement
+{
+    public List<Statement> Body { get; }
+    public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
+
+    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers)
+    {
+        Body = body;
+        Handlers = handlers;
+    }
+}
+
 public class Param
 {
     public string Name { get; }
