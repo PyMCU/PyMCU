@@ -217,6 +217,18 @@ public class StackAllocator
                         RegisterVar(ga.Size);
                         RegisterVar(ga.Dst);
                         break;
+                    case TryBegin tb:
+                        // jmpbuf requires 22 contiguous bytes (avr-libc jmp_buf on ATmega).
+                        if (tb.JmpBufVar is Variable jbv && !_globalNames.Contains(jbv.Name))
+                        {
+                            node.Locals.Add(jbv.Name);
+                            VariableSizes[jbv.Name] = 22;
+                        }
+                        RegisterVar(tb.ExnCodeVar);
+                        break;
+                    case RaiseExn re:
+                        RegisterVar(re.Code);
+                        break;
                     case BytearrayLoad bl:
                         // bytearray pointer params are UINT16 (2-byte address); must be sized explicitly
                         // because PtrName is a string, not a Val, so RegisterVar never sees it.
