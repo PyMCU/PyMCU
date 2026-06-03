@@ -8,6 +8,7 @@
 
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 class UART:
     """Hardware UART, zero-cost abstraction (all methods @inline).
@@ -43,6 +44,8 @@ class UART:
                     case "pic18":
                         from pymcu.hal._uart.pic18 import uart_init
                         uart_init(baud)
+                    case _:
+                        raise CompileError("UART not supported on this architecture")
 
     @inline
     def write(self, data: uint8):
@@ -65,6 +68,8 @@ class UART:
                     case "pic18":
                         from pymcu.hal._uart.pic18 import uart_write
                         uart_write(data)
+                    case _:
+                        raise CompileError("UART not supported on this architecture")
 
     @inline
     def read(self) -> uint8:
@@ -87,6 +92,8 @@ class UART:
                     case "pic18":
                         from pymcu.hal._uart.pic18 import uart_read
                         return uart_read()
+                    case _:
+                        raise CompileError("UART not supported on this architecture")
 
     @inline
     def write_str(self, s: const[str]):
