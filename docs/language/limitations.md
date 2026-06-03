@@ -73,7 +73,7 @@ finally:
 | Limitation | Notes |
 |---|---|
 | SRAM cost: ~21 bytes per `try` block | `setjmp` saves 20 registers + PC to SRAM; on ATmega328P (2 KB) this is non-trivial |
-| Single nesting level per function | No nested `try` blocks within the same function scope |
+| `raise` and `except` must be in the same function | Only one `jmp_buf` active at a time — no handler chain; cross-function propagation is unsafe |
 | AVR only | PIC18 and other backends: use return codes or sentinel values instead |
 | Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime |
 
@@ -82,10 +82,17 @@ finally:
 
 `try / except` is valid Python but misaligned with bare-metal best practices. Every `try`
 block spends 21 bytes of SRAM on a `jmp_buf` even when no exception is raised. On a 2 KB
-device this adds up fast. The idiomatic alternative is a status return value:
+device this adds up fast.
+
+Because there is only **one active `jmp_buf` at a time** (no handler chain), `raise` and
+`except` must be in the **same function**. Cross-function propagation is not safe: if an
+inner function has its own `try` block, its `jmp_buf` overwrites the caller's, and an
+unhandled raise will not reach the outer handler.
+
+The idiomatic alternative is a status return value:
 
 ```python
-# Idiomatic: zero SRAM overhead
+# Idiomatic: zero SRAM overhead, works across any call depth
 STATUS_OK:    uint8 = 0
 STATUS_RANGE: uint8 = 1
 
@@ -98,9 +105,6 @@ match read_sensor():
     case STATUS_OK:    ...
     case STATUS_RANGE: ...
 ```
-
-Reserve `try / except` for cases where you need to propagate an error across multiple
-function call levels without threading a status code through every signature.
 :::
 
 **`CompileError` — compile-time intrinsic:**
