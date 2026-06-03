@@ -72,9 +72,36 @@ finally:
 
 | Limitation | Notes |
 |---|---|
+| SRAM cost: ~21 bytes per `try` block | `setjmp` saves 20 registers + PC to SRAM; on ATmega328P (2 KB) this is non-trivial |
 | Single nesting level per function | No nested `try` blocks within the same function scope |
-| AVR only | PIC18 and other backends: use return error codes instead |
-| Exception types are integer codes | Import from `pymcu.exceptions`; no message strings at runtime |
+| AVR only | PIC18 and other backends: use return codes or sentinel values instead |
+| Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime |
+
+:::{admonition} Prefer return codes for firmware
+:class: warning
+
+`try / except` is valid Python but misaligned with bare-metal best practices. Every `try`
+block spends 21 bytes of SRAM on a `jmp_buf` even when no exception is raised. On a 2 KB
+device this adds up fast. The idiomatic alternative is a status return value:
+
+```python
+# Idiomatic: zero SRAM overhead
+STATUS_OK:    uint8 = 0
+STATUS_RANGE: uint8 = 1
+
+def read_sensor() -> uint8:
+    if adc.read() > 1000:
+        return STATUS_RANGE
+    return STATUS_OK
+
+match read_sensor():
+    case STATUS_OK:    ...
+    case STATUS_RANGE: ...
+```
+
+Reserve `try / except` for cases where you need to propagate an error across multiple
+function call levels without threading a status code through every signature.
+:::
 
 **`CompileError` — compile-time intrinsic:**
 

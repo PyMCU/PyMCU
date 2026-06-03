@@ -149,7 +149,6 @@ largest audience of MicroPython users.
 |---|---|
 | `dict` / `set` | Dynamic hash tables require heap; no runtime |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
-| `try` / `except` | No runtime |
 | `async` / `await` | Use `@interrupt` + polling loop |
 | `f"..."` runtime interpolation | Use `uart.write_str()` / `uart.print_byte()` |
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
