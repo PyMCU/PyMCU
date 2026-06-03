@@ -25,7 +25,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return |
-| `pass` / `raise` | `raise ExnType` emits `longjmp` to active handler; see `pymcu.exceptions` |
+| `pass` / `raise` | `raise ExnType` emits `longjmp` to active handler; `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
 | `global` | Cross-function variable access |

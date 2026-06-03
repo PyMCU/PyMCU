@@ -56,8 +56,6 @@ compile-time constants, `const[str]` runtime subscript (reads byte from flash).
 `setjmp` / `longjmp`. No stack unwinding — the handler is a simple `longjmp` destination.
 
 ```python
-from pymcu.exceptions import ValueError
-
 try:
     if val > 255:
         raise ValueError
@@ -66,6 +64,9 @@ except ValueError:
 finally:
     cleanup()
 ```
+
+`ValueError`, `TypeError`, `IndexError`, `KeyError`, and `NotImplementedError` are builtins
+— no import required, exactly like CPython.
 
 **Limitations:**
 

@@ -6,6 +6,9 @@
 
 - `try / except / raise / finally` — AVR targets via avr-libc `setjmp`/`longjmp`; single
   nesting level per function; exception codes imported from `pymcu.exceptions`
+- `ValueError`, `TypeError`, `IndexError`, `KeyError`, `NotImplementedError` are now
+  **builtins** — no import required, identical to CPython; `pymcu.exceptions` still
+  exports the codes for IDE support and explicit imports from library code
 - `CompileError` intrinsic — `raise CompileError("msg")` aborts compilation with a
   `CompileError:` diagnostic; never generates runtime code; used in HAL modules for
   unsupported arch/chip guards; cannot be caught by `try/except`
