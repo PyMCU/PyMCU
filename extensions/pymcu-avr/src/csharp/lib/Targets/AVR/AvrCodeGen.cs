@@ -704,6 +704,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         EmitFlashArrayPool(output);
         if (program.NeedsGc) EmitGcRuntime(output);
+        if (program.ExternSymbols.Contains("setjmp")) EmitExnRuntime(output);
         WriteSymbolsIfRequested(optimized, program);
         WriteLineMapIfRequested(optimized);
         WriteVarMapIfRequested(program);
@@ -908,6 +909,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case GcAlloc ga:  CompileGcAlloc(ga);  break;
             case GcRoot gr:   CompileGcRoot(gr);   break;
             case GcUnroot gu: CompileGcUnroot(gu); break;
+            case TryBegin tb: CompileTryBegin(tb); break;
+            case RaiseExn re: CompileRaiseExn(re); break;
         }
     }
 
@@ -2492,6 +2495,15 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (is8bit) Emit("CLR", "R25");
     }
 
+    private static void EmitExnRuntime(TextWriter os)
+    {
+        os.WriteLine("; ── Exception runtime ──────────────────────────────────────────────────────");
+        os.WriteLine("__pymcu_unhandled_exn:");
+        os.WriteLine("    cli");
+        os.WriteLine("    rjmp .-2");
+        os.WriteLine();
+    }
+
     // Emit the gc_runtime.S content (embedded resource) into the output .asm file.
     private static void EmitGcRuntime(TextWriter os)
     {
@@ -2836,6 +2848,68 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         File.WriteAllText(EmitVarMapPath,
             JsonSerializer.Serialize(entries, AvrVarMapJsonContext.Default.ListVarMapEntry));
+    }
+
+    private void CompileTryBegin(TryBegin tb)
+    {
+        string jmpBufName = (tb.JmpBufVar as Variable)?.Name ?? "";
+        if (!_stackLayout.TryGetValue(jmpBufName, out int jmpBufOffset))
+            throw new Exception($"jmpbuf variable '{jmpBufName}' not found in stack layout");
+
+        int jmpBufAddr = 0x0100 + jmpBufOffset;
+        Emit("LDI", "R24", $"lo8({jmpBufAddr})");
+        Emit("LDI", "R25", $"hi8({jmpBufAddr})");
+
+        if (_stackLayout.TryGetValue("__pymcu_active_jmpbuf", out int activeOffset))
+        {
+            int activeAddr = 0x0100 + activeOffset;
+            Emit("STS", activeAddr.ToString(), "R24");
+            Emit("STS", (activeAddr + 1).ToString(), "R25");
+        }
+
+        Emit("CALL", "setjmp");
+
+        string exnCodeName = (tb.ExnCodeVar as Variable)?.Name ?? "";
+        if (_stackLayout.TryGetValue(exnCodeName, out int exnOffset))
+        {
+            if (exnOffset < 64)
+                Emit("STD", $"Y+{exnOffset}", "R24");
+            else
+            {
+                int exnAddr = 0x0100 + exnOffset;
+                Emit("STS", exnAddr.ToString(), "R24");
+            }
+        }
+
+        Emit("TST", "R24");
+        Emit("BRNE", tb.CatchLabel);
+    }
+
+    private void CompileRaiseExn(RaiseExn re)
+    {
+        LoadIntoReg(re.Code, "R22", DataType.UINT8);
+        Emit("CLR", "R23");
+
+        if (_stackLayout.TryGetValue("__pymcu_active_jmpbuf", out int activeOffset))
+        {
+            int activeAddr = 0x0100 + activeOffset;
+            Emit("LDS", "R24", activeAddr.ToString());
+            Emit("LDS", "R25", (activeAddr + 1).ToString());
+        }
+        else
+        {
+            Emit("LDI", "R24", "0");
+            Emit("LDI", "R25", "0");
+        }
+
+        string noHandlerLabel = $"L_no_handler_{_labelCounter++}";
+        Emit("MOV", "R16", "R24");
+        Emit("OR", "R16", "R25");
+        Emit("TST", "R16");
+        Emit("BREQ", noHandlerLabel);
+        Emit("CALL", "longjmp");
+        EmitLabel(noHandlerLabel);
+        Emit("CALL", "__pymcu_unhandled_exn");
     }
 }
 

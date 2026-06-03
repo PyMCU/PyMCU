@@ -410,6 +410,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             output.WriteLine(line.ToString());
 
         EmitFlashArrayPool(output);
+        if (program.ExternSymbols.Contains("setjmp")) EmitExnRuntime(output);
+    }
+
+    private static void EmitExnRuntime(TextWriter os)
+    {
+        os.WriteLine("; ── Exception runtime ──────────────────────────────────────────────────────");
+        os.WriteLine("__pymcu_unhandled_exn:");
+        os.WriteLine("    cli");
+        os.WriteLine("    rjmp .-2");
+        os.WriteLine();
     }
 
     public override void EmitContextSave()
@@ -599,6 +609,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case ArrayStore ast: CompileArrayStore(ast); break;
             case BytearrayLoad bl: CompileBytearrayLoad(bl); break;
             case BytearrayStore bs2: CompileBytearrayStore(bs2); break;
+            case TryBegin tb: CompileTryBegin(tb); break;
+            case RaiseExn re: CompileRaiseExn(re); break;
         }
     }
 
@@ -2010,5 +2022,78 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             os.WriteLine("\t.byte " + string.Join(", ", bytes));
             os.WriteLine("\t.balign 2");
         }
+    }
+
+    private void CompileTryBegin(TryBegin tb)
+    {
+        // Load address of jmpbuf into R25:R24 (avr-gcc arg0 convention).
+        // jmpbuf is a stack-local variable; its address = RAMSTART + offset(jmpbuf).
+        string jmpBufName = (tb.JmpBufVar as Variable)?.Name ?? "";
+        if (!_stackLayout.TryGetValue(jmpBufName, out int jmpBufOffset))
+            throw new Exception($"jmpbuf variable '{jmpBufName}' not found in stack layout");
+
+        int jmpBufAddr = 0x0100 + jmpBufOffset;
+        Emit("LDI", "R24", $"lo8({jmpBufAddr})");
+        Emit("LDI", "R25", $"hi8({jmpBufAddr})");
+
+        // Store the jmpbuf pointer in __pymcu_active_jmpbuf (global 2-byte SRAM slot).
+        if (_stackLayout.TryGetValue("__pymcu_active_jmpbuf", out int activeOffset))
+        {
+            int activeAddr = 0x0100 + activeOffset;
+            Emit("STS", activeAddr.ToString(), "R24");
+            Emit("STS", (activeAddr + 1).ToString(), "R25");
+        }
+
+        // Call _setjmp(jmpbuf). R25:R24 already loaded.
+        Emit("CALL", "setjmp");
+
+        // If _setjmp returns != 0 (longjmp fired), jump to catch label.
+        // Store the exception code (R24) into exnCodeVar first.
+        string exnCodeName = (tb.ExnCodeVar as Variable)?.Name ?? "";
+        if (_stackLayout.TryGetValue(exnCodeName, out int exnOffset))
+        {
+            bool nearY = exnOffset < 64;
+            if (nearY)
+                Emit("STD", $"Y+{exnOffset}", "R24");
+            else
+            {
+                int exnAddr = 0x0100 + exnOffset;
+                Emit("STS", exnAddr.ToString(), "R24");
+            }
+        }
+
+        Emit("TST", "R24");
+        Emit("BRNE", tb.CatchLabel);
+    }
+
+    private void CompileRaiseExn(RaiseExn re)
+    {
+        // Load exception code into R22 (arg1 for longjmp).
+        LoadIntoReg(re.Code, "R22", DataType.UINT8);
+        Emit("CLR", "R23");
+
+        // Load __pymcu_active_jmpbuf pointer into R24:R25 (arg0).
+        if (_stackLayout.TryGetValue("__pymcu_active_jmpbuf", out int activeOffset))
+        {
+            int activeAddr = 0x0100 + activeOffset;
+            Emit("LDS", "R24", activeAddr.ToString());
+            Emit("LDS", "R25", (activeAddr + 1).ToString());
+        }
+        else
+        {
+            Emit("LDI", "R24", "0");
+            Emit("LDI", "R25", "0");
+        }
+
+        // If pointer is null (0), call __pymcu_unhandled_exn(code).
+        // Otherwise call longjmp(jmpbuf, code). longjmp never returns.
+        string noHandlerLabel = $"L_no_handler_{_labelCounter++}";
+        Emit("MOV", "R16", "R24");
+        Emit("OR", "R16", "R25");
+        Emit("TST", "R16");
+        Emit("BREQ", noHandlerLabel);
+        Emit("CALL", "longjmp");
+        EmitLabel(noHandlerLabel);
+        Emit("CALL", "__pymcu_unhandled_exn");
     }
 }
