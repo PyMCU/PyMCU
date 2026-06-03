@@ -10,52 +10,96 @@ no runtime, no interpreter, no virtual machine. The same binary you would write 
 
 ## The pitch in one table
 
-| Target | Blink flash footprint | SRAM | Notes |
+| Source | Flash footprint | SRAM | Notes |
 |---|---|---|---|
-| **Pure C** (`avr-gcc -Os`) | ~68 bytes | 0 bytes | Hand-written register access |
-| **PyMCU** (native HAL) | ~72 bytes | 0 bytes | Python source → same output |
-| **PyMCU** (CircuitPython API) | 124 bytes | 0 bytes | Full CP compat layer |
-| **Arduino** (IDE defaults) | ~924 bytes | 9 bytes | Includes full Arduino runtime |
+| **Pure C** (`avr-gcc -Os`) | ~68 bytes | 0 bytes | Reference: hand-written register access |
+| **PyMCU** (native HAL) | **120 bytes** | 0 bytes | Measured — `pymcu.hal.gpio` + `delay_ms` |
+| **PyMCU** (MicroPython API) | **146 bytes** | 0 bytes | Measured — `machine.Pin` + `utime.sleep_ms` |
+| **PyMCU** (CircuitPython API) | **166 bytes** | 0 bytes | Measured — `digitalio` + `board.LED` |
+| **Arduino** (IDE defaults) | ~924 bytes | 9 bytes | Reference: full Arduino runtime |
 
-Python syntax. C-equivalent output.
+Python syntax. Zero SRAM. No runtime overhead.
 
 ---
 
-## What it looks like
+## Write code you already know
 
-### Your source (Python)
+Pick the API that fits your background. Both compile to the same bare-metal firmware.
+
+### CircuitPython
 
 ```python
-from pymcu.hal.gpio import Pin
-from pymcu.time import delay_ms
+# The exact same code that runs on a Pico under CircuitPython
+import board
+import digitalio
+from time import sleep_ms
 
-led = Pin("PB5", Pin.OUT)
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
 
 while True:
-    led.toggle()
-    delay_ms(500)
+    led.value = True
+    sleep_ms(500)
+    led.value = False
+    sleep_ms(500)
 ```
 
-### What the compiler produces (AVR assembly, annotated)
+### MicroPython
 
-```asm
-main:
-    SBI  0x04, 5       ; DDRB |= (1 << PB5)  — output mode
-loop:
-    SBI  0x05, 5       ; PORTB |= (1 << PB5) — LED on
-    CALL _delay_ms_500
-    CBI  0x05, 5       ; PORTB &= ~(1 << PB5) — LED off
-    CALL _delay_ms_500
-    RJMP loop
+```python
+# The exact same code that runs on a Pico under MicroPython
+from machine import Pin
+from utime import sleep_ms
+
+led = Pin(13, Pin.OUT)
+
+while True:
+    led.value(1)
+    sleep_ms(500)
+    led.value(0)
+    sleep_ms(500)
 ```
 
-No heap. No runtime. No surprises.
+```bash
+pymcu build   # → dist/firmware.hex  (146 bytes flash, 0 bytes SRAM)
+pymcu flash   # → avrdude upload to Arduino Uno
+```
 
 ---
 
-## Or use the CircuitPython API you already know
+## First binary in under 5 minutes
+
+### 1. Install
+
+```bash
+pipx install "pymcu[avr]"
+```
+
+Requires Python 3.11+ and `pipx`. The `[avr]` extra includes the AVR toolchain.
+
+### 2. Create a project
+
+```bash
+pymcu new blink
+cd blink
+```
+
+### 3. Choose your API and write the program
+
+**CircuitPython style** — add `pymcu-circuitpython` to dependencies:
+
+```toml
+# pyproject.toml
+[project]
+dependencies = ["pymcu", "pymcu-circuitpython"]
+
+[tool.pymcu]
+board     = "arduino_uno"
+frequency = 16000000
+```
 
 ```python
+# src/main.py
 import board
 import digitalio
 from time import sleep_ms
@@ -68,68 +112,54 @@ while True:
     sleep_ms(500)
 ```
 
-```bash
-pymcu build   # → dist/firmware.hex  (124 bytes flash, 0 bytes SRAM)
-pymcu flash   # → avrdude upload to Arduino Uno
-```
-
-The same code that runs under CircuitPython on a Pico compiles to bare-metal AVR firmware
-with zero runtime overhead.
-
----
-
-## First binary in under 5 minutes
-
-### 1. Install
-
-```bash
-pipx install "pymcu[avr]"
-```
-
-Requires Python 3.11+ and `pipx`. The `[avr]` extra includes the AVR toolchain and backend.
-
-### 2. Create a project
-
-```bash
-pymcu new blink
-cd blink
-```
-
-### 3. Write your program
-
-```python
-# src/main.py
-from pymcu.hal.gpio import Pin
-from pymcu.time import delay_ms
-
-led = Pin("PB5", Pin.OUT)
-
-while True:
-    led.toggle()
-    delay_ms(500)
-```
-
-### 4. Configure the target
+**MicroPython style** — add `pymcu-micropython` to dependencies:
 
 ```toml
-# pyproject.toml  (already created by pymcu new)
+# pyproject.toml
+[project]
+dependencies = ["pymcu", "pymcu-micropython"]
+
 [tool.pymcu]
 board     = "arduino_uno"
 frequency = 16000000
 ```
 
-### 5. Build and flash
+```python
+# src/main.py
+from machine import Pin
+from utime import sleep_ms
+
+led = Pin(13, Pin.OUT)
+
+while True:
+    led.toggle()
+    sleep_ms(500)
+```
+
+### 4. Build and flash
 
 ```bash
 pymcu build
 # Compiling src/main.py...
-# → dist/firmware.hex  (72 bytes flash, 0 bytes SRAM)
+# → dist/firmware.hex
 
 pymcu flash --port /dev/cu.usbmodem*
-# avrdude: 72 bytes of flash verified
+# avrdude: flash verified
 ```
 
-Your LED is blinking. Total time: under 3 minutes on a clean machine.
+---
+
+## Choosing an API
+
+| Package | API surface | Install |
+|---|---|---|
+| `pymcu-circuitpython` | `digitalio`, `analogio`, `busio`, `pwmio`, `time`, `board`, `neopixel` | `pip install pymcu-circuitpython` |
+| `pymcu-micropython` | `machine` (Pin/UART/ADC/PWM/SPI/I2C/Timer/WDT), `utime` | `pip install pymcu-micropython` |
+| `pymcu.hal.*` | Direct register-level HAL — lowest overhead | included in `pymcu` |
+
+**Start with the compat layer that matches your background.** The APIs are stable,
+community-specified, and unlikely to change between alpha releases. Switch to
+`pymcu.hal.*` only if you need direct register access or a chip not yet covered.
 
 ---
 
@@ -137,50 +167,10 @@ Your LED is blinking. Total time: under 3 minutes on a clean machine.
 
 | Architecture | Chips |
 |---|---|
-| **AVR** | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
-| **AVR tiny** | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
+| **AVR** (ATmega) | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
+| **AVR** (ATtiny) | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
 | **PIC** | PIC12, PIC14, PIC14E, PIC18 |
 | **RISC-V** | Experimental |
-
----
-
-## API choices
-
-Start with a compatibility layer if you are new to PyMCU — the APIs are stable,
-community-specified, and port directly from existing MicroPython or CircuitPython projects.
-
-| Package | API | Best for |
-|---|---|---|
-| `pymcu-circuitpython` | `digitalio`, `analogio`, `busio`, `pwmio`, `time`, `board` | Port CircuitPython code directly |
-| `pymcu-micropython` | `machine`, `utime` | Port MicroPython code directly |
-| `pymcu.hal.*` | Direct register-level HAL | Full control, lowest overhead |
-
----
-
-## What Python features are supported
-
-PyMCU accepts Python syntax but enforces a strict compile-time type system.
-These features **work**:
-
-- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float`
-- Fixed arrays: `buf: uint8[16]`
-- Heap-bounded lists: `x: list[uint8] = list()`
-- `for`, `while`, `if`, `match / case`, `with`, `class`, `@inline`
-- `@interrupt` for hardware ISR handlers
-- `try / except / raise / finally` (AVR only; `raise` and `except` in same function)
-- `asm("...")` inline assembly
-- CircuitPython and MicroPython compat packages
-
-These features **do not exist**:
-
-- `dict` / `set` (hash tables require heap)
-- Runtime string formatting — `f"value={x}"` with non-constant expressions
-- `async` / `await` (use `@interrupt` + polling loop)
-- Closures capturing mutable variables
-- `*args` / `**kwargs`
-
-The compiler rejects unsupported features with a clear error at compile time.
-See the [Language Limitations](docs/language/limitations.md) page for the full list.
 
 ---
 
@@ -197,9 +187,33 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 | `pymcu.hal.i2c` | `I2C` + `SoftI2C` |
 | `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` — `enable` / `disable` / `feed` |
-| `pymcu.hal.power` | `sleep_idle` / `power_down` / `standby` / … |
+| `pymcu.hal.power` | `sleep_idle` / `power_down` / `standby` |
 
 Drivers: DHT11, DS18B20, LM35, HD44780 LCD, SSD1306 OLED, MAX7219, BMP280, WS2812 NeoPixel.
+
+---
+
+## What Python features are supported
+
+PyMCU accepts Python syntax but enforces a strict compile-time type system.
+
+**Supported:**
+- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float`
+- Fixed arrays `buf: uint8[16]` and heap-bounded lists `x: list[uint8] = list()`
+- `for`, `while`, `if`, `match / case`, `with`, `class`, `@inline`, `lambda`
+- `@interrupt` ISR handlers, `asm("...")` inline assembly
+- `try / except / raise / finally` (AVR only; `raise` and `except` in same function)
+- CircuitPython and MicroPython compat packages
+
+**Not supported:**
+- `dict` / `set` (hash tables require heap)
+- Runtime `f"value={x}"` with non-constant expressions (compile-time constants only)
+- `async` / `await` — use `@interrupt` + polling loop instead
+- Closures capturing mutable variables — use explicit parameters
+- `*args` / `**kwargs`
+
+The compiler rejects unsupported features with a clear error at compile time.
+See the [Language Limitations](docs/language/limitations.md) page for the full list.
 
 ---
 
