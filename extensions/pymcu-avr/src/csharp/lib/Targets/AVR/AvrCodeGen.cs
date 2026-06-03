@@ -1838,6 +1838,14 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     {
         if (bw.Target is MemoryAddress { Address: >= 0x20 and <= 0x3F } mem)
         {
+            if (bw.Src is Constant c)
+            {
+                if (c.Value != 0)
+                    Emit("SBI", $"0x{mem.Address - 0x20:X2}", $"{bw.Bit}");
+                else
+                    Emit("CBI", $"0x{mem.Address - 0x20:X2}", $"{bw.Bit}");
+                return;
+            }
             LoadIntoReg(bw.Src, "R24");
             var sk = MakeLabel("L_BIT_WRITE_SKIP");
             var dn = MakeLabel("L_BIT_WRITE_DONE");
@@ -1848,6 +1856,17 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             EmitLabel(sk);
             Emit("CBI", $"0x{mem.Address - 0x20:X2}", $"{bw.Bit}");
             EmitLabel(dn);
+            return;
+        }
+
+        if (bw.Src is Constant cv)
+        {
+            LoadIntoReg(bw.Target, "R18");
+            if (cv.Value != 0)
+                Emit("ORI", "R18", $"{1 << bw.Bit}");
+            else
+                Emit("ANDI", "R18", $"{(byte)~(1 << bw.Bit)}");
+            StoreRegInto("R18", bw.Target);
             return;
         }
 
