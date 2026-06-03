@@ -8,6 +8,7 @@
 
 from pymcu.types import uint8, uint16, inline
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 
 # noinspection PyProtectedMember
@@ -44,6 +45,8 @@ class EEPROM:
             case "attiny85" | "attiny45" | "attiny25":
                 from pymcu.hal._eeprom.attiny85 import eeprom_write
                 eeprom_write(addr, value)
+            case _:
+                raise CompileError("EEPROM not supported on this chip")
 
     @inline
     def read(self, addr: uint16) -> uint8:
@@ -59,5 +62,5 @@ class EEPROM:
             case "attiny85" | "attiny45" | "attiny25":
                 from pymcu.hal._eeprom.attiny85 import eeprom_read
                 return eeprom_read(addr)
-
-        return 0
+            case _:
+                raise CompileError("EEPROM not supported on this chip")

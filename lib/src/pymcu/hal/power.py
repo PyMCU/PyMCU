@@ -8,6 +8,7 @@
 
 from pymcu.types import uint8, inline
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 # Sleep / Power Management HAL
 #
@@ -41,6 +42,8 @@ def sleep_idle():
         case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from pymcu.hal._power.atmega328p import sleep_idle as _sleep_idle
             _sleep_idle()
+        case _:
+            raise CompileError("sleep_idle not supported on this chip")
 
 # noinspection PyProtectedMember
 @inline
@@ -54,6 +57,8 @@ def sleep_adc_noise():
         case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from pymcu.hal._power.atmega328p import sleep_adc_noise as _sleep_adc_noise
             _sleep_adc_noise()
+        case _:
+            raise CompileError("sleep_adc_noise not supported on this chip")
 
 # noinspection PyProtectedMember
 @inline
@@ -68,6 +73,8 @@ def sleep_power_down():
         case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from pymcu.hal._power.atmega328p import sleep_power_down as _sleep_power_down
             _sleep_power_down()
+        case _:
+            raise CompileError("sleep_power_down not supported on this chip")
 
 
 # noinspection PyProtectedMember
@@ -82,6 +89,8 @@ def sleep_power_save():
         case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from pymcu.hal._power.atmega328p import sleep_power_save as _sleep_power_save
             _sleep_power_save()
+        case _:
+            raise CompileError("sleep_power_save not supported on this chip")
 
 
 # noinspection PyProtectedMember
@@ -95,3 +104,5 @@ def sleep_standby():
         case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
             from pymcu.hal._power.atmega328p import sleep_standby as _sleep_standby
             _sleep_standby()
+        case _:
+            raise CompileError("sleep_standby not supported on this chip")

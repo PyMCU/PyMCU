@@ -8,6 +8,7 @@
 
 from pymcu.types import uint8, uint16, inline, const
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 
 # noinspection PyProtectedMember
@@ -43,6 +44,8 @@ class Watchdog:
                 from pymcu.hal._watchdog.attiny85 import wdt_enable, wdt_timeout_wdp
                 wdp: uint8 = wdt_timeout_wdp(self._timeout_ms)
                 wdt_enable(wdp)
+            case _:
+                raise CompileError("Watchdog not supported on this chip")
 
     @inline
     def disable(self):
@@ -54,6 +57,8 @@ class Watchdog:
             case "attiny85" | "attiny45" | "attiny25":
                 from pymcu.hal._watchdog.attiny85 import wdt_disable
                 wdt_disable()
+            case _:
+                raise CompileError("Watchdog not supported on this chip")
 
     @inline
     def feed(self):
@@ -69,3 +74,5 @@ class Watchdog:
             case "attiny85" | "attiny45" | "attiny25":
                 from pymcu.hal._watchdog.attiny85 import wdt_feed
                 wdt_feed()
+            case _:
+                raise CompileError("Watchdog not supported on this chip")

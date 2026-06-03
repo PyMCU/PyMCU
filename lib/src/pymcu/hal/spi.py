@@ -8,6 +8,7 @@
 
 from pymcu.types import uint8, inline, Callable, const
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 
 # noinspection PyProtectedMember
@@ -72,6 +73,8 @@ class SPI:
                         spi_peripheral_init()
                         self._mode = "p"
                         self._cs = ""
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def transfer(self, data: uint8) -> uint8:
@@ -90,7 +93,7 @@ class SPI:
                     from pymcu.hal._spi.avr import spi_peripheral_exchange
                     return spi_peripheral_exchange(data)
             case _:
-                return 0
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def write(self, data: uint8):
@@ -100,6 +103,8 @@ class SPI:
                 if self._mode == "c":
                     from pymcu.hal._spi.avr import spi_transfer
                     spi_transfer(data)
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def receive(self) -> uint8:
@@ -109,7 +114,7 @@ class SPI:
                 from pymcu.hal._spi.avr import spi_peripheral_receive
                 return spi_peripheral_receive()
             case _:
-                return 0
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def send(self, data: uint8):
@@ -118,6 +123,8 @@ class SPI:
             case "avr":
                 from pymcu.hal._spi.avr import spi_peripheral_send
                 spi_peripheral_send(data)
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def ready(self) -> uint8:
@@ -127,7 +134,7 @@ class SPI:
                 from pymcu.hal._spi.avr import spi_peripheral_ready
                 return spi_peripheral_ready()
             case _:
-                return 0
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def irq(self, handler: Callable):
@@ -145,6 +152,8 @@ class SPI:
             case "avr":
                 from pymcu.hal._spi.avr import spi_irq_setup
                 spi_irq_setup(handler)
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def select(self):
@@ -156,6 +165,8 @@ class SPI:
                 else:
                     from pymcu.hal._spi.avr import spi_select
                     spi_select()
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     @inline
     def deselect(self):
@@ -167,6 +178,8 @@ class SPI:
                 else:
                     from pymcu.hal._spi.avr import spi_deselect
                     spi_deselect()
+            case _:
+                raise CompileError("SPI not supported on this architecture")
 
     def __enter__(self):
         """Controller mode: assert chip-select (context manager entry)."""
