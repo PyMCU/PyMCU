@@ -10,15 +10,18 @@ no runtime, no interpreter, no virtual machine. The same binary you would write 
 
 ## The pitch in one table
 
-| Source | Flash footprint | SRAM | Notes |
-|---|---|---|---|
-| **Pure C** (`avr-gcc -Os`) | ~68 bytes | 0 bytes | Reference: hand-written register access |
-| **PyMCU** (native HAL) | **120 bytes** | 0 bytes | Measured — `pymcu.hal.gpio` + `delay_ms` |
-| **PyMCU** (MicroPython API) | **146 bytes** | 0 bytes | Measured — `machine.Pin` + `utime.sleep_ms` |
-| **PyMCU** (CircuitPython API) | **166 bytes** | 0 bytes | Measured — `digitalio` + `board.LED` |
-| **Arduino** (IDE defaults) | ~924 bytes | 9 bytes | Reference: full Arduino runtime |
+Blink program compiled for ATmega328P at 16 MHz (all numbers measured):
 
-Python syntax. Zero SRAM. No runtime overhead.
+| Source | Flash | SRAM | Notes |
+|---|---|---|---|
+| **C** (`avr-gcc -Os`) | **176 bytes** | 0 bytes | Includes 26-vector ISR table (104 bytes of zeros) |
+| **PyMCU** (native HAL) | **120 bytes** | 0 bytes | Compact 2-byte jump; no unused vectors |
+| **PyMCU** (MicroPython API) | **146 bytes** | 0 bytes | `machine.Pin` + `utime.sleep_ms` |
+| **PyMCU** (CircuitPython API) | **166 bytes** | 0 bytes | `digitalio.DigitalInOut` + `time.sleep` |
+| **Arduino** (IDE defaults) | ~924 bytes | 9 bytes | Full Arduino runtime |
+
+PyMCU is smaller than equivalent C because avr-gcc always emits a full 26-entry interrupt
+vector table (104 bytes). PyMCU only emits the vectors your program actually uses.
 
 ---
 
