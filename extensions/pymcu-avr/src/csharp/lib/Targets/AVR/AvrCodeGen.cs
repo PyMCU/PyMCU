@@ -2882,7 +2882,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         Emit("TST", "R24");
-        Emit("BRNE", tb.CatchLabel);
+        EmitBranch("BRNE", tb.CatchLabel);
     }
 
     private void CompileRaiseExn(RaiseExn re)
