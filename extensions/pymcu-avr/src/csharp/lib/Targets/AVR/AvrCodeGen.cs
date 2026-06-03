@@ -33,6 +33,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, string> _regLayout = new();
     private Dictionary<string, string> _tmpRegLayout = new();
     private readonly HashSet<string> _allTmpRegNames = [];
+    private readonly HashSet<int> _usedExnCodes = [];
     private HashSet<string> _varIsFloat = new();
     private readonly Dictionary<string, List<int>> _flashArrayPool = new();
     // Maps function name → list of parameter sizes (in bytes) for correct call-site arg loading.
@@ -704,7 +705,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         EmitFlashArrayPool(output);
         if (program.NeedsGc) EmitGcRuntime(output);
-        if (program.ExternSymbols.Contains("setjmp")) EmitExnRuntime(output);
+        if (program.ExternSymbols.Contains("setjmp")) EmitExnRuntime(output, _usedExnCodes, cfg.Chip);
         WriteSymbolsIfRequested(optimized, program);
         WriteLineMapIfRequested(optimized);
         WriteVarMapIfRequested(program);
@@ -2495,13 +2496,91 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         if (is8bit) Emit("CLR", "R25");
     }
 
-    private static void EmitExnRuntime(TextWriter os)
+    private static void EmitExnRuntime(TextWriter os, HashSet<int> usedCodes, string chip)
     {
         os.WriteLine("; ── Exception runtime ──────────────────────────────────────────────────────");
-        os.WriteLine("__pymcu_unhandled_exn:");
-        os.WriteLine("    cli");
-        os.WriteLine("    rjmp .-2");
+        var codes = usedCodes.OrderBy(x => x).ToList();
+        bool hasUart = chip is "atmega328p" or "atmega328" or "atmega168p" or "atmega168"
+                              or "atmega88p" or "atmega88" or "atmega48p" or "atmega48"
+                              or "atmega2560" or "atmega32u4";
+        if (codes.Count == 0 || !hasUart)
+        {
+            os.WriteLine("__pymcu_unhandled_exn:");
+            os.WriteLine("    cli");
+            os.WriteLine("    rjmp .-2");
+            os.WriteLine();
+            return;
+        }
+        foreach (int code in codes)
+        {
+            os.WriteLine($"__exn_str_{code}:");
+            os.WriteLine($"    .byte {ExnAsciiBytes(code)}");
+        }
+        os.WriteLine("    .balign 2");
         os.WriteLine();
+        os.WriteLine("__pymcu_unhandled_exn:");
+        os.WriteLine("    lds   R16, 0xC1");
+        os.WriteLine("    sbrs  R16, 3");
+        os.WriteLine("    rjmp  __exn_halt");
+        if (codes.Count == 1)
+        {
+            int code = codes[0];
+            os.WriteLine($"    ldi   R30, lo8(__exn_str_{code})");
+            os.WriteLine($"    ldi   R31, hi8(__exn_str_{code})");
+        }
+        else
+        {
+            foreach (int code in codes)
+            {
+                os.WriteLine($"    cpi   R22, {code}");
+                os.WriteLine($"    breq  __exn_load_{code}");
+            }
+            os.WriteLine("    rjmp  __exn_halt");
+            for (int i = 0; i < codes.Count; i++)
+            {
+                int code = codes[i];
+                os.WriteLine($"__exn_load_{code}:");
+                os.WriteLine($"    ldi   R30, lo8(__exn_str_{code})");
+                os.WriteLine($"    ldi   R31, hi8(__exn_str_{code})");
+                if (i < codes.Count - 1)
+                    os.WriteLine("    rjmp  __exn_print_loop");
+            }
+        }
+        os.WriteLine("__exn_print_loop:");
+        os.WriteLine("    lpm   R16, Z+");
+        os.WriteLine("    tst   R16");
+        os.WriteLine("    breq  __exn_halt");
+        os.WriteLine("__exn_wait_udre:");
+        os.WriteLine("    lds   R17, 0xC0");
+        os.WriteLine("    sbrs  R17, 5");
+        os.WriteLine("    rjmp  __exn_wait_udre");
+        os.WriteLine("    sts   0xC6, R16");
+        os.WriteLine("    rjmp  __exn_print_loop");
+        os.WriteLine("__exn_halt:");
+        os.WriteLine("    cli");
+        os.WriteLine("    rjmp  .-2");
+        os.WriteLine();
+    }
+
+    private static string ExnCodeName(int code) => code switch
+    {
+        1 => "ValueError",
+        2 => "TypeError",
+        3 => "IndexError",
+        4 => "KeyError",
+        5 => "NotImplementedError",
+        _ => $"Exception{code}"
+    };
+
+    private static string ExnAsciiBytes(int code)
+    {
+        string name = ExnCodeName(code);
+        var bytes = new List<int> { 'E', ':' };
+        foreach (char ch in name) bytes.Add(ch);
+        bytes.Add(13);
+        bytes.Add(10);
+        bytes.Add(0);
+        return string.Join(", ", bytes);
     }
 
     // Emit the gc_runtime.S content (embedded resource) into the output .asm file.
@@ -2887,6 +2966,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileRaiseExn(RaiseExn re)
     {
+        if (re.Code is Constant c) _usedExnCodes.Add(c.Value);
         LoadIntoReg(re.Code, "R22", DataType.UINT8);
         Emit("CLR", "R23");
 
