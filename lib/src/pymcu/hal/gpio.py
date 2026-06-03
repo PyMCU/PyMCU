@@ -18,6 +18,7 @@
 
 from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, const, inline
+from pymcu.exceptions import CompileError
 
 
 # noinspection PyProtectedMember
@@ -39,7 +40,7 @@ class Pin:
     IRQ_LOW_LEVEL  = 4
     IRQ_HIGH_LEVEL = 8
 
-    def __init__(self, name: str, mode: uint8, pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    def __init__(self, name: str, mode: const[uint8], pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
         """Configure a digital I/O pin.
 
         name:  port-pin name string (e.g. ``"PB5"``).
@@ -113,11 +114,11 @@ class Pin:
                     pin_write(name, value)
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313" | "atmega2560" | "atmega32u4":
                 if mode == 2:
-                    raise NotImplementedError("Open-drain mode not supported on AVR")
+                    raise CompileError("Open-drain mode not supported on AVR")
                 if alt != -1:
-                    raise NotImplementedError("Alternate functions not supported on AVR")
+                    raise CompileError("Alternate functions not supported on AVR")
                 if drive:
-                    raise NotImplementedError("Drive strength control not supported on AVR")
+                    raise CompileError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega328p import _PinRegs
                 _r = _PinRegs(name)
                 self._port = _r._port
@@ -127,7 +128,7 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on AVR")
+                        raise CompileError("Pull-down resistor not supported on AVR")
                     # noinspection PyTypeChecker
                     self._port[self._bit] = pull
                 if value != -1:
@@ -141,7 +142,7 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on ATtiny")
+                        raise CompileError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
@@ -154,7 +155,7 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on ATtiny")
+                        raise CompileError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
@@ -167,17 +168,17 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on ATtiny")
+                        raise CompileError("Pull-down resistor not supported on ATtiny")
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
             case "atmega2560":
                 if mode == 2:
-                    raise NotImplementedError("Open-drain mode not supported on AVR")
+                    raise CompileError("Open-drain mode not supported on AVR")
                 if alt != -1:
-                    raise NotImplementedError("Alternate functions not supported on AVR")
+                    raise CompileError("Alternate functions not supported on AVR")
                 if drive:
-                    raise NotImplementedError("Drive strength control not supported on AVR")
+                    raise CompileError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
@@ -186,17 +187,17 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on AVR")
+                        raise CompileError("Pull-down resistor not supported on AVR")
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
             case "atmega32u4":
                 if mode == 2:
-                    raise NotImplementedError("Open-drain mode not supported on AVR")
+                    raise CompileError("Open-drain mode not supported on AVR")
                 if alt != -1:
-                    raise NotImplementedError("Alternate functions not supported on AVR")
+                    raise CompileError("Alternate functions not supported on AVR")
                 if drive:
-                    raise NotImplementedError("Drive strength control not supported on AVR")
+                    raise CompileError("Drive strength control not supported on AVR")
                 from pymcu.hal._gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
@@ -205,7 +206,7 @@ class Pin:
                 self._ddr[self._bit] = mode ^ 1
                 if pull != -1:
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on AVR")
+                        raise CompileError("Pull-down resistor not supported on AVR")
                     self._port[self._bit] = pull
                 if value != -1:
                     self._port[self._bit] = value
@@ -363,7 +364,7 @@ class Pin:
             match __CHIP__.name:
                 case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313" | "atmega2560" | "atmega32u4":
                     if pull == 2:
-                        raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
+                        raise CompileError("Pull-down resistor not supported on ATmega328P")
                     self._port[self._bit] = pull
                 case "pic16f18877":
                     from pymcu.hal._gpio.pic16f18877 import pin_pull_up, pin_pull_off
@@ -416,10 +417,10 @@ class Pin:
                     pin_write(self.name, value)
         if drive:
             if __CHIP__.arch == "avr":
-                raise NotImplementedError("Drive strength control not supported on AVR")
+                raise CompileError("Drive strength control not supported on AVR")
         if alt != -1:
             if __CHIP__.arch == "avr":
-                raise NotImplementedError("Alternate functions not supported on AVR")
+                raise CompileError("Alternate functions not supported on AVR")
 
     @inline
     def pull(self, pull_mode: const):
@@ -430,7 +431,7 @@ class Pin:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313" | "atmega2560" | "atmega32u4":
                 if pull_mode == 2:
-                    raise NotImplementedError("Pull-down resistor not supported on ATmega328P")
+                    raise CompileError("Pull-down resistor not supported on ATmega328P")
                 self._port[self._bit] = pull_mode
             case "pic16f18877":
                 from pymcu.hal._gpio.pic16f18877 import pin_pull_up, pin_pull_off
@@ -467,7 +468,7 @@ class Pin:
     def drive(self, strength: uint8):
         """Set the output drive strength. Support depends on the target chip."""
         if __CHIP__.arch == "avr":
-            raise NotImplementedError("Drive strength control not supported on AVR")
+            raise CompileError("Drive strength control not supported on AVR")
 
     @inline
     def irq(self, trigger: const = 3, handler: const = 0):
@@ -493,7 +494,7 @@ class Pin:
                 from pymcu.hal._gpio.atmega32u4 import pin_irq_setup
                 pin_irq_setup(self.name, trigger, handler)
             case "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
-                raise NotImplementedError("IRQ not yet supported on ATtiny")
+                raise CompileError("IRQ not yet supported on ATtiny")
             case "pic16f877a":
                 from pymcu.hal._gpio.pic16f877a import pin_irq_setup
                 pin_irq_setup(self.name, trigger)
@@ -507,7 +508,7 @@ class Pin:
                 from pymcu.hal._gpio.pic18f45k50 import pin_irq_setup
                 pin_irq_setup(self.name, trigger)
             case "pic10f200":
-                raise NotImplementedError("IRQ not supported on PIC10F200")
+                raise CompileError("IRQ not supported on PIC10F200")
 
     @inline
     def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
