@@ -23,11 +23,13 @@ suggests the idiomatic PyMCU alternative where one exists.
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `list.append(x)` | Heap allocation required | `uint8[N]` fixed-size array |
+| `list.append(x)` on a **fixed-size** array | Fixed arrays have no append | `list[uint8]` heap-bounded list, or `uint8[N]` fixed-size array |
 | `dict` | Hash table requires heap | `match / case` key dispatch |
 | `set` | Hash set requires heap | `uint8` bitmask |
 
-**Supported:** `bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
+**Supported:** `list[T]` (`x: list[uint8] = list()`) compiles to a bounded bump-allocator
+with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`.
+`bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
 Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index access.
 
 **Rule of thumb:** if the size is not known at compile time, it cannot be compiled.

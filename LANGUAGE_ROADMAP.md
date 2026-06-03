@@ -418,11 +418,10 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 
 | Feature | Reason |
 |---------|--------|
-| Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32-2048 bytes SRAM |
-| Garbage collection | No runtime |
-| `try` / `except` / `raise` / `finally` | ✅ Implemented (AVR — avr-libc setjmp/longjmp; `pymcu.exceptions` constants; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts — only emitted for exception types actually raised) |
+| `dict` / `set` | Hash tables require heap; no runtime |
+| Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `async` / `await` | Use `@interrupt` + polling loop |
-| `float` / `complex` / `Decimal` | Use `fixed16` when available |
+| `complex` / `Decimal` | Not available |
 | `f"..."` runtime interpolation | Compile-time only (constants only) |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
