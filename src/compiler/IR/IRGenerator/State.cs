@@ -93,6 +93,14 @@ public partial class IRGenerator
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
 
+    // Depth counter for runtime-conditional branches currently being compiled.
+    // > 0 means we are inside a branch whose predicate could not be folded at compile time.
+    // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)
+    // from a CompileError guard inside a runtime if/match that const-propagation failed to
+    // fold (depth > 0). In the latter case the raise is only a potential error; aborting
+    // the compilation would be a false positive.
+    private int _runtimeBranchDepth = 0;
+
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
 

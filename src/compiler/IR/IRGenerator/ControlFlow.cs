@@ -245,6 +245,7 @@ public partial class IRGenerator
 
         int optResult = EmitOptimizedConditionalJump(stmt.Condition, nextLabel, false);
         bool skipThen = false;
+        bool isRuntimeBranch = false;
 
         if (optResult == -1) skipThen = true;
         else if (optResult == 2)
@@ -281,6 +282,7 @@ public partial class IRGenerator
             else
             {
                 Emit(new JumpIfZero(condVal, nextLabel));
+                isRuntimeBranch = true;
             }
         }
 
@@ -290,7 +292,9 @@ public partial class IRGenerator
 
         if (!skipThen)
         {
+            if (isRuntimeBranch) _runtimeBranchDepth++;
             VisitStatement(stmt.ThenBranch);
+            if (isRuntimeBranch) _runtimeBranchDepth--;
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
@@ -308,6 +312,7 @@ public partial class IRGenerator
 
             int elifOpt = EmitOptimizedConditionalJump(elifCond, nextLabel, false);
             bool skipElif = false;
+            bool elifIsRuntime = false;
 
             if (elifOpt == -1) skipElif = true;
             else if (elifOpt == 2)
@@ -331,12 +336,15 @@ public partial class IRGenerator
                 else
                 {
                     Emit(new JumpIfZero(elifVal, nextLabel));
+                    elifIsRuntime = true;
                 }
             }
 
             if (!skipElif)
             {
+                if (elifIsRuntime) _runtimeBranchDepth++;
                 VisitStatement(elifBlock);
+                if (elifIsRuntime) _runtimeBranchDepth--;
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
@@ -346,7 +354,10 @@ public partial class IRGenerator
         if (stmt.ElseBranch != null)
         {
             Emit(new Label(nextLabel));
+            // The else branch runs when the condition was false — still runtime-guarded.
+            if (isRuntimeBranch) _runtimeBranchDepth++;
             VisitStatement(stmt.ElseBranch);
+            if (isRuntimeBranch) _runtimeBranchDepth--;
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
         }
@@ -574,12 +585,21 @@ public partial class IRGenerator
                         Emit(new JumpIfZero(g, nextCaseLabel));
                     }
 
+                    // Non-CT match body: the pattern comparison was runtime, so the body
+                    // is guarded by a runtime condition. Increment depth so that any
+                    // CompileError raise inside the body is not a false-positive abort.
+                    bool matchBodyIsRuntime = !allAltsConst;
+                    if (matchBodyIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
+                    if (matchBodyIsRuntime) _runtimeBranchDepth--;
                     Emit(new Jump(endLabel));
                 }
             }
             else
             {
+                // Wildcard (case _:) — only runs if no prior case matched.
+                // When ctAlreadyMatched is false the subject was runtime, so the wildcard
+                // body is also runtime-guarded (we arrive here only if no case matched).
                 if (!ctAlreadyMatched)
                 {
                     if (!string.IsNullOrEmpty(branch.CaptureName))
@@ -600,7 +620,10 @@ public partial class IRGenerator
                         Emit(new JumpIfZero(g, nextCaseLabel));
                     }
 
+                    bool wildcardIsRuntime = !(targetVal is Constant);
+                    if (wildcardIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
+                    if (wildcardIsRuntime) _runtimeBranchDepth--;
                     Emit(new Jump(endLabel));
                 }
             }
@@ -663,11 +686,28 @@ public partial class IRGenerator
         if (stmt.ErrorType == "CompileError")
         {
             string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
-            throw new ArchitectureError(msg, stmt.Line, 0);
+            if (_runtimeBranchDepth == 0)
+            {
+                // Statically unconditional: the raise is guaranteed to execute.
+                // Abort compilation immediately — this is the intended ZCA behaviour.
+                throw new ArchitectureError(msg, stmt.Line, 0);
+            }
+
+            // Inside a runtime-conditional branch: the const-propagation chain failed to
+            // fold the guard to a compile-time value (e.g. mode: uint8 instead of
+            // const[uint8]). Aborting here would be a false positive — the raise might
+            // never execute at runtime. Emit a SignalError so the IR is well-formed, and
+            // warn the developer that the guard should use a const parameter.
+            Console.Error.WriteLine(
+                $"warning: CompileError guard could not be verified at compile time " +
+                $"(line {stmt.Line}): {msg}. " +
+                "Ensure the guarding parameter is declared as const[...] so the branch is pruned.");
+            Emit(new SignalError(new Constant(0)));
+            return;
         }
+
         Val code = ResolveBinding(stmt.ErrorType);
-        exnExterns.Add("longjmp");
-        Emit(new RaiseExn(code));
+        Emit(new SignalError(code));
     }
 
     private void VisitTry(TryStmt stmt)
