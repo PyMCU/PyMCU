@@ -704,7 +704,66 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         foreach (var func in program.Functions.Where(func => func.IsInterrupt))
             CompileFunction(func);
+
+        // --- Call Graph Analysis for DCE ---
+        var referencedFuncs = new HashSet<string>();
+        var worklist = new Queue<string>();
+        
+        void AddRef(string name)
+        {
+            if (referencedFuncs.Add(name))
+                worklist.Enqueue(name);
+        }
+
+        AddRef("main");
+        foreach (var f in program.Functions.Where(f => f.IsInterrupt))
+            AddRef(f.Name);
+        foreach (var sym in program.ExternSymbols)
+            AddRef(sym);
+
+        while (worklist.Count > 0)
+        {
+            var fName = worklist.Dequeue();
+            var f = program.Functions.FirstOrDefault(x => x.Name == fName);
+            if (f == null) continue;
+            foreach (var instr in f.Body)
+            {
+                if (instr is Call c)
+                {
+                    if ((c.FunctionName == "_delay_ms_avr" || c.FunctionName.EndsWith("__delay_ms_avr")) 
+                        && c.Args.Count == 1 && c.Args[0] is Constant msConst)
+                    {
+                        ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
+                        ulong loops = cycles / 6;
+                        if (loops > 0) continue; 
+                    }
+                    if ((c.FunctionName == "_delay_us_avr" || c.FunctionName.EndsWith("__delay_us_avr")) 
+                        && c.Args.Count == 1 && c.Args[0] is Constant usConst)
+                    {
+                        ulong cycles = (ulong)usConst.Value * (cfg.Frequency / 1000000);
+                        ulong loops = cycles / 6;
+                        if (loops > 0) continue; 
+                    }
+                    AddRef(c.FunctionName);
+                }
+                var valsToCheck = instr switch
+                {
+                    Binary b => new[] { b.Src1, b.Src2, b.Dst },
+                    Copy cp => new[] { cp.Src, cp.Dst },
+                    Return r => r.Value != null ? new[] { r.Value } : Array.Empty<Val>(),
+                    Call cl => [.. cl.Args, cl.Dst],
+                    _ => Array.Empty<Val>()
+                };
+                foreach (var v in valsToCheck)
+                {
+                    if (v is FunctionRef fr) AddRef(fr.FunctionName);
+                }
+            }
+        }
+        // ------------------------------------
+
         foreach (var func in program.Functions.Where(func => !func.IsInterrupt)
+                     .Where(func => referencedFuncs.Contains(func.Name))
                      .Where(func => !func.IsInline || func.Name == "main"))
         {
             CompileFunction(func);
