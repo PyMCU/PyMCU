@@ -387,6 +387,15 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         var name = val switch { Variable v2 => v2.Name, Temporary t2 => t2.Name, _ => "" };
 
+        // "__exn_r22_capture" is a register alias: it represents R22 at catch-dispatcher
+        // entry — the physical register where SignalError deposited the error code.
+        // Compiled as MOV reg, R22 (zero SRAM cost, no stack-overlay risk).
+        if (name == "__exn_r22_capture")
+        {
+            if (reg != "R22") Emit("MOV", reg, "R22");
+            return;
+        }
+
         if (!string.IsNullOrEmpty(name) && _regLayout.TryGetValue(name, out var srcReg))
         {
             DataType sourceType = GetValType(val);

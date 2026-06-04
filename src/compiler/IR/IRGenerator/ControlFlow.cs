@@ -728,11 +728,15 @@ public partial class IRGenerator
         string catchDispatch = MakeLabel();
         string afterLabel    = MakeLabel();
 
-        // Allocate an SRAM slot for the caught error code so catch handlers can use it.
-        // (R22 may be clobbered by handler calls; save it to a named variable.)
-        string exnCodeName = currentFunction + ".__exn_code__";
-        variableTypes[exnCodeName] = DataType.UINT8;
-        Val exnCode = new Variable(exnCodeName, DataType.UINT8);
+        // The error code lives in the error register (R22 on AVR) when BranchOnError
+        // fires.  We use the sentinel Variable("__exn_r22_capture") as a read-only alias
+        // for that register: the backend compiles LoadIntoReg("__exn_r22_capture", "R24")
+        // as MOV R24, R22, with zero SRAM overhead.
+        //
+        // This avoids the stack-overlay collision that would occur if we saved R22 to an
+        // SRAM slot that the StackAllocator might alias with a callee's local variable.
+        // The comparison chain runs before any handler body, so R22 is stable throughout.
+        Val exnCode = new Variable("__exn_r22_capture", DataType.UINT8);
 
         // Compile the try body. After each Call instruction, insert BranchOnError so
         // that any SignalError from the callee jumps to the catch dispatcher.
@@ -757,10 +761,6 @@ public partial class IRGenerator
 
         // ── Catch dispatcher ─────────────────────────────────────────────────
         Emit(new Label(catchDispatch));
-
-        // Save error code from R22 into the named variable so that nested calls inside
-        // handler bodies do not clobber the code before the comparison chain.
-        Emit(new Copy(new Temporary("__t_exn_save", DataType.UINT8), exnCode));
 
         for (int i = 0; i < stmt.Handlers.Count; i++)
         {
