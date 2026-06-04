@@ -118,6 +118,9 @@ public enum BinaryOp
 [JsonDerivedType(typeof(GcUnroot),             "gunroot")]
 [JsonDerivedType(typeof(TryBegin),             "trybegin")]
 [JsonDerivedType(typeof(RaiseExn),             "raise")]
+[JsonDerivedType(typeof(SignalError),          "sigerr")]
+[JsonDerivedType(typeof(SignalSuccess),        "sigok")]
+[JsonDerivedType(typeof(BranchOnError),        "boe")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -214,13 +217,29 @@ public record GcRoot(Val Var) : Instruction;
 // GC: deregister a GC_REF root (shadow-stack pop before Return)
 public record GcUnroot(Val Var) : Instruction;
 
-// Exception handling: install a setjmp-based handler. JmpBufVar is a 22-byte local.
+// Exception handling (SJLJ — legacy, being replaced by T-flag propagation model).
 // _setjmp(jmpbuf) == 0 → normal; != 0 → longjmp fired, jump to CatchLabel.
 // ExnCodeVar receives the exception code passed to longjmp.
 public record TryBegin(Val JmpBufVar, string CatchLabel, Val ExnCodeVar) : Instruction;
 
-// Exception handling: call longjmp(active_jmpbuf, code) or __pymcu_unhandled_exn(code).
+// Exception handling (SJLJ — legacy). Raise via longjmp.
 public record RaiseExn(Val Code) : Instruction;
+
+// --- Error propagation (T-flag / Result model, architecture-agnostic) ---
+
+// Signal that this function is raising an error propagating to the caller.
+// Backend AVR : emits SET  (sets T flag in SREG).
+// Backend Cortex-M0 : emits MOV R1, code.
+public record SignalError(Val Code) : Instruction;
+
+// Signal that this function is returning successfully (happy path).
+// Must appear immediately before every Return inside a CanFail function.
+// Backend AVR : emits CLT. Backend Cortex-M0 : emits MOV R1, 0.
+public record SignalSuccess() : Instruction;
+
+// After a call to a CanFail function, branch to ErrorLabel if the callee signaled error.
+// Backend AVR : emits BRTS ErrorLabel. Backend Cortex-M0 : CMP R1,0 ; BNE ErrorLabel.
+public record BranchOnError(string ErrorLabel) : Instruction;
 
 // --- Function Definition ---
 public class Function
@@ -234,6 +253,16 @@ public class Function
     public bool IsNaked { get; set; } = false;
     public int InterruptVector { get; set; } = 0;
     public string? OriginalName { get; set; }
+
+    // Set by CanFailAnalyzer after IR generation.
+    // True when the function may propagate an error to its caller via SignalError.
+    public bool CanFail { get; set; } = false;
+
+    // True for @extern("symbol") functions — FFI inbound, always CanFail = false.
+    public bool IsExtern { get; set; } = false;
+
+    // True for @export_c functions — FFI outbound, must be CanFail = false.
+    public bool IsExportC { get; set; } = false;
 }
 
 public class ProgramIR
