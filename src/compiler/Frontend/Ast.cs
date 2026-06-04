@@ -521,11 +521,13 @@ public class TryStmt : Statement
 {
     public List<Statement> Body { get; }
     public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
+    public List<Statement>? Finally { get; }
 
-    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers)
+    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers, List<Statement>? finally_ = null)
     {
         Body = body;
         Handlers = handlers;
+        Finally = finally_;
     }
 }
 

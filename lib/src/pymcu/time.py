@@ -16,6 +16,7 @@
 from pymcu.types import uint8, uint16, uint32, inline, asm
 from pymcu.chips import __CHIP__, __FREQ__
 
+@inline
 def delay_ms(ms: uint16):
     """Delay for approximately the given number of milliseconds."""
     match __CHIP__.arch:
@@ -162,7 +163,6 @@ def _delay_1ms_avr_20mhz():
     asm("    POP R25")
     asm("    POP R24")
 
-@inline
 def _delay_ms_avr(ms: uint16):
     # Dispatch to the frequency-specific non-inline 1ms helper.
     # match __FREQ__ is dead-code-eliminated at compile time -- only the

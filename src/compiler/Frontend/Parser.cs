@@ -541,7 +541,16 @@ public class Parser
             handlers.Add((exnType, handlerBlock.Statements));
         }
 
-        return new TryStmt(body, handlers) { Line = line };
+        List<Statement>? finallyBody = null;
+        if (Check(TokenType.Finally))
+        {
+            Consume(TokenType.Finally, "Expected 'finally'");
+            Consume(TokenType.Colon, "Expected ':' after 'finally'");
+            ConsumeStatementEnd();
+            finallyBody = ParseBlock().Statements;
+        }
+
+        return new TryStmt(body, handlers, finallyBody) { Line = line };
     }
 
     private Statement ParseWithStatement()

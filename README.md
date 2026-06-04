@@ -14,10 +14,10 @@ Blink program compiled for ATmega328P at 16 MHz (all numbers measured):
 
 | Source | Flash | SRAM | Notes |
 |---|---|---|---|
-| **C** (`avr-gcc -Os`) | **58 bytes** | 0 bytes | 162b total - 104b vector table (`crt0`) |
+| **C** (`avr-gcc -Os`) | **72 bytes** | 0 bytes | 176b total - 104b vector table (`crt0`) |
 | **PyMCU** (CircuitPython API) | **110 bytes** | 0 bytes | Zero-cost abstraction (`digitalio.DigitalInOut` + explicit value) |
 | **PyMCU** (MicroPython API) | **108 bytes** | 0 bytes | Zero-cost abstraction (`machine.Pin` + `utime.sleep_ms`) |
-| **PyMCU** (native HAL) | **116 bytes** | 0 bytes | Compact 2-byte jump; no unused vectors |
+| **PyMCU** (native HAL) | **108 bytes** | 0 bytes | Zero-cost abstraction (`Pin.high()` / `Pin.low()`) |
 | **Arduino** (IDE defaults) | **~820 bytes** | 9 bytes | 924b total - 104b vector table |
 
 *Note: The sizes for C and Arduino have been adjusted to subtract the 104-byte interrupt vector table for a fair differential comparison. PyMCU avoids linking the standard C runtime (`crt0`) and generates its own minimal startup, emitting only the interrupt vectors your program actually uses. While PyMCU has a slight overhead compared to pure `-Os` C, it remains drastically smaller than Arduino.*

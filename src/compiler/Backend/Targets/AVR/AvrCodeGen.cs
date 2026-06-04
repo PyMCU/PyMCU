@@ -372,35 +372,86 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         EmitRaw(".global main");
         Emit("RJMP", "main");
 
-        if (isrMap.Count > 0)
+        // Always emit the vector table for safety. If an unhandled interrupt fires
+        // (e.g. due to hardware noise), it will execute RETI and return safely
+        // instead of executing random code.
+        for (var vec = 1; vec <= 25; vec++)
         {
-            for (var vec = 1; vec <= 25; vec++)
+            EmitRaw($".org 0x{vec * 2:X4}");
+
+            if (isrMap.TryGetValue(vec * 2, out var isrFunc))
             {
-                // AVR8Sharp sets cpu.Pc = overflowInterrupt (a byte address on real hardware,
-                // e.g. 0x12 for Timer2 OVF). Since ProgramMemory is word-indexed, cpu.Pc=0x12
-                // executes from byte 0x24 (= 2 × 0x12).
-                // AVRA .org uses WORD addresses, and _avra_to_gnuas() multiplies by 2:
-                //   AVRA .org 0x0012 → avr-as .org 0x0024 (byte).
-                // To place RJMP at byte 0x0024, we need AVRA .org = 0x0012 = vec*2.
-                // This matches overflowInterrupt = vec*2 (the byte address on real hardware).
-                EmitRaw($".org 0x{vec * 2:X4}");
-
-                if (isrMap.TryGetValue(vec * 2, out var isrFunc))
-                {
-                    Emit("RJMP", isrFunc.Name);
-                }
-                else
-                {
-                    Emit("RETI");
-                }
+                Emit("RJMP", isrFunc.Name);
             }
-
-            EmitRaw("");
+            else
+            {
+                Emit("RETI");
+            }
         }
+
+        EmitRaw("");
 
         foreach (var func in program.Functions.Where(func => func.IsInterrupt))
             CompileFunction(func);
+        // --- Call Graph Analysis for DCE ---
+        var referencedFuncs = new HashSet<string>();
+        var worklist = new Queue<string>();
+        
+        void AddRef(string name)
+        {
+            if (referencedFuncs.Add(name))
+                worklist.Enqueue(name);
+        }
+
+        AddRef("main");
+        foreach (var f in program.Functions.Where(f => f.IsInterrupt))
+            AddRef(f.Name);
+        foreach (var sym in program.ExternSymbols)
+            AddRef(sym);
+
+        while (worklist.Count > 0)
+        {
+            var fName = worklist.Dequeue();
+            var f = program.Functions.FirstOrDefault(x => x.Name == fName);
+            if (f == null) continue;
+            foreach (var instr in f.Body)
+            {
+                if (instr is Call c)
+                {
+                    if ((c.FunctionName == "_delay_ms_avr" || c.FunctionName.EndsWith("__delay_ms_avr")) 
+                        && c.Args.Count == 1 && c.Args[0] is Constant msConst)
+                    {
+                        ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
+                        ulong loops = cycles / 6;
+                        if (loops > 0) continue; 
+                    }
+                    if ((c.FunctionName == "_delay_us_avr" || c.FunctionName.EndsWith("__delay_us_avr")) 
+                        && c.Args.Count == 1 && c.Args[0] is Constant usConst)
+                    {
+                        ulong cycles = (ulong)usConst.Value * (cfg.Frequency / 1000000);
+                        ulong loops = cycles / 6;
+                        if (loops > 0) continue; 
+                    }
+                    AddRef(c.FunctionName);
+                }
+                var valsToCheck = instr switch
+                {
+                    Binary b => new[] { b.Src1, b.Src2, b.Dst },
+                    Copy cp => new[] { cp.Src, cp.Dst },
+                    Return r => r.Value != null ? new[] { r.Value } : Array.Empty<Val>(),
+                    Call cl => [.. cl.Args, cl.Dst],
+                    _ => Array.Empty<Val>()
+                };
+                foreach (var v in valsToCheck)
+                {
+                    if (v is FunctionRef fr) AddRef(fr.FunctionName);
+                }
+            }
+        }
+        // ------------------------------------
+
         foreach (var func in program.Functions.Where(func => !func.IsInterrupt)
+                     .Where(func => referencedFuncs.Contains(func.Name))
                      .Where(func => !func.IsInline || func.Name == "main"))
         {
             CompileFunction(func);
@@ -869,6 +920,29 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
+        Console.WriteLine($"[INFO] [AVR-DEBUG] CompileCall: {call.FunctionName} args={call.Args.Count} isConst={(call.Args.Count > 0 ? call.Args[0] is Constant : false)}");
+        if ((call.FunctionName == "_delay_ms_avr" || call.FunctionName.EndsWith("__delay_ms_avr")) && call.Args.Count == 1 && call.Args[0] is Constant msConst)
+        {
+            ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
+            ulong loops = cycles / 6;
+            if (loops > 0)
+            {
+                EmitComment($"Inline delay for {msConst.Value} ms at {cfg.Frequency} Hz ({cycles} cycles)");
+                Emit("LDI", "R18", $"{(loops & 0xFF)}");
+                Emit("LDI", "R19", $"{(loops >> 8) & 0xFF}");
+                Emit("LDI", "R20", $"{(loops >> 16) & 0xFF}");
+                Emit("LDI", "R21", $"{(loops >> 24) & 0xFF}");
+                string loopLabel = MakeLabel("L_DELAY");
+                EmitLabel(loopLabel);
+                Emit("SUBI", "R18", "1");
+                Emit("SBCI", "R19", "0");
+                Emit("SBCI", "R20", "0");
+                Emit("SBCI", "R21", "0");
+                Emit("BRNE", loopLabel);
+            }
+            return;
+        }
+
         string[] argRegs = ["R24", "R22", "R20", "R18"];
         for (var k = 0; k < call.Args.Count && k < 4; k++)
         {
