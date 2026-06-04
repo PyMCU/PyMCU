@@ -37,6 +37,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private Dictionary<string, List<int>> _functionParamSizes = new();
     private int _labelCounter;
     private Function? _currentFunction;
+    private int _bssSize;
 
     private string MakeLabel(string prefix = ".L") => $"{prefix}_{_labelCounter++}";
     private static string GetHighReg(string reg) => "R" + (int.Parse(reg[1..]) + 1);
@@ -326,6 +327,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         var (offsets, _) = allocator.Allocate(program);
         _stackLayout = offsets;
         _varSizes = allocator.VariableSizes;
+        _bssSize = program.Globals.Sum(g => g.Type.SizeOf()) + program.GlobalArrays.Values.Sum();
         _regLayout = AvrRegisterAllocator.Allocate(program);
 
         // Build function parameter size map for correct call-site arg loading.
@@ -354,6 +356,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             var safeName = name.Replace('.', '_');
             EmitRaw($".equ {safeName}, _stack_base + {offset}");
         }
+
+        if (_bssSize > 0)
+            EmitRaw($".equ _bss_end, _stack_base + {_bssSize}");
 
         EmitRaw("");
 
@@ -612,6 +617,24 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             Emit("OUT", "0x3D", "R16");
             Emit("LDI", "R28", "lo8(_stack_base)");
             Emit("LDI", "R29", "hi8(_stack_base)");
+            if (_bssSize > 0)
+            {
+                var bssLoop = MakeLabel("L_BSS_LOOP");
+                var bssEnd  = MakeLabel("L_BSS_END");
+                Emit("LDI", "R26", "lo8(_stack_base)");
+                Emit("LDI", "R27", "hi8(_stack_base)");
+                Emit("LDI", "R30", "lo8(_bss_end)");
+                Emit("LDI", "R31", "hi8(_bss_end)");
+                Emit("CP",  "R26", "R30");
+                Emit("CPC", "R27", "R31");
+                Emit("BREQ", bssEnd);
+                EmitLabel(bssLoop);
+                Emit("ST", "X+", "R1");
+                Emit("CP",  "R26", "R30");
+                Emit("CPC", "R27", "R31");
+                Emit("BRNE", bssLoop);
+                EmitLabel(bssEnd);
+            }
         }
 
         if (!func.IsInterrupt && func.Name != "main" && func.Params.Count > 0)
