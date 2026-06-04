@@ -39,6 +39,12 @@ public class IrGenerationPhase : CompilerPhaseBase
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines);
 
-        context.IntermediateRepresentation = Optimizer.Optimize(ir);
+        var optimized = Optimizer.Optimize(ir);
+
+        // CanFail analysis runs after optimization so that dead-code-eliminated
+        // functions and cloned bodies are the final IR seen by the backend.
+        CanFailAnalyzer.Analyze(optimized);
+
+        context.IntermediateRepresentation = optimized;
     }
 }

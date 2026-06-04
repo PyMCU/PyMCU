@@ -97,6 +97,9 @@ private static Function CloneFunction(Function f)
         IsInterrupt = f.IsInterrupt,
         IsNaked = f.IsNaked,
         InterruptVector = f.InterruptVector,
+        CanFail = f.CanFail,
+        IsExtern = f.IsExtern,
+        IsExportC = f.IsExportC,
     };
 }
 

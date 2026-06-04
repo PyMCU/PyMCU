@@ -642,6 +642,7 @@ public partial class IRGenerator
         loopStack.Clear();
         externFunctionMap.Clear();
         exnExterns.Clear();
+
         return irProgram;
     }
 

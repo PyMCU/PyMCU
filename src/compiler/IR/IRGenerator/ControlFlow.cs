@@ -688,21 +688,21 @@ public partial class IRGenerator
             string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
             if (_runtimeBranchDepth == 0)
             {
-                // Statically unconditional: the raise is guaranteed to execute.
-                // Abort compilation immediately — this is the intended ZCA behaviour.
+                // Statically unconditional: the raise is reachable without any runtime
+                // guard. Abort compilation immediately — this is the intended ZCA path.
                 throw new ArchitectureError(msg, stmt.Line, 0);
             }
 
             // Inside a runtime-conditional branch: the const-propagation chain failed to
             // fold the guard to a compile-time value (e.g. mode: uint8 instead of
-            // const[uint8]). Aborting here would be a false positive — the raise might
-            // never execute at runtime. Emit a SignalError so the IR is well-formed, and
-            // warn the developer that the guard should use a const parameter.
+            // const[uint8]). Aborting would be a false positive — the raise might never
+            // execute at runtime.
+            // CompileError must NEVER mutate into a runtime instruction; it is a
+            // compile-time-only concept. Emit nothing and warn the developer.
             Console.Error.WriteLine(
                 $"warning: CompileError guard could not be verified at compile time " +
                 $"(line {stmt.Line}): {msg}. " +
-                "Ensure the guarding parameter is declared as const[...] so the branch is pruned.");
-            Emit(new SignalError(new Constant(0)));
+                "Ensure the guarding parameter is declared as const[...] so the branch can be pruned.");
             return;
         }
 
@@ -712,34 +712,56 @@ public partial class IRGenerator
 
     private void VisitTry(TryStmt stmt)
     {
-        exnExterns.Add("setjmp");
-        exnExterns.Add("longjmp");
+        // T-flag propagation model (replaces SJLJ setjmp/longjmp):
+        //
+        //   - Each CALL in the try body is followed by BranchOnError(catchDispatch)
+        //     which emits BRTS on AVR — fires only when the callee set T=1 (SignalError).
+        //   - Non-CanFail callees clear T via CLT before RET (injected by the backend for
+        //     CanFail functions) or leave T=0 (they never touch T unless they signal error).
+        //   - At catchDispatch, R22 holds the error code loaded by SignalError; the
+        //     dispatch compares R22 against each handler's expected exception code.
+        //
+        // This replaces the 22-byte jmpbuf + _setjmp/_longjmp overhead with a single
+        // BRTS per call site — zero cost on the happy path.
+
         bool hasFinally = stmt.Finally != null && stmt.Finally.Count > 0;
+        string catchDispatch = MakeLabel();
+        string afterLabel    = MakeLabel();
 
-        string catchLabel = MakeLabel();
-        string afterLabel = MakeLabel();
-
-        // Allocate a 22-byte jmpbuf and exception-code variable in the function frame.
-        string jmpBufName = currentFunction + ".__jmpbuf__";
-        variableTypes[jmpBufName] = DataType.UINT8;
+        // Allocate an SRAM slot for the caught error code so catch handlers can use it.
+        // (R22 may be clobbered by handler calls; save it to a named variable.)
         string exnCodeName = currentFunction + ".__exn_code__";
         variableTypes[exnCodeName] = DataType.UINT8;
-
-        Val jmpBuf = new Variable(jmpBufName, DataType.UINT8);
         Val exnCode = new Variable(exnCodeName, DataType.UINT8);
 
-        Emit(new TryBegin(jmpBuf, catchLabel, exnCode));
+        // Compile the try body. After each Call instruction, insert BranchOnError so
+        // that any SignalError from the callee jumps to the catch dispatcher.
+        int bodyStart = currentInstructions.Count;
 
         foreach (var s in stmt.Body)
             VisitStatement(s);
 
-        // Normal (no exception) exit: run finally block (if any), then skip catch section.
+        // Post-process: find every Call emitted inside the try body and insert a
+        // BranchOnError guard immediately after it. We iterate in reverse so that
+        // inserting at position i does not shift the indices of earlier Calls.
+        var callIndices = new List<int>();
+        for (int i = bodyStart; i < currentInstructions.Count; i++)
+            if (currentInstructions[i] is Call) callIndices.Add(i);
+
+        for (int i = callIndices.Count - 1; i >= 0; i--)
+            currentInstructions.Insert(callIndices[i] + 1, new BranchOnError(catchDispatch));
+
+        // Happy path: run finally block (if any), then skip catch section.
         EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
 
-        Emit(new Label(catchLabel));
+        // ── Catch dispatcher ─────────────────────────────────────────────────
+        Emit(new Label(catchDispatch));
 
-        // Dispatch to the matching handler by comparing exnCode.
+        // Save error code from R22 into the named variable so that nested calls inside
+        // handler bodies do not clobber the code before the comparison chain.
+        Emit(new Copy(new Temporary("__t_exn_save", DataType.UINT8), exnCode));
+
         for (int i = 0; i < stmt.Handlers.Count; i++)
         {
             var (exnType, handlerBody) = stmt.Handlers[i];
@@ -759,15 +781,9 @@ public partial class IRGenerator
             Emit(new Label(skipLabel));
         }
 
-        // Unmatched exception path (no handler matched, or try/finally with no handlers):
-        // if finally exists, run it first, then call __pymcu_unhandled_exn.
-        // Clear active jmpbuf before calling so a nested raise doesn't loop back here.
-        if (hasFinally)
-        {
-            EmitFinallyBody(stmt);
-            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
-        }
-        // else: fall through to afterLabel (v1: unmatched exception silently ignored)
+        // No handler matched or finally-only: run finally then halt.
+        if (hasFinally) EmitFinallyBody(stmt);
+        Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
 
         Emit(new Label(afterLabel));
     }
