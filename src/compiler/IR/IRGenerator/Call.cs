@@ -1250,6 +1250,26 @@ public partial class IRGenerator
                 string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
                 boundParams.Add(paramIdx);
 
+                if (argValues[i] is FloatConstant fcArg)
+                {
+                    var fcPType = func.Params[paramIdx].Type;
+                    bool fcIsInt = fcPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                    if (fcIsInt)
+                    {
+                        constantVariables[paramName] = (int)fcArg.Value;
+                        floatConstantVariables.Remove(paramName);
+                    }
+                    else
+                    {
+                        floatConstantVariables[paramName] = fcArg.Value;
+                        constantVariables.Remove(paramName);
+                    }
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(fcPType);
+                    continue;
+                }
+
                 if (argValues[i] is Variable vArg)
                 {
                     if (func.Params[paramIdx].Type == "const[str]")
@@ -1266,16 +1286,28 @@ public partial class IRGenerator
 
                     if (floatConstantVariables.TryGetValue(vArg.Name, out double fv))
                     {
-                        floatConstantVariables[paramName] = fv;
-                        constantVariables.Remove(paramName);
+                        var fvPType = func.Params[paramIdx].Type;
+                        bool fvIsInt = fvPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                        if (fvIsInt)
+                        {
+                            constantVariables[paramName] = (int)fv;
+                            floatConstantVariables.Remove(paramName);
+                        }
+                        else
+                        {
+                            floatConstantVariables[paramName] = fv;
+                            constantVariables.Remove(paramName);
+                        }
                         strConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
+                        variableTypes[paramName] = DataTypeExtensions.StringToDataType(fvPType);
                         continue;
                     }
 
                     variableAliases[paramName] = vArg.Name;
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
                     continue;
                 }
 
@@ -1337,13 +1369,11 @@ public partial class IRGenerator
                     constantVariables[paramName] = cArg2.Value;
                     continue;
                 }
-
                 if (argValues[i] is Constant cArg3)
                 {
                     constantVariables[paramName] = cArg3.Value;
                     continue;
                 }
-
                 if (argValues[i] is MemoryAddress mArg)
                 {
                     constantAddressVariables[paramName] = mArg.Address;
@@ -1355,6 +1385,7 @@ public partial class IRGenerator
                 strConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                variableTypes[paramName] = paramType;
                 Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
             }
 
@@ -1391,10 +1422,17 @@ public partial class IRGenerator
                                 constantVariables[paramName] = ckw.Value;
                             }
                         }
-                        else if (kvp.Value is Constant ckw2) constantVariables[paramName] = ckw2.Value;
+                        else if (kvp.Value is Constant ckw2)
+                        {
+                            constantVariables[paramName] = ckw2.Value;
+                        }
                         else
                         {
+                            constantVariables.Remove(paramName);
+                            strConstantVariables.Remove(paramName);
+                            variableAliases.Remove(paramName);
                             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
+                            variableTypes[paramName] = paramType;
                             Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
                         }
 
