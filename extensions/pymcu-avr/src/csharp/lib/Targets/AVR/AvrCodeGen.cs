@@ -320,6 +320,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         {
             { "BREQ", "BRNE" }, { "BRNE", "BREQ" }, { "BRLT", "BRGE" }, { "BRGE", "BRLT" },
             { "BRCS", "BRCC" }, { "BRCC", "BRCS" }, { "BRLO", "BRSH" }, { "BRSH", "BRLO" },
+            { "BRTS", "BRTC" }, { "BRTC", "BRTS" },  // T-flag branches (error propagation)
         };
         string inverted = inv.GetValueOrDefault(cond, cond);
         string skip = MakeLabel("L_BR_SKIP");
@@ -705,7 +706,12 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         EmitFlashArrayPool(output);
         if (program.NeedsGc) EmitGcRuntime(output);
-        if (program.ExternSymbols.Contains("setjmp")) EmitExnRuntime(output, _usedExnCodes, cfg.Chip);
+        // Emit the exception runtime when either the SJLJ model (setjmp) is used
+        // OR when the T-flag model calls __pymcu_unhandled_exn for unmatched catches.
+        bool needsExnRuntime = program.ExternSymbols.Contains("setjmp")
+            || program.Functions.Any(f =>
+                f.Body.OfType<Call>().Any(c => c.FunctionName == "__pymcu_unhandled_exn"));
+        if (needsExnRuntime) EmitExnRuntime(output, _usedExnCodes, cfg.Chip);
         WriteSymbolsIfRequested(optimized, program);
         WriteLineMapIfRequested(optimized);
         WriteVarMapIfRequested(program);
@@ -3032,12 +3038,16 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     // discriminar el tipo; R22 no es el error "carrier" (ese es T), sino el payload.
     private void CompileSignalError(SignalError se)
     {
+        // Load the error code into R22 so the catch dispatcher can identify the type.
         if (se.Code is not Constant { Value: 0 })
-        {
-            // Cargar el código en R22 para que el handler pueda despacharlo.
             LoadIntoReg(se.Code, "R22", DataType.UINT8);
-        }
-        Emit("SET");   // BSET 6 — T = 1
+
+        Emit("SET");   // BSET 6 — T = 1 (signal error to caller)
+
+        // SignalError is terminal: return immediately with T = 1.
+        // CompileReturn injects CLT before RET for CanFail success paths — we must
+        // bypass that by emitting RET directly here (without CLT) so T stays set.
+        Emit("RET");
     }
 
     // SignalSuccess — el callee retorna en el happy path.

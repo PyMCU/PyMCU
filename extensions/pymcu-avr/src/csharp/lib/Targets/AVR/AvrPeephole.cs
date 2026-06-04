@@ -114,7 +114,8 @@ public static class AvrPeephole
             {
                 if (line.Mnemonic is "RJMP" or "RCALL" or "JMP" or "CALL" or
                     "BREQ" or "BRNE" or "BRLO" or "BRSH" or "BRMI" or "BRPL" or
-                    "BRLT" or "BRGE" or "BRCS" or "BRCC")
+                    "BRLT" or "BRGE" or "BRCS" or "BRCC" or
+                    "BRTS" or "BRTC")
                 {
                     usedLabels.Add(line.Op1);
                 }
