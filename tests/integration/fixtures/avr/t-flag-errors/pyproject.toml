@@ -1,0 +1,10 @@
+[project]
+name = "t-flag-errors"
+version = "0.1.0"
+dependencies = ["pymcu-stdlib"]
+
+[tool.pymcu]
+target = "atmega328p"
+frequency = 16000000
+sources = "src"
+entry = "main.py"
