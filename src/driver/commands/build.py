@@ -333,6 +333,13 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
                     total = total + rec_len
     except Exception:
         pass
+
+    # Deduct the 52-byte vector table (26 vectors * 2 bytes). 
+    # It is emitted unconditionally for safety and shouldn't count as language overhead.
+    VECTOR_TABLE_SIZE = 52
+    if total >= VECTOR_TABLE_SIZE:
+        total -= VECTOR_TABLE_SIZE
+
     return total
 
 def build(
