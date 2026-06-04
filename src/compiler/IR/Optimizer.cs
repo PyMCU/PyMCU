@@ -75,7 +75,7 @@ public static class Optimizer
             foreach (var callee in callees) Enqueue(callee);
         }
 
-        optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
+        // optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
         return optimized;
 
         void Enqueue(string name)
@@ -238,9 +238,97 @@ private static Function CloneFunction(Function f)
                         }
 
                         if (foldable)
+                        {
                             func.Body[i] = new Copy(new Constant(result), binary.Dst);
+                        }
                     }
 
+                    break;
+                }
+                case JumpIfEqual je:
+                {
+                    var c1 = GetConstant(je.Src1);
+                    var c2 = GetConstant(je.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value == c2.Value) func.Body[i] = new Jump(je.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfNotEqual jne:
+                {
+                    var c1 = GetConstant(jne.Src1);
+                    var c2 = GetConstant(jne.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value != c2.Value) func.Body[i] = new Jump(jne.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfLessThan jlt:
+                {
+                    var c1 = GetConstant(jlt.Src1);
+                    var c2 = GetConstant(jlt.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value < c2.Value) func.Body[i] = new Jump(jlt.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfLessOrEqual jle:
+                {
+                    var c1 = GetConstant(jle.Src1);
+                    var c2 = GetConstant(jle.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value <= c2.Value) func.Body[i] = new Jump(jle.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfGreaterThan jgt:
+                {
+                    var c1 = GetConstant(jgt.Src1);
+                    var c2 = GetConstant(jgt.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value > c2.Value) func.Body[i] = new Jump(jgt.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfGreaterOrEqual jge:
+                {
+                    var c1 = GetConstant(jge.Src1);
+                    var c2 = GetConstant(jge.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value >= c2.Value) func.Body[i] = new Jump(jge.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfZero jz:
+                {
+                    var c1 = GetConstant(jz.Condition);
+                    if (c1.HasValue)
+                    {
+                        if (c1.Value == 0) func.Body[i] = new Jump(jz.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfNotZero jnz:
+                {
+                    var c1 = GetConstant(jnz.Condition);
+                    if (c1.HasValue)
+                    {
+                        if (c1.Value != 0) func.Body[i] = new Jump(jnz.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
                     break;
                 }
                 case Unary unary:
@@ -666,6 +754,24 @@ private static Function CloneFunction(Function f)
                     Connect(block, blocks[i + 1]);
             }
         }
+
+        // Eliminate unreachable blocks
+        var reachable = new HashSet<BasicBlock>();
+        var queue = new Queue<BasicBlock>();
+        if (cfg.Entry != null)
+        {
+            reachable.Add(cfg.Entry);
+            queue.Enqueue(cfg.Entry);
+        }
+        while (queue.Count > 0)
+        {
+            var b = queue.Dequeue();
+            foreach (var s in b.Successors)
+            {
+                if (reachable.Add(s)) queue.Enqueue(s);
+            }
+        }
+        cfg.Blocks.RemoveAll(b => !reachable.Contains(b));
 
         return cfg;
     }
