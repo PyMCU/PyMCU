@@ -334,11 +334,15 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     except Exception:
         pass
 
-    # Deduct the 52-byte vector table (26 vectors * 2 bytes). 
-    # It is emitted unconditionally for safety and shouldn't count as language overhead.
-    VECTOR_TABLE_SIZE = 52
-    if total >= VECTOR_TABLE_SIZE:
-        total -= VECTOR_TABLE_SIZE
+    # Deduct the constant startup preamble that every PyMCU binary carries:
+    #   - 26 interrupt vector slots x 4 bytes (RJMP + NOP padding) = 104 bytes
+    #   - __bad_interrupt: RJMP main                                =   2 bytes
+    # Total preamble = 106 bytes. This matches avr-libc's crt0 footprint
+    # (26 x JMP = 104 bytes + __bad_interrupt: JMP = 4 bytes = 108 bytes),
+    # keeping the differential comparison fair.
+    PREAMBLE_SIZE = 106
+    if total >= PREAMBLE_SIZE:
+        total -= PREAMBLE_SIZE
 
     return total
 
