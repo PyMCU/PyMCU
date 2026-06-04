@@ -681,18 +681,17 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         EmitRaw(".global main");
         Emit("RJMP", "main");
 
-        // Always emit the vector table for safety. If an unhandled interrupt fires
-        // (e.g. due to hardware noise), it will execute RETI and return safely
-        // instead of executing random code.
+        // Always emit the vector table. Unused vectors jump to __bad_interrupt which
+        // performs a soft reset, matching avr-libc safety semantics.
+        // AVR8Sharp sets cpu.Pc = overflowInterrupt (a byte address on real hardware,
+        // e.g. 0x12 for Timer2 OVF). Since ProgramMemory is word-indexed, cpu.Pc=0x12
+        // executes from byte 0x24 (= 2 × 0x12).
+        // AVRA .org uses WORD addresses, and _avra_to_gnuas() multiplies by 2:
+        //   AVRA .org 0x0012 → avr-as .org 0x0024 (byte).
+        // To place RJMP at byte 0x0024, we need AVRA .org = 0x0012 = vec*2.
+        // This matches overflowInterrupt = vec*2 (the byte address on real hardware).
         for (var vec = 1; vec <= 25; vec++)
         {
-            // AVR8Sharp sets cpu.Pc = overflowInterrupt (a byte address on real hardware,
-            // e.g. 0x12 for Timer2 OVF). Since ProgramMemory is word-indexed, cpu.Pc=0x12
-            // executes from byte 0x24 (= 2 × 0x12).
-            // AVRA .org uses WORD addresses, and _avra_to_gnuas() multiplies by 2:
-            //   AVRA .org 0x0012 → avr-as .org 0x0024 (byte).
-            // To place RJMP at byte 0x0024, we need AVRA .org = 0x0012 = vec*2.
-            // This matches overflowInterrupt = vec*2 (the byte address on real hardware).
             EmitRaw($".org 0x{vec * 2:X4}");
 
             if (isrMap.TryGetValue(vec * 2, out var isrFunc))
@@ -701,10 +700,13 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             }
             else
             {
-                Emit("RETI");
+                Emit("RJMP", "__bad_interrupt");
             }
         }
 
+        EmitRaw("");
+        EmitLabel("__bad_interrupt");
+        Emit("RJMP", "main");
         EmitRaw("");
 
         foreach (var func in program.Functions.Where(func => func.IsInterrupt))

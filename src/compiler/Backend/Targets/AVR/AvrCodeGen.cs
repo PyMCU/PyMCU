@@ -377,9 +377,8 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         EmitRaw(".global main");
         Emit("RJMP", "main");
 
-        // Always emit the vector table for safety. If an unhandled interrupt fires
-        // (e.g. due to hardware noise), it will execute RETI and return safely
-        // instead of executing random code.
+        // Always emit the vector table. Unused vectors jump to __bad_interrupt which
+        // performs a soft reset, matching avr-libc safety semantics.
         for (var vec = 1; vec <= 25; vec++)
         {
             EmitRaw($".org 0x{vec * 2:X4}");
@@ -390,10 +389,13 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             }
             else
             {
-                Emit("RETI");
+                Emit("RJMP", "__bad_interrupt");
             }
         }
 
+        EmitRaw("");
+        EmitLabel("__bad_interrupt");
+        Emit("RJMP", "main");
         EmitRaw("");
 
         foreach (var func in program.Functions.Where(func => func.IsInterrupt))
