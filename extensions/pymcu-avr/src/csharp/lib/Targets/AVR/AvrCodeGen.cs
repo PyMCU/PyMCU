@@ -27,6 +27,7 @@ namespace PyMCU.Backend.Targets.AVR;
 
 public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 {
+    private int _loopCounter = 0;
     private readonly List<AvrAsmLine> _assembly = [];
     private Dictionary<string, int> _stackLayout = new();
     private Dictionary<string, int> _varSizes = new();
@@ -1133,6 +1134,26 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
+        if ((call.FunctionName == "_delay_ms_avr" || call.FunctionName.EndsWith("__delay_ms_avr")) && call.Args.Count == 1 && call.Args[0] is Constant msConst)
+        {
+            ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
+            ulong loops = cycles / 6;
+            if (loops == 0) return;
+
+            string label = $"_dly_L{_loopCounter++}";
+
+            Emit($"LDI", "R18", $"{(loops & 0xFF)}");
+            Emit($"LDI", "R19", $"{((loops >> 8) & 0xFF)}");
+            Emit($"LDI", "R20", $"{((loops >> 16) & 0xFF)}");
+            Emit($"LDI", "R21", $"{((loops >> 24) & 0xFF)}");
+            EmitLabel(label);
+            Emit($"SUBI", "R18", "1");
+            Emit($"SBCI", "R19", "0");
+            Emit($"SBCI", "R20", "0");
+            Emit($"SBCI", "R21", "0");
+            Emit("BRNE", label);
+            return;
+        }
         // Float arguments use R22:R25 (arg0) and R18:R21 (arg1) per float convention.
         // Integer arguments use R24 (arg0), R22 (arg1), R20 (arg2), R18 (arg3).
         string[] argRegs = ["R24", "R22", "R20", "R18"];
