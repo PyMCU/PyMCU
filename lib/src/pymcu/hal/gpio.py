@@ -285,7 +285,7 @@ class Pin:
                 from pymcu.hal._gpio.pic18f45k50 import pin_toggle
                 pin_toggle(self.name)
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313" | "atmega2560" | "atmega32u4":
-                self._port[self._bit] = self._port[self._bit] ^ 1
+                self._pin[self._bit] = 1
 
     @inline
     def value(self, x: const = -1) -> uint8:
