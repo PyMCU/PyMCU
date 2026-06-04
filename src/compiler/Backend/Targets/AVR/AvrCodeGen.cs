@@ -605,6 +605,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         if (func.Name == "main")
         {
+            Emit("CLR", "R1");
             Emit("LDI", "R16", "hi8(0x08FF)");
             Emit("OUT", "0x3E", "R16");
             Emit("LDI", "R16", "lo8(0x08FF)");

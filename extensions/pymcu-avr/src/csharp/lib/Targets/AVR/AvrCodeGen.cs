@@ -839,6 +839,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         if (func.Name == "main")
         {
+            Emit("CLR", "R1");
             Emit("LDI", "R16", "hi8(0x08FF)");
             Emit("OUT", "0x3E", "R16");
             Emit("LDI", "R16", "lo8(0x08FF)");
@@ -1193,6 +1194,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
+        Console.WriteLine($"[INFO] [AVR-DEBUG-EXT] CompileCall: {call.FunctionName} args={call.Args.Count} isConst={(call.Args.Count > 0 ? call.Args[0] is Constant : false)}");
         if ((call.FunctionName == "_delay_ms_avr" || call.FunctionName.EndsWith("__delay_ms_avr")) && call.Args.Count == 1 && call.Args[0] is Constant msConst)
         {
             ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
