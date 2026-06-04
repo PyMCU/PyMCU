@@ -912,6 +912,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case GcUnroot gu: CompileGcUnroot(gu); break;
             case TryBegin tb: CompileTryBegin(tb); break;
             case RaiseExn re: CompileRaiseExn(re); break;
+            case SignalError se: CompileSignalError(se); break;
+            case SignalSuccess: CompileSignalSuccess(); break;
+            case BranchOnError boe: CompileBranchOnError(boe); break;
         }
     }
 
@@ -925,6 +928,14 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             else
                 LoadIntoReg(r.Value, "R24", returnType);
         }
+
+        // Inject CLT before RET in every CanFail function's happy path.
+        // This guarantees T == 0 when the caller reads the flag, regardless of
+        // which other CanFail callees the function may have called along the way.
+        // ISRs are excluded: (a) they cannot be CanFail (enforced by CanFailAnalyzer)
+        // and (b) SREG is restored from the saved context by EmitContextRestore().
+        if ((_currentFunction?.CanFail ?? false) && !(_currentFunction?.IsInterrupt ?? false))
+            Emit("CLT");
 
         if (!(_currentFunction?.IsNaked ?? false))
             Emit("RET");
@@ -3009,6 +3020,43 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("CALL", "longjmp");
         EmitLabel(noHandlerLabel);
         Emit("CALL", "__pymcu_unhandled_exn");
+    }
+
+    // -------------------------------------------------------------------------
+    // T-flag error propagation (ABI interna PyMCU — reemplaza SJLJ)
+    // -------------------------------------------------------------------------
+
+    // SignalError — el callee está propagando un error al caller.
+    // Emite SET: pone el T flag del SREG a 1.
+    // El error code se guarda en R22 para que el dispatch en el catch site pueda
+    // discriminar el tipo; R22 no es el error "carrier" (ese es T), sino el payload.
+    private void CompileSignalError(SignalError se)
+    {
+        if (se.Code is not Constant { Value: 0 })
+        {
+            // Cargar el código en R22 para que el handler pueda despacharlo.
+            LoadIntoReg(se.Code, "R22", DataType.UINT8);
+        }
+        Emit("SET");   // BSET 6 — T = 1
+    }
+
+    // SignalSuccess — el callee retorna en el happy path.
+    // Emite CLT: pone el T flag a 0.
+    // Se inyecta ANTES de cada RET en funciones CanFail (ver CompileReturn).
+    private void CompileSignalSuccess()
+    {
+        Emit("CLT");   // BCLR 6 — T = 0
+    }
+
+    // BranchOnError — tras llamar a una función CanFail, ramifica si T == 1.
+    // BRTS tiene un rango de ±63 bytes de PC; para targets lejanos usamos la
+    // inversión BRTC/RJMP (mismo patrón que EmitBranch para los otros flags).
+    private void CompileBranchOnError(BranchOnError boe)
+    {
+        // BRTS target  →  si T está set, salta a target.
+        // EmitBranch("BRTS", target) emitiría BRTC skip; RJMP target; label skip:
+        // lo que es correcto para targets fuera del rango del branch corto.
+        EmitBranch("BRTS", boe.ErrorLabel);
     }
 }
 
