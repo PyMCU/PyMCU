@@ -23,13 +23,18 @@ configure PB5 as output, then loop `LED on → wait 500 ms → LED off → wait 
 
 PyMCU produces a **smaller binary than C** here. Why?
 
-Every firmware binary has two parts that have nothing to do with your code: an **interrupt vector table** (a fixed-size safety table all AVR firmwares must have at address 0) and a **startup stub** (a handful of instructions that zero registers and set the stack pointer before calling `main`). Both toolchains emit roughly the same amount for these — PyMCU uses 2-byte `RJMP` instructions where C uses 4-byte `JMP`, saving 2 bytes in the vector table.
-
-The real difference is in the **application code itself**. `Pin("PB5", Pin.OUT)` and `delay_ms(500)` are resolved entirely at compile time — the compiler sees through the Python objects and emits the same raw `SBI`/`CBI` port-toggle instructions a C programmer would write by hand. The delay loop PyMCU generates happens to use one fewer padding instruction than the loop `avr-gcc -Os` emits for this particular pattern.
+`Pin("PB5", Pin.OUT)` and `delay_ms(500)` are resolved entirely at compile time — the
+compiler sees through the Python objects and emits the same raw `SBI`/`CBI` port-toggle
+instructions a C programmer would write by hand. The delay loop PyMCU generates happens to
+use one fewer padding instruction than the loop `avr-gcc -Os` emits for this particular pattern.
+The interrupt vector table and startup stub are identical fixed overhead in both toolchains.
 
 **Native HAL and MicroPython API produce byte-for-byte identical firmware** — both compile down to the same `SBI`/`CBI` toggle and the same delay loop. The API is a zero-cost abstraction. CircuitPython is 2 bytes larger because the `Direction.OUTPUT` setter clears the PORT register before setting DDR, as the CircuitPython spec requires.
 
 > These numbers are for a minimal blink. Real programs that use SRAM (global variables, buffers) will emit a small zeroing loop at startup, just like C does.
+
+> **For complex drivers** (custom protocols, timing-critical bit-bang): expect 2-3x flash vs
+> hand-written C. That is still 100-1000x smaller than any embedded Python interpreter.
 
 ---
 
@@ -84,10 +89,15 @@ pymcu flash   # → avrdude upload to Arduino Uno
 ### 1. Install
 
 ```bash
-pipx install "pymcu[avr]"
+pipx install "pymcu-compiler[avr]"
 ```
 
 Requires Python 3.11+ and `pipx`. The `[avr]` extra includes the AVR toolchain.
+
+> **Package name:** PyMCU is published as `pymcu-compiler` on PyPI while a
+> [PEP 541 request](https://github.com/pypa/pypi-support) to reclaim the `pymcu`
+> name is under review. Once approved, a `pymcu` metapackage will alias
+> `pymcu-compiler` — installs and project configs will stay compatible.
 
 ### 2. Create a project
 
@@ -103,7 +113,7 @@ cd blink
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["pymcu", "pymcu-circuitpython"]
+dependencies = ["pymcu-compiler", "pymcu-circuitpython"]
 
 [tool.pymcu]
 board     = "arduino_uno"
@@ -131,7 +141,7 @@ while True:
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["pymcu", "pymcu-micropython"]
+dependencies = ["pymcu-compiler", "pymcu-micropython"]
 
 [tool.pymcu]
 board     = "arduino_uno"
@@ -171,7 +181,7 @@ pymcu flash --port /dev/cu.usbmodem*
 |---|---|---|
 | `pymcu-circuitpython` | `digitalio`, `analogio`, `busio`, `pwmio`, `time`, `board`, `neopixel` | `pip install pymcu-circuitpython` |
 | `pymcu-micropython` | `machine` (Pin/UART/ADC/PWM/SPI/I2C/Timer/WDT), `utime` | `pip install pymcu-micropython` |
-| `pymcu.hal.*` | Direct register-level HAL — lowest overhead | included in `pymcu` |
+| `pymcu.hal.*` | Direct register-level HAL — lowest overhead | `pymcu-stdlib` (installed automatically with `pymcu-compiler`) |
 
 **Start with the compat layer that matches your background.** The APIs are stable,
 community-specified, and unlikely to change between alpha releases. Switch to
@@ -185,8 +195,6 @@ community-specified, and unlikely to change between alpha releases. Switch to
 |---|---|
 | **AVR** (ATmega) | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
 | **AVR** (ATtiny) | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
-| **PIC** | PIC12, PIC14, PIC14E, PIC18 |
-| **RISC-V** | Experimental |
 
 ---
 
@@ -241,6 +249,16 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 | `pymcu build` | Compile `src/` → `dist/firmware.hex` |
 | `pymcu flash` | Upload via avrdude |
 | `pymcu clean` | Remove build artifacts |
+
+---
+
+## Sustainability
+
+Post-alpha development will be slower and community-driven. If PyMCU saves you time,
+consider sponsoring the project — the goal is a modest $100-200/month to cover the
+AI tooling costs that made this first release possible.
+
+[Sponsor on GitHub](https://github.com/sponsors/begeistert)
 
 ---
 
