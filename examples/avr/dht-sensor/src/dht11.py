@@ -58,7 +58,6 @@ class DHT11:
         self.humidity = hum_int
         self.temperature = temp_int
 
-    @inline
     def _read_byte(self) -> uint8:
         # Read 8 consecutive bits from the sensor.
         result: uint8 = 0

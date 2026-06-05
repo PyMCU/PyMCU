@@ -1181,6 +1181,25 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         EmitBranch("BRNE", jnz.Target);
     }
 
+    // 16-bit compare against a compile-time constant.
+    // When the constant fits in one byte (hi==0), use CPI+CPC R1 (saves 2 LDI words).
+    // R1 is the AVR zero register and is always 0 in PyMCU-generated code.
+    private void Emit16BitCompareConstant(int val)
+    {
+        if ((val & 0xFF00) == 0)
+        {
+            Emit("CPI", "R24", $"{val & 0xFF}");
+            Emit("CPC", "R25", "R1");
+        }
+        else
+        {
+            Emit("LDI", "R18", $"{val & 0xFF}");
+            Emit("LDI", "R19", $"{(val >> 8) & 0xFF}");
+            Emit("CP",  "R24", "R18");
+            Emit("CPC", "R25", "R19");
+        }
+    }
+
     private void EmitCompare(Val src1, Val src2, DataType type)
     {
         LoadIntoReg(src1, "R24", type);
@@ -1199,13 +1218,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 Emit("CPC", "R23", "R21");
             }
             else if (type.SizeOf() == 2)
-            {
-                Emit("LDI", "R18", $"{val & 0xFF}");
-                Emit("LDI", "R19", $"{(val >> 8) & 0xFF}");
-                Emit("CP", "R24", "R18");
-                Emit("CPC", "R25", "R19");
-            }
-            else Emit("CPI", "R24", $"{val & 0xFF}");
+                Emit16BitCompareConstant(val);
+            else
+                Emit("CPI", "R24", $"{val & 0xFF}");
         }
         else
         {
@@ -1285,13 +1300,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     Emit("CPC", "R23", "R21");
                 }
                 else if (type.SizeOf() == 2)
-                {
-                    Emit("LDI", "R18", $"{cmpVal & 0xFF}");
-                    Emit("LDI", "R19", $"{(cmpVal >> 8) & 0xFF}");
-                    Emit("CP",  "R24", "R18");
-                    Emit("CPC", "R25", "R19");
-                }
-                else Emit("CPI", "R24", $"{cmpVal & 0xFF}");
+                    Emit16BitCompareConstant(cmpVal);
+                else
+                    Emit("CPI", "R24", $"{cmpVal & 0xFF}");
                 EmitBranch(brLo, jle.Target);
                 return;
             }
@@ -1333,13 +1344,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             {
                 int cmpVal = val + 1;
                 if (type.SizeOf() == 2)
-                {
-                    Emit("LDI", "R18", $"{cmpVal & 0xFF}");
-                    Emit("LDI", "R19", $"{(cmpVal >> 8) & 0xFF}");
-                    Emit("CP", "R24", "R18");
-                    Emit("CPC", "R25", "R19");
-                }
-                else Emit("CPI", "R24", $"{cmpVal & 0xFF}");
+                    Emit16BitCompareConstant(cmpVal);
+                else
+                    Emit("CPI", "R24", $"{cmpVal & 0xFF}");
 
                 EmitBranch(signed ? "BRGE" : "BRSH", jgt.Target);
             }
@@ -1359,7 +1366,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
-        Console.WriteLine($"[INFO] [AVR-DEBUG-EXT] CompileCall: {call.FunctionName} args={call.Args.Count} isConst={(call.Args.Count > 0 ? call.Args[0] is Constant : false)}");
         if ((call.FunctionName == "_delay_ms_avr" || call.FunctionName.EndsWith("__delay_ms_avr")) && call.Args.Count == 1 && call.Args[0] is Constant msConst)
         {
             ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);
