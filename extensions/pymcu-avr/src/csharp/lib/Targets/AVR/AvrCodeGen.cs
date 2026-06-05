@@ -1166,8 +1166,44 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
     private void CompileLessOrEqual(JumpIfLessOrEqual jle)
     {
         var type = GetValType(jle.Src1);
+        bool signed = IsSignedComparison(jle.Src1, jle.Src2);
+        string brLo = signed ? "BRLT" : "BRLO";
+
+        // val <= const  ≡  val < (const+1): saves one EmitBranch (2 instructions).
+        if (jle.Src2 is Constant cLE)
+        {
+            int maxVal = type.SizeOf() == 2 ? (signed ? 0x7FFF : 0xFFFF)
+                       : type.SizeOf() == 4 ? int.MaxValue
+                       : (signed ? 0x7F : 0xFF);
+            if (cLE.Value < maxVal)
+            {
+                int cmpVal = cLE.Value + 1;
+                LoadIntoReg(jle.Src1, "R24", type);
+                if (type.SizeOf() == 4)
+                {
+                    Emit("LDI", "R18", $"{cmpVal & 0xFF}");
+                    Emit("LDI", "R19", $"{(cmpVal >> 8) & 0xFF}");
+                    Emit("LDI", "R20", $"{(cmpVal >> 16) & 0xFF}");
+                    Emit("LDI", "R21", $"{(cmpVal >> 24) & 0xFF}");
+                    Emit("CP",  "R24", "R18");
+                    Emit("CPC", "R25", "R19");
+                    Emit("CPC", "R22", "R20");
+                    Emit("CPC", "R23", "R21");
+                }
+                else if (type.SizeOf() == 2)
+                {
+                    Emit("LDI", "R18", $"{cmpVal & 0xFF}");
+                    Emit("LDI", "R19", $"{(cmpVal >> 8) & 0xFF}");
+                    Emit("CP",  "R24", "R18");
+                    Emit("CPC", "R25", "R19");
+                }
+                else Emit("CPI", "R24", $"{cmpVal & 0xFF}");
+                EmitBranch(brLo, jle.Target);
+                return;
+            }
+        }
+
         EmitCompare(jle.Src1, jle.Src2, type);
-        string brLo = IsSignedComparison(jle.Src1, jle.Src2) ? "BRLT" : "BRLO";
         EmitBranch(brLo, jle.Target);
         EmitBranch("BREQ", jle.Target);
     }
