@@ -143,7 +143,29 @@ public partial class IRGenerator
 
                     if (instanceClasses.TryGetValue(vObj.Name, out string clsC))
                     {
-                        callee = clsC + "_" + memC.Member;
+                        // Walk MRO: find the class that actually defines the method so that
+                        // inherited non-inline methods (e.g. DHTBase._read_byte called on a
+                        // DHT11 instance) resolve to the correct label instead of the
+                        // non-existent <ConcreteClass>_<method> symbol.
+                        string definingClass = ResolveMROMethod(clsC!, memC.Member);
+                        callee = definingClass + "_" + memC.Member;
+
+                        // ZCA force-inline: if the resolved callee is a non-inline instance
+                        // method, add its AST to inlineFunctions on-demand so the standard
+                        // inline expansion runs.  ZCA field aliasing requires inline expansion;
+                        // without it, `self._field` accesses inside the method would reference
+                        // the wrong stack frame.
+                        if (!inlineFunctions.ContainsKey(callee)
+                            && instanceMethodDefs.TryGetValue(callee, out var implDef))
+                        {
+                            inlineFunctions[callee] = implDef;
+                        }
+
+                        // Phase 3 gate: emit VirtualCall only when static dispatch cannot be
+                        // proven safe.  In the current ZCA model instanceClasses always holds
+                        // the exact concrete type (Rule 2), so IsVirtualDispatch always returns
+                        // false and we always take the direct-call path above.
+                        // (IsVirtualDispatch kept here for future polymorphic-variable support.)
                     }
                     else
                     {
@@ -1759,5 +1781,74 @@ public partial class IRGenerator
         Emit(new StoreIndirect(newLen, listVar));
 
         return new NoneVal();
+    }
+
+    // -------------------------------------------------------------------------
+    // Class hierarchy helpers — MRO resolution and virtual-dispatch gate
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Walk the MRO chain starting at <paramref name="cls"/> (no trailing underscore)
+    /// and return the first class that directly defines <paramref name="methodName"/>.
+    /// Falls back to <paramref name="cls"/> if no defining class is found (safe: linker
+    /// will catch a truly-missing symbol).
+    /// </summary>
+    private string ResolveMROMethod(string cls, string methodName)
+    {
+        string? current = cls;
+        while (current != null)
+        {
+            if (classDirectMethods.TryGetValue(current, out var dm) && dm.Contains(methodName))
+                return current;
+
+            if (classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                && !string.IsNullOrEmpty(parentPrefix))
+            {
+                // parentPrefix has a trailing underscore — strip it for the next lookup.
+                current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+            }
+            else
+                break;
+        }
+        return cls;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when a call to <paramref name="methodName"/> on an object of
+    /// declared type <paramref name="cls"/> cannot be devirtualized statically.
+    ///
+    /// Devirtualization is safe (returns false) when ANY of:
+    ///   Rule 1 — <paramref name="cls"/> is a leaf class (no known subclasses).
+    ///   Rule 3 — no subclass in the entire subtree overrides the method.
+    ///
+    /// Rule 2 (exact type from instanceClasses) is enforced by the call site: we only
+    /// reach this helper when instanceClasses already holds the concrete type, so Rule 2
+    /// always applies and this method always returns false for the current ZCA model.
+    /// The implementation is kept general for future polymorphic variable support.
+    /// </summary>
+    private bool IsVirtualDispatch(string cls, string methodName)
+    {
+        // Rule 1: leaf class.
+        if (!classChildren.TryGetValue(cls, out var children) || children.Count == 0)
+            return false;
+
+        // Rule 3: no subclass overrides the method.
+        if (IsMethodNeverOverridden(cls, methodName))
+            return false;
+
+        return true;
+    }
+
+    private bool IsMethodNeverOverridden(string cls, string methodName)
+    {
+        if (!classChildren.TryGetValue(cls, out var children)) return true;
+        foreach (var child in children)
+        {
+            if (classDirectMethods.TryGetValue(child, out var dm) && dm.Contains(methodName))
+                return false;
+            if (!IsMethodNeverOverridden(child, methodName))
+                return false;
+        }
+        return true;
     }
 }
