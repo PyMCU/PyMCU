@@ -1185,7 +1185,9 @@ public partial class IRGenerator
                     pendingConstructorTarget = "";
                     kwArgValues[kw.Key] = VisitExpression(kw.Value);
                     if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
-                    if (string.IsNullOrEmpty(pendingConstructorTarget)) pendingConstructorTarget = savedOuterPct;
+                    // Always restore: inner ctor targets (anonymous __cN) must not
+                    // overwrite the outer assignment target (e.g. "main.spi").
+                    pendingConstructorTarget = savedOuterPct;
                 }
                 else
                 {
@@ -1193,7 +1195,8 @@ public partial class IRGenerator
                     string savedOuterPct = pendingConstructorTarget;
                     pendingConstructorTarget = "";
                     argValues.Add(VisitExpression(arg));
-                    if (string.IsNullOrEmpty(pendingConstructorTarget)) pendingConstructorTarget = savedOuterPct;
+                    // Always restore: same reason as kwarg case above.
+                    pendingConstructorTarget = savedOuterPct;
                 }
             }
 
@@ -1430,10 +1433,18 @@ public partial class IRGenerator
                         {
                             constantVariables.Remove(paramName);
                             strConstantVariables.Remove(paramName);
-                            variableAliases.Remove(paramName);
                             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
                             variableTypes[paramName] = paramType;
-                            Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                            if (kvp.Value is Variable)
+                            {
+                                // Variable arg (including ZCA instances): preserve the alias
+                                // set above and skip the Copy, same as positional arg handling.
+                            }
+                            else
+                            {
+                                variableAliases.Remove(paramName);
+                                Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                            }
                         }
 
                         break;
