@@ -942,16 +942,82 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             }
         }
 
+        // --- Outlining pre-scan ---
+        // Find all InlineExpansionMarker groups in the function body.
+        // Any group with 1+ occurrences gets outlined: first copy becomes a subroutine,
+        // all occurrences (including the first) are replaced with RCALL.
+        var inlineGroups = new Dictionary<string, List<(int start, int end)>>();
+        {
+            int depth = 0;
+            int scanStart = -1;
+            string? scanFunc = null;
+            for (int k = 0; k < func.Body.Count; k++)
+            {
+                if (func.Body[k] is InlineExpansionMarker km)
+                {
+                    if (!km.IsEnd)
+                    {
+                        if (depth == 0) { scanStart = k; scanFunc = km.FuncName; }
+                        depth++;
+                    }
+                    else
+                    {
+                        depth--;
+                        if (depth == 0 && scanFunc != null)
+                        {
+                            if (!inlineGroups.ContainsKey(scanFunc))
+                                inlineGroups[scanFunc] = new();
+                            inlineGroups[scanFunc].Add((scanStart, k));
+                            scanFunc = null;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Map funcName → subroutine label; collect subroutine body ranges.
+        var outlinedLabels = new Dictionary<string, string>();
+        var pendingSubroutines = new List<(string label, int start, int end)>();
+        foreach (var (fname, ranges) in inlineGroups)
+        {
+            var label = MakeLabel("_pymcu_outline");
+            outlinedLabels[fname] = label;
+            // Body range: [ranges[0].start + 1, ranges[0].end) (exclusive of markers)
+            pendingSubroutines.Add((label, ranges[0].start + 1, ranges[0].end));
+        }
+
+        // --- Main compilation loop with outlining ---
         bool emittedEpilogue = false;
+        int skipDepth = 0;
         foreach (var instr in func.Body)
         {
             if (func.IsInterrupt && !func.IsNaked && instr is Return)
             {
-                EmitContextRestore();
-                Emit("RETI");
-                emittedEpilogue = true;
+                if (skipDepth == 0)
+                {
+                    EmitContextRestore();
+                    Emit("RETI");
+                    emittedEpilogue = true;
+                }
                 continue;
             }
+
+            if (instr is InlineExpansionMarker iem)
+            {
+                if (!iem.IsEnd)
+                {
+                    if (skipDepth == 0 && outlinedLabels.TryGetValue(iem.FuncName, out var rcallLabel))
+                        Emit("RCALL", rcallLabel);
+                    skipDepth++;
+                }
+                else
+                {
+                    if (skipDepth > 0) skipDepth--;
+                }
+                continue;
+            }
+
+            if (skipDepth > 0) continue;
 
             CompileInstruction(instr);
         }
@@ -960,6 +1026,34 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         {
             EmitContextRestore();
             Emit("RETI");
+        }
+
+        // --- Emit pending subroutines after the function body ---
+        foreach (var (label, start, end) in pendingSubroutines)
+        {
+            EmitLabel(label);
+            int subSkip = 0;
+            for (int i = start; i < end; i++)
+            {
+                var si = func.Body[i];
+                if (si is InlineExpansionMarker sim)
+                {
+                    if (!sim.IsEnd)
+                    {
+                        if (subSkip == 0 && outlinedLabels.TryGetValue(sim.FuncName, out var sl))
+                            Emit("RCALL", sl);
+                        subSkip++;
+                    }
+                    else if (subSkip > 0)
+                    {
+                        subSkip--;
+                    }
+                    continue;
+                }
+                if (subSkip > 0) continue;
+                CompileInstruction(si);
+            }
+            Emit("RET");
         }
     }
 

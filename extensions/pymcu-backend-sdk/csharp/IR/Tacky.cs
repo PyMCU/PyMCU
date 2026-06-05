@@ -122,6 +122,7 @@ public enum BinaryOp
 [JsonDerivedType(typeof(SignalSuccess),        "sigok")]
 [JsonDerivedType(typeof(BranchOnError),        "boe")]
 [JsonDerivedType(typeof(VirtualCall),          "vcall")]
+[JsonDerivedType(typeof(InlineExpansionMarker), "imarker")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -241,6 +242,11 @@ public record SignalSuccess() : Instruction;
 // After a call to a CanFail function, branch to ErrorLabel if the callee signaled error.
 // Backend AVR : emits BRTS ErrorLabel. Backend Cortex-M0 : CMP R1,0 ; BNE ErrorLabel.
 public record BranchOnError(string ErrorLabel) : Instruction;
+
+// Marks the boundary of a force-inlined non-@inline method expansion.
+// IsEnd=false → begin; IsEnd=true → end.
+// The AVR codegen uses these markers to outline repeated copies into a single subroutine.
+public record InlineExpansionMarker(string FuncName, bool IsEnd) : Instruction;
 
 // Virtual method call through a flash-resident vtable.
 // DeclaredClass: static receiver type.  DefiningClass: MRO-resolved defining class.

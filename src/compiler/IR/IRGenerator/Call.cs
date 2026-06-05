@@ -1163,9 +1163,6 @@ public partial class IRGenerator
             return extDst;
         }
 
-        if (callee.Contains("read_line")) {
-            System.Console.WriteLine($"[DEBUG] Call to {callee}. Is in inlineFunctions? {inlineFunctions.ContainsKey(callee)}");
-        }
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
             var exitLabel = MakeLabel();
@@ -1235,6 +1232,10 @@ public partial class IRGenerator
                     pendingConstructorTarget = savedOuterPct;
                 }
             }
+
+            bool isForceInlined = func != null && !func.IsInline;
+            if (isForceInlined)
+                Emit(new InlineExpansionMarker(callee, false));
 
             inlineDepth++;
             string savedPrefix = currentInlinePrefix;
@@ -1545,6 +1546,9 @@ public partial class IRGenerator
 
             Emit(new Label(exitLabel));
 
+            if (isForceInlined)
+                Emit(new InlineExpansionMarker(callee, true));
+
             if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
                 lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
             inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -1553,15 +1557,8 @@ public partial class IRGenerator
             currentModulePrefix = savedModulePrefix;
             inlineDepth--;
 
-            if (result != null) {
-                if (callee.Contains("read_line")) System.Console.WriteLine($"[DEBUG-RT] returning result temp {result.Name}");
-                return result;
-            }
-            if (ctorSubexprSynth != null) {
-                if (callee.Contains("read_line")) System.Console.WriteLine($"[DEBUG-RT] returning ctor synth {ctorSubexprSynth}");
-                return new Variable(ctorSubexprSynth);
-            }
-            if (callee.Contains("read_line")) System.Console.WriteLine($"[DEBUG-RT] returning NoneVal");
+            if (result != null) return result;
+            if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
             return new NoneVal();
         }
 
