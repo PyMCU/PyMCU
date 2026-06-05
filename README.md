@@ -11,26 +11,28 @@ no runtime, no interpreter, no virtual machine. The same binary you would write 
 ## The pitch in one table
 
 LED blink for ATmega328P @ 16 MHz — all variants perform the identical operation:
-set PB5 as output, then loop `toggle PB5 (PIN-register XOR) → delay 500 ms`.
+set PB5 as output, then loop `set PB5 high → delay 500 ms → set PB5 low → delay 500 ms`.
 Flash sizes exclude the interrupt-vector preamble, which is constant across all programs.
 
 | Source | Flash | SRAM | Notes |
 |---|---|---|---|
-| **C** (`avr-gcc -Os`) | **50 bytes** | 0 bytes | 158b total − 108b preamble (26×`JMP` + `__bad_interrupt`) |
-| **PyMCU** (CircuitPython API) | **60 bytes** | 0 bytes | `DigitalInOut.toggle()`; 166b total − 106b preamble |
-| **PyMCU** (MicroPython API) | **58 bytes** | 0 bytes | `machine.Pin.toggle()`; 164b total − 106b preamble |
-| **PyMCU** (native HAL) | **58 bytes** | 0 bytes | `Pin.toggle()`; 164b total − 106b preamble |
+| **C** (`avr-gcc -Os`) | **68 bytes** | 0 bytes | 176b total − 108b preamble (26×`JMP` + `__bad_interrupt`) |
+| **PyMCU** (CircuitPython API) | **80 bytes** | 0 bytes | `led.value = True/False`; 186b total − 106b preamble |
+| **PyMCU** (MicroPython API) | **78 bytes** | 0 bytes | `led.value(1/0)`; 184b total − 106b preamble |
+| **PyMCU** (native HAL) | **78 bytes** | 0 bytes | `led.high()/led.low()`; 184b total − 106b preamble |
 | **Arduino** (IDE defaults) | **~924 bytes** | 9 bytes | Full framework overhead (estimated) |
 
 *Preamble definition: C uses 26×4-byte `JMP` slots + `__bad_interrupt: JMP` = 108 B;
 PyMCU uses 26×(`RJMP`+NOP) + `__bad_interrupt: RJMP` = 106 B.
 Both are equivalent in safety coverage.
 The "after preamble" totals include crt0-compatible startup: `CLR R1` (zero-register
-invariant for C FFI), SP/Y-register setup, and — new in this release — a BSS zeroing
-loop that ensures globals are clean even after a watchdog-triggered reset (~36 B
-constant for standard stdlib imports).
-Stripping startup overhead leaves **22 B** of user logic for PyMCU vs **26 B** for C
-for this toggle+delay loop — PyMCU generates 15 % fewer bytes of application code.*
+invariant for C FFI), SP/Y-register setup, and a BSS-zeroing loop that ensures globals
+are clean after a watchdog reset (36 B constant; C startup is 24 B).
+Stripping startup overhead leaves **42 B** of user logic for PyMCU HAL/MP vs **44 B** for C
+for this set/clear + delay loop — constant folding through property chains works correctly
+and PyMCU generates 5 % fewer bytes of application code.
+The extra 2 B in the CircuitPython variant (44 B) come from `Direction.setter` clearing
+the PORT pin before asserting DDR — semantically correct and expected.*
 
 ---
 
@@ -73,7 +75,7 @@ while True:
 ```
 
 ```bash
-pymcu build   # → dist/firmware.hex  (58 bytes flash, 0 bytes SRAM)
+pymcu build   # → dist/firmware.hex  (78 bytes flash, 0 bytes SRAM)
 pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
@@ -146,7 +148,9 @@ from utime import sleep_ms
 led = Pin(13, Pin.OUT)
 
 while True:
-    led.toggle()
+    led.value(1)
+    sleep_ms(500)
+    led.value(0)
     sleep_ms(500)
 ```
 
