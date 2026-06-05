@@ -759,6 +759,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     Copy cp => new[] { cp.Src, cp.Dst },
                     Return r => r.Value != null ? new[] { r.Value } : Array.Empty<Val>(),
                     Call cl => [.. cl.Args, cl.Dst],
+                    ArrayStore ast => new[] { ast.Src },
                     _ => Array.Empty<Val>()
                 };
                 foreach (var v in valsToCheck)
