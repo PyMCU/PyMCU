@@ -309,7 +309,8 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 ## Sustainability
 
 Post-alpha development will be slower and community-driven. If PyMCU saves you time,
-consider sponsoring the project — every contribution helps keep development going.
+consider sponsoring the project — the goal is $200-300/month to cover the AI tooling
+costs that made this first release possible and keep active development going.
 
 [Sponsor on GitHub](https://github.com/sponsors/begeistert)
 
