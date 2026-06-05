@@ -709,6 +709,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         Emit("RJMP", "main");
         EmitRaw("");
 
+        // Emit flash-resident vtables for classes that still require virtual dispatch
+        // after the devirtualization pass (empty for the vast majority of programs).
+        EmitVtables(program);
+
         foreach (var func in program.Functions.Where(func => func.IsInterrupt))
             CompileFunction(func);
 
@@ -753,6 +757,9 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                     }
                     AddRef(c.FunctionName);
                 }
+                // VirtualCall: the DefiningClass implementation must survive DCE.
+                if (instr is VirtualCall vc2)
+                    AddRef(vc2.DefiningClass + "_" + vc2.MethodName);
                 var valsToCheck = instr switch
                 {
                     Binary b => new[] { b.Src1, b.Src2, b.Dst },
@@ -980,6 +987,7 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfGreaterOrEqual jge: CompileCompareJump(jge.Src1, jge.Src2, IsSignedComparison(jge.Src1, jge.Src2) ? "BRGE" : "BRSH", jge.Target); break;
             case Call c: CompileCall(c); break;
             case IndirectCall ic: CompileIndirectCall(ic); break;
+            case VirtualCall vc: CompileVirtualCall(vc); break;
             case Copy cp: CompileCopy(cp); break;
             case Bitcast bc: CompileBitcast(bc); break;
             case LoadIndirect li: CompileLoadIndirect(li); break;
@@ -1303,6 +1311,104 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
         var dstType = GetValType(call.Dst);
         StoreRegInto("R24", call.Dst, dstType);
+    }
+
+    // -------------------------------------------------------------------------
+    // Virtual dispatch (flash vtable + ICALL Z)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Emit code for a VirtualCall that survived the devirtualization pass.
+    ///
+    /// Object layout: self is a SRAM struct whose first 2 bytes (vptr lo/hi) point
+    /// to the class's flash-resident vtable.
+    ///
+    ///   LDD  R30, Y+&lt;self_lo&gt;      ; vptr lo
+    ///   LDD  R31, Y+&lt;self_lo&gt;+1   ; vptr hi (vptr is a 2-byte flash address)
+    ///   SUBI R30, lo8(-&lt;slot*2&gt;)  ; advance by slot index × 2
+    ///   SBCI R31, hi8(-&lt;slot*2&gt;)
+    ///   LPM  R0,  Z+               ; target function address lo (byte)
+    ///   LPM  R31, Z                ; target function address hi (byte)
+    ///   MOV  R30, R0
+    ///   ;; load args into R24, R22, R20, R18 per ABI
+    ///   ICALL
+    /// </summary>
+    private void CompileVirtualCall(VirtualCall vc)
+    {
+        string[] argRegs = ["R24", "R22", "R20", "R18"];
+
+        // Load self pointer into Z (vptr is the first 2 bytes of the object in SRAM).
+        string selfName = vc.Self.Name.Replace('.', '_');
+        if (_stackLayout.TryGetValue(selfName, out int selfOffset))
+        {
+            Emit("LDD", "R30", $"Y+{selfOffset}");
+            Emit("LDD", "R31", $"Y+{selfOffset + 1}");
+        }
+        else
+        {
+            // Register-allocated: load address via MOVW / STS fallback.
+            Emit("LDI", "R30", $"lo8({selfName})");
+            Emit("LDI", "R31", $"hi8({selfName})");
+        }
+
+        // Read vptr (first 2 SRAM bytes of self) into Z.
+        Emit("LD",  "R30", "Z+");
+        Emit("LD",  "R31", "Z");
+        Emit("SBIW", "R30", "2");   // undo the +2 from the Z+ above
+
+        // Advance Z by slotIndex * 2.
+        int slotOffset = vc.SlotIndex * 2;
+        if (slotOffset > 0)
+        {
+            Emit("SUBI", "R30", $"lo8(-{slotOffset})");
+            Emit("SBCI", "R31", $"hi8(-{slotOffset})");
+        }
+
+        // LPM: read 16-bit function address from flash (Z points to vtable slot).
+        Emit("LPM", "R0",  "Z+");
+        Emit("LPM", "R31", "Z");
+        Emit("MOV", "R30", "R0");
+
+        // Load self as arg 0, then the remaining arguments.
+        var allArgs = new List<Val> { vc.Self };
+        allArgs.AddRange(vc.Args);
+        for (int k = 0; k < allArgs.Count && k < argRegs.Length; k++)
+        {
+            var argType = GetValType(allArgs[k]);
+            LoadIntoReg(allArgs[k], argRegs[k], argType);
+        }
+
+        Emit("ICALL");
+
+        var dstType = GetValType(vc.Dst);
+        if (dstType == DataType.FLOAT)
+            StoreFloatFromRegs(vc.Dst);
+        else
+            StoreRegInto("R24", vc.Dst, dstType);
+    }
+
+    /// <summary>
+    /// Emit flash-resident vtables for classes in <c>program.Vtables</c>.
+    /// Each vtable is a sequence of .word entries in PROGMEM; each .word holds
+    /// the byte address of the implementing function.
+    ///
+    /// Called only when VirtualCall nodes survived the devirtualization pass —
+    /// emits nothing (zero flash overhead) for ordinary programs.
+    /// </summary>
+    private void EmitVtables(ProgramIR program)
+    {
+        if (program.Vtables == null || program.Vtables.Count == 0) return;
+
+        EmitRaw(".section .rodata");
+        foreach (var vt in program.Vtables)
+        {
+            EmitRaw("");
+            EmitLabel($"{vt.ClassName}__vtable");
+            foreach (var entry in vt.Entries)
+                EmitRaw($"    .word {entry.DefiningClass}_{entry.MethodName}");
+        }
+        EmitRaw(".section .text");
+        EmitRaw("");
     }
 
     private void CompileCopy(Copy cp)
