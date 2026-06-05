@@ -201,13 +201,28 @@ def uart_write_float(value: float):
     # Print a float with one decimal place (e.g. 23.5, -5.0).
     # Precision: one decimal digit, sufficient for DHT22 sensor values.
     # Uses __fp_* soft-float routines and __div16/__mod16 from the AVR math runtime.
+    # Decimal conversion is inlined to avoid pulling in uart_write_decimal_u8 when
+    # a program only prints floats (not integers).
     if value < 0.0:
         uart_write(45)
         value = 0.0 - value
     tenths: uint16 = uint16(value * 10.0)
     int_part: uint8 = uint8(tenths // 10)
     frac: uint8 = uint8(tenths % 10)
-    uart_write_decimal_u8(int_part)
+    if int_part >= 100:
+        hundreds: uint8 = int_part // 100
+        uart_write(hundreds + 48)
+        tens: uint8 = (int_part // 10) % 10
+        uart_write(tens + 48)
+        units: uint8 = int_part % 10
+        uart_write(units + 48)
+    elif int_part >= 10:
+        tens: uint8 = int_part // 10
+        uart_write(tens + 48)
+        units: uint8 = int_part % 10
+        uart_write(units + 48)
+    else:
+        uart_write(int_part + 48)
     uart_write(46)
     uart_write(frac + 48)
 
