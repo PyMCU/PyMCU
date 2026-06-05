@@ -158,6 +158,24 @@ public partial class IRGenerator
         return new Constant(0);
     }
 
+    private DataType GetValType(Val v)
+    {
+        if (v is FloatConstant) return DataType.FLOAT;
+        if (v is Variable varV) return varV.Type;
+        if (v is Temporary tmp) return tmp.Type;
+        if (v is MemoryAddress mem) return mem.Type;
+        if (v is Constant c)
+        {
+            if (c.Value >= 0 && c.Value <= 255) return DataType.UINT8;
+            if (c.Value >= -128 && c.Value <= 127) return DataType.INT8;
+            if (c.Value >= 0 && c.Value <= 65535) return DataType.UINT16;
+            if (c.Value >= -32768 && c.Value <= 32767) return DataType.INT16;
+            return DataType.INT32;
+        }
+
+        return DataType.UINT8;
+    }
+
     private Val VisitFStringExpr(FStringExpr expr)
     {
         string result = "";
@@ -472,20 +490,6 @@ public partial class IRGenerator
             return floatDst;
         }
 
-        DataType GetValType(Val v)
-        {
-            if (v is FloatConstant) return DataType.FLOAT;
-            if (v is Variable varV) return varV.Type;
-            if (v is Temporary tmp) return tmp.Type;
-            if (v is Constant c)
-            {
-                if (c.Value > 255 || c.Value < -128) return DataType.UINT16;
-                return DataType.UINT8;
-            }
-
-            return DataType.UINT8;
-        }
-
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
         DataType resType = t1.SizeOf() >= t2.SizeOf() ? t1 : t2;
@@ -499,8 +503,17 @@ public partial class IRGenerator
                 case AstBinOp.Sub: return new Constant(cA.Value - cB.Value);
                 case AstBinOp.Equal: return new Constant(cA.Value == cB.Value ? 1 : 0);
                 case AstBinOp.NotEqual: return new Constant(cA.Value != cB.Value ? 1 : 0);
+                case AstBinOp.Mul: return new Constant(cA.Value * cB.Value);
+                case AstBinOp.Div: return new Constant(cA.Value / cB.Value);
+                case AstBinOp.FloorDiv:
+                    int q = cA.Value / cB.Value;
+                    if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
+                    return new Constant(q);
+                case AstBinOp.Mod: return new Constant(cA.Value % cB.Value);
                 case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
+                case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
+                case AstBinOp.RShift: return new Constant(cA.Value >> cB.Value);
             }
         }
 
@@ -522,7 +535,7 @@ public partial class IRGenerator
 
         Emit(new JumpIfZero(cond, falseLabel));
         Val trueVal = VisitExpression(expr.TrueVal);
-        Temporary result = MakeTemp(DataType.UINT8);
+        Temporary result = MakeTemp(GetValType(trueVal));
         Emit(new Copy(trueVal, result));
         Emit(new Jump(endLabel));
         Emit(new Label(falseLabel));
@@ -568,7 +581,7 @@ public partial class IRGenerator
             return res2;
         }
 
-        Temporary result = MakeTemp(DataType.UINT8);
+        Temporary result = MakeTemp(GetValType(operand));
         Emit(new Unary(MapUnaryOp(expr.Op), operand, result));
         return result;
     }

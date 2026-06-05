@@ -643,6 +643,13 @@ public partial class IRGenerator
         externFunctionMap.Clear();
         exnExterns.Clear();
 
+        if (_pendingFlashData.Count > 0)
+        {
+            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFunc != null) mainFunc.Body.InsertRange(0, _pendingFlashData);
+            _pendingFlashData.Clear();
+        }
+
         return irProgram;
     }
 
@@ -868,6 +875,7 @@ public partial class IRGenerator
     // arrayElemTypes so that ArrayLoadFlash works for runtime-indexed access.
     private int _flashStrCounter;
     private readonly Dictionary<string, string> _flashStrCache = new();
+    private readonly List<FlashData> _pendingFlashData = new();
 
     private string InternStringAsFlash(string value)
     {
@@ -880,7 +888,7 @@ public partial class IRGenerator
             .Append(0) // null terminator
             .ToList();
 
-        Emit(new FlashData(name, bytes));
+        _pendingFlashData.Add(new FlashData(name, bytes));
         flashArrays.Add(name);
         arraySizes[name] = bytes.Count;
         arrayElemTypes[name] = DataType.UINT8;

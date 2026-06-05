@@ -120,7 +120,7 @@ private static Function CloneFunction(Function f)
 
         if (UnrollConstantLoops(func))
         {
-            for (var i = 0; i < 3; ++i)
+            for (var i = 0; i < 10; ++i)
             {
                 PropagateCopies(func);
                 FoldConstants(func);
@@ -239,6 +239,8 @@ private static Function CloneFunction(Function f)
 
                         if (foldable)
                         {
+                            var dstType = GetDataType(binary.Dst);
+                            if (dstType != DataType.UNKNOWN) result = WrapToType(result, dstType);
                             func.Body[i] = new Copy(new Constant(result), binary.Dst);
                         }
                     }
@@ -347,12 +349,36 @@ private static Function CloneFunction(Function f)
                         }
 
                         if (foldable)
+                        {
+                            var dstType = GetDataType(unary.Dst);
+                            if (dstType != DataType.UNKNOWN) result = WrapToType(result, dstType);
                             func.Body[i] = new Copy(new Constant(result), unary.Dst);
+                        }
                     }
 
                     break;
                 }
             }
+        }
+    }
+
+    private static DataType GetDataType(Val val)
+    {
+        if (val is Variable v) return v.Type;
+        if (val is Temporary t) return t.Type;
+        if (val is MemoryAddress m) return m.Type;
+        return DataType.UNKNOWN;
+    }
+
+    private static int WrapToType(int value, DataType type)
+    {
+        switch (type)
+        {
+            case DataType.UINT8: return value & 0xFF;
+            case DataType.INT8: return (sbyte)(value & 0xFF);
+            case DataType.UINT16: return value & 0xFFFF;
+            case DataType.INT16: return (short)(value & 0xFFFF);
+            default: return value;
         }
     }
 
@@ -743,7 +769,9 @@ private static Function CloneFunction(Function f)
             else if (IsConditionalJump(lastInstr, out var target))
             {
                 if (labelToBlock.TryGetValue(target, out var targetBlock))
+                {
                     Connect(block, targetBlock);
+                }
 
                 if (i + 1 < blocks.Count)
                     Connect(block, blocks[i + 1]);
@@ -813,6 +841,9 @@ private static Function CloneFunction(Function f)
                 return true;
             case JumpIfBitClear j:
                 target = j.Target;
+                return true;
+            case BranchOnError b:
+                target = b.ErrorLabel;
                 return true;
             default: return false;
         }
