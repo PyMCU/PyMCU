@@ -104,6 +104,26 @@ public partial class IRGenerator
                 return condResult ? 2 : -1;
             }
 
+            // Fold compile-time ptr-register comparisons: `if pin_reg == PIND:` where
+            // pin_reg is a ptr parameter propagated through constantAddressVariables.
+            if (v1 is MemoryAddress ma1 && v2 is MemoryAddress ma2)
+            {
+                bool condResult = false;
+                switch (binExpr.Op)
+                {
+                    case Frontend.BinaryOp.Equal:    condResult = ma1.Address == ma2.Address; break;
+                    case Frontend.BinaryOp.NotEqual: condResult = ma1.Address != ma2.Address; break;
+                    case Frontend.BinaryOp.Less:     condResult = ma1.Address <  ma2.Address; break;
+                    case Frontend.BinaryOp.LessEq:   condResult = ma1.Address <= ma2.Address; break;
+                    case Frontend.BinaryOp.Greater:  condResult = ma1.Address >  ma2.Address; break;
+                    case Frontend.BinaryOp.GreaterEq:condResult = ma1.Address >= ma2.Address; break;
+                }
+
+                if (jumpIfTrue) { if (condResult) Emit(new Jump(targetLabel)); }
+                else            { if (!condResult) Emit(new Jump(targetLabel)); }
+                return condResult ? 2 : -1;
+            }
+
             switch (binExpr.Op)
             {
                 case Frontend.BinaryOp.Equal:

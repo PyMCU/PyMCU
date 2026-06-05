@@ -514,6 +514,28 @@ public partial class IRGenerator
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
                 case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
                 case AstBinOp.RShift: return new Constant(cA.Value >> cB.Value);
+                case AstBinOp.Less: return new Constant(cA.Value < cB.Value ? 1 : 0);
+                case AstBinOp.LessEq: return new Constant(cA.Value <= cB.Value ? 1 : 0);
+                case AstBinOp.Greater: return new Constant(cA.Value > cB.Value ? 1 : 0);
+                case AstBinOp.GreaterEq: return new Constant(cA.Value >= cB.Value ? 1 : 0);
+            }
+        }
+
+        // Fold compile-time ptr-register comparisons (e.g. `if pin_reg == PIND:`).
+        // Both sides resolve to MemoryAddress when the ptr variable is in
+        // constantAddressVariables and the RHS is a globals entry with IsMemoryAddress.
+        // This allows the if/elif dispatch tree in pin_pulse_in to be fully DCE'd.
+        if (v1 is MemoryAddress maL && v2 is MemoryAddress maR)
+        {
+            switch (expr.Op)
+            {
+                case AstBinOp.Equal:     return new Constant(maL.Address == maR.Address ? 1 : 0);
+                case AstBinOp.NotEqual:  return new Constant(maL.Address != maR.Address ? 1 : 0);
+                case AstBinOp.Less:      return new Constant(maL.Address <  maR.Address ? 1 : 0);
+                case AstBinOp.LessEq:    return new Constant(maL.Address <= maR.Address ? 1 : 0);
+                case AstBinOp.Greater:   return new Constant(maL.Address >  maR.Address ? 1 : 0);
+                case AstBinOp.GreaterEq: return new Constant(maL.Address >= maR.Address ? 1 : 0);
+                // Non-comparison ops on two ptrs fall through to normal Binary emit.
             }
         }
 
