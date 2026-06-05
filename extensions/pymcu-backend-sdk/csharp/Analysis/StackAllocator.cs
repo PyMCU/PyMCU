@@ -278,12 +278,44 @@ public class StackAllocator
 
         _offsetsBase[funcName] = currentBase;
 
+        // --- Inline-copy slot merging ---
+        // Variables named `inlineN_FUNCNAME_rest` that differ only in N (the inline
+        // copy index) are sequential, non-overlapping copies of the same local from
+        // function FUNCNAME.  Assign them to the same SRAM slot so that N copies of
+        // _read_byte() do not consume N × k bytes; instead they share k bytes total.
+        //
+        // Group key = everything after the leading "inlineN_" token.
+        // For variables without the inline prefix, the key is the variable name itself
+        // and no merging occurs.
+        var canonicalOffset = new Dictionary<string, int>();   // canonical → assigned offset
+        var canonicalSize   = new Dictionary<string, int>();   // canonical → max slot size
+        var varCanonical    = new Dictionary<string, string>(); // varName  → canonical
+
+        foreach (var varName in node.Locals)
+        {
+            if (_globalNames.Contains(varName)) continue;
+            string canonical = StripInlinePrefix(varName);
+            varCanonical[varName] = canonical;
+            int sz = VariableSizes.GetValueOrDefault(varName, 1);
+            if (canonicalSize.TryGetValue(canonical, out int prev))
+                canonicalSize[canonical] = Math.Max(prev, sz);
+            else
+                canonicalSize[canonical] = sz;
+        }
+
         int currentFrameSize = 0;
         foreach (var varName in node.Locals)
         {
             if (_globalNames.Contains(varName)) continue;
-            _offsets[varName] = currentBase + currentFrameSize;
-            currentFrameSize += VariableSizes.GetValueOrDefault(varName, 1);
+            string canonical = varCanonical[varName];
+            if (!canonicalOffset.TryGetValue(canonical, out int assignedOffset))
+            {
+                // First member of this canonical group: claim a new slot.
+                assignedOffset = currentBase + currentFrameSize;
+                canonicalOffset[canonical] = assignedOffset;
+                currentFrameSize += canonicalSize[canonical];
+            }
+            _offsets[varName] = assignedOffset;
         }
 
         int childrenBase = currentBase + currentFrameSize;
@@ -296,5 +328,27 @@ public class StackAllocator
         }
 
         node.Visited = false;
+    }
+
+    /// <summary>
+    /// Strip the leading "inlineN_" prefix (where N is one or more digits) from a
+    /// variable name to get its canonical group key.  Multiple inline copies of the
+    /// same function produce variables like "inline2__read_byte_result" and
+    /// "inline3__read_byte_result"; both share canonical key "_read_byte_result" and
+    /// can therefore occupy the same SRAM slot.
+    ///
+    /// Variables without the prefix are their own canonical key (no merging).
+    /// Nested prefixes ("inline2_inline3_...") are stripped one level at a time so
+    /// deeply nested inline chains also benefit.
+    /// </summary>
+    private static string StripInlinePrefix(string name)
+    {
+        // Match "inline" + digits + "_" at the start of the name.
+        if (!name.StartsWith("inline", StringComparison.Ordinal)) return name;
+        int i = 6; // length of "inline"
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        if (i < name.Length && name[i] == '_')
+            return name[(i + 1)..]; // strip "inlineN_", keep the rest
+        return name;
     }
 }
