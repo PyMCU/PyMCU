@@ -911,6 +911,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
                 }
                 else if (_stackLayout.TryGetValue(pname, out int off))
                 {
+                    // Skip if the parameter is never read as an IR Variable in this function body.
+                    // Covers pure-asm functions whose bodies use calling-convention registers directly.
+                    if (!IsVariableReadInBody(pname, func.Body))
+                        continue;
                     int pSize = p32 ? 4 : (p16 ? 2 : 1);
                     bool nearY = off + (pSize - 1) < 64;
                     if (nearY)
@@ -2956,6 +2960,56 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         os.WriteLine("    cli");
         os.WriteLine("    rjmp  .-2");
         os.WriteLine();
+    }
+
+    // Returns true when varName appears as a source (read) operand in any instruction.
+    // Used to skip dead parameter-store prologues for pure-asm functions.
+    private static bool IsVariableReadInBody(string varName, List<Instruction> body)
+    {
+        static bool IsV(string n, Val v) => v is Variable vr && vr.Name == n;
+        foreach (var instr in body)
+        {
+            bool hit = instr switch
+            {
+                Copy c              => IsV(varName, c.Src),
+                Binary b            => IsV(varName, b.Src1) || IsV(varName, b.Src2),
+                Unary u             => IsV(varName, u.Src),
+                Return r            => IsV(varName, r.Value),
+                Call c              => c.Args.Any(a => IsV(varName, a)),
+                JumpIfZero z        => IsV(varName, z.Condition),
+                JumpIfNotZero nz    => IsV(varName, nz.Condition),
+                JumpIfEqual e       => IsV(varName, e.Src1) || IsV(varName, e.Src2),
+                JumpIfNotEqual ne   => IsV(varName, ne.Src1) || IsV(varName, ne.Src2),
+                JumpIfLessThan lt   => IsV(varName, lt.Src1) || IsV(varName, lt.Src2),
+                JumpIfLessOrEqual le=> IsV(varName, le.Src1) || IsV(varName, le.Src2),
+                JumpIfGreaterThan gt=> IsV(varName, gt.Src1) || IsV(varName, gt.Src2),
+                JumpIfGreaterOrEqual ge => IsV(varName, ge.Src1) || IsV(varName, ge.Src2),
+                JumpIfBitSet jbs    => IsV(varName, jbs.Source),
+                JumpIfBitClear jbc  => IsV(varName, jbc.Source),
+                BitSet bs           => IsV(varName, bs.Target),
+                BitClear bc         => IsV(varName, bc.Target),
+                BitWrite bw         => IsV(varName, bw.Target) || IsV(varName, bw.Src),
+                BitCheck bk         => IsV(varName, bk.Source),
+                AugAssign aa        => IsV(varName, aa.Target) || IsV(varName, aa.Operand),
+                ArrayLoad al        => IsV(varName, al.Index),
+                ArrayStore ast      => IsV(varName, ast.Index) || IsV(varName, ast.Src),
+                ArrayLoadFlash alf  => IsV(varName, alf.Index),
+                BytearrayLoad bl    => bl.PtrName == varName || IsV(varName, bl.Index),
+                BytearrayStore bst  => bst.PtrName == varName || IsV(varName, bst.Index) || IsV(varName, bst.Src),
+                LoadIndirect li     => IsV(varName, li.SrcPtr),
+                StoreIndirect si    => IsV(varName, si.Src) || IsV(varName, si.DstPtr),
+                Bitcast bt          => IsV(varName, bt.Src),
+                IndirectCall ic     => IsV(varName, ic.FuncAddr) || ic.Args.Any(a => IsV(varName, a)),
+                VirtualCall vc      => IsV(varName, vc.Self) || vc.Args.Any(a => IsV(varName, a)),
+                InlineAsm ia        => ia.Operands?.Any(a => IsV(varName, a)) ?? false,
+                SignalError se      => IsV(varName, se.Code),
+                RaiseExn re         => IsV(varName, re.Code),
+                GcAlloc ga          => IsV(varName, ga.Size),
+                _                   => false,
+            };
+            if (hit) return true;
+        }
+        return false;
     }
 
     private static string ExnCodeName(int code) => code switch
