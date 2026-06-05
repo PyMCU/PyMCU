@@ -104,7 +104,7 @@ public partial class IRGenerator
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
 
-    // @extern("symbol") registrations: Whipsnake function name -> C symbol name.
+    // @extern("symbol") registrations: PyMCU function name -> C symbol name.
     private Dictionary<string, string?> externFunctionMap = new();
 
     // Exception-related extern symbols to add to the program (e.g. _setjmp, longjmp).

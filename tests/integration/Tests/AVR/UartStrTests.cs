@@ -19,7 +19,7 @@ public class UartStrTests
     public void BuildFirmware() => _session = new SimSession(PymcuCompiler.Build("uart-str"));
 
     [Test]
-    public void Boot_SendsHelloWhipsnake()
+    public void Boot_SendsHelloPyMCU()
     {
         var uno = Sim();
         uno.RunUntilSerial(uno.Serial, "Hello, PyMCU!");

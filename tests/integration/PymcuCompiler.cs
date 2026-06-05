@@ -126,6 +126,10 @@ public static class PymcuCompiler
         };
         // Verbose pymcu output so compiler path resolution is visible in CI logs
         psi.Environment["PYMCU_VERBOSE"] = "1";
+        
+        // Add .venv/bin to PATH so that python3 and pymcuc are found there first
+        var venvBin = Path.Combine(RepoRoot, ".venv", "bin");
+        psi.Environment["PATH"] = venvBin + Path.PathSeparator + psi.Environment["PATH"];
 
         // Use python3 explicitly instead of relying on shebang - more reliable in CI
         var venvPython = Path.Combine(RepoRoot, ".venv", "bin", "python3");

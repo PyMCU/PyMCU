@@ -145,7 +145,7 @@ class PyMCUCompiler:
             
         for key, val in configs.items():
             cmd.extend(["-C", f"{key}={val}"])
-        
+
         try:
             # stdout is captured so the driver can parse structured progress tokens:
             #   [PHASE_START] <name>
