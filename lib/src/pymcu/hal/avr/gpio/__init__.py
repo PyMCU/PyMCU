@@ -1,6 +1,38 @@
+# -----------------------------------------------------------------------------
+# PyMCU Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+#
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
+# -----------------------------------------------------------------------------
+#
+# AVR GPIO facade -- pymcu.hal.avr.gpio
+#
+# Module-level conditional imports select the correct chip implementation at
+# compile time. The ConditionalImportExtractor in the compiler resolves these
+# if/elif chains before the dependency graph is built, so only the winning
+# chip-specific module is loaded.
+#
+# Constant folding applies through __CHIP__.name (a string property) so each
+# branch is evaluated exactly once and the dead branches are eliminated.
+# -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, const, inline
 from pymcu.exceptions import CompileError
+
+if __CHIP__.name == "atmega328p" or __CHIP__.name == "atmega328" or __CHIP__.name == "atmega168p" or __CHIP__.name == "atmega168" or __CHIP__.name == "atmega88p" or __CHIP__.name == "atmega88" or __CHIP__.name == "atmega48p" or __CHIP__.name == "atmega48":
+    from pymcu.hal.avr.gpio.atmega328p import _PinRegs, pin_irq_setup, pin_pulse_in
+elif __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a":
+    from pymcu.hal.avr.gpio.attiny_b import select_port, select_ddr, select_pin, select_bit
+elif __CHIP__.name == "attiny84" or __CHIP__.name == "attiny44" or __CHIP__.name == "attiny24":
+    from pymcu.hal.avr.gpio.attiny_ab import select_port, select_ddr, select_pin, select_bit
+elif __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
+    from pymcu.hal.avr.gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit
+elif __CHIP__.name == "atmega2560":
+    from pymcu.hal.avr.gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit
+elif __CHIP__.name == "atmega32u4":
+    from pymcu.hal.avr.gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit
+
 
 class Pin:
     IN  = 1
@@ -29,38 +61,32 @@ class Pin:
 
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
-                from pymcu.hal.avr.atmega328p__gpio import _PinRegs
                 _r = _PinRegs(name)
                 self._port = _r._port
                 self._ddr  = _r._ddr
                 self._pin  = _r._pin
                 self._bit  = _r._bit
             case "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a":
-                from pymcu.hal.avr.attiny_b__gpio import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
             case "attiny84" | "attiny44" | "attiny24":
-                from pymcu.hal.avr.attiny_ab__gpio import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
             case "attiny2313" | "attiny4313":
-                from pymcu.hal.avr.attiny2313__gpio import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
             case "atmega2560":
-                from pymcu.hal.avr.atmega2560__gpio import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
             case "atmega32u4":
-                from pymcu.hal.avr.atmega32u4__gpio import select_port, select_ddr, select_pin, select_bit
                 self._port = select_port(name)
                 self._ddr = select_ddr(name)
                 self._pin = select_pin(name)
@@ -130,13 +156,10 @@ class Pin:
     def irq(self, trigger: const = 3, handler: const = 0):
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
-                from pymcu.hal.avr.atmega328p__gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger, handler)
             case "atmega2560":
-                from pymcu.hal.avr.atmega2560__gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger, handler)
             case "atmega32u4":
-                from pymcu.hal.avr.atmega32u4__gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger, handler)
             case "attiny85" | "attiny45" | "attiny25" | "attiny13" | "attiny13a" | "attiny84" | "attiny44" | "attiny24" | "attiny2313" | "attiny4313":
                 raise CompileError("IRQ not yet supported on ATtiny")
@@ -145,7 +168,6 @@ class Pin:
     def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
         match __CHIP__.name:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
-                from pymcu.hal.avr.atmega328p__gpio import pin_pulse_in
                 return pin_pulse_in(self._pin, self._bit, state, timeout_us)
             case _:
                 return 0
