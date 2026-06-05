@@ -359,12 +359,21 @@ public partial class IRGenerator
                     var classPrefix = currentModulePrefix + classDef.Name + "_";
                     currentModulePrefix = classPrefix;
 
+                    // Ensure an entry exists in classDirectMethods even for empty classes.
+                    string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
+                    if (!classDirectMethods.ContainsKey(classKey))
+                        classDirectMethods[classKey] = new HashSet<string>();
+
                     if (classDef.Body is Block block)
                     {
                         foreach (var inner in block.Statements)
                         {
                             if (inner is FunctionDef func)
                             {
+                                // Register as directly-defined BEFORE the inheritance copy so
+                                // ResolveMROMethod can distinguish "defined here" from "inherited".
+                                classDirectMethods[classKey].Add(func.Name);
+
                                 string fullName = currentModulePrefix + func.Name;
                                 functionReturnTypes[fullName] = func.ReturnType;
                                 var @params = new List<string>();
@@ -410,6 +419,10 @@ public partial class IRGenerator
                                 {
                                     functionsToCompile.Add(new FunctionEntry
                                         { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                                    // Keep the AST so Call.cs can force-inline this method when
+                                    // it is called on a ZCA instance with a known concrete type.
+                                    // ZCA field aliasing requires inline expansion of self accesses.
+                                    instanceMethodDefs[fullName] = func;
                                 }
 
                                 if (!func.IsPropertySetter)
@@ -447,6 +460,13 @@ public partial class IRGenerator
                         string resolvedBasePrefix = ResolveBase();
                         string childClassName = classPrefix.Substring(0, classPrefix.Length - 1);
                         classBasePrefixes[childClassName] = resolvedBasePrefix;
+
+                        // Register child → parent edge in the class-children graph.
+                        string parentKey = resolvedBasePrefix.EndsWith("_")
+                            ? resolvedBasePrefix[..^1] : resolvedBasePrefix;
+                        if (!classChildren.TryGetValue(parentKey, out var childSet))
+                            classChildren[parentKey] = childSet = new HashSet<string>();
+                        childSet.Add(childClassName);
 
                         var toInherit = new List<KeyValuePair<string, FunctionDef>>();
                         foreach (var kvp in inlineFunctions)

@@ -59,6 +59,19 @@ public partial class IRGenerator
     // Class inheritance: maps "ChildClassName" -> "base_prefix_" (e.g., "GPIODevice_")
     // so that super().__init__() and default-ctor inheritance can be resolved.
     private Dictionary<string, string?> classBasePrefixes = new();
+
+    // Non-inline class instance methods: maps fully-qualified name → FunctionDef AST.
+    // Populated alongside functionsToCompile so Call.cs can force-inline them when called
+    // on a ZCA instance with a known concrete type (field aliasing requires inlining).
+    private Dictionary<string, FunctionDef> instanceMethodDefs = new();
+
+    // Class hierarchy graph (both populated by ScanFunctions).
+    // Keys use the unqualified class name WITHOUT trailing underscore (e.g. "dht_DHT11").
+    // classChildren:      parent → set of direct subclass names.
+    // classDirectMethods: class  → set of method names defined *directly* in that class body
+    //                     (excludes methods inherited via the toInherit copy loop).
+    private Dictionary<string, HashSet<string>> classChildren      = new();
+    private Dictionary<string, HashSet<string>> classDirectMethods = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
