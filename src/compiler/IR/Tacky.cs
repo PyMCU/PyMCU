@@ -195,6 +195,24 @@ public record SignalSuccess() : Instruction;
 // Backend Cortex-M0 : emits CMP R1, 0 ; BNE ErrorLabel.
 public record BranchOnError(string ErrorLabel) : Instruction;
 
+// Virtual method call through a flash-resident vtable.
+// DeclaredClass: the static (declared) type of the receiver — used to locate the vtable.
+// DefiningClass: the class in DeclaredClass's MRO that defines the method (pre-computed
+//                so the devirt pass and codegen do not need to re-walk the MRO).
+// MethodName:    unqualified method name (e.g. "_read_byte").
+// SlotIndex:     index into the vtable (2 * SlotIndex = byte offset from vtable base).
+// Self:          receiver variable (holds the vptr as its first SRAM field).
+// Args:          call arguments excluding self.
+// Dst:           destination for the return value.
+public record VirtualCall(
+    string DeclaredClass,
+    string DefiningClass,
+    string MethodName,
+    int SlotIndex,
+    Variable Self,
+    List<Val> Args,
+    Val Dst) : Instruction;
+
 // --- Function Definition ---
 public class Function
 {
@@ -221,6 +239,21 @@ public class Function
     public bool IsExportC { get; set; } = false;
 }
 
+// One slot in a class's flash-resident vtable.
+public class VtableEntry
+{
+    public string MethodName    { get; set; } = "";
+    // The class in the MRO that provides the implementation for this slot.
+    public string DefiningClass { get; set; } = "";
+}
+
+// Vtable layout for a single class.
+public class VtableSpec
+{
+    public string ClassName           { get; set; } = "";
+    public List<VtableEntry> Entries  { get; set; } = new();
+}
+
 public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
@@ -238,4 +271,14 @@ public class ProgramIR
 
     // True when the program uses GC_REF values; the backend injects the GC runtime.
     public bool NeedsGc { get; set; } = false;
+
+    // Class hierarchy graph — populated by IRGenerator.Generate() and consumed by the
+    // devirtualization pass in Optimizer.Optimize().
+    // Keys use the class name WITHOUT trailing underscore (e.g. "dht_DHT11").
+    public Dictionary<string, HashSet<string>> ClassChildren      { get; set; } = new();
+    public Dictionary<string, HashSet<string>> ClassDirectMethods { get; set; } = new();
+
+    // Vtable specs for classes that still require runtime virtual dispatch after the
+    // devirt pass.  Empty in the vast majority of programs (all calls devirtualized).
+    public List<VtableSpec> Vtables { get; set; } = new();
 }

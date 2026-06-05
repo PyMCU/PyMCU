@@ -28,6 +28,11 @@ public static class Optimizer
             GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
             Functions = program.Functions.Select(CloneFunction).ToList(),
             ExternSymbols = new List<string>(program.ExternSymbols),
+            // Preserve class hierarchy for the devirt pass and downstream codegen.
+            ClassChildren = new Dictionary<string, HashSet<string>>(
+                program.ClassChildren.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
+            ClassDirectMethods = new Dictionary<string, HashSet<string>>(
+                program.ClassDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
         };
 
         // Build the set of global variable names so EliminateDeadVariableStores
@@ -154,6 +159,18 @@ public static class Optimizer
             }
         }
         // --- End DGE ---
+
+        // --- Devirtualization pass ---
+        // Convert VirtualCall nodes to direct Call when static analysis proves
+        // the target is unambiguous.  For every current PyMCU program this pass
+        // eliminates ALL VirtualCall nodes (Rule 2: instanceClasses always holds
+        // the exact concrete type).
+        foreach (var func in optimized.Functions)
+            DevirtualizeCalls(func, optimized.ClassChildren, optimized.ClassDirectMethods);
+
+        // Build vtable specs for VirtualCall nodes that survived devirtualization.
+        // In the common case this list is empty (no vtable flash overhead).
+        optimized.Vtables = BuildVtableSpecs(optimized);
 
         return optimized;
 
@@ -1192,6 +1209,116 @@ private static Function CloneFunction(Function f)
             }
         }
         return anyUnrolled;
+    }
+
+    // -------------------------------------------------------------------------
+    // Devirtualization helpers
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Replace VirtualCall instructions with direct Calls wherever the target
+    /// can be proven unambiguous.
+    /// </summary>
+    private static void DevirtualizeCalls(
+        Function func,
+        Dictionary<string, HashSet<string>> classChildren,
+        Dictionary<string, HashSet<string>> classDirectMethods)
+    {
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            if (func.Body[i] is not VirtualCall vc) continue;
+
+            bool devirt =
+                // Rule 1: declared class is a leaf (no known subclasses).
+                !classChildren.TryGetValue(vc.DeclaredClass, out var ch) || ch.Count == 0
+                // Rule 3: no subclass in the subtree overrides the method.
+                || IsMethodNeverOverriddenOpt(vc.DeclaredClass, vc.MethodName, classChildren, classDirectMethods);
+
+            if (!devirt) continue;
+
+            // Direct call: self is passed as the first argument per the PyMCU ABI.
+            string target = vc.DefiningClass + "_" + vc.MethodName;
+            var callArgs = new List<Val> { vc.Self };
+            callArgs.AddRange(vc.Args);
+            func.Body[i] = new Call(target, callArgs, vc.Dst);
+        }
+    }
+
+    private static bool IsMethodNeverOverriddenOpt(
+        string cls, string methodName,
+        Dictionary<string, HashSet<string>> classChildren,
+        Dictionary<string, HashSet<string>> classDirectMethods)
+    {
+        if (!classChildren.TryGetValue(cls, out var children)) return true;
+        foreach (var child in children)
+        {
+            if (classDirectMethods.TryGetValue(child, out var dm) && dm.Contains(methodName))
+                return false;
+            if (!IsMethodNeverOverriddenOpt(child, methodName, classChildren, classDirectMethods))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Build vtable specs for classes that still have residual VirtualCall nodes
+    /// after devirtualization.  Returns an empty list for all current programs.
+    /// </summary>
+    private static List<VtableSpec> BuildVtableSpecs(ProgramIR program)
+    {
+        // Collect (declaredClass, methodName) pairs that survived devirtualization.
+        var needsVtable = new Dictionary<string, HashSet<string>>();
+        foreach (var func in program.Functions)
+        {
+            foreach (var instr in func.Body)
+            {
+                if (instr is not VirtualCall vc) continue;
+                if (!needsVtable.TryGetValue(vc.DeclaredClass, out var ms))
+                    needsVtable[vc.DeclaredClass] = ms = new HashSet<string>();
+                ms.Add(vc.MethodName);
+            }
+        }
+
+        var specs = new List<VtableSpec>();
+        foreach (var (cls, methods) in needsVtable)
+        {
+            // Build vtable: one entry per virtual method.
+            var entries = methods
+                .Select(m => new VtableEntry
+                {
+                    MethodName    = m,
+                    DefiningClass = WalkMROForMethodOpt(cls, m, program.ClassDirectMethods,
+                                                        program.ClassChildren),
+                })
+                .ToList();
+
+            specs.Add(new VtableSpec { ClassName = cls, Entries = entries });
+        }
+        return specs;
+    }
+
+    private static string WalkMROForMethodOpt(
+        string cls, string methodName,
+        Dictionary<string, HashSet<string>> classDirectMethods,
+        Dictionary<string, HashSet<string>> classChildren)
+    {
+        // We don't have classBasePrefixes here; do a BFS over classChildren inverse to find
+        // the declaring class.  For the common case (leaf class or not overridden) the
+        // DevirtualizeCalls pass already handled this; this path is rarely reached.
+        string? current = cls;
+        // Build a reverse map on the fly: child → parent via classChildren values.
+        var childToParent = new Dictionary<string, string>();
+        foreach (var (parent, children) in classChildren)
+            foreach (var child in children)
+                childToParent[child] = parent;
+
+        while (current != null)
+        {
+            if (classDirectMethods.TryGetValue(current, out var dm) && dm.Contains(methodName))
+                return current;
+            childToParent.TryGetValue(current, out current);
+        }
+        return cls;
     }
 
     private static Instruction RenameBodyLabels(Instruction instr, HashSet<string> bodyLabels, int iteration)

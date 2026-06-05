@@ -121,6 +121,7 @@ public enum BinaryOp
 [JsonDerivedType(typeof(SignalError),          "sigerr")]
 [JsonDerivedType(typeof(SignalSuccess),        "sigok")]
 [JsonDerivedType(typeof(BranchOnError),        "boe")]
+[JsonDerivedType(typeof(VirtualCall),          "vcall")]
 public abstract record Instruction;
 
 public record Return(Val Value) : Instruction;
@@ -241,6 +242,18 @@ public record SignalSuccess() : Instruction;
 // Backend AVR : emits BRTS ErrorLabel. Backend Cortex-M0 : CMP R1,0 ; BNE ErrorLabel.
 public record BranchOnError(string ErrorLabel) : Instruction;
 
+// Virtual method call through a flash-resident vtable.
+// DeclaredClass: static receiver type.  DefiningClass: MRO-resolved defining class.
+// SlotIndex: vtable slot (byte offset = SlotIndex * 2).  Self: receiver variable.
+public record VirtualCall(
+    string DeclaredClass,
+    string DefiningClass,
+    string MethodName,
+    int SlotIndex,
+    Variable Self,
+    List<Val> Args,
+    Val Dst) : Instruction;
+
 // --- Function Definition ---
 public class Function
 {
@@ -265,6 +278,20 @@ public class Function
     public bool IsExportC { get; set; } = false;
 }
 
+// One slot in a class's flash-resident vtable.
+public class VtableEntry
+{
+    public string MethodName    { get; set; } = "";
+    public string DefiningClass { get; set; } = "";
+}
+
+// Vtable layout for a single class.
+public class VtableSpec
+{
+    public string ClassName           { get; set; } = "";
+    public List<VtableEntry> Entries  { get; set; } = new();
+}
+
 public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
@@ -282,4 +309,11 @@ public class ProgramIR
 
     // True when the program uses GC_REF values; the backend injects the GC runtime.
     public bool NeedsGc { get; set; } = false;
+
+    // Class hierarchy for the devirtualization pass.
+    public Dictionary<string, HashSet<string>> ClassChildren      { get; set; } = new();
+    public Dictionary<string, HashSet<string>> ClassDirectMethods { get; set; } = new();
+
+    // Vtable specs surviving after devirtualization (empty for most programs).
+    public List<VtableSpec> Vtables { get; set; } = new();
 }

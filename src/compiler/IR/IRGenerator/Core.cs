@@ -650,6 +650,13 @@ public partial class IRGenerator
             _pendingFlashData.Clear();
         }
 
+        // Propagate class hierarchy so the Optimizer devirt pass and AvrCodeGen
+        // can work without access to IRGenerator-internal state.
+        irProgram.ClassChildren = new Dictionary<string, HashSet<string>>(
+            classChildren.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
+        irProgram.ClassDirectMethods = new Dictionary<string, HashSet<string>>(
+            classDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
+
         return irProgram;
     }
 

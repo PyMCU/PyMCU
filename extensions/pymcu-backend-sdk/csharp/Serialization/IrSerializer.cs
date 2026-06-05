@@ -50,5 +50,10 @@ public static class IrSerializer
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ProgramIR))]
 [JsonSerializable(typeof(Dictionary<string, int>))]
+[JsonSerializable(typeof(Dictionary<string, HashSet<string>>))]
+[JsonSerializable(typeof(HashSet<string>))]
+[JsonSerializable(typeof(List<VtableSpec>))]
+[JsonSerializable(typeof(VtableSpec))]
+[JsonSerializable(typeof(VtableEntry))]
 [JsonSerializable(typeof(PyMCU.Common.Models.DeviceConfig))]
 internal partial class PymcuIrContext : JsonSerializerContext { }
