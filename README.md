@@ -18,24 +18,24 @@ Every binary is made of three fixed layers. The table shows each one separately:
 | Source | Preamble | Startup | User code | **Total** | SRAM |
 |---|---|---|---|---|---|
 | **C** (`avr-gcc -Os`) | 108 B | 24 B | **44 B** | 176 B | 0 B |
-| **PyMCU** (native HAL) | 106 B | 36 B | **42 B** | 184 B | 0 B |
-| **PyMCU** (MicroPython API) | 106 B | 36 B | **42 B** | 184 B | 0 B |
-| **PyMCU** (CircuitPython API) | 106 B | 36 B | **44 B** | 186 B | 0 B |
+| **PyMCU** (native HAL) | 106 B | 24 B | **32 B** | 162 B | 0 B |
+| **PyMCU** (MicroPython API) | 106 B | 24 B | **32 B** | 162 B | 0 B |
+| **PyMCU** (CircuitPython API) | 106 B | 24 B | **34 B** | 164 B | 0 B |
 | **Arduino** (IDE defaults) | — | — | — | ~1 024 B | 9 B |
 
 **Layer 1 — Preamble** (constant, not program logic):
 C emits 26 × 4-byte `JMP` slots + `__bad_interrupt: JMP` = **108 B**.
-PyMCU emits 26 × (`RJMP` + `NOP`) + `__bad_interrupt: RJMP` = **106 B** (RJMP is 2-byte vs 4-byte JMP; a NOP pad keeps slot alignment for future ISR use). Both give equivalent safety coverage.
+PyMCU emits 26 × (`RJMP` + `NOP`) + `__bad_interrupt: RJMP` = **106 B** (`RJMP` is 2-byte vs 4-byte `JMP`; a `NOP` pad keeps slot alignment for future ISR use). Both give equivalent safety coverage.
 
 **Layer 2 — Startup** (fixed per toolchain, not per program):
 C `__ctors_end` does: `CLR R1` + `OUT SREG, R1` + `LDI/OUT SP` + `CALL main` = **24 B**.
-PyMCU does: `CLR R1` + `OUT/LDI SP` + `LDI Y` (frame-pointer) + BSS-zeroing loop = **36 B**.
-The extra 12 B are the BSS loop. It is **only emitted when there are global variables** (`_bssSize > 0` in the codegen). In this blink, `_bssSize = 9` because the stdlib modules pulled in by `import` (exception-code slots + `_millis_count`) occupy 9 bytes of RAM. The loop zeroes them once at boot, guaranteeing clean state after a watchdog reset — identical to what avr-libc does for C programs that have `.bss` data. A C blink with no globals skips it too.
+PyMCU does the same: `CLR R1` + `LDI/OUT SP` + `LDI Y` (frame-pointer) = **24 B**.
+The BSS-zeroing loop (`LDI Z, _bss_end` + `ST Z+, R1` + `BRNE`) is **only emitted when `_bssSize > 0`** — i.e. when the program actually has runtime global variables that need to be zeroed at boot. This blink has none: unused stdlib globals (`pymcu.exceptions.*`, `_millis_count`) are removed by the **Dead Global Elimination** pass in the optimizer before codegen runs.
 
 **Layer 3 — User code** (the only part that changes between variants):
-PyMCU HAL and MicroPython compile to **42 B** of application logic.
-Plain C compiles to **44 B** — PyMCU emits 5 % fewer bytes here because constant-folding resolves `Pin("PB5", Pin.OUT)` entirely at compile time: the register address and bit index are embedded directly as `SBI`/`CBI` immediates, exactly as a hand-written C programmer would.
-The CircuitPython extra 2 B come from `Direction.setter` clearing PORT before asserting DDR — semantically required by the CircuitPython spec and expected.*
+PyMCU HAL and MicroPython compile to **32 B** of application logic — **12 B less than C's 44 B**.
+Constant-folding resolves `Pin("PB5", Pin.OUT)` entirely at compile time and the delay loop counter fits in one fewer register pair compared to the gcc-generated version.
+The CircuitPython extra 2 B come from `Direction.setter` clearing PORT before asserting DDR — semantically required by the CircuitPython spec.
 
 ---
 
@@ -78,7 +78,7 @@ while True:
 ```
 
 ```bash
-pymcu build   # → dist/firmware.hex  (78 bytes flash, 0 bytes SRAM)
+pymcu build   # → dist/firmware.hex  (56 bytes flash, 0 bytes SRAM)
 pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
