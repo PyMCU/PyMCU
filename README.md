@@ -85,7 +85,9 @@ The interrupt vector table and startup stub are identical fixed overhead in both
 > These numbers are for a minimal blink. Real programs that use SRAM (global variables, buffers) will emit a small zeroing loop at startup, just like C does.
 
 > **For complex drivers** (custom protocols, timing-critical bit-bang): expect 2-3x flash vs
-> hand-written C. That is still 100-1000x smaller than any embedded Python interpreter.
+> hand-written C. PyMCU is not competing with C — the goal is to make microcontroller
+> development approachable in Python you already know, without the overhead of Arduino.
+> The output is still 100-1000x smaller than any embedded Python interpreter.
 
 ---
 
@@ -307,9 +309,7 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 ## Sustainability
 
 Post-alpha development will be slower and community-driven. If PyMCU saves you time,
-consider sponsoring the project — the goal is $200-300/month, which nets roughly
-$100-200 after payment processing and local taxes, enough to cover the AI tooling
-costs that made this first release possible.
+consider sponsoring the project — every contribution helps keep development going.
 
 [Sponsor on GitHub](https://github.com/sponsors/begeistert)
 
