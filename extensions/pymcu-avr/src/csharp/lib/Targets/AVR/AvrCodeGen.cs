@@ -973,9 +973,10 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             case JumpIfNotZero jnz: CompileJumpIfNotZero(jnz); break;
             case Label l: EmitLabel(l.Name); break;
             case DebugLine d:
-                EmitComment(string.IsNullOrEmpty(d.SourceFile)
-                    ? $"Line {d.Line}: {d.Text}"
-                    : $"{d.SourceFile}:{d.Line}: {d.Text}");
+                if (cfg.EmitDebugComments)
+                    EmitComment(string.IsNullOrEmpty(d.SourceFile)
+                        ? $"Line {d.Line}: {d.Text}"
+                        : $"{d.SourceFile}:{d.Line}: {d.Text}");
                 if (!string.IsNullOrEmpty(d.SourceFile) && !d.IsInline)
                     _assembly.Add(AvrAsmLine.MakeDebugMarker(d.SourceFile, d.Line));
                 break;

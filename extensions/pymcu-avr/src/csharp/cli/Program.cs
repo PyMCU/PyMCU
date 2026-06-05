@@ -143,11 +143,14 @@ rootCmd.SetAction(pr =>
     // Build DeviceConfig from CLI flags.
     var cfg = new DeviceConfig
     {
-        TargetChip      = target,
-        Arch            = "avr",
-        Frequency       = freq,
-        ResetVector     = resetVec,
-        InterruptVector = intVec,
+        TargetChip          = target,
+        Arch                = "avr",
+        Frequency           = freq,
+        ResetVector         = resetVec,
+        InterruptVector     = intVec,
+        // Enable source-line comments in the .asm when a linemap is requested
+        // (debug builds) but suppress them in plain release builds.
+        EmitDebugComments   = !string.IsNullOrEmpty(emitLineMap),
     };
     foreach (var item in configs)
     {

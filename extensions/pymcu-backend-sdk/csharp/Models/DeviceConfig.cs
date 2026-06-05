@@ -32,6 +32,10 @@ public class DeviceConfig
     public int InterruptVectorHigh { get; set; } = -1;
     public int InterruptVectorLow { get; set; } = -1;
 
+    // When true the backend emits "; file:line: text" comments in the .asm output.
+    // Defaults to false (release builds).  Set to true via --emit-linemap or --debug.
+    public bool EmitDebugComments { get; set; } = false;
+
     // Native pointer size in bytes, derived from the target architecture.
     // AVR / PIC12 / PIC14 / PIC18 = 2 bytes; ARM Cortex-M / RISC-V 32 = 4 bytes.
     public int PointerWidth => Arch switch
