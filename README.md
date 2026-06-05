@@ -2,7 +2,7 @@
 <br />
 <p align="center">
   <a href="https://github.com/begeistert/PyMCU">
-    <img src="docs/_static/images/logo.svg" alt="PyMCU" width="200" height="200">
+    <img src="docs/_static/images/logo-icon.png" alt="PyMCU" width="200" height="200">
   </a>
 
   <h3 align="center">PyMCU</h3>
