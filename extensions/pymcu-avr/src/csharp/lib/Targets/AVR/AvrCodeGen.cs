@@ -784,6 +784,11 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
             CompileFunction(func);
         }
 
+        // In release mode (no debug comments), shorten long generated symbol names
+        // so the .asm file is easier to read. Full names are preserved in debug/linemap mode.
+        if (!cfg.EmitDebugComments)
+            ApplySymbolShortening(program);
+
         var optimized = AvrPeephole.Optimize(_assembly);
         foreach (var line in optimized)
             output.WriteLine(line.ToString());
@@ -2960,6 +2965,77 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
         os.WriteLine("    cli");
         os.WriteLine("    rjmp  .-2");
         os.WriteLine();
+    }
+
+    // ── Symbol shortening (release builds) ───────────────────────────────────────────────────────
+    // Generates a deterministic short name for a generated symbol when it exceeds 24 characters.
+    // Strategy: strip up to and including the last __ separator (Python private-name convention).
+    // Fallback: FNV-1a 32-bit hash prefixed with _s for names without __ or that still collide.
+    private static string MakeShortSymbol(string name)
+    {
+        if (name.Length <= 24) return name;
+        int dunder = name.LastIndexOf("__");
+        if (dunder >= 0 && dunder + 2 < name.Length)
+        {
+            string tail = name[(dunder + 2)..];
+            if (tail.Length <= 24) return tail;
+        }
+        uint h = 2166136261u;
+        foreach (char c in name) { h ^= (byte)c; h *= 16777619u; }
+        return $"_s{h:x8}";
+    }
+
+    // Builds a full-name → short-name map for all long symbols and applies it to _assembly in-place.
+    private void ApplySymbolShortening(ProgramIR program)
+    {
+        // Collect all long generated names: function labels + SRAM variable names.
+        var longNames = new HashSet<string>();
+        foreach (var fn in program.Functions)
+            if (fn.Name.Length > 24) longNames.Add(fn.Name);
+        foreach (var key in _stackLayout.Keys)
+        {
+            var underscored = key.Replace('.', '_');
+            if (underscored.Length > 24) longNames.Add(underscored);
+        }
+
+        // Build the map with collision resolution.
+        var map = new Dictionary<string, string>();
+        var used = new HashSet<string>();
+        foreach (var name in longNames.OrderByDescending(n => n.Length))
+        {
+            string candidate = MakeShortSymbol(name);
+            int n = 0;
+            while (used.Contains(candidate))
+                candidate = $"{MakeShortSymbol(name)}_{++n}";
+            map[name] = candidate;
+            used.Add(candidate);
+        }
+        if (map.Count == 0) return;
+
+        // Sort by key length descending to avoid partial-match replacements.
+        var pairs = map.OrderByDescending(kv => kv.Key.Length).ToList();
+
+        foreach (var line in _assembly)
+        {
+            switch (line.Type)
+            {
+                case AvrAsmLine.LineType.Label:
+                    foreach (var (full, sh) in pairs)
+                        if (line.LabelText == full) { line.LabelText = sh; break; }
+                    break;
+                case AvrAsmLine.LineType.Instruction:
+                    foreach (var (full, sh) in pairs)
+                    {
+                        if (line.Op1 == full) line.Op1 = sh;
+                        if (line.Op2 == full) line.Op2 = sh;
+                    }
+                    break;
+                case AvrAsmLine.LineType.Raw:
+                    foreach (var (full, sh) in pairs)
+                        line.Content = line.Content.Replace(full, sh);
+                    break;
+            }
+        }
     }
 
     // Returns true when varName appears as a source (read) operand in any instruction.
