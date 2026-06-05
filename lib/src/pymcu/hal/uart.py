@@ -24,13 +24,13 @@ def uart_rx_isr():
     """Ring-buffer filler ISR. Call from within a uart.irq() handler."""
     match __CHIP__.name:
         case "attiny2313" | "attiny4313":
-            from pymcu.hal.avr.attiny2313_uart import uart_rx_isr as _impl
+            from pymcu.hal.avr.uart.attiny2313 import uart_rx_isr as _impl
             _impl()
         case "atmega32u4":
-            from pymcu.hal.avr.atmega32u4_uart import uart_rx_isr as _impl
+            from pymcu.hal.avr.uart.atmega32u4 import uart_rx_isr as _impl
             _impl()
         case _:
             match __CHIP__.arch:
                 case "avr":
-                    from pymcu.hal.avr.avr_uart import uart_rx_isr as _impl
+                    from pymcu.hal.avr.uart.avr import uart_rx_isr as _impl
                     _impl()
