@@ -14,19 +14,29 @@
 #   sleep_power_down()    -- deepest sleep; wake via ext interrupt, WDT, or TWI
 #   sleep_power_save()    -- power-down with async timer still running
 #   sleep_standby()       -- power-down with fast oscillator wake
+#   sleep_extended_standby() -- power-down + async timer + fast oscillator
 #
 # Global interrupts must be enabled before calling sleep functions.
 from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, inline
+from pymcu.types import inline
+
+if __CHIP__.arch == "avr":
+    from pymcu.hal.avr.power import (
+        sleep_idle as _sleep_idle,
+        sleep_adc_noise as _sleep_adc_noise,
+        sleep_power_down as _sleep_power_down,
+        sleep_power_save as _sleep_power_save,
+        sleep_standby as _sleep_standby,
+        sleep_extended_standby as _sleep_extended_standby,
+    )
 
 
 @inline
 def sleep_idle():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_idle as _impl
-            _impl()
+            _sleep_idle()
         case _:
             raise CompileError("sleep_idle not supported on this architecture")
 
@@ -35,8 +45,7 @@ def sleep_idle():
 def sleep_adc_noise():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_adc_noise as _impl
-            _impl()
+            _sleep_adc_noise()
         case _:
             raise CompileError("sleep_adc_noise not supported on this architecture")
 
@@ -45,8 +54,7 @@ def sleep_adc_noise():
 def sleep_power_down():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_power_down as _impl
-            _impl()
+            _sleep_power_down()
         case _:
             raise CompileError("sleep_power_down not supported on this architecture")
 
@@ -55,8 +63,7 @@ def sleep_power_down():
 def sleep_power_save():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_power_save as _impl
-            _impl()
+            _sleep_power_save()
         case _:
             raise CompileError("sleep_power_save not supported on this architecture")
 
@@ -65,8 +72,7 @@ def sleep_power_save():
 def sleep_standby():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_standby as _impl
-            _impl()
+            _sleep_standby()
         case _:
             raise CompileError("sleep_standby not supported on this architecture")
 
@@ -75,7 +81,6 @@ def sleep_standby():
 def sleep_extended_standby():
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.atmega328p_power import sleep_extended_standby as _impl
-            _impl()
+            _sleep_extended_standby()
         case _:
             raise CompileError("sleep_extended_standby not supported on this architecture")
