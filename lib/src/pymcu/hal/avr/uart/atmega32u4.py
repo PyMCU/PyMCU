@@ -256,3 +256,15 @@ def uart_rx_irq_setup():
     UCSR1B[7] = 1
     SREG[7] = 1
     compile_isr(uart_rx_isr, 0x002C)
+
+
+def uart_write_float(value: float):
+    if value < 0.0:
+        uart_write(45)
+        value = 0.0 - value
+    tenths: uint16 = uint16(value * 10.0)
+    int_part: uint8 = uint8(tenths // 10)
+    frac: uint8 = uint8(tenths % 10)
+    uart_write_decimal_u8(int_part)
+    uart_write(46)
+    uart_write(frac + 48)
