@@ -75,8 +75,88 @@ public static class Optimizer
             foreach (var callee in callees) Enqueue(callee);
         }
 
-        // optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
+        // --- Dead Global Elimination (DGE) ---
+        // A global is live only if a Variable with that name is referenced
+        // (read OR written) inside a reachable function body.  Globals that
+        // come from transitively-imported stdlib modules but are never touched
+        // by reachable code (e.g. pymcu.exceptions.* when no raise/except is
+        // used, _millis_count when millis_init() is never called) are removed
+        // so they do not inflate _bssSize and trigger the BSS-zeroing loop.
+        {
+            var globalVarNames = new HashSet<string>(optimized.Globals.Select(g => g.Name));
+            globalVarNames.UnionWith(optimized.GlobalArrays.Keys);
+
+            var referencedGlobals = new HashSet<string>();
+            foreach (var func in optimized.Functions.Where(f => reachable.Contains(f.Name)))
+            {
+                foreach (var instr in func.Body)
+                {
+                    // Collect all Val uses (reads)
+                    RegisterUses(instr, val =>
+                    {
+                        if (val is Variable v && globalVarNames.Contains(v.Name))
+                            referencedGlobals.Add(v.Name);
+                    });
+                    // Also capture write destinations (Copy, AugAssign, etc.)
+                    var dst = GetDst(instr);
+                    if (dst is Variable vDst && globalVarNames.Contains(vDst.Name))
+                        referencedGlobals.Add(vDst.Name);
+                    if (instr is AugAssign { Target: Variable aaDst } && globalVarNames.Contains(aaDst.Name))
+                        referencedGlobals.Add(aaDst.Name);
+
+                    // Conservative: if a naked InlineAsm string literally contains
+                    // a global's mangled name, keep that global alive.  This handles
+                    // rare cases where raw asm references a global by its .equ symbol
+                    // name without going through an IR Variable operand.
+                    // Note: standard delay-loop asm ("PUSH R24", "DEC R25", etc.)
+                    // never contains global variable names, so DGE still fires.
+                    if (instr is InlineAsm { Operands: null or { Count: 0 }, Code: var asmStr })
+                    {
+                        foreach (var gName in globalVarNames)
+                        {
+                            if (asmStr.Contains(gName.Replace('.', '_')))
+                                referencedGlobals.Add(gName);
+                        }
+                    }
+                }
+            }
+
+            var deadGlobals = globalVarNames.Except(referencedGlobals).ToHashSet();
+
+            if (deadGlobals.Count > 0)
+            {
+                optimized.Globals.RemoveAll(g => deadGlobals.Contains(g.Name));
+                foreach (var k in deadGlobals.Where(k => optimized.GlobalArrays.ContainsKey(k)).ToList())
+                    optimized.GlobalArrays.Remove(k);
+
+                // Purge every instruction that references a dead global from ALL
+                // function bodies (reachable and non-reachable alike).  This is
+                // necessary so the StackAllocator never sees dead-global Variable
+                // names and creates phantom SRAM slots for them — which would
+                // otherwise cause spurious .equ symbols in the backend.
+                //
+                // For reachable functions: the global was never read, so stores
+                // to it have no effect and are safe to remove.
+                // For non-reachable functions: the whole body is dead code.
+                foreach (var func in optimized.Functions)
+                {
+                    func.Body.RemoveAll(instr =>
+                    {
+                        // Remove any instruction whose sole destination is a dead global.
+                        var dst = GetDst(instr);
+                        if (dst is Variable dv && deadGlobals.Contains(dv.Name)) return true;
+                        if (instr is AugAssign { Target: Variable aav } && deadGlobals.Contains(aav.Name)) return true;
+                        // Remove Copy stores to dead globals.
+                        if (instr is Copy { Dst: Variable cv } && deadGlobals.Contains(cv.Name)) return true;
+                        return false;
+                    });
+                }
+            }
+        }
+        // --- End DGE ---
+
         return optimized;
+
 
         void Enqueue(string name)
         {
