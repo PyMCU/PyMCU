@@ -311,7 +311,7 @@ def millis_init():
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import millis_init as _millis_init_avr
+            from pymcu.hal.avr.atmega328p_timer import millis_init as _millis_init_avr
             _millis_init_avr()
 
 
@@ -324,7 +324,7 @@ def millis() -> uint32:
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import millis as _millis_avr
+            from pymcu.hal.avr.atmega328p_timer import millis as _millis_avr
             return _millis_avr()
         case _:
             return 0
@@ -341,7 +341,7 @@ def micros() -> uint32:
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import micros as _micros_avr
+            from pymcu.hal.avr.atmega328p_timer import micros as _micros_avr
             return _micros_avr()
         case _:
             return 0

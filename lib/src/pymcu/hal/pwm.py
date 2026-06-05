@@ -8,158 +8,17 @@
 #
 # hal/pwm.py -- hardware PWM zero-cost abstraction (ZCA)
 #
-# Supported architectures: AVR, PIC.
-#
 # PWM(pin, duty) accepts a port-pin name string (e.g. "PD6").
-# If you hold a Pin instance, pass pin.name -- it is a compile-time const[str]
-# in the ZCA alias chain with no runtime cost: PWM(my_pin.name, duty).
-#
-# The timer channel, compare register, and control register pointers are
-# resolved at construction time; set_duty() / start() / stop() each
-# compile to a single register write with no further dispatch.
-#
-# duty: 0-255 (0 = 0%, 255 = 100%). Timer is left stopped after init;
-# call start() before the first set_duty().
+# The timer channel and compare register are resolved at construction time;
+# set_duty() / start() / stop() each compile to a single register write.
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, inline
+from pymcu.exceptions import CompileError
 
-
-# noinspection PyProtectedMember
-class PWM:
-    """Hardware PWM channel, zero-cost abstraction (all methods @inline).
-
-    Accepts a port-pin name string. If you hold a Pin instance, pass pin.name:
-
-        pwm = PWM("PD6", 0)
-        pwm = PWM(led_pin.name, 0)     # identical generated code
-        pwm.start()
-        pwm.set_duty(128)    # 50% duty cycle
-    """
-
-    def __init__(self, pin: str, duty: uint8, freq: uint16 = 0):
-        """Initialize a hardware PWM channel from a port-pin name string.
-
-        duty: initial duty cycle, 0-255 (0 = 0%, 255 = 100%).
-        freq: target PWM frequency in Hz (0 = use hardware default).
-              Only 5 discrete frequencies are available per timer; the
-              smallest prescaler whose frequency is >= freq is chosen.
-        The timer is left stopped after init; call start() before set_duty().
-        """
-        match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                from pymcu.hal._pwm.atmega328p import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val, pwm_prescaler_for_freq
-                prescaler: uint8 = 0
-                if freq == 0:
-                    prescaler = pwm_select_start_val(pin)
-                else:
-                    prescaler = pwm_prescaler_for_freq(pin, freq)
-                self._pin       = pin
-                pwm_init(pin, duty, prescaler)
-                self._ocr       = pwm_select_ocr(pin)
-                self._tccr_b    = pwm_select_tccr_b(pin)
-                self._start_val = prescaler
-            case "pic16f877a":
-                from pymcu.hal._pwm.pic16f877a import pwm_init
-                self.pin = pin
-                pwm_init(pin, duty)
-            case "pic16f18877":
-                from pymcu.hal._pwm.pic16f18877 import pwm_init
-                self.pin = pin
-                pwm_init(pin, duty)
-            case "pic18f45k50":
-                from pymcu.hal._pwm.pic18f45k50 import pwm_init
-                self.pin = pin
-                pwm_init(pin, duty)
-            case "attiny85" | "attiny45" | "attiny25":
-                from pymcu.hal._pwm.attiny85 import pwm_init, pwm_select_ocr, pwm_select_tccr_b, pwm_select_start_val, pwm_prescaler_for_freq
-                prescaler: uint8 = 0
-                if freq == 0:
-                    prescaler = pwm_select_start_val(pin)
-                else:
-                    prescaler = pwm_prescaler_for_freq(pin, freq)
-                self._pin       = pin
-                pwm_init(pin, duty, prescaler)
-                self._ocr       = pwm_select_ocr(pin)
-                self._tccr_b    = pwm_select_tccr_b(pin)
-                self._start_val = prescaler
-
-    @inline
-    def set_duty(self, duty: uint8):
-        """Update the duty cycle. duty: 0-255 (0 = 0%, 255 = 100%).
-
-        Compiles to a single register write.
-        """
-        match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                # Direct OCR write -- single STS instruction.
-                self._ocr.value = duty
-            case "pic16f877a":
-                from pymcu.hal._pwm.pic16f877a import pwm_set_duty
-                pwm_set_duty(self.pin, duty)
-            case "pic16f18877":
-                from pymcu.hal._pwm.pic16f18877 import pwm_set_duty
-                pwm_set_duty(self.pin, duty)
-            case "pic18f45k50":
-                from pymcu.hal._pwm.pic18f45k50 import pwm_set_duty
-                pwm_set_duty(self.pin, duty)
-            case "attiny85" | "attiny45" | "attiny25":
-                self._ocr.value = duty
-
-    @inline
-    def start(self):
-        """Enable the timer clock and start generating the PWM waveform.
-
-        Must be called once before the first set_duty() takes effect.
-        """
-        match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                # Restore prescaler value to re-enable the timer.
-                self._tccr_b.value = self._start_val
-            case "pic16f877a":
-                from pymcu.hal._pwm.pic16f877a import pwm_start
-                pwm_start(self.pin)
-            case "pic16f18877":
-                from pymcu.hal._pwm.pic16f18877 import pwm_start
-                pwm_start(self.pin)
-            case "pic18f45k50":
-                from pymcu.hal._pwm.pic18f45k50 import pwm_start
-                pwm_start(self.pin)
-            case "attiny85" | "attiny45" | "attiny25":
-                self._tccr_b.value = self._start_val
-
-    @inline
-    def stop(self):
-        """Disable the timer clock and stop the PWM waveform.
-
-        The duty cycle value is preserved; start() resumes at the same level.
-        """
-        match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                # Clear TCCRxB to stop the timer clock.
-                self._tccr_b.value = 0x00
-            case "pic16f877a":
-                from pymcu.hal._pwm.pic16f877a import pwm_stop
-                pwm_stop(self.pin)
-            case "pic16f18877":
-                from pymcu.hal._pwm.pic16f18877 import pwm_stop
-                pwm_stop(self.pin)
-            case "pic18f45k50":
-                from pymcu.hal._pwm.pic18f45k50 import pwm_stop
-                pwm_stop(self.pin)
-            case "attiny85" | "attiny45" | "attiny25":
-                self._tccr_b.value = 0x00
-
-    @inline
-    def set_freq(self, freq: uint16):
-        # Change PWM frequency by recomputing the prescaler and writing TCCRxB.
-        match __CHIP__.name:
-            case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48" | "atmega2560" | "atmega32u4":
-                from pymcu.hal._pwm.atmega328p import pwm_prescaler_for_freq
-                self._start_val = pwm_prescaler_for_freq(self._pin, freq)
-                self._tccr_b.value = self._start_val
-            case "attiny85" | "attiny45" | "attiny25":
-                from pymcu.hal._pwm.attiny85 import pwm_prescaler_for_freq
-                self._start_val = pwm_prescaler_for_freq(self._pin, freq)
-                self._tccr_b.value = self._start_val
-            case _:
-                pass
+if __CHIP__.arch == "avr":
+    from pymcu.hal.avr.pwm import PWM
+elif __CHIP__.arch == "pic14":
+    from pymcu.hal.pic14.pwm import PWM
+elif __CHIP__.arch == "pic18":
+    from pymcu.hal.pic18.pwm import PWM
+else:
+    raise CompileError("PWM not supported on this architecture")

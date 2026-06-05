@@ -9,20 +9,6 @@ from pymcu.types import uint8, uint16, inline, asm
 #   EEDR  at I/O 0x1D (data 0x3D)
 #   EEAR  at I/O 0x1E (data 0x3E) -- EEARL (low 8 bits)
 #   EEARH at I/O 0x1F (data 0x3F) -- EEARH (bit 0 only = address bit 8)
-#
-# EECR bit layout (same as ATmega328P EECR):
-#   bit 3: EERIE (interrupt enable)
-#   bit 2: EEMPE (master write enable -- timed window)
-#   bit 1: EEPE  (write enable)
-#   bit 0: EERE  (read enable)
-#
-# Timed write sequence:
-#   1. Poll EEPE (bit 1) until clear.
-#   2. Write address to EEAR (and EEARH for addr > 0xFF).
-#   3. Write data to EEDR.
-#   4. Set EEMPE (bit 2), then within 4 cycles set EEPE (bit 1).
-#
-# EECR is at I/O 0x1C; use OUT 0x1c instead of STS for the timed sequence.
 
 @inline
 def eeprom_write(addr: uint16, value: uint8):

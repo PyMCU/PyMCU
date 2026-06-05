@@ -166,3 +166,10 @@ def timer1_irq_compa_setup(handler: Callable):
     TIMSK[6] = 1    # OCIE1A
     SREG[7] = 1     # SEI
     compile_isr(handler, 0x0006)   # Timer1 COMPA: word 0x0003, byte 0x0006
+
+# millis not supported on ATtiny85 -- no-op stubs so avr/timer.py can export them
+@inline
+def millis_init(): pass
+
+@inline
+def millis() -> uint32: return 0
