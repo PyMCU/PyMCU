@@ -1,7 +1,14 @@
 # PyMCU — Python to bare-metal firmware
 
-> **Alpha — v0.1.** Core AVR compilation is solid and test-covered.
-> Error messages, tooling, and some language edges are still rough.
+> [!IMPORTANT]
+> **Alpha — v0.1 — under active development.**
+> Core AVR compilation is stable and test-covered, but rough edges remain in error messages
+> and tooling. Stability is expected for the supported feature set — if you hit a bug,
+> [please open an issue](https://github.com/begeistert/PyMCU/issues), it helps a lot.
+>
+> **Avoid `pymcu.hal.*`** during the alpha — the native HAL API may change between releases.
+> Use the **MicroPython** or **CircuitPython** compat API instead; those are stable and
+> community-specified.
 
 PyMCU compiles a **statically-typed subset of Python** into bare-metal AVR firmware —
 no runtime, no interpreter, no virtual machine. The same binary you would write in C.
@@ -183,9 +190,10 @@ pymcu flash --port /dev/cu.usbmodem*
 | `pymcu-micropython` | `machine` (Pin/UART/ADC/PWM/SPI/I2C/Timer/WDT), `utime` | `pip install pymcu-micropython` |
 | `pymcu.hal.*` | Direct register-level HAL — lowest overhead | `pymcu-stdlib` (installed automatically with `pymcu-compiler`) |
 
-**Start with the compat layer that matches your background.** The APIs are stable,
-community-specified, and unlikely to change between alpha releases. Switch to
-`pymcu.hal.*` only if you need direct register access or a chip not yet covered.
+**Start with MicroPython or CircuitPython** — they are stable, community-specified,
+and backed by real hardware compatibility guarantees. The `pymcu.hal.*` native HAL is
+functional but its API **may change between alpha releases** — avoid it unless you need
+direct register access not yet covered by the compat layers.
 
 ---
 
@@ -255,8 +263,9 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 ## Sustainability
 
 Post-alpha development will be slower and community-driven. If PyMCU saves you time,
-consider sponsoring the project — the goal is a modest $100-200/month to cover the
-AI tooling costs that made this first release possible.
+consider sponsoring the project — the goal is $200-300/month, which nets roughly
+$100-200 after payment processing and local taxes, enough to cover the AI tooling
+costs that made this first release possible.
 
 [Sponsor on GitHub](https://github.com/sponsors/begeistert)
 
