@@ -776,6 +776,20 @@ public partial class IRGenerator
                 return new Constant(val);
             }
 
+            // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
+            if (v is FloatConstant fc && dstType != DataType.FLOAT)
+            {
+                int val = (int)fc.Value;
+                switch (dstType)
+                {
+                    case DataType.UINT8: val = (byte)val; break;
+                    case DataType.UINT16: val = (ushort)val; break;
+                    case DataType.INT8: val = (sbyte)val; break;
+                    case DataType.INT16: val = (short)val; break;
+                }
+                return new Constant(val);
+            }
+
             Temporary dst = MakeTemp(dstType);
             Emit(new Copy(v, dst));
             return dst;

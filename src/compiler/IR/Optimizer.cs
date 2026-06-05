@@ -502,7 +502,17 @@ private static Function CloneFunction(Function f)
                         if (tempCopies.Remove(tDst.Name))
                             blacklistedTemps.Add(tDst.Name);
                         else
-                            tempCopies[tDst.Name] = copy.Src;
+                        {
+                            // Float constant to non-float temp: fold to integer constant.
+                            if (copy.Src is FloatConstant fcTmp && tDst.Type != DataType.FLOAT)
+                            {
+                                var intConst = new Constant(WrapToType((int)fcTmp.Value, tDst.Type));
+                                func.Body[i] = new Copy(intConst, tDst);
+                                tempCopies[tDst.Name] = intConst;
+                            }
+                            else
+                                tempCopies[tDst.Name] = copy.Src;
+                        }
                     }
 
                     break;
@@ -511,8 +521,17 @@ private static Function CloneFunction(Function f)
                 {
                     if (copy.Dst is Variable vDst)
                     {
-                        if (copy.Src is Constant c) varConsts[vDst.Name] = c.Value;
-                        else varConsts.Remove(vDst.Name);
+                        if (copy.Src is Constant c)
+                            varConsts[vDst.Name] = c.Value;
+                        else if (copy.Src is FloatConstant fcVar && vDst.Type != DataType.FLOAT)
+                        {
+                            // Float constant to integer variable: fold at optimizer time.
+                            int folded = WrapToType((int)fcVar.Value, vDst.Type);
+                            varConsts[vDst.Name] = folded;
+                            func.Body[i] = new Copy(new Constant(folded), vDst);
+                        }
+                        else
+                            varConsts.Remove(vDst.Name);
                     }
 
                     break;
