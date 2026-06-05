@@ -1,4 +1,48 @@
-# PyMCU — Python to bare-metal firmware
+<!-- PROJECT LOGO -->
+<br />
+<p align="center">
+  <a href="https://github.com/begeistert/PyMCU">
+    <img src="docs/_static/images/logo.svg" alt="PyMCU" width="200" height="200">
+  </a>
+
+  <h3 align="center">PyMCU</h3>
+
+  <p align="center">
+    Python to bare-metal firmware — no runtime, no interpreter, no VM.
+    <br />
+    <a href="https://github.com/begeistert/PyMCU"><strong>Explore the project »</strong></a>
+    <br />
+    <br />
+    <a href="https://github.com/begeistert/PyMCU/issues">Report a bug</a>
+    ·
+    <a href="https://github.com/begeistert/PyMCU/issues">Request a feature</a>
+    ·
+    <a href="https://github.com/sponsors/begeistert">Sponsor</a>
+  </p>
+
+  <p align="center">
+    <a href="https://pypi.org/project/pymcu-compiler/">
+      <img src="https://img.shields.io/pypi/v/pymcu-compiler?label=pymcu-compiler&color=blue" alt="PyPI version">
+    </a>
+    <a href="https://pypi.org/project/pymcu-compiler/">
+      <img src="https://img.shields.io/pypi/pyversions/pymcu-compiler" alt="Python versions">
+    </a>
+    <a href="https://github.com/begeistert/PyMCU/blob/main/LICENSE">
+      <img src="https://img.shields.io/github/license/begeistert/PyMCU" alt="License">
+    </a>
+    <a href="https://github.com/begeistert/PyMCU/commits/main">
+      <img src="https://img.shields.io/github/last-commit/begeistert/PyMCU" alt="Last commit">
+    </a>
+    <a href="https://github.com/begeistert/PyMCU/issues">
+      <img src="https://img.shields.io/github/issues/begeistert/PyMCU" alt="Open issues">
+    </a>
+    <a href="https://github.com/sponsors/begeistert">
+      <img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors" alt="Sponsor">
+    </a>
+  </p>
+</p>
+
+---
 
 > [!IMPORTANT]
 > **Alpha — v0.1 — under active development.**
