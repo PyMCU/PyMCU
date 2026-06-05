@@ -19,7 +19,8 @@ if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
     from pymcu.hal.avr.uart.attiny2313 import (
         uart_init, uart_write, uart_read, uart_write_str,
         uart_available, uart_read_nb, uart_read_byte_isr,
-        uart_enable_rx_interrupt, uart_rx_isr, uart_rx_available, uart_rx_read,
+        uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
+        uart_rx_available, uart_rx_read,
         uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
         uart_write_decimal_i16, uart_write_decimal_u32, uart_write_float,
     )
@@ -27,7 +28,8 @@ elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import (
         uart_init, uart_write, uart_read, uart_write_str,
         uart_available, uart_read_nb, uart_read_byte_isr,
-        uart_enable_rx_interrupt, uart_rx_isr, uart_rx_available, uart_rx_read,
+        uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
+        uart_rx_available, uart_rx_read,
         uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
         uart_write_decimal_i16, uart_write_decimal_u32, uart_write_float,
     )
@@ -35,10 +37,16 @@ else:
     from pymcu.hal.avr.uart.avr import (
         uart_init, uart_write, uart_read, uart_write_str,
         uart_available, uart_read_nb, uart_read_byte_isr,
-        uart_enable_rx_interrupt, uart_rx_isr, uart_rx_available, uart_rx_read,
+        uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
+        uart_rx_available, uart_rx_read,
         uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
         uart_write_decimal_i16, uart_write_decimal_u32, uart_write_float,
     )
+
+
+@inline
+def uart_rx_isr():
+    _uart_rx_isr_impl()
 
 
 class UART:

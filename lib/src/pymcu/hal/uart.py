@@ -11,6 +11,7 @@ from pymcu.types import inline
 
 if __CHIP__.arch == "avr":
     from pymcu.hal.avr.uart import UART
+    from pymcu.hal.avr.uart import uart_rx_isr as _avr_uart_rx_isr
 elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.uart import UART
 elif __CHIP__.arch == "pic18":
@@ -21,16 +22,6 @@ else:
 
 @inline
 def uart_rx_isr():
-    """Ring-buffer filler ISR. Call from within a uart.irq() handler."""
-    match __CHIP__.name:
-        case "attiny2313" | "attiny4313":
-            from pymcu.hal.avr.uart.attiny2313 import uart_rx_isr as _impl
-            _impl()
-        case "atmega32u4":
-            from pymcu.hal.avr.uart.atmega32u4 import uart_rx_isr as _impl
-            _impl()
-        case _:
-            match __CHIP__.arch:
-                case "avr":
-                    from pymcu.hal.avr.uart.avr import uart_rx_isr as _impl
-                    _impl()
+    match __CHIP__.arch:
+        case "avr":
+            _avr_uart_rx_isr()
