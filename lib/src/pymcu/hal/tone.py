@@ -19,21 +19,15 @@ from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
 from pymcu.types import uint16, inline
 
+if __CHIP__.arch == "avr":
+    from pymcu.hal.avr.tone import tone_start, no_tone
+
 
 @inline
 def tone(freq_hz: uint16):
     match __CHIP__.arch:
         case "avr":
-            match __CHIP__.name:
-                case "atmega2560":
-                    from pymcu.hal.avr.atmega2560_tone import tone_start
-                    tone_start(freq_hz)
-                case "atmega32u4":
-                    from pymcu.hal.avr.atmega32u4_tone import tone_start
-                    tone_start(freq_hz)
-                case _:
-                    from pymcu.hal.avr.atmega328p_tone import tone_start
-                    tone_start(freq_hz)
+            tone_start(freq_hz)
         case _:
             raise CompileError("Tone not supported on this architecture")
 
@@ -42,15 +36,6 @@ def tone(freq_hz: uint16):
 def noTone():
     match __CHIP__.arch:
         case "avr":
-            match __CHIP__.name:
-                case "atmega2560":
-                    from pymcu.hal.avr.atmega2560_tone import no_tone
-                    no_tone()
-                case "atmega32u4":
-                    from pymcu.hal.avr.atmega32u4_tone import no_tone
-                    no_tone()
-                case _:
-                    from pymcu.hal.avr.atmega328p_tone import no_tone
-                    no_tone()
+            no_tone()
         case _:
             raise CompileError("Tone not supported on this architecture")
