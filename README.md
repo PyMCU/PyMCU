@@ -12,27 +12,30 @@ no runtime, no interpreter, no virtual machine. The same binary you would write 
 
 LED blink for ATmega328P @ 16 MHz — all variants perform the identical operation:
 set PB5 as output, then loop `set PB5 high → delay 500 ms → set PB5 low → delay 500 ms`.
-Flash sizes exclude the interrupt-vector preamble, which is constant across all programs.
 
-| Source | Flash | SRAM | Notes |
-|---|---|---|---|
-| **C** (`avr-gcc -Os`) | **68 bytes** | 0 bytes | 176b total − 108b preamble (26×`JMP` + `__bad_interrupt`) |
-| **PyMCU** (CircuitPython API) | **80 bytes** | 0 bytes | `led.value = True/False`; 186b total − 106b preamble |
-| **PyMCU** (MicroPython API) | **78 bytes** | 0 bytes | `led.value(1/0)`; 184b total − 106b preamble |
-| **PyMCU** (native HAL) | **78 bytes** | 0 bytes | `led.high()/led.low()`; 184b total − 106b preamble |
-| **Arduino** (IDE defaults) | **~924 bytes** | 9 bytes | Full framework overhead (estimated) |
+Every binary is made of three fixed layers. The table shows each one separately:
 
-*Preamble definition: C uses 26×4-byte `JMP` slots + `__bad_interrupt: JMP` = 108 B;
-PyMCU uses 26×(`RJMP`+NOP) + `__bad_interrupt: RJMP` = 106 B.
-Both are equivalent in safety coverage.
-The "after preamble" totals include crt0-compatible startup: `CLR R1` (zero-register
-invariant for C FFI), SP/Y-register setup, and a BSS-zeroing loop that ensures globals
-are clean after a watchdog reset (36 B constant; C startup is 24 B).
-Stripping startup overhead leaves **42 B** of user logic for PyMCU HAL/MP vs **44 B** for C
-for this set/clear + delay loop — constant folding through property chains works correctly
-and PyMCU generates 5 % fewer bytes of application code.
-The extra 2 B in the CircuitPython variant (44 B) come from `Direction.setter` clearing
-the PORT pin before asserting DDR — semantically correct and expected.*
+| Source | Preamble | Startup | User code | **Total** | SRAM |
+|---|---|---|---|---|---|
+| **C** (`avr-gcc -Os`) | 108 B | 24 B | **44 B** | 176 B | 0 B |
+| **PyMCU** (native HAL) | 106 B | 36 B | **42 B** | 184 B | 0 B |
+| **PyMCU** (MicroPython API) | 106 B | 36 B | **42 B** | 184 B | 0 B |
+| **PyMCU** (CircuitPython API) | 106 B | 36 B | **44 B** | 186 B | 0 B |
+| **Arduino** (IDE defaults) | — | — | — | ~1 024 B | 9 B |
+
+**Layer 1 — Preamble** (constant, not program logic):
+C emits 26 × 4-byte `JMP` slots + `__bad_interrupt: JMP` = **108 B**.
+PyMCU emits 26 × (`RJMP` + `NOP`) + `__bad_interrupt: RJMP` = **106 B** (RJMP is 2-byte vs 4-byte JMP; a NOP pad keeps slot alignment for future ISR use). Both give equivalent safety coverage.
+
+**Layer 2 — Startup** (fixed per toolchain, not per program):
+C `__ctors_end` does: `CLR R1` + `OUT SREG, R1` + `LDI/OUT SP` + `CALL main` = **24 B**.
+PyMCU does: `CLR R1` + `OUT/LDI SP` + `LDI Y` (frame-pointer) + BSS-zeroing loop = **36 B**.
+The extra 12 B are the BSS loop. It is **only emitted when there are global variables** (`_bssSize > 0` in the codegen). In this blink, `_bssSize = 9` because the stdlib modules pulled in by `import` (exception-code slots + `_millis_count`) occupy 9 bytes of RAM. The loop zeroes them once at boot, guaranteeing clean state after a watchdog reset — identical to what avr-libc does for C programs that have `.bss` data. A C blink with no globals skips it too.
+
+**Layer 3 — User code** (the only part that changes between variants):
+PyMCU HAL and MicroPython compile to **42 B** of application logic.
+Plain C compiles to **44 B** — PyMCU emits 5 % fewer bytes here because constant-folding resolves `Pin("PB5", Pin.OUT)` entirely at compile time: the register address and bit index are embedded directly as `SBI`/`CBI` immediates, exactly as a hand-written C programmer would.
+The CircuitPython extra 2 B come from `Direction.setter` clearing PORT before asserting DDR — semantically required by the CircuitPython spec and expected.*
 
 ---
 
