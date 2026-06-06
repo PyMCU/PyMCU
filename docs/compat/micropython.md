@@ -89,7 +89,6 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | `avr.EEPROM` | `read`, `write` | ✅ Complete |
 | `avr.SoftSPI` | `transfer`, `write`, `select`, `deselect` | ✅ Complete |
 | `avr.SoftI2C` | `scan`, `writeto`, `readfrom`, `ping` | ✅ Complete |
-| `lm35.LM35` | `read` (raw ADC), `temperature` | ✅ Complete |
 | `print()` | UART output — auto-injects UART init | ✅ Complete |
 | `input()` | UART input — reads line from UART | ✅ Complete |
 | `machine.RTC` | Real-time clock | ✗ Not planned |
@@ -850,37 +849,6 @@ structures. Use `ping(addr)` to probe a known address directly.
 
 `freq` is converted to a bit-bang half-period: `half_us = 500_000 // freq`.
 At 100 kHz this gives 5 µs half-period; at 400 kHz ("fast mode"), 1 µs.
-:::
-
----
-
-## `lm35` — temperature sensor driver
-
-A small bundled driver for the **LM35** analog temperature sensor, importable as
-`from lm35 import LM35` when `stdlib = ["micropython"]` is set. It wraps a
-`machine.ADC` instance and converts the raw count to degrees Celsius.
-
-```python
-from machine import ADC, Pin
-from lm35 import LM35
-from utime import sleep_ms
-
-def main():
-    sensor = LM35(ADC(Pin(14)))     # A0 = Pin(14) = PC0
-    while True:
-        print("T: ", sensor.temperature(), " C", sep="")
-        sleep_ms(1000)
-```
-
-| Method | Signature | Description |
-|---|---|---|
-| `read()` | `() -> uint16` | Raw ADC count (0–1023) |
-| `temperature()` | `() -> float` | Degrees Celsius (`raw × 0.4882813`, i.e. `raw × 5000 mV / 1024 / 10 mV/°C`) |
-
-:::{note}
-`temperature()` returns a `float`. Soft-float on AVR costs ~200–400 cycles per
-operation; if you only need integer precision, use `read()` and scale with
-integer math instead.
 :::
 
 ---
