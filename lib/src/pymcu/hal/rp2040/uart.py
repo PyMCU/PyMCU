@@ -30,9 +30,10 @@ class UART:
     """Hardware UART0 (PL011), zero-cost abstraction."""
 
     def __init__(self, baud: const = 115200, tx: const = 0, rx: const = 1):
-        # Bring UART0, IO_BANK0 and PADS_BANK0 out of reset.
-        RESETS_RESET_CLR.value = (1 << RESET_UART0) | (1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)
-        while (RESETS_RESET_DONE.value & (1 << RESET_UART0)) == 0:
+        # Bring UART0, IO_BANK0 and PADS_BANK0 out of reset; wait for all three.
+        reset_mask: uint32 = (1 << RESET_UART0) | (1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)
+        RESETS_RESET_CLR.value = reset_mask
+        while (RESETS_RESET_DONE.value & reset_mask) != reset_mask:
             pass
 
         # Baud rate: 64 * divisor = (clk_peri * 4) / baud.
@@ -77,3 +78,47 @@ class UART:
     def println(self, s: const[str]):
         self.write_str(s)
         self.write(10)
+
+    @inline
+    def write_hex(self, byte: uint8):
+        hi: uint8 = (byte >> 4) & 0x0F
+        lo: uint8 = byte & 0x0F
+        if hi < 10:
+            self.write(hi + 48)
+        else:
+            self.write(hi - 10 + 65)
+        if lo < 10:
+            self.write(lo + 48)
+        else:
+            self.write(lo - 10 + 65)
+
+    @inline
+    def available(self) -> uint8:
+        # Returns 1 when the RX FIFO holds at least one byte (RXFE = 0).
+        if (UART0_FR.value >> UART_FR_RXFE) & 1:
+            return 0
+        return 1
+
+    @inline
+    def read_nb(self) -> uint8:
+        # Non-blocking: returns the byte if ready, 0 if the FIFO is empty.
+        if (UART0_FR.value >> UART_FR_RXFE) & 1:
+            return 0
+        return UART0_DR.value & 0xFF
+
+    @inline
+    def read_line(self, buf: bytearray, max_len: uint8) -> uint8:
+        # Reads bytes into buf until '\n' (10) or max_len-1 bytes received.
+        # CR ('\r' = 13) is discarded silently.
+        # Appends a null terminator; returns the byte count (excluding newline).
+        count: uint8 = 0
+        while count < max_len - 1:
+            b: uint8 = self.read()
+            if b == 10:
+                break
+            if b != 13:
+                buf[count] = b
+                count = count + 1
+        if count < max_len:
+            buf[count] = 0
+        return count
