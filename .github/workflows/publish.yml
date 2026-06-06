@@ -235,11 +235,13 @@ jobs:
           path: extensions/pymcu-avr/dist/*.whl
           retention-days: 15
 
-  # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
+  # Runs on any release tag — stable (vX.Y.Z) or pre-release (e.g. v0.1.0a1).
+  # The public alpha ships on real PyPI so `pip install --pre pymcu-compiler[avr]`
+  # resolves the whole set; TestPyPI is reserved for manual dispatch smoke tests.
   publish-pypi:
     name: Publish to PyPI
     needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-avr, build-toolchain-sdk]
-    if: needs.check-tag.outputs.is_stable == 'true'
+    if: needs.check-tag.outputs.is_stable == 'true' || needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -258,11 +260,13 @@ jobs:
       - name: Publish to PyPI
         run: uv publish dist/*
 
-  # Runs only on a pre-release tag (any v* tag that is not vX.Y.Z).
+  # Manual smoke-test channel: a workflow_dispatch run (no tag) publishes to
+  # TestPyPI. Pre-release tags now go to real PyPI via publish-pypi, so this no
+  # longer fires on tags.
   publish-testpypi:
     name: Publish to TestPyPI
     needs: [check-tag, build-stdlib, build-wheels, build-backend-sdk, build-avr, build-toolchain-sdk]
-    if: needs.check-tag.outputs.is_prerelease == 'true'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prerelease
     permissions:
