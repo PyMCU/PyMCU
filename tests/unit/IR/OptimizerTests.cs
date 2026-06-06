@@ -172,12 +172,14 @@ public class OptimizerPassTests
     [Fact]
     public void FoldConstants_Unary_Neg_ProducesNegatedConstant()
     {
+        // The default Temporary is UINT8, so the folded constant is wrapped to that
+        // destination type: -5 as a uint8 is 251 (matches the runtime result).
         var body = Optimize(
             new Unary(IrUnaryOp.Neg, new Constant(5), new Temporary("t1")),
             new Return(new Temporary("t1")));
 
         body.OfType<Return>().First().Value
-            .Should().Be(new Constant(-5));
+            .Should().Be(new Constant(unchecked((byte)-5)));   // 251
     }
 
     [Fact]
@@ -205,12 +207,13 @@ public class OptimizerPassTests
     [Fact]
     public void FoldConstants_Unary_BitNot_ProducesFlippedBits()
     {
+        // UINT8 destination -> the folded ~5 is wrapped to a uint8: (byte)~5 == 250.
         var body = Optimize(
             new Unary(IrUnaryOp.BitNot, new Constant(5), new Temporary("t1")),
             new Return(new Temporary("t1")));
 
         body.OfType<Return>().First().Value
-            .Should().Be(new Constant(~5));
+            .Should().Be(new Constant(unchecked((byte)~5)));   // 250
     }
 
     // ─── FoldConstants — Binary edge cases ───────────────────────────────────
