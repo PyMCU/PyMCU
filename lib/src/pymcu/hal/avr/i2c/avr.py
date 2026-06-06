@@ -61,7 +61,7 @@ def i2c_init():
     # 100 kHz at F_CPU = 16 MHz, prescaler = 1
     # TWBR = (F_CPU / SCL_freq - 16) / (2 * prescaler) = (160 - 16) / 2 = 72
     TWBR.value = 72
-    TWSR.value = 0x00   # prescaler bits[1:0] = 00 -- prescaler = 1
+    # TWSR prescaler bits[1:0] default to 00 (prescaler = 1x) after reset -- no write needed.
     TWCR.value = 0x04   # TWEN(2) = 1: enable TWI (takes over PC4/PC5 pins)
 
 
@@ -196,6 +196,41 @@ def i2c_read_from(addr: uint8) -> uint8:
             return rx_byte
     TWCR.value = 0x94               # STOP on any failure
     return 0
+
+
+@inline
+def i2c_read_n(addr: uint8, buf, n: uint8) -> uint8:
+    # Send START, SLA+R, read n bytes (ACK for first n-1, NACK for last), STOP.
+    # Returns 1 on success, 0 if device NACKs the address.
+    TWCR.value = 0xA4               # START
+    while not TWCR[7]:
+        pass
+    st0: uint8 = TWSR.value & 0xF8
+    if st0 != 0x08:
+        TWCR.value = 0x94
+        return 0
+    sla_r: uint8 = (addr << 1) | 1  # SLA+R
+    TWDR.value = sla_r
+    TWCR.value = 0x84
+    while not TWCR[7]:
+        pass
+    st1: uint8 = TWSR.value & 0xF8
+    if st1 != 0x40:                 # SLA+R NACK - no device
+        TWCR.value = 0x94
+        return 0
+    i: uint8 = 0
+    while i < n:
+        remaining: uint8 = n - i
+        if remaining > 1:
+            TWCR.value = 0xC4       # TWINT|TWEA|TWEN -- ACK (more bytes)
+        else:
+            TWCR.value = 0x84       # TWINT|TWEN -- NACK (last byte)
+        while not TWCR[7]:
+            pass
+        buf[i] = TWDR.value
+        i = i + 1
+    TWCR.value = 0x94               # STOP
+    return 1
 
 
 @inline

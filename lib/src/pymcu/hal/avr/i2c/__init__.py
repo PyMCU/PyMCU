@@ -13,7 +13,7 @@
 from pymcu.types import uint8, inline, Callable
 from pymcu.hal.avr.i2c.avr import (
     i2c_init, i2c_start, i2c_stop, i2c_write, i2c_read_ack, i2c_read_nack,
-    i2c_ping, i2c_write_to, i2c_write_bytes, i2c_read_from,
+    i2c_ping, i2c_write_to, i2c_write_bytes, i2c_read_from, i2c_read_n,
     i2c_writeto_mem, i2c_readfrom_mem,
     i2c_peripheral_init, i2c_peripheral_ready, i2c_peripheral_status,
     i2c_peripheral_acknowledge, i2c_peripheral_nack,
@@ -107,6 +107,12 @@ class I2C:
     def read_from(self, addr: uint8) -> uint8:
         if self._mode == "c":
             return i2c_read_from(addr)
+        return 0
+
+    @inline
+    def read_n(self, addr: uint8, buf, n: uint8) -> uint8:
+        if self._mode == "c":
+            return i2c_read_n(addr, buf, n)
         return 0
 
     @inline
