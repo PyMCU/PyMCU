@@ -524,6 +524,22 @@ public partial class IRGenerator
                 {
                     if (imp.Aliases.ContainsKey(sym)) continue;
 
+                    // Re-export a plain @inline function under the facade name. The
+                    // class-method loop below only matches "prefix_sym_<method>" keys, so
+                    // the exact function key "prefix_sym" (e.g. millis) would otherwise be
+                    // left unmapped and its call site would emit an unresolved CALL.
+                    string srcExact = srcPrefix + sym;
+                    string dstExact = dstPrefix + sym;
+                    if (inlineFunctions.TryGetValue(srcExact, out var exactFn)
+                        && !inlineFunctions.ContainsKey(dstExact))
+                    {
+                        inlineFunctions[dstExact] = exactFn;
+                        if (functionParams.TryGetValue(srcExact, out var ep)) functionParams[dstExact] = ep;
+                        if (functionReturnTypes.TryGetValue(srcExact, out var ert)) functionReturnTypes[dstExact] = ert;
+                        if (functionParamTypes.TryGetValue(srcExact, out var ept)) functionParamTypes[dstExact] = ept;
+                        if (methodInstanceTypes.TryGetValue(srcExact, out var emit)) methodInstanceTypes[dstExact] = emit;
+                    }
+
                     string srcClassPrefix = srcPrefix + sym + "_";
                     string dstClassPrefix = dstPrefix + sym + "_";
 
