@@ -537,7 +537,11 @@ public partial class IRGenerator
                         throw new Exception("Cannot assign to .value of this expression type");
                     case 2 when target is MemoryAddress addr:
                     {
-                        if (value is Constant constVal)
+                        // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
+                        // aligned access; splitting a constant into byte stores would
+                        // both break peripheral semantics and miss the atomic register
+                        // aliases. Only split on 8-bit AVR (PointerWidth == 2).
+                        if (value is Constant constVal && DataTypeExtensions.PointerWidth < 4)
                         {
                             int fullValue = constVal.Value;
                             int lowByte = fullValue & 0xFF;
@@ -556,7 +560,9 @@ public partial class IRGenerator
                         throw new Exception("16-bit .value assignment requires constant address");
                     case 4 when target is MemoryAddress addr32:
                     {
-                        if (value is Constant constVal32)
+                        // See the 16-bit case: keep 32-bit MMIO stores atomic on
+                        // 32-bit targets; only AVR byte-splits constant words.
+                        if (value is Constant constVal32 && DataTypeExtensions.PointerWidth < 4)
                         {
                             Emit(new Copy(new Constant(constVal32.Value & 0xFF),         new MemoryAddress(addr32.Address,     DataType.UINT8)));
                             Emit(new Copy(new Constant((constVal32.Value >> 8)  & 0xFF), new MemoryAddress(addr32.Address + 1, DataType.UINT8)));

@@ -39,6 +39,11 @@ public static class DataTypeExtensions
     private static int _ptrWidth = 2;
     public static void SetPointerWidth(int width) => _ptrWidth = width;
 
+    // Native pointer/word width in bytes for the active target (2 = AVR/PIC,
+    // 4 = ARM Cortex-M / RISC-V 32). Used to decide whether wide MMIO stores
+    // must be word-atomic (4) or may be lowered to byte stores (2).
+    public static int PointerWidth => _ptrWidth;
+
     // Returns the pointer-sized concrete DataType for the current target.
     private static DataType PointerType() => _ptrWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
 
