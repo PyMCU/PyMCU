@@ -31,7 +31,6 @@ pymcu-stdlib = {path = "lib", editable = true}
 pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
 pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
 pymcu-backend-sdk = {path = "extensions/pymcu-backend-sdk", editable = true}
-pymcu-rp2040 = {path = "extensions/pymcu-rp2040", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
