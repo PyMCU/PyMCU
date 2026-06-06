@@ -28,6 +28,11 @@ def adc_channel_admux(channel: str) -> uint8:
             return 0xC8
         case "ADC8":
             return 0xC8
+        case "VBG":
+            # Internal 1.1V bandgap measured against AVcc reference:
+            # REFS1:0 = 01 (AVcc), MUX3:0 = 1110 (ch14). ADMUX = 0b01001110.
+            # Used to compute Vcc = 1.1 * 1024 / ADCraw.
+            return 0x4E
         case _:
             return 0x40
 
