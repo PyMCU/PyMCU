@@ -94,3 +94,14 @@ UART_FR_BUSY = 3    # transmitter busy
 #  Clocks (minimal: peripheral clock for UART)
 # ==========================================
 CLOCKS_BASE = 0x40008000
+
+# ==========================================
+#  TIMER (free-running 64-bit microsecond counter)
+# ==========================================
+# A single 1 MHz counter shared by the whole chip. TIMERAWL is the raw low
+# 32 bits with no read-latching side effect, so it is safe to poll directly
+# in a busy-wait. Polling it makes delays cycle-accurate and immune to CPU
+# clock / pipeline / instruction-count variance (unlike a calibrated loop).
+TIMER_BASE = 0x40054000
+TIMER_TIMERAWL : ptr[uint32] = ptr(TIMER_BASE + 0x28)   # raw low 32 bits (us)
+TIMER_TIMERAWH : ptr[uint32] = ptr(TIMER_BASE + 0x24)   # raw high 32 bits (us)

@@ -13,7 +13,7 @@
 # Accuracy: <0.1% at 1, 8, 12, 16, 20 MHz; defaults to 16 MHz for other
 # AVR frequencies. For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, uint16, uint32, inline, asm
+from pymcu.types import uint8, uint16, uint32, inline, asm, ptr
 from pymcu.chips import __CHIP__, __FREQ__
 
 @inline
@@ -219,20 +219,12 @@ def _delay_ms_pic12(ms: uint8):
 
 @inline
 def _delay_ms_rp2040(ms: uint16):
-    # Cortex-M0+ at 125 MHz. The per-ms inner loop lives in a non-inline helper
-    # so the asm("nop") (a side-effecting barrier that stops LLVM from deleting
-    # the otherwise-empty delay loop) is emitted once.
-    i: uint16 = 0
-    while i < ms:
-        _delay_1ms_rp2040()
-        i = i + 1
-
-def _delay_1ms_rp2040():
-    # ~125000 cycles per ms; a nop + counter loop is ~4 cycles/iter -> ~31250.
-    j: uint32 = 0
-    while j < 31250:
-        asm("nop")
-        j = j + 1
+    # Poll the hardware microsecond timer instead of a calibrated busy-loop.
+    # 1 ms = 1000 us; the timer runs at 1 MHz, so the delay is exact on real
+    # silicon and on the emulator (whose timer advances by elapsed cycles),
+    # independent of CPU clock and pipeline timing. ms * 1000 fits in uint32
+    # for the full uint16 range (65535 ms -> 65_535_000 us).
+    _delay_us_rp2040(ms * 1000)
 
 
 @inline
@@ -322,16 +314,19 @@ def _delay_us_pic12(us: uint8):
         asm("    NOP")
         i = i + 1
 
-def _delay_us_rp2040(us: uint8):
-    """Software microsecond delay loop for RP2040 (Cortex-M0+ at 125 MHz)."""
-    # ~125 cycles/us; ~4 cycles per nop+counter iteration -> ~31 iters/us.
-    i: uint8 = 0
-    while i < us:
-        j: uint8 = 0
-        while j < 31:
-            asm("nop")
-            j = j + 1
-        i = i + 1
+@inline
+def _delay_us_rp2040(us: uint32):
+    """Microsecond delay for RP2040, driven by the hardware TIMER (1 MHz)."""
+    # TIMER.TIMERAWL (0x40054028) is the raw low 32 bits of the free-running
+    # microsecond counter, readable with no latching side effect. The volatile
+    # MMIO load in the loop condition is a real side effect, so opt -O2 cannot
+    # delete the wait; no asm("nop") barrier is needed. uint32 subtraction
+    # wraps modulo 2**32, so delays up to ~71 minutes are correct across the
+    # counter roll-over.
+    timer: ptr[uint32] = ptr(0x40054028)
+    start: uint32 = timer.value
+    while (timer.value - start) < us:
+        pass
 
 
 @inline
