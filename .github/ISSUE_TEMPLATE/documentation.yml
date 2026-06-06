@@ -1,0 +1,45 @@
+---
+name: Documentation issue
+description: Something in the docs is missing, wrong, outdated, or unclear
+title: "[Docs]: "
+labels: ["documentation", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for improving the docs! Tell us what's confusing or incorrect so
+        the next person doesn't hit the same wall.
+
+  - type: input
+    attributes:
+      label: Location
+      description: Page URL, file path under `docs/`, or a docstring/example that's affected.
+      placeholder: e.g. docs/docs/limitations.md, examples/avr/spi-irq/README.md
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Type of problem
+      options:
+        - Incorrect / outdated information
+        - Missing information
+        - Unclear / confusing
+        - Broken link or example
+        - Typo / formatting
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Details
+      description: What is wrong, and what would be correct or clearer? Paste the relevant snippet if helpful.
+    validations:
+      required: true
+
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

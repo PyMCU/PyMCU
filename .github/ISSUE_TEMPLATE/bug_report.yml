@@ -1,0 +1,184 @@
+---
+name: Bug report
+description: A program miscompiles, crashes the compiler, or behaves wrong on hardware
+title: "[Bug]: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! The fields below help us
+        **localize the problem fast** — which layer, which target, and the exact
+        code that triggers it.
+
+        > [!TIP]
+        > Please search [existing issues][search] first — your bug may already be
+        > reported. Fill in as much as you can; a minimal reproduction is worth
+        > a thousand words.
+
+        [search]: https://github.com/PyMCU/PyMCU/issues?q=is%3Aissue
+
+  - type: dropdown
+    attributes:
+      label: Affected component
+      description: Which part of the toolchain do you think is involved? Pick "Not sure" if unclear.
+      options:
+        - Compiler / code generation (pymcuc)
+        - CLI driver (pymcu build / flash / …)
+        - Standard library & HAL (pymcu-stdlib)
+        - AVR backend & toolchain (pymcu-avr)
+        - CircuitPython compatibility layer (pymcu-circuitpython)
+        - MicroPython compatibility layer (pymcu-micropython)
+        - JetBrains plugin
+        - VS Code extension
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Compatibility layer
+      description: |
+        Which API surface does your code import from? This is one of the most
+        important clues for triage.
+      options:
+        - Native PyMCU stdlib (pymcu.hal / pymcu.drivers)
+        - CircuitPython (board / digitalio / busio / …)
+        - MicroPython (machine / utime / …)
+        - Not applicable / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Target architecture
+      options:
+        - AVR
+        - PIC
+        - RISC-V
+        - PIO (RP2040)
+        - Not applicable / not sure
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Target chip / board
+      description: The value of `target` or `board` in your `[tool.pymcu]` config.
+      placeholder: e.g. atmega328p, arduino_uno, attiny85
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Versions
+      description: |
+        Paste the output of `pymcu version`. If the compiler crashes before that
+        works, run it with `PYMCU_VERBOSE=1` and include the compiler/CLI versions
+        you installed.
+      render: console
+      placeholder: |
+        $ pymcu version
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Minimal reproduction (PyMCU source)
+      description: |
+        The smallest `.py` program that reproduces the problem. Trim everything
+        not needed to trigger it. This is **required** — issues without a
+        reproduction are very hard to act on.
+      render: python
+      placeholder: |
+        from pymcu.hal.gpio import Pin
+
+        def main():
+            led = Pin("PB5", Pin.OUT)
+            led.high()
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Project configuration
+      description: The `[tool.pymcu]` section of your `pyproject.toml` (and `[tool.pymcu.ffi]` if you use C interop).
+      render: toml
+      placeholder: |
+        [tool.pymcu]
+        target = "atmega328p"
+        frequency = 16000000
+        sources = "src"
+        entry = "main.py"
+        stdlib = ["circuitpython"]
+    validations:
+      required: false
+
+  - type: input
+    attributes:
+      label: Command that triggers the bug
+      placeholder: e.g. pymcu build  /  pymcu flash --port /dev/cu.usbmodem14101
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What actually happened
+      description: |
+        The full error message or wrong behavior. **Re-run with `PYMCU_VERBOSE=1`**
+        and paste the verbose output — it includes the compiler phase where things
+        went wrong.
+      render: console
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Generated output (optional but very helpful)
+      description: |
+        If this is a code-generation bug, paste the relevant part of the generated
+        assembly (`dist/firmware.asm` / the `debug/` output) or the simulator
+        behavior. Highlight the instruction(s) that look wrong.
+      render: asm
+    validations:
+      required: false
+
+  - type: dropdown
+    attributes:
+      label: Host operating system
+      description: The machine you run the PyMCU CLI on.
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Toolchain / hardware details (optional)
+      description: |
+        Anything relevant about the assembler/programmer or board:
+        AVRA / avr-gcc versions, avrdude + programmer, the physical board, wiring,
+        or the serial adapter in use.
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I included a minimal reproduction (source + config + command).
+          required: true
