@@ -32,6 +32,8 @@ def delay_ms(ms: uint16):
             _delay_ms_riscv(ms)
         case "pic12":
             _delay_ms_pic12(ms)
+        case "rp2040":
+            _delay_ms_rp2040(ms)
 
 @inline
 def _delay_ms_pic14(ms: uint8):
@@ -216,6 +218,24 @@ def _delay_ms_pic12(ms: uint8):
         i = i + 1
 
 @inline
+def _delay_ms_rp2040(ms: uint16):
+    # Cortex-M0+ at 125 MHz. The per-ms inner loop lives in a non-inline helper
+    # so the asm("nop") (a side-effecting barrier that stops LLVM from deleting
+    # the otherwise-empty delay loop) is emitted once.
+    i: uint16 = 0
+    while i < ms:
+        _delay_1ms_rp2040()
+        i = i + 1
+
+def _delay_1ms_rp2040():
+    # ~125000 cycles per ms; a nop + counter loop is ~4 cycles/iter -> ~31250.
+    j: uint32 = 0
+    while j < 31250:
+        asm("nop")
+        j = j + 1
+
+
+@inline
 def delay_us(us: uint8):
     """Delay for approximately the given number of microseconds."""
     match __CHIP__.arch:
@@ -231,6 +251,8 @@ def delay_us(us: uint8):
             _delay_us_riscv(us)
         case "pic12":
             _delay_us_pic12(us)
+        case "rp2040":
+            _delay_us_rp2040(us)
 
 @inline
 def _delay_us_pic14(us: uint8):
@@ -298,6 +320,17 @@ def _delay_us_pic12(us: uint8):
     i: uint8 = 0
     while i < us:
         asm("    NOP")
+        i = i + 1
+
+def _delay_us_rp2040(us: uint8):
+    """Software microsecond delay loop for RP2040 (Cortex-M0+ at 125 MHz)."""
+    # ~125 cycles/us; ~4 cycles per nop+counter iteration -> ~31 iters/us.
+    i: uint8 = 0
+    while i < us:
+        j: uint8 = 0
+        while j < 31:
+            asm("nop")
+            j = j + 1
         i = i + 1
 
 

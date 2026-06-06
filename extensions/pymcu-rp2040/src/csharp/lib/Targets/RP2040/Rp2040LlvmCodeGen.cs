@@ -57,11 +57,53 @@ public class Rp2040LlvmCodeGen(DeviceConfig cfg) : CodeGen
             _out.WriteLine($"@{Sym(g.Name)} = internal global {LlT(g.Type)} 0");
         if (program.Globals.Count > 0) _out.WriteLine();
 
+        // Emit only functions reachable from a root (main / interrupt / exported).
+        // PyMCU does not tree-shake unreachable non-inline functions, so an
+        // imported module (e.g. pymcu.time) drops in sibling helpers written for
+        // OTHER architectures -- their AVR/PIC inline asm would make llc reject
+        // the module. Reachability analysis prunes them here.
+        var reachable = ComputeReachable(program);
         foreach (var func in program.Functions)
         {
             if (func.IsInline) continue;   // inlined at call sites; never emitted standalone
+            if (!reachable.Contains(func.Name)) continue;
             CompileFunction(func);
         }
+    }
+
+    // Functions reachable from main / interrupt handlers / @export_c entry points,
+    // following direct Calls and address-taken FunctionRefs transitively.
+    private static HashSet<string> ComputeReachable(ProgramIR program)
+    {
+        var byName = new Dictionary<string, Function>();
+        foreach (var f in program.Functions) byName[f.Name] = f;
+
+        var reachable = new HashSet<string>();
+        var work = new Stack<string>();
+        void AddRoot(string name)
+        {
+            if (byName.ContainsKey(name) && reachable.Add(name)) work.Push(name);
+        }
+
+        foreach (var f in program.Functions)
+            if (f.Name == "main" || f.IsInterrupt || f.IsExportC || (f.OriginalName == "main"))
+                AddRoot(f.Name);
+
+        while (work.Count > 0)
+        {
+            var f = byName[work.Pop()];
+            foreach (var instr in f.Body)
+            {
+                switch (instr)
+                {
+                    case Call c: AddRoot(c.FunctionName); break;
+                    case VirtualCall vc: AddRoot(vc.MethodName); break;
+                }
+                foreach (var v in OperandsOf(instr))
+                    if (v is FunctionRef fr) AddRoot(fr.FunctionName);
+            }
+        }
+        return reachable;
     }
 
     private void EmitModulePreamble()
