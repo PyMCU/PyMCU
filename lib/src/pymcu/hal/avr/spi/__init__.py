@@ -13,6 +13,7 @@
 from pymcu.types import uint8, inline, Callable, const
 from pymcu.hal.avr.spi.avr import (
     spi_init, spi_select, spi_deselect, spi_transfer,
+    spi_write_bytes, spi_readinto_n, spi_write_readinto_n,
     spi_peripheral_init, spi_peripheral_ready, spi_peripheral_exchange,
     spi_peripheral_receive, spi_peripheral_send, spi_irq_setup,
 )
@@ -58,6 +59,21 @@ class SPI:
     def write(self, data: uint8):
         if self._mode == "c":
             spi_transfer(data)
+
+    @inline
+    def write_bytes(self, buf, n: uint8):
+        if self._mode == "c":
+            spi_write_bytes(buf, n)
+
+    @inline
+    def readinto_n(self, buf, n: uint8, write_byte: uint8):
+        if self._mode == "c":
+            spi_readinto_n(buf, n, write_byte)
+
+    @inline
+    def write_readinto_n(self, write_buf, read_buf, n: uint8):
+        if self._mode == "c":
+            spi_write_readinto_n(write_buf, read_buf, n)
 
     @inline
     def receive(self) -> uint8:
