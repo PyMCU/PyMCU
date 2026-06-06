@@ -16,6 +16,7 @@ import sys
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from rich.console import Console
 
@@ -157,19 +158,34 @@ class PyMCUCompiler:
             #
             # stderr is left to pass through directly so VS Code's problem matcher
             # can parse diagnostic lines (file:line:col: severity: msg).
-            with subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                bufsize=1,
-            ) as proc:
-                if proc.stdout and on_output:
-                    for raw in proc.stdout:
-                        on_output(raw.rstrip("\n").rstrip("\r"))
-                elif proc.stdout:
-                    proc.stdout.read()  # drain to avoid blocking
-                proc.wait()
+            #
+            # returncode == -9 means the frontend was SIGKILL'd by the OS (jetsam under
+            # heavy parallel-build load) -- transient and never a real result, so retry a
+            # few times. Other signals (crashes) and positive exit codes fail on the first
+            # attempt. Output is buffered and only emitted for the attempt we keep.
+            SIGKILL_RETURNCODE = -9
+            max_signal_retries = 3
+            for attempt in range(max_signal_retries + 1):
+                buffered: list[str] = []
+                with subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=None,
+                    text=True,
+                    bufsize=1,
+                ) as proc:
+                    if proc.stdout:
+                        buffered = [raw.rstrip("\n").rstrip("\r") for raw in proc.stdout]
+                    proc.wait()
+
+                if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
+                    time.sleep(0.25 * (attempt + 1))
+                    continue
+                break
+
+            if on_output:
+                for line in buffered:
+                    on_output(line)
 
             if proc.returncode != 0:
                 raise RuntimeError("Compilation failed (see diagnostics above)")
