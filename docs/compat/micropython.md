@@ -332,20 +332,32 @@ from machine import I2C
 from pymcu.types import uint8
 
 i2c = I2C(freq=100000)             # 100 kHz standard mode (scl/sda are fixed)
-count: uint8 = i2c.scan()          # count of responding devices (not a list — no heap)
+count: uint8 = i2c.scan()          # count of responding devices (not a list)
+
+# Single-byte variants (MicroPython-compatible signatures)
 i2c.writeto(0x3C, 0x00)            # write command byte to SSD1306
 val: uint8 = i2c.readfrom(0x3C)    # read one byte
+
+# Multi-byte variants (PyMCU deviation — explicit n required)
+buf: uint8[4] = bytearray(4)
+i2c.writeto(0x48, buf, 3)          # write 3 bytes from buf to 0x48
+n: uint8 = i2c.readfrom_into(0x48, buf, 3)  # read 3 bytes into buf; returns 1=ok, 0=NACK
 ```
 
 | Method | Signature | Description |
 |---|---|---|
 | `scan()` | `() -> uint8` | Count of responding devices (not a list) |
+| `scan(buf, max_count)` | `(buf: bytearray, max_count: uint8) -> uint8` | Store addresses into caller buffer; returns count |
 | `writeto(addr, data)` | `(addr: uint8, data: uint8)` | Write one byte to address |
+| `writeto(addr, buf, n)` | `(addr: uint8, buf: bytearray, n: uint8)` | Write `n` bytes from buffer to address |
 | `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte from address |
+| `readfrom_into(addr, buf, n)` | `(addr: uint8, buf: bytearray, n: uint8) -> uint8` | Read `n` bytes into buffer; returns 1 on ACK, 0 on NACK |
 
 :::{note}
-`scan()` returns a device *count* rather than a list of addresses — the MCU has no heap
-for dynamic lists. Use `pymcu.hal.i2c.I2C` for `ping(addr)` to probe specific addresses.
+`scan()` returns a device *count* rather than a list of addresses — returning a `list[uint8]`
+would pull in GC infrastructure for a result most programs discard immediately. Use
+`scan(buf, max_count)` to capture addresses into a caller-owned buffer at zero GC cost,
+or `pymcu.hal.i2c.I2C.ping(addr)` to probe a specific address directly.
 :::
 
 For bit-bang I2C with arbitrary GPIO pins, use `avr.SoftI2C` (see below).
@@ -859,8 +871,9 @@ if i2c.ping(0x3C):           # SSD1306 OLED at 0x3C
 | `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte |
 
 :::{note}
-`scan()` returns a count rather than a list. The MCU has no heap for dynamic data
-structures. Use `ping(addr)` to probe a known address directly.
+`scan()` returns a count rather than a list — returning a `list[uint8]` would
+pull in GC infrastructure for a result most programs discard. Use `ping(addr)` to
+probe a known address directly.
 
 `freq` is converted to a bit-bang half-period: `half_us = 500_000 // freq`.
 At 100 kHz this gives 5 µs half-period; at 400 kHz ("fast mode"), 1 µs.
@@ -940,8 +953,10 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
 | `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf, n)` for multi-byte |
 | `UART.readline()` | Returns `bytes` object | `readline(buf, max_len)` — caller provides buffer, returns count |
-| `UART.readinto(buf)` | Fills up to `len(buf)` | `readinto(buf, nbytes)` — explicit count required (no heap length query) |
+| `UART.readinto(buf)` | Fills up to `len(buf)` | `readinto(buf, nbytes)` — explicit count required (fixed-size arrays have no runtime `len`) |
 | `I2C.scan()` | Returns list of addresses | `scan()` returns count only; `scan(buf, max_count)` fills caller-provided buffer and returns count |
+| `I2C.writeto(addr, buf)` | `buf` length inferred from object | `writeto(addr, buf, n)` — explicit byte count required (fixed arrays have no runtime `len`) |
+| `I2C.readfrom(addr, nbytes)` | Returns `bytes` object (GC-allocated) | `readfrom_into(addr, buf, n)` — caller provides buffer; returns 1 on success, 0 on NACK |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
 | `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
