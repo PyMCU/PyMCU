@@ -362,13 +362,19 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
   codegen rejects the corresponding IR with a clear "not supported yet" error.
   Virtual-method dispatch, runtime-indexed arrays and operand-form inline `asm()` are
   likewise deferred.
-- **Approximate delays:** `delay_ms` / `delay_us` are software loops (`asm("nop")`
-  barriers so LLVM cannot delete them). Timing is rough — use a hardware timer once
-  one is available if you need accuracy.
+- **Delays:** `delay_ms` / `delay_us` poll the hardware **TIMER** (the
+  free-running 1 MHz microsecond counter), so timing is accurate on real silicon
+  regardless of CPU clock and pipeline, not a calibrated busy-loop. In the
+  emulator the wall-clock measured by `RunMilliseconds` reads the wait slightly
+  short, because that harness budgets execution by retired instruction count
+  while the timer advances by elapsed cycles — the firmware delay itself is
+  exact.
 - **UART clock assumption:** the baud divisors assume `clk_peri = 125 MHz`
   (`clk_sys` at the pico-sdk default). A configurable clocks HAL is future work.
 - **Toolchain:** requires **LLVM** (`opt`, `llc`, `llvm-mc`, `ld.lld`,
-  `llvm-objcopy`) on the host. Install with `pip install pymcu[rp2040]`; until the
-  vendored LLVM wheel ships, the toolchain falls back to a system LLVM (e.g.
-  `brew install llvm lld`).
+  `llvm-objcopy`) on the host, provided by the vendored
+  [`pymcu-rp2040-toolchain`](https://github.com/begeistert/pymcu-rp2040-toolchain)
+  wheel (`pip install pymcu[rp2040]`), analogous to `pymcu-avr-toolchain`. If the
+  wheel is not installed for your platform the toolchain falls back to a system
+  LLVM (e.g. `brew install llvm lld`).
 - **No C/C++ interop (`@extern`) yet** on this backend.

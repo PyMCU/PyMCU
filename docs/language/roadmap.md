@@ -139,7 +139,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 |---|---|
 | GPIO (`pymcu.hal.gpio.Pin`) | ✅ Single-cycle IO (SIO); zero-cost; all 30 GPIOs |
 | UART0 (`pymcu.hal.uart.UART`) | ✅ PL011; compile-time baud divisors |
-| `delay_ms` / `delay_us` | ✅ Software loop (approximate timing) |
+| `delay_ms` / `delay_us` | ✅ Hardware TIMER (1 MHz); accurate on silicon |
 | Single core (core 0) | ✅ |
 | Dual-core / SIO FIFO | ⏳ Planned |
 | PIO, SPI, I2C, PWM, ADC, USB | ⏳ Planned |
