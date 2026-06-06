@@ -15,6 +15,12 @@ license = { text = "MIT" }
 dependencies = [
     "pymcu-backend-sdk>=0.1.0a1",
     "pymcu-toolchain-sdk>=0.1.0a1",
+    # Pull in the pre-built avr-gcc toolchain wheel so `pip install
+    # pymcu-compiler[avr]` is self-contained (no manual toolchain step).
+    # Wheels exist only for linux x86_64, win amd64 and macOS arm64; on other
+    # platforms (linux arm64, macOS Intel) the user supplies avr-gcc via the
+    # system package manager and the AvrgasToolchain falls back to PATH.
+    "pymcu-avr-toolchain>=15.2.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 
 [project.entry-points."pymcu.toolchains"]
