@@ -69,7 +69,7 @@ html_theme_options = {
         },
         {
             "name": "PyPI",
-            "url": "https://pypi.org/project/pymcu/",
+            "url": "https://pypi.org/project/pymcu-compiler/",
             "icon": "fa-brands fa-python",
         },
     ],
