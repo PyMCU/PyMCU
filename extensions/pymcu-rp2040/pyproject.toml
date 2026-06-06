@@ -15,14 +15,18 @@ license = { text = "MIT" }
 dependencies = [
     "pymcu-backend-sdk>=0.1.0a1",
     "pymcu-toolchain-sdk>=0.1.0a1",
-    # Pre-built LLVM toolchain wheel (clang/llc/opt/llvm-mc/lld/llvm-objcopy)
-    # so `pip install pymcu-compiler[rp2040]` is self-contained. On platforms
-    # without a wheel the Rp2040LlvmToolchain falls back to LLVM on PATH.
-    "pymcu-rp2040-toolchain>=18.0.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    # NOTE: the vendored LLVM toolchain wheel (pymcu-rp2040-toolchain, bundling
+    # opt/llc/llvm-mc/ld.lld/llvm-objcopy) is not published yet. Until it is, the
+    # Rp2040LlvmToolchain resolves LLVM from ~/.pymcu/tools, common keg dirs, or
+    # PATH (e.g. `brew install llvm lld`). When the wheel ships, re-add it here
+    # with a platform marker so `pip install pymcu[rp2040]` is self-contained.
 ]
 
 [project.entry-points."pymcu.backends"]
 rp2040 = "pymcu.backend.rp2040:Rp2040BackendPlugin"
+
+[project.entry-points."pymcu.toolchains"]
+rp2040 = "pymcu.toolchain.rp2040:Rp2040ToolchainPlugin"
 
 [tool.uv.sources]
 pymcu-backend-sdk = {path = "../pymcu-backend-sdk", editable = true}

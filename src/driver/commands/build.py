@@ -68,6 +68,7 @@ FLASH_SIZES: dict[str, int] = {
     "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
     "attiny13": 1024,  "attiny13a": 1024,
     "attiny2313": 2048, "attiny4313": 4096,
+    "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
 }
 
 
@@ -874,6 +875,34 @@ def build(
                     shutil.move(str(elf_file), str(debug_dir / elf_file.name))
                     if firmware_obj.exists():
                         firmware_obj.unlink()
+
+                elif toolchain.get_name() == "llvm-rp2040":
+                    # ── LLVM pipeline (RP2040): opt -> llc -> llvm-mc -> lld -> objcopy ─
+                    # The backend wrote LLVM IR (.ll) into output_file; the toolchain
+                    # optimises it, links it against the boot2/crt0 runtime and emits a
+                    # flat flash image (firmware.bin) with boot2 at offset 0.
+                    progress.update(build_task, description="  [cyan]LLVM build[/cyan]...", completed=75)
+                    bin_file = toolchain.assemble(output_file)
+                    hex_file = None  # RP2040 ships a raw flash binary, not Intel HEX
+
+                    debug_dir = output_dir / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    for inter in ["firmware.elf", "firmware.o", "boot2.o",
+                                  "crt0.o", "firmware.opt.ll"]:
+                        p = output_dir / inter
+                        if p.exists():
+                            shutil.move(str(p), str(debug_dir / p.name))
+
+                    flash_total = FLASH_SIZES.get(target.lower(), 0)
+                    flash_bytes = bin_file.stat().st_size
+                    if flash_total:
+                        pct = flash_bytes * 100 // flash_total
+                        console.print(
+                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
+                            f"({pct}% of program storage)"
+                        )
+                    else:
+                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
 
                 else:
                     # ── Generic toolchain assembly (e.g. gputils/PIC) ──────────────────
