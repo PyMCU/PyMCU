@@ -13,25 +13,30 @@ public static class PymcuCompiler
 {
     private static readonly string RepoRoot = FindRepoRoot();
     private static readonly string PymcuExe = Path.Combine(RepoRoot, ".venv", "bin", "pymcu");
-    private static readonly ConcurrentDictionary<string, string> Cache = new();
+    // Lazy<T> guarantees the factory runs at most once even if multiple threads
+    // race on the same key -- ConcurrentDictionary.GetOrAdd(key, factory) can
+    // invoke the factory more than once, so we wrap the result in Lazy.
+    private static readonly ConcurrentDictionary<string, Lazy<string>> Cache = new();
 
     /// <summary>
     /// Compiles the showcase example at <c>examples/avr/{name}</c>.
     /// </summary>
     /// <param name="name">Example directory name, e.g. <c>"blink"</c>.</param>
     public static string Build(string name)
-        => Cache.GetOrAdd("ex:" + name, _ => Compile(Path.Combine(RepoRoot, "examples", "avr", name), name));
+        => Cache.GetOrAdd("ex:" + name,
+            _ => new Lazy<string>(() => Compile(Path.Combine(RepoRoot, "examples", "avr", name), name))).Value;
 
     /// <summary>
     /// Compiles the compiler test fixture at <c>tests/integration/fixtures/avr/{name}</c>.
     /// </summary>
     /// <param name="name">Fixture directory name, e.g. <c>"bitwise-ops"</c>.</param>
     public static string BuildFixture(string name)
-        => Cache.GetOrAdd("fx:" + name, _ => Compile(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "avr", name), name));
+        => Cache.GetOrAdd("fx:" + name,
+            _ => new Lazy<string>(() => Compile(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "avr", name), name))).Value;
 
     // ── RP2040 (flat flash binary) ───────────────────────────────────────────
 
-    private static readonly ConcurrentDictionary<string, byte[]> BinCache = new();
+    private static readonly ConcurrentDictionary<string, Lazy<byte[]>> BinCache = new();
 
     /// <summary>
     /// Compiles the RP2040 example at <c>examples/rp2040/{name}</c> and returns
@@ -39,14 +44,14 @@ public static class PymcuCompiler
     /// </summary>
     public static byte[] BuildRp2040(string name)
         => BinCache.GetOrAdd("rp:ex:" + name,
-            _ => CompileBin(Path.Combine(RepoRoot, "examples", "rp2040", name), name));
+            _ => new Lazy<byte[]>(() => CompileBin(Path.Combine(RepoRoot, "examples", "rp2040", name), name))).Value;
 
     /// <summary>
     /// Compiles the RP2040 fixture at <c>tests/integration/fixtures/rp2040/{name}</c>.
     /// </summary>
     public static byte[] BuildFixtureRp2040(string name)
         => BinCache.GetOrAdd("rp:fx:" + name,
-            _ => CompileBin(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "rp2040", name), name));
+            _ => new Lazy<byte[]>(() => CompileBin(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "rp2040", name), name))).Value;
 
     private static byte[] CompileBin(string projectDir, string name)
     {
