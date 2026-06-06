@@ -849,7 +849,10 @@ public partial class IRGenerator
                     if (constantVariables.TryGetValue(next, out int tmpVal)) return new Constant(tmpVal);
                     if (constantAddressVariables.TryGetValue(next, out int tmpAddr))
                         return new MemoryAddress(tmpAddr, DataType.UINT16);
-                    break;
+                    // Alias points to a runtime temporary -- return it directly.
+                    DataType tmpDt = DataType.UINT8;
+                    if (variableTypes.TryGetValue(next, out var dt2)) tmpDt = dt2;
+                    return new Temporary(next, tmpDt);
                 }
 
                 resolved = next;
