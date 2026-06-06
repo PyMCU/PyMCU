@@ -67,6 +67,27 @@ def naked(f):
     return f
 
 
+def softfloat(f):
+    # Marker decorator: the decorated function relies on software floating
+    # point (no hardware FPU on the target).  The pymcuc compiler recognises
+    # this decorator and emits an informational diagnostic so users know the
+    # function pulls in the (heavier) soft-float runtime.  At Python
+    # simulation time it is a no-op passthrough, exactly like @inline.
+    return f
+
+
+def compile_message(message: str):
+    # Parametrised decorator: the pymcuc compiler prints `message` as a
+    # diagnostic and REFUSES to compile any code path that reaches the
+    # decorated function.  Used to report HAL features that cannot be
+    # supported on a given target (e.g. AnalogOut on a chip without a DAC)
+    # with a clear, actionable message instead of an obscure failure.
+    # At Python simulation time the decorator is inert.
+    def _wrap(f):
+        return f
+    return _wrap
+
+
 def asm(instruction: str):
     pass
 
