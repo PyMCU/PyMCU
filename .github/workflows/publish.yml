@@ -110,9 +110,9 @@ jobs:
           path: dist/*.whl
           retention-days: 15
 
-  # Pure-Python SDK that codegen backends depend on.
-  build-backend-sdk:
-    name: Build pymcu-backend-sdk
+  # Merged Python SDK (backend + toolchain abstract base classes).
+  build-sdk:
+    name: Build pymcu-sdk
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -123,39 +123,15 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Build backend-sdk wheel + sdist
-        working-directory: extensions/pymcu-backend-sdk
+      - name: Build pymcu-sdk wheel + sdist
+        working-directory: extensions/pymcu-sdk
         run: uv build
 
-      - name: Upload backend-sdk artifacts
+      - name: Upload pymcu-sdk artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-backend-sdk
-          path: extensions/pymcu-backend-sdk/dist/*
-          retention-days: 15
-
-  # Pure-Python toolchain SDK (shared base for all toolchain drivers).
-  build-toolchain-sdk:
-    name: Build pymcu-toolchain-sdk wheel
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build toolchain-sdk wheel
-        working-directory: extensions/pymcu-toolchain-sdk
-        run: uv build
-
-      - name: Upload toolchain-sdk artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-toolchain-sdk
-          path: extensions/pymcu-toolchain-sdk/dist/*
+          name: dist-sdk
+          path: extensions/pymcu-sdk/dist/*
           retention-days: 15
 
   # pymcu-avr — merged AVR extension: codegen backend (.NET AOT) + toolchain driver (Python).

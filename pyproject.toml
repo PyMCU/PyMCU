@@ -17,7 +17,7 @@ dependencies = [
     "tomlkit>=0.12.0",
     "rich>=13.0.0",
     "pymcu-stdlib>=0.1.0a1",
-    "pymcu-toolchain-sdk>=0.1.0a1",
+    "pymcu-sdk>=0.1.0a1",
 ]
 
 [project.optional-dependencies]
@@ -28,9 +28,8 @@ all = ["pymcu-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1", "pymcu-rp2040>=0.1.
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
-pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
+pymcu-sdk = {path = "extensions/pymcu-sdk", editable = true}
 pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
-pymcu-backend-sdk = {path = "extensions/pymcu-backend-sdk", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
@@ -56,8 +55,7 @@ dev = ["pytest>=8.0"]
 [tool.pytest.ini_options]
 pythonpath = [
     ".",
-    "extensions/pymcu-toolchain-sdk/src",
+    "extensions/pymcu-sdk/src",
     "extensions/pymcu-toolchain-pic/src",
-    "extensions/pymcu-backend-sdk/src",
 ]
 addopts = ["--import-mode=importlib"]
