@@ -90,3 +90,31 @@ def wdt_timeout_wdp(timeout_ms: const[uint16]) -> uint8:
     elif timeout_ms <= 4000:
         return 8
     return 9
+
+
+@inline
+def wdt_arm_rt(timeout_ms: uint16):
+    # Arm the watchdog in reset mode from a RUNTIME timeout (ms). A plain
+    # runtime if/elif picks the prescaler bucket and each branch calls
+    # wdt_enable() with a LITERAL, so the timed asm sequence stays const-folded
+    # and straight-line (the verified path) -- only the bucket choice is runtime.
+    if timeout_ms <= 16:
+        wdt_enable(0)
+    elif timeout_ms <= 32:
+        wdt_enable(1)
+    elif timeout_ms <= 64:
+        wdt_enable(2)
+    elif timeout_ms <= 125:
+        wdt_enable(3)
+    elif timeout_ms <= 250:
+        wdt_enable(4)
+    elif timeout_ms <= 500:
+        wdt_enable(5)
+    elif timeout_ms <= 1000:
+        wdt_enable(6)
+    elif timeout_ms <= 2000:
+        wdt_enable(7)
+    elif timeout_ms <= 4000:
+        wdt_enable(8)
+    else:
+        wdt_enable(9)

@@ -13,9 +13,9 @@ from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, inline, const
 
 if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
-    from pymcu.hal.avr.watchdog.attiny85 import wdt_timeout_wdp, wdt_enable, wdt_disable, wdt_feed
+    from pymcu.hal.avr.watchdog.attiny85 import wdt_timeout_wdp, wdt_enable, wdt_disable, wdt_feed, wdt_arm_rt
 else:
-    from pymcu.hal.avr.watchdog.atmega328p import wdt_timeout_wdp, wdt_enable, wdt_disable, wdt_feed
+    from pymcu.hal.avr.watchdog.atmega328p import wdt_timeout_wdp, wdt_enable, wdt_disable, wdt_feed, wdt_arm_rt
 
 
 class Watchdog:
@@ -28,6 +28,13 @@ class Watchdog:
     def enable(self):
         wdp: uint8 = wdt_timeout_wdp(self._timeout_ms)
         wdt_enable(wdp)
+
+    @inline
+    def arm_ms(self, timeout_ms: uint16):
+        # Arm from a RUNTIME timeout in ms (the const-free path). Used by the
+        # CircuitPython microcontroller.watchdog wrapper, whose timeout is a
+        # mutable instance member rather than a compile-time constant.
+        wdt_arm_rt(timeout_ms)
 
     @inline
     def disable(self):
