@@ -293,17 +293,34 @@ from pymcu.types import uint8
 spi = SPI()                       # hardware SPI, controller mode
 cs  = Pin(10, Pin.OUT)
 
+# Single-byte variants (MicroPython-compatible signatures)
 cs.low()
 spi.write(0x9F)                   # send command byte (discard MISO)
 device_id: uint8 = spi.read(0xFF) # send 0xFF dummy, return MISO byte
+cs.high()
+
+# Multi-byte variants (PyMCU deviation — explicit n required)
+buf: bytearray = bytearray(4)
+buf[0] = 0xAA
+buf[1] = 0xBB
+rxbuf: bytearray = bytearray(4)
+
+cs.low()
+spi.write(buf, 3)                          # send 3 bytes, discard MISO
+spi.readinto(rxbuf, 3)                     # receive 3 bytes (clocks 0xFF as dummy)
+spi.readinto(rxbuf, 3, 0x00)               # receive 3 bytes, clock 0x00 as dummy
+spi.write_readinto(buf, rxbuf, 3)          # full-duplex: send 3 and receive 3
 cs.high()
 ```
 
 | Method | Signature | Description |
 |---|---|---|
 | `write(byte)` | `(byte: uint8)` | Send one byte, discard MISO |
-| `read(write_byte=0xFF)` | `(write_byte: uint8) -> uint8` | Send `write_byte`, return MISO |
-| `write_readinto(out, in_val)` | `(out: uint8, in_val: uint8) -> uint8` | Full-duplex byte exchange |
+| `write(buf, n)` | `(buf: bytearray, n: uint8)` | Send `n` bytes from buffer, discard MISO |
+| `read(write_byte=0xFF)` | `(write_byte: uint8) -> uint8` | Send `write_byte`, return MISO byte |
+| `readinto(buf, n, write_byte=0xFF)` | `(buf: bytearray, n: uint8, write_byte: uint8)` | Receive `n` bytes into buffer, clock `write_byte` as dummy |
+| `write_readinto(out, in_val)` | `(out: uint8, in_val: uint8) -> uint8` | Full-duplex single-byte exchange |
+| `write_readinto(write_buf, read_buf, n)` | `(write_buf: bytearray, read_buf: bytearray, n: uint8)` | Full-duplex `n`-byte exchange |
 | `init()` / `deinit()` | `()` | No-ops (SPI is set up in the constructor) |
 
 :::{note}
@@ -957,6 +974,9 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `I2C.scan()` | Returns list of addresses | `scan()` returns count only; `scan(buf, max_count)` fills caller-provided buffer and returns count |
 | `I2C.writeto(addr, buf)` | `buf` length inferred from object | `writeto(addr, buf, n)` — explicit byte count required (fixed arrays have no runtime `len`) |
 | `I2C.readfrom(addr, nbytes)` | Returns `bytes` object (GC-allocated) | `readfrom_into(addr, buf, n)` — caller provides buffer; returns 1 on success, 0 on NACK |
+| `SPI.write(buf)` | `buf` length inferred from object | `write(buf, n)` — explicit byte count required |
+| `SPI.readinto(buf, write=0x00)` | Fills up to `len(buf)`; default write=0x00 | `readinto(buf, n, write_byte=0xFF)` — explicit count; default dummy is 0xFF |
+| `SPI.write_readinto(write_buf, read_buf)` | Buffer lengths inferred | `write_readinto(write_buf, read_buf, n)` — explicit byte count required |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
 | `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
