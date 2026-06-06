@@ -48,7 +48,6 @@ html_theme_options = {
         "image_dark": "_static/images/logo-dark.svg",
         "alt_text": "PyMCU",
     },
-    "github_url": "https://github.com/pymcu/pymcu",
     "navbar_align": "left",
     "navbar_end": ["navbar-icon-links", "theme-switcher"],
     "secondary_sidebar_items": ["page-toc", "edit-this-page"],
@@ -64,7 +63,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/pymcu/pymcu",
+            "url": "https://github.com/PyMCU/PyMCU",
             "icon": "fa-brands fa-github",
         },
         {
