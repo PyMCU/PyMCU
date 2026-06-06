@@ -7,6 +7,7 @@
 from pymcu.hal.gpio import Pin
 from pymcu.time import delay_ms
 
+
 def main():
     led = Pin("PB5", Pin.OUT)
 
