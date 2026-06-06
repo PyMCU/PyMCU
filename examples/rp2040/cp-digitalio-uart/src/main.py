@@ -22,9 +22,5 @@ def main():
     buf: uint8[1] = bytearray(1)
     while True:
         uart.readinto(buf)
-        # LED mirrors the LSB of the received byte.
-        if buf[0] & 1:
-            led.value = 1
-        else:
-            led.value = 0
+        led.value = buf[0] & 1
         uart.write(buf)
