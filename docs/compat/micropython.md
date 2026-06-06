@@ -354,10 +354,10 @@ count: uint8 = i2c.scan()          # count of responding devices (not a list)
 i2c.writeto(0x3C, 0x00)            # write command byte to SSD1306
 val: uint8 = i2c.readfrom(0x3C)    # read one byte
 
-# Multi-byte variants (PyMCU deviation — explicit n required)
-buf: uint8[4] = bytearray(4)
-i2c.writeto(0x48, buf, 3)          # write 3 bytes from buf to 0x48
-n: uint8 = i2c.readfrom_into(0x48, buf, 3)  # read 3 bytes into buf; returns 1=ok, 0=NACK
+# Multi-byte variants — same API as MicroPython
+buf: uint8[3] = [0, 0, 0]
+i2c.writeto(0x48, buf)              # write len(buf) bytes to 0x48
+n: uint8 = i2c.readfrom_into(0x48, buf)  # read len(buf) bytes; returns 1=ok, 0=NACK
 ```
 
 | Method | Signature | Description |
@@ -365,9 +365,9 @@ n: uint8 = i2c.readfrom_into(0x48, buf, 3)  # read 3 bytes into buf; returns 1=o
 | `scan()` | `() -> uint8` | Count of responding devices (not a list) |
 | `scan(buf, max_count)` | `(buf: bytearray, max_count: uint8) -> uint8` | Store addresses into caller buffer; returns count |
 | `writeto(addr, data)` | `(addr: uint8, data: uint8)` | Write one byte to address |
-| `writeto(addr, buf, n)` | `(addr: uint8, buf: bytearray, n: uint8)` | Write `n` bytes from buffer to address |
+| `writeto(addr, buf)` | `(addr: uint8, buf: bytearray)` | Write `len(buf)` bytes from buffer to address |
 | `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte from address |
-| `readfrom_into(addr, buf, n)` | `(addr: uint8, buf: bytearray, n: uint8) -> uint8` | Read `n` bytes into buffer; returns 1 on ACK, 0 on NACK |
+| `readfrom_into(addr, buf)` | `(addr: uint8, buf: bytearray) -> uint8` | Read `len(buf)` bytes into buffer; returns 1 on ACK, 0 on NACK |
 
 :::{note}
 `scan()` returns a device *count* rather than a list of addresses — returning a `list[uint8]`
@@ -969,10 +969,10 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
 | `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf, n)` for multi-byte |
 | `UART.readline()` | Returns `bytes` object | `readline(buf, max_len)` — caller provides buffer, returns count |
-| `UART.readinto(buf)` | Fills up to `len(buf)` | `readinto(buf, nbytes)` — explicit count required (fixed-size arrays have no runtime `len`) |
+| `UART.readinto(buf)` | Fills up to `len(buf)` | ✅ `readinto(buf)` — `len(buf)` inferred at compile time |
 | `I2C.scan()` | Returns list of addresses | `scan()` returns count only; `scan(buf, max_count)` fills caller-provided buffer and returns count |
-| `I2C.writeto(addr, buf)` | `buf` length inferred from object | `writeto(addr, buf, n)` — explicit byte count required (fixed arrays have no runtime `len`) |
-| `I2C.readfrom(addr, nbytes)` | Returns `bytes` object (GC-allocated) | `readfrom_into(addr, buf, n)` — caller provides buffer; returns 1 on success, 0 on NACK |
+| `I2C.writeto(addr, buf)` | `buf` length inferred from object | ✅ `writeto(addr, buf)` — `len(buf)` inferred at compile time |
+| `I2C.readfrom(addr, nbytes)` | Returns `bytes` object (GC-allocated) | `readfrom_into(addr, buf)` — caller provides buffer; fills `len(buf)` bytes; returns 1/0 (not `None`) |
 | `SPI.write(buf)` | `buf` length inferred from object | ✅ `write(buf)` — `len(buf)` inferred at compile time from the array declaration |
 | `SPI.readinto(buf, write=0x00)` | Fills `len(buf)` bytes; default write=0x00 | `readinto(buf)` matches length; default dummy byte is 0xFF (not 0x00) |
 | `SPI.write_readinto(write_buf, read_buf)` | Buffer lengths inferred | ✅ `write_readinto(write_buf, read_buf)` — length inferred from `write_buf` |
