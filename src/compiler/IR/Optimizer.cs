@@ -80,6 +80,14 @@ public static class Optimizer
             foreach (var callee in callees) Enqueue(callee);
         }
 
+        // Prune functions unreachable from main / any ISR. Only do this when a "main"
+        // root exists, so passes that optimize a function in isolation (no entry point)
+        // keep their functions. Edges come from Call and FunctionRef uses, matching the
+        // reachability the DGE below already trusts; the per-target backend runs its own
+        // call-graph DCE on top, so this is a conservative early prune.
+        if (optimized.Functions.Any(f => f.Name == "main"))
+            optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
+
         // --- Dead Global Elimination (DGE) ---
         // A global is live only if a Variable with that name is referenced
         // (read OR written) inside a reachable function body.  Globals that
