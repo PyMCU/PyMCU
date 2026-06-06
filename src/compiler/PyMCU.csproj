@@ -31,14 +31,6 @@
     <Compile Remove="Backend\Analysis\DynamicStackAllocator.cs" />
   </ItemGroup>
 
-  <!-- Exclude AVR backend files that now live in PyMCU.Backend.AVR. -->
-  <ItemGroup>
-    <Compile Remove="Backend\Targets\AVR\AvrCodeGen.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrLinearScan.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrPeephole.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrRegisterAllocator.cs" />
-  </ItemGroup>
-
   <!--
     WriteVersionInfo — AOT-safe version stamping.
     Overwrites Common/CompilerInfo.cs with a const string derived from $(Version).
