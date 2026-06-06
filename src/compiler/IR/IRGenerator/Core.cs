@@ -160,30 +160,48 @@ public partial class IRGenerator
             instanceClasses[dst] = cls;
             virtualInstances.Add(dst);
         }
-        string srcPfx = src + ".";
-        string dstPfx = dst + ".";
-        foreach (var kv in constantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
-            constantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
-        foreach (var kv in strConstantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
-            strConstantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
-        foreach (var kv in floatConstantVariables.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
-            floatConstantVariables[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
-        foreach (var kv in instanceClasses.Where(kv => kv.Key.StartsWith(srcPfx)).ToList())
-            instanceClasses[dstPfx + kv.Key[srcPfx.Length..]] = kv.Value;
+
+        // Copy every descendant key. Nested instance fields are flattened two ways depending
+        // on the access path: dotted ("inst._pin") and underscore-joined ("inst__pin", from
+        // self._pin field access). Both must follow the instance to its new binding (e.g. a
+        // for-in loop variable) or a nested method like self._pin.mode() loses its class and
+        // degrades to an undefined CALL.
+        void CopyDescendants<T>(Dictionary<string, T> map, string sep)
+        {
+            string sp = src + sep, dp = dst + sep;
+            foreach (var kv in map.Where(kv => kv.Key.StartsWith(sp, StringComparison.Ordinal)).ToList())
+                map[dp + kv.Key[sp.Length..]] = kv.Value;
+        }
+
+        foreach (var sep in new[] { ".", "_" })
+        {
+            CopyDescendants(constantVariables, sep);
+            CopyDescendants(strConstantVariables, sep);
+            CopyDescendants(floatConstantVariables, sep);
+            CopyDescendants(constantAddressVariables, sep);
+            CopyDescendants(instanceClasses, sep);
+        }
     }
 
     private void CleanCtState(string dst)
     {
         instanceClasses.Remove(dst);
-        string dstPfx = dst + ".";
-        foreach (var k in constantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
-            constantVariables.Remove(k);
-        foreach (var k in strConstantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
-            strConstantVariables.Remove(k);
-        foreach (var k in floatConstantVariables.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
-            floatConstantVariables.Remove(k);
-        foreach (var k in instanceClasses.Keys.Where(k => k.StartsWith(dstPfx)).ToList())
-            instanceClasses.Remove(k);
+
+        void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
+        {
+            string dp = dst + sep;
+            foreach (var k in map.Keys.Where(k => k.StartsWith(dp, StringComparison.Ordinal)).ToList())
+                map.Remove(k);
+        }
+
+        foreach (var sep in new[] { ".", "_" })
+        {
+            RemoveDescendants(constantVariables, sep);
+            RemoveDescendants(strConstantVariables, sep);
+            RemoveDescendants(floatConstantVariables, sep);
+            RemoveDescendants(constantAddressVariables, sep);
+            RemoveDescendants(instanceClasses, sep);
+        }
     }
 
     public ProgramIR Generate(

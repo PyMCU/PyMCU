@@ -310,11 +310,14 @@ public partial class IRGenerator
                                                      instanceClasses.Keys.Any(x => x.StartsWith(elemKey + "."));
                                     if (elemIsZca)
                                     {
-                                        PropagateCtState(elemKey, valKey);
+                                        // Bind to the function-qualified value-var name the loop body
+                                        // resolves to (qualifiedVal), not the inline-only valKey, so a
+                                        // `pin.value = ...` setter inside a def sees the ZCA state.
+                                        PropagateCtState(elemKey, qualifiedVal);
                                     }
                                     else if (constantVariables.TryGetValue(elemKey, out int cv))
                                     {
-                                        constantVariables[valKey] = cv;
+                                        constantVariables[qualifiedVal] = cv;
                                     }
                                     else
                                     {
@@ -325,8 +328,8 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
-                                CleanCtState(valKey);
-                                constantVariables.Remove(valKey);
+                                CleanCtState(qualifiedVal);
+                                constantVariables.Remove(qualifiedVal);
                             }
 
                             constantVariables.Remove(idxKey);
@@ -659,7 +662,14 @@ public partial class IRGenerator
 
                 if (forSize > 0)
                 {
-                    string forVarKey = currentInlinePrefix + stmt.VarName;
+                    // Qualify the loop variable the same way ResolveBinding does for a bare name,
+                    // so the loop body's references (e.g. a `pin.direction = ...` property setter)
+                    // resolve to the same key the loop binds -- including the currentFunction prefix
+                    // when iterating inside a def. Without this, ZCA per-element state registered on
+                    // the loop var is invisible to the body inside a function.
+                    string forVarKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + stmt.VarName
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
                     DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
                     variableTypes[forVarKey] = elemDt2;
 

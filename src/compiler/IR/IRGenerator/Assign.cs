@@ -441,6 +441,22 @@ public partial class IRGenerator
             }
         }
 
+        // Untyped assignment of a list / list-comprehension to a name, e.g.
+        //   outs = [digitalio.DigitalInOut(p) for p in (board.D5, board.D6, board.D7)]
+        // The compile-time-unrolled array path (slots name__k + instanceClasses for ZCA
+        // elements) is normally reached only through an annotated target; handle the plain
+        // form here so CircuitPython-style code compiles.
+        if (stmt.Target is VariableExpr listTarget)
+        {
+            List<Expression>? elemExprs = stmt.Value switch
+            {
+                ListExpr le => le.Elements,
+                ListCompExpr lc => ExpandCtListComp(lc),
+                _ => null
+            };
+            if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
+        }
+
         Val value = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr varExpr)
@@ -1477,6 +1493,135 @@ public partial class IRGenerator
                     PropagateCtState(srcVar.Name, elemName);
             }
         }
+    }
+
+    /// <summary>
+    /// Store a compile-time list of element expressions into an unrolled array bound to
+    /// <paramref name="target"/> (slots name__0..name__N-1). ZCA-instance elements are
+    /// constructed directly into their slot so instanceClasses[slot] is registered and
+    /// for-in / enumerate over the array resolve the element type. Always handles the list.
+    /// </summary>
+    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs)
+    {
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + target.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target.Name : target.Name);
+        if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(target.Name)) qualified = target.Name;
+
+        int count = elemExprs.Count;
+        DataType elemDt = DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
+
+        for (int k = 0; k < count; ++k)
+        {
+            string elemName = qualified + "__" + k;
+            variableTypes[elemName] = DataType.UINT8;
+
+            // ZCA constructor element: build the instance directly into the slot (like a plain
+            // `x = Cls(...)` assignment) so instanceClasses[slot] is registered. Constructing via
+            // a temporary loses the class -- an `__init__` whose ReturnType is "" still allocates a
+            // result temp, so VisitExpression would return that temp, not the instance.
+            string? ctorClass = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
+            if (ctorClass != null)
+            {
+                instanceClasses[elemName] = ctorClass;
+                virtualInstances.Add(elemName);
+                pendingConstructorTarget = elemName;
+                VisitExpression(elemExprs[k]);
+                continue;
+            }
+
+            Val v = VisitExpression(elemExprs[k]);
+            if (k == 0) elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+            variableTypes[elemName] = elemDt;
+            Emit(new Copy(v, new Variable(elemName, elemDt)));
+            if (v is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
+        }
+
+        arraySizes[qualified] = count;
+        arrayElemTypes[qualified] = elemDt;
+        variableTypes[qualified] = elemDt;
+        return true;
+    }
+
+    /// <summary>
+    /// If <paramref name="call"/> is a constructor call for a known class (Cls(...) or
+    /// module.Cls(...)), return the resolved class prefix; otherwise null. Mirrors the
+    /// constructor detection used for a plain `x = Cls(...)` assignment.
+    /// </summary>
+    private string? ResolveCtorClass(CallExpr call)
+    {
+        string resolvedClass = "";
+        if (call.Callee is VariableExpr calleeVar)
+            resolvedClass = ResolveCallee(calleeVar.Name);
+        else if (call.Callee is MemberAccessExpr { Object: VariableExpr objVar } calleeMem && modules.ContainsKey(objVar.Name))
+            resolvedClass = objVar.Name.Replace('.', '_') + "_" + calleeMem.Member;
+
+        if (!string.IsNullOrEmpty(resolvedClass)
+            && (inlineFunctions.ContainsKey(resolvedClass + "___init__")
+                || overloadedFunctions.Contains(resolvedClass + "___init__")))
+            return resolvedClass;
+        return null;
+    }
+
+    /// <summary>
+    /// Desugar a compile-time list comprehension into the concrete list of element
+    /// expressions by substituting the loop variable with each iterable item. Supports the
+    /// single-iterable, no-filter form over a tuple/list/range literal -- enough for
+    /// CircuitPython idioms like [DigitalInOut(p) for p in (board.D5, board.D6)]. Returns
+    /// null for anything it cannot expand so the caller falls back to the normal path.
+    /// </summary>
+    private List<Expression>? ExpandCtListComp(ListCompExpr lc)
+    {
+        if (!string.IsNullOrEmpty(lc.Var2Name) || lc.Iterable2 != null || lc.Filter != null)
+            return null;
+
+        List<Expression> items;
+        switch (lc.Iterable)
+        {
+            case TupleExpr te: items = te.Elements; break;
+            case ListExpr le:  items = le.Elements; break;
+            case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
+                int start = 0, stop;
+                if (rangeCall.Args.Count == 1) stop = EvaluateConstantExpr(rangeCall.Args[0]);
+                else if (rangeCall.Args.Count >= 2)
+                {
+                    start = EvaluateConstantExpr(rangeCall.Args[0]);
+                    stop = EvaluateConstantExpr(rangeCall.Args[1]);
+                }
+                else return null;
+                items = new List<Expression>();
+                for (int i = start; i < stop; ++i) items.Add(new IntegerLiteral(i));
+                break;
+            default: return null;
+        }
+
+        var result = new List<Expression>(items.Count);
+        foreach (var item in items)
+            result.Add(SubstituteVar(lc.Element, lc.VarName, item));
+        return result;
+    }
+
+    /// <summary>
+    /// Return a copy of <paramref name="expr"/> with every VariableExpr named
+    /// <paramref name="varName"/> replaced by <paramref name="repl"/>. Only the expression
+    /// shapes that appear in list-comp elements are rewritten; other nodes are returned as-is.
+    /// </summary>
+    private static Expression SubstituteVar(Expression expr, string varName, Expression repl)
+    {
+        Expression S(Expression e) => SubstituteVar(e, varName, repl);
+        return expr switch
+        {
+            VariableExpr v when v.Name == varName => repl,
+            CallExpr c => new CallExpr(S(c.Callee), c.Args.Select(S).ToList()),
+            MemberAccessExpr m => new MemberAccessExpr(S(m.Object), m.Member),
+            BinaryExpr b => new BinaryExpr(S(b.Left), b.Op, S(b.Right)),
+            UnaryExpr u => new UnaryExpr(u.Op, S(u.Operand)),
+            IndexExpr i => new IndexExpr(S(i.Target), S(i.Index)),
+            KeywordArgExpr k => new KeywordArgExpr(k.Key, S(k.Value)),
+            TupleExpr t => new TupleExpr(t.Elements.Select(S).ToList()),
+            ListExpr l => new ListExpr(l.Elements.Select(S).ToList()),
+            _ => expr
+        };
     }
 
     private void VisitAugAssign(AugAssignStmt stmt)
