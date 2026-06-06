@@ -306,6 +306,19 @@ def new(
         except Exception:
             return fallback
 
+    # Compiler driver + backend extra. The PyPI package is `pymcu-compiler`
+    # (the `pymcuc` binary it ships is NOT a distribution); installing it with
+    # the backend extra (e.g. [avr]) pulls the codegen backend and toolchain so
+    # a fresh `pip install` of the generated project is self-contained.
+    compiler_extra = "[avr]" if chip.lower().startswith("at") else ""
+
+    def _pin_compiler() -> str:
+        try:
+            from importlib.metadata import version
+            return f"pymcu-compiler{compiler_extra}>={version('pymcu-compiler')}"
+        except Exception:
+            return f"pymcu-compiler{compiler_extra}"
+
     # ------------------------------------------------------------------
     # File generation
     # ------------------------------------------------------------------
@@ -327,7 +340,7 @@ def new(
 
             deps = tomlkit.array()
             deps.append(_pin_version("pymcu-stdlib", "pymcu-stdlib"))
-            deps.append(_pin_version("pymcuc", "pymcuc"))
+            deps.append(_pin_compiler())
             for flavor in stdlib:
                 deps.append(_pin_version(f"pymcu-{flavor}", f"pymcu-{flavor}"))
             project_tbl.add("dependencies", deps)
@@ -368,7 +381,7 @@ def new(
         if pkg_manager == "pip":
             lines = [
                 _pin_version("pymcu-stdlib", "pymcu-stdlib"),
-                _pin_version("pymcuc", "pymcuc"),
+                _pin_compiler(),
             ]
             for flavor in stdlib:
                 lines.append(_pin_version(f"pymcu-{flavor}", f"pymcu-{flavor}"))
