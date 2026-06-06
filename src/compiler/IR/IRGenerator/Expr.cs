@@ -727,9 +727,16 @@ public partial class IRGenerator
                 }
                 else
                 {
-                    if (!(expr.Index is IntegerLiteral c2))
+                    // Accept a literal subscript or a variable that folds to a compile-time
+                    // constant (e.g. the index of an unrolled enumerate() loop).
+                    int elemIdx;
+                    if (expr.Index is IntegerLiteral c2)
+                        elemIdx = c2.Value;
+                    else if (VisitExpression(expr.Index) is Constant cc2)
+                        elemIdx = cc2.Value;
+                    else
                         throw new Exception("Array subscript must be a compile-time constant");
-                    string elemName = qualified + "__" + c2.Value;
+                    string elemName = qualified + "__" + elemIdx;
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }
             }

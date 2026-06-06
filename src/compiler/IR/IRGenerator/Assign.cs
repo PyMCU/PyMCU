@@ -81,9 +81,19 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        if (!(indexExpr.Index is IntegerLiteral c))
+                        // Accept either a literal subscript or a variable that folds to a
+                        // compile-time constant (e.g. the index from an unrolled
+                        // `for i, _ in enumerate(buf)` loop, where `i` is constant per
+                        // iteration). This lets inline functions write into a caller's
+                        // fixed array via constant-index stores without SRAM indexing.
+                        int elemIdx;
+                        if (indexExpr.Index is IntegerLiteral c)
+                            elemIdx = c.Value;
+                        else if (VisitExpression(indexExpr.Index) is Constant cc)
+                            elemIdx = cc.Value;
+                        else
                             throw new Exception("Array subscript must be a compile-time constant");
-                        string elemName = qualified + "__" + c.Value;
+                        string elemName = qualified + "__" + elemIdx;
                         Val srcVal = VisitExpression(stmt.Value);
                         Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
                     }
