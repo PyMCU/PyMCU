@@ -201,8 +201,7 @@ public class Parser
         bool isNaked = false;
         bool isExtern = false;
         string externSymbol = "";
-        bool isSoftFloat = false;
-        string compileMessage = "";
+        string warningMessage = "";
 
         while (Check(TokenType.At))
         {
@@ -283,21 +282,16 @@ public class Parser
             {
                 isNaked = true;
             }
-            else if (decorator.Value == "softfloat")
+            else if (decorator.Value == "warning")
             {
-                // The function relies on the software-float runtime; recorded so
-                // the IR generator can emit an informational diagnostic.
-                isSoftFloat = true;
-            }
-            else if (decorator.Value == "compile_message")
-            {
-                // @compile_message("..."): record the message. The IR generator
-                // aborts compilation with it if a call to this function is reached.
-                Consume(TokenType.LParen, "Expected '(' after @compile_message");
+                // @warning("..."): record the message. The IR generator prints it
+                // (once per function) as an informational note when a call to the
+                // decorated function is expanded; it does NOT abort compilation.
+                Consume(TokenType.LParen, "Expected '(' after @warning");
                 var msgTok = Consume(TokenType.String,
-                    "Expected a string message in @compile_message(" + (char)34 + "..." + (char)34 + ")");
-                compileMessage = msgTok.Value;
-                Consume(TokenType.RParen, "Expected ')' after @compile_message message");
+                    "Expected a string message in @warning(" + (char)34 + "..." + (char)34 + ")");
+                warningMessage = msgTok.Value;
+                Consume(TokenType.RParen, "Expected ')' after @warning message");
             }
             else
             {
@@ -346,8 +340,7 @@ public class Parser
             IsNaked = isNaked,
             IsExtern = isExtern,
             ExternSymbol = externSymbol,
-            IsSoftFloat = isSoftFloat,
-            CompileMessage = compileMessage
+            WarningMessage = warningMessage
         };
         return func;
     }

@@ -147,9 +147,9 @@ public partial class IRGenerator
     // unrolled at compile time, mirroring a direct `for b in b"Hi"` loop.
     private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
 
-    // Functions already reported via the @softfloat informational diagnostic, so
+    // Functions already reported via the @warning informational diagnostic, so
     // the note is emitted at most once per function.
-    private HashSet<string> softFloatNoticed = new();
+    private HashSet<string> warningNoticed = new();
 
     // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();

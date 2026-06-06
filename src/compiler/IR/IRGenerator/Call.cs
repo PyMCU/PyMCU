@@ -1213,20 +1213,13 @@ public partial class IRGenerator
 
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
-            // @compile_message: reaching a call to this function is a hard error;
-            // abort with the author-supplied message (e.g. unsupported HAL feature).
-            if (func != null && !string.IsNullOrEmpty(func.CompileMessage))
+            // @warning("..."): print the author-supplied note (once per function)
+            // when a call to this function is expanded. Informational only -- it
+            // does NOT abort compilation, so flagged-but-usable features (soft-float,
+            // reduced bare-metal behaviour) still build.
+            if (func != null && !string.IsNullOrEmpty(func.WarningMessage) && warningNoticed.Add(func.Name))
             {
-                int cmLine = currentStmtLine > 0 ? currentStmtLine : 1;
-                throw new CompilerError("CompileError", func.CompileMessage, cmLine, 1);
-            }
-
-            // @softfloat: note (once per function) that the software-float runtime
-            // is pulled in, so users understand the added code-size/cycle cost.
-            if (func != null && func.IsSoftFloat && softFloatNoticed.Add(func.Name))
-            {
-                Console.Error.WriteLine(
-                    $"[pymcuc] note: '{func.Name}' uses software floating point (soft-float runtime).");
+                Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
             }
 
             var exitLabel = MakeLabel();

@@ -576,10 +576,9 @@ public class FunctionDef : Statement
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
 
-    // @softfloat: the function relies on the software-float runtime.
-    public bool IsSoftFloat { get; set; } = false;
-    // @compile_message("..."): when reached, the compiler aborts with this message.
-    public string CompileMessage { get; set; } = "";
+    // @warning("..."): an informational diagnostic printed (once) when a call
+    // to this function is expanded. Does not abort compilation. Empty = none.
+    public string WarningMessage { get; set; } = "";
 
     public FunctionDef(string name, List<Param> parameters, string returnType,
         Block body, bool isInline = false, bool isInterrupt = false,
