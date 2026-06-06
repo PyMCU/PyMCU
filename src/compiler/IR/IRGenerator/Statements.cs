@@ -71,6 +71,42 @@ public partial class IRGenerator
             }
         }
 
+        // Fold constant arithmetic so register definitions can use a readable
+        // `BASE + offset` form, e.g. `UART0_DR: ptr[uint32] = ptr(UART0_BASE + 0x00)`.
+        // Without this, only literal-address registers (the AVR `ptr(0x23)` style)
+        // resolved to a MemoryAddress; expression-based addresses (RP2040 / CH32V
+        // peripheral maps) fell through to the catch in ScanGlobals and were
+        // mis-registered as mutable SRAM globals.
+        if (expr is BinaryExpr bin)
+        {
+            int l = EvaluateConstantExpr(bin.Left);
+            int r = EvaluateConstantExpr(bin.Right);
+            switch (bin.Op)
+            {
+                case PyMCU.Frontend.BinaryOp.Add:    return l + r;
+                case PyMCU.Frontend.BinaryOp.Sub:    return l - r;
+                case PyMCU.Frontend.BinaryOp.Mul:    return l * r;
+                case PyMCU.Frontend.BinaryOp.Div:    return l / r;
+                case PyMCU.Frontend.BinaryOp.FloorDiv: return l / r;
+                case PyMCU.Frontend.BinaryOp.Mod:    return l % r;
+                case PyMCU.Frontend.BinaryOp.BitAnd: return l & r;
+                case PyMCU.Frontend.BinaryOp.BitOr:  return l | r;
+                case PyMCU.Frontend.BinaryOp.BitXor: return l ^ r;
+                case PyMCU.Frontend.BinaryOp.LShift: return l << r;
+                case PyMCU.Frontend.BinaryOp.RShift: return l >> r;
+            }
+        }
+
+        if (expr is UnaryExpr un)
+        {
+            int v = EvaluateConstantExpr(un.Operand);
+            switch (un.Op)
+            {
+                case PyMCU.Frontend.UnaryOp.Negate: return -v;
+                case PyMCU.Frontend.UnaryOp.BitNot: return ~v;
+            }
+        }
+
         throw new Exception("Not a constant expression");
     }
 
