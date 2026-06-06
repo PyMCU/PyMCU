@@ -381,6 +381,10 @@ public partial class IRGenerator
                         if (setter is { Params.Count: >= 2 })
                         {
                             var paramName = newPrefix + setter.Params[1].Name;
+                            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
+                            variableTypes[paramName] = paramType;
+                            constantVariables.Remove(paramName);
+                            variableAliases.Remove(paramName);
                             switch (argVal)
                             {
                                 case Constant c:
@@ -390,7 +394,12 @@ public partial class IRGenerator
                                     variableAliases[paramName] = vv.Name;
                                     break;
                                 case Temporary tt:
-                                    variableAliases[paramName] = tt.Name;
+                                    // Materialize the runtime value into the param's own SRAM slot.
+                                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
+                                    // across the inline boundary, so the setter body would read an
+                                    // uninitialized variable (always 0) -- the root cause of
+                                    // `led.value = buf[0] & 1` collapsing to a single branch.
+                                    Emit(new Copy(tt, new Variable(paramName, paramType)));
                                     break;
                             }
                         }
