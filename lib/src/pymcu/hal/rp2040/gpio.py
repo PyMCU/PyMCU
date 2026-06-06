@@ -26,8 +26,9 @@ from pymcu.exceptions import CompileError
 
 
 class Pin:
-    OUT = 0
-    IN  = 1
+    OUT        = 0
+    IN         = 1
+    OPEN_DRAIN = 2   # not natively supported; accepted for API compat (no-op in mode())
 
     PULL_UP   = 1
     PULL_DOWN = 2
@@ -80,6 +81,26 @@ class Pin:
     @inline
     def toggle(self):
         SIO_GPIO_OUT_XOR.value = 1 << self._pin
+
+    @inline
+    def mode(self, m: const[uint8]):
+        # Reconfigure direction without re-running pad/mux init.
+        if m == 0:  # OUT
+            SIO_GPIO_OE_SET.value = 1 << self._pin
+        else:       # IN (OPEN_DRAIN falls here: leaves FUNCSEL intact, floats output)
+            SIO_GPIO_OE_CLR.value = 1 << self._pin
+
+    @inline
+    def pull(self, p: const[uint8]):
+        # Rewrite pad IE + pull bits only; preserves drive strength.
+        # PADS layout: bit6=IE, bit3=PUE, bit2=PDE.
+        pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * self._pin)
+        if p == 1:       # PULL_UP
+            pad.value = 0x48
+        elif p == 2:     # PULL_DOWN
+            pad.value = 0x44
+        else:            # no pull
+            pad.value = 0x40
 
     @inline
     def value(self, x: const = -1) -> uint32:
