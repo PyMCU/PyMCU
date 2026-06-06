@@ -20,11 +20,14 @@ def main():
     uart.println("READY")
 
     # Initial read -- pull-up active, no external drive -> expect 0x01
-    v0: uint8 = btn.value()
-    uart.write(v0)
+    v: uint8 = btn.value()
+    uart.write(v)
 
-    # Loop: on each UART byte, read btn and echo its state
+    # Loop: each received byte triggers a new read; send the pin state back.
+    # Bug B1 was here: `v = btn.value()` (no annotation) folded to 255.
+    # Fixed in Statements.cs (commit 0b07885): dead-code const return no longer
+    # overwrites the live-path alias.
     while True:
         uart.read()
-        v1: uint8 = btn.value()
-        uart.write(v1)
+        v = btn.value()
+        uart.write(v)
