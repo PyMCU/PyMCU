@@ -91,5 +91,13 @@ extensions/pymcu-avr/src/python/pymcu/backend/avr/createdump
 # AVR backend intermediate publish artifacts
 extensions/pymcu-avr/src/python/pymcu/backend/avr/*.dll
 
+# AOT compiler/debugserver binaries bundled into backend Python packages.
+# Built locally or by CI and shipped inside PyPI wheels -- never committed to
+# source. Covers every backend (avr/pic/pio/riscv) and platform-suffixed names.
+extensions/*/src/python/**/pymcuc
+extensions/*/src/python/**/pymcuc.exe
+extensions/*/src/python/**/pymcuc-*
+!extensions/*/src/python/**/*.py
+
 # Test runner output
 tests/integration/TestResults/
