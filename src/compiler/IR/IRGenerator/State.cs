@@ -142,6 +142,15 @@ public partial class IRGenerator
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
+    // Tracks inline-function parameters bound to a bytes/list literal argument
+    // (e.g. uart.write(b"Hi")). Lets the param be iterated via for-in and
+    // unrolled at compile time, mirroring a direct `for b in b"Hi"` loop.
+    private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
+
+    // Functions already reported via the @softfloat informational diagnostic, so
+    // the note is emitted at most once per function.
+    private HashSet<string> softFloatNoticed = new();
+
     // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();
 

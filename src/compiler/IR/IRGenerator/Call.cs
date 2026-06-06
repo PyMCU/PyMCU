@@ -1213,6 +1213,22 @@ public partial class IRGenerator
 
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
+            // @compile_message: reaching a call to this function is a hard error;
+            // abort with the author-supplied message (e.g. unsupported HAL feature).
+            if (func != null && !string.IsNullOrEmpty(func.CompileMessage))
+            {
+                int cmLine = currentStmtLine > 0 ? currentStmtLine : 1;
+                throw new CompilerError("CompileError", func.CompileMessage, cmLine, 1);
+            }
+
+            // @softfloat: note (once per function) that the software-float runtime
+            // is pulled in, so users understand the added code-size/cycle cost.
+            if (func != null && func.IsSoftFloat && softFloatNoticed.Add(func.Name))
+            {
+                Console.Error.WriteLine(
+                    $"[pymcuc] note: '{func.Name}' uses software floating point (soft-float runtime).");
+            }
+
             var exitLabel = MakeLabel();
             var newDepth = inlineDepth + 1;
             var newPrefix = $"inline{newDepth}.{func?.Name}.";
@@ -1257,6 +1273,7 @@ public partial class IRGenerator
             var kwArgValues = new Dictionary<string, Val>();
             var rawKwStrArgs = new Dictionary<string, string?>();
             var rawStrArgs = new List<StringLiteral?>();
+            var rawListArgs = new List<ListExpr?>();
 
             foreach (var arg in expr.Args)
             {
@@ -1273,11 +1290,24 @@ public partial class IRGenerator
                 else
                 {
                     rawStrArgs.Add(arg as StringLiteral);
-                    string savedOuterPct = pendingConstructorTarget;
-                    pendingConstructorTarget = "";
-                    argValues.Add(VisitExpression(arg));
-                    // Always restore: same reason as kwarg case above.
-                    pendingConstructorTarget = savedOuterPct;
+                    rawListArgs.Add(arg as ListExpr);
+                    if (arg is ListExpr)
+                    {
+                        // Bytes/list literal argument (e.g. uart.write(b"Hi")). Visiting
+                        // it as an expression is unsupported; instead we bind the raw AST
+                        // to the inline parameter below so a `for x in param` loop in the
+                        // callee unrolls it at compile time. Push a placeholder to keep
+                        // argValues index-aligned with the parameter list.
+                        argValues.Add(new NoneVal());
+                    }
+                    else
+                    {
+                        string savedOuterPct = pendingConstructorTarget;
+                        pendingConstructorTarget = "";
+                        argValues.Add(VisitExpression(arg));
+                        // Always restore: same reason as kwarg case above.
+                        pendingConstructorTarget = savedOuterPct;
+                    }
                 }
             }
 
@@ -1337,6 +1367,18 @@ public partial class IRGenerator
                 if (paramIdx >= func.Params.Count) break;
                 string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
                 boundParams.Add(paramIdx);
+
+                if (i < rawListArgs.Count && rawListArgs[i] != null)
+                {
+                    // Bytes/list literal bound to this parameter: record the raw AST so
+                    // a `for x in param` loop unrolls it. Clear any stale scalar bindings.
+                    listLiteralParams[paramName] = rawListArgs[i]!;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    continue;
+                }
+                listLiteralParams.Remove(paramName);
 
                 if (argValues[i] is FloatConstant fcArg)
                 {
