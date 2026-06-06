@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymcu-rp2040"
+version = "0.1.0a1"
+description = "RP2040 (Cortex-M0+) support for pymcu-compiler: LLVM-IR codegen backend + LLVM toolchain driver"
+readme = "README.md"
+authors = [
+    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
+]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pymcu-backend-sdk>=0.1.0a1",
+    "pymcu-toolchain-sdk>=0.1.0a1",
+    # Pre-built LLVM toolchain wheel (clang/llc/opt/llvm-mc/lld/llvm-objcopy)
+    # so `pip install pymcu-compiler[rp2040]` is self-contained. On platforms
+    # without a wheel the Rp2040LlvmToolchain falls back to LLVM on PATH.
+    "pymcu-rp2040-toolchain>=18.0.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+]
+
+[project.entry-points."pymcu.backends"]
+rp2040 = "pymcu.backend.rp2040:Rp2040BackendPlugin"
+
+[tool.uv.sources]
+pymcu-backend-sdk = {path = "../pymcu-backend-sdk", editable = true}
+pymcu-toolchain-sdk = {path = "../pymcu-toolchain-sdk", editable = true}
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/pymcu"]
+artifacts = ["src/python/pymcu/backend/rp2040/pymcuc-rp2040*"]
