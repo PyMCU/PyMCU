@@ -29,6 +29,72 @@ public static class PymcuCompiler
     public static string BuildFixture(string name)
         => Cache.GetOrAdd("fx:" + name, _ => Compile(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "avr", name), name));
 
+    // ── RP2040 (flat flash binary) ───────────────────────────────────────────
+
+    private static readonly ConcurrentDictionary<string, byte[]> BinCache = new();
+
+    /// <summary>
+    /// Compiles the RP2040 example at <c>examples/rp2040/{name}</c> and returns
+    /// the flat flash image (<c>dist/firmware.bin</c>) for PicoSimulation.LoadFlash.
+    /// </summary>
+    public static byte[] BuildRp2040(string name)
+        => BinCache.GetOrAdd("rp:ex:" + name,
+            _ => CompileBin(Path.Combine(RepoRoot, "examples", "rp2040", name), name));
+
+    /// <summary>
+    /// Compiles the RP2040 fixture at <c>tests/integration/fixtures/rp2040/{name}</c>.
+    /// </summary>
+    public static byte[] BuildFixtureRp2040(string name)
+        => BinCache.GetOrAdd("rp:fx:" + name,
+            _ => CompileBin(Path.Combine(RepoRoot, "tests", "integration", "fixtures", "rp2040", name), name));
+
+    private static byte[] CompileBin(string projectDir, string name)
+    {
+        RunPymcuBuild(projectDir, name);
+        var binFile = Path.Combine(projectDir, "dist", "firmware.bin");
+        if (!File.Exists(binFile))
+            throw new FileNotFoundException($"Firmware bin not found after build: {binFile}");
+        return File.ReadAllBytes(binFile);
+    }
+
+    /// <summary>Runs <c>pymcu build</c> in <paramref name="projectDir"/>, throwing on failure.</summary>
+    private static void RunPymcuBuild(string projectDir, string name)
+    {
+        if (!Directory.Exists(projectDir))
+            throw new DirectoryNotFoundException($"Project directory not found: {projectDir}");
+
+        var venvBin = Path.Combine(RepoRoot, ".venv", "bin");
+        var venvPython = Path.Combine(venvBin, "python3");
+        var psi = new ProcessStartInfo
+        {
+            FileName = venvPython,
+            Arguments = $"{PymcuExe} build",
+            WorkingDirectory = projectDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.Environment["PYMCU_VERBOSE"] = "1";
+        psi.Environment["PATH"] = venvBin + Path.PathSeparator + psi.Environment["PATH"];
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start pymcu process.");
+        var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+        var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
+        var finished = proc.WaitForExit(120_000);
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+
+        if (!finished)
+        {
+            proc.Kill();
+            throw new TimeoutException($"pymcu build timed out for '{name}'.\n{stdout}\n{stderr}");
+        }
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"pymcu build failed for '{name}' (exit {proc.ExitCode}):\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
+
     // ── Internal ─────────────────────────────────────────────────────────────
 
     private static string Compile(string exampleDir, string name)
