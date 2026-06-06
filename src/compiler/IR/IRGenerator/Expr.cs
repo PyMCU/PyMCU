@@ -102,7 +102,11 @@ public partial class IRGenerator
         return "";
     }
 
-    private Val EmitDunderCall(string selfQname, string className, string funcKey, List<Val> extraArgs)
+    // seqArgs (optional) binds an extra-arg index to a bytes/list/tuple literal
+    // so the dunder body can consume that parameter via constant subscript or a
+    // for-in unroll -- e.g. pixels[i] = (r, g, b) passes the tuple to __setitem__.
+    private Val EmitDunderCall(string selfQname, string className, string funcKey, List<Val> extraArgs,
+                               Dictionary<int, Frontend.ListExpr>? seqArgs = null)
     {
         var func = inlineFunctions[funcKey];
         string exitLabel = MakeLabel();
@@ -117,6 +121,14 @@ public partial class IRGenerator
         {
             string paramKey = newPrefix + func.Params[pi].Name;
             DataType dt = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
+            if (seqArgs != null && seqArgs.TryGetValue(extraIdx, out var seqLit))
+            {
+                listLiteralParams[paramKey] = seqLit;
+                constantVariables.Remove(paramKey);
+                variableAliases.Remove(paramKey);
+                continue;
+            }
+            listLiteralParams.Remove(paramKey);
             if (extraArgs[extraIdx] is Constant c)
             {
                 constantVariables[paramKey] = c.Value;
@@ -772,6 +784,17 @@ public partial class IRGenerator
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }
             }
+        }
+
+        // Instance-member array load: self._buf[i] (i runtime), where self._buf
+        // was declared as a per-instance SRAM framebuffer.
+        if (expr.Target is MemberAccessExpr memLoad
+            && ResolveMemberArrayName(memLoad) is string flatLoad)
+        {
+            Val idxVal = VisitExpression(expr.Index);
+            Temporary tmp = MakeTemp(arrayElemTypes[flatLoad]);
+            Emit(new ArrayLoad(flatLoad, idxVal, tmp, arrayElemTypes[flatLoad], arraySizes[flatLoad]));
+            return tmp;
         }
 
         {

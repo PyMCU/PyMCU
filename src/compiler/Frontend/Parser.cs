@@ -151,6 +151,15 @@ public class Parser
                 var inner = Consume(TokenType.Identifier, "Expected inner type");
                 typeStr += inner.Value;
 
+                // Array size given as a named constant times a literal, e.g.
+                // uint8[n*3] for a per-instance framebuffer. The product is folded
+                // against the (compile-time constant) identifier in the IR generator.
+                if (Match(TokenType.Star))
+                {
+                    var factor = Consume(TokenType.Number, "Expected a numeric factor after '*' in array size");
+                    typeStr += "*" + factor.Value;
+                }
+
                 // Handle nested bracket: e.g. const[uint8[4]] or const[str]
                 if (Match(TokenType.LBracket))
                 {
@@ -1001,8 +1010,25 @@ public class Parser
 
         if (Match(TokenType.Colon))
         {
-            if (!(expr is VariableExpr varExpr)) Error("Only simple variables can be annotated with types");
-            string name = ((VariableExpr)expr).Name;
+            // Allow a simple variable (x: T) or an instance-member array
+            // declaration (self._buf: uint8[N]) used to reserve a per-instance
+            // SRAM framebuffer. The member form is encoded as a dotted target
+            // ("self._buf") and only supported for array annotations.
+            string name;
+            if (expr is VariableExpr varExpr)
+            {
+                name = varExpr.Name;
+            }
+            else if (expr is MemberAccessExpr memAnn && memAnn.Object is VariableExpr memObj)
+            {
+                name = memObj.Name + "." + memAnn.Member;
+            }
+            else
+            {
+                Error("Only simple variables or instance members can be annotated with types");
+                name = "";
+            }
+
             string type = ParseTypeAnnotation();
 
             Expression? init = null;
@@ -1017,6 +1043,9 @@ public class Parser
             {
                 return new AnnAssign(name, type, init) { Line = line };
             }
+
+            if (name.Contains('.'))
+                Error("Only array-typed annotations are supported on instance members");
 
             return new VarDecl(name, type, init) { Line = line };
         }

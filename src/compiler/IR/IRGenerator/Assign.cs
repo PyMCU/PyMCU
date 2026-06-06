@@ -102,6 +102,17 @@ public partial class IRGenerator
                 }
             }
 
+            // Instance-member array store: self._buf[i] = val (i runtime), where
+            // self._buf was declared as a per-instance SRAM framebuffer.
+            if (indexExpr.Target is MemberAccessExpr memStore
+                && ResolveMemberArrayName(memStore) is string flatStore)
+            {
+                Val idxVal = VisitExpression(indexExpr.Index);
+                Val srcVal = VisitExpression(stmt.Value);
+                Emit(new ArrayStore(flatStore, idxVal, srcVal, arrayElemTypes[flatStore], arraySizes[flatStore]));
+                return;
+            }
+
             {
                 Val tgtVal = VisitExpression(indexExpr.Target);
                 string cls = GetValClass(tgtVal);
@@ -112,8 +123,21 @@ public partial class IRGenerator
                     {
                         string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
                         Val idxVal = VisitExpression(indexExpr.Index);
-                        Val srcVal = VisitExpression(stmt.Value);
-                        EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
+                        // A tuple/list literal RHS (pixels[i] = (r, g, b)) is bound to the
+                        // color parameter as a sequence literal so __setitem__ can read it
+                        // by constant subscript; otherwise evaluate a scalar value.
+                        ListExpr? seqRhs = stmt.Value as ListExpr
+                            ?? (stmt.Value is TupleExpr tup ? new ListExpr(tup.Elements) : null);
+                        if (seqRhs != null)
+                        {
+                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, new NoneVal() },
+                                new Dictionary<int, ListExpr> { { 1, seqRhs } });
+                        }
+                        else
+                        {
+                            Val srcVal = VisitExpression(stmt.Value);
+                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
+                        }
                         return;
                     }
                 }
@@ -860,8 +884,84 @@ public partial class IRGenerator
         }
     }
 
+    // Resolves a member access (self._buf) to the flattened SRAM array name it
+    // was declared under via `self._buf: uint8[N]`, or null if it is not an
+    // instance-member array. Visiting the object (self) only resolves an alias
+    // and has no side effects.
+    private string? ResolveMemberArrayName(MemberAccessExpr mem)
+    {
+        var objVal = VisitExpression(mem.Object);
+        string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+        if (string.IsNullOrEmpty(baseName)) return null;
+        string flat = baseName + "_" + mem.Member;
+        return arraySizes.ContainsKey(flat) ? flat : null;
+    }
+
+    // Resolves an array-size annotation token to a constant: a literal ("24"),
+    // a compile-time constant identifier ("n", e.g. a folded constructor param),
+    // or a product of either ("n*3", "3*n").
+    private int ResolveArraySizeExpr(string token)
+    {
+        int star = token.IndexOf('*');
+        if (star >= 0)
+            return ResolveArraySizeAtom(token[..star]) * ResolveArraySizeAtom(token[(star + 1)..]);
+        return ResolveArraySizeAtom(token);
+    }
+
+    private int ResolveArraySizeAtom(string atom)
+    {
+        atom = atom.Trim();
+        if (atom.Length > 0 && atom.All(char.IsDigit)) return int.Parse(atom);
+        if (constantVariables.TryGetValue(currentInlinePrefix + atom, out int cv)) return cv;
+        if (constantVariables.TryGetValue(atom, out int cv2)) return cv2;
+        throw new Exception("Array size '" + atom + "' is not a compile-time constant");
+    }
+
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // Instance-member array declaration (self._buf: uint8[N]): reserve a
+        // per-instance SRAM framebuffer. The parser encodes the target as a
+        // dotted name ("self._buf"); resolve the instance to its flattened
+        // storage name (exactly like a normal `self.x = ...` member) and
+        // register it as a variable-indexed (SRAM) array so pixels[i] works.
+        if (stmt.Target.Contains('.'))
+        {
+            int dot = stmt.Target.IndexOf('.');
+            string objName = stmt.Target.Substring(0, dot);
+            string member = stmt.Target.Substring(dot + 1);
+
+            int mb = stmt.Annotation.IndexOf('[');
+            int mc = stmt.Annotation.LastIndexOf(']');
+            if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
+                throw new Exception("Instance-member annotation must be an array type, e.g. uint8[N]");
+            string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
+            int memCount = ResolveArraySizeExpr(memSz);
+            DataType memElem = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, mb));
+
+            var objVal = VisitExpression(new VariableExpr(objName));
+            string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+            while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+            if (string.IsNullOrEmpty(baseName))
+                throw new Exception("Cannot resolve instance for member array '" + stmt.Target + "'");
+            string flat = baseName + "_" + member;
+
+            arraySizes[flat] = memCount;
+            arrayElemTypes[flat] = memElem;
+            variableTypes[flat] = memElem;
+            arraysWithVariableIndex.Add(flat);
+
+            // Zero-initialise (a NeoPixel strip starts all-off), or apply a
+            // literal list initialiser when one is supplied.
+            var memInit = new List<int>(Enumerable.Repeat(0, memCount));
+            if (stmt.Value is ListExpr mle)
+                for (int k = 0; k < Math.Min(memCount, mle.Elements.Count); k++)
+                    if (mle.Elements[k] is IntegerLiteral mil) memInit[k] = mil.Value;
+            for (int k = 0; k < memCount; ++k)
+                Emit(new ArrayStore(flat, new Constant(k), new Constant(memInit[k]), memElem, memCount));
+            return;
+        }
+
         // const[uint8[N]] annotation → flash (PROGMEM) array.
         if (stmt.Annotation.StartsWith("const[") && stmt.Annotation.EndsWith("]"))
         {
