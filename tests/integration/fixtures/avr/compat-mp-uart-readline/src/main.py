@@ -22,7 +22,7 @@ def main():
     while True:
         cmd: uint8 = uart.read()
         if cmd == 76:
-            n: uint8 = uart.readline(line_buf, 16)
+            n: uint8 = uart.readline(line_buf)
             uart.write(n)
             j: uint8 = 0
             while j < n:

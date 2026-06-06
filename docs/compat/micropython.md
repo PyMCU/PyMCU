@@ -212,8 +212,9 @@ uart.print_byte(42)            # sends "42\n" as decimal ASCII digits
 | `write(byte)` | `(byte: uint8)` | Send a single byte |
 | `write(s)` | `(s: str)` | Send a compile-time string literal — `uart.write("OK\n")` |
 | `read()` | `() -> uint8` | Blocking read — spins until RXC flag is set |
-| `readline(buf, max_len)` | `(buf: bytearray, max_len: uint8) -> uint8` | Read until `\n` (or `max_len-1` bytes) into caller-provided buffer; returns byte count |
-| `readinto(buf, nbytes)` | `(buf: bytearray, nbytes: uint8) -> uint8` | Read exactly `nbytes` bytes into buffer; returns `nbytes` |
+| `readline(buf)` | `(buf: bytearray) -> uint8` | Read until `\n` (or `len(buf)-1` bytes) into caller-provided buffer; `len(buf)` inferred at compile time; returns byte count |
+| `readline(buf, max_len)` | `(buf: bytearray, max_len: uint8) -> uint8` | Read until `\n` with explicit cap; kept for backward compatibility |
+| `readinto(buf)` | `(buf: bytearray) -> uint8` | Read exactly `len(buf)` bytes into buffer; byte count inferred at compile time |
 | `any()` | `() -> uint8` | Returns `1` if at least one byte is waiting, `0` otherwise |
 | `write_str(s)` | `(s: str)` | PyMCU extension — prefer `write(str)` for portability |
 | `println(s)` | `(s: str)` | PyMCU extension — `write_str(s)` + newline |
@@ -967,14 +968,14 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `try / except / raise` | Supported (heap-based) | ✅ Supported — zero-cost T-flag error ABI, no heap |
 | `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
 | `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
-| `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf, n)` for multi-byte |
-| `UART.readline()` | Returns `bytes` object | `readline(buf, max_len)` — caller provides buffer, returns count |
+| `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf)` for multi-byte |
+| `UART.readline()` | Returns `bytes` object, no args | `readline(buf)` — caller provides buffer; `len(buf)` inferred as limit; returns count |
 | `UART.readinto(buf)` | Fills up to `len(buf)` | ✅ `readinto(buf)` — `len(buf)` inferred at compile time |
 | `I2C.scan()` | Returns list of addresses | `scan()` returns count only; `scan(buf, max_count)` fills caller-provided buffer and returns count |
 | `I2C.writeto(addr, buf)` | `buf` length inferred from object | ✅ `writeto(addr, buf)` — `len(buf)` inferred at compile time |
 | `I2C.readfrom(addr, nbytes)` | Returns `bytes` object (GC-allocated) | `readfrom_into(addr, buf)` — caller provides buffer; fills `len(buf)` bytes; returns 1/0 (not `None`) |
 | `SPI.write(buf)` | `buf` length inferred from object | ✅ `write(buf)` — `len(buf)` inferred at compile time from the array declaration |
-| `SPI.readinto(buf, write=0x00)` | Fills `len(buf)` bytes; default write=0x00 | `readinto(buf)` matches length; default dummy byte is 0xFF (not 0x00) |
+| `SPI.readinto(buf, write=0xFF)` | Fills `len(buf)` bytes; default write=0xFF | ✅ `readinto(buf)` — `len(buf)` inferred at compile time; default dummy byte 0xFF matches |
 | `SPI.write_readinto(write_buf, read_buf)` | Buffer lengths inferred | ✅ `write_readinto(write_buf, read_buf)` — length inferred from `write_buf` |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
