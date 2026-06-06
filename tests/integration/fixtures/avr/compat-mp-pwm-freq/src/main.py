@@ -13,12 +13,12 @@
 #
 # After setup sends 0x46 ('F') via machine.UART to signal completion.
 #
-from machine import PWM, UART
+from machine import Pin, PWM, UART
 
 
 def main():
     uart = UART(0, 9600)
-    pwm = PWM("PD6", freq=1000)   # freq > 976 -> CS=0x02 (prescaler /8)
+    pwm = PWM(Pin("PD6"), freq=1000)  # PD6; freq > 976 -> CS=0x02 (prescaler /8)
     pwm.init()
     pwm.freq(100)                  # freq > 61, <= 244 -> CS=0x04 (prescaler /256)
     uart.write(0x46)               # 'F' done marker

@@ -9,12 +9,12 @@
 #
 # After PWM setup, sends 0x44 ('D') via machine.UART to signal completion.
 #
-from machine import PWM, UART
+from machine import Pin, PWM, UART
 
 
 def main():
     uart = UART(0, 9600)
-    pwm = PWM("PD6")
+    pwm = PWM(Pin("PD6"))   # PD6 = OC0A
     pwm.init()        # start Fast PWM output on OC0A
     pwm.duty(128)     # set OCR0A = 128 (50% duty cycle)
     uart.write(0x44)  # 'D' done marker
