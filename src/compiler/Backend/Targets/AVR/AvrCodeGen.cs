@@ -947,7 +947,6 @@ public class AvrCodeGen(DeviceConfig cfg) : CodeGen
 
     private void CompileCall(Call call)
     {
-        Console.WriteLine($"[INFO] [AVR-DEBUG] CompileCall: {call.FunctionName} args={call.Args.Count} isConst={(call.Args.Count > 0 ? call.Args[0] is Constant : false)}");
         if ((call.FunctionName == "_delay_ms_avr" || call.FunctionName.EndsWith("__delay_ms_avr")) && call.Args.Count == 1 && call.Args[0] is Constant msConst)
         {
             ulong cycles = (ulong)msConst.Value * (cfg.Frequency / 1000);

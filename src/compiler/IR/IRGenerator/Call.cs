@@ -1724,8 +1724,6 @@ public partial class IRGenerator
 
         bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType) && (rType == "void" || rType == "None");
         
-        if (callee.Contains("read_line")) System.Console.WriteLine($"[DEBUG-FB] Emitting fallback call for {callee}");
-
         if (returnsVoidEnd)
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
