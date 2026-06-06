@@ -20,7 +20,10 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", ".venv", "Thumbs.db", ".DS_Store"]
+
+# Served as a sub-path of the shared PyMCU docs site (docs.pymcu.org/pymcu/).
+html_baseurl = "https://docs.pymcu.org/pymcu/"
 
 # ---------------------------------------------------------------------------
 # MyST extensions
