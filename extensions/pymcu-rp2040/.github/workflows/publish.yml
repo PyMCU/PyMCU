@@ -1,0 +1,227 @@
+name: Publish pymcu-rp2040
+
+# Builds one platform-specific wheel per runner (dotnet AOT + Python package).
+# The hatch_build.py hook calls `dotnet publish` natively on each runner, so
+# no cross-compilation is needed.
+#
+# Dependency layout: the extension's .csproj files reference pymcu-backend-sdk
+# via relative paths that assume the full PyMCU monorepo structure. In CI we
+# reproduce that structure by checking out the main pymcu repo at ./pymcu and
+# placing this repo at ./pymcu/extensions/pymcu-rp2040.
+# Once pymcu-backend-sdk is published to NuGet/PyPI this checkout can be removed.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build one wheel per platform. Each runner compiles the pymcuc-rp2040 AOT
+  # binary natively (no cross-compilation) via hatch_build.py.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.name }} wheel
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runs-on: ubuntu-latest
+            wheel_tag: manylinux_2_28_x86_64
+          - name: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            wheel_tag: manylinux_2_28_aarch64
+          - name: macos-arm64
+            runs-on: macos-latest
+            wheel_tag: macosx_14_0_arm64
+          - name: windows-x64
+            runs-on: windows-latest
+            wheel_tag: win_amd64
+
+    steps:
+      # Checkout pymcu main repo so relative .csproj → pymcu-backend-sdk paths resolve.
+      - name: Checkout pymcu (SDK dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: begeistert/pymcu
+          path: pymcu
+
+      # Checkout this repo inside the expected extension path.
+      - name: Checkout pymcu-rp2040
+        uses: actions/checkout@v4
+        with:
+          path: pymcu/extensions/pymcu-rp2040
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build wheel
+        working-directory: pymcu/extensions/pymcu-rp2040
+        env:
+          WHEEL_PLATFORM_TAG: ${{ matrix.wheel_tag }}
+        run: uv build --wheel
+
+      - name: Report wheel size
+        shell: bash
+        run: du -sh pymcu/extensions/pymcu-rp2040/dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: pymcu/extensions/pymcu-rp2040/dist/*.whl
+
+  # ---------------------------------------------------------------------------
+  # Collect all wheels, build the source-only sdist, smoke test, checksums.
+  # ---------------------------------------------------------------------------
+  collect-and-release:
+    name: Collect wheels and smoke test
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pymcu (SDK dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: begeistert/pymcu
+          path: pymcu
+
+      - name: Checkout pymcu-rp2040
+        uses: actions/checkout@v4
+        with:
+          path: pymcu/extensions/pymcu-rp2040
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Build sdist (no binary)
+        working-directory: pymcu/extensions/pymcu-rp2040
+        env:
+          PYMCU_SKIP_DOTNET_BUILD: "1"
+        run: uv build --sdist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: pymcu/extensions/pymcu-rp2040/dist/*.tar.gz
+
+      - name: Smoke test (Linux x64 wheel)
+        run: |
+          WHEEL=$(ls dist/pymcu_rp2040-*-manylinux_2_28_x86_64.whl | head -1)
+          uv run --with "$WHEEL" python -c "
+          from pathlib import Path
+          import importlib
+          mod = importlib.import_module('pymcu.backend.rp2040')
+          print('pymcu.backend.rp2040 imported OK')
+          pkg_path = Path(mod.__file__).parent
+          binary = next(pkg_path.glob('pymcuc-rp2040*'), None)
+          assert binary and binary.exists(), f'pymcuc-rp2040 binary not found in {pkg_path}'
+          print(f'binary: {binary} ({binary.stat().st_size // 1024} KB)')
+          print('Smoke test passed.')
+          "
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum *.whl > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload SHA256SUMS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: dist/SHA256SUMS
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+  # ---------------------------------------------------------------------------
+  # Publish all wheels + sdist to PyPI via OIDC trusted publishing.
+  # pymcu-rp2040 wheels are small (~5-20 MB each) and fit within PyPI's 100 MB limit.
+  # Fires ONLY on tag pushes (v*). workflow_dispatch never triggers this job.
+  # ---------------------------------------------------------------------------
+  publish-pypi:
+    name: Publish to PyPI
+    needs: collect-and-release
+    runs-on: ubuntu-latest
+    environment: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Publish to PyPI
+        run: uv publish dist/*
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release and attach all wheels + SHA256SUMS as assets.
+  # Fires ONLY on tag pushes (v*). workflow_dispatch never triggers this job.
+  # ---------------------------------------------------------------------------
+  publish-github-release:
+    name: Publish to GitHub Releases
+    needs: collect-and-release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Download SHA256SUMS
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256sums
+          path: dist/
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists — uploading assets."
+            gh release upload "$TAG" dist/*.whl dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "pymcu-rp2040 ${TAG}" \
+              --generate-notes \
+              dist/*.whl dist/SHA256SUMS
+          fi
