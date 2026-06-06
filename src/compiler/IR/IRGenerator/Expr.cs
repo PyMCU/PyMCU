@@ -613,6 +613,22 @@ public partial class IRGenerator
         throw new Exception("Yield not yet implemented");
     }
 
+    // Resolves a variable name to the bytes/list/tuple literal bound to it as an
+    // inline parameter, following the inline prefix and any variableAliases chain
+    // (same resolution as the for-in path in Iteration.cs). Returns null if the
+    // name is not a sequence-literal parameter.
+    private Frontend.ListExpr? ResolveListLiteralParam(string name)
+    {
+        string? key = currentInlinePrefix + name;
+        for (var depth = 0; depth < 20; depth++)
+        {
+            if (key != null && listLiteralParams.TryGetValue(key, out var bound)) return bound;
+            if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
+            else break;
+        }
+        return null;
+    }
+
     private Val VisitIndex(IndexExpr expr)
     {
         if (expr.Index is SliceExpr sl)
@@ -668,6 +684,22 @@ public partial class IRGenerator
 
         if (expr.Target is VariableExpr ve)
         {
+            // Tuple/list/bytes literal bound to an inline parameter: fold a constant
+            // subscript (param[0]) to the corresponding element expression. Mirrors
+            // the for-in unroll path in Iteration.cs (same key + alias resolution);
+            // enables e.g. NeoPixel.fill((r, g, b)) consumed as color[0..2].
+            if (ResolveListLiteralParam(ve.Name) is ListExpr litArg)
+            {
+                int li;
+                if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
+                else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
+                else throw new Exception("Tuple/list parameter subscript must be a compile-time constant");
+                if (li < 0) li += litArg.Elements.Count;
+                if (li < 0 || li >= litArg.Elements.Count)
+                    throw new Exception("Tuple/list parameter subscript index out of range");
+                return VisitExpression(litArg.Elements[li]);
+            }
+
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
 

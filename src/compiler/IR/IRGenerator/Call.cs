@@ -1283,14 +1283,18 @@ public partial class IRGenerator
                 else
                 {
                     rawStrArgs.Add(arg as StringLiteral);
-                    rawListArgs.Add(arg as ListExpr);
-                    if (arg is ListExpr)
+                    // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
+                    // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
+                    // and bind it to the inline parameter so the callee can consume
+                    // it via `for x in param` (unrolled) or `param[const]` indexing.
+                    ListExpr? seqLit = arg as ListExpr
+                        ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
+                    rawListArgs.Add(seqLit);
+                    if (seqLit != null)
                     {
-                        // Bytes/list literal argument (e.g. uart.write(b"Hi")). Visiting
-                        // it as an expression is unsupported; instead we bind the raw AST
-                        // to the inline parameter below so a `for x in param` loop in the
-                        // callee unrolls it at compile time. Push a placeholder to keep
-                        // argValues index-aligned with the parameter list.
+                        // Visiting the literal as an expression is unsupported; the raw
+                        // AST is bound below. Push a placeholder to keep argValues
+                        // index-aligned with the parameter list.
                         argValues.Add(new NoneVal());
                     }
                     else
@@ -1363,8 +1367,9 @@ public partial class IRGenerator
 
                 if (i < rawListArgs.Count && rawListArgs[i] != null)
                 {
-                    // Bytes/list literal bound to this parameter: record the raw AST so
-                    // a `for x in param` loop unrolls it. Clear any stale scalar bindings.
+                    // Bytes/list/tuple literal bound to this parameter: record the raw AST
+                    // so `for x in param` unrolls it and `param[const]` folds. Clear any
+                    // stale scalar bindings.
                     listLiteralParams[paramName] = rawListArgs[i]!;
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);

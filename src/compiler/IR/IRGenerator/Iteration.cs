@@ -77,15 +77,7 @@ public partial class IRGenerator
             ListExpr? GetListParam(Expression e)
             {
                 if (e is not VariableExpr varE) return null;
-                var key = currentInlinePrefix + varE.Name;
-                for (var depth = 0; depth < 20; depth++)
-                {
-                    if (key != null && listLiteralParams.TryGetValue(key, out var bound)) return bound;
-                    if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
-                    else break;
-                }
-
-                return null;
+                return ResolveListLiteralParam(varE.Name);
             }
 
             if (GetListParam(iter) is ListExpr boundList)
