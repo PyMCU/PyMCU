@@ -15,6 +15,6 @@ def main():
     uart = busio.UART(board.TX, board.RX, baudrate=9600)
     # 50% duty cycle: CircuitPython 16-bit 32768 -> OCR0A = 32768 >> 8 = 128
     pwm = PWMOut(board.D6, duty_cycle=32768)
-    uart.write(0x44)  # 'D' done marker
+    uart.write(b"D")  # 'D' done marker
     while True:
         pass
