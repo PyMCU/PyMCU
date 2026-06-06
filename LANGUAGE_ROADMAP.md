@@ -98,6 +98,11 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
 | `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants |
 
+> **RP2040 (alpha):** the RP2040 backend currently implements only `pymcu.hal.gpio`
+> (`Pin`), `pymcu.hal.uart` (`UART0`) and `pymcu.time` (`delay_ms` / `delay_us`).
+> Other HAL modules in the table above are not wired up on RP2040 yet. Boards:
+> `raspberry_pi_pico` / `pico` → `rp2040`.
+
 ### Compat Packages
 
 | Package | Activation | Coverage |
@@ -366,6 +371,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `pymcu-toolchain-sdk` | ✅ Implemented | Standalone SDK package; base classes + `ToolchainPlugin` ABC |
 | `pymcu-toolchain-avr` | ✅ Implemented | AVR plugin (GNU AVR binutils); independent of core `pymcu` |
 | `pymcu-toolchain-pic` | ✅ Implemented | PIC plugin (GNU PIC Utilities); independent of core `pymcu` |
+| `pymcu-rp2040` (backend + toolchain) | 🧪 Alpha | RP2040 / Cortex-M0+ backend that emits **LLVM IR** (not asm); LLVM toolchain (`opt`/`llc`/`llvm-mc`/`ld.lld`/`llvm-objcopy`) → `firmware.bin`. `pip install pymcu[rp2040]`. MVP: GPIO + UART0, single core |
 | Programmer plugin system | ✅ Implemented | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
 
 ### Language

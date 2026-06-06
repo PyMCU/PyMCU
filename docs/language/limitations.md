@@ -344,3 +344,31 @@ relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` a
 - **C/C++ interop:** supported via `@extern` and `[tool.pymcu.ffi]` in `pyproject.toml`.
   C sources use `avr-gcc`; C++ sources (`.cpp`/`.cc`/`.cxx`) use `avr-g++`
   with `-fno-exceptions -fno-rtti`, enabling use of Arduino libraries.
+
+## Platform notes (RP2040 / Raspberry Pi Pico) — alpha
+
+The RP2040 backend lowers PyMCU's IR to **LLVM IR** (target `thumbv6m-none-eabi`)
+rather than emitting assembly directly, so LLVM does register allocation, instruction
+selection and optimization. `pymcu build` emits a flat flash image (`firmware.bin`,
+with the stage-2 boot loader at offset 0). It is **alpha** and intentionally limited:
+
+- **MVP peripherals only:** GPIO (`pymcu.hal.gpio.Pin`, via single-cycle IO) and
+  UART0 (`pymcu.hal.uart.UART`, PL011) are supported. SPI, I2C, PWM, ADC, PIO, USB,
+  timers, EEPROM/flash and the watchdog are **not** wired up on this backend yet.
+- **Single core:** only core 0 runs. Dual-core launch and the SIO FIFO are not
+  exposed.
+- **No GC / exceptions / soft-float yet:** `list[T]`, `try/except/raise`, and `float`
+  arithmetic compile on AVR but are **not supported** on the RP2040 backend — the
+  codegen rejects the corresponding IR with a clear "not supported yet" error.
+  Virtual-method dispatch, runtime-indexed arrays and operand-form inline `asm()` are
+  likewise deferred.
+- **Approximate delays:** `delay_ms` / `delay_us` are software loops (`asm("nop")`
+  barriers so LLVM cannot delete them). Timing is rough — use a hardware timer once
+  one is available if you need accuracy.
+- **UART clock assumption:** the baud divisors assume `clk_peri = 125 MHz`
+  (`clk_sys` at the pico-sdk default). A configurable clocks HAL is future work.
+- **Toolchain:** requires **LLVM** (`opt`, `llc`, `llvm-mc`, `ld.lld`,
+  `llvm-objcopy`) on the host. Install with `pip install pymcu[rp2040]`; until the
+  vendored LLVM wheel ships, the toolchain falls back to a system LLVM (e.g.
+  `brew install llvm lld`).
+- **No C/C++ interop (`@extern`) yet** on this backend.

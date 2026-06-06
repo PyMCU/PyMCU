@@ -118,10 +118,9 @@ This page tracks which language and HAL features have been implemented, and what
 
 ---
 
-## Planned
+## RP2040 (alpha)
 
-The current focus is **ATmega328P** (Arduino Uno). The next major milestone is
-**RP2040** (Raspberry Pi Pico).
+The **RP2040** (Raspberry Pi Pico, ARM Cortex-M0+) backend is implemented in **alpha**.
 
 The reason is philosophical: the RP2040 is the most popular MicroPython target today.
 PyMCU's promise is *prototype fast in MicroPython, bring to the metal with PyMCU* — the
@@ -129,17 +128,35 @@ same source file that runs on a Pico under MicroPython should compile to bare-me
 firmware with zero runtime when you are ready to ship. RP2040 closes that loop for the
 largest audience of MicroPython users.
 
+Unlike the AVR/PIC/RISC-V backends, the RP2040 backend does **not** emit assembly
+directly. It lowers PyMCU's architecture-agnostic IR to **LLVM IR**, so LLVM handles
+register allocation, instruction selection, the AAPCS calling convention and all
+optimization passes for `thumbv6m-none-eabi`. `pymcu build` produces a flat flash
+image (`firmware.bin`); the build is verified end-to-end against the RP2040Sharp
+emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
+
+| Feature | Status |
+|---|---|
+| GPIO (`pymcu.hal.gpio.Pin`) | ✅ Single-cycle IO (SIO); zero-cost; all 30 GPIOs |
+| UART0 (`pymcu.hal.uart.UART`) | ✅ PL011; compile-time baud divisors |
+| `delay_ms` / `delay_us` | ✅ Software loop (approximate timing) |
+| Single core (core 0) | ✅ |
+| Dual-core / SIO FIFO | ⏳ Planned |
+| PIO, SPI, I2C, PWM, ADC, USB | ⏳ Planned |
+| GC (`list[T]`), exceptions, soft-float | ⏳ Not yet on this backend |
+
+## Planned
+
 | Feature | Notes |
 |---|---|
-| **RP2040 backend** | Next architecture target — ARM Cortex-M0+ codegen, PIO support |
+| RP2040 peripherals | SPI / I2C / PWM / ADC / PIO / USB; dual-core launch |
 | `fixed16` (Q8.8 fixed-point) | Fixed-point arithmetic without soft-float overhead; `Q8.8` format |
 | MicroPython/CircuitPython API alignment | Broaden compat module coverage; close remaining API gaps |
 | PIC18 codegen | Extend backend for PIC18Fxxxx family |
 | RISC-V 32-bit codegen | CH32V003, ESP32-C3 targets |
 | RP2040 PIO backend | Programmable I/O state machine output |
 | Over-the-air (OTA) support | Bootloader + `pymcu flash` over UART |
-| LLVM IR backend | Unlocks all LLVM targets (ARM Cortex-M, etc.) |
-| ARM Cortex-M0/M4 codegen | STM32, nRF52; via LLVM or direct codegen |
+| ARM Cortex-M3/M4 codegen | STM32, nRF52 — reuses the LLVM backend |
 
 ---
 
