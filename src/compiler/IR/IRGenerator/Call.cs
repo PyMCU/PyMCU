@@ -315,6 +315,16 @@ public partial class IRGenerator
                         if (variableAliases.TryGetValue(key, out string ak)) key = ak;
                         else break;
                     }
+
+                    // SRAM arrays (variable-indexed) are passed as buffer pointers — use
+                    // "bytearray" so overloads that accept bytearray parameters are selected.
+                    // Try all three qualified forms since the set may use different prefixes.
+                    string qKey = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name;
+                    if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
+                        arraysWithVariableIndex.Contains(v.Name) ||
+                        moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
+                        bytearrayParams.Contains(key) || bytearrayParams.Contains(qKey))
+                        return "bytearray";
                 }
 
                 return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));
@@ -380,6 +390,19 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(currentFunction) &&
                     arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
                 if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+
+                // Follow variableAliases to resolve through @inline parameter bindings
+                // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
+                string lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + vLen.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
+                string lenResolved = lenKey;
+                for (int depth = 0; depth < 20; depth++)
+                {
+                    if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
+                    lenResolved = lenNext;
+                    if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
+                }
             }
 
             Val argVal = VisitExpression(expr.Args[0]);
