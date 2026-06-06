@@ -363,8 +363,11 @@ def on_tick():
     ticks += 1
 
 def main():
-    # MicroPython style: period in ms, callback registered in one call
-    t = Timer(1, period=100, callback=on_tick)   # fires every 100 ms
+    # MicroPython style: configure by frequency
+    t = Timer(1, freq=10, callback=on_tick)       # 10 Hz == 100 ms
+
+    # Alternative: configure by period in ms
+    t = Timer(1, period=100, callback=on_tick)    # fires every 100 ms
 
     # Low-level style (still works):
     # t = Timer(1, prescaler=64)
@@ -375,9 +378,19 @@ def main():
         pass
 ```
 
-`Timer(id, period=ms, callback=fn)` auto-selects a prescaler and OCR value for the
-requested period and registers the callback in one step — identical to the MicroPython
-API. Under the hood, `Timer.init(period=ms)` maps to:
+`Timer(id, freq=Hz)` and `Timer(id, period=ms)` both auto-select a prescaler and OCR
+value and register the callback in one step — identical to the MicroPython API.
+
+`Timer.init(freq=Hz)` prescaler selection for AVR @ 16 MHz (Timer1, 16-bit):
+
+| `freq` (Hz) | Prescaler | OCR formula |
+|---|---|---|
+| ≥ 245 | 1 | `16 000 000 / freq − 1` |
+| ≥ 31 | 8 | `2 000 000 / freq − 1` |
+| ≥ 4 | 64 | `250 000 / freq − 1` (exact) |
+| ≥ 1 | 1024 | `15 625 / freq − 1` |
+
+`Timer.init(period=ms)` prescaler selection:
 
 | `period` (ms) | Prescaler | OCR formula |
 |---|---|---|
@@ -926,6 +939,7 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only |
 | `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
+| `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
 | `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
 | `Pin("PB5", mode)` | String pin name | ✅ Supported — bypasses Arduino integer mapping |
 | Lambda expressions | Supported | ❌ Not available — use named functions |
