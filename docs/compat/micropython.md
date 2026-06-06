@@ -10,25 +10,39 @@ compile-time shim that expands directly to HAL instructions. The MCU receives on
 resulting machine code — typically a few hundred bytes of flash, 0 bytes SRAM overhead.
 :::
 
-PyMCU targets the **ATmega328P** (Arduino Uno / Nano / Pro Mini). The pin numbering in
-`machine.Pin` follows the Arduino integer convention (D0–D13, A0–A5). Port strings such as
-`"PB5"` are also accepted directly.
+The layer ships board definitions for **`arduino_uno`**, **`arduino_nano`**,
+**`arduino_micro`**, **`arduino_mega`**, **`digispark`**, and the ATtiny family
+(`attiny13`/`13a`, `attiny24`/`44`/`84`, `attiny25`/`45`/`85`, `attiny2313`/`4313`).
+Select one with `board = "…"` in `[tool.pymcu]`. The examples below target the
+**ATmega328P** (Arduino Uno / Nano). The pin numbering in `machine.Pin` follows the
+Arduino integer convention (D0–D13, A0–A5); port strings such as `"PB5"` are also
+accepted directly.
 
 ---
 
 ## Quick start
 
 ```bash
-pip install pymcu pymcu-micropython
+pip install pymcu-compiler pymcu-micropython
 ```
+
+:::{note}
+The compiler/CLI is currently published as **`pymcu-compiler`** on PyPI (the
+`pymcu` command comes from it). A [PEP 541][pep541] request for the shorter
+`pymcu` name is in progress — the original owner has agreed to transfer it —
+so a future release may install simply as `pip install pymcu`.
+
+[pep541]: https://peps.python.org/pep-0541/
+:::
 
 ```toml
 # pyproject.toml
 [tool.pymcu]
-stdlib  = ["micropython"]
-board   = "arduino_uno"
-chip    = "atmega328p"
-f_cpu   = 16000000
+stdlib    = ["micropython"]
+board     = "arduino_uno"     # implies the chip (atmega328p) and pin map
+frequency = 16000000
+sources   = "src"
+entry     = "main.py"
 ```
 
 ```python
@@ -56,24 +70,26 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | Module | API surface | Status |
 |---|---|---|
 | `machine.Pin` | `__init__`, `high/low/on/off/toggle`, `value`, `irq`, `mode`, `init`, `__call__` | ✅ Complete |
-| `machine.UART` | `write`, `read`, `write_str`, `println`, `print_byte`, `any`, `init` | ✅ Complete |
+| `machine.UART` | `write`, `read`, `write_str`, `println`, `print_byte` | ✅ Complete |
 | `machine.ADC` | `read` (10-bit), `read_u16` (16-bit scaled) | ✅ Complete |
 | `machine.PWM` | `freq`, `duty_u16`, `duty`, `init`, `deinit` | ✅ Complete |
-| `machine.SPI` | `write`, `read`, `write_readinto` | ✅ Complete |
+| `machine.SPI` | `write`, `read`, `write_readinto`, `init`, `deinit` | ✅ Complete |
 | `machine.I2C` | `scan`, `writeto`, `readfrom` | ✅ Complete |
 | `machine.Timer` | `__init__`, `init`, `deinit`, `start`, `irq` | ✅ Complete |
 | `machine.WDT` | `__init__`, `feed` | ✅ Complete |
 | `machine.Signal` | `on`, `off`, `value` | ✅ Complete |
 | `machine.mem8` / `machine.mem16` | `[]` get/set | ✅ Complete |
 | `machine.freq()` | Returns CPU Hz | ✅ Complete |
+| `machine.reset()` | Software reset (via watchdog) | ✅ Complete |
 | `machine.idle/lightsleep/deepsleep` | Sleep modes | ✅ Complete |
 | `machine.disable_irq/enable_irq` | IRQ control | ✅ Complete |
 | `machine.time_pulse_us` | Pulse measurement | ✅ Complete |
-| `utime` | `sleep_ms`, `sleep_us`, `sleep`, `ticks_ms`, `ticks_diff` | ✅ Complete |
+| `utime` | `sleep_ms`, `sleep_us`, `sleep`, `ticks_ms`, `ticks_us`, `ticks_cpu`, `ticks_diff` | ✅ Complete |
 | `micropython` | `const`, `native` (stub), `viper` (stub) | ✅ Complete |
 | `avr.EEPROM` | `read`, `write` | ✅ Complete |
 | `avr.SoftSPI` | `transfer`, `write`, `select`, `deselect` | ✅ Complete |
 | `avr.SoftI2C` | `scan`, `writeto`, `readfrom`, `ping` | ✅ Complete |
+| `lm35.LM35` | `read` (raw ADC), `temperature` | ✅ Complete |
 | `print()` | UART output — auto-injects UART init | ✅ Complete |
 | `input()` | UART input — reads line from UART | ✅ Complete |
 | `machine.RTC` | Real-time clock | ✗ Not planned |
@@ -170,39 +186,35 @@ btn.irq(Pin.IRQ_FALLING, on_press)                    # positional (HAL order)
 **Constructor:**
 
 ```python
-UART(id, baudrate=9600, *, bits=8, parity=None, stop=1)
+UART(id=0, baudrate=9600)
 ```
 
-The ATmega328P has one hardware UART (USART0). `id=0` is the only valid value.
-The `baudrate` is resolved at compile time against `f_cpu` in `pyproject.toml`;
-only standard baud rates (9600, 19200, 38400, 57600, 115200) are guaranteed
-to produce exact UBRR values with less than 0.5% error.
+The ATmega328P has one hardware UART (USART0). `id` is accepted for API
+compatibility but ignored — `0` is the only meaningful value. The `baudrate` is
+resolved at compile time against `frequency` in `pyproject.toml`; only standard
+baud rates (9600, 19200, 38400, 57600, 115200) are guaranteed to produce exact
+UBRR values with less than 0.5% error.
 
 ```python
 from machine import UART
 from pymcu.types import uint8
 
-uart = UART(0, 9600)           # id=0 → USART0; baud rate set at compile time
+uart = UART(0, 9600)           # id ignored → USART0; baud rate set at compile time
 uart.write(65)                 # send single byte  (ASCII 'A')
 uart.write_str("hello\n")      # send string literal from PROGMEM
 uart.println("ready")          # write_str + newline
 
-b: uint8 = uart.read()         # blocking read — waits for RXC flag
+b: uint8 = uart.read()         # blocking read — spins until RXC flag is set
 uart.print_byte(42)            # sends "42\n" as decimal ASCII digits
-
-if uart.any():
-    b = uart.read()            # non-blocking: check RXC flag first
 ```
 
 | Method | Signature | Description |
 |---|---|---|
 | `write(byte)` | `(byte: uint8)` | Send a single byte |
 | `write_str(s)` | `(s: str)` | Send a compile-time string constant from PROGMEM |
-| `println(s)` | `(s: str)` | `write_str(s)` + `\r\n` |
+| `println(s)` | `(s: str)` | `write_str(s)` + newline |
 | `read()` | `() -> uint8` | Blocking read — spins until RXC flag is set |
 | `print_byte(n)` | `(n: uint8)` | Print uint8 as decimal ASCII digits + newline |
-| `any()` | `() -> uint8` | Returns 1 if a byte is waiting in the receive buffer |
-| `init(baudrate)` | `(baudrate: uint32)` | Re-initialise UART with a new baud rate |
 
 :::{note}
 `print()` — the Python built-in — is the simplest way to write to the UART from
@@ -264,42 +276,38 @@ or D11 (Timer2) via the HAL directly.
 **Constructor:**
 
 ```python
-SPI(id=0, baudrate=4000000, *, polarity=0, phase=0, bits=8, firstbit=SPI.MSB)
+SPI()
 ```
 
-Hardware SPI on the ATmega328P uses fixed pins: D13 (SCK), D11 (MOSI), D12 (MISO).
-The chip-select pin must be managed manually — this matches standard MicroPython behaviour.
+Hardware SPI on the ATmega328P uses fixed pins: D13 (SCK), D11 (MOSI), D12 (MISO),
+configured as controller (master) inside the constructor. The chip-select pin must
+be managed manually with a `Pin` — this matches standard MicroPython behaviour.
 
 ```python
 from machine import SPI, Pin
 from pymcu.types import uint8
 
-spi = SPI(0, baudrate=1000000)    # 1 MHz; prescaler auto-selected
+spi = SPI()                       # hardware SPI, controller mode
 cs  = Pin(10, Pin.OUT)
 
 cs.low()
 spi.write(0x9F)                   # send command byte (discard MISO)
 device_id: uint8 = spi.read(0xFF) # send 0xFF dummy, return MISO byte
 cs.high()
-
-# context manager (resets CS on exit)
-with spi:
-    spi.write(0x06)               # WREN command
 ```
-
-| Constant | Value | Description |
-|---|---|---|
-| `SPI.MSB` | 0 | Send MSB first (default) |
-| `SPI.LSB` | 1 | Send LSB first |
 
 | Method | Signature | Description |
 |---|---|---|
 | `write(byte)` | `(byte: uint8)` | Send one byte, discard MISO |
-| `read(write_byte)` | `(write_byte: uint8) -> uint8` | Send `write_byte`, return MISO |
-| `write_readinto(out, in_val)` | `(out: uint8, in_val: uint8) -> uint8` | Full-duplex byte |
-| `init(baudrate)` | `(baudrate: uint32)` | Re-initialise with new baud rate |
+| `read(write_byte=0xFF)` | `(write_byte: uint8) -> uint8` | Send `write_byte`, return MISO |
+| `write_readinto(out, in_val)` | `(out: uint8, in_val: uint8) -> uint8` | Full-duplex byte exchange |
+| `init()` / `deinit()` | `()` | No-ops (SPI is set up in the constructor) |
 
-For bit-bang SPI with arbitrary GPIO pins, use `avr.SoftSPI` (see below).
+:::{note}
+The constructor takes no arguments — the SPI clock divider, polarity, and bit order
+use the HAL defaults (controller mode, MSB-first, f_osc/4). For a configurable clock
+or arbitrary pins, use `avr.SoftSPI` (see below).
+:::
 
 ---
 
@@ -308,33 +316,29 @@ For bit-bang SPI with arbitrary GPIO pins, use `avr.SoftSPI` (see below).
 **Constructor:**
 
 ```python
-I2C(id=0, *, freq=400000)
+I2C(scl=None, sda=None, freq=100000)
 ```
 
-Hardware I2C (TWI) uses fixed pins: A4 (SDA = PC4) and A5 (SCL = PC5).
-Requires 4.7 kΩ external pull-up resistors on both lines.
+Hardware I2C (TWI) uses fixed pins: A4 (SDA = PC4) and A5 (SCL = PC5). The `scl`
+and `sda` arguments are accepted for MicroPython API compatibility but ignored —
+the hardware pins are fixed on the ATmega328P. Requires 4.7 kΩ external pull-up
+resistors on both lines.
 
 ```python
 from machine import I2C
 from pymcu.types import uint8
 
-i2c = I2C(0, freq=100000)          # 100 kHz standard mode
+i2c = I2C(freq=100000)             # 100 kHz standard mode (scl/sda are fixed)
 count: uint8 = i2c.scan()          # count of responding devices (not a list — no heap)
 i2c.writeto(0x3C, 0x00)            # write command byte to SSD1306
 val: uint8 = i2c.readfrom(0x3C)    # read one byte
-
-# context manager
-with i2c:
-    i2c.writeto(0x48, 0x00)        # ADS1115 — pointer register
-    raw: uint8 = i2c.readfrom(0x48)
 ```
 
 | Method | Signature | Description |
 |---|---|---|
 | `scan()` | `() -> uint8` | Count of responding devices (not a list) |
-| `writeto(addr, data)` | `(addr: uint8, data: uint8) -> uint8` | Write one byte to address |
+| `writeto(addr, data)` | `(addr: uint8, data: uint8)` | Write one byte to address |
 | `readfrom(addr)` | `(addr: uint8) -> uint8` | Read one byte from address |
-| `init(freq)` | `(freq: uint32)` | Re-initialise with new clock frequency |
 
 :::{note}
 `scan()` returns a device *count* rather than a list of addresses — the MCU has no heap
@@ -406,10 +410,11 @@ general-purpose periodic interrupts.
 **Constructor:**
 
 ```python
-WDT(id=0, timeout=2000)
+WDT(id=0, timeout=5000)
 ```
 
-Configures the ATmega328P hardware watchdog. The MCU resets if `feed()` is not called
+The `id` argument is accepted for API compatibility and ignored (single watchdog
+on AVR). Configures the ATmega328P hardware watchdog. The MCU resets if `feed()` is not called
 within the configured window. Useful as a fault-recovery safety net.
 
 ```python
@@ -499,7 +504,7 @@ compile time. `mem8` / `mem16` exist purely for MicroPython source compatibility
 ### `machine` — IRQ and sleep
 
 ```python
-from machine import disable_irq, enable_irq, idle, lightsleep, deepsleep
+from machine import disable_irq, enable_irq, idle, lightsleep, deepsleep, reset
 
 # Atomic / critical section
 state = disable_irq()   # CLI instruction — disables global interrupts
@@ -510,6 +515,9 @@ enable_irq(state)       # SEI instruction — restores interrupts
 idle()           # Idle: CPU halted, all peripherals running (~70% power reduction)
 lightsleep()     # Power-save: async timer kept alive; I/O and Timer2 active
 deepsleep()      # Power-down: only INT0/INT1 or WDT can wake (~99% reduction)
+
+# Software reset (triggers a watchdog reset to restart the MCU)
+reset()
 ```
 
 ---
@@ -543,14 +551,14 @@ from pymcu.types import uint32
 clk: uint32 = freq()    # returns 16000000 for a 16 MHz Arduino Uno
 ```
 
-The value is a compile-time constant derived from `f_cpu` in `pyproject.toml`.
+The value is a compile-time constant derived from `frequency` in `pyproject.toml`.
 
 ---
 
 ### `utime`
 
 ```python
-from utime import sleep_ms, sleep_us, sleep, ticks_ms, ticks_diff
+from utime import sleep_ms, sleep_us, sleep, ticks_ms, ticks_us, ticks_cpu, ticks_diff
 from pymcu.types import uint32
 
 sleep_ms(500)       # busy-wait 500 ms  (uses _delay_ms loop)
@@ -560,6 +568,9 @@ sleep(1)            # 1 second (integer only — no float on AVR)
 t0: uint32 = ticks_ms()
 sleep_ms(200)
 elapsed: uint32 = ticks_diff(ticks_ms(), t0)   # elapsed ≈ 200
+
+us: uint32 = ticks_us()         # microseconds (4 µs resolution at 16 MHz)
+cpu: uint32 = ticks_cpu()       # alias for ticks_us() on AVR
 ```
 
 :::{note}
@@ -578,7 +589,9 @@ resolution at 16 MHz). Do not use Timer0 for PWM or CTC in the same project when
 | `sleep_ms(n)` | Busy-wait via `_delay_ms` loop |
 | `sleep_us(n)` | Busy-wait via `_delay_us` loop |
 | `sleep(n)` | Integer seconds (`delay_ms(n * 1000)`) |
-| `ticks_ms()` | Milliseconds since boot — Timer0 counter |
+| `ticks_ms()` | Milliseconds since boot — Timer0 counter (`millis()`) |
+| `ticks_us()` | Microseconds since boot — `micros()`, ~4 µs resolution at 16 MHz |
+| `ticks_cpu()` | Alias for `ticks_us()` (no separate CPU timer on AVR) |
 | `ticks_diff(a, b)` | `a - b` with uint32 wrap-around |
 
 ---
@@ -670,8 +683,9 @@ def main():
 ```
 
 **Auto-injection:** Like `print()`, the driver detects `input(` and injects
-`uart_init()` automatically. The UART baud rate is taken from `pyproject.toml`
-(`[tool.pymcu] baud = 9600`).
+the UART initialisation automatically. The output device and baud rate come from
+the optional `stdout` / `stdout_baud` keys in `[tool.pymcu]` (defaults: `uart0`
+at `115200` baud).
 
 **Under the hood:** `input("prompt")` lowers to:
 
@@ -681,8 +695,9 @@ def main():
 
 :::{note}
 `input()` is a **blocking call** — execution pauses until the user presses Enter.
-There is no timeout. If your application must remain responsive, poll `UART.any()`
-in your own loop and accumulate bytes manually with `machine.UART`.
+There is no timeout. If your application must remain responsive, read the
+receive-complete flag yourself (e.g. via `machine.mem8` on `UCSR0A`) and
+accumulate bytes one at a time with `machine.UART.read()`.
 :::
 
 :::{warning}
@@ -833,6 +848,37 @@ At 100 kHz this gives 5 µs half-period; at 400 kHz ("fast mode"), 1 µs.
 
 ---
 
+## `lm35` — temperature sensor driver
+
+A small bundled driver for the **LM35** analog temperature sensor, importable as
+`from lm35 import LM35` when `stdlib = ["micropython"]` is set. It wraps a
+`machine.ADC` instance and converts the raw count to degrees Celsius.
+
+```python
+from machine import ADC, Pin
+from lm35 import LM35
+from utime import sleep_ms
+
+def main():
+    sensor = LM35(ADC(Pin(14)))     # A0 = Pin(14) = PC0
+    while True:
+        print("T: ", sensor.temperature(), " C", sep="")
+        sleep_ms(1000)
+```
+
+| Method | Signature | Description |
+|---|---|---|
+| `read()` | `() -> uint16` | Raw ADC count (0–1023) |
+| `temperature()` | `() -> float` | Degrees Celsius (`raw × 0.4882813`, i.e. `raw × 5000 mV / 1024 / 10 mV/°C`) |
+
+:::{note}
+`temperature()` returns a `float`. Soft-float on AVR costs ~200–400 cycles per
+operation; if you only need integer precision, use `read()` and scale with
+integer math instead.
+:::
+
+---
+
 ## Porting guide
 
 ### Add type annotations to every variable
@@ -900,7 +946,7 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | RAM overhead | ~10–40 KB for the VM | ~0 bytes (static dispatch, no GC) |
 | `float` arithmetic | Full hardware/soft-float | Soft-float (~200–400 cycles per op) |
 | `f"..."` format strings | Runtime evaluation | Compile-time constants only |
-| `try / except` | Supported | ❌ Not available — use sentinel return values |
+| `try / except / raise` | Supported (heap-based) | ✅ Supported — zero-cost T-flag error ABI, no heap |
 | `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
 | `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
 | Lambda expressions | Supported | ❌ Not available — use named functions |

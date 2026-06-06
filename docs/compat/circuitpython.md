@@ -15,7 +15,7 @@ native machine code — zero interpreter overhead.
 ## Quick start
 
 ```bash
-pip install pymcu pymcu-circuitpython
+pip install pymcu-compiler pymcu-circuitpython
 ```
 
 ```toml
