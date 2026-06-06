@@ -409,16 +409,30 @@ public partial class IRGenerator
                     }
                 }
 
+                // Guard: when a live return path already set the result via a Variable or
+                // Temporary (runtime value), a subsequent dead-code `return constant` must NOT
+                // overwrite the alias — that would fold the runtime result to the sentinel
+                // constant (e.g. 255 for a uint8 default-arg guard) on every later use.
+                //
+                // Rule: Constant returns win only when they are FIRST (first-return-wins for
+                // constants). Variable/Temporary returns always update regardless of order —
+                // this preserves the `return -1; ... return result` pattern where a runtime
+                // return must clear a stale constant set by an earlier const return.
+                bool wasAlreadyAssigned = ctx.ResultAssigned;
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
 
                 if (val is Constant c)
                 {
-                    constantVariables[ctx.ResultTemp.Name] = c.Value;
-                    // If the constant is a string ID, also register it as a string constant
-                    // so downstream code can resolve it via ResolveStrConstant.
-                    if (stringIdToStr.TryGetValue(c.Value, out string? sv))
-                        strConstantVariables[ctx.ResultTemp.Name] = sv;
+                    if (!wasAlreadyAssigned)
+                    {
+                        // First return wins for constants — subsequent const dead-code paths skipped.
+                        constantVariables[ctx.ResultTemp.Name] = c.Value;
+                        // If the constant is a string ID, also register it as a string constant
+                        // so downstream code can resolve it via ResolveStrConstant.
+                        if (stringIdToStr.TryGetValue(c.Value, out string? sv))
+                            strConstantVariables[ctx.ResultTemp.Name] = sv;
+                    }
                 }
                 else if (val is Variable v)
                 {
