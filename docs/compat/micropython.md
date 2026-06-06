@@ -70,7 +70,7 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | Module | API surface | Status |
 |---|---|---|
 | `machine.Pin` | `__init__`, `high/low/on/off/toggle`, `value`, `irq`, `mode`, `init`, `__call__` | ✅ Complete |
-| `machine.UART` | `write`, `read`, `write_str`, `println`, `print_byte` | ✅ Complete |
+| `machine.UART` | `write(byte)`, `write(str)`, `read`, `any`, `write_str`, `println`, `print_byte` | ✅ Complete |
 | `machine.ADC` | `read` (10-bit), `read_u16` (16-bit scaled) | ✅ Complete |
 | `machine.PWM` | `freq`, `duty_u16`, `duty`, `init`, `deinit` | ✅ Complete |
 | `machine.SPI` | `write`, `read`, `write_readinto`, `init`, `deinit` | ✅ Complete |
@@ -84,7 +84,7 @@ Top-level statements are automatically wrapped in a `main()` entry point — no 
 | `machine.idle/lightsleep/deepsleep` | Sleep modes | ✅ Complete |
 | `machine.disable_irq/enable_irq` | IRQ control | ✅ Complete |
 | `machine.time_pulse_us` | Pulse measurement | ✅ Complete |
-| `utime` | `sleep_ms`, `sleep_us`, `sleep`, `ticks_ms`, `ticks_us`, `ticks_cpu`, `ticks_diff` | ✅ Complete |
+| `utime` | `sleep_ms`, `sleep_us`, `sleep`, `ticks_ms`, `ticks_us`, `ticks_cpu`, `ticks_diff`, `ticks_add` | ✅ Complete |
 | `micropython` | `const`, `native` (stub), `viper` (stub) | ✅ Complete |
 | `avr.EEPROM` | `read`, `write` | ✅ Complete |
 | `avr.SoftSPI` | `transfer`, `write`, `select`, `deselect` | ✅ Complete |
@@ -211,10 +211,12 @@ uart.print_byte(42)            # sends "42\n" as decimal ASCII digits
 | Method | Signature | Description |
 |---|---|---|
 | `write(byte)` | `(byte: uint8)` | Send a single byte |
-| `write_str(s)` | `(s: str)` | Send a compile-time string constant from PROGMEM |
-| `println(s)` | `(s: str)` | `write_str(s)` + newline |
+| `write(s)` | `(s: str)` | Send a compile-time string literal — `uart.write("OK\n")` |
 | `read()` | `() -> uint8` | Blocking read — spins until RXC flag is set |
-| `print_byte(n)` | `(n: uint8)` | Print uint8 as decimal ASCII digits + newline |
+| `any()` | `() -> uint8` | Returns `1` if at least one byte is waiting, `0` otherwise |
+| `write_str(s)` | `(s: str)` | PyMCU extension — prefer `write(str)` for portability |
+| `println(s)` | `(s: str)` | PyMCU extension — `write_str(s)` + newline |
+| `print_byte(n)` | `(n: uint8)` | PyMCU extension — decimal ASCII digits + newline |
 
 :::{note}
 `print()` — the Python built-in — is the simplest way to write to the UART from
@@ -558,7 +560,7 @@ The value is a compile-time constant derived from `frequency` in `pyproject.toml
 ### `utime`
 
 ```python
-from utime import sleep_ms, sleep_us, sleep, ticks_ms, ticks_us, ticks_cpu, ticks_diff
+from utime import sleep_ms, sleep_us, sleep, ticks_ms, ticks_us, ticks_cpu, ticks_diff, ticks_add
 from pymcu.types import uint32
 
 sleep_ms(500)       # busy-wait 500 ms  (uses _delay_ms loop)
@@ -568,6 +570,9 @@ sleep(1)            # 1 second (integer only — no float on AVR)
 t0: uint32 = ticks_ms()
 sleep_ms(200)
 elapsed: uint32 = ticks_diff(ticks_ms(), t0)   # elapsed ≈ 200
+
+# Deadline pattern (identical to real MicroPython):
+deadline: uint32 = ticks_add(ticks_ms(), 500)  # 500 ms from now
 
 us: uint32 = ticks_us()         # microseconds (4 µs resolution at 16 MHz)
 cpu: uint32 = ticks_cpu()       # alias for ticks_us() on AVR
@@ -593,6 +598,7 @@ resolution at 16 MHz). Do not use Timer0 for PWM or CTC in the same project when
 | `ticks_us()` | Microseconds since boot — `micros()`, ~4 µs resolution at 16 MHz |
 | `ticks_cpu()` | Alias for `ticks_us()` (no separate CPU timer on AVR) |
 | `ticks_diff(a, b)` | `a - b` with uint32 wrap-around |
+| `ticks_add(t, d)` | `t + d` with uint32 wrap-around — compute deadline from `ticks_ms()` |
 
 ---
 
@@ -948,7 +954,12 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `f"..."` format strings | Runtime evaluation | Compile-time constants only |
 | `try / except / raise` | Supported (heap-based) | ✅ Supported — zero-cost T-flag error ABI, no heap |
 | `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
+| `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
+| `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only |
 | `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
+| `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
+| `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
+| `Pin("PB5", mode)` | String pin name | ✅ Supported — bypasses Arduino integer mapping |
 | Lambda expressions | Supported | ❌ Not available — use named functions |
 | Target hardware | STM32, RP2040, ESP32, … | ATmega328P (Arduino Uno / Nano) |
 
