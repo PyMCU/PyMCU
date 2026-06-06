@@ -20,6 +20,24 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // Resolves the fixed-array size of `name` by following the variableAliases
+    // chain from the current inline prefix. This lets a `for x in param` loop
+    // find the array length when a (possibly uninitialised) runtime array is
+    // passed into an @inline function -- the size is registered under the
+    // caller's qualified name, not the parameter name.
+    private int ResolveAliasedArraySize(string name, out string baseKey)
+    {
+        baseKey = "";
+        string key = currentInlinePrefix + name;
+        for (int d = 0; d < 20; d++)
+        {
+            if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
+            else break;
+            if (arraySizes.TryGetValue(key, out int s)) { baseKey = key; return s; }
+        }
+        return -1;
+    }
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
@@ -48,6 +66,38 @@ public partial class IRGenerator
                 {
                     constantVariables[varKey] = (int)c;
                     VisitStatement(stmt.Body);
+                }
+
+                constantVariables.Remove(varKey);
+                return;
+            }
+
+            // A parameter bound to a bytes/list literal argument (e.g. the `buf` of
+            // uart.write(b"Hi")) iterates exactly like a direct list literal.
+            ListExpr? GetListParam(Expression e)
+            {
+                if (e is not VariableExpr varE) return null;
+                var key = currentInlinePrefix + varE.Name;
+                for (var depth = 0; depth < 20; depth++)
+                {
+                    if (key != null && listLiteralParams.TryGetValue(key, out var bound)) return bound;
+                    if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
+                    else break;
+                }
+
+                return null;
+            }
+
+            if (GetListParam(iter) is ListExpr boundList)
+            {
+                foreach (var elem in boundList.Elements)
+                {
+                    if (elem is IntegerLiteral il)
+                    {
+                        constantVariables[varKey] = il.Value;
+                        VisitStatement(stmt.Body);
+                    }
+                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
                 }
 
                 constantVariables.Remove(varKey);
@@ -228,6 +278,12 @@ public partial class IRGenerator
                         {
                             arrSize = s2;
                             @base = vE.Name;
+                        }
+
+                        if (arrSize < 0)
+                        {
+                            int s3a = ResolveAliasedArraySize(vE.Name, out var b3a);
+                            if (s3a > 0) { arrSize = s3a; @base = b3a; }
                         }
 
                         if (arrSize > 0)
@@ -492,6 +548,12 @@ public partial class IRGenerator
                             @base = v.Name;
                         }
 
+                        if (arrSize < 0)
+                        {
+                            int s3r = ResolveAliasedArraySize(v.Name, out var b3r);
+                            if (s3r > 0) { arrSize = s3r; @base = b3r; }
+                        }
+
                         if (arrSize > 0)
                         {
                             DataType elemDt = arrayElemTypes.TryGetValue(@base, out var edt) ? edt : DataType.UINT8;
@@ -597,6 +659,11 @@ public partial class IRGenerator
                 }
                 if (forSize < 0 && arraySizes.TryGetValue(forVarExpr2.Name, out int fs2))
                 { forSize = fs2; forBase = forVarExpr2.Name; }
+                if (forSize < 0)
+                {
+                    int fs3 = ResolveAliasedArraySize(forVarExpr2.Name, out var fb3);
+                    if (fs3 > 0) { forSize = fs3; forBase = fb3; }
+                }
 
                 if (forSize > 0)
                 {
