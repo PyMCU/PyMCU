@@ -16,6 +16,8 @@ elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.uart import UART
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.uart import UART
+elif __CHIP__.arch == "rp2040":
+    from pymcu.hal.rp2040.uart import UART
 else:
     raise CompileError("UART not supported on this architecture")
 
