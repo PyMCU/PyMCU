@@ -212,6 +212,8 @@ uart.print_byte(42)            # sends "42\n" as decimal ASCII digits
 | `write(byte)` | `(byte: uint8)` | Send a single byte |
 | `write(s)` | `(s: str)` | Send a compile-time string literal — `uart.write("OK\n")` |
 | `read()` | `() -> uint8` | Blocking read — spins until RXC flag is set |
+| `readline(buf, max_len)` | `(buf: bytearray, max_len: uint8) -> uint8` | Read until `\n` (or `max_len-1` bytes) into caller-provided buffer; returns byte count |
+| `readinto(buf, nbytes)` | `(buf: bytearray, nbytes: uint8) -> uint8` | Read exactly `nbytes` bytes into buffer; returns `nbytes` |
 | `any()` | `() -> uint8` | Returns `1` if at least one byte is waiting, `0` otherwise |
 | `write_str(s)` | `(s: str)` | PyMCU extension — prefer `write(str)` for portability |
 | `println(s)` | `(s: str)` | PyMCU extension — `write_str(s)` + newline |
@@ -936,7 +938,9 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `try / except / raise` | Supported (heap-based) | ✅ Supported — zero-cost T-flag error ABI, no heap |
 | `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
 | `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
-| `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only |
+| `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf, n)` for multi-byte |
+| `UART.readline()` | Returns `bytes` object | `readline(buf, max_len)` — caller provides buffer, returns count |
+| `UART.readinto(buf)` | Fills up to `len(buf)` | `readinto(buf, nbytes)` — explicit count required (no heap length query) |
 | `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
