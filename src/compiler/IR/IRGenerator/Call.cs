@@ -1087,6 +1087,37 @@ public partial class IRGenerator
             return new FunctionRef(fnName);
         }
 
+        if (callee == "_set_irq_zca_arg" && intrinsicNames.Contains("_set_irq_zca_arg"))
+        {
+            // _set_irq_zca_arg(handler, zca_instance): records the ZCA variable that
+            // should be bound to handler's first parameter when the ISR wrapper is synthesized.
+            if (expr.Args.Count == 2)
+            {
+                // Resolve handler name (same alias-chase as compile_isr arg0)
+                string hKey = "";
+                if (expr.Args[0] is VariableExpr v0)
+                {
+                    hKey = currentInlinePrefix + v0.Name;
+                    for (int d = 0; d < 20; d++)
+                        if (variableAliases.TryGetValue(hKey, out string? nk) && nk != null) hKey = nk; else break;
+                    int ld = hKey.LastIndexOf('.');
+                    if (ld >= 0) hKey = hKey[(ld + 1)..];
+                    hKey = ResolveCallee(hKey);
+                }
+                // Resolve ZCA instance to its root variable key (follow alias chain)
+                Val zcaVal = VisitExpression(expr.Args[1]);
+                string zcaKey = "";
+                if (zcaVal is Variable vz) zcaKey = vz.Name;
+                else if (zcaVal is Temporary tz) zcaKey = tz.Name;
+                for (int d = 0; d < 20; d++)
+                    if (variableAliases.TryGetValue(zcaKey, out string? nz) && nz != null) zcaKey = nz; else break;
+
+                if (!string.IsNullOrEmpty(hKey) && !string.IsNullOrEmpty(zcaKey))
+                    pendingZcaIsrBindings[hKey] = zcaKey;
+            }
+            return new NoneVal();
+        }
+
         if (callee == "compile_isr" && intrinsicNames.Contains("compile_isr"))
         {
             if (expr.Args.Count != 2)
@@ -1132,6 +1163,23 @@ public partial class IRGenerator
             }
 
             if (!handlerProvided) return new NoneVal();
+
+            // ZCA ISR synthesis: if a ZCA binding was registered via _set_irq_zca_arg,
+            // synthesize a parameterless wrapper that inline-expands handler with the
+            // ZCA constants bound. The wrapper is what gets registered at the vector.
+            if (pendingZcaIsrBindings.TryGetValue(handlerFuncName, out string? zcaRootKey) &&
+                !string.IsNullOrEmpty(zcaRootKey))
+            {
+                pendingZcaIsrBindings.Remove(handlerFuncName);
+                string synthName = SynthesizeZcaIsrWrapper(handlerFuncName, zcaRootKey);
+                if (!string.IsNullOrEmpty(synthName))
+                {
+                    pendingIsrRegistrations[synthName] = vector;
+                    return new NoneVal();
+                }
+                // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
+            }
+
             pendingIsrRegistrations[handlerFuncName] = vector;
             return new NoneVal();
         }
@@ -1847,5 +1895,89 @@ public partial class IRGenerator
                 return false;
         }
         return true;
+    }
+
+    // Synthesizes a parameterless ISR wrapper that inline-expands handlerFuncName
+    // with the ZCA variable zcaRootKey bound to the handler's first parameter.
+    // The synthesized Function is added to pendingZcaSynthFunctions and its name returned.
+    private string SynthesizeZcaIsrWrapper(string handlerFuncName, string zcaRootKey)
+    {
+        if (!zcaHandlerAstNodes.TryGetValue(handlerFuncName, out var entry)) return "";
+
+        var funcDef = entry.Func;
+        if (funcDef.Params.Count == 0) return "";
+
+        // Build a collision-free synthesis name
+        string baseName = handlerFuncName.Replace('.', '_');
+        string zcaSuffix = zcaRootKey.Replace('.', '_');
+        string synthName = "_irq_synth_" + baseName + "_" + zcaSuffix;
+
+        // Save compilation state
+        var savedInstructions  = currentInstructions;
+        var savedFunction      = currentFunction;
+        var savedModulePrefix  = currentModulePrefix;
+        var savedInlinePrefix  = currentInlinePrefix;
+        int savedInlineDepth   = inlineDepth;
+        var savedLoopStack     = loopStack;
+        var savedInlineStack   = inlineStack;
+        int savedLastLine      = lastLine;
+        var savedFunctionGlobals = currentFunctionGlobals;
+
+        // Set up fresh compilation context for the wrapper
+        currentInstructions   = new List<Instruction>();
+        currentFunction       = synthName;
+        currentModulePrefix   = entry.Prefix;
+        currentInlinePrefix   = synthName + "_s_";
+        inlineDepth           = 0;
+        loopStack             = new List<LoopLabels>();
+        inlineStack           = new List<InlineContext>();
+        lastLine              = -1;
+        currentFunctionGlobals = new HashSet<string>();
+
+        // Bind handler's first parameter to the ZCA root variable
+        string paramName = currentInlinePrefix + funcDef.Params[0].Name;
+        variableAliases[paramName] = zcaRootKey;
+        if (instanceClasses.TryGetValue(zcaRootKey, out string? cls) && cls != null)
+            instanceClasses[paramName] = cls;
+
+        // Propagate ZCA sub-fields (constantVariables, strConstantVariables, instanceClasses)
+        string zcaFieldPfx = zcaRootKey + ".";
+        foreach (var kv in constantVariables
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            constantVariables[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+        foreach (var kv in strConstantVariables
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            strConstantVariables[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+        foreach (var kv in instanceClasses
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            instanceClasses[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+
+        // Compile the handler body with ZCA constants in scope
+        VisitBlock(funcDef.Body);
+        if (currentInstructions.Count == 0 || currentInstructions[^1] is not Return)
+            Emit(new Return(new NoneVal()));
+
+        // Build the IR function object
+        var wrapperFunc = new Function
+        {
+            Name         = synthName,
+            OriginalName = funcDef.Name,
+            ReturnType   = DataType.VOID,
+            Body         = new List<Instruction>(currentInstructions),
+        };
+        pendingZcaSynthFunctions.Add(wrapperFunc);
+
+        // Restore compilation state
+        currentInstructions    = savedInstructions;
+        currentFunction        = savedFunction;
+        currentModulePrefix    = savedModulePrefix;
+        currentInlinePrefix    = savedInlinePrefix;
+        inlineDepth            = savedInlineDepth;
+        loopStack              = savedLoopStack;
+        inlineStack            = savedInlineStack;
+        lastLine               = savedLastLine;
+        currentFunctionGlobals = savedFunctionGlobals;
+
+        return synthName;
     }
 }

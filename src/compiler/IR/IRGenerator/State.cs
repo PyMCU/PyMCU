@@ -117,6 +117,13 @@ public partial class IRGenerator
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
 
+    // ZCA ISR synthesis: handler name -> root ZCA variable key (set by _set_irq_zca_arg).
+    private Dictionary<string, string> pendingZcaIsrBindings = new();
+    // ZCA ISR synthesis: handler name -> (FunctionDef, module prefix) for on-demand wrapper.
+    private Dictionary<string, (FunctionDef Func, string Prefix)> zcaHandlerAstNodes = new();
+    // ZCA ISR synthesis: synthesized Function objects collected during VisitCall, added to irProgram in Generate().
+    private List<Function> pendingZcaSynthFunctions = new();
+
     // @extern("symbol") registrations: PyMCU function name -> C symbol name.
     private Dictionary<string, string?> externFunctionMap = new();
 

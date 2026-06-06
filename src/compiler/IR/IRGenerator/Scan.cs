@@ -339,8 +339,23 @@ public partial class IRGenerator
             }
             else
             {
-                functionsToCompile.Add(new FunctionEntry
-                    { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                // If the first parameter has an unknown (class) type, this is a ZCA-parameterized
+                // handler (e.g. def on_irq(pin: Pin)). Store for on-demand synthesis; do NOT
+                // add to functionsToCompile because the body references ZCA fields that are
+                // only known at the call site.
+                bool hasZcaFirstParam = func.Params.Count > 0 &&
+                    DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
+                    func.Params[0].Type != "bytearray" &&
+                    !func.Params[0].Type.StartsWith("ptr");
+                if (hasZcaFirstParam)
+                {
+                    zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");
+                }
+                else
+                {
+                    functionsToCompile.Add(new FunctionEntry
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                }
             }
         }
 

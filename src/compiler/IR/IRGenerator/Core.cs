@@ -209,6 +209,9 @@ public partial class IRGenerator
         functionsToCompile.Clear();
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
+        pendingZcaIsrBindings.Clear();
+        zcaHandlerAstNodes.Clear();
+        pendingZcaSynthFunctions.Clear();
         externFunctionMap.Clear();
         pendingFlashData.Clear();
 
@@ -254,6 +257,7 @@ public partial class IRGenerator
                 intrinsicNames.Add("interrupt");
                 intrinsicNames.Add("asm");
                 intrinsicNames.Add("compile_isr");
+                intrinsicNames.Add("_set_irq_zca_arg");
                 intrinsicNames.Add("funcref");
             }
 
@@ -288,6 +292,7 @@ public partial class IRGenerator
                     intrinsicNames.Add("interrupt");
                     intrinsicNames.Add("asm");
                     intrinsicNames.Add("compile_isr");
+                    intrinsicNames.Add("_set_irq_zca_arg");
                 }
 
                 foreach (var sym in imp.Symbols)
@@ -577,6 +582,10 @@ public partial class IRGenerator
                 mainFunc.Body.InsertRange(0, pendingFlashData);
             }
         }
+
+        foreach (var sf in pendingZcaSynthFunctions)
+            irProgram.Functions.Add(sf);
+        pendingZcaSynthFunctions.Clear();
 
         foreach (var kvp in pendingIsrRegistrations)
         {
