@@ -201,6 +201,8 @@ public class Parser
         bool isNaked = false;
         bool isExtern = false;
         string externSymbol = "";
+        bool isSoftFloat = false;
+        string compileMessage = "";
 
         while (Check(TokenType.At))
         {
@@ -281,6 +283,22 @@ public class Parser
             {
                 isNaked = true;
             }
+            else if (decorator.Value == "softfloat")
+            {
+                // The function relies on the software-float runtime; recorded so
+                // the IR generator can emit an informational diagnostic.
+                isSoftFloat = true;
+            }
+            else if (decorator.Value == "compile_message")
+            {
+                // @compile_message("..."): record the message. The IR generator
+                // aborts compilation with it if a call to this function is reached.
+                Consume(TokenType.LParen, "Expected '(' after @compile_message");
+                var msgTok = Consume(TokenType.String,
+                    "Expected a string message in @compile_message(" + (char)34 + "..." + (char)34 + ")");
+                compileMessage = msgTok.Value;
+                Consume(TokenType.RParen, "Expected ')' after @compile_message message");
+            }
             else
             {
                 Error("Unknown decorator: " + decorator.Value);
@@ -327,7 +345,9 @@ public class Parser
             PropertyName = propSetterOf,
             IsNaked = isNaked,
             IsExtern = isExtern,
-            ExternSymbol = externSymbol
+            ExternSymbol = externSymbol,
+            IsSoftFloat = isSoftFloat,
+            CompileMessage = compileMessage
         };
         return func;
     }
@@ -382,6 +402,22 @@ public class Parser
 
         do
         {
+            // Bare '*' is the PEP 3102 keyword-only separator (common in
+            // CircuitPython APIs, e.g. busio.UART(tx, rx, *, baudrate=9600)).
+            // PyMCU resolves arguments by name/position regardless, so we accept
+            // the marker and treat following parameters like any other. A
+            // '*args' varargs form is not supported.
+            if (Check(TokenType.Star))
+            {
+                Advance();
+                if (!Check(TokenType.Comma) && !Check(TokenType.RParen))
+                {
+                    Error("Variadic '*args' parameters are not supported; '*' is only valid as a keyword-only separator");
+                }
+                if (Check(TokenType.RParen)) break;
+                continue;
+            }
+
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
             if (Match(TokenType.Colon))
