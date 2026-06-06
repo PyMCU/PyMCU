@@ -528,6 +528,12 @@ public partial class IRGenerator
         var paramNames = new HashSet<string>(func.Params.Select(p => p.Name));
         var result = new HashSet<string>();
 
+        // bytearray-typed parameters always require SRAM — they are indexable buffers passed
+        // by pointer.  Marking them here avoids having to follow the full inline call chain to
+        // find a variable-index subscript.
+        foreach (var p in func.Params)
+            if (p.Type == "bytearray") result.Add(p.Name);
+
         void ScanIExpr(Expression? expr)
         {
             if (expr == null) return;
@@ -562,6 +568,27 @@ public partial class IRGenerator
                                     result.Add(argVe.Name);
                             }
                             argPos++;
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(nestedKey) && overloadedFunctions.Contains(nestedKey))
+                {
+                    // Overloaded direct call: union results from all variants.
+                    foreach (var kv in inlineFunctions)
+                    {
+                        if (!kv.Key.StartsWith(nestedKey + "___")) continue;
+                        var oVarIdx = GetInlineVarIndexedParams(kv.Value, visiting);
+                        if (oVarIdx.Count == 0) continue;
+                        int oArgPos = 0;
+                        foreach (var np in kv.Value.Params)
+                        {
+                            if (np.Name == "self") continue;
+                            if (oVarIdx.Contains(np.Name) && oArgPos < ic.Args.Count)
+                            {
+                                if (ic.Args[oArgPos] is VariableExpr argVe && paramNames.Contains(argVe.Name))
+                                    result.Add(argVe.Name);
+                            }
+                            oArgPos++;
                         }
                     }
                 }
@@ -717,25 +744,33 @@ public partial class IRGenerator
                 // Propagate variable-index array info from inline function parameters
                 // to the actual arguments at this call site.
                 FunctionDef? resolvedFunc = null;
+                string overloadedKey = "";   // non-empty when the call targets an overloaded inline
+
                 if (call.Callee is MemberAccessExpr memAcc && memAcc.Object is VariableExpr objVe)
                 {
                     // Method call: resolve object type via pre-collected localVarTypes.
                     string objKey = prefix + objVe.Name;
                     if (localVarTypes.TryGetValue(objKey, out string cls))
                     {
-                        inlineFunctions.TryGetValue(cls + "_" + memAcc.Member, out resolvedFunc);
+                        string methodKey = cls + "_" + memAcc.Member;
+                        if (!inlineFunctions.TryGetValue(methodKey, out resolvedFunc) &&
+                            overloadedFunctions.Contains(methodKey))
+                            overloadedKey = methodKey;
                     }
                 }
                 else if (call.Callee is VariableExpr callVe)
                 {
                     // Direct function call.
                     string resolvedCallee = ResolveCallee(callVe.Name);
-                    inlineFunctions.TryGetValue(resolvedCallee, out resolvedFunc);
+                    if (!inlineFunctions.TryGetValue(resolvedCallee, out resolvedFunc) &&
+                        overloadedFunctions.Contains(resolvedCallee))
+                        overloadedKey = resolvedCallee;
 
                     // For non-inline functions: if an argument is a local array passed to a
                     // bytearray parameter (UINT16 pointer type), mark it as needing SRAM storage
                     // so it is allocated contiguously and not constant-folded away.
-                    if (resolvedFunc == null && functionParamTypes.TryGetValue(resolvedCallee, out var calleeParamTypes))
+                    if (resolvedFunc == null && string.IsNullOrEmpty(overloadedKey) &&
+                        functionParamTypes.TryGetValue(resolvedCallee, out var calleeParamTypes))
                     {
                         for (int ai = 0; ai < call.Args.Count && ai < calleeParamTypes.Count; ai++)
                         {
@@ -749,6 +784,7 @@ public partial class IRGenerator
                     }
                 }
 
+                // Single non-overloaded inline function.
                 if (resolvedFunc != null)
                 {
                     var varIdxParams = GetInlineVarIndexedParams(resolvedFunc, new HashSet<FunctionDef>());
@@ -768,6 +804,38 @@ public partial class IRGenerator
                                 }
                             }
                             argPos++;
+                        }
+                    }
+                }
+
+                // Overloaded inline functions: union var-index info across ALL variants whose
+                // non-self parameter count matches the call argument count.  We cannot pick a
+                // single overload without full type inference, so we take the conservative
+                // (false-positive-safe) approach of marking an argument if ANY overload
+                // indicates that position needs SRAM.
+                if (!string.IsNullOrEmpty(overloadedKey))
+                {
+                    int argCount = call.Args.Count;
+                    foreach (var kv in inlineFunctions)
+                    {
+                        if (!kv.Key.StartsWith(overloadedKey + "___")) continue;
+                        if (kv.Value.Params.Count(p => p.Name != "self") != argCount) continue;
+                        var varIdxP = GetInlineVarIndexedParams(kv.Value, new HashSet<FunctionDef>());
+                        if (varIdxP.Count == 0) continue;
+                        int ap = 0;
+                        foreach (var param in kv.Value.Params)
+                        {
+                            if (param.Name == "self") continue;
+                            if (varIdxP.Contains(param.Name) && ap < call.Args.Count)
+                            {
+                                if (call.Args[ap] is VariableExpr argVe)
+                                {
+                                    string actualName = prefix + argVe.Name;
+                                    if (localArrays.Contains(actualName))
+                                        arraysWithVariableIndex.Add(actualName);
+                                }
+                            }
+                            ap++;
                         }
                     }
                 }
