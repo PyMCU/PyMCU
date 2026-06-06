@@ -1,19 +1,14 @@
 name: Publish pymcu-avr
 
 # Builds one platform-specific wheel per runner (dotnet AOT + Python package).
-# The hatch_build.py hook calls `dotnet publish` natively on each runner, so
+# The hatch_build.py hook calls `dotnet publish` natively on each runner so
 # no cross-compilation is needed.
-#
-# Dependency layout: the extension's .csproj files reference pymcu-backend-sdk
-# via relative paths that assume the full PyMCU monorepo structure. In CI we
-# reproduce that structure by checking out the main pymcu repo at ./pymcu and
-# placing this repo at ./pymcu/extensions/pymcu-avr.
-# Once pymcu-backend-sdk is published to NuGet/PyPI this checkout can be removed.
+# Lives in the main PyMCU repo until pymcu-avr is extracted to its own repo.
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'pymcu-avr/v*'
   workflow_dispatch:
 
 jobs:
@@ -45,18 +40,7 @@ jobs:
             wheel_tag: win_amd64
 
     steps:
-      # Checkout pymcu main repo so relative .csproj → pymcu-backend-sdk paths resolve.
-      - name: Checkout pymcu (SDK dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: begeistert/pymcu
-          path: pymcu
-
-      # Checkout this repo inside the expected extension path.
-      - name: Checkout pymcu-avr
-        uses: actions/checkout@v4
-        with:
-          path: pymcu/extensions/pymcu-avr
+      - uses: actions/checkout@v4
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -66,19 +50,19 @@ jobs:
       - uses: astral-sh/setup-uv@v6
 
       - name: Build wheel
-        working-directory: pymcu/extensions/pymcu-avr
+        working-directory: extensions/pymcu-avr
         env:
           WHEEL_PLATFORM_TAG: ${{ matrix.wheel_tag }}
         run: uv build --wheel
 
       - name: Report wheel size
         shell: bash
-        run: du -sh pymcu/extensions/pymcu-avr/dist/*.whl
+        run: du -sh extensions/pymcu-avr/dist/*.whl
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.name }}
-          path: pymcu/extensions/pymcu-avr/dist/*.whl
+          path: extensions/pymcu-avr/dist/*.whl
 
   # ---------------------------------------------------------------------------
   # Collect all wheels, build the source-only sdist, smoke test, checksums.
@@ -90,17 +74,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout pymcu (SDK dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: begeistert/pymcu
-          path: pymcu
-
-      - name: Checkout pymcu-avr
-        uses: actions/checkout@v4
-        with:
-          path: pymcu/extensions/pymcu-avr
-
+      - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
 
       - name: Download all wheels
@@ -111,7 +85,7 @@ jobs:
           merge-multiple: true
 
       - name: Build sdist (no binary)
-        working-directory: pymcu/extensions/pymcu-avr
+        working-directory: extensions/pymcu-avr
         env:
           PYMCU_SKIP_DOTNET_BUILD: "1"
         run: uv build --sdist
@@ -120,14 +94,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-sdist
-          path: pymcu/extensions/pymcu-avr/dist/*.tar.gz
+          path: extensions/pymcu-avr/dist/*.tar.gz
 
       - name: Smoke test (Linux x64 wheel)
         run: |
           WHEEL=$(ls dist/pymcu_avr-*-manylinux_2_28_x86_64.whl | head -1)
           uv run --with "$WHEEL" python -c "
           from pathlib import Path
-          import importlib, sys
+          import importlib
           mod = importlib.import_module('pymcu.backend.avr')
           print('pymcu.backend.avr imported OK')
           pkg_path = Path(mod.__file__).parent
@@ -154,15 +128,14 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Publish all wheels + sdist to PyPI via OIDC trusted publishing.
-  # pymcu-avr wheels are small (~5-20 MB each) and fit within PyPI's 100 MB limit.
-  # Fires ONLY on tag pushes (v*). workflow_dispatch never triggers this job.
+  # Fires ONLY on tag pushes (pymcu-avr/v*). workflow_dispatch never triggers.
   # ---------------------------------------------------------------------------
   publish-pypi:
     name: Publish to PyPI
     needs: collect-and-release
     runs-on: ubuntu-latest
     environment: release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pymcu-avr/v')
     permissions:
       id-token: write
     steps:
@@ -186,13 +159,13 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release and attach all wheels + SHA256SUMS as assets.
-  # Fires ONLY on tag pushes (v*). workflow_dispatch never triggers this job.
+  # Fires ONLY on tag pushes (pymcu-avr/v*). workflow_dispatch never triggers.
   # ---------------------------------------------------------------------------
   publish-github-release:
     name: Publish to GitHub Releases
     needs: collect-and-release
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pymcu-avr/v')
     permissions:
       contents: write
     steps:
@@ -221,7 +194,7 @@ jobs:
           else
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "pymcu-avr ${TAG}" \
+              --title "pymcu-avr ${TAG#pymcu-avr/}" \
               --generate-notes \
               dist/*.whl dist/SHA256SUMS
           fi
