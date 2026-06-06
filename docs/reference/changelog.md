@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1 — First Public Alpha
 
 ### Language
 
@@ -39,9 +39,7 @@
 
 ---
 
-## v0.1 — First Public Alpha
-
-### Language
+### Language (core)
 
 - `if / elif / else`, `while`, `for`, `match / case`, `def`, `class`, `return`, `pass`, `global`, `with`, `assert`, `raise`
 - `for i in range(n)`, `for x in array`, `for i, x in enumerate(iterable)`, `for x, y in zip(a, b)`
