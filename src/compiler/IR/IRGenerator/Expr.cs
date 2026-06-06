@@ -71,7 +71,7 @@ public partial class IRGenerator
         if (expr is FloatLiteral floatLit)
             return new FloatConstant(floatLit.Value);
 
-        throw new Exception("IR Generation: Unknown Expression type");
+        throw new Exception($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 
     private Val VisitLambdaExpr(LambdaExpr expr)

@@ -446,6 +446,14 @@ public partial class IRGenerator
                                         currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
                                 }
                             }
+                            else if (inner is ClassDef nestedClass)
+                            {
+                                // Nested class (class defined inside another class), e.g.
+                                // CircuitPython's alarm.time.TimeAlarm. Register its methods
+                                // under the nested prefix so it is ZCA-constructible like a
+                                // top-level class (VisitCall finds <prefix>___init__).
+                                ScanNestedClassMembers(nestedClass, classPrefix);
+                            }
                         }
                     }
 
@@ -515,6 +523,95 @@ public partial class IRGenerator
                 }
             }
         }
+    }
+
+    // Registers a nested class (a class defined in the body of another class) so it
+    // can be constructed with zero-cost ZCA inlining just like a top-level class.
+    // Mirrors the per-method registration done for top-level classes, prefixing
+    // symbols with the enclosing class path. Recurses for further nesting. Bases
+    // (inheritance) on nested classes are not handled here -- none use it today.
+    private void ScanNestedClassMembers(ClassDef nested, string outerPrefix)
+    {
+        if (nested.Bases.Contains("Enum") || nested.Bases.Contains("IntEnum")) return;
+        if (nested.Body is not Block block) return;
+
+        classNames.Add(nested.Name);
+        if (nested.IsValue) valueClasses.Add(nested.Name);
+
+        var oldPrefix = currentModulePrefix;
+        var classPrefix = outerPrefix + nested.Name + "_";
+        currentModulePrefix = classPrefix;
+
+        string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
+        if (!classDirectMethods.ContainsKey(classKey))
+            classDirectMethods[classKey] = new HashSet<string>();
+
+        foreach (var inner in block.Statements)
+        {
+            if (inner is FunctionDef func)
+            {
+                classDirectMethods[classKey].Add(func.Name);
+
+                string fullName = currentModulePrefix + func.Name;
+                functionReturnTypes[fullName] = func.ReturnType;
+                var @params = new List<string>();
+                var paramTypes = new List<DataType>();
+                foreach (var p in func.Params)
+                {
+                    @params.Add(p.Name);
+                    paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
+                }
+
+                functionParams[fullName] = @params;
+                functionParamTypes[fullName] = paramTypes;
+
+                if (func.IsPropertySetter)
+                {
+                    string setterKey = fullName + "___setter";
+                    inlineFunctions[setterKey] = func;
+                    propertySetters[classKey + "." + func.PropertyName] = setterKey;
+                }
+                else if (func.IsInline)
+                {
+                    if (!inlineFunctions.TryAdd(fullName, func))
+                    {
+                        if (!overloadedFunctions.Contains(fullName))
+                        {
+                            var existing = inlineFunctions[fullName];
+                            if (existing?.Params != null)
+                            {
+                                var existingSfx = BuildOverloadSuffix(existing.Params);
+                                inlineFunctions[fullName + "___" + existingSfx] = existing;
+                            }
+
+                            inlineFunctions.Remove(fullName);
+                            overloadedFunctions.Add(fullName);
+                        }
+
+                        string newSfx = BuildOverloadSuffix(func.Params);
+                        inlineFunctions[fullName + "___" + newSfx] = func;
+                    }
+                }
+                else
+                {
+                    functionsToCompile.Add(new FunctionEntry
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                    instanceMethodDefs[fullName] = func;
+                }
+
+                if (!func.IsPropertySetter)
+                {
+                    methodInstanceTypes[fullName] =
+                        currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+                }
+            }
+            else if (inner is ClassDef deeper)
+            {
+                ScanNestedClassMembers(deeper, classPrefix);
+            }
+        }
+
+        currentModulePrefix = oldPrefix;
     }
 
     // Returns the set of parameter names (excluding "self") that are accessed with a
