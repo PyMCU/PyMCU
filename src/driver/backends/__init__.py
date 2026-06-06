@@ -35,6 +35,7 @@ _CHIP_INSTALL_HINTS: dict[str, str] = {
     "pic": "pip install pymcu[pic]",
     "ch32v": "pip install pymcu[riscv]",
     "riscv": "pip install pymcu[riscv]",
+    "rp2040": "pip install pymcu[rp2040]",
 }
 
 

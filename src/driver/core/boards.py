@@ -37,6 +37,10 @@ BOARD_CHIPS: dict[str, str] = {
     # ATtiny bare chips -- 20-pin (PD0-PD6 + PB0-PB7)
     "attiny2313":  "attiny2313",
     "attiny4313":  "attiny4313",
+    # RP2040 (ARM Cortex-M0+) boards
+    "raspberry_pi_pico": "rp2040",
+    "pico":              "rp2040",
+    "rp2040":            "rp2040",
 }
 
 

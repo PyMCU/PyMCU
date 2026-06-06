@@ -53,6 +53,14 @@ public static class ArchFamilyResolver
             || s.StartsWith("ch32v"))
             return "riscv";
 
+        // ARM Cortex-M family.  RP2040 ships a dual Cortex-M0+; the "arm"
+        // family is the ABI/ISR-compatible unit for all Cortex-M targets.
+        // Note: this must precede the "pio" branch so the bare "rp2040" arch
+        // resolves to the CPU family rather than the PIO co-processor.
+        if (s == "arm" || s == "cortex-m" || s == "cortex-m0"
+            || s == "cortex-m0plus" || s == "cortex-m0+" || s == "rp2040")
+            return "arm";
+
         if (s == "pio" || s == "rp2040-pio")
             return "pio";
 
