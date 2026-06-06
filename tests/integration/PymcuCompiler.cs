@@ -13,6 +13,16 @@ public static class PymcuCompiler
 {
     private static readonly string RepoRoot = FindRepoRoot();
     private static readonly string PymcuExe = Path.Combine(RepoRoot, ".venv", "bin", "pymcu");
+
+    // Bound only the compile step. NUnit runs fixtures in parallel (= ProcessorCount
+    // threads); each cold fixture spawns pymcu -> pymcuc -> pymcuc-avr -> avra, so without
+    // a cap a high-core machine can launch dozens of toolchain processes at once and OOM.
+    // The simulation phase (the slow part of each test) stays fully parallel -- this gate
+    // is released as soon as the firmware is built. Builds are cached (Lazy below), so each
+    // fixture passes through here at most once. ProcessorCount scales with the host; the
+    // floor keeps tiny CI runners moving and the ceiling protects 16/32-core machines.
+    private static readonly SemaphoreSlim BuildGate = new(Math.Clamp(Environment.ProcessorCount, 2, 8));
+
     // Lazy<T> guarantees the factory runs at most once even if multiple threads
     // race on the same key -- ConcurrentDictionary.GetOrAdd(key, factory) can
     // invoke the factory more than once, so we wrap the result in Lazy.
@@ -55,7 +65,9 @@ public static class PymcuCompiler
 
     private static byte[] CompileBin(string projectDir, string name)
     {
-        RunPymcuBuild(projectDir, name);
+        BuildGate.Wait();
+        try { RunPymcuBuild(projectDir, name); }
+        finally { BuildGate.Release(); }
         var binFile = Path.Combine(projectDir, "dist", "firmware.bin");
         if (!File.Exists(binFile))
             throw new FileNotFoundException($"Firmware bin not found after build: {binFile}");
@@ -103,6 +115,13 @@ public static class PymcuCompiler
     // ── Internal ─────────────────────────────────────────────────────────────
 
     private static string Compile(string exampleDir, string name)
+    {
+        BuildGate.Wait();
+        try { return CompileImpl(exampleDir, name); }
+        finally { BuildGate.Release(); }
+    }
+
+    private static string CompileImpl(string exampleDir, string name)
     {
         Console.WriteLine($"[PymcuCompiler] RepoRoot    : {RepoRoot}");
         Console.WriteLine($"[PymcuCompiler] PymcuExe    : {PymcuExe} (exists={File.Exists(PymcuExe)})");
