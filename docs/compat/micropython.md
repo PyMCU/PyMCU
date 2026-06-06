@@ -941,7 +941,7 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `UART.read()` | Optional `nbytes` parameter | Single-byte blocking read only; use `readinto(buf, n)` for multi-byte |
 | `UART.readline()` | Returns `bytes` object | `readline(buf, max_len)` — caller provides buffer, returns count |
 | `UART.readinto(buf)` | Fills up to `len(buf)` | `readinto(buf, nbytes)` — explicit count required (no heap length query) |
-| `I2C.scan()` | Returns list of addresses | Returns count (no heap for address list) |
+| `I2C.scan()` | Returns list of addresses | `scan()` returns count only; `scan(buf, max_count)` fills caller-provided buffer and returns count |
 | `Timer.irq(handler)` | `handler(timer)` receives Timer | ✅ Supported — ZCA synthesis passes Timer instance |
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
 | `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
