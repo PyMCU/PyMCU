@@ -1,7 +1,0 @@
-[project]
-name = "overflow-behavior"
-version = "0.1.0"
-
-[tool.pymcu]
-target = "atmega328p"
-

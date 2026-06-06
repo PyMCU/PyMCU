@@ -1,6 +1,0 @@
-[tool.pymcu]
-target = "atmega328p"
-
-[tool.pymcu.build]
-entry = "src/main.py"
-output = "dist"

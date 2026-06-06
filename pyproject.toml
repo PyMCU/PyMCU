@@ -8,7 +8,7 @@ version = "0.1.0a1"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
-    { name = "Iván Montiel Cardona", email = "developer@begeistert.dev" }
+    { name = "Iván Montiel Cardona", email = "contact@pymcu.org" }
 ]
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -31,7 +31,6 @@ pymcu-stdlib = {path = "lib", editable = true}
 pymcu-toolchain-sdk = {path = "extensions/pymcu-toolchain-sdk", editable = true}
 pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
 pymcu-backend-sdk = {path = "extensions/pymcu-backend-sdk", editable = true}
-pymcu-avr = {path = "extensions/pymcu-avr", editable = true}
 pymcu-rp2040 = {path = "extensions/pymcu-rp2040", editable = true}
 
 [project.scripts]
@@ -61,6 +60,5 @@ pythonpath = [
     "extensions/pymcu-toolchain-sdk/src",
     "extensions/pymcu-toolchain-pic/src",
     "extensions/pymcu-backend-sdk/src",
-    "extensions/pymcu-avr/src/python",
 ]
 addopts = ["--import-mode=importlib"]
