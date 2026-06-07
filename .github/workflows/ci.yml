@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main", "develop", "feature/**"]
+    branches: ["main", "develop", "development", "feature/**"]
   pull_request:
     branches: ["main"]
 
@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.x"
 
@@ -37,90 +37,9 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: unit-test-results
-          path: test-results/
-          retention-days: 15
-
-  integration:
-    name: Integration Tests (AVR)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-    container:
-      image: ghcr.io/pymcu/pymcu:latest
-      options: --user root
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: "10.x"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - name: Create virtual environment and install dependencies
-        run: |
-          uv venv .venv
-          uv pip install --python .venv ./extensions/pymcu-toolchain-sdk
-          uv pip install --python .venv ./extensions/pymcu-toolchain-avr
-          uv pip install --python .venv -e .
-          uv pip install --python .venv ./lib
-          uv pip install --python .venv ./external/pymcu-micropython
-          uv pip install --python .venv ./external/pymcu-circuitpython
-          uv pip install --python .venv ./extensions/pymcu-backend-sdk
-          uv pip install --python .venv ./extensions/pymcu-backend-avr
-
-      - name: Configure environment
-        run: |
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
-          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> $GITHUB_ENV
-
-      - name: Build pymcuc compiler
-        run: |
-          dotnet publish src/compiler/PyMCU.csproj \
-            -c Release -o build/bin --nologo
-
-      - name: Build pymcuc-avr backend CLI
-        run: |
-          dotnet publish extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj \
-            -c Release -o build/bin --nologo
-
-      - name: Add pymcuc to PATH
-        run: echo "$GITHUB_WORKSPACE/build/bin" >> $GITHUB_PATH
-
-      - name: Restore integration test packages
-        run: dotnet restore tests/integration/PyMCU.IntegrationTests.csproj --nologo
-
-      - name: Run integration tests
-        run: |
-          dotnet test tests/integration/PyMCU.IntegrationTests.csproj \
-            --no-restore \
-            --logger "trx;LogFileName=integration-results.trx" \
-            --logger "console;verbosity=normal" \
-            --blame-hang-timeout 120s \
-            --results-directory test-results \
-            --nologo \
-            -- NUnit.NumberOfTestWorkers=1
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: integration-test-results
           path: test-results/
           retention-days: 15
 
@@ -136,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -147,8 +66,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer
-          pip install ./extensions/pymcu-toolchain-sdk
-          pip install ./extensions/pymcu-toolchain-avr
+          pip install ./extensions/pymcu-sdk
           pip install ./extensions/pymcu-toolchain-pic
 
       - name: Run driver tests

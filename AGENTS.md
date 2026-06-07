@@ -90,7 +90,7 @@ Violations of these rules cause compile errors in the PyMCU compiler itself:
 The integration test suite uses AVR8Sharp (cycle-accurate AVR simulator) and .NET:
 
 ```bash
-# Run all tests (must stay green — currently 269 passing)
+# Run all tests (must stay green — currently 691 passing)
 dotnet test tests/integration/PyMCU.IntegrationTests.csproj
 
 # After any stdlib change, rsync to the virtualenv first:

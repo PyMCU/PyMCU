@@ -1,6 +1,7 @@
 # tests/driver/test_toolchains.py
 #
 # Unit tests for toolchain classes.  No real binaries or network calls needed.
+# AVR-specific tests live in pymcu-avr/tests/toolchain/.
 
 import os
 import sys
@@ -14,10 +15,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from rich.console import Console
-from pymcu.toolchain.avr.avrgas import AvrgasToolchain, _TOOLCHAIN_VERSION
 from pymcu.toolchain.pic.gputils import GputilsToolchain
-from pymcu.toolchain.avr.avra import AvraToolchain
-from pymcu.toolchain.avr import AvrToolchainPlugin
 from pymcu.toolchain.pic import PicToolchainPlugin
 from src.driver.toolchains import get_toolchain_for_chip, discover_plugins
 from src.driver.core.base_tool import CacheableTool, _default_platform_key, _is_non_interactive
@@ -75,27 +73,6 @@ class TestIsNonInteractive:
 
 
 # ---------------------------------------------------------------------------
-# AvrgasToolchain.supports()
-# ---------------------------------------------------------------------------
-
-class TestAvrgasSupports:
-    @pytest.mark.parametrize("chip", [
-        "atmega328p", "atmega2560", "attiny85", "attiny13a", "atmega32u4",
-    ])
-    def test_avr_chips(self, chip):
-        assert AvrgasToolchain.supports(chip) is True
-
-    @pytest.mark.parametrize("chip", [
-        "pic16f84a", "pic18f4550", "ch32v003", "unknown123",
-    ])
-    def test_non_avr_chips(self, chip):
-        assert AvrgasToolchain.supports(chip) is False
-
-    def test_generic_avr_string(self):
-        assert AvrgasToolchain.supports("avr") is True
-
-
-# ---------------------------------------------------------------------------
 # GputilsToolchain.supports()
 # ---------------------------------------------------------------------------
 
@@ -119,22 +96,12 @@ class TestGputilsSupports:
 
 class TestGetToolchainForChip:
     def _entry_points(self):
-        return _make_entry_points({"avr": AvrToolchainPlugin, "pic": PicToolchainPlugin})
-
-    def test_avr_chip_returns_avrgas(self):
-        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
-            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
-        assert isinstance(tc, AvrgasToolchain)
+        return _make_entry_points({"pic": PicToolchainPlugin})
 
     def test_pic_chip_returns_gputils(self):
         with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
             tc = get_toolchain_for_chip("pic16f84a", Console(quiet=True))
         assert isinstance(tc, GputilsToolchain)
-
-    def test_avra_not_in_factory(self):
-        with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
-            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
-        assert not isinstance(tc, AvraToolchain)
 
     def test_unknown_chip_raises(self):
         with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
@@ -143,8 +110,8 @@ class TestGetToolchainForChip:
 
     def test_chip_stored_on_instance(self):
         with patch("src.driver.toolchains.entry_points", return_value=self._entry_points()):
-            tc = get_toolchain_for_chip("atmega328p", Console(quiet=True))
-        assert tc.chip == "atmega328p"
+            tc = get_toolchain_for_chip("pic16f84a", Console(quiet=True))
+        assert tc.chip == "pic16f84a"
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +119,11 @@ class TestGetToolchainForChip:
 # ---------------------------------------------------------------------------
 
 class TestDiscoverPlugins:
-    def test_returns_avr_and_pic(self):
-        eps = _make_entry_points({"avr": AvrToolchainPlugin, "pic": PicToolchainPlugin})
+    def test_returns_pic(self):
+        eps = _make_entry_points({"pic": PicToolchainPlugin})
         with patch("src.driver.toolchains.entry_points", return_value=eps):
             plugins = discover_plugins()
-        assert "avr" in plugins
         assert "pic" in plugins
-        assert plugins["avr"] is AvrToolchainPlugin
         assert plugins["pic"] is PicToolchainPlugin
 
     def test_returns_empty_when_no_plugins(self):
@@ -170,24 +135,11 @@ class TestDiscoverPlugins:
         bad_ep = MagicMock(spec=EntryPoint)
         bad_ep.name = "broken"
         bad_ep.load.side_effect = ImportError("module missing")
-        eps = [bad_ep] + _make_entry_points({"avr": AvrToolchainPlugin})
+        eps = [bad_ep] + _make_entry_points({"pic": PicToolchainPlugin})
         with patch("src.driver.toolchains.entry_points", return_value=eps):
             plugins = discover_plugins()
-        assert "avr" in plugins
+        assert "pic" in plugins
         assert "broken" not in plugins
-
-
-# ---------------------------------------------------------------------------
-# linux-aarch64 platform metadata
-# ---------------------------------------------------------------------------
-
-class TestAvrgasLinuxAarch64:
-    def test_aarch64_metadata_present(self):
-        assert "linux-arm64" in AvrgasToolchain.METADATA
-
-    def test_aarch64_url_contains_aarch64(self):
-        url = AvrgasToolchain.METADATA["linux-arm64"]["url"]
-        assert "aarch64" in url
 
 
 # ---------------------------------------------------------------------------
@@ -205,40 +157,6 @@ class TestToolsDirOverride:
         tc = GputilsToolchain(Console(quiet=True))
         assert ".pymcu" in str(tc.base_dir)
         assert "tools" in str(tc.base_dir)
-
-
-# ---------------------------------------------------------------------------
-# AvrgasToolchain.is_cached() — checks version file
-# ---------------------------------------------------------------------------
-
-class TestAvrgasIsCached:
-    def test_not_cached_when_no_binaries(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda name: None)
-        tc = AvrgasToolchain(Console(quiet=True), "atmega328p")
-        assert tc.is_cached() is False
-
-    def test_cached_when_on_system_path(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
-        tc = AvrgasToolchain(Console(quiet=True), "atmega328p")
-        assert tc.is_cached() is True
-
-    def test_not_cached_when_version_mismatch(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
-        monkeypatch.setattr(shutil, "which", lambda name: None)
-        tc = AvrgasToolchain(Console(quiet=True), "atmega328p")
-        # Create fake binaries but with a stale version
-        try:
-            info = tc._platform_info()
-            bin_dir = tc._get_tool_dir() / info["bin_dir"]
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            for b in ("avr-as", "avr-ld", "avr-objcopy"):
-                (bin_dir / b).write_text("")
-            tc._write_cached_version("0.0.0-stale")
-        except RuntimeError:
-            pytest.skip("Platform not supported in this test environment")
-        assert tc.is_cached() is False
 
 
 # ---------------------------------------------------------------------------
@@ -339,4 +257,3 @@ class TestVersionFile:
         monkeypatch.setenv("PYMCU_TOOLS_DIR", str(tmp_path))
         tc = GputilsToolchain(Console(quiet=True))
         assert tc._read_cached_version() == ""
-

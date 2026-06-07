@@ -1,9 +1,8 @@
 name: Publish Wheels
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
@@ -110,11 +109,37 @@ jobs:
           path: dist/*.whl
           retention-days: 15
 
-  # Runs only on a stable tag: vX.Y.Z (digits and dots only after the v).
+  # Merged Python SDK (backend + toolchain abstract base classes).
+  build-sdk:
+    name: Build pymcu-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build pymcu-sdk wheel + sdist
+        working-directory: extensions/pymcu-sdk
+        run: uv build
+
+      - name: Upload pymcu-sdk artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdk
+          path: extensions/pymcu-sdk/dist/*
+          retention-days: 15
+
+  # Runs on any release — stable (vX.Y.Z) or pre-release (e.g. v0.1.0a1).
+  # The public alpha ships on real PyPI so `pip install --pre pymcu-compiler[avr]`
+  # resolves the whole set; TestPyPI is reserved for manual dispatch smoke tests.
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-stdlib, build-wheels]
-    if: needs.check-tag.outputs.is_stable == 'true'
+    needs: [check-tag, build-stdlib, build-wheels, build-sdk]
+    if: needs.check-tag.outputs.is_stable == 'true' || needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -133,11 +158,13 @@ jobs:
       - name: Publish to PyPI
         run: uv publish dist/*
 
-  # Runs only on a pre-release tag (any v* tag that is not vX.Y.Z).
+  # Manual smoke-test channel: a workflow_dispatch run (no tag) publishes to
+  # TestPyPI. Pre-release tags now go to real PyPI via publish-pypi, so this no
+  # longer fires on tags.
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-stdlib, build-wheels]
-    if: needs.check-tag.outputs.is_prerelease == 'true'
+    needs: [check-tag, build-stdlib, build-wheels, build-sdk]
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prerelease
     permissions:
@@ -155,3 +182,42 @@ jobs:
 
       - name: Publish to TestPyPI
         run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
+
+  # Publishes all wheels to the private Gitea index on every tag push or
+  # manual workflow_dispatch. The Gitea instance is only reachable via the
+  # Headscale network — the Tailscale action connects the runner before publishing.
+  publish-gitea:
+    name: Publish to Gitea (private index)
+    needs:
+      - build-stdlib
+      - build-wheels
+      - build-sdk
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: gitea
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Connect to Headscale network
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.HEADSCALE_AUTH_KEY }}
+          args: --login-server ${{ secrets.HEADSCALE_URL }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Publish to Gitea
+        run: |
+          uv publish \
+            --publish-url "${{ secrets.PRIVATE_PYPI_URL }}" \
+            --username "${{ secrets.PRIVATE_PYPI_USERNAME }}" \
+            --password "${{ secrets.PRIVATE_PYPI_TOKEN }}" \
+            dist/*

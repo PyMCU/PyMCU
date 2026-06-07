@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\extensions\pymcu-backend-sdk\csharp\PyMCU.Backend.SDK.csproj" />
+    <ProjectReference Include="..\..\extensions\pymcu-sdk\csharp\PyMCU.Backend.SDK.csproj" />
   </ItemGroup>
 
   <!-- Exclude shared types that now live in PyMCU.Backend.SDK. -->
@@ -29,14 +29,6 @@
     <Compile Remove="Backend\CodeGen.cs" />
     <Compile Remove="Backend\Analysis\StackAllocator.cs" />
     <Compile Remove="Backend\Analysis\DynamicStackAllocator.cs" />
-  </ItemGroup>
-
-  <!-- Exclude AVR backend files that now live in PyMCU.Backend.AVR. -->
-  <ItemGroup>
-    <Compile Remove="Backend\Targets\AVR\AvrCodeGen.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrLinearScan.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrPeephole.cs" />
-    <Compile Remove="Backend\Targets\AVR\AvrRegisterAllocator.cs" />
   </ItemGroup>
 
   <!--

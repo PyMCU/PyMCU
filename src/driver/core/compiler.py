@@ -2,20 +2,8 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -28,6 +16,7 @@ import sys
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from rich.console import Console
 
@@ -157,7 +146,7 @@ class PyMCUCompiler:
             
         for key, val in configs.items():
             cmd.extend(["-C", f"{key}={val}"])
-        
+
         try:
             # stdout is captured so the driver can parse structured progress tokens:
             #   [PHASE_START] <name>
@@ -169,19 +158,34 @@ class PyMCUCompiler:
             #
             # stderr is left to pass through directly so VS Code's problem matcher
             # can parse diagnostic lines (file:line:col: severity: msg).
-            with subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                bufsize=1,
-            ) as proc:
-                if proc.stdout and on_output:
-                    for raw in proc.stdout:
-                        on_output(raw.rstrip("\n").rstrip("\r"))
-                elif proc.stdout:
-                    proc.stdout.read()  # drain to avoid blocking
-                proc.wait()
+            #
+            # returncode == -9 means the frontend was SIGKILL'd by the OS (jetsam under
+            # heavy parallel-build load) -- transient and never a real result, so retry a
+            # few times. Other signals (crashes) and positive exit codes fail on the first
+            # attempt. Output is buffered and only emitted for the attempt we keep.
+            SIGKILL_RETURNCODE = -9
+            max_signal_retries = 3
+            for attempt in range(max_signal_retries + 1):
+                buffered: list[str] = []
+                with subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=None,
+                    text=True,
+                    bufsize=1,
+                ) as proc:
+                    if proc.stdout:
+                        buffered = [raw.rstrip("\n").rstrip("\r") for raw in proc.stdout]
+                    proc.wait()
+
+                if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
+                    time.sleep(0.25 * (attempt + 1))
+                    continue
+                break
+
+            if on_output:
+                for line in buffered:
+                    on_output(line)
 
             if proc.returncode != 0:
                 raise RuntimeError("Compilation failed (see diagnostics above)")

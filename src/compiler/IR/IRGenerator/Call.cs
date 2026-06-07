@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -16,6 +16,7 @@
 
 using PyMCU.Common;
 using PyMCU.Frontend;
+using PyMCU.IR;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -128,9 +129,43 @@ public partial class IRGenerator
                 Val objVal = VisitExpression(memC.Object);
                 if (objVal is Variable vObj)
                 {
+                    // list[T] method dispatch
+                    if (listVarElemTypes.ContainsKey(vObj.Name))
+                    {
+                        switch (memC.Member)
+                        {
+                            case "append" when expr.Args.Count == 1:
+                                return EmitListAppend(vObj, expr.Args[0]);
+                            default:
+                                throw new Exception($"list.{memC.Member}(): method not supported");
+                        }
+                    }
+
                     if (instanceClasses.TryGetValue(vObj.Name, out string clsC))
                     {
-                        callee = clsC + "_" + memC.Member;
+                        // Walk MRO: find the class that actually defines the method so that
+                        // inherited non-inline methods (e.g. DHTBase._read_byte called on a
+                        // DHT11 instance) resolve to the correct label instead of the
+                        // non-existent <ConcreteClass>_<method> symbol.
+                        string definingClass = ResolveMROMethod(clsC!, memC.Member);
+                        callee = definingClass + "_" + memC.Member;
+
+                        // ZCA force-inline: if the resolved callee is a non-inline instance
+                        // method, add its AST to inlineFunctions on-demand so the standard
+                        // inline expansion runs.  ZCA field aliasing requires inline expansion;
+                        // without it, `self._field` accesses inside the method would reference
+                        // the wrong stack frame.
+                        if (!inlineFunctions.ContainsKey(callee)
+                            && instanceMethodDefs.TryGetValue(callee, out var implDef))
+                        {
+                            inlineFunctions[callee] = implDef;
+                        }
+
+                        // Phase 3 gate: emit VirtualCall only when static dispatch cannot be
+                        // proven safe.  In the current ZCA model instanceClasses always holds
+                        // the exact concrete type (Rule 2), so IsVirtualDispatch always returns
+                        // false and we always take the direct-call path above.
+                        // (IsVirtualDispatch kept here for future polymorphic-variable support.)
                     }
                     else
                     {
@@ -146,6 +181,30 @@ public partial class IRGenerator
                     throw new Exception("Complex member access in call not yet supported");
                 }
             }
+        }
+        else if (expr.Callee is IndexExpr idxCallee0 && idxCallee0.Target is VariableExpr idxArrVe0)
+        {
+            // Callable[N] array call: _tasks[i]() — load function address from SRAM, then ICALL.
+            string arrKey0 = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + idxArrVe0.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + idxArrVe0.Name : idxArrVe0.Name);
+            if (!arraySizes.ContainsKey(arrKey0) && arraySizes.ContainsKey(idxArrVe0.Name))
+                arrKey0 = idxArrVe0.Name;
+            if (arraySizes.TryGetValue(arrKey0, out int arrSz0)
+                && arrayElemTypes.TryGetValue(arrKey0, out DataType arrElemDt0)
+                && arrElemDt0 == DataType.FUNCREF)
+            {
+                Val idxVal0 = VisitExpression(idxCallee0.Index);
+                Temporary tmpFn0 = MakeTemp(DataType.FUNCREF);
+                Emit(new ArrayLoad(arrKey0, idxVal0, tmpFn0, DataType.FUNCREF, arrSz0));
+                var indArgs0 = new List<Val>();
+                foreach (var a in expr.Args)
+                    indArgs0.Add(VisitExpression(a));
+                Val indDst0 = new NoneVal();
+                Emit(new IndirectCall(tmpFn0, indArgs0, indDst0));
+                return indDst0;
+            }
+            throw new Exception($"Callable array '{idxArrVe0.Name}' not found or element type is not Callable");
         }
         else
         {
@@ -198,6 +257,32 @@ public partial class IRGenerator
             }
         }
 
+        // Indirect call via FUNCREF-typed variable (function pointer via funcref() intrinsic).
+        // After the lambda check so lambdas take priority; before all intrinsics/inline expansion.
+        if (expr.Callee is VariableExpr fvExpr)
+        {
+            // Build qualified key matching Assign.cs (currentFunction + "." + name when not inline)
+            string fvKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + fvExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fvExpr.Name : fvExpr.Name);
+            for (int d = 0; d < 20; ++d)
+                if (variableAliases.TryGetValue(fvKey, out string nx)) fvKey = nx;
+                else break;
+            if (variableTypes.TryGetValue(fvKey, out DataType fvType) && fvType == DataType.FUNCREF)
+            {
+                var indArgs = new List<Val>();
+                foreach (var a in expr.Args)
+                    indArgs.Add(VisitExpression(a));
+                Temporary indDst = MakeTemp();
+                Emit(new IndirectCall(new Variable(fvKey, DataType.FUNCREF), indArgs, indDst));
+                return indDst;
+            }
+        }
+
+        // Indirect call via Callable[N] array: _tasks[i]()
+        // Note: this path is unreachable now since the IndexExpr case above handles
+        // it and returns early. Kept here as dead code guard in case of future refactoring.
+
         if (inlineFunctions.ContainsKey(callee + "___init__") || overloadedFunctions.Contains(callee + "___init__"))
         {
             callee += "___init__";
@@ -230,6 +315,16 @@ public partial class IRGenerator
                         if (variableAliases.TryGetValue(key, out string ak)) key = ak;
                         else break;
                     }
+
+                    // SRAM arrays (variable-indexed) are passed as buffer pointers — use
+                    // "bytearray" so overloads that accept bytearray parameters are selected.
+                    // Try all three qualified forms since the set may use different prefixes.
+                    string qKey = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name;
+                    if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
+                        arraysWithVariableIndex.Contains(v.Name) ||
+                        moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
+                        bytearrayParams.Contains(key) || bytearrayParams.Contains(qKey))
+                        return "bytearray";
                 }
 
                 return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));
@@ -295,6 +390,19 @@ public partial class IRGenerator
                 if (!string.IsNullOrEmpty(currentFunction) &&
                     arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
                 if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+
+                // Follow variableAliases to resolve through @inline parameter bindings
+                // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
+                string lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + vLen.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
+                string lenResolved = lenKey;
+                for (int depth = 0; depth < 20; depth++)
+                {
+                    if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
+                    lenResolved = lenNext;
+                    if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
+                }
             }
 
             Val argVal = VisitExpression(expr.Args[0]);
@@ -306,6 +414,17 @@ public partial class IRGenerator
                 {
                     string selfName = argVal is Variable v ? v.Name : (argVal is Temporary t ? t.Name : "");
                     return EmitDunderCall(selfName, cls, funcKey, new List<Val>());
+                }
+            }
+
+            // Handle list[T] variable: len(x) → load length from offset 0 of heap header
+            if (expr.Args[0] is VariableExpr vListLen)
+            {
+                string listQual = ResolveListVarQualified(vListLen.Name);
+                if (!string.IsNullOrEmpty(listQual))
+                {
+                    Val listPtr = new Variable(listQual, DataType.GC_REF);
+                    return EmitListLoad(listPtr, 0, DataType.UINT8);
                 }
             }
 
@@ -702,9 +821,59 @@ public partial class IRGenerator
                 return new Constant(val);
             }
 
+            // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
+            if (v is FloatConstant fc && dstType != DataType.FLOAT)
+            {
+                int val = (int)fc.Value;
+                switch (dstType)
+                {
+                    case DataType.UINT8: val = (byte)val; break;
+                    case DataType.UINT16: val = (ushort)val; break;
+                    case DataType.INT8: val = (sbyte)val; break;
+                    case DataType.INT16: val = (short)val; break;
+                }
+                return new Constant(val);
+            }
+
             Temporary dst = MakeTemp(dstType);
             Emit(new Copy(v, dst));
             return dst;
+        }
+
+        if (callee == "bitcast")
+        {
+            if (expr.Args.Count != 2) throw new Exception("bitcast() expects exactly two arguments: bitcast(type, value)");
+            string typeName = (expr.Args[0] as VariableExpr)?.Name
+                ?? throw new Exception("bitcast() first argument must be a type name");
+            DataType bcDstType;
+            if (typeName == "float")
+                bcDstType = DataType.FLOAT;
+            else if (!castTypes.TryGetValue(typeName, out bcDstType))
+                throw new Exception($"bitcast(): unknown type '{typeName}'");
+
+            Val srcVal = VisitExpression(expr.Args[1]);
+
+            // Compile-time constant folding
+            if (bcDstType == DataType.UINT32 && srcVal is FloatConstant fcBc)
+            {
+                uint bits = BitConverter.SingleToUInt32Bits((float)fcBc.Value);
+                return new Constant((int)bits);
+            }
+            if (bcDstType == DataType.FLOAT && srcVal is Constant cBc)
+                return new FloatConstant(BitConverter.Int32BitsToSingle(cBc.Value));
+
+            Temporary bcDst = MakeTemp(bcDstType);
+            Emit(new Bitcast(srcVal, bcDst));
+            return bcDst;
+        }
+
+        if (callee == "gc_alloc")
+        {
+            if (expr.Args.Count != 1) throw new Exception("gc_alloc() expects exactly one argument: gc_alloc(size)");
+            Val sizeVal = VisitExpression(expr.Args[0]);
+            Temporary gcDst = MakeTemp(DataType.GC_REF);
+            Emit(new GcAlloc(sizeVal, gcDst));
+            return gcDst;
         }
 
         if (callee == "asm")
@@ -780,16 +949,22 @@ public partial class IRGenerator
                 else posArgs.Add(arg);
             }
 
-            // Resolve uart_write_str inline function for string output
-            string writeStrFn = ResolveCallee("uart_write_str");
-            if (writeStrFn == "uart_write_str")
+            // Resolve the string-output function.  Prefer the arch-dispatched
+            // console.print_str injected by the build driver; fall back to
+            // uart_write_str for projects that initialise UART manually.
+            string writeStrFn = ResolveCallee("print_str");
+            if (writeStrFn == "print_str")
             {
-                foreach (var fnName in inlineFunctions.Keys)
+                writeStrFn = ResolveCallee("uart_write_str");
+                if (writeStrFn == "uart_write_str")
                 {
-                    if (fnName.EndsWith("_uart_write_str"))
+                    foreach (var fnName in inlineFunctions.Keys)
                     {
-                        writeStrFn = fnName;
-                        break;
+                        if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
+                        {
+                            writeStrFn = fnName;
+                            break;
+                        }
                     }
                 }
             }
@@ -803,6 +978,9 @@ public partial class IRGenerator
                 VisitCall(synthCall);
             }
 
+            // Integer output: uart_write_decimal_u8 is non-inline and works with direct Emit.
+            // print_u8 from console.py is @inline and requires VisitCall; deferred to a
+            // future refactor of EmitPrintArg to use VisitCall for all write functions.
             string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
             if (decimalWriteFn == "uart_write_decimal_u8")
             {
@@ -812,6 +990,20 @@ public partial class IRGenerator
                     if (fnName.EndsWith(decSuffix))
                     {
                         decimalWriteFn = fnName;
+                        break;
+                    }
+                }
+            }
+
+            // Float output: same rationale — use the non-inline uart function.
+            string floatWriteFn = ResolveCallee("uart_write_float");
+            if (floatWriteFn == "uart_write_float")
+            {
+                foreach (var fnName in functionReturnTypes.Keys)
+                {
+                    if (fnName.EndsWith("uart_write_float"))
+                    {
+                        floatWriteFn = fnName;
                         break;
                     }
                 }
@@ -843,6 +1035,16 @@ public partial class IRGenerator
                 }
 
                 Val val = VisitExpression(arg);
+                bool isFloat = val is FloatConstant ||
+                               (val is Variable vf && vf.Type == DataType.FLOAT) ||
+                               (val is Temporary tf && tf.Type == DataType.FLOAT);
+                if (isFloat)
+                {
+                    Temporary ftmp = MakeTemp(DataType.FLOAT);
+                    Emit(new Copy(val, ftmp));
+                    Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
+                    return;
+                }
                 Temporary tmp = MakeTemp();
                 Emit(new Copy(val, tmp));
                 Emit(new Call(decimalWriteFn, new List<Val> { tmp }, tmp));
@@ -885,6 +1087,58 @@ public partial class IRGenerator
             Val argVal = VisitExpression(expr.Args[0]);
             if (argVal is Constant) return argVal;
             throw new Exception("const() argument must be a compile-time constant expression");
+        }
+
+        if ((callee == "funcref" || callee == "pymcu_types_funcref") && intrinsicNames.Contains("funcref"))
+        {
+            if (expr.Args.Count != 1)
+                throw new Exception("funcref() expects exactly one argument: a function name");
+            if (expr.Args[0] is not VariableExpr fnRefExpr)
+                throw new Exception("funcref() argument must be a function name identifier");
+
+            // Resolve alias chain (same as compile_isr) to find the canonical function name.
+            string key = currentInlinePrefix + fnRefExpr.Name;
+            for (int d = 0; d < 20; ++d)
+                if (variableAliases.TryGetValue(key, out string nx)) key = nx;
+                else break;
+
+            string resolvedName = key;
+            int lastDot = resolvedName.LastIndexOf('.');
+            if (lastDot >= 0) resolvedName = resolvedName.Substring(lastDot + 1);
+            string fnName = ResolveCallee(resolvedName);
+
+            return new FunctionRef(fnName);
+        }
+
+        if (callee == "_set_irq_zca_arg" && intrinsicNames.Contains("_set_irq_zca_arg"))
+        {
+            // _set_irq_zca_arg(handler, zca_instance): records the ZCA variable that
+            // should be bound to handler's first parameter when the ISR wrapper is synthesized.
+            if (expr.Args.Count == 2)
+            {
+                // Resolve handler name (same alias-chase as compile_isr arg0)
+                string hKey = "";
+                if (expr.Args[0] is VariableExpr v0)
+                {
+                    hKey = currentInlinePrefix + v0.Name;
+                    for (int d = 0; d < 20; d++)
+                        if (variableAliases.TryGetValue(hKey, out string? nk) && nk != null) hKey = nk; else break;
+                    int ld = hKey.LastIndexOf('.');
+                    if (ld >= 0) hKey = hKey[(ld + 1)..];
+                    hKey = ResolveCallee(hKey);
+                }
+                // Resolve ZCA instance to its root variable key (follow alias chain)
+                Val zcaVal = VisitExpression(expr.Args[1]);
+                string zcaKey = "";
+                if (zcaVal is Variable vz) zcaKey = vz.Name;
+                else if (zcaVal is Temporary tz) zcaKey = tz.Name;
+                for (int d = 0; d < 20; d++)
+                    if (variableAliases.TryGetValue(zcaKey, out string? nz) && nz != null) zcaKey = nz; else break;
+
+                if (!string.IsNullOrEmpty(hKey) && !string.IsNullOrEmpty(zcaKey))
+                    pendingZcaIsrBindings[hKey] = zcaKey;
+            }
+            return new NoneVal();
         }
 
         if (callee == "compile_isr" && intrinsicNames.Contains("compile_isr"))
@@ -932,6 +1186,23 @@ public partial class IRGenerator
             }
 
             if (!handlerProvided) return new NoneVal();
+
+            // ZCA ISR synthesis: if a ZCA binding was registered via _set_irq_zca_arg,
+            // synthesize a parameterless wrapper that inline-expands handler with the
+            // ZCA constants bound. The wrapper is what gets registered at the vector.
+            if (pendingZcaIsrBindings.TryGetValue(handlerFuncName, out string? zcaRootKey) &&
+                !string.IsNullOrEmpty(zcaRootKey))
+            {
+                pendingZcaIsrBindings.Remove(handlerFuncName);
+                string synthName = SynthesizeZcaIsrWrapper(handlerFuncName, zcaRootKey);
+                if (!string.IsNullOrEmpty(synthName))
+                {
+                    pendingIsrRegistrations[synthName] = vector;
+                    return new NoneVal();
+                }
+                // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
+            }
+
             pendingIsrRegistrations[handlerFuncName] = vector;
             return new NoneVal();
         }
@@ -965,6 +1236,15 @@ public partial class IRGenerator
 
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
+            // @warning("..."): print the author-supplied note (once per function)
+            // when a call to this function is expanded. Informational only -- it
+            // does NOT abort compilation, so flagged-but-usable features (soft-float,
+            // reduced bare-metal behaviour) still build.
+            if (func != null && !string.IsNullOrEmpty(func.WarningMessage) && warningNoticed.Add(func.Name))
+            {
+                Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
+            }
+
             var exitLabel = MakeLabel();
             var newDepth = inlineDepth + 1;
             var newPrefix = $"inline{newDepth}.{func?.Name}.";
@@ -1009,6 +1289,7 @@ public partial class IRGenerator
             var kwArgValues = new Dictionary<string, Val>();
             var rawKwStrArgs = new Dictionary<string, string?>();
             var rawStrArgs = new List<StringLiteral?>();
+            var rawListArgs = new List<ListExpr?>();
 
             foreach (var arg in expr.Args)
             {
@@ -1018,17 +1299,41 @@ public partial class IRGenerator
                     pendingConstructorTarget = "";
                     kwArgValues[kw.Key] = VisitExpression(kw.Value);
                     if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
-                    if (string.IsNullOrEmpty(pendingConstructorTarget)) pendingConstructorTarget = savedOuterPct;
+                    // Always restore: inner ctor targets (anonymous __cN) must not
+                    // overwrite the outer assignment target (e.g. "main.spi").
+                    pendingConstructorTarget = savedOuterPct;
                 }
                 else
                 {
                     rawStrArgs.Add(arg as StringLiteral);
-                    string savedOuterPct = pendingConstructorTarget;
-                    pendingConstructorTarget = "";
-                    argValues.Add(VisitExpression(arg));
-                    if (string.IsNullOrEmpty(pendingConstructorTarget)) pendingConstructorTarget = savedOuterPct;
+                    // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
+                    // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
+                    // and bind it to the inline parameter so the callee can consume
+                    // it via `for x in param` (unrolled) or `param[const]` indexing.
+                    ListExpr? seqLit = arg as ListExpr
+                        ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
+                    rawListArgs.Add(seqLit);
+                    if (seqLit != null)
+                    {
+                        // Visiting the literal as an expression is unsupported; the raw
+                        // AST is bound below. Push a placeholder to keep argValues
+                        // index-aligned with the parameter list.
+                        argValues.Add(new NoneVal());
+                    }
+                    else
+                    {
+                        string savedOuterPct = pendingConstructorTarget;
+                        pendingConstructorTarget = "";
+                        argValues.Add(VisitExpression(arg));
+                        // Always restore: same reason as kwarg case above.
+                        pendingConstructorTarget = savedOuterPct;
+                    }
                 }
             }
+
+            bool isForceInlined = func != null && !func.IsInline;
+            if (isForceInlined)
+                Emit(new InlineExpansionMarker(callee, false));
 
             inlineDepth++;
             string savedPrefix = currentInlinePrefix;
@@ -1083,6 +1388,39 @@ public partial class IRGenerator
                 string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
                 boundParams.Add(paramIdx);
 
+                if (i < rawListArgs.Count && rawListArgs[i] != null)
+                {
+                    // Bytes/list/tuple literal bound to this parameter: record the raw AST
+                    // so `for x in param` unrolls it and `param[const]` folds. Clear any
+                    // stale scalar bindings.
+                    listLiteralParams[paramName] = rawListArgs[i]!;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    continue;
+                }
+                listLiteralParams.Remove(paramName);
+
+                if (argValues[i] is FloatConstant fcArg)
+                {
+                    var fcPType = func.Params[paramIdx].Type;
+                    bool fcIsInt = fcPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                    if (fcIsInt)
+                    {
+                        constantVariables[paramName] = (int)fcArg.Value;
+                        floatConstantVariables.Remove(paramName);
+                    }
+                    else
+                    {
+                        floatConstantVariables[paramName] = fcArg.Value;
+                        constantVariables.Remove(paramName);
+                    }
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(fcPType);
+                    continue;
+                }
+
                 if (argValues[i] is Variable vArg)
                 {
                     if (func.Params[paramIdx].Type == "const[str]")
@@ -1099,16 +1437,28 @@ public partial class IRGenerator
 
                     if (floatConstantVariables.TryGetValue(vArg.Name, out double fv))
                     {
-                        floatConstantVariables[paramName] = fv;
-                        constantVariables.Remove(paramName);
+                        var fvPType = func.Params[paramIdx].Type;
+                        bool fvIsInt = fvPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                        if (fvIsInt)
+                        {
+                            constantVariables[paramName] = (int)fv;
+                            floatConstantVariables.Remove(paramName);
+                        }
+                        else
+                        {
+                            floatConstantVariables[paramName] = fv;
+                            constantVariables.Remove(paramName);
+                        }
                         strConstantVariables.Remove(paramName);
                         variableAliases.Remove(paramName);
+                        variableTypes[paramName] = DataTypeExtensions.StringToDataType(fvPType);
                         continue;
                     }
 
                     variableAliases[paramName] = vArg.Name;
                     constantVariables.Remove(paramName);
                     strConstantVariables.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
                     continue;
                 }
 
@@ -1170,13 +1520,11 @@ public partial class IRGenerator
                     constantVariables[paramName] = cArg2.Value;
                     continue;
                 }
-
                 if (argValues[i] is Constant cArg3)
                 {
                     constantVariables[paramName] = cArg3.Value;
                     continue;
                 }
-
                 if (argValues[i] is MemoryAddress mArg)
                 {
                     constantAddressVariables[paramName] = mArg.Address;
@@ -1188,6 +1536,7 @@ public partial class IRGenerator
                 strConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                variableTypes[paramName] = paramType;
                 Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
             }
 
@@ -1224,11 +1573,26 @@ public partial class IRGenerator
                                 constantVariables[paramName] = ckw.Value;
                             }
                         }
-                        else if (kvp.Value is Constant ckw2) constantVariables[paramName] = ckw2.Value;
+                        else if (kvp.Value is Constant ckw2)
+                        {
+                            constantVariables[paramName] = ckw2.Value;
+                        }
                         else
                         {
+                            constantVariables.Remove(paramName);
+                            strConstantVariables.Remove(paramName);
                             DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
-                            Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                            variableTypes[paramName] = paramType;
+                            if (kvp.Value is Variable)
+                            {
+                                // Variable arg (including ZCA instances): preserve the alias
+                                // set above and skip the Copy, same as positional arg handling.
+                            }
+                            else
+                            {
+                                variableAliases.Remove(paramName);
+                                Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                            }
                         }
 
                         break;
@@ -1293,6 +1657,9 @@ public partial class IRGenerator
 
             Emit(new Label(exitLabel));
 
+            if (isForceInlined)
+                Emit(new InlineExpansionMarker(callee, true));
+
             if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
                 lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
             inlineStack.RemoveAt(inlineStack.Count - 1);
@@ -1307,7 +1674,30 @@ public partial class IRGenerator
         }
 
         var argValuesL = new List<Val>();
-        foreach (var arg in expr.Args) argValuesL.Add(VisitExpression(arg));
+        foreach (var arg in expr.Args)
+        {
+            // If the argument is a bare variable name that refers to a local array,
+            // pass its base address rather than trying to load it as a scalar.
+            if (arg is VariableExpr argVe)
+            {
+                string argQualified = (!string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix
+                    : currentFunction + ".") + argVe.Name;
+                if (!arraySizes.ContainsKey(argQualified))
+                {
+                    // Fall back to unqualified / module-level name
+                    string altQ = currentModulePrefix + argVe.Name;
+                    if (arraySizes.ContainsKey(altQ)) argQualified = altQ;
+                    else if (arraySizes.ContainsKey(argVe.Name)) argQualified = argVe.Name;
+                }
+                if (arraySizes.ContainsKey(argQualified))
+                {
+                    argValuesL.Add(new ArrayBase(argQualified));
+                    continue;
+                }
+            }
+            argValuesL.Add(VisitExpression(arg));
+        }
 
         int dotPos2 = callee.IndexOf('.');
         if (dotPos2 != -1)
@@ -1329,20 +1719,35 @@ public partial class IRGenerator
             {
                 string paramVarName = callee + "." + paramNames[i];
                 DataType ptype = i < paramTypes.Count ? paramTypes[i] : DataType.UINT8;
-                Emit(new Copy(argValuesL[i], new Variable(paramVarName, ptype)));
+                Val argVal = argValuesL[i];
+
+                // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
+                // (which resolves as a UINT8 Variable rather than a FunctionRef), create the
+                // FunctionRef so DCE treats the function as reachable and the backend emits
+                // the correct lo8/hi8 address load rather than a SRAM load.
+                if (ptype == DataType.FUNCREF && argVal is Variable argVar && argVar.Type != DataType.FUNCREF)
+                {
+                    string rawName = argVar.Name.Contains('.')
+                        ? argVar.Name.Substring(argVar.Name.LastIndexOf('.') + 1)
+                        : argVar.Name;
+                    string resolvedFn = ResolveCallee(rawName);
+                    if (functionParams.ContainsKey(resolvedFn) || functionReturnTypes.ContainsKey(resolvedFn))
+                    {
+                        argVal = new FunctionRef(resolvedFn);
+                        // Update the arg list so the CALL instruction also passes the FunctionRef.
+                        // Without this the backend would emit a 1-byte UINT8 load into R24 and
+                        // leave R25 (the hi byte of the word address) undefined.
+                        argValuesL[i] = argVal;
+                    }
+                }
+
+                Emit(new Copy(argVal, new Variable(paramVarName, ptype)));
             }
         }
 
-        if (callee == "pull") callee = "__pio_pull";
-        else if (callee == "push") callee = "__pio_push";
-        else if (callee == "out") callee = "__pio_out";
-        else if (callee == "in_") callee = "__pio_in";
-        else if (callee == "wait") callee = "__pio_wait";
-
-        var isPioIntrinsic = callee.StartsWith("__pio_") || callee == "delay";
-
-        if (isPioIntrinsic || (functionReturnTypes.TryGetValue(callee, out string? rType) &&
-                               (rType == "void" || rType == "None")))
+        bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType) && (rType == "void" || rType == "None");
+        
+        if (returnsVoidEnd)
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
             return new NoneVal();
@@ -1351,5 +1756,289 @@ public partial class IRGenerator
         Temporary dstC = MakeTemp();
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
+    }
+
+    // Resolves a short variable name to its fully qualified list variable name,
+    // or returns "" if the variable is not a list[T].
+    private string ResolveListVarQualified(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix))
+        {
+            string k = currentInlinePrefix + name;
+            if (listVarElemTypes.ContainsKey(k)) return k;
+        }
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            string k = currentFunction + "." + name;
+            if (listVarElemTypes.ContainsKey(k)) return k;
+        }
+        if (listVarElemTypes.ContainsKey(name)) return name;
+        return "";
+    }
+
+    // Computes basePtr + 2 + index * elemSize as a UINT16 address Temporary.
+    private Temporary EmitElemAddr(Val basePtr, Val index, int elemSize)
+    {
+        Val ptrU16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                   : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                   : basePtr;
+
+        Temporary finalAddr = MakeTemp(DataType.UINT16);
+        if (elemSize == 1)
+        {
+            Temporary idxPlusTwo = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, index, new Constant(2), idxPlusTwo));
+            Emit(new Binary(BinaryOp.Add, ptrU16, idxPlusTwo, finalAddr));
+        }
+        else
+        {
+            Temporary scaled = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Mul, index, new Constant(elemSize), scaled));
+            Temporary scaledPlusTwo = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.Add, scaled, new Constant(2), scaledPlusTwo));
+            Emit(new Binary(BinaryOp.Add, ptrU16, scaledPlusTwo, finalAddr));
+        }
+        return finalAddr;
+    }
+
+    // Emits IR for list.append(val). Handles fast path (len < cap) and slow path (realloc).
+    private Val EmitListAppend(Variable listVar, Expression valExpr)
+    {
+        DataType elemDt = listVarElemTypes[listVar.Name];
+        int elemSize = elemDt.SizeOf();
+
+        // Load current length (offset 0) and capacity (offset 1)
+        Temporary tmpLen = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(listVar, tmpLen));
+        Temporary tmpCap = EmitListLoad(listVar, 1, DataType.UINT8);
+
+        string fastLabel = MakeLabel();
+
+        // if len < cap: skip realloc
+        Temporary ltCap = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.LessThan, tmpLen, tmpCap, ltCap));
+        Emit(new JumpIfNotZero(ltCap, fastLabel));
+
+        // === SLOW PATH: realloc to double capacity ===
+
+        // new_cap = cap * 2
+        Temporary newCap = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.Mul, tmpCap, new Constant(2), newCap));
+
+        // new_alloc_size = 2 + new_cap * elemSize
+        Temporary newCapScaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, newCap, new Constant(elemSize), newCapScaled));
+        Temporary newAllocSize = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newCapScaled, new Constant(2), newAllocSize));
+
+        // Save old pointer, allocate new buffer
+        Temporary oldPtr = MakeTemp(DataType.GC_REF);
+        Emit(new Copy(listVar, oldPtr));
+        Temporary newPtr = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(newAllocSize, newPtr));
+
+        // Write new header
+        EmitListStore(newPtr, 0, tmpLen);
+        EmitListStore(newPtr, 1, newCap);
+
+        // Copy existing elements byte-by-byte
+        // Compute base pointers outside the loop
+        Val oldPtrU16 = oldPtr with { Type = DataType.UINT16 };
+        Val newPtrU16 = newPtr with { Type = DataType.UINT16 };
+        Temporary totalBytes = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, tmpLen, new Constant(elemSize), totalBytes));
+        Temporary oldBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, oldPtrU16, new Constant(2), oldBase));
+        Temporary newBase = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newPtrU16, new Constant(2), newBase));
+
+        Temporary byteOff = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new Constant(0), byteOff));
+        string copyLoopLabel = MakeLabel();
+        string copyLoopEnd = MakeLabel();
+        Emit(new Label(copyLoopLabel));
+        Temporary cmpDone = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.GreaterEqual, byteOff, totalBytes, cmpDone));
+        Emit(new JumpIfNotZero(cmpDone, copyLoopEnd));
+        Temporary srcAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, oldBase, byteOff, srcAddr));
+        Temporary dstAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, newBase, byteOff, dstAddr));
+        Temporary byteTmp = MakeTemp(DataType.UINT8);
+        Emit(new LoadIndirect(srcAddr, byteTmp));
+        Emit(new StoreIndirect(byteTmp, dstAddr));
+        Emit(new AugAssign(BinaryOp.Add, byteOff, new Constant(1)));
+        Emit(new Jump(copyLoopLabel));
+        Emit(new Label(copyLoopEnd));
+
+        // Update listVar → newPtr; shadow stack slot already tracks SRAM addr of listVar
+        Emit(new Copy(newPtr, listVar));
+
+        // === FAST PATH: write element at offset 2 + len * elemSize ===
+        Emit(new Label(fastLabel));
+
+        Val elemVal = VisitExpression(valExpr);
+        Temporary appendAddr = EmitElemAddr(listVar, tmpLen, elemSize);
+        Emit(new StoreIndirect(elemVal, appendAddr));
+
+        // length += 1
+        Temporary newLen = MakeTemp(DataType.UINT8);
+        Emit(new Binary(BinaryOp.Add, tmpLen, new Constant(1), newLen));
+        Emit(new StoreIndirect(newLen, listVar));
+
+        return new NoneVal();
+    }
+
+    // -------------------------------------------------------------------------
+    // Class hierarchy helpers — MRO resolution and virtual-dispatch gate
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Walk the MRO chain starting at <paramref name="cls"/> (no trailing underscore)
+    /// and return the first class that directly defines <paramref name="methodName"/>.
+    /// Falls back to <paramref name="cls"/> if no defining class is found (safe: linker
+    /// will catch a truly-missing symbol).
+    /// </summary>
+    private string ResolveMROMethod(string cls, string methodName)
+    {
+        string? current = cls;
+        while (current != null)
+        {
+            if (classDirectMethods.TryGetValue(current, out var dm) && dm.Contains(methodName))
+                return current;
+
+            if (classBasePrefixes.TryGetValue(current, out var parentPrefix)
+                && !string.IsNullOrEmpty(parentPrefix))
+            {
+                // parentPrefix has a trailing underscore — strip it for the next lookup.
+                current = parentPrefix!.EndsWith("_") ? parentPrefix[..^1] : parentPrefix;
+            }
+            else
+                break;
+        }
+        return cls;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when a call to <paramref name="methodName"/> on an object of
+    /// declared type <paramref name="cls"/> cannot be devirtualized statically.
+    ///
+    /// Devirtualization is safe (returns false) when ANY of:
+    ///   Rule 1 — <paramref name="cls"/> is a leaf class (no known subclasses).
+    ///   Rule 3 — no subclass in the entire subtree overrides the method.
+    ///
+    /// Rule 2 (exact type from instanceClasses) is enforced by the call site: we only
+    /// reach this helper when instanceClasses already holds the concrete type, so Rule 2
+    /// always applies and this method always returns false for the current ZCA model.
+    /// The implementation is kept general for future polymorphic variable support.
+    /// </summary>
+    private bool IsVirtualDispatch(string cls, string methodName)
+    {
+        // Rule 1: leaf class.
+        if (!classChildren.TryGetValue(cls, out var children) || children.Count == 0)
+            return false;
+
+        // Rule 3: no subclass overrides the method.
+        if (IsMethodNeverOverridden(cls, methodName))
+            return false;
+
+        return true;
+    }
+
+    private bool IsMethodNeverOverridden(string cls, string methodName)
+    {
+        if (!classChildren.TryGetValue(cls, out var children)) return true;
+        foreach (var child in children)
+        {
+            if (classDirectMethods.TryGetValue(child, out var dm) && dm.Contains(methodName))
+                return false;
+            if (!IsMethodNeverOverridden(child, methodName))
+                return false;
+        }
+        return true;
+    }
+
+    // Synthesizes a parameterless ISR wrapper that inline-expands handlerFuncName
+    // with the ZCA variable zcaRootKey bound to the handler's first parameter.
+    // The synthesized Function is added to pendingZcaSynthFunctions and its name returned.
+    private string SynthesizeZcaIsrWrapper(string handlerFuncName, string zcaRootKey)
+    {
+        if (!zcaHandlerAstNodes.TryGetValue(handlerFuncName, out var entry)) return "";
+
+        var funcDef = entry.Func;
+        if (funcDef.Params.Count == 0) return "";
+
+        // Build a collision-free synthesis name
+        string baseName = handlerFuncName.Replace('.', '_');
+        string zcaSuffix = zcaRootKey.Replace('.', '_');
+        string synthName = "_irq_synth_" + baseName + "_" + zcaSuffix;
+
+        // Save compilation state
+        var savedInstructions  = currentInstructions;
+        var savedFunction      = currentFunction;
+        var savedModulePrefix  = currentModulePrefix;
+        var savedInlinePrefix  = currentInlinePrefix;
+        int savedInlineDepth   = inlineDepth;
+        var savedLoopStack     = loopStack;
+        var savedInlineStack   = inlineStack;
+        int savedLastLine      = lastLine;
+        var savedFunctionGlobals = currentFunctionGlobals;
+
+        // Set up fresh compilation context for the wrapper
+        currentInstructions   = new List<Instruction>();
+        currentFunction       = synthName;
+        currentModulePrefix   = entry.Prefix;
+        currentInlinePrefix   = synthName + "_s_";
+        inlineDepth           = 0;
+        loopStack             = new List<LoopLabels>();
+        inlineStack           = new List<InlineContext>();
+        lastLine              = -1;
+        currentFunctionGlobals = new HashSet<string>();
+
+        // Bind handler's first parameter to the ZCA root variable
+        string paramName = currentInlinePrefix + funcDef.Params[0].Name;
+        variableAliases[paramName] = zcaRootKey;
+        if (instanceClasses.TryGetValue(zcaRootKey, out string? cls) && cls != null)
+            instanceClasses[paramName] = cls;
+
+        // Propagate ZCA sub-fields (constantVariables, strConstantVariables, instanceClasses)
+        string zcaFieldPfx = zcaRootKey + ".";
+        foreach (var kv in constantVariables
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            constantVariables[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+        foreach (var kv in strConstantVariables
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            strConstantVariables[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+        foreach (var kv in instanceClasses
+            .Where(kv => kv.Key.StartsWith(zcaFieldPfx)).ToList())
+            instanceClasses[paramName + "." + kv.Key[zcaFieldPfx.Length..]] = kv.Value;
+
+        // Compile the handler body with ZCA constants in scope
+        VisitBlock(funcDef.Body);
+        if (currentInstructions.Count == 0 || currentInstructions[^1] is not Return)
+            Emit(new Return(new NoneVal()));
+
+        // Build the IR function object
+        var wrapperFunc = new Function
+        {
+            Name         = synthName,
+            OriginalName = funcDef.Name,
+            ReturnType   = DataType.VOID,
+            Body         = new List<Instruction>(currentInstructions),
+        };
+        pendingZcaSynthFunctions.Add(wrapperFunc);
+
+        // Restore compilation state
+        currentInstructions    = savedInstructions;
+        currentFunction        = savedFunction;
+        currentModulePrefix    = savedModulePrefix;
+        currentInlinePrefix    = savedInlinePrefix;
+        inlineDepth            = savedInlineDepth;
+        loopStack              = savedLoopStack;
+        inlineStack            = savedInlineStack;
+        lastLine               = savedLastLine;
+        currentFunctionGlobals = savedFunctionGlobals;
+
+        return synthName;
     }
 }

@@ -172,12 +172,14 @@ public class OptimizerPassTests
     [Fact]
     public void FoldConstants_Unary_Neg_ProducesNegatedConstant()
     {
+        // The default Temporary is UINT8, so the folded constant is wrapped to that
+        // destination type: -5 as a uint8 is 251 (matches the runtime result).
         var body = Optimize(
             new Unary(IrUnaryOp.Neg, new Constant(5), new Temporary("t1")),
             new Return(new Temporary("t1")));
 
         body.OfType<Return>().First().Value
-            .Should().Be(new Constant(-5));
+            .Should().Be(new Constant(unchecked((byte)-5)));   // 251
     }
 
     [Fact]
@@ -205,12 +207,13 @@ public class OptimizerPassTests
     [Fact]
     public void FoldConstants_Unary_BitNot_ProducesFlippedBits()
     {
+        // UINT8 destination -> the folded ~5 is wrapped to a uint8: (byte)~5 == 250.
         var body = Optimize(
             new Unary(IrUnaryOp.BitNot, new Constant(5), new Temporary("t1")),
             new Return(new Temporary("t1")));
 
         body.OfType<Return>().First().Value
-            .Should().Be(new Constant(~5));
+            .Should().Be(new Constant(unchecked((byte)~5)));   // 250
     }
 
     // ─── FoldConstants — Binary edge cases ───────────────────────────────────
@@ -446,6 +449,46 @@ public class OptimizerPassTests
         var optimized = Optimizer.Optimize(prog);
         optimized.Functions.Select(f => f.Name)
             .Should().BeEquivalentTo(["main", "a", "b"]);
+    }
+
+    // ─── Dead Variable Store Elimination ─────────────────────────────────────
+
+    [Fact]
+    public void DVSE_RemovesCopyToVariable_WhenNeverRead()
+    {
+        // main.x = 5, but x is never read — the Copy must be eliminated.
+        var body = Optimize(
+            new Copy(new Constant(5), new Variable("main.x", DataType.UINT8)),
+            new Return(new Constant(0)));
+
+        Assert.DoesNotContain(body, i =>
+            i is Copy { Dst: Variable { Name: "main.x" } });
+    }
+
+    [Fact]
+    public void DVSE_KeepsCopyToVariable_WhenRead()
+    {
+        // main.x = 5, then return x — the assignment (or its propagated constant) must survive.
+        var body = Optimize(
+            new Copy(new Constant(5), new Variable("main.x", DataType.INT16)),
+            new Return(new Variable("main.x", DataType.INT16)));
+
+        var hasCopyOrPropagated =
+            body.Any(i => i is Copy { Dst: Variable { Name: "main.x" } }) ||
+            body.OfType<Return>().Any(r => r.Value is Constant { Value: 5 });
+        Assert.True(hasCopyOrPropagated,
+            "live write to main.x (or propagated constant) must survive");
+    }
+
+    [Fact]
+    public void DVSE_DoesNotRemoveMemoryAddressWrite()
+    {
+        // Writes to MemoryAddress (MMIO) must never be eliminated.
+        var body = Optimize(
+            new Copy(new Constant(1), new MemoryAddress(0x25)),
+            new Return(new Constant(0)));
+
+        Assert.Contains(body, i => i is Copy { Dst: MemoryAddress { Address: 0x25 } });
     }
 }
 

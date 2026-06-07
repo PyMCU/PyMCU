@@ -36,52 +36,27 @@ NOBLOCK = 0
 # and emit 'Call' nodes with the specific names expected by PIOCodeGen.
 
 def pull(block: bool = True) -> None:
-    """
-    Pulls 32 bits from the TX FIFO into the OSR.
-    Maps to C++: __pio_pull
-    """
-    # The compiler replaces this call with the intrinsic.
-    # Python runtime just ignores it.
+    """Pulls 32 bits from the TX FIFO into the OSR."""
     pass
 
 def push(block: bool = True) -> None:
-    """
-    Pushes 32 bits from the ISR into the RX FIFO.
-    Maps to C++: __pio_push
-    """
+    """Pushes 32 bits from the ISR into the RX FIFO."""
     pass
 
 def out(destination: Union[PIORegister, int], bit_count: int) -> None:
-    """
-    Shifts 'bit_count' bits out of OSR to 'destination'.
-    Usage: out(PINS, 1) or out(X, 32)
-    Maps to C++: __pio_out
-    """
+    """Shifts bit_count bits out of OSR to destination. Usage: out(PINS, 1)"""
     pass
 
 def in_(source: Union[PIORegister, int], bit_count: int) -> None:
-    """
-    Shifts 'bit_count' bits from 'source' into ISR.
-    Note: Named 'in_' because 'in' is a Python keyword.
-    Usage: in_(PINS, 1)
-    Maps to C++: __pio_in
-    """
+    """Shifts bit_count bits from source into ISR. Named in_ because in is a keyword."""
     pass
 
 def wait(polarity: int, source: PIORegister, index: int) -> None:
-    """
-    Waits for a pin or IRQ.
-    Usage: wait(1, PIN, 0)  -> Wait for pin mapping 0 to be High
-           wait(0, GPIO, 15) -> Wait for raw GPIO 15 to be Low
-    Maps to C++: __pio_wait
-    """
+    """Waits for a pin or IRQ. Usage: wait(1, PIN, 0) or wait(0, GPIO, 15)"""
     pass
 
 def delay(cycles: int) -> None:
-    """
-    Adds delay cycles [n] to the *previous* instruction.
-    Maps to C++: delay
-    """
+    """Adds delay cycles to the previous instruction."""
     pass
 
 # --- 5. Decorator ---

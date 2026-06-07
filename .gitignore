@@ -73,3 +73,31 @@ extensions/jetbrains-pymcu/.gradle/
 extensions/jetbrains-pymcu/.intellijPlatform/
 
 WORK_SUMMARY.md
+
+# Sphinx build output
+docs/_build/
+
+# PyMCU AVR backend — compiled native binaries (built by CI, not committed)
+extensions/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr
+extensions/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr.exe
+extensions/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr-debugserver
+extensions/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr-debugserver.exe
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.dSYM/
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.pdb
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.deps.json
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.runtimeconfig.json
+extensions/pymcu-avr/src/python/pymcu/backend/avr/createdump
+
+# AVR backend intermediate publish artifacts
+extensions/pymcu-avr/src/python/pymcu/backend/avr/*.dll
+
+# AOT compiler/debugserver binaries bundled into backend Python packages.
+# Built locally or by CI and shipped inside PyPI wheels -- never committed to
+# source. Covers every backend (avr/pic/pio/riscv) and platform-suffixed names.
+extensions/*/src/python/**/pymcuc
+extensions/*/src/python/**/pymcuc.exe
+extensions/*/src/python/**/pymcuc-*
+!extensions/*/src/python/**/*.py
+
+# Test runner output
+tests/integration/TestResults/

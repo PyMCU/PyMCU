@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -25,12 +25,24 @@ public static class Optimizer
         var optimized = new ProgramIR
         {
             Globals = [..program.Globals],
+            GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
             Functions = program.Functions.Select(CloneFunction).ToList(),
             ExternSymbols = new List<string>(program.ExternSymbols),
+            // Preserve class hierarchy for the devirt pass and downstream codegen.
+            ClassChildren = new Dictionary<string, HashSet<string>>(
+                program.ClassChildren.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
+            ClassDirectMethods = new Dictionary<string, HashSet<string>>(
+                program.ClassDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),
         };
 
+        // Build the set of global variable names so EliminateDeadVariableStores
+        // never removes stores to module-level globals (they are read by other functions).
+        var globalNames = new HashSet<string>(optimized.Globals.Select(g => g.Name));
+        foreach (var arrName in optimized.GlobalArrays.Keys)
+            globalNames.Add(arrName);
+
         foreach (var func in optimized.Functions)
-            OptimizeFunction(func);
+            OptimizeFunction(func, globalNames);
 
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
@@ -41,6 +53,12 @@ public static class Optimizer
             foreach (var instr in func.Body)
             {
                 if (instr is Call call) callees.Add(call.FunctionName);
+                // Also treat FunctionRef values as call-graph edges so that
+                // functions captured as Callable pointers survive DFE.
+                RegisterUses(instr, val =>
+                {
+                    if (val is FunctionRef fref) callees.Add(fref.FunctionName);
+                });
             }
 
             callGraph[func.Name] = callees;
@@ -62,8 +80,108 @@ public static class Optimizer
             foreach (var callee in callees) Enqueue(callee);
         }
 
-        optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
+        // Prune functions unreachable from main / any ISR. Only do this when a "main"
+        // root exists, so passes that optimize a function in isolation (no entry point)
+        // keep their functions. Edges come from Call and FunctionRef uses, matching the
+        // reachability the DGE below already trusts; the per-target backend runs its own
+        // call-graph DCE on top, so this is a conservative early prune.
+        if (optimized.Functions.Any(f => f.Name == "main"))
+            optimized.Functions.RemoveAll(f => !reachable.Contains(f.Name));
+
+        // --- Dead Global Elimination (DGE) ---
+        // A global is live only if a Variable with that name is referenced
+        // (read OR written) inside a reachable function body.  Globals that
+        // come from transitively-imported stdlib modules but are never touched
+        // by reachable code (e.g. pymcu.exceptions.* when no raise/except is
+        // used, _millis_count when millis_init() is never called) are removed
+        // so they do not inflate _bssSize and trigger the BSS-zeroing loop.
+        {
+            var globalVarNames = new HashSet<string>(optimized.Globals.Select(g => g.Name));
+            globalVarNames.UnionWith(optimized.GlobalArrays.Keys);
+
+            var referencedGlobals = new HashSet<string>();
+            foreach (var func in optimized.Functions.Where(f => reachable.Contains(f.Name)))
+            {
+                foreach (var instr in func.Body)
+                {
+                    // Collect all Val uses (reads)
+                    RegisterUses(instr, val =>
+                    {
+                        if (val is Variable v && globalVarNames.Contains(v.Name))
+                            referencedGlobals.Add(v.Name);
+                    });
+                    // Also capture write destinations (Copy, AugAssign, etc.)
+                    var dst = GetDst(instr);
+                    if (dst is Variable vDst && globalVarNames.Contains(vDst.Name))
+                        referencedGlobals.Add(vDst.Name);
+                    if (instr is AugAssign { Target: Variable aaDst } && globalVarNames.Contains(aaDst.Name))
+                        referencedGlobals.Add(aaDst.Name);
+
+                    // Conservative: if a naked InlineAsm string literally contains
+                    // a global's mangled name, keep that global alive.  This handles
+                    // rare cases where raw asm references a global by its .equ symbol
+                    // name without going through an IR Variable operand.
+                    // Note: standard delay-loop asm ("PUSH R24", "DEC R25", etc.)
+                    // never contains global variable names, so DGE still fires.
+                    if (instr is InlineAsm { Operands: null or { Count: 0 }, Code: var asmStr })
+                    {
+                        foreach (var gName in globalVarNames)
+                        {
+                            if (asmStr.Contains(gName.Replace('.', '_')))
+                                referencedGlobals.Add(gName);
+                        }
+                    }
+                }
+            }
+
+            var deadGlobals = globalVarNames.Except(referencedGlobals).ToHashSet();
+
+            if (deadGlobals.Count > 0)
+            {
+                optimized.Globals.RemoveAll(g => deadGlobals.Contains(g.Name));
+                foreach (var k in deadGlobals.Where(k => optimized.GlobalArrays.ContainsKey(k)).ToList())
+                    optimized.GlobalArrays.Remove(k);
+
+                // Purge every instruction that references a dead global from ALL
+                // function bodies (reachable and non-reachable alike).  This is
+                // necessary so the StackAllocator never sees dead-global Variable
+                // names and creates phantom SRAM slots for them — which would
+                // otherwise cause spurious .equ symbols in the backend.
+                //
+                // For reachable functions: the global was never read, so stores
+                // to it have no effect and are safe to remove.
+                // For non-reachable functions: the whole body is dead code.
+                foreach (var func in optimized.Functions)
+                {
+                    func.Body.RemoveAll(instr =>
+                    {
+                        // Remove any instruction whose sole destination is a dead global.
+                        var dst = GetDst(instr);
+                        if (dst is Variable dv && deadGlobals.Contains(dv.Name)) return true;
+                        if (instr is AugAssign { Target: Variable aav } && deadGlobals.Contains(aav.Name)) return true;
+                        // Remove Copy stores to dead globals.
+                        if (instr is Copy { Dst: Variable cv } && deadGlobals.Contains(cv.Name)) return true;
+                        return false;
+                    });
+                }
+            }
+        }
+        // --- End DGE ---
+
+        // --- Devirtualization pass ---
+        // Convert VirtualCall nodes to direct Call when static analysis proves
+        // the target is unambiguous.  For every current PyMCU program this pass
+        // eliminates ALL VirtualCall nodes (Rule 2: instanceClasses always holds
+        // the exact concrete type).
+        foreach (var func in optimized.Functions)
+            DevirtualizeCalls(func, optimized.ClassChildren, optimized.ClassDirectMethods);
+
+        // Build vtable specs for VirtualCall nodes that survived devirtualization.
+        // In the common case this list is empty (no vtable flash overhead).
+        optimized.Vtables = BuildVtableSpecs(optimized);
+
         return optimized;
+
 
         void Enqueue(string name)
         {
@@ -76,21 +194,27 @@ private static Function CloneFunction(Function f)
     return new Function
     {
         Name = f.Name,
+        OriginalName = f.OriginalName,
         Params = [..f.Params],
         ReturnType = f.ReturnType,
         Body = [..f.Body],
         IsInline = f.IsInline,
         IsInterrupt = f.IsInterrupt,
+        IsNaked = f.IsNaked,
         InterruptVector = f.InterruptVector,
+        CanFail = f.CanFail,
+        IsExtern = f.IsExtern,
+        IsExportC = f.IsExportC,
     };
 }
 
-    private static void OptimizeFunction(Function func)
+    private static void OptimizeFunction(Function func, HashSet<string>? globalNames = null)
     {
         for (var i = 0; i < 10; ++i)
         {
             PropagateCopies(func);
             FoldConstants(func);
+            EliminateDeadVariableStores(func, globalNames);
             CoalesceInstructions(func);
 
             var cfg = BuildCfg(func);
@@ -99,12 +223,69 @@ private static Function CloneFunction(Function f)
             func.Body = cfg.Blocks.SelectMany(b => b.Instructions).ToList();
         }
 
+        if (UnrollConstantLoops(func))
+        {
+            for (var i = 0; i < 10; ++i)
+            {
+                PropagateCopies(func);
+                FoldConstants(func);
+                EliminateDeadVariableStores(func, globalNames);
+                CoalesceInstructions(func);
+                var cfg2 = BuildCfg(func);
+                EliminateDeadCodeCfg(cfg2);
+                func.Body = cfg2.Blocks.SelectMany(b => b.Instructions).ToList();
+            }
+        }
+
         CollapseBoolJumps(func);
         CollapseBitChecks(func);
 
         var finalCfg = BuildCfg(func);
         EliminateDeadCodeCfg(finalCfg);
         func.Body = finalCfg.Blocks.SelectMany(b => b.Instructions).ToList();
+    }
+
+    /// <summary>
+    /// Removes Copy instructions whose destination is a Variable that is never
+    /// read anywhere in the function body. This catches dead stores that arise
+    /// from @inline expansion (e.g. compiler-generated bit-number temporaries
+    /// like "main.led__bit") after PropagateCopies has replaced all reads with
+    /// the folded constant.
+    ///
+    /// Only Copy-to-Variable is considered: MemoryAddress targets represent
+    /// hardware I/O and must never be removed. AugAssign targets appear as
+    /// uses in RegisterUses so they are never mistakenly eliminated.
+    /// </summary>
+    private static void EliminateDeadVariableStores(Function func, HashSet<string>? globalNames = null)
+    {
+        var readVars = new HashSet<string>();
+        foreach (var instr in func.Body)
+            RegisterUses(instr, v => { if (v is Variable vr) readVars.Add(vr.Name); });
+
+        // If the function contains inline asm with no IR operands, float results may be
+        // read via the AVR register convention (R22:R25) without any IR-level use.
+        // Conservatively keep all Copy-to-Variable instructions whose source is a float
+        // Temporary so that the preceding float computation (CALL __mulsf3 etc.) is not
+        // eliminated by the subsequent dead-code pass.
+        bool hasNakedAsm = func.Body.Any(i => i is InlineAsm { Operands: null or { Count: 0 } });
+
+        func.Body = func.Body
+            .Where(instr =>
+            {
+                if (instr is not Copy { Dst: Variable vDst }) return true;
+                if (readVars.Contains(vDst.Name)) return true;
+                if (hasNakedAsm && instr is Copy { Src: Temporary { Type: DataType.FLOAT } }) return true;
+                // Never eliminate stores to FUNCREF variables — function pointer assignments
+                // are observable side effects read by asm or cross-function via SRAM.
+                if (instr is Copy cp2 && cp2.Dst is Variable dv2 && dv2.Type == DataType.FUNCREF)
+                    return true;
+                // Never eliminate stores to module-level globals — they are observable
+                // side effects read by other functions in the program (e.g. randomSeed
+                // writing to _state which is read by random()).
+                if (globalNames != null && globalNames.Contains(vDst.Name)) return true;
+                return false;
+            })
+            .ToList();
     }
 
     private static int? GetConstant(Val val) => val is Constant c ? c.Value : null;
@@ -162,9 +343,99 @@ private static Function CloneFunction(Function f)
                         }
 
                         if (foldable)
+                        {
+                            var dstType = GetDataType(binary.Dst);
+                            if (dstType != DataType.UNKNOWN) result = WrapToType(result, dstType);
                             func.Body[i] = new Copy(new Constant(result), binary.Dst);
+                        }
                     }
 
+                    break;
+                }
+                case JumpIfEqual je:
+                {
+                    var c1 = GetConstant(je.Src1);
+                    var c2 = GetConstant(je.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value == c2.Value) func.Body[i] = new Jump(je.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfNotEqual jne:
+                {
+                    var c1 = GetConstant(jne.Src1);
+                    var c2 = GetConstant(jne.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value != c2.Value) func.Body[i] = new Jump(jne.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfLessThan jlt:
+                {
+                    var c1 = GetConstant(jlt.Src1);
+                    var c2 = GetConstant(jlt.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value < c2.Value) func.Body[i] = new Jump(jlt.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfLessOrEqual jle:
+                {
+                    var c1 = GetConstant(jle.Src1);
+                    var c2 = GetConstant(jle.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value <= c2.Value) func.Body[i] = new Jump(jle.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfGreaterThan jgt:
+                {
+                    var c1 = GetConstant(jgt.Src1);
+                    var c2 = GetConstant(jgt.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value > c2.Value) func.Body[i] = new Jump(jgt.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfGreaterOrEqual jge:
+                {
+                    var c1 = GetConstant(jge.Src1);
+                    var c2 = GetConstant(jge.Src2);
+                    if (c1.HasValue && c2.HasValue)
+                    {
+                        if (c1.Value >= c2.Value) func.Body[i] = new Jump(jge.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfZero jz:
+                {
+                    var c1 = GetConstant(jz.Condition);
+                    if (c1.HasValue)
+                    {
+                        if (c1.Value == 0) func.Body[i] = new Jump(jz.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
+                    break;
+                }
+                case JumpIfNotZero jnz:
+                {
+                    var c1 = GetConstant(jnz.Condition);
+                    if (c1.HasValue)
+                    {
+                        if (c1.Value != 0) func.Body[i] = new Jump(jnz.Target);
+                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                    }
                     break;
                 }
                 case Unary unary:
@@ -183,12 +454,36 @@ private static Function CloneFunction(Function f)
                         }
 
                         if (foldable)
+                        {
+                            var dstType = GetDataType(unary.Dst);
+                            if (dstType != DataType.UNKNOWN) result = WrapToType(result, dstType);
                             func.Body[i] = new Copy(new Constant(result), unary.Dst);
+                        }
                     }
 
                     break;
                 }
             }
+        }
+    }
+
+    private static DataType GetDataType(Val val)
+    {
+        if (val is Variable v) return v.Type;
+        if (val is Temporary t) return t.Type;
+        if (val is MemoryAddress m) return m.Type;
+        return DataType.UNKNOWN;
+    }
+
+    private static int WrapToType(int value, DataType type)
+    {
+        switch (type)
+        {
+            case DataType.UINT8: return value & 0xFF;
+            case DataType.INT8: return (sbyte)(value & 0xFF);
+            case DataType.UINT16: return value & 0xFFFF;
+            case DataType.INT16: return (short)(value & 0xFFFF);
+            default: return value;
         }
     }
 
@@ -312,7 +607,17 @@ private static Function CloneFunction(Function f)
                         if (tempCopies.Remove(tDst.Name))
                             blacklistedTemps.Add(tDst.Name);
                         else
-                            tempCopies[tDst.Name] = copy.Src;
+                        {
+                            // Float constant to non-float temp: fold to integer constant.
+                            if (copy.Src is FloatConstant fcTmp && tDst.Type != DataType.FLOAT)
+                            {
+                                var intConst = new Constant(WrapToType((int)fcTmp.Value, tDst.Type));
+                                func.Body[i] = new Copy(intConst, tDst);
+                                tempCopies[tDst.Name] = intConst;
+                            }
+                            else
+                                tempCopies[tDst.Name] = copy.Src;
+                        }
                     }
 
                     break;
@@ -321,8 +626,17 @@ private static Function CloneFunction(Function f)
                 {
                     if (copy.Dst is Variable vDst)
                     {
-                        if (copy.Src is Constant c) varConsts[vDst.Name] = c.Value;
-                        else varConsts.Remove(vDst.Name);
+                        if (copy.Src is Constant c)
+                            varConsts[vDst.Name] = c.Value;
+                        else if (copy.Src is FloatConstant fcVar && vDst.Type != DataType.FLOAT)
+                        {
+                            // Float constant to integer variable: fold at optimizer time.
+                            int folded = WrapToType((int)fcVar.Value, vDst.Type);
+                            varConsts[vDst.Name] = folded;
+                            func.Body[i] = new Copy(new Constant(folded), vDst);
+                        }
+                        else
+                            varConsts.Remove(vDst.Name);
                     }
 
                     break;
@@ -336,11 +650,19 @@ private static Function CloneFunction(Function f)
                 case Unary un:
                     InvalidateVar(un.Dst);
                     break;
+                case Bitcast bc:
+                    InvalidateVar(bc.Dst);
+                    break;
                 // InlineAsm with operands may modify variables; invalidate them.
                 case InlineAsm { Operands: not null } ia:
                     foreach (var op in ia.Operands) InvalidateVar(op);
                     break;
                 case Label:
+                    varConsts.Clear();
+                    break;
+                // A call with ArrayBase args may modify variables through the pointer;
+                // conservatively invalidate all tracked variable constants.
+                case Call callInstr when callInstr.Args.Any(a => a is ArrayBase):
                     varConsts.Clear();
                     break;
             }
@@ -571,7 +893,9 @@ private static Function CloneFunction(Function f)
             else if (IsConditionalJump(lastInstr, out var target))
             {
                 if (labelToBlock.TryGetValue(target, out var targetBlock))
+                {
                     Connect(block, targetBlock);
+                }
 
                 if (i + 1 < blocks.Count)
                     Connect(block, blocks[i + 1]);
@@ -582,6 +906,24 @@ private static Function CloneFunction(Function f)
                     Connect(block, blocks[i + 1]);
             }
         }
+
+        // Eliminate unreachable blocks
+        var reachable = new HashSet<BasicBlock>();
+        var queue = new Queue<BasicBlock>();
+        if (cfg.Entry != null)
+        {
+            reachable.Add(cfg.Entry);
+            queue.Enqueue(cfg.Entry);
+        }
+        while (queue.Count > 0)
+        {
+            var b = queue.Dequeue();
+            foreach (var s in b.Successors)
+            {
+                if (reachable.Add(s)) queue.Enqueue(s);
+            }
+        }
+        cfg.Blocks.RemoveAll(b => !reachable.Contains(b));
 
         return cfg;
     }
@@ -624,6 +966,9 @@ private static Function CloneFunction(Function f)
             case JumpIfBitClear j:
                 target = j.Target;
                 return true;
+            case BranchOnError b:
+                target = b.ErrorLabel;
+                return true;
             default: return false;
         }
     }
@@ -648,11 +993,13 @@ private static Function CloneFunction(Function f)
         Binary b => b.Dst,
         Unary u => u.Dst,
         Copy c => c.Dst,
+        Bitcast bc => bc.Dst,
         Call cl => cl.Dst,
-        BitCheck bc => bc.Dst,
+        BitCheck bck => bck.Dst,
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
         ArrayLoadFlash alf => alf.Dst,
+        BytearrayLoad bld => bld.Dst,
         _ => null,
     };
 
@@ -661,11 +1008,13 @@ private static Function CloneFunction(Function f)
         Binary b => b with { Dst = newDst },
         Unary u => u with { Dst = newDst },
         Copy c => c with { Dst = newDst },
+        Bitcast bc => bc with { Dst = newDst },
         Call cl => cl with { Dst = newDst },
-        BitCheck bc => bc with { Dst = newDst },
+        BitCheck bck => bck with { Dst = newDst },
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
         ArrayLoadFlash alf => alf with { Dst = newDst },
+        BytearrayLoad bld => bld with { Dst = newDst },
         _ => instr,
     };
 
@@ -680,10 +1029,15 @@ private static Function CloneFunction(Function f)
                 register(b.Src2);
                 break;
             case Copy c: register(c.Src); break;
+            case Bitcast bc: register(bc.Src); break;
             case JumpIfZero j: register(j.Condition); break;
             case JumpIfNotZero j: register(j.Condition); break;
             case Call cl:
                 foreach (var a in cl.Args) register(a);
+                break;
+            case IndirectCall ic:
+                register(ic.FuncAddr);
+                foreach (var a in ic.Args) register(a);
                 break;
             case BitCheck bc: register(bc.Source); break;
             case BitWrite bw:
@@ -736,6 +1090,13 @@ private static Function CloneFunction(Function f)
                 register(ast.Index);
                 register(ast.Src);
                 break;
+            case BytearrayStore bst:
+                register(bst.Index);
+                register(bst.Src);
+                break;
+            case BytearrayLoad bld:
+                register(bld.Index);
+                break;
         }
     }
 
@@ -747,6 +1108,7 @@ private static Function CloneFunction(Function f)
             Unary u => u with { Src = replace(u.Src) },
             Binary b => b with { Src1 = replace(b.Src1), Src2 = replace(b.Src2) },
             Copy c => c with { Src = replace(c.Src) },
+            Bitcast bc => bc with { Src = replace(bc.Src) },
             JumpIfZero j => j with { Condition = replace(j.Condition) },
             JumpIfNotZero j => j with { Condition = replace(j.Condition) },
             Call cl => cl with { Args = cl.Args.Select(replace).ToList() },
@@ -769,6 +1131,221 @@ private static Function CloneFunction(Function f)
             ArrayLoadFlash alf => alf with { Index = replace(alf.Index) },
             InlineAsm ia when ia.Operands != null => ia with { Operands = ia.Operands.Select(replace).ToList() },
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
+            BytearrayStore bst => bst with { Index = replace(bst.Index), Src = replace(bst.Src) },
+            BytearrayLoad bld => bld with { Index = replace(bld.Index) },
+            _ => instr,
+        };
+    }
+
+    private const int MaxUnrollTripCount = 16;
+
+    private static bool UnrollConstantLoops(Function func)
+    {
+        bool anyUnrolled = false;
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            var body = func.Body;
+            for (int i = 0; i < body.Count - 1; i++)
+            {
+                if (body[i] is not Label { Name: var lStart }) continue;
+                if (body[i + 1] is not JumpIfGreaterOrEqual {
+                    Src1: Variable { Name: var loopVar },
+                    Src2: Constant { Value: var tripN },
+                    Target: var lEnd }) continue;
+                if (tripN <= 0 || tripN > MaxUnrollTripCount) continue;
+
+                int backJumpIdx = -1, endLabelIdx = -1;
+                for (int j = i + 2; j < body.Count - 1; j++)
+                {
+                    if (body[j] is Jump { Target: var jt } && jt == lStart &&
+                        body[j + 1] is Label { Name: var lt } && lt == lEnd)
+                    { backJumpIdx = j; endLabelIdx = j + 1; break; }
+                }
+                if (backJumpIdx < 0) continue;
+
+                var loopBody = body.GetRange(i + 2, backJumpIdx - (i + 2));
+
+                if (loopBody.Any(instr => instr is Jump { Target: var t } && t == lEnd)) continue;
+                if (loopBody.Any(instr => instr is Jump { Target: var t2 } && t2 == lStart)) continue;
+
+                // The increment must be the last non-DebugLine instruction in the loop body.
+                // This prevents matching conditional increments inside if-blocks.
+                int incrIdx = -1;
+                for (int bi = loopBody.Count - 1; bi >= 0; bi--)
+                {
+                    if (loopBody[bi] is DebugLine) continue;
+                    if (loopBody[bi] is AugAssign { Op: BinaryOp.Add, Target: Variable { Name: var tv }, Operand: Constant { Value: 1 } }
+                        && tv == loopVar)
+                        incrIdx = bi;
+                    break;
+                }
+                if (incrIdx < 0) continue;
+
+                int initValue = -1;
+                for (int j = i - 1; j >= Math.Max(0, i - 20); j--)
+                {
+                    if (body[j] is Copy { Src: Constant { Value: var cv }, Dst: Variable { Name: var dv } } && dv == loopVar)
+                    { initValue = cv; break; }
+                    if (body[j] is Label) break;
+                }
+                if (initValue < 0) continue;
+
+                int tripCount = tripN - initValue;
+                if (tripCount <= 0 || tripCount > MaxUnrollTripCount) continue;
+
+                var bodyLabels = new HashSet<string>(loopBody.OfType<Label>().Select(l => l.Name));
+                var unrolled = new List<Instruction>();
+                for (int k = initValue; k < tripN; k++)
+                {
+                    unrolled.Add(new Copy(new Constant(k), new Variable(loopVar)));
+                    for (int bi = 0; bi < loopBody.Count; bi++)
+                    {
+                        if (bi == incrIdx) continue;
+                        unrolled.Add(RenameBodyLabels(loopBody[bi], bodyLabels, k));
+                    }
+                }
+                unrolled.Add(new Copy(new Constant(tripN), new Variable(loopVar)));
+
+                body.RemoveRange(i, endLabelIdx - i + 1);
+                body.InsertRange(i, unrolled);
+                func.Body = body;
+                anyUnrolled = true;
+                changed = true;
+                break;
+            }
+        }
+        return anyUnrolled;
+    }
+
+    // -------------------------------------------------------------------------
+    // Devirtualization helpers
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Replace VirtualCall instructions with direct Calls wherever the target
+    /// can be proven unambiguous.
+    /// </summary>
+    private static void DevirtualizeCalls(
+        Function func,
+        Dictionary<string, HashSet<string>> classChildren,
+        Dictionary<string, HashSet<string>> classDirectMethods)
+    {
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            if (func.Body[i] is not VirtualCall vc) continue;
+
+            bool devirt =
+                // Rule 1: declared class is a leaf (no known subclasses).
+                !classChildren.TryGetValue(vc.DeclaredClass, out var ch) || ch.Count == 0
+                // Rule 3: no subclass in the subtree overrides the method.
+                || IsMethodNeverOverriddenOpt(vc.DeclaredClass, vc.MethodName, classChildren, classDirectMethods);
+
+            if (!devirt) continue;
+
+            // Direct call: self is passed as the first argument per the PyMCU ABI.
+            string target = vc.DefiningClass + "_" + vc.MethodName;
+            var callArgs = new List<Val> { vc.Self };
+            callArgs.AddRange(vc.Args);
+            func.Body[i] = new Call(target, callArgs, vc.Dst);
+        }
+    }
+
+    private static bool IsMethodNeverOverriddenOpt(
+        string cls, string methodName,
+        Dictionary<string, HashSet<string>> classChildren,
+        Dictionary<string, HashSet<string>> classDirectMethods)
+    {
+        if (!classChildren.TryGetValue(cls, out var children)) return true;
+        foreach (var child in children)
+        {
+            if (classDirectMethods.TryGetValue(child, out var dm) && dm.Contains(methodName))
+                return false;
+            if (!IsMethodNeverOverriddenOpt(child, methodName, classChildren, classDirectMethods))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Build vtable specs for classes that still have residual VirtualCall nodes
+    /// after devirtualization.  Returns an empty list for all current programs.
+    /// </summary>
+    private static List<VtableSpec> BuildVtableSpecs(ProgramIR program)
+    {
+        // Collect (declaredClass, methodName) pairs that survived devirtualization.
+        var needsVtable = new Dictionary<string, HashSet<string>>();
+        foreach (var func in program.Functions)
+        {
+            foreach (var instr in func.Body)
+            {
+                if (instr is not VirtualCall vc) continue;
+                if (!needsVtable.TryGetValue(vc.DeclaredClass, out var ms))
+                    needsVtable[vc.DeclaredClass] = ms = new HashSet<string>();
+                ms.Add(vc.MethodName);
+            }
+        }
+
+        var specs = new List<VtableSpec>();
+        foreach (var (cls, methods) in needsVtable)
+        {
+            // Build vtable: one entry per virtual method.
+            var entries = methods
+                .Select(m => new VtableEntry
+                {
+                    MethodName    = m,
+                    DefiningClass = WalkMROForMethodOpt(cls, m, program.ClassDirectMethods,
+                                                        program.ClassChildren),
+                })
+                .ToList();
+
+            specs.Add(new VtableSpec { ClassName = cls, Entries = entries });
+        }
+        return specs;
+    }
+
+    private static string WalkMROForMethodOpt(
+        string cls, string methodName,
+        Dictionary<string, HashSet<string>> classDirectMethods,
+        Dictionary<string, HashSet<string>> classChildren)
+    {
+        // We don't have classBasePrefixes here; do a BFS over classChildren inverse to find
+        // the declaring class.  For the common case (leaf class or not overridden) the
+        // DevirtualizeCalls pass already handled this; this path is rarely reached.
+        string? current = cls;
+        // Build a reverse map on the fly: child → parent via classChildren values.
+        var childToParent = new Dictionary<string, string>();
+        foreach (var (parent, children) in classChildren)
+            foreach (var child in children)
+                childToParent[child] = parent;
+
+        while (current != null)
+        {
+            if (classDirectMethods.TryGetValue(current, out var dm) && dm.Contains(methodName))
+                return current;
+            childToParent.TryGetValue(current, out current);
+        }
+        return cls;
+    }
+
+    private static Instruction RenameBodyLabels(Instruction instr, HashSet<string> bodyLabels, int iteration)
+    {
+        string R(string lbl) => bodyLabels.Contains(lbl) ? $"{lbl}_u{iteration}" : lbl;
+        return instr switch
+        {
+            Label l when bodyLabels.Contains(l.Name) => new Label($"{l.Name}_u{iteration}"),
+            Jump j => new Jump(R(j.Target)),
+            JumpIfZero j => new JumpIfZero(j.Condition, R(j.Target)),
+            JumpIfNotZero j => new JumpIfNotZero(j.Condition, R(j.Target)),
+            JumpIfEqual j => new JumpIfEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfNotEqual j => new JumpIfNotEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfLessThan j => new JumpIfLessThan(j.Src1, j.Src2, R(j.Target)),
+            JumpIfLessOrEqual j => new JumpIfLessOrEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfGreaterThan j => new JumpIfGreaterThan(j.Src1, j.Src2, R(j.Target)),
+            JumpIfGreaterOrEqual j => new JumpIfGreaterOrEqual(j.Src1, j.Src2, R(j.Target)),
+            JumpIfBitSet j => new JumpIfBitSet(j.Source, j.Bit, R(j.Target)),
+            JumpIfBitClear j => new JumpIfBitClear(j.Source, j.Bit, R(j.Target)),
             _ => instr,
         };
     }

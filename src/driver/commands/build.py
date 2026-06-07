@@ -2,20 +2,8 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -25,6 +13,8 @@
 # -----------------------------------------------------------------------------
 
 from pathlib import Path
+import json
+import re
 import tomlkit
 import typer
 import os
@@ -78,6 +68,7 @@ FLASH_SIZES: dict[str, int] = {
     "attiny84": 8192,  "attiny44": 4096,  "attiny24": 2048,
     "attiny13": 1024,  "attiny13a": 1024,
     "attiny2313": 2048, "attiny4313": 4096,
+    "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
 }
 
 
@@ -150,6 +141,175 @@ def _load_extension_board_chips(flavor: str) -> dict[str, str]:
         return {}
 
 
+_PRINT_RE    = re.compile(r'\bprint\s*\(')
+_UART_RE     = re.compile(r'\bUART\s*\(')
+_TICKS_MS_RE = re.compile(r'\bticks_ms\s*\(')
+_INPUT_RE    = re.compile(r'\binput\s*\(')
+
+
+def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
+    """Scan .py files in sources_dir.
+
+    Returns (has_print, has_uart, has_input):
+      has_print -- True if any file contains a print() call
+      has_uart  -- True if any file explicitly constructs a UART() instance
+      has_input -- True if any file contains an input() call
+    """
+    has_print = False
+    has_uart  = False
+    has_input = False
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            # Strip inline comments from each line before matching to avoid
+            # false positives from comment text (e.g. "# Output on UART (9600 baud)")
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if not has_print and _PRINT_RE.search(code):
+                has_print = True
+            if not has_uart and _UART_RE.search(code):
+                has_uart = True
+            if not has_input and _INPUT_RE.search(code):
+                has_input = True
+        except OSError:
+            pass
+        if has_print and has_uart and has_input:
+            break
+    return has_print, has_uart, has_input
+
+
+def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
+    """Return True if any .py file in sources_dir calls ticks_ms()."""
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            text = py_file.read_text(encoding="utf-8", errors="ignore")
+            if _TICKS_MS_RE.search(text):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+_MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
+
+
+def _inject_preamble(
+    entry_point: Path,
+    generated_dir: Path,
+    comment: str,
+    import_line: str,
+    call_line: str,
+) -> tuple[Path, int]:
+    """Write a synthetic entry file injecting import_line + call_line.
+
+    When the source has an explicit ``def main():``, the import is placed at
+    the top of the file and the call is inserted as the first statement inside
+    ``def main():``.  Otherwise both are prepended at the top level.  This
+    avoids the compiler error that fires when top-level executable statements
+    coexist with an explicit ``def main()``.
+
+    Returns (synthetic_path, preamble_line_count) so callers can correct
+    linemap line numbers that were shifted by the injected preamble.
+    """
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    synthetic = generated_dir / entry_point.name
+    existing = entry_point.read_text(encoding="utf-8")
+    m = _MAIN_DEF_RE.search(existing)
+    if m:
+        header = comment + import_line + "\n"
+        modified = existing[:m.end()] + "\n    " + call_line + existing[m.end():]
+        synthetic.write_text(header + modified, encoding="utf-8")
+        # Lines before def main() shifted by header_lines; lines inside def main()
+        # shifted by header_lines + 1 (the inserted call_line).  Use the larger
+        # value so breakpoints inside the function body (the common case) resolve
+        # correctly.
+        preamble_lines = header.count("\n") + 1
+    else:
+        preamble = comment + import_line + call_line + "\n\n"
+        synthetic.write_text(preamble + existing, encoding="utf-8")
+        preamble_lines = preamble.count("\n")
+    return synthetic, preamble_lines
+
+
+def _get_stdout_config(pymcu_config: dict) -> tuple[str, int]:
+    """Return (device, baud) for the configured stdout output device.
+
+    Reads optional ``stdout`` and ``stdout_baud`` keys from [tool.pymcu].
+    Defaults to uart0 at 115200 baud when not specified.
+    """
+    device = str(pymcu_config.get("stdout", "uart0"))
+    baud   = int(pymcu_config.get("stdout_baud", 115200))
+    return device, baud
+
+
+def _inject_print_preamble(
+    entry_point: Path,
+    generated_dir: Path,
+    device: str = "uart0",
+    baud: int = 115200,
+) -> tuple[Path, int]:
+    """Return a synthetic entry file with a stdout-init preamble prepended.
+
+    Mirrors MicroPython's boot behavior: the configured output device is
+    pre-initialized before user code runs, so print() works without an
+    explicit UART() constructor in user code.
+
+    Imports print_str from console.py so the IRGenerator resolves string
+    output via the arch-dispatched console function rather than the
+    uart-specific name.  Integer and float write functions (uart_write_decimal_u8,
+    uart_write_float) are kept as-is because they are non-inline and the
+    print() handler emits them via direct IR Call nodes rather than VisitCall.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment=f"# Auto-injected by pymcu build: stdout={device} at {baud} baud for print()\n",
+        import_line=(
+            "from pymcu.hal.uart import UART as _pymcu_stdout\n"
+            "from pymcu.hal.console import print_str\n"
+        ),
+        call_line=f"_pymcu_stdout({baud})",
+    )
+
+
+def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Return a synthetic entry file with a millis_init() preamble prepended.
+
+    Called when ticks_ms() is detected in user sources and no explicit
+    millis_init() call is present.  Mirrors the print() / UART preamble
+    injection pattern: the build driver owns the setup, user code stays clean.
+
+    Note: millis_init() configures Timer0 in normal overflow mode at prescaler
+    64 (~1 ms resolution at 16 MHz).  Do not use Timer0 for PWM or CTC in the
+    same project when ticks_ms() is active.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n",
+        import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
+        call_line="_pymcu_millis_init()",
+    )
+
+
+def _correct_linemap(linemap_path: Path, filename: str, offset: int) -> None:
+    """Subtract *offset* from every linemap entry whose File == *filename*.
+
+    Entries that would have a corrected line number <= 0 (i.e. they point into
+    the injected preamble itself) are dropped — they have no counterpart in the
+    original source file.
+    """
+    entries = json.loads(linemap_path.read_text(encoding="utf-8"))
+    corrected = []
+    for e in entries:
+        if e.get("File") == filename:
+            new_line = e["Line"] - offset
+            if new_line > 0:
+                corrected.append({**e, "Line": new_line})
+        else:
+            corrected.append(e)
+    linemap_path.write_text(json.dumps(corrected), encoding="utf-8")
+
+
 def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
     """Return the chip name for *board*, checking extension-supplied entries first."""
     return extra.get(board) or BOARD_CHIPS.get(board)
@@ -174,6 +334,17 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
                     total = total + rec_len
     except Exception:
         pass
+
+    # Deduct the constant startup preamble that every PyMCU binary carries:
+    #   - 26 interrupt vector slots x 4 bytes (RJMP + NOP padding) = 104 bytes
+    #   - __bad_interrupt: RJMP main                                =   2 bytes
+    # Total preamble = 106 bytes. This matches avr-libc's crt0 footprint
+    # (26 x JMP = 104 bytes + __bad_interrupt: JMP = 4 bytes = 108 bytes),
+    # keeping the differential comparison fair.
+    PREAMBLE_SIZE = 106
+    if total >= PREAMBLE_SIZE:
+        total -= PREAMBLE_SIZE
+
     return total
 
 def build(
@@ -183,6 +354,7 @@ def build(
         help="Override stdlib flavor(s) from pyproject.toml (e.g. --stdlib micropython). "
              "Can be specified multiple times.",
     ),
+    debug: bool = typer.Option(False, "--debug", help="Emit debug symbols and line map for the emulator debugger"),
 ):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
     _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
@@ -327,10 +499,12 @@ def build(
         if not output_dir.exists():
             output_dir.mkdir(parents=True)
 
+        # Shared generated-files directory (board shim + print preamble).
+        generated_dir = output_dir / "_generated"
+
         # Generate dist/_generated/board.py shim when board= is set.
         # This shim is prepended to -I so `import board` finds it first.
         if board_key:
-            generated_dir = output_dir / "_generated"
             generated_dir.mkdir(parents=True, exist_ok=True)
             board_shim = generated_dir / "board.py"
 
@@ -369,6 +543,55 @@ def build(
             # Prepend generated dir so `import board` finds the shim first
             extra_includes.insert(0, str(generated_dir))
 
+        # Auto-inject stdout preamble when print() or input() is used without an
+        # explicit UART() constructor in user sources.  This mirrors MicroPython's
+        # REPL behaviour where the output device is pre-initialized before user
+        # code runs, so print()/input() work out of the box with no extra imports.
+        # The output device is configurable via [tool.pymcu] stdout / stdout_baud.
+        _linemap_preamble_offset = 0
+
+        _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
+        if (_has_print or _has_input) and not _has_uart:
+            _stdout_device, _stdout_baud = _get_stdout_config(pymcu_config)
+            entry_point, _n = _inject_print_preamble(
+                entry_point, generated_dir, _stdout_device, _stdout_baud
+            )
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _trigger = "print()" if _has_print else "input()"
+            if _has_print and _has_input:
+                _trigger = "print() and input()"
+            _diag_log(
+                f"{_trigger} detected without UART() — injecting stdout preamble "
+                f"({_stdout_device} at {_stdout_baud} baud)",
+                verbose=is_verbose,
+            )
+            if is_verbose:
+                console.print(
+                    f"[debug] {_trigger} without UART — stdout preamble injected "
+                    f"({_stdout_device} at {_stdout_baud} baud)",
+                    style="dim",
+                )
+
+        # Auto-inject millis_init() preamble when ticks_ms() is used.
+        # millis_init() must run before any ticks_ms() call; injecting it here
+        # mirrors how UART is set up for print().
+        if _detect_ticks_ms_usage(sources_dir):
+            entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log(
+                "ticks_ms() detected — injecting millis_init() preamble (Timer0 OVF @ prescaler 64)",
+                verbose=is_verbose,
+            )
+            if is_verbose:
+                console.print(
+                    "[debug] ticks_ms() detected — millis_init() preamble injected",
+                    style="dim",
+                )
+
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
         ffi_sources_raw: list[str] = list(ffi_config.get("sources", []))
@@ -376,7 +599,7 @@ def build(
 
         # 1. Factory: Get the appropriate toolchain strategy.
         # When [tool.pymcu.ffi] sources are declared the GNU binutils pipeline
-        # (avr-as + avr-ld + avr-objcopy) is used instead of avra.
+        # (avr-as + avr-ld + avr-objcopy) is used.
         if use_ffi:
             try:
                 toolchain = get_ffi_toolchain_for_chip(target, console)
@@ -434,6 +657,13 @@ def build(
                         emit_ir_path=str(ir_file),
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
+                    linemap_path: Path | None = None
+                    varmap_path: Path | None = None
+                    if debug:
+                        debug_dir = output_dir / "_debug"
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        linemap_path = debug_dir / "linemap.json"
+                        varmap_path  = debug_dir / "varmap.json"
                     run_backend(
                         backend_binary=backend_plugin.get_backend_binary(),
                         ir_file=ir_file,
@@ -445,7 +675,14 @@ def build(
                         interrupt_vector=interrupt_vector,
                         verbose=verbose,
                         on_output=compiler_handler,
+                        emit_linemap_path=linemap_path,
+                        emit_varmap_path=varmap_path,
                     )
+                    # Correct linemap line numbers when preamble was injected.
+                    # The compiler saw the synthetic file (with prepended lines),
+                    # so all recorded line numbers are shifted by the preamble size.
+                    if linemap_path and linemap_path.exists() and _linemap_preamble_offset > 0:
+                        _correct_linemap(linemap_path, "main.py", _linemap_preamble_offset)
                 else:
                     compiler.compile(
                         input_file=entry_point,
@@ -492,18 +729,17 @@ def build(
                         console.print(f"[bold yellow]Warning:[/bold yellow] float.inc not found for {pic_arch}")
 
                 # AVR Math Runtime Injection
-                # If we are targeting AVR, we need to assemble and link the math runtime
-                # Since AVRA doesn't support linking multiple objects easily like ld,
-                # we will append the math assembly source directly to the output file
+                # If we are targeting AVR, we need to assemble and link the math runtime.
+                # Append the math assembly source directly to the output file
                 # if the compiler emitted calls to __div8, __mod8, etc.
-                if toolchain.get_name() in ("avra", "avr-as"):
+                if toolchain.get_name() == "avr-as":
                     progress.update(build_task, description="Injecting AVR Math Runtime...")
                     avr_math_path = math_lib_path / "avr"
                     
                     # List of runtime functions to check
                     runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32"]
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
-                    
+
                     if needed_funcs:
                         # Build the math runtime text
                         func_map = {
@@ -517,7 +753,7 @@ def build(
                         }
                         math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
                         included_files = set()
-                        for func in needed_funcs:
+                        for func in [f for f in needed_funcs if not f.startswith("__fp")]:
                             fname = func_map.get(func)
                             if fname and fname not in included_files:
                                 src_path = avr_math_path / fname
@@ -527,7 +763,6 @@ def build(
                                     included_files.add(fname)
                                 else:
                                     console.print(f"[bold yellow]Warning:[/bold yellow] Runtime file {fname} not found")
-
                         # Insert math runtime BEFORE the first function label so that
                         # __div8/__mod8 are at a low word address, within RCALL range
                         # (±2047 words) of any call site in large firmware images.
@@ -536,16 +771,33 @@ def build(
 
                         insert_idx = len(lines)  # fallback: append
                         past_vector_table = False
+                        org_line_idx = -1
                         for i, line in enumerate(lines):
                             stripped = line.strip()
                             if stripped.startswith(".org"):
                                 past_vector_table = True
+                                org_line_idx = i
                             elif past_vector_table and stripped and not stripped.startswith(";") \
                                     and not stripped.startswith(".") \
                                     and stripped.endswith(":"):
                                 # First function label after the vector table
                                 insert_idx = i
                                 break
+
+                        # The peephole optimiser removes "RJMP main" when main: is the
+                        # very next label in the compiler's internal list (programs with
+                        # no ISRs).  If we are about to insert the math runtime before
+                        # main: and the reset-vector jump is gone, re-add it so the CPU
+                        # jumps past the runtime to main at reset.
+                        if insert_idx < len(lines):
+                            first_label = lines[insert_idx].strip().rstrip(":")
+                            if first_label == "main" and org_line_idx >= 0:
+                                has_reset_jump = any(
+                                    "RJMP\tmain" in lines[j] or "JMP\tmain" in lines[j]
+                                    for j in range(org_line_idx + 1, insert_idx)
+                                )
+                                if not has_reset_jump:
+                                    math_runtime_text = "\tRJMP\tmain\n" + math_runtime_text
 
                         lines.insert(insert_idx, math_runtime_text + "\n")
                         with open(output_file, "w") as f:
@@ -624,44 +876,41 @@ def build(
                     if firmware_obj.exists():
                         firmware_obj.unlink()
 
+                elif toolchain.get_name() == "llvm-rp2040":
+                    # ── LLVM pipeline (RP2040): opt -> llc -> llvm-mc -> lld -> objcopy ─
+                    # The backend wrote LLVM IR (.ll) into output_file; the toolchain
+                    # optimises it, links it against the boot2/crt0 runtime and emits a
+                    # flat flash image (firmware.bin) with boot2 at offset 0.
+                    progress.update(build_task, description="  [cyan]LLVM build[/cyan]...", completed=75)
+                    bin_file = toolchain.assemble(output_file)
+                    hex_file = None  # RP2040 ships a raw flash binary, not Intel HEX
+
+                    debug_dir = output_dir / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    for inter in ["firmware.elf", "firmware.o", "boot2.o",
+                                  "crt0.o", "firmware.opt.ll"]:
+                        p = output_dir / inter
+                        if p.exists():
+                            shutil.move(str(p), str(debug_dir / p.name))
+
+                    flash_total = FLASH_SIZES.get(target.lower(), 0)
+                    flash_bytes = bin_file.stat().st_size
+                    if flash_total:
+                        pct = flash_bytes * 100 // flash_total
+                        console.print(
+                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
+                            f"({pct}% of program storage)"
+                        )
+                    else:
+                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
+
                 else:
-                    # ── Standard avra pipeline with linker-relaxation ─────────────────
-                    import re as _re
+                    # ── Generic toolchain assembly (e.g. gputils/PIC) ──────────────────
                     last_exc = None
-                    # Linker-relaxation loop: start with RJMP/RCALL (1 word, ±2047 range).
-                    # If AVRA reports out-of-range errors at specific lines, upgrade only
-                    # those instructions to JMP/CALL (2 words, full 22-bit range) and retry.
-                    for _pass in range(8):
-                        try:
-                            hex_file = toolchain.assemble(output_file)
-                            _diag_log(f"avra: Generated hex_file on pass {_pass}: {hex_file}", verbose=is_verbose)
-                            _diag_log(f"avra: hex_file exists: {hex_file.exists() if hex_file else 'None'}", verbose=is_verbose)
-                            if hex_file and hex_file.exists():
-                                _diag_log(f"avra: hex_file size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
-                            break
-                        except RuntimeError as e:
-                            err_str = str(e)
-                            if "out of range" not in err_str.lower() or toolchain.get_name() != "avra":
-                                last_exc = e
-                                break
-                            bad_lines = set(
-                                int(m) - 1
-                                for m in _re.findall(r"\((\d+)\)", err_str)
-                            )
-                            if not bad_lines:
-                                last_exc = e
-                                break
-                            with open(output_file, "r") as f:
-                                asm_lines = f.readlines()
-                            for idx in bad_lines:
-                                if 0 <= idx < len(asm_lines):
-                                    ln = asm_lines[idx]
-                                    ln = ln.replace("\tRCALL\t", "\tCALL\t")
-                                    ln = ln.replace("\tRJMP\t",  "\tJMP\t")
-                                    asm_lines[idx] = ln
-                            with open(output_file, "w") as f:
-                                f.writelines(asm_lines)
-                            last_exc = e
+                    try:
+                        hex_file = toolchain.assemble(output_file)
+                    except RuntimeError as e:
+                        last_exc = e
                     if hex_file is None:
                         progress.stop()
                         console.print(f"[bold red]Assembly Error:[/bold red] {last_exc}")
@@ -676,31 +925,8 @@ def build(
 
             progress.update(build_task, completed=90)
 
-            # Step 2.5: Flash size report (HEX parse) + optional ELF generation
-            if toolchain.get_name() == "avra":
-                progress.update(build_task, description="Reporting size...")
-                flash_bytes = _parse_hex_flash_bytes(hex_file)
-                if flash_bytes > 0:
-                    flash_total = FLASH_SIZES.get(target.lower(), 0)
-                    if flash_total:
-                        pct = flash_bytes * 100 // flash_total
-                        console.print(
-                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
-                            f"({pct}% of program storage)"
-                        )
-                    else:
-                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
-
-                # Optional ELF conversion for debug tooling (avr-objcopy)
-                link_result = toolchain.link(hex_file, target, output_dir)
-                if link_result:
-                    elf_path, _ = link_result
-                    debug_dir = output_dir / "debug"
-                    if not debug_dir.exists():
-                        debug_dir.mkdir(parents=True)
-                    shutil.move(str(elf_path), str(debug_dir / elf_path.name))
-            elif hex_file is not None:
-                # Flash size report for avr-as builds (FFI or non-FFI).
+            # Step 2.5: Flash size report (HEX parse)
+            if hex_file is not None:
                 progress.update(build_task, description="Reporting size...")
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:

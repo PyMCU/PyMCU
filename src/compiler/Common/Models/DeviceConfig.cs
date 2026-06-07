@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -31,4 +31,13 @@ public class DeviceConfig
     public int InterruptVector { get; set; } = -1;
     public int InterruptVectorHigh { get; set; } = -1;
     public int InterruptVectorLow { get; set; } = -1;
+
+    // Native pointer size in bytes, derived from the target architecture.
+    // AVR / PIC12 / PIC14 / PIC18 = 2 bytes; ARM Cortex-M / RISC-V 32 = 4 bytes.
+    public int PointerWidth => Arch switch
+    {
+        "arm" or "rp2040" or "cortex-m" => 4,
+        "riscv32" => 4,
+        _ => 2,
+    };
 }

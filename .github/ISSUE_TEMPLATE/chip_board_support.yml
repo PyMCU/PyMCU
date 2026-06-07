@@ -1,0 +1,82 @@
+---
+name: Chip / board / peripheral support request
+description: Request support for a new MCU, board, or peripheral driver (HAL)
+title: "[Hardware]: "
+labels: ["hardware-support", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this to request a new chip, board definition, or peripheral driver.
+        The more datasheet detail you provide, the faster it can land.
+
+        > [!TIP]
+        > Existing chips live in `lib/src/pymcu/chips/` and boards in
+        > `lib/src/pymcu/boards/`. Check whether yours is already partially
+        > supported.
+
+  - type: dropdown
+    attributes:
+      label: Request type
+      options:
+        - New MCU / chip
+        - New board definition
+        - New peripheral / driver (sensor, display, …)
+        - Extend an existing chip (more peripherals/pins)
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Architecture
+      options:
+        - AVR
+        - PIC
+        - RISC-V
+        - PIO (RP2040)
+        - Other / new architecture
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Chip / board / device name
+      placeholder: e.g. ATmega4809, Raspberry Pi Pico, SSD1331 OLED
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Datasheet / reference
+      description: Links to the datasheet, register map, pinout, or an existing reference driver (Arduino library, MicroPython module, etc.).
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Peripherals needed
+      description: |
+        Which capabilities matter to you, in priority order?
+      placeholder: |
+        - GPIO
+        - UART
+        - Timer / PWM
+        - ADC
+        - I2C / SPI
+        - Sleep / power management
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: How you intend to use it, the board you have on hand, and whether you'd be willing to help test or contribute the implementation.
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

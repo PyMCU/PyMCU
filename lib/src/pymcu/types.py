@@ -22,7 +22,7 @@ class ptr(Generic[T]):
 
     def __set__(self, instance, value):
         raise RuntimeError(
-            "⚠️ Error: You're trying to write to a hardware register "
+            "Error: You're trying to write to a hardware register "
             "while running Python on your computer.\n"
             "This code must be compiled with 'pymcuc' and run on the microcontroller."
         )
@@ -63,6 +63,23 @@ def inline(f):
     return f
 
 
+def naked(f):
+    return f
+
+
+def warning(message: str):
+    # Parametrised diagnostic decorator: when the pymcuc compiler expands a
+    # call to the decorated function it prints `message` (once per function)
+    # as an informational build-time note.  It does NOT abort compilation.
+    # Use it to flag functions that pull in the heavier software-float
+    # runtime, have reduced behaviour on bare metal, or otherwise warrant a
+    # heads-up (e.g. AnalogOut on a chip without a DAC, or read() that cannot
+    # allocate a bytes object).  At Python simulation time it is inert.
+    def _wrap(f):
+        return f
+    return _wrap
+
+
 def asm(instruction: str):
     pass
 
@@ -80,7 +97,15 @@ def compile_isr(handler: Callable, vector: int = 0):
     pass
 
 
-# Integer width aliases — defined as TypeAlias so int literals are always
+def funcref(fn: Callable) -> int:
+    # Compiler intrinsic: returns the word address of `fn` as a runtime
+    # function pointer (uint16 on AVR).  The result must be stored in a
+    # variable annotated with Callable and can be invoked via ICALL.
+    # At Python simulation time this returns 0 (no-op).
+    return 0
+
+
+# Integer width aliases -- defined as TypeAlias so int literals are always
 # assignable (e.g. `x: uint16 = 0` is valid) while still communicating the
 # intended bit width to the pymcuc compiler via the annotation text.
 uint8:  TypeAlias = int

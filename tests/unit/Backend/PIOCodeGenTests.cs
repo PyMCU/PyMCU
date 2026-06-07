@@ -82,8 +82,8 @@ public class PIOCodeGenTests
     public void Intrinsics()
     {
         var prog = MakeProgram("main",
-            new Call("__pio_pull", [], new NoneVal()),
-            new Call("__pio_wait", [new Constant(1), new MemoryAddress(1), new Constant(0)], new NoneVal()),
+            new Call("pull", [], new NoneVal()),
+            new Call("wait", [new Constant(1), new MemoryAddress(1), new Constant(0)], new NoneVal()),
             new Call("delay", [new Constant(5)], new NoneVal()));
         var asm = Compile(prog);
         Assert.Contains("PULL BLOCK", asm);

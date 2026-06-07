@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymcu-sdk"
+version = "0.1.0a1.post0"
+description = "Plugin SDK for PyMCU — abstract base classes for codegen backends and toolchain drivers"
+readme = "README.md"
+authors = [
+    { name = "Iván Montiel Cardona", email = "contact@pymcu.org" }
+]
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/PyMCU/pymcu"
+Repository = "https://github.com/PyMCU/pymcu"
+"Bug Tracker" = "https://github.com/PyMCU/pymcu/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pymcu"]

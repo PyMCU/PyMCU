@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -232,9 +232,9 @@ public class PIC18CodeGen : CodeGen
                 case JumpIfLessOrEqual arg: CompileJumpIfLessOrEqual(arg); break;
                 case JumpIfGreaterThan arg: CompileJumpIfGreaterThan(arg); break;
                 case JumpIfGreaterOrEqual arg: CompileJumpIfGreaterOrEqual(arg); break;
-                case AugAssign: throw new NotSupportedException("PIC18: AugAssign not implemented");
-                case LoadIndirect: throw new NotSupportedException("PIC18: LoadIndirect not yet implemented");
-                case StoreIndirect: throw new NotSupportedException("PIC18: StoreIndirect not yet implemented");
+                case AugAssign arg: CompileAugAssign(arg); break;
+                case LoadIndirect arg: CompileLoadIndirect(arg); break;
+                case StoreIndirect arg: CompileStoreIndirect(arg); break;
                 case InlineAsm arg: assembly.Add(PIC18AsmLine.MakeRaw(arg.Code)); break;
                 case DebugLine arg:
                     if (!string.IsNullOrEmpty(arg.SourceFile)) EmitComment($"{arg.SourceFile}:{arg.Line}: {arg.Text}");
@@ -737,5 +737,52 @@ public class PIC18CodeGen : CodeGen
             Emit("SUBWF", s1, "W", GetAccessMode(s1));
             Emit("BTFSC", "STATUS", "C", "ACCESS");
             Emit("BRA", arg.Target);
+        }
+
+        private void CompileAugAssign(AugAssign aa)
+        {
+            string addr = ResolveAddress(aa.Target);
+            LoadIntoW(aa.Operand);
+            SelectBank(addr);
+            string access = GetAccessMode(addr);
+            switch (aa.Op)
+            {
+                case PyMCU.IR.BinaryOp.Add:    Emit("ADDWF", addr, "F", access); break;
+                case PyMCU.IR.BinaryOp.Sub:    Emit("SUBWF", addr, "F", access); break;
+                case PyMCU.IR.BinaryOp.BitAnd: Emit("ANDWF", addr, "F", access); break;
+                case PyMCU.IR.BinaryOp.BitOr:  Emit("IORWF", addr, "F", access); break;
+                case PyMCU.IR.BinaryOp.BitXor: Emit("XORWF", addr, "F", access); break;
+                default: throw new NotSupportedException($"PIC18: AugAssign {aa.Op} not supported");
+            }
+        }
+
+        private void CompileLoadIndirect(LoadIndirect li)
+        {
+            if (li.SrcPtr is Constant c)
+                Emit("LFSR", "0", $"0x{c.Value:X3}");
+            else
+            {
+                string ptrAddr = ResolveAddress(li.SrcPtr);
+                SelectBank(ptrAddr);
+                Emit("MOVFF", ptrAddr, "FSR0L");
+                Emit("CLRF", "FSR0H", "ACCESS");
+            }
+            Emit("MOVF", "INDF0", "W", "ACCESS");
+            StoreWInto(li.Dst);
+        }
+
+        private void CompileStoreIndirect(StoreIndirect si)
+        {
+            if (si.DstPtr is Constant c)
+                Emit("LFSR", "0", $"0x{c.Value:X3}");
+            else
+            {
+                string ptrAddr = ResolveAddress(si.DstPtr);
+                SelectBank(ptrAddr);
+                Emit("MOVFF", ptrAddr, "FSR0L");
+                Emit("CLRF", "FSR0H", "ACCESS");
+            }
+            LoadIntoW(si.Src);
+            Emit("MOVWF", "INDF0", "ACCESS");
         }
 }

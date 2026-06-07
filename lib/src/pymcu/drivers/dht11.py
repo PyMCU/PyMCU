@@ -1,5 +1,5 @@
 # DHT11 temperature & humidity sensor driver
-# Zero-cost abstraction — mirrors the Pin/UART pattern exactly.
+# Zero-cost abstraction -- mirrors the Pin/UART pattern exactly.
 #
 # Usage:
 #   from pymcu.drivers.dht11 import DHT11
@@ -10,8 +10,8 @@
 #
 # The class interface is arch-neutral.  Architecture-specific dispatch is done
 # via the same two-level DCE used by Pin and UART:
-#   1. match __CHIP__.arch  — eliminates non-matching architectures
-#   2. _avr_read(self.name) — const[str] dispatch, eliminates non-matching pins
+#   1. match __CHIP__.arch  -- eliminates non-matching architectures
+#   2. _avr_read(self.name) -- const[str] dispatch, eliminates non-matching pins
 #
 # To add a new architecture, add a new case to DHT11.read() and create
 # lib/src/pymcu/drivers/_dht11/<arch>.py following the avr.py template.

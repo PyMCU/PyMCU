@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -102,7 +102,10 @@ public class PIOCodeGen : CodeGen
                 case JumpIfBitClear a: Gather(a.Source); break;
                 case Call a:
                     foreach (var arg in a.Args) Gather(arg);
-                    Gather(a.Dst);
+                    // PIO intrinsics (pull, out, wait, …) produce dead Temporary
+                    // destinations that the IRGen emits but PIO never reads back.
+                    // Only gather named Variable returns, not Temporary artifacts.
+                    if (a.Dst is Variable) Gather(a.Dst);
                     break;
             }
         }
@@ -278,27 +281,27 @@ public class PIOCodeGen : CodeGen
     {
         switch (arg.FunctionName)
         {
-            case "__pio_pull":
+            case "pull":
             {
                 string block = "BLOCK";
                 if (arg.Args.Count > 0 && arg.Args[0] is Constant c && c.Value == 0) block = "NOBLOCK";
                 Emit("PULL", block);
                 break;
             }
-            case "__pio_push":
+            case "push":
             {
                 string block = "BLOCK";
                 if (arg.Args.Count > 0 && arg.Args[0] is Constant c && c.Value == 0) block = "NOBLOCK";
                 Emit("PUSH", block);
                 break;
             }
-            case "__pio_out":
+            case "out":
                 Emit("OUT", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]));
                 break;
-            case "__pio_in":
+            case "in_":
                 Emit("IN", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]));
                 break;
-            case "__pio_wait":
+            case "wait":
                 Emit("WAIT", ResolveOperand(arg.Args[0]), ResolveOperand(arg.Args[1]), ResolveOperand(arg.Args[2]));
                 break;
             case "delay":

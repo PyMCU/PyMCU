@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -16,17 +16,23 @@
 
 namespace PyMCU.Common;
 
-public class CompilerError(string typeName, string message, int line, int column)
+public class CompilerError(string typeName, string message, int line, int column, int length = 1)
     : Exception(message)
 {
     public int Line { get; } = line;
     public int Column { get; } = column;
+    public int Length { get; } = length;
     public string TypeName { get; } = typeName;
 }
 
-public class SyntaxError(string message, int line, int column) : CompilerError("SyntaxError", message, line, column);
+public class SyntaxError(string message, int line, int column, int length = 1)
+    : CompilerError("SyntaxError", message, line, column, length);
 
-public class IndentationError(string message, int line, int column)
-    : CompilerError("IndentationError", message, line, column);
+public class IndentationError(string message, int line, int column, int length = 1)
+    : CompilerError("IndentationError", message, line, column, length);
 
-public class LexicalError(string message, int line, int column) : CompilerError("LexicalError", message, line, column);
+public class LexicalError(string message, int line, int column, int length = 1)
+    : CompilerError("LexicalError", message, line, column, length);
+
+public class ArchitectureError(string message, int line, int column, int length = 1)
+    : CompilerError("CompileError", message, line, column, length);

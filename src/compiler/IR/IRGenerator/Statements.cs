@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -71,6 +71,42 @@ public partial class IRGenerator
             }
         }
 
+        // Fold constant arithmetic so register definitions can use a readable
+        // `BASE + offset` form, e.g. `UART0_DR: ptr[uint32] = ptr(UART0_BASE + 0x00)`.
+        // Without this, only literal-address registers (the AVR `ptr(0x23)` style)
+        // resolved to a MemoryAddress; expression-based addresses (RP2040 / CH32V
+        // peripheral maps) fell through to the catch in ScanGlobals and were
+        // mis-registered as mutable SRAM globals.
+        if (expr is BinaryExpr bin)
+        {
+            int l = EvaluateConstantExpr(bin.Left);
+            int r = EvaluateConstantExpr(bin.Right);
+            switch (bin.Op)
+            {
+                case PyMCU.Frontend.BinaryOp.Add:    return l + r;
+                case PyMCU.Frontend.BinaryOp.Sub:    return l - r;
+                case PyMCU.Frontend.BinaryOp.Mul:    return l * r;
+                case PyMCU.Frontend.BinaryOp.Div:    return l / r;
+                case PyMCU.Frontend.BinaryOp.FloorDiv: return l / r;
+                case PyMCU.Frontend.BinaryOp.Mod:    return l % r;
+                case PyMCU.Frontend.BinaryOp.BitAnd: return l & r;
+                case PyMCU.Frontend.BinaryOp.BitOr:  return l | r;
+                case PyMCU.Frontend.BinaryOp.BitXor: return l ^ r;
+                case PyMCU.Frontend.BinaryOp.LShift: return l << r;
+                case PyMCU.Frontend.BinaryOp.RShift: return l >> r;
+            }
+        }
+
+        if (expr is UnaryExpr un)
+        {
+            int v = EvaluateConstantExpr(un.Operand);
+            switch (un.Op)
+            {
+                case PyMCU.Frontend.UnaryOp.Negate: return -v;
+                case PyMCU.Frontend.UnaryOp.BitNot: return ~v;
+            }
+        }
+
         throw new Exception("Not a constant expression");
     }
 
@@ -79,10 +115,12 @@ public partial class IRGenerator
         var irFunc = new Function();
         string fullName = currentModulePrefix + funcNode.Name;
         irFunc.Name = fullName;
+        irFunc.OriginalName = funcNode.Name;
         currentFunction = fullName;
 
         irFunc.IsInline = funcNode.IsInline;
         irFunc.IsInterrupt = funcNode.IsInterrupt;
+        irFunc.IsNaked = funcNode.IsNaked;
         irFunc.InterruptVector = funcNode.InterruptVector;
         irFunc.ReturnType = DataTypeExtensions.StringToDataType(funcNode.ReturnType);
 
@@ -97,6 +135,8 @@ public partial class IRGenerator
             irFunc.Params.Add(qualifiedParam);
             DataType paramDt = DataTypeExtensions.StringToDataType(param.Type);
             variableTypes[qualifiedParam] = paramDt;
+            if (param.Type == "bytearray")
+                bytearrayParams.Add(qualifiedParam);
         }
 
         arraysWithVariableIndex.Clear();
@@ -107,6 +147,37 @@ public partial class IRGenerator
         if (currentInstructions.Count == 0 || !(currentInstructions.Last() is Return))
         {
             Emit(new Return(new NoneVal()));
+        }
+
+        // Collect unique GC_REF named locals; inject GcRoot at prologue and GcUnroot before each Return.
+        // Only track named Variables (not Temporaries): gc_alloc returns a Temporary that is immediately
+        // Copy'd to a named Variable, and that Variable is what needs shadow-stack tracking.
+        // Temporaries may live only in registers (_tmpRegLayout) and have no SRAM slot for GetGcRefSramAddr.
+        var gcRefs = new List<Val>();
+        var gcRefNames = new HashSet<string>();
+        foreach (var instr in currentInstructions)
+        {
+            if (instr is Copy cp && cp.Dst is Variable vd && vd.Type == DataType.GC_REF)
+            {
+                if (gcRefNames.Add(vd.Name)) gcRefs.Add(vd);
+            }
+        }
+
+        if (gcRefs.Count > 0)
+        {
+            var annotated = new List<Instruction>();
+            // Prologue: push each GC_REF local onto the shadow stack.
+            foreach (var gcRef in gcRefs)
+                annotated.Add(new GcRoot(gcRef));
+            // Body: insert GcUnroot before every Return.
+            foreach (var instr in currentInstructions)
+            {
+                if (instr is Return)
+                    foreach (var gcRef in gcRefs)
+                        annotated.Add(new GcUnroot(gcRef));
+                annotated.Add(instr);
+            }
+            currentInstructions = annotated;
         }
 
         irFunc.Body = new List<Instruction>(currentInstructions);
@@ -143,7 +214,7 @@ public partial class IRGenerator
 
             if (stmt.Line <= linesPtr.Count)
             {
-                Emit(new DebugLine(stmt.Line, linesPtr[stmt.Line - 1], currentSourceFile));
+                Emit(new DebugLine(stmt.Line, linesPtr[stmt.Line - 1], currentSourceFile, !string.IsNullOrEmpty(currentInlinePrefix)));
                 lastLine = stmt.Line;
             }
         }
@@ -304,7 +375,11 @@ public partial class IRGenerator
         }
         else if (stmt is RaiseStmt raiseStmt)
         {
-            throw new Exception($"{raiseStmt.ErrorType}: {raiseStmt.Message}");
+            VisitRaise(raiseStmt);
+        }
+        else if (stmt is TryStmt tryStmt)
+        {
+            VisitTry(tryStmt);
         }
         else
         {
@@ -370,19 +445,38 @@ public partial class IRGenerator
                     }
                 }
 
+                // Guard: when a live return path already set the result via a Variable or
+                // Temporary (runtime value), a subsequent dead-code `return constant` must NOT
+                // overwrite the alias — that would fold the runtime result to the sentinel
+                // constant (e.g. 255 for a uint8 default-arg guard) on every later use.
+                //
+                // Rule: Constant returns win only when they are FIRST (first-return-wins for
+                // constants). Variable/Temporary returns always update regardless of order —
+                // this preserves the `return -1; ... return result` pattern where a runtime
+                // return must clear a stale constant set by an earlier const return.
+                bool wasAlreadyAssigned = ctx.ResultAssigned;
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
 
                 if (val is Constant c)
                 {
-                    constantVariables[ctx.ResultTemp.Name] = c.Value;
-                    // If the constant is a string ID, also register it as a string constant
-                    // so downstream code can resolve it via ResolveStrConstant.
-                    if (stringIdToStr.TryGetValue(c.Value, out string? sv))
-                        strConstantVariables[ctx.ResultTemp.Name] = sv;
+                    if (!wasAlreadyAssigned)
+                    {
+                        // First return wins for constants — subsequent const dead-code paths skipped.
+                        constantVariables[ctx.ResultTemp.Name] = c.Value;
+                        // If the constant is a string ID, also register it as a string constant
+                        // so downstream code can resolve it via ResolveStrConstant.
+                        if (stringIdToStr.TryGetValue(c.Value, out string? sv))
+                            strConstantVariables[ctx.ResultTemp.Name] = sv;
+                    }
                 }
                 else if (val is Variable v)
                 {
+                    // A non-constant return path clears any constant tracked from a prior
+                    // return path (e.g. `return -1` followed by `return result`).  Without
+                    // this, the stale constant propagates through the alias chain and causes
+                    // the comparison to be constant-folded at IR-generation time.
+                    constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = v.Name;
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(v.Name, out string? vsv))
@@ -390,6 +484,7 @@ public partial class IRGenerator
                 }
                 else if (val is Temporary t)
                 {
+                    constantVariables.Remove(ctx.ResultTemp.Name);
                     variableAliases[ctx.ResultTemp.Name] = t.Name;
                     // Carry string-constant metadata through the alias
                     if (strConstantVariables.TryGetValue(t.Name, out string? tsv))

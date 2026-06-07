@@ -26,7 +26,7 @@ build-backend name:
 
 # Named backend shorthands (each has its own .csproj name).
 build-backend-avr:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
+    dotnet publish "{{repo_root}}/extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
 build-backend-pic:

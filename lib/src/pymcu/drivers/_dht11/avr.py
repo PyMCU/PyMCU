@@ -1,4 +1,4 @@
-# DHT11 AVR implementation — loaded by dht11.py via:
+# DHT11 AVR implementation -- loaded by dht11.py via:
 #   from pymcu.drivers._dht11.avr import _avr_read
 # Pattern mirrors _gpio/atmega328p.py
 from pymcu.types import uint8, uint16, inline
@@ -9,7 +9,7 @@ from pymcu.time import delay_ms, delay_us
 @inline
 def _avr_read(pin_name: str) -> uint16:
     # Same if/elif pattern as pin_set_mode/pin_high in _gpio/atmega328p.py.
-    # IRGenerator constant-folds string ID comparisons — only the matching
+    # IRGenerator constant-folds string ID comparisons -- only the matching
     # branch survives, identical to how all GPIO HAL dispatch works.
     if pin_name == "PD2":
         return _pd_read(2)
@@ -70,7 +70,7 @@ def _pd_wait(mask: uint8, level: uint8) -> uint8:
             if current == 0:
                 return timeout
         else:
-            if current != 0:
+            if current:
                 return timeout
         timeout = timeout - 1
     return 0
@@ -86,7 +86,7 @@ def _pd_byte(mask: uint8) -> uint8:
         if _pd_wait(mask, 1) == 0:
             return 0
         count: uint8 = 0
-        while (PIND.value & mask) != 0:
+        while PIND.value & mask:
             count = count + 1
             if count == 255:
                 break

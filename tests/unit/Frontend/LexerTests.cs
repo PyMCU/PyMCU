@@ -345,4 +345,83 @@ public class LexerTests
 
         Assert.Contains(tokens, t => t.Type == TokenType.FString);
     }
+
+    // ─── Column and Length tracking ──────────────────────────────────────────
+
+    [Fact]
+    public void TokenColumnNumbers_AreTrackedToTokenStart()
+    {
+        // "def foo():" — d=1, space=4, f=5, (=8, )=9, :=10
+        var lexer = new Lexer("def foo():");
+        var tokens = lexer.Tokenize();
+
+        var defTok = tokens.First(t => t.Type == TokenType.Def);
+        Assert.Equal(1, defTok.Column);
+        Assert.Equal(3, defTok.Length);
+
+        var fooTok = tokens.First(t => t.Type == TokenType.Identifier && t.Value == "foo");
+        Assert.Equal(5, fooTok.Column);
+        Assert.Equal(3, fooTok.Length);
+
+        var lparen = tokens.First(t => t.Type == TokenType.LParen);
+        Assert.Equal(8, lparen.Column);
+        Assert.Equal(1, lparen.Length);
+
+        var rparen = tokens.First(t => t.Type == TokenType.RParen);
+        Assert.Equal(9, rparen.Column);
+        Assert.Equal(1, rparen.Length);
+
+        var colon = tokens.First(t => t.Type == TokenType.Colon);
+        Assert.Equal(10, colon.Column);
+        Assert.Equal(1, colon.Length);
+    }
+
+    [Fact]
+    public void TwoCharOperator_HasCorrectColumnAndLength()
+    {
+        // "x -> y" — arrow starts at col 3
+        var lexer = new Lexer("x -> y");
+        var tokens = lexer.Tokenize();
+
+        var arrow = tokens.First(t => t.Type == TokenType.Arrow);
+        Assert.Equal(3, arrow.Column);
+        Assert.Equal(2, arrow.Length);
+    }
+
+    [Fact]
+    public void NumberToken_StartsAtCorrectColumn()
+    {
+        // "x = 42" — number at col 5
+        var lexer = new Lexer("x = 42");
+        var tokens = lexer.Tokenize();
+
+        var num = tokens.First(t => t.Type == TokenType.Number);
+        Assert.Equal(5, num.Column);
+        Assert.Equal(2, num.Length);
+    }
+
+    [Fact]
+    public void EqualEqual_HasCorrectColumnAndLength()
+    {
+        // "a == b" — == starts at col 3
+        var lexer = new Lexer("a == b");
+        var tokens = lexer.Tokenize();
+
+        var eq = tokens.First(t => t.Type == TokenType.EqualEqual);
+        Assert.Equal(3, eq.Column);
+        Assert.Equal(2, eq.Length);
+    }
+
+    [Fact]
+    public void SecondLineToken_HasCorrectColumn()
+    {
+        var src = "x = 1" + (char)10 + "return foo";
+        var lexer = new Lexer(src);
+        var tokens = lexer.Tokenize();
+
+        var retTok = tokens.First(t => t.Type == TokenType.Return);
+        Assert.Equal(2, retTok.Line);
+        Assert.Equal(1, retTok.Column);
+        Assert.Equal(6, retTok.Length);
+    }
 }

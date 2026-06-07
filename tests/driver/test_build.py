@@ -95,6 +95,7 @@ class TestBuildStdlibFlag:
 
 class TestBuildBoardResolution:
     def test_known_board_resolves(self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+        pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
         monkeypatch.chdir(tmp_path)
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("def main(): pass\n")

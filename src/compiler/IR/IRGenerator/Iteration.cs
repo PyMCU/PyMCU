@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -20,6 +20,24 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // Resolves the fixed-array size of `name` by following the variableAliases
+    // chain from the current inline prefix. This lets a `for x in param` loop
+    // find the array length when a (possibly uninitialised) runtime array is
+    // passed into an @inline function -- the size is registered under the
+    // caller's qualified name, not the parameter name.
+    private int ResolveAliasedArraySize(string name, out string baseKey)
+    {
+        baseKey = "";
+        string key = currentInlinePrefix + name;
+        for (int d = 0; d < 20; d++)
+        {
+            if (variableAliases.TryGetValue(key, out var nxt)) key = nxt;
+            else break;
+            if (arraySizes.TryGetValue(key, out int s)) { baseKey = key; return s; }
+        }
+        return -1;
+    }
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
@@ -48,6 +66,30 @@ public partial class IRGenerator
                 {
                     constantVariables[varKey] = (int)c;
                     VisitStatement(stmt.Body);
+                }
+
+                constantVariables.Remove(varKey);
+                return;
+            }
+
+            // A parameter bound to a bytes/list literal argument (e.g. the `buf` of
+            // uart.write(b"Hi")) iterates exactly like a direct list literal.
+            ListExpr? GetListParam(Expression e)
+            {
+                if (e is not VariableExpr varE) return null;
+                return ResolveListLiteralParam(varE.Name);
+            }
+
+            if (GetListParam(iter) is ListExpr boundList)
+            {
+                foreach (var elem in boundList.Elements)
+                {
+                    if (elem is IntegerLiteral il)
+                    {
+                        constantVariables[varKey] = il.Value;
+                        VisitStatement(stmt.Body);
+                    }
+                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
                 }
 
                 constantVariables.Remove(varKey);
@@ -230,6 +272,12 @@ public partial class IRGenerator
                             @base = vE.Name;
                         }
 
+                        if (arrSize < 0)
+                        {
+                            int s3a = ResolveAliasedArraySize(vE.Name, out var b3a);
+                            if (s3a > 0) { arrSize = s3a; @base = b3a; }
+                        }
+
                         if (arrSize > 0)
                         {
                             DataType elemDt = arrayElemTypes.TryGetValue(@base, out var dt) ? dt : DataType.UINT8;
@@ -258,9 +306,18 @@ public partial class IRGenerator
                                 else
                                 {
                                     string elemKey = @base + "__" + k;
-                                    if (constantVariables.TryGetValue(elemKey, out int cv))
+                                    bool elemIsZca = instanceClasses.ContainsKey(elemKey) ||
+                                                     instanceClasses.Keys.Any(x => x.StartsWith(elemKey + "."));
+                                    if (elemIsZca)
                                     {
-                                        constantVariables[valKey] = cv;
+                                        // Bind to the function-qualified value-var name the loop body
+                                        // resolves to (qualifiedVal), not the inline-only valKey, so a
+                                        // `pin.value = ...` setter inside a def sees the ZCA state.
+                                        PropagateCtState(elemKey, qualifiedVal);
+                                    }
+                                    else if (constantVariables.TryGetValue(elemKey, out int cv))
+                                    {
+                                        constantVariables[qualifiedVal] = cv;
                                     }
                                     else
                                     {
@@ -271,7 +328,8 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
-                                constantVariables.Remove(valKey);
+                                CleanCtState(qualifiedVal);
+                                constantVariables.Remove(qualifiedVal);
                             }
 
                             constantVariables.Remove(idxKey);
@@ -296,8 +354,20 @@ public partial class IRGenerator
                             var vals = new List<int>();
                             foreach (var elem in le2.Elements)
                             {
-                                if (elem is IntegerLiteral il) vals.Add(il.Value);
-                                else throw new Exception("zip() list elements must be compile-time integer constants.");
+                                if (elem is IntegerLiteral il)
+                                {
+                                    vals.Add(il.Value);
+                                }
+                                else
+                                {
+                                    // Try resolving as a compile-time constant expression
+                                    // (e.g. enum member like Priority.IDLE, or BooleanLiteral).
+                                    Val resolved = VisitExpression(elem);
+                                    if (resolved is Constant rc)
+                                        vals.Add(rc.Value);
+                                    else
+                                        throw new Exception("zip() list elements must be compile-time integer constants.");
+                                }
                             }
 
                             return vals;
@@ -352,18 +422,76 @@ public partial class IRGenerator
                         throw new Exception("zip() arguments must be constant list literals or constant arrays.");
                     }
 
-                    var vals0 = CollectInts(arg0);
-                    var vals1 = CollectInts(arg1);
-                    int len = Math.Min(vals0.Count, vals1.Count);
-                    for (int k = 0; k < len; ++k)
+                    // Try to interpret a list expression as a list of function references.
+                    // Returns null if any element is not a known function name.
+                    List<string>? TryCollectFuncRefs(Expression e)
                     {
-                        constantVariables[key1] = vals0[k];
-                        constantVariables[key2] = vals1[k];
-                        VisitStatement(stmt.Body);
+                        if (e is not ListExpr le3) return null;
+                        var names = new List<string>();
+                        foreach (var elem in le3.Elements)
+                        {
+                            if (elem is VariableExpr ve)
+                            {
+                                string resolved = ResolveCallee(ve.Name);
+                                if (functionParams.ContainsKey(resolved) || functionReturnTypes.ContainsKey(resolved)
+                                    || inlineFunctions.ContainsKey(resolved))
+                                {
+                                    names.Add(resolved);
+                                    continue;
+                                }
+                            }
+                            return null;
+                        }
+                        return names;
                     }
 
-                    constantVariables.Remove(key1);
-                    constantVariables.Remove(key2);
+                    List<string>? funcRefs0 = TryCollectFuncRefs(arg0);
+                    List<string>? funcRefs1 = TryCollectFuncRefs(arg1);
+
+                    if (funcRefs0 != null)
+                    {
+                        // First list is function references; second must be integer constants.
+                        var vals1 = CollectInts(arg1);
+                        int len = Math.Min(funcRefs0.Count, vals1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            loopFunctionAliases[key1] = funcRefs0[k];
+                            constantVariables[key2] = vals1[k];
+                            VisitStatement(stmt.Body);
+                        }
+                        loopFunctionAliases.Remove(key1);
+                        constantVariables.Remove(key2);
+                    }
+                    else if (funcRefs1 != null)
+                    {
+                        // First list is integer constants; second is function references.
+                        var vals0 = CollectInts(arg0);
+                        int len = Math.Min(vals0.Count, funcRefs1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            constantVariables[key1] = vals0[k];
+                            loopFunctionAliases[key2] = funcRefs1[k];
+                            VisitStatement(stmt.Body);
+                        }
+                        constantVariables.Remove(key1);
+                        loopFunctionAliases.Remove(key2);
+                    }
+                    else
+                    {
+                        // Both lists are integer constants (original behaviour).
+                        var vals0 = CollectInts(arg0);
+                        var vals1 = CollectInts(arg1);
+                        int len = Math.Min(vals0.Count, vals1.Count);
+                        for (int k = 0; k < len; ++k)
+                        {
+                            constantVariables[key1] = vals0[k];
+                            constantVariables[key2] = vals1[k];
+                            VisitStatement(stmt.Body);
+                        }
+
+                        constantVariables.Remove(key1);
+                        constantVariables.Remove(key2);
+                    }
                     return;
                 }
                 else if (calleeVar.Name == "reversed" && call.Args.Count == 1)
@@ -415,24 +543,154 @@ public partial class IRGenerator
                             @base = v.Name;
                         }
 
+                        if (arrSize < 0)
+                        {
+                            int s3r = ResolveAliasedArraySize(v.Name, out var b3r);
+                            if (s3r > 0) { arrSize = s3r; @base = b3r; }
+                        }
+
                         if (arrSize > 0)
                         {
+                            DataType elemDt = arrayElemTypes.TryGetValue(@base, out var edt) ? edt : DataType.UINT8;
+                            // Use the fully-qualified key so the optimizer's copy-propagation
+                            // maps "main.v" correctly when the body resolves the loop variable.
+                            string qValKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                                ? valKey
+                                : (!string.IsNullOrEmpty(currentFunction)
+                                    ? currentFunction + "." + stmt.VarName
+                                    : valKey);
+                            variableTypes[qValKey] = elemDt;
                             for (int k = arrSize - 1; k >= 0; --k)
                             {
                                 string elemKey = @base + "__" + k;
-                                if (constantVariables.TryGetValue(elemKey, out int cv)) constantVariables[valKey] = cv;
+                                if (constantVariables.TryGetValue(elemKey, out int cv))
+                                    constantVariables[valKey] = cv;
+                                else if (instanceClasses.ContainsKey(elemKey) ||
+                                         instanceClasses.Keys.Any(x => x.StartsWith(elemKey + ".")))
+                                    PropagateCtState(elemKey, qValKey);
                                 else
-                                    throw new Exception(
-                                        "reversed() array elements must be compile-time integer constants.");
+                                    Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
+                                CleanCtState(qValKey);
+                                constantVariables.Remove(valKey);
                             }
-
-                            constantVariables.Remove(valKey);
                             return;
                         }
                     }
 
                     throw new Exception("reversed() argument must be a constant list literal or a constant array.");
+                }
+            }
+
+            // for v in x: where x is a list[T] variable → runtime loop with heap load per iteration
+            if (iter is VariableExpr listVarExpr)
+            {
+                string listQ = ResolveListVarQualified(listVarExpr.Name);
+                if (!string.IsNullOrEmpty(listQ))
+                {
+                    DataType elemDt = listVarElemTypes[listQ];
+                    Variable listPtr = new Variable(listQ, DataType.GC_REF);
+
+                    // load length
+                    Temporary listLen = MakeTemp(DataType.UINT8);
+                    Emit(new LoadIndirect(listPtr, listLen));
+
+                    // loop index
+                    string idxVarName = string.IsNullOrEmpty(currentInlinePrefix)
+                        ? (string.IsNullOrEmpty(currentFunction)
+                            ? "__list_i" + tempCounter
+                            : currentFunction + ".__list_i" + tempCounter)
+                        : currentInlinePrefix + "__list_i" + tempCounter;
+                    tempCounter++;
+                    Variable idxVar = new Variable(idxVarName, DataType.UINT8);
+                    variableTypes[idxVarName] = DataType.UINT8;
+                    Emit(new Copy(new Constant(0), idxVar));
+
+                    // loop variable (the element)
+                    string elemVarName = string.IsNullOrEmpty(currentInlinePrefix)
+                        ? (string.IsNullOrEmpty(currentFunction) ? stmt.VarName : currentFunction + "." + stmt.VarName)
+                        : currentInlinePrefix + stmt.VarName;
+                    Variable elemVar = new Variable(elemVarName, elemDt);
+                    variableTypes[elemVarName] = elemDt;
+
+                    string loopStart = MakeLabel();
+                    string loopEnd = MakeLabel();
+                    loopStack.Add(new LoopLabels { ContinueLabel = loopStart, BreakLabel = loopEnd });
+
+                    Emit(new Label(loopStart));
+                    Temporary cmpTmp = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(PyMCU.IR.BinaryOp.GreaterEqual, idxVar, listLen, cmpTmp));
+                    Emit(new JumpIfNotZero(cmpTmp, loopEnd));
+
+                    Temporary elemAddr = EmitElemAddr(listPtr, idxVar, elemDt.SizeOf());
+                    Temporary elemTmp = MakeTemp(elemDt);
+                    Emit(new LoadIndirect(elemAddr, elemTmp));
+                    Emit(new Copy(elemTmp, elemVar));
+
+                    VisitStatement(stmt.Body);
+
+                    Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, idxVar, new Constant(1)));
+                    Emit(new Jump(loopStart));
+                    Emit(new Label(loopEnd));
+                    loopStack.RemoveAt(loopStack.Count - 1);
+                    return;
+                }
+            }
+
+            // for v in ct_array: — unroll over compile-time array (scalars or ZCA instances)
+            if (iter is VariableExpr forVarExpr2)
+            {
+                string forBase = "";
+                int forSize = -1;
+                if (!string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string fk = currentInlinePrefix + forVarExpr2.Name;
+                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
+                }
+                if (forSize < 0 && !string.IsNullOrEmpty(currentFunction))
+                {
+                    string fk = currentFunction + "." + forVarExpr2.Name;
+                    if (arraySizes.TryGetValue(fk, out int fs)) { forSize = fs; forBase = fk; }
+                }
+                if (forSize < 0 && arraySizes.TryGetValue(forVarExpr2.Name, out int fs2))
+                { forSize = fs2; forBase = forVarExpr2.Name; }
+                if (forSize < 0)
+                {
+                    int fs3 = ResolveAliasedArraySize(forVarExpr2.Name, out var fb3);
+                    if (fs3 > 0) { forSize = fs3; forBase = fb3; }
+                }
+
+                if (forSize > 0)
+                {
+                    // Qualify the loop variable the same way ResolveBinding does for a bare name,
+                    // so the loop body's references (e.g. a `pin.direction = ...` property setter)
+                    // resolve to the same key the loop binds -- including the currentFunction prefix
+                    // when iterating inside a def. Without this, ZCA per-element state registered on
+                    // the loop var is invisible to the body inside a function.
+                    string forVarKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + stmt.VarName
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                    DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
+                    variableTypes[forVarKey] = elemDt2;
+
+                    for (int fk = 0; fk < forSize; fk++)
+                    {
+                        string elemKey2 = forBase + "__" + fk;
+                        bool isZca = instanceClasses.ContainsKey(elemKey2) ||
+                                     instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
+                        if (isZca)
+                            PropagateCtState(elemKey2, forVarKey);
+                        else if (constantVariables.TryGetValue(elemKey2, out int cv2))
+                            constantVariables[forVarKey] = cv2;
+                        else
+                            Emit(new Copy(new Variable(elemKey2, elemDt2), new Variable(forVarKey, elemDt2)));
+
+                        VisitStatement(stmt.Body);
+
+                        CleanCtState(forVarKey);
+                        constantVariables.Remove(forVarKey);
+                    }
+                    return;
                 }
             }
 

@@ -56,49 +56,59 @@ __fp_add:
     ; --- Extract arg0 ---
     ; sign A
     mov  R12, R25
-    andi R12, 0x80           ; R12 = sign bit of A (0x00 or 0x80)
+    ldi  R16, 0x80
+    and  R12, R16            ; R12 = sign bit of A (0x00 or 0x80)
     ; exponent A = (R25 << 1) | (R24 >> 7)
     mov  R10, R25
-    andi R10, 0x7F
+    ldi  R16, 0x7F
+    and  R10, R16
     lsl  R10                 ; exp high 7 bits
     mov  R16, R24
     lsr  R16                 ; R24 >> 7 -> bit0 = exp LSB
-    andi R16, 0x01
+    ldi  R17, 0x01
+    and  R16, R17
     or   R10, R16            ; R10 = 8-bit biased exponent of A
     ; mantissa A: R24[6:0]:R23:R22  (23 bits), add implied leading 1 if exp != 0
     mov  R6, R24
-    andi R6, 0x7F            ; high 7 bits of mantissa into R6
+    ldi  R16, 0x7F
+    and  R6, R16             ; high 7 bits of mantissa into R6
     mov  R5, R23
     mov  R4, R22
-    cpi  R10, 0
+    tst  R10
     breq __fpadd_no_impl1
-    ori  R6, 0x80            ; set implied leading 1 (bit23 = 1)
+    ldi  R16, 0x80
+    or   R6, R16             ; set implied leading 1 (bit23 = 1)
 __fpadd_no_impl1:
 
     ; --- Extract arg1 ---
     ; sign B
     mov  R13, R21
-    andi R13, 0x80
+    ldi  R16, 0x80
+    and  R13, R16
     ; exponent B
     mov  R11, R21
-    andi R11, 0x7F
+    ldi  R16, 0x7F
+    and  R11, R16
     lsl  R11
     mov  R16, R20
     lsr  R16
-    andi R16, 0x01
+    ldi  R17, 0x01
+    and  R16, R17
     or   R11, R16            ; R11 = 8-bit biased exponent of B
     ; mantissa B
     mov  R9, R20
-    andi R9, 0x7F
+    ldi  R16, 0x7F
+    and  R9, R16
     mov  R8, R19
     mov  R7, R18
-    cpi  R11, 0
+    tst  R11
     breq __fpadd_no_impl2
-    ori  R9, 0x80
+    ldi  R16, 0x80
+    or   R9, R16
 __fpadd_no_impl2:
 
     ; --- Handle zero operands (exp == 0 -> treat as 0) ---
-    cpi  R10, 0
+    tst  R10
     brne __fpadd_a_nonzero
     ; A is zero: result = B
     mov  R22, R18
@@ -107,7 +117,7 @@ __fpadd_no_impl2:
     mov  R25, R21
     rjmp __fpadd_done
 __fpadd_a_nonzero:
-    cpi  R11, 0
+    tst  R11
     brne __fpadd_b_nonzero
     ; B is zero: result = A (already in R22:R25)
     rjmp __fpadd_done
@@ -122,7 +132,8 @@ __fpadd_b_nonzero:
     ; expA > expB: shift mantissa B right by (expA - expB)
     sub  R11, R10            ; R11 = expB - expA (negative)
     neg  R11                 ; R11 = expA - expB (positive shift count)
-    cpi  R11, 24
+    ldi  R16, 24
+    cp   R11, R16
     brge __fpadd_b_zero      ; shift >= 24: B becomes 0, result = A
 __fpadd_shift_b:
     lsr  R9
@@ -157,7 +168,8 @@ __fpadd_a_smaller:
     ; R10 = expB (result exp), shift A right by (expB - expA_original)
     ; We lost expA; re-derive from argument:
     mov  R10, R25
-    andi R10, 0x7F
+    ldi  R16, 0x7F
+    and  R10, R16
     lsl  R10
     mov  R17, R24
     lsr  R17
@@ -246,7 +258,8 @@ __fpadd_normalize:
     ror  R5
     ror  R4
     inc  R10
-    cpi  R10, 0xFF
+    ldi  R16, 0xFF
+    cp   R10, R16
     breq __fpadd_return_inf
 
 __fpadd_no_overflow:
@@ -254,7 +267,7 @@ __fpadd_no_overflow:
 __fpadd_norm_loop:
     sbrc R6, 7
     rjmp __fpadd_norm_done
-    cpi  R10, 0
+    tst  R10
     breq __fpadd_return_zero  ; underflow: exponent exhausted
     lsl  R4
     rol  R5
@@ -265,7 +278,8 @@ __fpadd_norm_done:
 
     ; --- Recompose float ---
     ; Clear implied leading 1 (mantissa bits 22:0 only)
-    andi R6, 0x7F
+    ldi  R16, 0x7F
+    and  R6, R16
     ; Rebuild R25: sign | exp[7:1]
     mov  R25, R10
     lsr  R25                 ; exp >> 1
@@ -348,30 +362,32 @@ __fp_mul:
 
     ; Extract signs, exponents, mantissas (same as add)
     mov  R12, R25
-    andi R12, 0x80
+    ldi  R16, 0x80
+    and  R12, R16
     mov  R10, R25
-    andi R10, 0x7F
+    ldi  R16, 0x7F
+    and  R10, R16
     lsl  R10
-    mov  R16, R24
-    lsr  R16
-    andi R16, 0x01
-    or   R10, R16
+    sbrc R24, 7                  ; bit7 of R24 = exp[0] of arg0; lsl zeroed bit0
+    inc  R10                     ; set bit0 (exp[0]) if R24 bit7 is set
     mov  R6, R24
-    andi R6, 0x7F
+    ldi  R16, 0x7F
+    and  R6, R16
     mov  R5, R23
     mov  R4, R22
 
     mov  R13, R21
-    andi R13, 0x80
+    ldi  R16, 0x80
+    and  R13, R16
     mov  R11, R21
-    andi R11, 0x7F
+    ldi  R16, 0x7F
+    and  R11, R16
     lsl  R11
-    mov  R16, R20
-    lsr  R16
-    andi R16, 0x01
-    or   R11, R16
+    sbrc R20, 7                  ; bit7 of R20 = exp[0] of arg1; lsl zeroed bit0
+    inc  R11                     ; set bit0 (exp[0]) if R20 bit7 is set
     mov  R9, R20
-    andi R9, 0x7F
+    ldi  R16, 0x7F
+    and  R9, R16
     mov  R8, R19
     mov  R7, R18
 
@@ -380,25 +396,41 @@ __fp_mul:
     eor  R12, R13
 
     ; Handle zero operands
-    cpi  R10, 0
-    breq __fpmul_return_zero
-    cpi  R11, 0
-    breq __fpmul_return_zero
+    tst  R10
+    breq __fpmul_ez_zero
+    tst  R11
+    breq __fpmul_ez_zero
 
     ; Set implied leading 1 bits
-    ori  R6, 0x80
-    ori  R9, 0x80
+    ldi  R16, 0x80
+    or   R6, R16
+    or   R9, R16
 
-    ; Result exponent = expA + expB - 127
-    mov  R10, R10
-    add  R10, R11
-    subi R10, 127
+    ; Result exponent = expA + expB - 127 (9-bit to avoid overflow)
+    clr  R14                     ; carry/borrow tracker (R14 pushed above, now clobbered)
+    add  R10, R11                ; R10 = (expA + expB) & 0xFF
+    adc  R14, R1                 ; R14 = carry from add (R1 is always 0)
+    ldi  R16, 127
+    sub  R10, R16                ; subtract bias; may borrow
+    sbc  R14, R1                 ; R14 = carry - borrow
 
     ; Overflow/underflow check on exponent
-    cpi  R10, 0xFF
-    brge __fpmul_return_inf
-    cpi  R10, 0
-    brle __fpmul_return_zero
+    ldi  R16, 0xFF
+    cp   R10, R16
+    brge __fpmul_ez_inf          ; result >= 0xFF: infinity
+    tst  R14
+    brmi __fpmul_ez_zero         ; R14 = 0xFF (borrow): underflow, result < 0
+    brne __fpmul_ez_inf          ; R14 = 1 (carry): overflow, result > 255
+    tst  R10
+    breq __fpmul_ez_zero         ; result == 0: underflow
+    rjmp __fpmul_do_mul          ; bypass trampolines
+
+__fpmul_ez_zero:
+    rjmp __fpmul_return_zero
+__fpmul_ez_inf:
+    rjmp __fpmul_return_inf
+
+__fpmul_do_mul:
 
     ; Multiply mantissas: A(24-bit) * B(24-bit) = 48-bit product
     ; We need only the top 24 bits (bits[47:24]).
@@ -449,8 +481,10 @@ __fp_mul:
     ; R18:R19:R20 still hold original arg1 bytes, and we set R9=R20 with implied 1.
     ; Restore R9 from R20:
     mov  R9, R20
-    andi R9, 0x7F
-    ori  R9, 0x80            ; B2 with implied 1
+    ldi  R16, 0x7F
+    and  R9, R16
+    ldi  R16, 0x80
+    or   R9, R16             ; B2 with implied 1
 
     pop  R8                  ; restore
     pop  R7
@@ -504,16 +538,21 @@ __fp_mul:
     rol  R5
     rol  R6
     dec  R10
-    cpi  R10, 0
-    breq __fpmul_return_zero
+    tst  R10
+    brne __fpmul_norm_done   ; R10 != 0: normalized OK, fall through to norm_done
+    rjmp __fpmul_return_zero ; R10 == 0: underflow
 
 __fpmul_norm_done:
     ; Exponent overflow check
-    cpi  R10, 0xFF
-    brge __fpmul_return_inf
+    ldi  R16, 0xFF
+    cp   R10, R16
+    brlo __fpmul_recompose   ; R10 < 0xFF: no overflow
+    rjmp __fpmul_return_inf
 
+__fpmul_recompose:
     ; Recompose
-    andi R6, 0x7F
+    ldi  R16, 0x7F
+    and  R6, R16
     mov  R25, R10
     lsr  R25
     or   R25, R12
@@ -583,30 +622,38 @@ __fp_div:
 
     ; Extract signs, exponents, mantissas
     mov  R12, R25
-    andi R12, 0x80
+    ldi  R16, 0x80
+    and  R12, R16
     mov  R10, R25
-    andi R10, 0x7F
+    ldi  R16, 0x7F
+    and  R10, R16
     lsl  R10
     mov  R16, R24
     lsr  R16
-    andi R16, 0x01
+    ldi  R17, 0x01
+    and  R16, R17
     or   R10, R16
     mov  R6, R24
-    andi R6, 0x7F
+    ldi  R16, 0x7F
+    and  R6, R16
     mov  R5, R23
     mov  R4, R22
 
     mov  R13, R21
-    andi R13, 0x80
+    ldi  R16, 0x80
+    and  R13, R16
     mov  R11, R21
-    andi R11, 0x7F
+    ldi  R16, 0x7F
+    and  R11, R16
     lsl  R11
     mov  R16, R20
     lsr  R16
-    andi R16, 0x01
+    ldi  R17, 0x01
+    and  R16, R17
     or   R11, R16
     mov  R9, R20
-    andi R9, 0x7F
+    ldi  R16, 0x7F
+    and  R9, R16
     mov  R8, R19
     mov  R7, R18
 
@@ -614,19 +661,23 @@ __fp_div:
     eor  R12, R13
 
     ; Division by zero: return Inf
-    cpi  R11, 0
+    tst  R11
     breq __fpdiv_return_inf
     ; Dividend zero: return zero
-    cpi  R10, 0
+    tst  R10
     breq __fpdiv_return_zero
 
     ; Set implied leading 1 bits
-    ori  R6, 0x80
-    ori  R9, 0x80
+    ldi  R16, 0x80
+    or   R6, R16
+    or   R9, R16
 
     ; Result exponent = expA - expB + 127
     sub  R10, R11
-    subi R10, -127           ; add 127
+    mov  R16, R10
+    ldi  R17, 127
+    add  R16, R17            ; R16 = (expA - expB) + 127
+    mov  R10, R16
 
     ; 24-bit restoring division: dividend(A) / divisor(B)
     ; Quotient Q is built in R4:R5:R6, remainder in R14:R15:R16
@@ -667,10 +718,12 @@ __fpdiv_next:
     ; Simplification: rotate carry into R4 which is being vacated by dividend shift.
     ; After shifting dividend left, bit0 of R4 is now 0 (from lsl). Set it to quotient bit.
     brcc __fpdiv_nobit
-    ori  R4, 1
+    set
+    bld  R4, 0           ; R4[0] = 1 (quotient bit set)
     rjmp __fpdiv_dec
 __fpdiv_nobit:
-    andi R4, 0xFE
+    clt
+    bld  R4, 0           ; R4[0] = 0 (quotient bit clear)
 __fpdiv_dec:
     dec  R17
     brne __fpdiv_loop
@@ -683,17 +736,19 @@ __fpdiv_dec:
     rol  R5
     rol  R6
     dec  R10
-    cpi  R10, 0
+    tst  R10
     breq __fpdiv_return_zero
 
 __fpdiv_norm_done:
-    cpi  R10, 0
-    brlt __fpdiv_return_zero
-    cpi  R10, 0xFF
+    tst  R10
+    brmi __fpdiv_return_zero
+    ldi  R16, 0xFF
+    cp   R10, R16
     brge __fpdiv_return_inf
 
     ; Recompose
-    andi R6, 0x7F
+    ldi  R16, 0x7F
+    and  R6, R16
     mov  R25, R10
     lsr  R25
     or   R25, R12
@@ -880,13 +935,13 @@ __fp_fti_shift:
     breq __fp_fti_shifted
     lsr  R25
     ror  R23
+    ror  R22
     dec  R24
     rjmp __fp_fti_shift
 __fp_fti_shifted:
-    ; Result in R23 (low byte) and bit0 of R25 (high byte)
-    mov  R24, R23
-    mov  R25, R25
-    andi R25, 0x01           ; should be 0 for small values
+    ; Result in R22 (low byte) and R23 (high byte)
+    mov  R24, R22
+    mov  R25, R23
 
     ; Apply sign
     cpi  R17, 0

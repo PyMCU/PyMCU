@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -76,21 +76,23 @@ public class FrontendResolutionPhase(
             var newModules = new List<ProgramNode>();
 
             // Create snapshot of current modules to avoid modification-during-iteration
-            var currentModules = context.NamedModules.ToList();
+            var currentAsts = context.NamedModules.Select(m => new { Name = m.Key, Node = m.Value }).ToList();
+            if (context.RootAst != null)
+                currentAsts.Add(new { Name = "__main__", Node = context.RootAst });
 
             Logger.Verbose("FrontendResolution",
-                $"Iteration {iteration}: Scanning {currentModules.Count} modules for new imports");
+                $"Iteration {iteration}: Scanning {currentAsts.Count} modules for new imports");
 
             // Scan all currently processed modules for imports
-            foreach (var (moduleName, node) in currentModules)
+            foreach (var item in currentAsts)
             {
-                foreach (var imp in node.Imports)
+                foreach (var imp in item.Node.Imports)
                 {
                     if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
                     if (processedModules.Contains(imp.ModuleName)) continue;
 
                     Logger.Verbose("FrontendResolution",
-                        $"Discovered new import: {imp.ModuleName} (from {moduleName})");
+                        $"Discovered new import: {imp.ModuleName} (from {item.Name})");
 
                     // Load the module if not yet loaded
                     if (!context.NamedModules.ContainsKey(imp.ModuleName))

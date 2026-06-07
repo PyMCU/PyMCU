@@ -1,0 +1,150 @@
+# Installation
+
+## Option 1 — pip (recommended)
+
+`pymcu-compiler` is distributed on PyPI. Install it with `pip` or `uv`:
+
+::::{tab-set}
+:::{tab-item} uv (recommended)
+```bash
+uv tool install pymcu-compiler
+```
+
+`uv tool install` places the `pymcu` command on your PATH globally, isolated in its own
+virtual environment. No activation step needed.
+:::
+:::{tab-item} pip / pipx
+```bash
+pipx install pymcu-compiler   # isolated install (recommended over plain pip)
+# — or —
+pip install pymcu-compiler    # install into the active environment
+```
+:::
+::::
+
+Verify:
+
+```bash
+pymcu --version
+# pymcu, version 0.12.0
+```
+
+### Compat layer extras
+
+Install optional MicroPython or CircuitPython compatibility packages alongside
+`pymcu-compiler`:
+
+```bash
+# MicroPython compat (machine, utime, micropython modules)
+pip install pymcu-micropython
+
+# CircuitPython compat (board, digitalio, busio, neopixel, …)
+pip install pymcu-circuitpython
+```
+
+---
+
+## Option 2 — Docker image
+
+Pre-built images are published to GitHub Container Registry for every release.
+Docker is useful for CI pipelines or environments where you cannot install Python tools.
+
+| Flavor | Image | Stdlib included |
+|---|---|---|
+| `base` | `ghcr.io/pymcu/pymcu:latest` | Bare-metal PyMCU stdlib |
+| `micropython` | `ghcr.io/pymcu/pymcu:micropython` | + `machine`, `utime`, `micropython` compat |
+| `circuitpython` | `ghcr.io/pymcu/pymcu:circuitpython` | + `board`, `digitalio`, `analogio`, `pwmio` compat |
+
+```bash
+docker pull ghcr.io/pymcu/pymcu:latest
+```
+
+Mount your project and run `pymcu build`:
+
+```bash
+docker run --rm \
+    -v "$(pwd):/workspace" \
+    ghcr.io/pymcu/pymcu:latest \
+    sh -c "cd /workspace && pymcu build"
+```
+
+---
+
+## Option 3 — Build from source
+
+For contributors or anyone who wants to run the latest development build.
+
+### Requirements
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- Python 3.11 or newer
+- `uv` (recommended)
+- `avrdude` (for flashing — see below)
+
+### Steps
+
+```bash
+git clone https://github.com/pymcu/pymcu.git
+cd pymcu
+
+# Build the C# compiler and AVR backend
+dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo
+dotnet publish extensions/pymcu-avr/src/csharp/cli/PyMCU.AVR.csproj -c Release -o build/bin --nologo
+
+# Set up Python environment
+uv venv && source .venv/bin/activate
+uv sync
+rsync -av lib/src/pymcu/ .venv/lib/python3.*/site-packages/pymcu/
+pip install -e src/driver
+```
+
+Verify:
+
+```bash
+pymcu --version
+# pymcu, version 0.12.0-dev
+```
+
+---
+
+## Flash the firmware
+
+Compiling produces `dist/firmware.hex`. Flashing to an Arduino Uno requires **avrdude**
+installed on your host machine.
+
+::::{tab-set}
+:::{tab-item} macOS
+```bash
+brew install avrdude
+```
+:::
+:::{tab-item} Linux (Debian/Ubuntu)
+```bash
+sudo apt-get install avrdude
+```
+:::
+:::{tab-item} Windows
+Download from the [AVRDUDE releases page](https://github.com/avrdudes/avrdude/releases).
+:::
+::::
+
+Then use `pymcu flash` (which calls avrdude internally):
+
+```bash
+pymcu flash --port /dev/cu.usbmodem*   # macOS
+pymcu flash --port /dev/ttyACM0        # Linux
+pymcu flash --port COM3                # Windows
+```
+
+Or call avrdude directly:
+
+```bash
+avrdude -c arduino -p atmega328p -P /dev/ttyACM0 -b 115200 \
+        -U flash:w:dist/firmware.hex:i
+```
+
+---
+
+## Next steps
+
+- {doc}`quickstart` — create your first project and flash an LED

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -52,6 +52,14 @@ public static class ArchFamilyResolver
         if (s == "riscv" || s == "rv32ec" || s == "rv32i"
             || s.StartsWith("ch32v"))
             return "riscv";
+
+        // ARM Cortex-M family.  RP2040 ships a dual Cortex-M0+; the "arm"
+        // family is the ABI/ISR-compatible unit for all Cortex-M targets.
+        // Note: this must precede the "pio" branch so the bare "rp2040" arch
+        // resolves to the CPU family rather than the PIO co-processor.
+        if (s == "arm" || s == "cortex-m" || s == "cortex-m0"
+            || s == "cortex-m0plus" || s == "cortex-m0+" || s == "rp2040")
+            return "arm";
 
         if (s == "pio" || s == "rp2040-pio")
             return "pio";

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -153,6 +153,57 @@ public partial class IRGenerator
         currentInstructions.Add(inst);
     }
 
+    private void PropagateCtState(string src, string dst)
+    {
+        if (instanceClasses.TryGetValue(src, out var cls))
+        {
+            instanceClasses[dst] = cls;
+            virtualInstances.Add(dst);
+        }
+
+        // Copy every descendant key. Nested instance fields are flattened two ways depending
+        // on the access path: dotted ("inst._pin") and underscore-joined ("inst__pin", from
+        // self._pin field access). Both must follow the instance to its new binding (e.g. a
+        // for-in loop variable) or a nested method like self._pin.mode() loses its class and
+        // degrades to an undefined CALL.
+        void CopyDescendants<T>(Dictionary<string, T> map, string sep)
+        {
+            string sp = src + sep, dp = dst + sep;
+            foreach (var kv in map.Where(kv => kv.Key.StartsWith(sp, StringComparison.Ordinal)).ToList())
+                map[dp + kv.Key[sp.Length..]] = kv.Value;
+        }
+
+        foreach (var sep in new[] { ".", "_" })
+        {
+            CopyDescendants(constantVariables, sep);
+            CopyDescendants(strConstantVariables, sep);
+            CopyDescendants(floatConstantVariables, sep);
+            CopyDescendants(constantAddressVariables, sep);
+            CopyDescendants(instanceClasses, sep);
+        }
+    }
+
+    private void CleanCtState(string dst)
+    {
+        instanceClasses.Remove(dst);
+
+        void RemoveDescendants<T>(Dictionary<string, T> map, string sep)
+        {
+            string dp = dst + sep;
+            foreach (var k in map.Keys.Where(k => k.StartsWith(dp, StringComparison.Ordinal)).ToList())
+                map.Remove(k);
+        }
+
+        foreach (var sep in new[] { ".", "_" })
+        {
+            RemoveDescendants(constantVariables, sep);
+            RemoveDescendants(strConstantVariables, sep);
+            RemoveDescendants(floatConstantVariables, sep);
+            RemoveDescendants(constantAddressVariables, sep);
+            RemoveDescendants(instanceClasses, sep);
+        }
+    }
+
     public ProgramIR Generate(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
@@ -176,14 +227,16 @@ public partial class IRGenerator
         functionsToCompile.Clear();
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
+        pendingZcaIsrBindings.Clear();
+        zcaHandlerAstNodes.Clear();
+        pendingZcaSynthFunctions.Clear();
         externFunctionMap.Clear();
         pendingFlashData.Clear();
 
         foreach (var t in new[] { "uint8", "uint16", "uint32", "int8", "int16", "int32", "int" })
             intrinsicNames.Add(t);
         intrinsicNames.Add("print");
-        intrinsicNames.Add("sleep_ms");
-        intrinsicNames.Add("sleep_us");
+        intrinsicNames.Add("input");
         intrinsicNames.Add("len");
         intrinsicNames.Add("sum");
         intrinsicNames.Add("any");
@@ -195,12 +248,20 @@ public partial class IRGenerator
         intrinsicNames.Add("zip");
         intrinsicNames.Add("reversed");
         intrinsicNames.Add("divmod");
+        intrinsicNames.Add("bitcast");
+        intrinsicNames.Add("gc_alloc");
 
         if (config.Frequency > 0)
         {
             constantVariables["__FREQ__"] = (int)config.Frequency;
             constantVariables["__FREQUENCY__"] = (int)config.Frequency;
         }
+
+        constantVariables["ValueError"]          = 1;
+        constantVariables["TypeError"]           = 2;
+        constantVariables["IndexError"]          = 3;
+        constantVariables["KeyError"]            = 4;
+        constantVariables["NotImplementedError"] = 5;
 
         foreach (var imp in mainAst.Imports)
         {
@@ -210,9 +271,12 @@ public partial class IRGenerator
                 intrinsicNames.Add("const");
                 intrinsicNames.Add("device_info");
                 intrinsicNames.Add("inline");
+                intrinsicNames.Add("naked");
                 intrinsicNames.Add("interrupt");
                 intrinsicNames.Add("asm");
                 intrinsicNames.Add("compile_isr");
+                intrinsicNames.Add("_set_irq_zca_arg");
+                intrinsicNames.Add("funcref");
             }
 
             if (imp.Symbols.Count == 0)
@@ -242,9 +306,11 @@ public partial class IRGenerator
                     intrinsicNames.Add("const");
                     intrinsicNames.Add("device_info");
                     intrinsicNames.Add("inline");
+                    intrinsicNames.Add("naked");
                     intrinsicNames.Add("interrupt");
                     intrinsicNames.Add("asm");
                     intrinsicNames.Add("compile_isr");
+                    intrinsicNames.Add("_set_irq_zca_arg");
                 }
 
                 foreach (var sym in imp.Symbols)
@@ -367,6 +433,21 @@ public partial class IRGenerator
             }
         }
 
+        // Propagate instanceClasses for `from X import Y` imports so that
+        // GetValClass can find the ZCA class when user code uses imported
+        // singletons via subscript (e.g. `from machine import mem8; mem8[addr]`).
+        foreach (var imp in mainAst.Imports)
+        {
+            string modPrefix = imp.ModuleName.Replace('.', '_') + "_";
+            foreach (var sym in imp.Symbols)
+            {
+                string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
+                string importedKey = modPrefix + sym;
+                if (instanceClasses.TryGetValue(importedKey, out var importedClass))
+                    instanceClasses[key] = importedClass;
+            }
+        }
+
         currentModulePrefix = "";
         currentSourceFile = "main.py";
         ScanGlobals(mainAst);
@@ -409,6 +490,22 @@ public partial class IRGenerator
                 throw new Exception(
                     "Top-level executable statements cannot coexist with an explicit def main(): function. " +
                     "Either remove def main() and use top-level code, or move all logic inside def main().");
+
+            // Inject module-level SRAM array initializations at the start of main().
+            // These are AnnAssign declarations (e.g. `_tasks: Callable[2] = [f1, f2]`)
+            // that need runtime initialization but are not compile-time constants.
+            // They are not injected in the synthesized-main path (handled there as
+            // executable top-level statements), only for the explicit def main() path.
+            var mainFuncDef = mainAst.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFuncDef != null)
+            {
+                var sramInits = mainAst.GlobalStatements
+                    .OfType<AnnAssign>()
+                    .Where(a => moduleSramArrays.Contains(a.Target) && !globals.ContainsKey(a.Target))
+                    .ToList();
+                for (int i = sramInits.Count - 1; i >= 0; i--)
+                    mainFuncDef.Body.Statements.Insert(0, sramInits[i]);
+            }
         }
 
         foreach (var imp in mainAst.Imports)
@@ -444,6 +541,22 @@ public partial class IRGenerator
                 foreach (var sym in imp.Symbols)
                 {
                     if (imp.Aliases.ContainsKey(sym)) continue;
+
+                    // Re-export a plain @inline function under the facade name. The
+                    // class-method loop below only matches "prefix_sym_<method>" keys, so
+                    // the exact function key "prefix_sym" (e.g. millis) would otherwise be
+                    // left unmapped and its call site would emit an unresolved CALL.
+                    string srcExact = srcPrefix + sym;
+                    string dstExact = dstPrefix + sym;
+                    if (inlineFunctions.TryGetValue(srcExact, out var exactFn)
+                        && !inlineFunctions.ContainsKey(dstExact))
+                    {
+                        inlineFunctions[dstExact] = exactFn;
+                        if (functionParams.TryGetValue(srcExact, out var ep)) functionParams[dstExact] = ep;
+                        if (functionReturnTypes.TryGetValue(srcExact, out var ert)) functionReturnTypes[dstExact] = ert;
+                        if (functionParamTypes.TryGetValue(srcExact, out var ept)) functionParamTypes[dstExact] = ept;
+                        if (methodInstanceTypes.TryGetValue(srcExact, out var emit)) methodInstanceTypes[dstExact] = emit;
+                    }
 
                     string srcClassPrefix = srcPrefix + sym + "_";
                     string dstClassPrefix = dstPrefix + sym + "_";
@@ -504,6 +617,10 @@ public partial class IRGenerator
             }
         }
 
+        foreach (var sf in pendingZcaSynthFunctions)
+            irProgram.Functions.Add(sf);
+        pendingZcaSynthFunctions.Clear();
+
         foreach (var kvp in pendingIsrRegistrations)
         {
             string bareName = kvp.Key;
@@ -537,6 +654,15 @@ public partial class IRGenerator
             irProgram.Globals.Add(new Variable(kvp.Key, kvp.Value));
         }
 
+        // Module-level SRAM arrays must be allocated as globals so the overlay
+        // algorithm never aliases them with function-local arrays across sibling calls.
+        foreach (var name in moduleSramArrays)
+        {
+            int count = arraySizes.TryGetValue(name, out int c) ? c : 1;
+            DataType elemType = arrayElemTypes.TryGetValue(name, out DataType dt) ? dt : DataType.UINT8;
+            irProgram.GlobalArrays[name] = count * elemType.SizeOf();
+        }
+
         var seenExtern = new HashSet<string>();
         foreach (var kvp in externFunctionMap)
         {
@@ -546,8 +672,34 @@ public partial class IRGenerator
             }
         }
 
+        foreach (var sym in exnExterns)
+            if (seenExtern.Add(sym))
+                irProgram.ExternSymbols.Add(sym);
+
+        // If any try/raise was emitted, allocate the global 2-byte active-jmpbuf pointer.
+        if (exnExterns.Count > 0)
+        {
+            irProgram.Globals.Add(new Variable("__pymcu_active_jmpbuf", DataType.UINT16));
+        }
+
         loopStack.Clear();
         externFunctionMap.Clear();
+        exnExterns.Clear();
+
+        if (_pendingFlashData.Count > 0)
+        {
+            var mainFunc = irProgram.Functions.FirstOrDefault(f => f.Name == "main");
+            if (mainFunc != null) mainFunc.Body.InsertRange(0, _pendingFlashData);
+            _pendingFlashData.Clear();
+        }
+
+        // Propagate class hierarchy so the Optimizer devirt pass and AvrCodeGen
+        // can work without access to IRGenerator-internal state.
+        irProgram.ClassChildren = new Dictionary<string, HashSet<string>>(
+            classChildren.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
+        irProgram.ClassDirectMethods = new Dictionary<string, HashSet<string>>(
+            classDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
+
         return irProgram;
     }
 
@@ -559,6 +711,10 @@ public partial class IRGenerator
                 return new MemoryAddress(symInfo.Value, symInfo.Type);
             return new Constant(symInfo.Value);
         }
+
+        // Loop variable bound to a function reference (zip() over a function list).
+        if (loopFunctionAliases.TryGetValue(name, out string? fnAliasName))
+            return new FunctionRef(fnAliasName);
 
         if (mutableGlobals.ContainsKey(name))
         {
@@ -631,6 +787,28 @@ public partial class IRGenerator
             return new Constant(mgVal);
         if (constantVariables.TryGetValue(name, out int nameVal))
             return new Constant(nameVal);
+
+        // Resolve bare names that refer to mutable globals in the current module
+        // (e.g. `_num_tasks` inside rtos.py functions, where the IR key is `rtos__num_tasks`).
+        if (!string.IsNullOrEmpty(currentModulePrefix))
+        {
+            string modKey2 = currentModulePrefix + name;
+            string localFnKey = string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + "." + name;
+            bool hasLocalDecl = !string.IsNullOrEmpty(localFnKey) &&
+                                (variableTypes.ContainsKey(localFnKey) || constantVariables.ContainsKey(localFnKey));
+            if (!hasLocalDecl && mutableGlobals.TryGetValue(modKey2, out var modType2))
+                return new Variable(modKey2, modType2);
+        }
+
+        // `from module import sym` where sym is a mutable global (e.g. `from machine import mem8`)
+        if (importedAliases.TryGetValue(name, out var importedAliasMod))
+        {
+            var origName = aliasToOriginal.TryGetValue(name, out var origAlias) ? origAlias : name;
+            string importedPrefix = importedAliasMod.Replace('.', '_') + "_";
+            string importedKey = importedPrefix + origName;
+            if (mutableGlobals.TryGetValue(importedKey, out var importedAliasType))
+                return new Variable(importedKey, importedAliasType);
+        }
 
         foreach (var mod in modules)
         {
@@ -747,6 +925,7 @@ public partial class IRGenerator
     // arrayElemTypes so that ArrayLoadFlash works for runtime-indexed access.
     private int _flashStrCounter;
     private readonly Dictionary<string, string> _flashStrCache = new();
+    private readonly List<FlashData> _pendingFlashData = new();
 
     private string InternStringAsFlash(string value)
     {
@@ -759,7 +938,7 @@ public partial class IRGenerator
             .Append(0) // null terminator
             .ToList();
 
-        Emit(new FlashData(name, bytes));
+        _pendingFlashData.Add(new FlashData(name, bytes));
         flashArrays.Add(name);
         arraySizes[name] = bytes.Count;
         arrayElemTypes[name] = DataType.UINT8;

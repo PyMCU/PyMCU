@@ -1,8 +1,14 @@
 FROM gcc:bookworm
 
 ARG TARGETARCH
+# Selects the Python stdlib flavor baked into this image.
+# base        — bare-metal PyMCU stdlib only (default)
+# micropython — adds pymcu-micropython compat layer
+# circuitpython — adds pymcu-circuitpython compat layer
+ARG FLAVOR=base
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYMCU_FLAVOR=${FLAVOR}
 
 RUN apt-get update && apt-get install -y \
     build-essential \

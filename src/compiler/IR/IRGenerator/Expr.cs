@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -15,6 +15,7 @@
  */
 
 using PyMCU.Frontend;
+using PyMCU.IR;
 using AstBinOp = PyMCU.Frontend.BinaryOp;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
 
@@ -70,7 +71,7 @@ public partial class IRGenerator
         if (expr is FloatLiteral floatLit)
             return new FloatConstant(floatLit.Value);
 
-        throw new Exception("IR Generation: Unknown Expression type");
+        throw new Exception($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 
     private Val VisitLambdaExpr(LambdaExpr expr)
@@ -101,7 +102,11 @@ public partial class IRGenerator
         return "";
     }
 
-    private Val EmitDunderCall(string selfQname, string className, string funcKey, List<Val> extraArgs)
+    // seqArgs (optional) binds an extra-arg index to a bytes/list/tuple literal
+    // so the dunder body can consume that parameter via constant subscript or a
+    // for-in unroll -- e.g. pixels[i] = (r, g, b) passes the tuple to __setitem__.
+    private Val EmitDunderCall(string selfQname, string className, string funcKey, List<Val> extraArgs,
+                               Dictionary<int, Frontend.ListExpr>? seqArgs = null)
     {
         var func = inlineFunctions[funcKey];
         string exitLabel = MakeLabel();
@@ -116,6 +121,14 @@ public partial class IRGenerator
         {
             string paramKey = newPrefix + func.Params[pi].Name;
             DataType dt = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
+            if (seqArgs != null && seqArgs.TryGetValue(extraIdx, out var seqLit))
+            {
+                listLiteralParams[paramKey] = seqLit;
+                constantVariables.Remove(paramKey);
+                variableAliases.Remove(paramKey);
+                continue;
+            }
+            listLiteralParams.Remove(paramKey);
             if (extraArgs[extraIdx] is Constant c)
             {
                 constantVariables[paramKey] = c.Value;
@@ -155,6 +168,24 @@ public partial class IRGenerator
 
         if (result != null) return result;
         return new Constant(0);
+    }
+
+    private DataType GetValType(Val v)
+    {
+        if (v is FloatConstant) return DataType.FLOAT;
+        if (v is Variable varV) return varV.Type;
+        if (v is Temporary tmp) return tmp.Type;
+        if (v is MemoryAddress mem) return mem.Type;
+        if (v is Constant c)
+        {
+            if (c.Value >= 0 && c.Value <= 255) return DataType.UINT8;
+            if (c.Value >= -128 && c.Value <= 127) return DataType.INT8;
+            if (c.Value >= 0 && c.Value <= 65535) return DataType.UINT16;
+            if (c.Value >= -32768 && c.Value <= 32767) return DataType.INT16;
+            return DataType.INT32;
+        }
+
+        return DataType.UINT8;
     }
 
     private Val VisitFStringExpr(FStringExpr expr)
@@ -471,20 +502,6 @@ public partial class IRGenerator
             return floatDst;
         }
 
-        DataType GetValType(Val v)
-        {
-            if (v is FloatConstant) return DataType.FLOAT;
-            if (v is Variable varV) return varV.Type;
-            if (v is Temporary tmp) return tmp.Type;
-            if (v is Constant c)
-            {
-                if (c.Value > 255 || c.Value < -128) return DataType.UINT16;
-                return DataType.UINT8;
-            }
-
-            return DataType.UINT8;
-        }
-
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
         DataType resType = t1.SizeOf() >= t2.SizeOf() ? t1 : t2;
@@ -498,8 +515,39 @@ public partial class IRGenerator
                 case AstBinOp.Sub: return new Constant(cA.Value - cB.Value);
                 case AstBinOp.Equal: return new Constant(cA.Value == cB.Value ? 1 : 0);
                 case AstBinOp.NotEqual: return new Constant(cA.Value != cB.Value ? 1 : 0);
+                case AstBinOp.Mul: return new Constant(cA.Value * cB.Value);
+                case AstBinOp.Div: return new Constant(cA.Value / cB.Value);
+                case AstBinOp.FloorDiv:
+                    int q = cA.Value / cB.Value;
+                    if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
+                    return new Constant(q);
+                case AstBinOp.Mod: return new Constant(cA.Value % cB.Value);
                 case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
+                case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
+                case AstBinOp.RShift: return new Constant(cA.Value >> cB.Value);
+                case AstBinOp.Less: return new Constant(cA.Value < cB.Value ? 1 : 0);
+                case AstBinOp.LessEq: return new Constant(cA.Value <= cB.Value ? 1 : 0);
+                case AstBinOp.Greater: return new Constant(cA.Value > cB.Value ? 1 : 0);
+                case AstBinOp.GreaterEq: return new Constant(cA.Value >= cB.Value ? 1 : 0);
+            }
+        }
+
+        // Fold compile-time ptr-register comparisons (e.g. `if pin_reg == PIND:`).
+        // Both sides resolve to MemoryAddress when the ptr variable is in
+        // constantAddressVariables and the RHS is a globals entry with IsMemoryAddress.
+        // This allows the if/elif dispatch tree in pin_pulse_in to be fully DCE'd.
+        if (v1 is MemoryAddress maL && v2 is MemoryAddress maR)
+        {
+            switch (expr.Op)
+            {
+                case AstBinOp.Equal:     return new Constant(maL.Address == maR.Address ? 1 : 0);
+                case AstBinOp.NotEqual:  return new Constant(maL.Address != maR.Address ? 1 : 0);
+                case AstBinOp.Less:      return new Constant(maL.Address <  maR.Address ? 1 : 0);
+                case AstBinOp.LessEq:    return new Constant(maL.Address <= maR.Address ? 1 : 0);
+                case AstBinOp.Greater:   return new Constant(maL.Address >  maR.Address ? 1 : 0);
+                case AstBinOp.GreaterEq: return new Constant(maL.Address >= maR.Address ? 1 : 0);
+                // Non-comparison ops on two ptrs fall through to normal Binary emit.
             }
         }
 
@@ -521,7 +569,7 @@ public partial class IRGenerator
 
         Emit(new JumpIfZero(cond, falseLabel));
         Val trueVal = VisitExpression(expr.TrueVal);
-        Temporary result = MakeTemp(DataType.UINT8);
+        Temporary result = MakeTemp(GetValType(trueVal));
         Emit(new Copy(trueVal, result));
         Emit(new Jump(endLabel));
         Emit(new Label(falseLabel));
@@ -567,7 +615,7 @@ public partial class IRGenerator
             return res2;
         }
 
-        Temporary result = MakeTemp(DataType.UINT8);
+        Temporary result = MakeTemp(GetValType(operand));
         Emit(new Unary(MapUnaryOp(expr.Op), operand, result));
         return result;
     }
@@ -575,6 +623,22 @@ public partial class IRGenerator
     private Val VisitYield(YieldExpr expr)
     {
         throw new Exception("Yield not yet implemented");
+    }
+
+    // Resolves a variable name to the bytes/list/tuple literal bound to it as an
+    // inline parameter, following the inline prefix and any variableAliases chain
+    // (same resolution as the for-in path in Iteration.cs). Returns null if the
+    // name is not a sequence-literal parameter.
+    private Frontend.ListExpr? ResolveListLiteralParam(string name)
+    {
+        string? key = currentInlinePrefix + name;
+        for (var depth = 0; depth < 20; depth++)
+        {
+            if (key != null && listLiteralParams.TryGetValue(key, out var bound)) return bound;
+            if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
+            else break;
+        }
+        return null;
     }
 
     private Val VisitIndex(IndexExpr expr)
@@ -632,8 +696,62 @@ public partial class IRGenerator
 
         if (expr.Target is VariableExpr ve)
         {
+            // Tuple/list/bytes literal bound to an inline parameter: fold a constant
+            // subscript (param[0]) to the corresponding element expression. Mirrors
+            // the for-in unroll path in Iteration.cs (same key + alias resolution);
+            // enables e.g. NeoPixel.fill((r, g, b)) consumed as color[0..2].
+            if (ResolveListLiteralParam(ve.Name) is ListExpr litArg)
+            {
+                int li;
+                if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
+                else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
+                else throw new Exception("Tuple/list parameter subscript must be a compile-time constant");
+                if (li < 0) li += litArg.Elements.Count;
+                if (li < 0 || li >= litArg.Elements.Count)
+                    throw new Exception("Tuple/list parameter subscript index out of range");
+                return VisitExpression(litArg.Elements[li]);
+            }
+
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
             if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name)) qualified = ve.Name;
+
+            // Inside an inline expansion, the target may be an aliased bytearray parameter.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !string.IsNullOrEmpty(currentInlinePrefix))
+            {
+                string inlineQ = currentInlinePrefix + ve.Name;
+                if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                    qualified = resolvedQ;
+                else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                    qualified = inlineQ;
+            }
+
+            // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
+            if (bytearrayParams.Contains(qualified))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary tmp = MakeTemp(DataType.UINT8);
+                Emit(new BytearrayLoad(qualified, idxVal, tmp));
+                return tmp;
+            }
+
+            // list[T] indexing: x[i] → load element from GC heap list at offset 2 + i*elemSize
+            {
+                string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                             : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                             : "";
+                if (!string.IsNullOrEmpty(listQ))
+                {
+                    DataType elemDt = listVarElemTypes[listQ];
+                    Val listPtr = new Variable(listQ, DataType.GC_REF);
+                    Val idxVal = VisitExpression(expr.Index);
+                    Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                    Temporary result = MakeTemp(elemDt);
+                    Emit(new LoadIndirect(elemAddr, result));
+                    return result;
+                }
+            }
+
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
                 if (flashArrays.Contains(qualified))
@@ -653,12 +771,30 @@ public partial class IRGenerator
                 }
                 else
                 {
-                    if (!(expr.Index is IntegerLiteral c2))
+                    // Accept a literal subscript or a variable that folds to a compile-time
+                    // constant (e.g. the index of an unrolled enumerate() loop).
+                    int elemIdx;
+                    if (expr.Index is IntegerLiteral c2)
+                        elemIdx = c2.Value;
+                    else if (VisitExpression(expr.Index) is Constant cc2)
+                        elemIdx = cc2.Value;
+                    else
                         throw new Exception("Array subscript must be a compile-time constant");
-                    string elemName = qualified + "__" + c2.Value;
+                    string elemName = qualified + "__" + elemIdx;
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }
             }
+        }
+
+        // Instance-member array load: self._buf[i] (i runtime), where self._buf
+        // was declared as a per-instance SRAM framebuffer.
+        if (expr.Target is MemberAccessExpr memLoad
+            && ResolveMemberArrayName(memLoad) is string flatLoad)
+        {
+            Val idxVal = VisitExpression(expr.Index);
+            Temporary tmp = MakeTemp(arrayElemTypes[flatLoad]);
+            Emit(new ArrayLoad(flatLoad, idxVal, tmp, arrayElemTypes[flatLoad], arraySizes[flatLoad]));
+            return tmp;
         }
 
         {

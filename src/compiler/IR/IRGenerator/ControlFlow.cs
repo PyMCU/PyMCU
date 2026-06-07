@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -16,6 +16,8 @@
 
 using PyMCU.Frontend;
 using AstUnOp = PyMCU.Frontend.UnaryOp;
+using PyMCU.IR;
+using PyMCU.Common;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -99,6 +101,26 @@ public partial class IRGenerator
                 }
 
                 // 2 = CT-true (only then branch needed), -1 = CT-false (only else needed)
+                return condResult ? 2 : -1;
+            }
+
+            // Fold compile-time ptr-register comparisons: `if pin_reg == PIND:` where
+            // pin_reg is a ptr parameter propagated through constantAddressVariables.
+            if (v1 is MemoryAddress ma1 && v2 is MemoryAddress ma2)
+            {
+                bool condResult = false;
+                switch (binExpr.Op)
+                {
+                    case Frontend.BinaryOp.Equal:    condResult = ma1.Address == ma2.Address; break;
+                    case Frontend.BinaryOp.NotEqual: condResult = ma1.Address != ma2.Address; break;
+                    case Frontend.BinaryOp.Less:     condResult = ma1.Address <  ma2.Address; break;
+                    case Frontend.BinaryOp.LessEq:   condResult = ma1.Address <= ma2.Address; break;
+                    case Frontend.BinaryOp.Greater:  condResult = ma1.Address >  ma2.Address; break;
+                    case Frontend.BinaryOp.GreaterEq:condResult = ma1.Address >= ma2.Address; break;
+                }
+
+                if (jumpIfTrue) { if (condResult) Emit(new Jump(targetLabel)); }
+                else            { if (!condResult) Emit(new Jump(targetLabel)); }
                 return condResult ? 2 : -1;
             }
 
@@ -243,6 +265,7 @@ public partial class IRGenerator
 
         int optResult = EmitOptimizedConditionalJump(stmt.Condition, nextLabel, false);
         bool skipThen = false;
+        bool isRuntimeBranch = false;
 
         if (optResult == -1) skipThen = true;
         else if (optResult == 2)
@@ -279,6 +302,7 @@ public partial class IRGenerator
             else
             {
                 Emit(new JumpIfZero(condVal, nextLabel));
+                isRuntimeBranch = true;
             }
         }
 
@@ -288,7 +312,9 @@ public partial class IRGenerator
 
         if (!skipThen)
         {
+            if (isRuntimeBranch) _runtimeBranchDepth++;
             VisitStatement(stmt.ThenBranch);
+            if (isRuntimeBranch) _runtimeBranchDepth--;
             if (stmt.ElifBranches.Count > 0 || stmt.ElseBranch != null)
                 Emit(new Jump(endLabel));
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
@@ -306,6 +332,7 @@ public partial class IRGenerator
 
             int elifOpt = EmitOptimizedConditionalJump(elifCond, nextLabel, false);
             bool skipElif = false;
+            bool elifIsRuntime = false;
 
             if (elifOpt == -1) skipElif = true;
             else if (elifOpt == 2)
@@ -329,12 +356,15 @@ public partial class IRGenerator
                 else
                 {
                     Emit(new JumpIfZero(elifVal, nextLabel));
+                    elifIsRuntime = true;
                 }
             }
 
             if (!skipElif)
             {
+                if (elifIsRuntime) _runtimeBranchDepth++;
                 VisitStatement(elifBlock);
+                if (elifIsRuntime) _runtimeBranchDepth--;
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
@@ -344,7 +374,10 @@ public partial class IRGenerator
         if (stmt.ElseBranch != null)
         {
             Emit(new Label(nextLabel));
+            // The else branch runs when the condition was false — still runtime-guarded.
+            if (isRuntimeBranch) _runtimeBranchDepth++;
             VisitStatement(stmt.ElseBranch);
+            if (isRuntimeBranch) _runtimeBranchDepth--;
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
         }
@@ -572,12 +605,21 @@ public partial class IRGenerator
                         Emit(new JumpIfZero(g, nextCaseLabel));
                     }
 
+                    // Non-CT match body: the pattern comparison was runtime, so the body
+                    // is guarded by a runtime condition. Increment depth so that any
+                    // CompileError raise inside the body is not a false-positive abort.
+                    bool matchBodyIsRuntime = !allAltsConst;
+                    if (matchBodyIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
+                    if (matchBodyIsRuntime) _runtimeBranchDepth--;
                     Emit(new Jump(endLabel));
                 }
             }
             else
             {
+                // Wildcard (case _:) — only runs if no prior case matched.
+                // When ctAlreadyMatched is false the subject was runtime, so the wildcard
+                // body is also runtime-guarded (we arrive here only if no case matched).
                 if (!ctAlreadyMatched)
                 {
                     if (!string.IsNullOrEmpty(branch.CaptureName))
@@ -598,7 +640,10 @@ public partial class IRGenerator
                         Emit(new JumpIfZero(g, nextCaseLabel));
                     }
 
+                    bool wildcardIsRuntime = !(targetVal is Constant);
+                    if (wildcardIsRuntime) _runtimeBranchDepth++;
                     if (branch.Body != null) VisitBlock((Block)branch.Body);
+                    if (wildcardIsRuntime) _runtimeBranchDepth--;
                     Emit(new Jump(endLabel));
                 }
             }
@@ -654,5 +699,119 @@ public partial class IRGenerator
     {
         if (loopStack.Count == 0) throw new Exception("Continue statement outside of loop");
         Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).ContinueLabel));
+    }
+
+    private void VisitRaise(RaiseStmt stmt)
+    {
+        if (stmt.ErrorType == "CompileError")
+        {
+            string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
+            if (_runtimeBranchDepth == 0)
+            {
+                // Statically unconditional: the raise is reachable without any runtime
+                // guard. Abort compilation immediately — this is the intended ZCA path.
+                throw new ArchitectureError(msg, stmt.Line, 0);
+            }
+
+            // Inside a runtime-conditional branch: the const-propagation chain failed to
+            // fold the guard to a compile-time value (e.g. mode: uint8 instead of
+            // const[uint8]). Aborting would be a false positive — the raise might never
+            // execute at runtime.
+            // CompileError must NEVER mutate into a runtime instruction; it is a
+            // compile-time-only concept. Emit nothing and warn the developer.
+            Console.Error.WriteLine(
+                $"warning: CompileError guard could not be verified at compile time " +
+                $"(line {stmt.Line}): {msg}. " +
+                "Ensure the guarding parameter is declared as const[...] so the branch can be pruned.");
+            return;
+        }
+
+        Val code = ResolveBinding(stmt.ErrorType);
+        Emit(new SignalError(code));
+    }
+
+    private void VisitTry(TryStmt stmt)
+    {
+        // T-flag propagation model (replaces SJLJ setjmp/longjmp):
+        //
+        //   - Each CALL in the try body is followed by BranchOnError(catchDispatch)
+        //     which emits BRTS on AVR — fires only when the callee set T=1 (SignalError).
+        //   - Non-CanFail callees clear T via CLT before RET (injected by the backend for
+        //     CanFail functions) or leave T=0 (they never touch T unless they signal error).
+        //   - At catchDispatch, R22 holds the error code loaded by SignalError; the
+        //     dispatch compares R22 against each handler's expected exception code.
+        //
+        // This replaces the 22-byte jmpbuf + _setjmp/_longjmp overhead with a single
+        // BRTS per call site — zero cost on the happy path.
+
+        bool hasFinally = stmt.Finally != null && stmt.Finally.Count > 0;
+        string catchDispatch = MakeLabel();
+        string afterLabel    = MakeLabel();
+
+        // The error code lives in the error register (R22 on AVR) when BranchOnError
+        // fires.  We use the sentinel Variable("__exn_r22_capture") as a read-only alias
+        // for that register: the backend compiles LoadIntoReg("__exn_r22_capture", "R24")
+        // as MOV R24, R22, with zero SRAM overhead.
+        //
+        // This avoids the stack-overlay collision that would occur if we saved R22 to an
+        // SRAM slot that the StackAllocator might alias with a callee's local variable.
+        // The comparison chain runs before any handler body, so R22 is stable throughout.
+        Val exnCode = new Variable("__exn_r22_capture", DataType.UINT8);
+
+        // Compile the try body. After each Call instruction, insert BranchOnError so
+        // that any SignalError from the callee jumps to the catch dispatcher.
+        int bodyStart = currentInstructions.Count;
+
+        foreach (var s in stmt.Body)
+            VisitStatement(s);
+
+        // Post-process: find every Call emitted inside the try body and insert a
+        // BranchOnError guard immediately after it. We iterate in reverse so that
+        // inserting at position i does not shift the indices of earlier Calls.
+        var callIndices = new List<int>();
+        for (int i = bodyStart; i < currentInstructions.Count; i++)
+            if (currentInstructions[i] is Call) callIndices.Add(i);
+
+        for (int i = callIndices.Count - 1; i >= 0; i--)
+            currentInstructions.Insert(callIndices[i] + 1, new BranchOnError(catchDispatch));
+
+        // Happy path: run finally block (if any), then skip catch section.
+        EmitFinallyBody(stmt);
+        Emit(new Jump(afterLabel));
+
+        // ── Catch dispatcher ─────────────────────────────────────────────────
+        Emit(new Label(catchDispatch));
+
+        for (int i = 0; i < stmt.Handlers.Count; i++)
+        {
+            var (exnType, handlerBody) = stmt.Handlers[i];
+            string skipLabel = MakeLabel();
+
+            Val expectedCode = ResolveBinding(exnType);
+            Val matchTemp = MakeTemp(DataType.UINT8);
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+            Emit(new JumpIfZero(matchTemp, skipLabel));
+
+            foreach (var s in handlerBody)
+                VisitStatement(s);
+
+            EmitFinallyBody(stmt);
+            Emit(new Jump(afterLabel));
+
+            Emit(new Label(skipLabel));
+        }
+
+        // No handler matched or finally-only: run finally then halt.
+        if (hasFinally) EmitFinallyBody(stmt);
+        Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+
+        Emit(new Label(afterLabel));
+    }
+
+    private void EmitFinallyBody(TryStmt stmt)
+    {
+        if (stmt.Finally == null) return;
+        foreach (var s in stmt.Finally)
+            VisitStatement(s);
     }
 }

@@ -25,7 +25,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `return` | With/without value; tuple multi-return |
-| `pass` / `raise` | `raise` is compile-time only |
+| `pass` / `raise` | `raise ExnType` emits `longjmp` to active handler; `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
+| `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
 | `global` | Cross-function variable access |
 
@@ -56,6 +57,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
+| `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
 | F-strings `f"text={var}"` | Compile-time constant only; all `{expr}` must resolve to string or integer constants |
 
 ### MCU-Specific Extensions
@@ -96,6 +98,11 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
 | `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants |
 
+> **RP2040 (alpha):** the RP2040 backend currently implements only `pymcu.hal.gpio`
+> (`Pin`), `pymcu.hal.uart` (`UART0`) and `pymcu.time` (`delay_ms` / `delay_us`).
+> Other HAL modules in the table above are not wired up on RP2040 yet. Boards:
+> `raspberry_pi_pico` / `pico` → `rp2040`.
+
 ### Compat Packages
 
 | Package | Activation | Coverage |
@@ -114,6 +121,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `in` / `not in` operator | Compile-time fold on constant list; runtime OR/AND chain |
 | `is` / `is not` | Maps to `==` / `!=` (identity = equality on bare-metal) |
 | `divmod(a, b)` built-in | Returns `(quotient, remainder)`; compile-time fold or `__div8`/`__mod8` |
+| `bitcast(T, v)` built-in | Reinterpret raw bytes as type `T`; float<->uint32 via register swap; compile-time fold for constant operands |
 | `hex(n)` / `bin(n)` (compile-time) | Fold to `"0xff"` / `"0b101"` string constant |
 | `sum(iterable)` | Compile-time fold or unrolled additions over fixed-size array |
 | `any(iterable)` / `all(iterable)` | Compile-time fold or OR/AND chain |
@@ -193,6 +201,7 @@ Everything in this section is shipped and tested in the current alpha build.
 |---------|-------|
 | Nested list comprehension | `[f(x,y) for x in outer for y in inner]` — full outer x inner product unroll |
 | `if` filter in list comprehension | `[x for x in [1,2,3,4] if x > 2]` — static condition only |
+| `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance array from list comp; `enumerate` also supported |
 | `bytearray` mutable buffer | `bytearray(8)` / `bytearray(b"...")` → SRAM `uint8[N]`; all array ops work |
 
 ---
@@ -332,46 +341,65 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
-## v0.11 — Next Tier
+## v0.13 — Implemented
 
-These are the highest-value features not yet implemented, in priority order.
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| Triple-quoted strings (`"""..."""` / `'''...'''`) | ✅ Implemented — lexer captures content including embedded newlines; leading newline after opening quote is stripped. Enables readable multi-line `asm()` blocks. |
+
+---
+
+## v0.12 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; GC-managed; `append()`, `len()`, `x[i]`, `for v in x:`. Overflow triggers automatic realloc (capacity × 2). |
+
+---
+
+## v0.11 — Implemented
 
 ### CLI / Driver
 
-| Feature | Effort | Notes |
-|---------|--------|-------|
+| Feature | Notes |
+|---------|-------|
 | Plugin-based toolchain system | ✅ Implemented | `pymcu.toolchains` entry-point group; `pip install pymcu[avr]` / `pymcu[pic]` |
 | `pymcu-toolchain-sdk` | ✅ Implemented | Standalone SDK package; base classes + `ToolchainPlugin` ABC |
 | `pymcu-toolchain-avr` | ✅ Implemented | AVR plugin (GNU AVR binutils); independent of core `pymcu` |
 | `pymcu-toolchain-pic` | ✅ Implemented | PIC plugin (GNU PIC Utilities); independent of core `pymcu` |
-| Programmer plugin system | ~1 week | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
+| `pymcu-rp2040` (backend + toolchain) | 🧪 Alpha | RP2040 / Cortex-M0+ backend that emits **LLVM IR** (not asm); LLVM toolchain (`opt`/`llc`/`llvm-mc`/`ld.lld`/`llvm-objcopy`) → `firmware.bin`. `pip install pymcu[rp2040]`. MVP: GPIO + UART0, single core |
+| Programmer plugin system | ✅ Implemented | `pymcu.programmers` entry-point group; `pymcu-programmer-avrdude`, etc. |
 
 ### Language
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| ~~Soft float~~ / `fixed16` | ~~1 week~~ | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
-| `round(x)` / `abs(x)` on `fixed16` | ~2h | Requires `fixed16` |
-| `const uint8[N]` (PROGMEM arrays) | ~3h | ✅ Implemented in v0.9 |
+| Feature | Notes |
+|---------|-------|
+| ~~Soft float~~ / `fixed16` | ✅ Soft-float IEEE 754 implemented (AVR) — `__fp_add/sub/mul/div/cmp` + int↔float conversions. `fixed16` deferred. |
+| `const uint8[N]` (PROGMEM arrays) | ✅ Implemented in v0.9 |
+| `uint16 >> n → uint8` widening shift | ✅ Compiler correctly loads wider source type for shift/bitwise ops narrowing to uint8 |
 
 ### HAL
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| `SoftI2C` bit-bang | ~3h | ✅ Implemented in v0.9 |
-| `I2C.write_to(addr, buf, n)` multi-byte | ~3h | ✅ Implemented in v0.9 as `I2C.write_bytes` |
-| `UART.read_line(buf, max_len)` | ~3h | Read until `\n` into fixed-size `uint8[N]` buffer |
-| Timer `millis()` / `micros()` | ~4h | ✅ Implemented in v0.9 |
-| Internal temperature sensor | ~1h | ATmega328P ADC channel 8; no external component needed |
-| `DS18B20` 1-Wire driver | ~4h | Popular temperature sensor; 1-Wire protocol |
+| Feature | Notes |
+|---------|-------|
+| `SoftI2C` bit-bang | ✅ Implemented in v0.9 |
+| `I2C.write_to(addr, buf, n)` multi-byte | ✅ Implemented in v0.9 as `I2C.write_bytes` |
+| `UART.read_line(buf, max_len)` | ✅ Implemented — reads until `\n` or max_len into fixed-size `uint8[N]` buffer |
+| Timer `millis()` / `micros()` | ✅ Implemented in v0.9 |
+| Internal temperature sensor | ✅ Implemented — ATmega328P ADC channel 8; `adc_read_temp_raw()` in `pymcu.hal.adc` |
+| `DS18B20` 1-Wire driver | ✅ Implemented — `pymcu.drivers.ds18b20`; `DS18B20(pin)` / `read_temp_raw()` / `read_temp_celsius()` |
 
 ### Compat
 
-| Feature | Effort | Why |
-|---------|--------|-----|
-| `machine.Timer(id, period, callback)` | ~3h | Requires `Pin.irq` (now available) |
-| `busio.SPI` / `busio.I2C` for CP flavor | ~3h | Wraps existing HAL under CircuitPython API names |
-| `neopixel` driver (CP flavor) | ~4h | WS2812 bit-bang via `neopixel.NeoPixel` API |
+| Feature | Notes |
+|---------|-------|
+| `machine.Timer(id, period, callback)` | ✅ Implemented — CTC mode on Timer1; period in ms; callback as ISR |
+| `busio.SPI` / `busio.I2C` for CP flavor | ✅ Implemented | Wraps existing HAL under CircuitPython API names |
+| `neopixel` driver (CP flavor) | ✅ Implemented | WS2812 bit-bang via `neopixel.NeoPixel` API |
 
 ---
 
@@ -379,6 +407,7 @@ These are the highest-value features not yet implemented, in priority order.
 
 | Feature | Effort | Why |
 |---------|--------|-----|
+| **MicroPython/CircuitPython API Alignment** | High Priority | Standardize the user-facing API for portability and ease of use. This is the main focus. |
 | `fixed16` (Q8.8 fixed-point) | ~1 week | Float-like sensor math without FPU |
 | PIC18 codegen | ~2 weeks | Extend backend for PIC18Fxxxx family |
 | RISC-V 32-bit codegen | ~2 weeks | CH32V003, ESP32-C3 |
@@ -395,11 +424,10 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 
 | Feature | Reason |
 |---------|--------|
-| Heap allocation / `list.append` / `dict` / `set` | No heap; MCUs have 32-2048 bytes SRAM |
-| Garbage collection | No runtime |
-| `try` / `except` | No runtime; use return-code error handling |
+| `dict` / `set` | Hash tables require heap; no runtime |
+| Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `async` / `await` | Use `@interrupt` + polling loop |
-| `float` / `complex` / `Decimal` | Use `fixed16` when available |
+| `complex` / `Decimal` | Not available |
 | `f"..."` runtime interpolation | Compile-time only (constants only) |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |

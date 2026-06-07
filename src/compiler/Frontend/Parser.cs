@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -41,6 +41,10 @@ public class Parser
             {
                 prog.Imports.Add(ParseImportStatement());
             }
+            else if (Check(TokenType.At) && DecoratorsLeadToClass())
+            {
+                prog.GlobalStatements.Add(ParseClassDefinitionWithDecorators());
+            }
             else if (Check(TokenType.Def) || Check(TokenType.At))
             {
                 prog.Functions.Add(ParseFunction());
@@ -69,6 +73,12 @@ public class Parser
     {
         int next = pos + 1;
         return next >= tokens.Count ? tokens[^1] : tokens[next];
+    }
+
+    private Token PeekAt(int offset)
+    {
+        int idx = pos + offset;
+        return idx >= tokens.Count ? tokens[^1] : tokens[idx];
     }
 
     private Token Previous() => pos == 0 ? tokens[0] : tokens[pos - 1];
@@ -118,14 +128,14 @@ public class Parser
     {
         var t = Peek();
         if (t.Type == TokenType.EndOfFile)
-            throw new SyntaxError("Unexpected EOF while parsing", t.Line, t.Column);
-        throw new SyntaxError(message, t.Line, t.Column);
+            throw new SyntaxError("Unexpected EOF while parsing", t.Line, t.Column, 1);
+        throw new SyntaxError(message, t.Line, t.Column, t.Length);
     }
 
     private void IndentError(string message)
     {
         var t = Peek();
-        throw new IndentationError(message, t.Line, t.Column);
+        throw new IndentationError(message, t.Line, t.Column, t.Length);
     }
 
     private string ParseTypeAnnotation()
@@ -140,6 +150,15 @@ public class Parser
             {
                 var inner = Consume(TokenType.Identifier, "Expected inner type");
                 typeStr += inner.Value;
+
+                // Array size given as a named constant times a literal, e.g.
+                // uint8[n*3] for a per-instance framebuffer. The product is folded
+                // against the (compile-time constant) identifier in the IR generator.
+                if (Match(TokenType.Star))
+                {
+                    var factor = Consume(TokenType.Number, "Expected a numeric factor after '*' in array size");
+                    typeStr += "*" + factor.Value;
+                }
 
                 // Handle nested bracket: e.g. const[uint8[4]] or const[str]
                 if (Match(TokenType.LBracket))
@@ -188,8 +207,10 @@ public class Parser
         bool isPropertyGetter = false;
         bool isPropertySetter = false;
         string propSetterOf = "";
+        bool isNaked = false;
         bool isExtern = false;
         string externSymbol = "";
+        string warningMessage = "";
 
         while (Check(TokenType.At))
         {
@@ -266,6 +287,21 @@ public class Parser
             {
                 // Ignored
             }
+            else if (decorator.Value == "naked")
+            {
+                isNaked = true;
+            }
+            else if (decorator.Value == "warning")
+            {
+                // @warning("..."): record the message. The IR generator prints it
+                // (once per function) as an informational note when a call to the
+                // decorated function is expanded; it does NOT abort compilation.
+                Consume(TokenType.LParen, "Expected '(' after @warning");
+                var msgTok = Consume(TokenType.String,
+                    "Expected a string message in @warning(" + (char)34 + "..." + (char)34 + ")");
+                warningMessage = msgTok.Value;
+                Consume(TokenType.RParen, "Expected ')' after @warning message");
+            }
             else
             {
                 Error("Unknown decorator: " + decorator.Value);
@@ -310,10 +346,30 @@ public class Parser
             IsPropertyGetter = isPropertyGetter,
             IsPropertySetter = isPropertySetter,
             PropertyName = propSetterOf,
+            IsNaked = isNaked,
             IsExtern = isExtern,
-            ExternSymbol = externSymbol
+            ExternSymbol = externSymbol,
+            WarningMessage = warningMessage
         };
         return func;
+    }
+
+    private ClassDef ParseClassDefinitionWithDecorators()
+    {
+        bool isValue = false;
+        while (Check(TokenType.At))
+        {
+            Advance(); // consume @
+            var dec = Consume(TokenType.Identifier, "Expected decorator name after '@'");
+            if (dec.Value == "value")
+                isValue = true;
+            else
+                Error("Unknown class decorator: @" + dec.Value);
+            Consume(TokenType.Newline, "Expected newline after class decorator");
+        }
+        var classDef = ParseClassDefinition();
+        classDef.IsValue = isValue;
+        return classDef;
     }
 
     private ClassDef ParseClassDefinition()
@@ -348,6 +404,22 @@ public class Parser
 
         do
         {
+            // Bare '*' is the PEP 3102 keyword-only separator (common in
+            // CircuitPython APIs, e.g. busio.UART(tx, rx, *, baudrate=9600)).
+            // PyMCU resolves arguments by name/position regardless, so we accept
+            // the marker and treat following parameters like any other. A
+            // '*args' varargs form is not supported.
+            if (Check(TokenType.Star))
+            {
+                Advance();
+                if (!Check(TokenType.Comma) && !Check(TokenType.RParen))
+                {
+                    Error("Variadic '*args' parameters are not supported; '*' is only valid as a keyword-only separator");
+                }
+                if (Check(TokenType.RParen)) break;
+                continue;
+            }
+
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
             if (Match(TokenType.Colon))
@@ -386,12 +458,29 @@ public class Parser
         return block;
     }
 
+    // Returns true if the current @ sequence (one or more @identifier\n pairs) leads to 'class'.
+    private bool DecoratorsLeadToClass()
+    {
+        int offset = 0;
+        while (PeekAt(offset).Type == TokenType.At)
+        {
+            offset++; // skip @
+            if (PeekAt(offset).Type != TokenType.Identifier) return false;
+            offset++; // skip decorator name
+            if (PeekAt(offset).Type != TokenType.Newline) return false;
+            offset++; // skip newline
+        }
+        return PeekAt(offset).Type == TokenType.Class;
+    }
+
     private Statement ParseStatement()
     {
         if (Check(TokenType.If)) return ParseIfStatement();
         if (Check(TokenType.Match)) return ParseMatchStatement();
         if (Check(TokenType.While)) return ParseWhileStatement();
         if (Check(TokenType.For)) return ParseForStatement();
+        if (Check(TokenType.At) && DecoratorsLeadToClass())
+            return ParseClassDefinitionWithDecorators();
         if (Check(TokenType.Def) || Check(TokenType.At))
         {
             if (functionDepth > 0)
@@ -431,6 +520,7 @@ public class Parser
         }
 
         if (Check(TokenType.Raise)) return ParseRaiseStatement();
+        if (Check(TokenType.Try)) return ParseTryStatement();
         if (Check(TokenType.With)) return ParseWithStatement();
         if (Check(TokenType.Assert)) return ParseAssertStatement();
 
@@ -456,16 +546,49 @@ public class Parser
         int line = Peek().Line;
         Consume(TokenType.Raise, "Expected 'raise'");
         string errorType = Consume(TokenType.Identifier, "Expected error type after 'raise'").Value;
-        Consume(TokenType.LParen, "Expected '(' after error type");
         string message = "";
-        if (Check(TokenType.String))
+        if (Check(TokenType.LParen))
         {
-            message = Advance().Value;
+            Advance();
+            if (Check(TokenType.String))
+                message = Advance().Value;
+            Consume(TokenType.RParen, "Expected ')' after error message");
         }
 
-        Consume(TokenType.RParen, "Expected ')' after error message");
         ConsumeStatementEnd();
         return new RaiseStmt(errorType, message) { Line = line };
+    }
+
+    private Statement ParseTryStatement()
+    {
+        int line = Peek().Line;
+        Consume(TokenType.Try, "Expected 'try'");
+        Consume(TokenType.Colon, "Expected ':' after 'try'");
+        ConsumeStatementEnd();
+        var tryBlock = ParseBlock();
+        var body = tryBlock.Statements;
+
+        var handlers = new List<(string, List<Statement>)>();
+        while (Check(TokenType.Except))
+        {
+            Consume(TokenType.Except, "Expected 'except'");
+            string exnType = Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+            Consume(TokenType.Colon, "Expected ':' after exception type");
+            ConsumeStatementEnd();
+            var handlerBlock = ParseBlock();
+            handlers.Add((exnType, handlerBlock.Statements));
+        }
+
+        List<Statement>? finallyBody = null;
+        if (Check(TokenType.Finally))
+        {
+            Consume(TokenType.Finally, "Expected 'finally'");
+            Consume(TokenType.Colon, "Expected ':' after 'finally'");
+            ConsumeStatementEnd();
+            finallyBody = ParseBlock().Statements;
+        }
+
+        return new TryStmt(body, handlers, finallyBody) { Line = line };
     }
 
     private Statement ParseWithStatement()
@@ -887,8 +1010,25 @@ public class Parser
 
         if (Match(TokenType.Colon))
         {
-            if (!(expr is VariableExpr varExpr)) Error("Only simple variables can be annotated with types");
-            string name = ((VariableExpr)expr).Name;
+            // Allow a simple variable (x: T) or an instance-member array
+            // declaration (self._buf: uint8[N]) used to reserve a per-instance
+            // SRAM framebuffer. The member form is encoded as a dotted target
+            // ("self._buf") and only supported for array annotations.
+            string name;
+            if (expr is VariableExpr varExpr)
+            {
+                name = varExpr.Name;
+            }
+            else if (expr is MemberAccessExpr memAnn && memAnn.Object is VariableExpr memObj)
+            {
+                name = memObj.Name + "." + memAnn.Member;
+            }
+            else
+            {
+                Error("Only simple variables or instance members can be annotated with types");
+                name = "";
+            }
+
             string type = ParseTypeAnnotation();
 
             Expression? init = null;
@@ -903,6 +1043,9 @@ public class Parser
             {
                 return new AnnAssign(name, type, init) { Line = line };
             }
+
+            if (name.Contains('.'))
+                Error("Only array-typed annotations are supported on instance members");
 
             return new VarDecl(name, type, init) { Line = line };
         }

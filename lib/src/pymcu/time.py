@@ -6,15 +6,15 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-# Software delay functions — no hardware timers, no conflicts.
+# Software delay functions -- no hardware timers, no conflicts.
 # Uses @inline + match __CHIP__.arch for dead-code-eliminated,
 # architecture-specific tight loops via asm().
 #
-# Accuracy: ~10-20% at ms level (acceptable for most MCU use cases).
-# For precise timing, use hardware timers directly.
+# Accuracy: <0.1% at 1, 8, 12, 16, 20 MHz; defaults to 16 MHz for other
+# AVR frequencies. For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, uint16, uint32, inline, asm
-from pymcu.chips import __CHIP__
+from pymcu.types import uint8, uint16, uint32, inline, asm, ptr
+from pymcu.chips import __CHIP__, __FREQ__
 
 @inline
 def delay_ms(ms: uint16):
@@ -32,12 +32,14 @@ def delay_ms(ms: uint16):
             _delay_ms_riscv(ms)
         case "pic12":
             _delay_ms_pic12(ms)
+        case "rp2040":
+            _delay_ms_rp2040(ms)
 
 @inline
 def _delay_ms_pic14(ms: uint8):
     """Software millisecond delay loop for PIC14 architecture."""
     # PIC14: Tcy = 4 clocks. DECFSZ+GOTO = 3 Tcy/iter.
-    # 255 iters × 3 = 765 Tcy ≈ 0.765ms at 4MHz (Tcy=1us)
+    # 255 iters x 3 = 765 Tcy ~ 0.765ms at 4MHz (Tcy=1us)
     # Outer while loop adds ~7 Tcy overhead per ms iteration.
     i: uint8 = 0
     while i < ms:
@@ -53,7 +55,7 @@ def _delay_ms_pic14e(ms: uint8):
     """Software millisecond delay loop for PIC14E architecture."""
     # PIC14E: Same instruction timing as PIC14, often higher Fosc.
     # At 32MHz internal: Tcy = 125ns, 1ms = 8000 Tcy.
-    # Need nested loop: outer 10 × inner 255 × 3 = 7650 Tcy ≈ 0.96ms
+    # Need nested loop: outer 10 x inner 255 x 3 = 7650 Tcy ~ 0.96ms
     i: uint8 = 0
     while i < ms:
         asm("    MOVLW 0x0B")
@@ -73,7 +75,7 @@ def _delay_ms_pic18(ms: uint8):
     """Software millisecond delay loop for PIC18 architecture."""
     # PIC18: Tcy = 4 clocks, DECFSZ+BRA = 3 Tcy/iter (BRA = 2 on taken).
     # Typically 48MHz: Tcy = 83.3ns, 1ms = 12000 Tcy.
-    # Nested: 16 × 255 × 3 = 12240 Tcy ≈ 1.02ms
+    # Nested: 16 x 255 x 3 = 12240 Tcy ~ 1.02ms
     i: uint8 = 0
     while i < ms:
         asm("    MOVLW 0x10")
@@ -88,32 +90,99 @@ def _delay_ms_pic18(ms: uint8):
         asm("    BRA _dly_outer_18")
         i = i + 1
 
-def _delay_1ms_avr():
-    """AVR 1ms delay subroutine (non-inline; called once per ms by _delay_ms_avr)."""
-    # Non-inline: labels appear exactly once in the assembled output.
-    # Nested loop: 21 outer * 255 inner * 3 cycles = 16065 cycles ≈ 1ms at 16MHz.
+def _delay_1ms_avr_1mhz():
+    # 1 MHz: outer=2, inner=163 -> 1000 cycles = 1.000 ms (+0.000%)
     asm("    PUSH R24")
     asm("    PUSH R25")
-    asm("    LDI R24, 21")
-    asm("_dly_outer_avr:")
-    asm("    LDI R25, 255")
-    asm("_dly_inner_avr:")
+    asm("    LDI R24, 2")
+    asm("_dly_o1mhz:")
+    asm("    LDI R25, 163")
+    asm("_dly_i1mhz:")
     asm("    DEC R25")
-    asm("    BRNE _dly_inner_avr")
+    asm("    BRNE _dly_i1mhz")
     asm("    DEC R24")
-    asm("    BRNE _dly_outer_avr")
+    asm("    BRNE _dly_o1mhz")
     asm("    POP R25")
     asm("    POP R24")
 
-@inline
+def _delay_1ms_avr_8mhz():
+    # 8 MHz: outer=11, inner=241 -> 8002 cycles ~ 1ms (+0.025%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 11")
+    asm("_dly_o8mhz:")
+    asm("    LDI R25, 241")
+    asm("_dly_i8mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i8mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o8mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_12mhz():
+    # 12 MHz: outer=17, inner=234 -> 12001 cycles ~ 1ms (+0.008%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 17")
+    asm("_dly_o12mhz:")
+    asm("    LDI R25, 234")
+    asm("_dly_i12mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i12mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o12mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_16mhz():
+    # 16 MHz: outer=24, inner=221 -> 16000 cycles = 1.000 ms (+0.000%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 24")
+    asm("_dly_o16mhz:")
+    asm("    LDI R25, 221")
+    asm("_dly_i16mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i16mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o16mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
+def _delay_1ms_avr_20mhz():
+    # 20 MHz: outer=30, inner=221 -> 19996 cycles ~ 1ms (-0.020%)
+    asm("    PUSH R24")
+    asm("    PUSH R25")
+    asm("    LDI R24, 30")
+    asm("_dly_o20mhz:")
+    asm("    LDI R25, 221")
+    asm("_dly_i20mhz:")
+    asm("    DEC R25")
+    asm("    BRNE _dly_i20mhz")
+    asm("    DEC R24")
+    asm("    BRNE _dly_o20mhz")
+    asm("    POP R25")
+    asm("    POP R24")
+
 def _delay_ms_avr(ms: uint16):
-    """Software millisecond delay loop for AVR architecture."""
-    # Calls the non-inline 1ms helper once per ms so labels are not duplicated
-    # across multiple delay_ms() call sites.
+    # Dispatch to the frequency-specific non-inline 1ms helper.
+    # match __FREQ__ is dead-code-eliminated at compile time -- only the
+    # matching branch survives in the assembled output.
     # uint16 counter supports up to 65535ms (~65 seconds).
     i: uint16 = 0
     while i < ms:
-        _delay_1ms_avr()
+        match __FREQ__:
+            case 1_000_000:
+                _delay_1ms_avr_1mhz()
+            case 8_000_000:
+                _delay_1ms_avr_8mhz()
+            case 12_000_000:
+                _delay_1ms_avr_12mhz()
+            case 20_000_000:
+                _delay_1ms_avr_20mhz()
+            case _:
+                _delay_1ms_avr_16mhz()
         i = i + 1
 
 @inline
@@ -121,7 +190,7 @@ def _delay_ms_riscv(ms: uint8):
     """Software millisecond delay loop for RISC-V architecture."""
     # RISC-V: ADDI+BNE = ~3-4 cycles/iter depending on pipeline.
     # CH32V003 at 48MHz: 1ms = 48000 cycles.
-    # Nested: 63 × 255 × 3 = 48195 ≈ 1ms
+    # Nested: 63 x 255 x 3 = 48195 ~ 1ms
     i: uint8 = 0
     while i < ms:
         asm("    LI t0, 63")
@@ -149,6 +218,16 @@ def _delay_ms_pic12(ms: uint8):
         i = i + 1
 
 @inline
+def _delay_ms_rp2040(ms: uint16):
+    # Poll the hardware microsecond timer instead of a calibrated busy-loop.
+    # 1 ms = 1000 us; the timer runs at 1 MHz, so the delay is exact on real
+    # silicon and on the emulator (whose timer advances by elapsed cycles),
+    # independent of CPU clock and pipeline timing. ms * 1000 fits in uint32
+    # for the full uint16 range (65535 ms -> 65_535_000 us).
+    _delay_us_rp2040(ms * 1000)
+
+
+@inline
 def delay_us(us: uint8):
     """Delay for approximately the given number of microseconds."""
     match __CHIP__.arch:
@@ -164,12 +243,14 @@ def delay_us(us: uint8):
             _delay_us_riscv(us)
         case "pic12":
             _delay_us_pic12(us)
+        case "rp2040":
+            _delay_us_rp2040(us)
 
 @inline
 def _delay_us_pic14(us: uint8):
     """Software microsecond delay loop for PIC14 architecture."""
     # PIC14 at 4MHz: Tcy=1us. 1us ~= 1 NOP.
-    # Loop overhead is ~7 Tcy so each iteration ≈ 8us at 4MHz.
+    # Loop overhead is ~7 Tcy so each iteration ~ 8us at 4MHz.
     # For approximate us-level delays.
     i: uint8 = 0
     while i < us:
@@ -233,6 +314,20 @@ def _delay_us_pic12(us: uint8):
         asm("    NOP")
         i = i + 1
 
+@inline
+def _delay_us_rp2040(us: uint32):
+    """Microsecond delay for RP2040, driven by the hardware TIMER (1 MHz)."""
+    # TIMER.TIMERAWL (0x40054028) is the raw low 32 bits of the free-running
+    # microsecond counter, readable with no latching side effect. The volatile
+    # MMIO load in the loop condition is a real side effect, so opt -O2 cannot
+    # delete the wait; no asm("nop") barrier is needed. uint32 subtraction
+    # wraps modulo 2**32, so delays up to ~71 minutes are correct across the
+    # counter roll-over.
+    timer: ptr[uint32] = ptr(0x40054028)
+    start: uint32 = timer.value
+    while (timer.value - start) < us:
+        pass
+
 
 @inline
 def millis_init():
@@ -244,7 +339,7 @@ def millis_init():
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import millis_init as _millis_init_avr
+            from pymcu.hal.avr.timer.atmega328p import millis_init as _millis_init_avr
             _millis_init_avr()
 
 
@@ -257,7 +352,7 @@ def millis() -> uint32:
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import millis as _millis_avr
+            from pymcu.hal.avr.timer.atmega328p import millis as _millis_avr
             return _millis_avr()
         case _:
             return 0
@@ -274,7 +369,7 @@ def micros() -> uint32:
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal._timer.atmega328p import micros as _micros_avr
+            from pymcu.hal.avr.timer.atmega328p import micros as _micros_avr
             return _micros_avr()
         case _:
             return 0

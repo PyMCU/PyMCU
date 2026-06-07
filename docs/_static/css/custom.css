@@ -1,0 +1,220 @@
+/* ============================================================
+   PyMCU – PyData Sphinx Theme overrides
+   ============================================================ */
+
+/* Google Fonts (loaded first so variables can reference them) */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap");
+
+/* ------------------------------------------------------------
+   Light mode (default) – brand palette
+   ------------------------------------------------------------ */
+:root {
+  --pst-color-primary:          #0161ef;
+  --pst-color-secondary:        #0154cf;
+  --pst-color-info:             #2a7cb5;
+  --pst-color-link:             #0161ef;
+  --pst-color-link-hover:       #2a7cb5;
+
+  --pst-font-family-base:       "Inter", -apple-system, BlinkMacSystemFont,
+                                 "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --pst-font-family-monospace:  "Fira Code", "JetBrains Mono", "Cascadia Code",
+                                 Consolas, "Courier New", monospace;
+
+  /* Tables */
+  --pymcu-table-head-bg:        #eaf1ff;
+  --pymcu-table-head-color:     #0d1a3a;
+  --pymcu-table-stripe-bg:      #f5f8ff;
+  --pymcu-table-border:         #c5d6f8;
+  --pymcu-table-text:           #1a1a2e;
+}
+
+/* ------------------------------------------------------------
+   Dark mode overrides
+   ------------------------------------------------------------ */
+[data-theme="dark"] {
+  --pst-color-primary:          #5ba3ff;
+  --pst-color-secondary:        #4a8eee;
+  --pst-color-info:             #4a9aca;
+  --pst-color-link:             #7ab8ff;
+  --pst-color-link-hover:       #a8d0ff;
+
+  /* Page chrome */
+  --pst-color-background:       #07091f;
+  --pst-color-on-background:    #dce6f8;
+  --pst-color-surface:          #111530;
+  --pst-color-on-surface:       #dce6f8;
+  --pst-color-border:           #2a3460;
+  --pst-color-shadow:           rgba(0, 0, 0, 0.6);
+
+  /* Text */
+  --pst-color-text-base:        #dce6f8;
+  --pst-color-text-muted:       #8ba4cc;
+  --pst-color-heading:          #eef3ff;
+
+  /* Inline code */
+  --pst-color-inline-code-links: #a8d0ff;
+
+  /* Tables – ensure legible contrast */
+  --pymcu-table-head-bg:        #1a2250;
+  --pymcu-table-head-color:     #e8eeff;
+  --pymcu-table-stripe-bg:      #141836;
+  --pymcu-table-border:         #2a3a70;
+  --pymcu-table-text:           #dce6f8;
+}
+
+/* ------------------------------------------------------------
+   Tables  (light + dark unified via custom vars)
+   ------------------------------------------------------------ */
+.bd-content table {
+  font-size: 0.875rem;
+  border-collapse: collapse;
+  width: 100%;
+  color: var(--pymcu-table-text);
+}
+
+.bd-content table thead th {
+  background-color: var(--pymcu-table-head-bg);
+  color: var(--pymcu-table-head-color);
+  border-bottom: 2px solid var(--pymcu-table-border);
+  padding: 0.45rem 0.75rem;
+}
+
+.bd-content table td,
+.bd-content table th {
+  border: 1px solid var(--pymcu-table-border);
+  padding: 0.4rem 0.75rem;
+  color: var(--pymcu-table-text);
+}
+
+.bd-content table tbody tr:nth-child(odd) {
+  background-color: var(--pymcu-table-stripe-bg);
+}
+
+.bd-content table tbody tr:hover {
+  background-color: color-mix(in srgb, var(--pst-color-primary) 8%, transparent);
+}
+
+/* Inline code inside tables */
+.bd-content table code {
+  background-color: color-mix(in srgb, var(--pst-color-primary) 10%, transparent);
+  color: var(--pymcu-table-text);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+}
+
+/* ------------------------------------------------------------
+   Code blocks – dark mode
+   ------------------------------------------------------------ */
+[data-theme="dark"] div[class*="highlight"] pre {
+  background-color: #0d1025;
+  color: #d4e0f7;
+}
+
+[data-theme="dark"] .highlight {
+  background-color: #0d1025;
+}
+
+/* Inline code (outside tables) */
+[data-theme="dark"] code.literal,
+[data-theme="dark"] code.docutils {
+  background-color: #1a2250;
+  color: #a8d0ff;
+}
+
+/* ------------------------------------------------------------
+   Admonitions – dark mode
+   ------------------------------------------------------------ */
+[data-theme="dark"] .admonition {
+  background-color: #0f1535;
+  border-left-color: var(--pst-color-primary);
+  color: var(--pst-color-text-base);
+}
+
+[data-theme="dark"] .admonition.note {
+  background-color: #0e1840;
+  border-left-color: var(--pst-color-primary);
+}
+
+[data-theme="dark"] .admonition.warning {
+  background-color: #1e1400;
+  border-left-color: #f0a800;
+}
+
+[data-theme="dark"] .admonition.important {
+  background-color: #0e1e10;
+  border-left-color: #2da44e;
+}
+
+[data-theme="dark"] .admonition-title {
+  color: var(--pst-color-heading);
+}
+
+/* ------------------------------------------------------------
+   Sphinx-design cards – dark mode
+   ------------------------------------------------------------ */
+[data-theme="dark"] .sd-card {
+  background-color: #111530;
+  border-color: #2a3460;
+  color: var(--pst-color-text-base);
+}
+
+[data-theme="dark"] .sd-card-title {
+  color: var(--pst-color-heading);
+}
+
+[data-theme="dark"] .sd-card-body {
+  color: var(--pst-color-text-base);
+}
+
+/* ------------------------------------------------------------
+   Navigation sidebar
+   ------------------------------------------------------------ */
+.bd-sidebar-primary {
+  font-size: 0.875rem;
+}
+
+[data-theme="dark"] .bd-sidebar-primary {
+  background-color: #080b22;
+  border-right-color: #1e2550;
+}
+
+[data-theme="dark"] .bd-sidebar-primary a {
+  color: #b0c8f0;
+}
+
+[data-theme="dark"] .bd-sidebar-primary a:hover,
+[data-theme="dark"] .bd-sidebar-primary a.current {
+  color: var(--pst-color-primary);
+}
+
+/* ------------------------------------------------------------
+   Page titles
+   ------------------------------------------------------------ */
+.bd-content h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-top: 1.5rem;
+}
+
+[data-theme="dark"] .bd-content h1,
+[data-theme="dark"] .bd-content h2,
+[data-theme="dark"] .bd-content h3,
+[data-theme="dark"] .bd-content h4 {
+  color: var(--pst-color-heading);
+}
+
+/* ------------------------------------------------------------
+   Version badge
+   ------------------------------------------------------------ */
+.version-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15em 0.5em;
+  border-radius: 0.25em;
+  background-color: var(--pst-color-primary);
+  color: #fff;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}

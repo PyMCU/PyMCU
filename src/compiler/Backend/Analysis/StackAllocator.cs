@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -55,6 +55,17 @@ public class StackAllocator
             globalOffset += VariableSizes[globalVar.Name];
         }
 
+        // Module-level SRAM arrays: allocate after scalars, before any function locals.
+        // Adding to _globalNames prevents the overlay algorithm from treating them as
+        // function locals and aliasing different arrays at the same SRAM address.
+        foreach (var kvp in program.GlobalArrays)
+        {
+            VariableSizes[kvp.Key] = kvp.Value;
+            _offsets[kvp.Key] = globalOffset;
+            _globalNames.Add(kvp.Key);
+            globalOffset += kvp.Value;
+        }
+
         if (globalOffset > _maxStackUsage) _maxStackUsage = globalOffset;
 
         BuildGraph(program);
@@ -103,6 +114,10 @@ public class StackAllocator
                         RegisterVar(c.Src);
                         RegisterVar(c.Dst);
                         break;
+                    case Bitcast bc2:
+                        RegisterVar(bc2.Src);
+                        RegisterVar(bc2.Dst);
+                        break;
                     case Binary b:
                         RegisterVar(b.Src1);
                         RegisterVar(b.Src2);
@@ -140,6 +155,12 @@ public class StackAllocator
                     case JumpIfNotZero jnz: RegisterVar(jnz.Condition); break;
                     case JumpIfBitSet jbs: RegisterVar(jbs.Source); break;
                     case JumpIfBitClear jbc: RegisterVar(jbc.Source); break;
+                    case JumpIfEqual je: RegisterVar(je.Src1); RegisterVar(je.Src2); break;
+                    case JumpIfNotEqual jne: RegisterVar(jne.Src1); RegisterVar(jne.Src2); break;
+                    case JumpIfLessThan jlt: RegisterVar(jlt.Src1); RegisterVar(jlt.Src2); break;
+                    case JumpIfLessOrEqual jle: RegisterVar(jle.Src1); RegisterVar(jle.Src2); break;
+                    case JumpIfGreaterThan jgt: RegisterVar(jgt.Src1); RegisterVar(jgt.Src2); break;
+                    case JumpIfGreaterOrEqual jge: RegisterVar(jge.Src1); RegisterVar(jge.Src2); break;
                     case ArrayLoad al:
                         if (!_globalNames.Contains(al.ArrayName) && node.Locals.Add(al.ArrayName))
                         {
@@ -157,6 +178,22 @@ public class StackAllocator
 
                         RegisterVar(ast.Index);
                         RegisterVar(ast.Src);
+                        break;
+                    case LoadIndirect li:
+                        RegisterVar(li.SrcPtr);
+                        RegisterVar(li.Dst);
+                        break;
+                    case StoreIndirect si:
+                        RegisterVar(si.Src);
+                        RegisterVar(si.DstPtr);
+                        break;
+                    case AugAssign aa:
+                        RegisterVar(aa.Target);
+                        RegisterVar(aa.Operand);
+                        break;
+                    case GcAlloc ga:
+                        RegisterVar(ga.Size);
+                        RegisterVar(ga.Dst);
                         break;
                 }
             }

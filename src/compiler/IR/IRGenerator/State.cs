@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -44,6 +44,7 @@ public partial class IRGenerator
     private Dictionary<string, ModuleScope> modules = new();
 
     private HashSet<string> classNames = new(); // Tracks known class names for callee resolution
+    private HashSet<string> valueClasses = new(); // @value-decorated classes: always use ZCA path, never heap-allocated
 
     // Maps "ClassName.property_name" -> qualified setter inline function key.
     // Populated by scan_functions when a @name.setter method is encountered.
@@ -58,9 +59,30 @@ public partial class IRGenerator
     // Class inheritance: maps "ChildClassName" -> "base_prefix_" (e.g., "GPIODevice_")
     // so that super().__init__() and default-ctor inheritance can be resolved.
     private Dictionary<string, string?> classBasePrefixes = new();
+
+    // Non-inline class instance methods: maps fully-qualified name → FunctionDef AST.
+    // Populated alongside functionsToCompile so Call.cs can force-inline them when called
+    // on a ZCA instance with a known concrete type (field aliasing requires inlining).
+    private Dictionary<string, FunctionDef> instanceMethodDefs = new();
+
+    // Class hierarchy graph (both populated by ScanFunctions).
+    // Keys use the unqualified class name WITHOUT trailing underscore (e.g. "dht_DHT11").
+    // classChildren:      parent → set of direct subclass names.
+    // classDirectMethods: class  → set of method names defined *directly* in that class body
+    //                     (excludes methods inherited via the toInherit copy loop).
+    private Dictionary<string, HashSet<string>> classChildren      = new();
+    private Dictionary<string, HashSet<string>> classDirectMethods = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+    // Tracks loop variables that are function references (from zip() over function lists).
+    // Key = loop variable name (e.g. "fn"), Value = resolved mangled function name (e.g. "blink_task").
+    private Dictionary<string, string> loopFunctionAliases = new();
+    // Tracks instance fields that have been written with different constant values
+    // (i.e., mutable at runtime). Once a field is killed it is never re-admitted
+    // to constantVariables, preventing incorrect DCE of branches like
+    // "if sensor.failed:".
+    private HashSet<string> killedConstants = new();
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
     private string pendingConstructorTarget = ""; // Target variable for constructor inlining
 
@@ -84,11 +106,29 @@ public partial class IRGenerator
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
 
+    // Depth counter for runtime-conditional branches currently being compiled.
+    // > 0 means we are inside a branch whose predicate could not be folded at compile time.
+    // VisitRaise uses this to distinguish a genuine compile-time CompileError (depth == 0)
+    // from a CompileError guard inside a runtime if/match that const-propagation failed to
+    // fold (depth > 0). In the latter case the raise is only a potential error; aborting
+    // the compilation would be a false positive.
+    private int _runtimeBranchDepth = 0;
+
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
 
-    // @extern("symbol") registrations: Whipsnake function name -> C symbol name.
+    // ZCA ISR synthesis: handler name -> root ZCA variable key (set by _set_irq_zca_arg).
+    private Dictionary<string, string> pendingZcaIsrBindings = new();
+    // ZCA ISR synthesis: handler name -> (FunctionDef, module prefix) for on-demand wrapper.
+    private Dictionary<string, (FunctionDef Func, string Prefix)> zcaHandlerAstNodes = new();
+    // ZCA ISR synthesis: synthesized Function objects collected during VisitCall, added to irProgram in Generate().
+    private List<Function> pendingZcaSynthFunctions = new();
+
+    // @extern("symbol") registrations: PyMCU function name -> C symbol name.
     private Dictionary<string, string?> externFunctionMap = new();
+
+    // Exception-related extern symbols to add to the program (e.g. _setjmp, longjmp).
+    private HashSet<string> exnExterns = new();
 
     private List<FunctionEntry> functionsToCompile = new();
     private Dictionary<string, int> stringLiteralIds = new();
@@ -102,6 +142,15 @@ public partial class IRGenerator
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
+    // Tracks inline-function parameters bound to a bytes/list literal argument
+    // (e.g. uart.write(b"Hi")). Lets the param be iterated via for-in and
+    // unrolled at compile time, mirroring a direct `for b in b"Hi"` loop.
+    private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
+
+    // Functions already reported via the @warning informational diagnostic, so
+    // the note is emitted at most once per function.
+    private HashSet<string> warningNoticed = new();
+
     // Tracks compile-time float constant variables (legacy; new code uses FloatConstant nodes)
     private Dictionary<string, double> floatConstantVariables = new();
 
@@ -111,6 +160,13 @@ public partial class IRGenerator
     // Fixed-size array support
     private Dictionary<string, int> arraySizes = new(); // qualified_name → element count
     private Dictionary<string, DataType> arrayElemTypes = new(); // qualified_name → element DataType
+
+    // Heap-allocated list[T] support: maps qualified_name → element DataType (GC_REF variables)
+    private Dictionary<string, DataType> listVarElemTypes = new();
+
+    // Function parameters declared as bytearray (passed as pointer, no length).
+    // The parameter name is stored as qualified_name (funcname_paramname).
+    private HashSet<string> bytearrayParams = new();
 
     // Arrays that are subscripted with at least one non-constant index anywhere in the current function.
     private HashSet<string> arraysWithVariableIndex = new();

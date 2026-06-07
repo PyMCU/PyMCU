@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -96,6 +96,12 @@ public partial class IRGenerator
                             }
                         }
                     }
+                }
+                else if (type.StartsWith("list[") && type.EndsWith("]"))
+                {
+                    string elemTypeName = type.Substring(5, type.Length - 6);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+                    listVarElemTypes[name] = elemDt;
                 }
                 else
                 {
@@ -255,9 +261,28 @@ public partial class IRGenerator
                 }
                 catch
                 {
+                    // SRAM arrays (already in moduleSramArrays) must not be added to
+                    // mutableGlobals here — their size is determined by ArrayStore/ArrayLoad
+                    // instructions in the StackAllocator, which uses count * elemSize.
+                    // Adding them with StringToDataType("T[N]") → UNKNOWN (1 byte) would
+                    // under-allocate SRAM and cause layout corruption.
+                    if (moduleSramArrays.Contains(name)) continue;
                     DataType t = DataTypeExtensions.StringToDataType(type);
                     mutableGlobals[currentModulePrefix + name] = t;
                     if (scope != null) scope.MutableGlobals[name] = t;
+                }
+
+                // Track module-level singleton instances (e.g. `mem8 = _Mem8()`) so
+                // that subscript and method dispatch via GetValClass works when these
+                // singletons are imported by user code.
+                if (initializer is CallExpr ctorCallInst
+                    && ctorCallInst.Callee is VariableExpr ctorVarInst
+                    && classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod)
+                    && classMod != null)
+                {
+                    string fullKey = currentModulePrefix + name;
+                    string fullClassName = classMod + ctorVarInst.Name;
+                    instanceClasses[fullKey] = fullClassName;
                 }
             }
         }
@@ -314,8 +339,23 @@ public partial class IRGenerator
             }
             else
             {
-                functionsToCompile.Add(new FunctionEntry
-                    { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                // If the first parameter has an unknown (class) type, this is a ZCA-parameterized
+                // handler (e.g. def on_irq(pin: Pin)). Store for on-demand synthesis; do NOT
+                // add to functionsToCompile because the body references ZCA fields that are
+                // only known at the call site.
+                bool hasZcaFirstParam = func.Params.Count > 0 &&
+                    DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
+                    func.Params[0].Type != "bytearray" &&
+                    !func.Params[0].Type.StartsWith("ptr");
+                if (hasZcaFirstParam)
+                {
+                    zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");
+                }
+                else
+                {
+                    functionsToCompile.Add(new FunctionEntry
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                }
             }
         }
 
@@ -329,9 +369,15 @@ public partial class IRGenerator
                 if (classDef.Body != null)
                 {
                     classNames.Add(classDef.Name);
+                    if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
                     var classPrefix = currentModulePrefix + classDef.Name + "_";
                     currentModulePrefix = classPrefix;
+
+                    // Ensure an entry exists in classDirectMethods even for empty classes.
+                    string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
+                    if (!classDirectMethods.ContainsKey(classKey))
+                        classDirectMethods[classKey] = new HashSet<string>();
 
                     if (classDef.Body is Block block)
                     {
@@ -339,6 +385,10 @@ public partial class IRGenerator
                         {
                             if (inner is FunctionDef func)
                             {
+                                // Register as directly-defined BEFORE the inheritance copy so
+                                // ResolveMROMethod can distinguish "defined here" from "inherited".
+                                classDirectMethods[classKey].Add(func.Name);
+
                                 string fullName = currentModulePrefix + func.Name;
                                 functionReturnTypes[fullName] = func.ReturnType;
                                 var @params = new List<string>();
@@ -384,6 +434,10 @@ public partial class IRGenerator
                                 {
                                     functionsToCompile.Add(new FunctionEntry
                                         { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                                    // Keep the AST so Call.cs can force-inline this method when
+                                    // it is called on a ZCA instance with a known concrete type.
+                                    // ZCA field aliasing requires inline expansion of self accesses.
+                                    instanceMethodDefs[fullName] = func;
                                 }
 
                                 if (!func.IsPropertySetter)
@@ -391,6 +445,14 @@ public partial class IRGenerator
                                     methodInstanceTypes[fullName] =
                                         currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
                                 }
+                            }
+                            else if (inner is ClassDef nestedClass)
+                            {
+                                // Nested class (class defined inside another class), e.g.
+                                // CircuitPython's alarm.time.TimeAlarm. Register its methods
+                                // under the nested prefix so it is ZCA-constructible like a
+                                // top-level class (VisitCall finds <prefix>___init__).
+                                ScanNestedClassMembers(nestedClass, classPrefix);
                             }
                         }
                     }
@@ -421,6 +483,13 @@ public partial class IRGenerator
                         string resolvedBasePrefix = ResolveBase();
                         string childClassName = classPrefix.Substring(0, classPrefix.Length - 1);
                         classBasePrefixes[childClassName] = resolvedBasePrefix;
+
+                        // Register child → parent edge in the class-children graph.
+                        string parentKey = resolvedBasePrefix.EndsWith("_")
+                            ? resolvedBasePrefix[..^1] : resolvedBasePrefix;
+                        if (!classChildren.TryGetValue(parentKey, out var childSet))
+                            classChildren[parentKey] = childSet = new HashSet<string>();
+                        childSet.Add(childClassName);
 
                         var toInherit = new List<KeyValuePair<string, FunctionDef>>();
                         foreach (var kvp in inlineFunctions)
@@ -456,26 +525,236 @@ public partial class IRGenerator
         }
     }
 
+    // Registers a nested class (a class defined in the body of another class) so it
+    // can be constructed with zero-cost ZCA inlining just like a top-level class.
+    // Mirrors the per-method registration done for top-level classes, prefixing
+    // symbols with the enclosing class path. Recurses for further nesting. Bases
+    // (inheritance) on nested classes are not handled here -- none use it today.
+    private void ScanNestedClassMembers(ClassDef nested, string outerPrefix)
+    {
+        if (nested.Bases.Contains("Enum") || nested.Bases.Contains("IntEnum")) return;
+        if (nested.Body is not Block block) return;
+
+        classNames.Add(nested.Name);
+        if (nested.IsValue) valueClasses.Add(nested.Name);
+
+        var oldPrefix = currentModulePrefix;
+        var classPrefix = outerPrefix + nested.Name + "_";
+        currentModulePrefix = classPrefix;
+
+        string classKey = classPrefix.Substring(0, classPrefix.Length - 1);
+        if (!classDirectMethods.ContainsKey(classKey))
+            classDirectMethods[classKey] = new HashSet<string>();
+
+        foreach (var inner in block.Statements)
+        {
+            if (inner is FunctionDef func)
+            {
+                classDirectMethods[classKey].Add(func.Name);
+
+                string fullName = currentModulePrefix + func.Name;
+                functionReturnTypes[fullName] = func.ReturnType;
+                var @params = new List<string>();
+                var paramTypes = new List<DataType>();
+                foreach (var p in func.Params)
+                {
+                    @params.Add(p.Name);
+                    paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
+                }
+
+                functionParams[fullName] = @params;
+                functionParamTypes[fullName] = paramTypes;
+
+                if (func.IsPropertySetter)
+                {
+                    string setterKey = fullName + "___setter";
+                    inlineFunctions[setterKey] = func;
+                    propertySetters[classKey + "." + func.PropertyName] = setterKey;
+                }
+                else if (func.IsInline)
+                {
+                    if (!inlineFunctions.TryAdd(fullName, func))
+                    {
+                        if (!overloadedFunctions.Contains(fullName))
+                        {
+                            var existing = inlineFunctions[fullName];
+                            if (existing?.Params != null)
+                            {
+                                var existingSfx = BuildOverloadSuffix(existing.Params);
+                                inlineFunctions[fullName + "___" + existingSfx] = existing;
+                            }
+
+                            inlineFunctions.Remove(fullName);
+                            overloadedFunctions.Add(fullName);
+                        }
+
+                        string newSfx = BuildOverloadSuffix(func.Params);
+                        inlineFunctions[fullName + "___" + newSfx] = func;
+                    }
+                }
+                else
+                {
+                    functionsToCompile.Add(new FunctionEntry
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                    instanceMethodDefs[fullName] = func;
+                }
+
+                if (!func.IsPropertySetter)
+                {
+                    methodInstanceTypes[fullName] =
+                        currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+                }
+            }
+            else if (inner is ClassDef deeper)
+            {
+                ScanNestedClassMembers(deeper, classPrefix);
+            }
+        }
+
+        currentModulePrefix = oldPrefix;
+    }
+
+    // Returns the set of parameter names (excluding "self") that are accessed with a
+    // variable (non-constant) index inside the given inline function body, including
+    // parameters that are forwarded to nested inline function calls whose own parameters
+    // are also variable-indexed.
+    private HashSet<string> GetInlineVarIndexedParams(FunctionDef func, HashSet<FunctionDef> visiting)
+    {
+        if (!visiting.Add(func)) return new HashSet<string>(); // cycle guard
+
+        var paramNames = new HashSet<string>(func.Params.Select(p => p.Name));
+        var result = new HashSet<string>();
+
+        // bytearray-typed parameters always require SRAM — they are indexable buffers passed
+        // by pointer.  Marking them here avoids having to follow the full inline call chain to
+        // find a variable-index subscript.
+        foreach (var p in func.Params)
+            if (p.Type == "bytearray") result.Add(p.Name);
+
+        void ScanIExpr(Expression? expr)
+        {
+            if (expr == null) return;
+            if (expr is IndexExpr idx && idx.Target is VariableExpr ve && !(idx.Index is IntegerLiteral))
+            {
+                if (paramNames.Contains(ve.Name))
+                    result.Add(ve.Name);
+            }
+
+            if (expr is CallExpr ic)
+            {
+                ScanIExpr(ic.Callee);
+                foreach (var a in ic.Args) ScanIExpr(a);
+
+                // Resolve direct calls (non-method) to inline functions and propagate.
+                string nestedKey = "";
+                if (ic.Callee is VariableExpr icVe)
+                    nestedKey = ResolveCallee(icVe.Name);
+
+                if (!string.IsNullOrEmpty(nestedKey) && inlineFunctions.TryGetValue(nestedKey, out var nested))
+                {
+                    var nestedVarIdx = GetInlineVarIndexedParams(nested, visiting);
+                    if (nestedVarIdx.Count > 0)
+                    {
+                        int argPos = 0;
+                        foreach (var np in nested.Params)
+                        {
+                            if (np.Name == "self") continue;
+                            if (nestedVarIdx.Contains(np.Name) && argPos < ic.Args.Count)
+                            {
+                                if (ic.Args[argPos] is VariableExpr argVe && paramNames.Contains(argVe.Name))
+                                    result.Add(argVe.Name);
+                            }
+                            argPos++;
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(nestedKey) && overloadedFunctions.Contains(nestedKey))
+                {
+                    // Overloaded direct call: union results from all variants.
+                    foreach (var kv in inlineFunctions)
+                    {
+                        if (!kv.Key.StartsWith(nestedKey + "___")) continue;
+                        var oVarIdx = GetInlineVarIndexedParams(kv.Value, visiting);
+                        if (oVarIdx.Count == 0) continue;
+                        int oArgPos = 0;
+                        foreach (var np in kv.Value.Params)
+                        {
+                            if (np.Name == "self") continue;
+                            if (oVarIdx.Contains(np.Name) && oArgPos < ic.Args.Count)
+                            {
+                                if (ic.Args[oArgPos] is VariableExpr argVe && paramNames.Contains(argVe.Name))
+                                    result.Add(argVe.Name);
+                            }
+                            oArgPos++;
+                        }
+                    }
+                }
+            }
+
+            if (expr is BinaryExpr ib) { ScanIExpr(ib.Left); ScanIExpr(ib.Right); }
+            if (expr is UnaryExpr iu) ScanIExpr(iu.Operand);
+            if (expr is MemberAccessExpr ima) ScanIExpr(ima.Object);
+        }
+
+        void ScanIStmt(Statement? s)
+        {
+            if (s == null) return;
+            if (s is AssignStmt ia) { ScanIExpr(ia.Target); ScanIExpr(ia.Value); }
+            else if (s is AnnAssign ia2) ScanIExpr(ia2.Value);
+            else if (s is ReturnStmt ir) ScanIExpr(ir.Value);
+            else if (s is ExprStmt ie) ScanIExpr(ie.Expr);
+            else if (s is IfStmt iif)
+            {
+                ScanIExpr(iif.Condition);
+                ScanIStmt(iif.ThenBranch);
+                foreach (var b in iif.ElifBranches) { ScanIExpr(b.Condition); ScanIStmt(b.Body); }
+                ScanIStmt(iif.ElseBranch);
+            }
+            else if (s is WhileStmt iwh) { ScanIExpr(iwh.Condition); ScanIStmt(iwh.Body); }
+            else if (s is Block ib2) foreach (var cs in ib2.Statements) ScanIStmt(cs);
+            else if (s is AugAssignStmt iaug) { ScanIExpr(iaug.Target); ScanIExpr(iaug.Value); }
+        }
+
+        foreach (var s in func.Body.Statements) ScanIStmt(s);
+        visiting.Remove(func);
+        return result;
+    }
+
     private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix)
     {
         var localArrays = new HashSet<string>();
+
+        // Pre-scan: collect local variable → class name for constructor calls, so we can
+        // resolve method calls to inline functions without needing instanceClasses (which
+        // is not yet populated at this point in compilation).
+        var localVarTypes = new Dictionary<string, string>();
 
         void CollectArrayDecls(Statement? stmt)
         {
             if (stmt == null) return;
             if (stmt is AnnAssign ann)
             {
-                int br = ann.Annotation.IndexOf('[');
-                int cl = ann.Annotation.LastIndexOf(']');
-                if (br != -1 && cl != -1)
+                if (ann.Annotation.StartsWith("list[") && ann.Annotation.EndsWith("]"))
                 {
-                    string inner = ann.Annotation.Substring(br + 1, cl - br - 1);
-                    if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                    string elemTypeName = ann.Annotation.Substring(5, ann.Annotation.Length - 6);
+                    DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+                    listVarElemTypes[prefix + ann.Target] = elemDt;
+                    // list variables are NOT fixed-size arrays; do not add to localArrays
+                }
+                else
+                {
+                    int br = ann.Annotation.IndexOf('[');
+                    int cl = ann.Annotation.LastIndexOf(']');
+                    if (br != -1 && cl != -1)
+                    {
+                        string inner = ann.Annotation.Substring(br + 1, cl - br - 1);
+                        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+                            localArrays.Add(prefix + ann.Target);
+                    }
+
+                    if (ann.Annotation == "bytearray")
                         localArrays.Add(prefix + ann.Target);
                 }
-
-                if (ann.Annotation == "bytearray")
-                    localArrays.Add(prefix + ann.Target);
             }
             else if (stmt is VarDecl vd)
             {
@@ -500,6 +779,43 @@ public partial class IRGenerator
 
         foreach (var s in stmts) CollectArrayDecls(s);
 
+        // Pre-scan statements to collect variable → class name from constructor calls.
+        void CollectLocalTypes(Statement? stmt)
+        {
+            if (stmt == null) return;
+
+            void TryRecordType(string varName, Expression? value)
+            {
+                if (value is not CallExpr ctorCall) return;
+                string cls = "";
+                if (ctorCall.Callee is VariableExpr cv)
+                    cls = ResolveCallee(cv.Name);
+                else if (ctorCall.Callee is MemberAccessExpr cm && cm.Object is VariableExpr modVe
+                         && modules.ContainsKey(modVe.Name))
+                    cls = modVe.Name.Replace('.', '_') + "_" + cm.Member;
+                if (!string.IsNullOrEmpty(cls) &&
+                    (inlineFunctions.ContainsKey(cls + "___init__") ||
+                     overloadedFunctions.Contains(cls + "___init__")))
+                    localVarTypes[prefix + varName] = cls;
+            }
+
+            if (stmt is AssignStmt asn && asn.Target is VariableExpr asv)
+                TryRecordType(asv.Name, asn.Value);
+            else if (stmt is AnnAssign aan && aan.Value != null)
+                TryRecordType(aan.Target, aan.Value);
+            else if (stmt is Block blk)
+                foreach (var s in blk.Statements) CollectLocalTypes(s);
+            else if (stmt is IfStmt ifs)
+            {
+                CollectLocalTypes(ifs.ThenBranch);
+                foreach (var b in ifs.ElifBranches) CollectLocalTypes(b.Body);
+                CollectLocalTypes(ifs.ElseBranch);
+            }
+            else if (stmt is WhileStmt whs) CollectLocalTypes(whs.Body);
+        }
+
+        foreach (var s in stmts) CollectLocalTypes(s);
+
         void ScanExpr(Expression? expr)
         {
             if (expr == null) return;
@@ -521,6 +837,105 @@ public partial class IRGenerator
             {
                 ScanExpr(call.Callee);
                 foreach (var arg in call.Args) ScanExpr(arg);
+
+                // Propagate variable-index array info from inline function parameters
+                // to the actual arguments at this call site.
+                FunctionDef? resolvedFunc = null;
+                string overloadedKey = "";   // non-empty when the call targets an overloaded inline
+
+                if (call.Callee is MemberAccessExpr memAcc && memAcc.Object is VariableExpr objVe)
+                {
+                    // Method call: resolve object type via pre-collected localVarTypes.
+                    string objKey = prefix + objVe.Name;
+                    if (localVarTypes.TryGetValue(objKey, out string cls))
+                    {
+                        string methodKey = cls + "_" + memAcc.Member;
+                        if (!inlineFunctions.TryGetValue(methodKey, out resolvedFunc) &&
+                            overloadedFunctions.Contains(methodKey))
+                            overloadedKey = methodKey;
+                    }
+                }
+                else if (call.Callee is VariableExpr callVe)
+                {
+                    // Direct function call.
+                    string resolvedCallee = ResolveCallee(callVe.Name);
+                    if (!inlineFunctions.TryGetValue(resolvedCallee, out resolvedFunc) &&
+                        overloadedFunctions.Contains(resolvedCallee))
+                        overloadedKey = resolvedCallee;
+
+                    // For non-inline functions: if an argument is a local array passed to a
+                    // bytearray parameter (UINT16 pointer type), mark it as needing SRAM storage
+                    // so it is allocated contiguously and not constant-folded away.
+                    if (resolvedFunc == null && string.IsNullOrEmpty(overloadedKey) &&
+                        functionParamTypes.TryGetValue(resolvedCallee, out var calleeParamTypes))
+                    {
+                        for (int ai = 0; ai < call.Args.Count && ai < calleeParamTypes.Count; ai++)
+                        {
+                            if (calleeParamTypes[ai] == DataType.UINT16 && call.Args[ai] is VariableExpr argVe2)
+                            {
+                                string actualName = prefix + argVe2.Name;
+                                if (localArrays.Contains(actualName))
+                                    arraysWithVariableIndex.Add(actualName);
+                            }
+                        }
+                    }
+                }
+
+                // Single non-overloaded inline function.
+                if (resolvedFunc != null)
+                {
+                    var varIdxParams = GetInlineVarIndexedParams(resolvedFunc, new HashSet<FunctionDef>());
+                    if (varIdxParams.Count > 0)
+                    {
+                        int argPos = 0;
+                        foreach (var param in resolvedFunc.Params)
+                        {
+                            if (param.Name == "self") continue;
+                            if (varIdxParams.Contains(param.Name) && argPos < call.Args.Count)
+                            {
+                                if (call.Args[argPos] is VariableExpr argVe)
+                                {
+                                    string actualName = prefix + argVe.Name;
+                                    if (localArrays.Contains(actualName))
+                                        arraysWithVariableIndex.Add(actualName);
+                                }
+                            }
+                            argPos++;
+                        }
+                    }
+                }
+
+                // Overloaded inline functions: union var-index info across ALL variants whose
+                // non-self parameter count matches the call argument count.  We cannot pick a
+                // single overload without full type inference, so we take the conservative
+                // (false-positive-safe) approach of marking an argument if ANY overload
+                // indicates that position needs SRAM.
+                if (!string.IsNullOrEmpty(overloadedKey))
+                {
+                    int argCount = call.Args.Count;
+                    foreach (var kv in inlineFunctions)
+                    {
+                        if (!kv.Key.StartsWith(overloadedKey + "___")) continue;
+                        if (kv.Value.Params.Count(p => p.Name != "self") != argCount) continue;
+                        var varIdxP = GetInlineVarIndexedParams(kv.Value, new HashSet<FunctionDef>());
+                        if (varIdxP.Count == 0) continue;
+                        int ap = 0;
+                        foreach (var param in kv.Value.Params)
+                        {
+                            if (param.Name == "self") continue;
+                            if (varIdxP.Contains(param.Name) && ap < call.Args.Count)
+                            {
+                                if (call.Args[ap] is VariableExpr argVe)
+                                {
+                                    string actualName = prefix + argVe.Name;
+                                    if (localArrays.Contains(actualName))
+                                        arraysWithVariableIndex.Add(actualName);
+                                }
+                            }
+                            ap++;
+                        }
+                    }
+                }
             }
             else if (expr is BinaryExpr bin)
             {

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -14,7 +14,9 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common;
 using PyMCU.Frontend;
+using PyMCU.IR;
 
 namespace PyMCU.IR.IRGenerator;
 
@@ -30,6 +32,45 @@ public partial class IRGenerator
                 if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
                     qualified = ve.Name;
 
+                // When inside an inline expansion, the target may be a parameter aliased to a
+                // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
+                // array-store path fires instead of falling through to the bit-subscript path.
+                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                    && !string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string inlineQ = currentInlinePrefix + ve.Name;
+                    if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                        qualified = resolvedQ;
+                    else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                        qualified = inlineQ;
+                }
+
+                // Bytearray parameter: indirect store through pointer.
+                if (bytearrayParams.Contains(qualified))
+                {
+                    Val idxVal = VisitExpression(indexExpr.Index);
+                    Val srcVal = VisitExpression(stmt.Value);
+                    Emit(new BytearrayStore(qualified, idxVal, srcVal));
+                    return;
+                }
+
+                // list[T] index assignment: x[i] = val → store at GC heap offset 2 + i*elemSize
+                {
+                    string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                                 : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                                 : "";
+                    if (!string.IsNullOrEmpty(listQ))
+                    {
+                        DataType elemDt = listVarElemTypes[listQ];
+                        Val listPtr = new Variable(listQ, DataType.GC_REF);
+                        Val idxVal = VisitExpression(indexExpr.Index);
+                        Val srcVal = VisitExpression(stmt.Value);
+                        Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                        Emit(new StoreIndirect(srcVal, elemAddr));
+                        return;
+                    }
+                }
+
                 if (arraySizes.ContainsKey(qualified))
                 {
                     if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
@@ -41,15 +82,36 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        if (!(indexExpr.Index is IntegerLiteral c))
+                        // Accept either a literal subscript or a variable that folds to a
+                        // compile-time constant (e.g. the index from an unrolled
+                        // `for i, _ in enumerate(buf)` loop, where `i` is constant per
+                        // iteration). This lets inline functions write into a caller's
+                        // fixed array via constant-index stores without SRAM indexing.
+                        int elemIdx;
+                        if (indexExpr.Index is IntegerLiteral c)
+                            elemIdx = c.Value;
+                        else if (VisitExpression(indexExpr.Index) is Constant cc)
+                            elemIdx = cc.Value;
+                        else
                             throw new Exception("Array subscript must be a compile-time constant");
-                        string elemName = qualified + "__" + c.Value;
+                        string elemName = qualified + "__" + elemIdx;
                         Val srcVal = VisitExpression(stmt.Value);
                         Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
                     }
 
                     return;
                 }
+            }
+
+            // Instance-member array store: self._buf[i] = val (i runtime), where
+            // self._buf was declared as a per-instance SRAM framebuffer.
+            if (indexExpr.Target is MemberAccessExpr memStore
+                && ResolveMemberArrayName(memStore) is string flatStore)
+            {
+                Val idxVal = VisitExpression(indexExpr.Index);
+                Val srcVal = VisitExpression(stmt.Value);
+                Emit(new ArrayStore(flatStore, idxVal, srcVal, arrayElemTypes[flatStore], arraySizes[flatStore]));
+                return;
             }
 
             {
@@ -62,8 +124,21 @@ public partial class IRGenerator
                     {
                         string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
                         Val idxVal = VisitExpression(indexExpr.Index);
-                        Val srcVal = VisitExpression(stmt.Value);
-                        EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
+                        // A tuple/list literal RHS (pixels[i] = (r, g, b)) is bound to the
+                        // color parameter as a sequence literal so __setitem__ can read it
+                        // by constant subscript; otherwise evaluate a scalar value.
+                        ListExpr? seqRhs = stmt.Value as ListExpr
+                            ?? (stmt.Value is TupleExpr tup ? new ListExpr(tup.Elements) : null);
+                        if (seqRhs != null)
+                        {
+                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, new NoneVal() },
+                                new Dictionary<int, ListExpr> { { 1, seqRhs } });
+                        }
+                        else
+                        {
+                            Val srcVal = VisitExpression(stmt.Value);
+                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
+                        }
                         return;
                     }
                 }
@@ -306,6 +381,10 @@ public partial class IRGenerator
                         if (setter is { Params.Count: >= 2 })
                         {
                             var paramName = newPrefix + setter.Params[1].Name;
+                            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
+                            variableTypes[paramName] = paramType;
+                            constantVariables.Remove(paramName);
+                            variableAliases.Remove(paramName);
                             switch (argVal)
                             {
                                 case Constant c:
@@ -315,7 +394,12 @@ public partial class IRGenerator
                                     variableAliases[paramName] = vv.Name;
                                     break;
                                 case Temporary tt:
-                                    variableAliases[paramName] = tt.Name;
+                                    // Materialize the runtime value into the param's own SRAM slot.
+                                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
+                                    // across the inline boundary, so the setter body would read an
+                                    // uninitialized variable (always 0) -- the root cause of
+                                    // `led.value = buf[0] & 1` collapsing to a single branch.
+                                    Emit(new Copy(tt, new Variable(paramName, paramType)));
                                     break;
                             }
                         }
@@ -357,6 +441,22 @@ public partial class IRGenerator
             }
         }
 
+        // Untyped assignment of a list / list-comprehension to a name, e.g.
+        //   outs = [digitalio.DigitalInOut(p) for p in (board.D5, board.D6, board.D7)]
+        // The compile-time-unrolled array path (slots name__k + instanceClasses for ZCA
+        // elements) is normally reached only through an annotated target; handle the plain
+        // form here so CircuitPython-style code compiles.
+        if (stmt.Target is VariableExpr listTarget)
+        {
+            List<Expression>? elemExprs = stmt.Value switch
+            {
+                ListExpr le => le.Elements,
+                ListCompExpr lc => ExpandCtListComp(lc),
+                _ => null
+            };
+            if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
+        }
+
         Val value = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr varExpr)
@@ -390,7 +490,10 @@ public partial class IRGenerator
                             {
                                 if (value is Temporary tmp) type = tmp.Type;
                                 else if (value is Variable vv) type = vv.Type;
+                                else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
                                 variableTypes[qualifiedName] = type;
+                                if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
+                                    Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
                             }
 
                             target = new Variable(qualifiedName, type);
@@ -459,7 +562,11 @@ public partial class IRGenerator
                         throw new Exception("Cannot assign to .value of this expression type");
                     case 2 when target is MemoryAddress addr:
                     {
-                        if (value is Constant constVal)
+                        // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
+                        // aligned access; splitting a constant into byte stores would
+                        // both break peripheral semantics and miss the atomic register
+                        // aliases. Only split on 8-bit AVR (PointerWidth == 2).
+                        if (value is Constant constVal && DataTypeExtensions.PointerWidth < 4)
                         {
                             int fullValue = constVal.Value;
                             int lowByte = fullValue & 0xFF;
@@ -478,7 +585,9 @@ public partial class IRGenerator
                         throw new Exception("16-bit .value assignment requires constant address");
                     case 4 when target is MemoryAddress addr32:
                     {
-                        if (value is Constant constVal32)
+                        // See the 16-bit case: keep 32-bit MMIO stores atomic on
+                        // 32-bit targets; only AVR byte-splits constant words.
+                        if (value is Constant constVal32 && DataTypeExtensions.PointerWidth < 4)
                         {
                             Emit(new Copy(new Constant(constVal32.Value & 0xFF),         new MemoryAddress(addr32.Address,     DataType.UINT8)));
                             Emit(new Copy(new Constant((constVal32.Value >> 8)  & 0xFF), new MemoryAddress(addr32.Address + 1, DataType.UINT8)));
@@ -510,7 +619,25 @@ public partial class IRGenerator
                 {
                     if (baseName != null && !virtualInstances.Contains(baseName))
                     {
-                        constantVariables[flattenedName] = c.Value;
+                        // Only track the constant if this field has not been written
+                        // before. A field written with two different constant values
+                        // at different points is a mutable runtime field (e.g.
+                        // sensor.failed) — tracking it as a compile-time constant
+                        // would cause the compiler to DCE branches incorrectly.
+                        if (!killedConstants.Contains(flattenedName))
+                        {
+                            if (constantVariables.TryGetValue(flattenedName, out int existing) && existing != c.Value)
+                            {
+                                // Second write with a different value → mutable field.
+                                constantVariables.Remove(flattenedName);
+                                killedConstants.Add(flattenedName);
+                            }
+                            else if (!constantVariables.ContainsKey(flattenedName))
+                            {
+                                constantVariables[flattenedName] = c.Value;
+                            }
+                            // If existing == c.Value, keep the existing entry as-is.
+                        }
                     }
                     else if (stringIdToStr.TryGetValue(c.Value, out var value1))
                     {
@@ -518,6 +645,50 @@ public partial class IRGenerator
                         strConstantVariables[flattenedName] = value1;
                         return;
                     }
+                    else
+                    {
+                        // Virtual (ZCA) instance, non-string constant (e.g. bit
+                        // index assigned in _PinRegs.__init__). Store it so that
+                        // subscript expressions like self._ddr[self._bit] can
+                        // resolve the bit index at compile time.
+                        //
+                        // Inline-prefixed temporaries (baseName starts with
+                        // "inline") are short-lived per-call-site objects.  The
+                        // same inline prefix can be reused across multiple call
+                        // sites (e.g. _PinRegs for pin 13 then pin 2 both land
+                        // in "inline2.hal_gpio_Pin_init._r").  Treating the
+                        // second write as a "different-value mutation" would
+                        // incorrectly kill the constant and break codegen.
+                        // For these temporaries always overwrite — they are
+                        // never truly mutable across call sites.
+                        //
+                        // For top-level virtual instances (sensor, data_pin._pin
+                        // etc.) apply the killedConstants guard so that genuinely
+                        // mutable fields (sensor.failed) are not folded away.
+                        bool isInlineTemp = baseName != null && baseName.StartsWith("inline");
+                        if (isInlineTemp)
+                        {
+                            constantVariables[flattenedName] = c.Value;
+                        }
+                        else if (!killedConstants.Contains(flattenedName))
+                        {
+                            if (constantVariables.TryGetValue(flattenedName, out int existingZca) && existingZca != c.Value)
+                            {
+                                constantVariables.Remove(flattenedName);
+                                killedConstants.Add(flattenedName);
+                            }
+                            else if (!constantVariables.ContainsKey(flattenedName))
+                            {
+                                constantVariables[flattenedName] = c.Value;
+                            }
+                        }
+                    }
+                }
+
+                if (value is MemoryAddress ma2)
+                {
+                    constantAddressVariables[flattenedName] = ma2.Address;
+                    return;
                 }
 
                 var folded = value switch
@@ -527,6 +698,18 @@ public partial class IRGenerator
                     _ => false
                 };
                 if (folded) return;
+
+                // Non-constant runtime assignment: if this field was previously
+                // tracked as a compile-time constant (e.g. self.humidity = 0 in
+                // __init__), kill the stale constant so later reads use the
+                // runtime value.  Guard with "value is not Constant" to avoid
+                // incorrectly killing constants like _bit that are set once as a
+                // constant and never reassigned with a runtime value.
+                if (value is not Constant && constantVariables.ContainsKey(flattenedName))
+                {
+                    constantVariables.Remove(flattenedName);
+                    killedConstants.Add(flattenedName);
+                }
 
                 if (value is Variable vVal)
                 {
@@ -584,26 +767,51 @@ public partial class IRGenerator
         {
             int count = 0;
             var initVals = new List<int>();
+            bool isInput = false;
+            string inputPrompt = "";
+            int inputMaxLen = 64;
 
             if (stmt.Init != null)
             {
-                if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee && callee.Name == "bytearray" &&
-                    call.Args.Count > 0)
+                if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee)
                 {
-                    Expression arg0 = call.Args[0];
-                    if (arg0 is IntegerLiteral il)
+                    if (callee.Name == "bytearray" && call.Args.Count > 0)
                     {
-                        count = il.Value;
-                        initVals.AddRange(Enumerable.Repeat(0, count));
-                    }
-                    else if (arg0 is ListExpr le)
-                    {
-                        count = le.Elements.Count;
-                        foreach (var e in le.Elements)
+                        Expression arg0 = call.Args[0];
+                        if (arg0 is IntegerLiteral il)
                         {
-                            if (e is IntegerLiteral il2) initVals.Add(il2.Value);
-                            else initVals.Add(0);
+                            count = il.Value;
+                            initVals.AddRange(Enumerable.Repeat(0, count));
                         }
+                        else if (arg0 is ListExpr le)
+                        {
+                            count = le.Elements.Count;
+                            foreach (var e in le.Elements)
+                            {
+                                if (e is IntegerLiteral il2) initVals.Add(il2.Value);
+                                else initVals.Add(0);
+                            }
+                        }
+                    }
+                    else if (callee.Name == "input")
+                    {
+                        isInput = true;
+                        foreach (var arg in call.Args)
+                        {
+                            if (arg is StringLiteral inputSl)
+                                inputPrompt = inputSl.Value;
+                            else if (arg is IntegerLiteral inputIl)
+                                inputMaxLen = inputIl.Value;
+                            else if (arg is KeywordArgExpr kw)
+                            {
+                                if (kw.Key == "prompt" && kw.Value is StringLiteral ksl) inputPrompt = ksl.Value;
+                                else if (kw.Key == "maxlen" && kw.Value is IntegerLiteral kil) inputMaxLen = kil.Value;
+                            }
+                            else
+                                throw new Exception("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
+                        }
+                        count = inputMaxLen;
+                        initVals.AddRange(Enumerable.Repeat(0, count));
                     }
                 }
             }
@@ -624,6 +832,45 @@ public partial class IRGenerator
 
             for (int k = 0; k < count; ++k)
                 Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), DataType.UINT8, count));
+
+            if (isInput)
+            {
+                // Emit prompt via print_str (console) or uart_write_str (fallback).
+                if (!string.IsNullOrEmpty(inputPrompt))
+                {
+                    string writeStrFn = ResolveCallee("print_str");
+                    if (writeStrFn == "print_str")
+                    {
+                        writeStrFn = ResolveCallee("uart_write_str");
+                        if (writeStrFn == "uart_write_str")
+                        {
+                            foreach (var fnName in inlineFunctions.Keys)
+                            {
+                                if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
+                                { writeStrFn = fnName; break; }
+                            }
+                        }
+                    }
+                    VisitCall(new CallExpr(
+                        new VariableExpr(writeStrFn),
+                        new List<Expression> { new StringLiteral(inputPrompt) }));
+                }
+
+                // Emit uart_read_line(buf, maxlen) via VisitCall so that the inline
+                // expansion runs, instead of emitting a bare Call IR node.
+                string readLineFn = ResolveCallee("uart_read_line");
+                if (readLineFn == "uart_read_line")
+                {
+                    foreach (var fnName in inlineFunctions.Keys)
+                    {
+                        if (fnName.EndsWith("_uart_read_line")) { readLineFn = fnName; break; }
+                    }
+                }
+                VisitCall(new CallExpr(
+                    new VariableExpr(readLineFn),
+                    new List<Expression> { new VariableExpr(stmt.Name), new IntegerLiteral(inputMaxLen) }));
+            }
+
             return;
         }
 
@@ -640,6 +887,20 @@ public partial class IRGenerator
 
         if (stmt.Init != null)
         {
+            // Callable-typed variable: auto-wrap bare function name as FunctionRef
+            if (dt == DataType.FUNCREF && stmt.Init is VariableExpr fnExpr)
+            {
+                string rhsKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + fnExpr.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fnExpr.Name : fnExpr.Name);
+                bool isAlreadyFuncref = variableTypes.TryGetValue(rhsKey, out DataType rhsDt) && rhsDt == DataType.FUNCREF;
+                if (!isAlreadyFuncref)
+                {
+                    string fnName = ResolveCallee(fnExpr.Name);
+                    Emit(new Copy(new FunctionRef(fnName), new Variable(q2, DataType.FUNCREF)));
+                    return;
+                }
+            }
             Val val = VisitExpression(stmt.Init);
             Val target = ResolveBinding(stmt.Name);
             if (target is Variable v) target = v with { Type = dt };
@@ -655,8 +916,84 @@ public partial class IRGenerator
         }
     }
 
+    // Resolves a member access (self._buf) to the flattened SRAM array name it
+    // was declared under via `self._buf: uint8[N]`, or null if it is not an
+    // instance-member array. Visiting the object (self) only resolves an alias
+    // and has no side effects.
+    private string? ResolveMemberArrayName(MemberAccessExpr mem)
+    {
+        var objVal = VisitExpression(mem.Object);
+        string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+        if (string.IsNullOrEmpty(baseName)) return null;
+        string flat = baseName + "_" + mem.Member;
+        return arraySizes.ContainsKey(flat) ? flat : null;
+    }
+
+    // Resolves an array-size annotation token to a constant: a literal ("24"),
+    // a compile-time constant identifier ("n", e.g. a folded constructor param),
+    // or a product of either ("n*3", "3*n").
+    private int ResolveArraySizeExpr(string token)
+    {
+        int star = token.IndexOf('*');
+        if (star >= 0)
+            return ResolveArraySizeAtom(token[..star]) * ResolveArraySizeAtom(token[(star + 1)..]);
+        return ResolveArraySizeAtom(token);
+    }
+
+    private int ResolveArraySizeAtom(string atom)
+    {
+        atom = atom.Trim();
+        if (atom.Length > 0 && atom.All(char.IsDigit)) return int.Parse(atom);
+        if (constantVariables.TryGetValue(currentInlinePrefix + atom, out int cv)) return cv;
+        if (constantVariables.TryGetValue(atom, out int cv2)) return cv2;
+        throw new Exception("Array size '" + atom + "' is not a compile-time constant");
+    }
+
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // Instance-member array declaration (self._buf: uint8[N]): reserve a
+        // per-instance SRAM framebuffer. The parser encodes the target as a
+        // dotted name ("self._buf"); resolve the instance to its flattened
+        // storage name (exactly like a normal `self.x = ...` member) and
+        // register it as a variable-indexed (SRAM) array so pixels[i] works.
+        if (stmt.Target.Contains('.'))
+        {
+            int dot = stmt.Target.IndexOf('.');
+            string objName = stmt.Target.Substring(0, dot);
+            string member = stmt.Target.Substring(dot + 1);
+
+            int mb = stmt.Annotation.IndexOf('[');
+            int mc = stmt.Annotation.LastIndexOf(']');
+            if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
+                throw new Exception("Instance-member annotation must be an array type, e.g. uint8[N]");
+            string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
+            int memCount = ResolveArraySizeExpr(memSz);
+            DataType memElem = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, mb));
+
+            var objVal = VisitExpression(new VariableExpr(objName));
+            string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+            while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+            if (string.IsNullOrEmpty(baseName))
+                throw new Exception("Cannot resolve instance for member array '" + stmt.Target + "'");
+            string flat = baseName + "_" + member;
+
+            arraySizes[flat] = memCount;
+            arrayElemTypes[flat] = memElem;
+            variableTypes[flat] = memElem;
+            arraysWithVariableIndex.Add(flat);
+
+            // Zero-initialise (a NeoPixel strip starts all-off), or apply a
+            // literal list initialiser when one is supplied.
+            var memInit = new List<int>(Enumerable.Repeat(0, memCount));
+            if (stmt.Value is ListExpr mle)
+                for (int k = 0; k < Math.Min(memCount, mle.Elements.Count); k++)
+                    if (mle.Elements[k] is IntegerLiteral mil) memInit[k] = mil.Value;
+            for (int k = 0; k < memCount; ++k)
+                Emit(new ArrayStore(flat, new Constant(k), new Constant(memInit[k]), memElem, memCount));
+            return;
+        }
+
         // const[uint8[N]] annotation → flash (PROGMEM) array.
         if (stmt.Annotation.StartsWith("const[") && stmt.Annotation.EndsWith("]"))
         {
@@ -734,6 +1071,59 @@ public partial class IRGenerator
             return;
         }
 
+        // list[T] annotation → heap-allocated GC list
+        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
+        {
+            string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
+            DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+            int elemSize = elemDt.SizeOf();
+
+            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.Target
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+
+            listVarElemTypes[qualified] = elemDt;
+            variableTypes[qualified] = DataType.GC_REF;
+
+            if (stmt.Value != null)
+            {
+                int capacity = 8;
+                List<Val>? initElements = null;
+
+                if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
+                    calleeV.Name == "list")
+                {
+                    if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                        capacity = capLit.Value;
+                }
+                else if (stmt.Value is ListExpr le)
+                {
+                    initElements = new List<Val>();
+                    foreach (var e in le.Elements)
+                        initElements.Add(VisitExpression(e));
+                    if (le.Elements.Count > capacity) capacity = le.Elements.Count;
+                }
+
+                int allocSize = 2 + capacity * elemSize;
+                Temporary tmpPtr = MakeTemp(DataType.GC_REF);
+                Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
+
+                int initCount = initElements?.Count ?? 0;
+                EmitListStore(tmpPtr, 0, new Constant(initCount));
+                EmitListStore(tmpPtr, 1, new Constant(capacity));
+
+                if (initElements != null)
+                {
+                    for (int k = 0; k < initElements.Count; k++)
+                        EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
+                }
+
+                Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
+            }
+
+            return;
+        }
+
         int bracket = stmt.Annotation.IndexOf('[');
         int close = stmt.Annotation.LastIndexOf(']');
         if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1)
@@ -752,6 +1142,47 @@ public partial class IRGenerator
                 arraySizes[qualified] = count;
                 arrayElemTypes[qualified] = elemDt;
                 variableTypes[qualified] = elemDt;
+
+                // Callable[N]: array of function references stored in SRAM.
+                if (elemDt == DataType.FUNCREF)
+                {
+                    bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
+                    if (stmt.Value is ListExpr callableList)
+                    {
+                        for (int k = 0; k < count; ++k)
+                        {
+                            Val fnVal;
+                            if (k < callableList.Elements.Count)
+                            {
+                                var elem = callableList.Elements[k];
+                                if (elem is VariableExpr fnVe)
+                                    fnVal = new FunctionRef(fnVe.Name);
+                                else if (elem is CallExpr funcrefCall
+                                         && funcrefCall.Callee is VariableExpr funcrefCallee
+                                         && funcrefCallee.Name == "funcref"
+                                         && funcrefCall.Args.Count == 1
+                                         && funcrefCall.Args[0] is VariableExpr refVe)
+                                    fnVal = new FunctionRef(refVe.Name);
+                                else
+                                    fnVal = new Constant(0);
+                            }
+                            else
+                            {
+                                fnVal = new Constant(0);
+                            }
+
+                            if (isSramCallable)
+                                Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
+                            else
+                            {
+                                string elemName = qualified + "__" + k;
+                                variableTypes[elemName] = DataType.FUNCREF;
+                                Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
+                            }
+                        }
+                    }
+                    return;
+                }
 
                 var initVals = new List<int>(Enumerable.Repeat(0, count));
                 if (stmt.Value != null)
@@ -864,6 +1295,7 @@ public partial class IRGenerator
         else if (stmt.Annotation.Contains("ptr[uint32]")) type = DataType.UINT16; // ptr var holds a 16-bit address on AVR
         else if (stmt.Annotation.Contains("uint16")) type = DataType.UINT16;
         else if (stmt.Annotation.Contains("uint32")) type = DataType.UINT32;
+        else if (stmt.Annotation == "Callable") type = DataType.FUNCREF;
 
         string qualified2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
@@ -1057,8 +1489,139 @@ public partial class IRGenerator
                 string elemName = qualifiedName + "__" + k;
                 variableTypes[elemName] = elemDt;
                 Emit(new Copy(entries[k], new Variable(elemName, elemDt)));
+                if (entries[k] is Variable srcVar)
+                    PropagateCtState(srcVar.Name, elemName);
             }
         }
+    }
+
+    /// <summary>
+    /// Store a compile-time list of element expressions into an unrolled array bound to
+    /// <paramref name="target"/> (slots name__0..name__N-1). ZCA-instance elements are
+    /// constructed directly into their slot so instanceClasses[slot] is registered and
+    /// for-in / enumerate over the array resolve the element type. Always handles the list.
+    /// </summary>
+    private bool TryVisitCtListAssign(VariableExpr target, List<Expression> elemExprs)
+    {
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + target.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target.Name : target.Name);
+        if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(target.Name)) qualified = target.Name;
+
+        int count = elemExprs.Count;
+        DataType elemDt = DataType.UINT8;   // ZCA slots use a placeholder; class travels in instanceClasses.
+
+        for (int k = 0; k < count; ++k)
+        {
+            string elemName = qualified + "__" + k;
+            variableTypes[elemName] = DataType.UINT8;
+
+            // ZCA constructor element: build the instance directly into the slot (like a plain
+            // `x = Cls(...)` assignment) so instanceClasses[slot] is registered. Constructing via
+            // a temporary loses the class -- an `__init__` whose ReturnType is "" still allocates a
+            // result temp, so VisitExpression would return that temp, not the instance.
+            string? ctorClass = elemExprs[k] is CallExpr ce ? ResolveCtorClass(ce) : null;
+            if (ctorClass != null)
+            {
+                instanceClasses[elemName] = ctorClass;
+                virtualInstances.Add(elemName);
+                pendingConstructorTarget = elemName;
+                VisitExpression(elemExprs[k]);
+                continue;
+            }
+
+            Val v = VisitExpression(elemExprs[k]);
+            if (k == 0) elemDt = v switch { Temporary t => t.Type, Variable vv => vv.Type, _ => DataType.UINT8 };
+            variableTypes[elemName] = elemDt;
+            Emit(new Copy(v, new Variable(elemName, elemDt)));
+            if (v is Variable srcVar) PropagateCtState(srcVar.Name, elemName);
+        }
+
+        arraySizes[qualified] = count;
+        arrayElemTypes[qualified] = elemDt;
+        variableTypes[qualified] = elemDt;
+        return true;
+    }
+
+    /// <summary>
+    /// If <paramref name="call"/> is a constructor call for a known class (Cls(...) or
+    /// module.Cls(...)), return the resolved class prefix; otherwise null. Mirrors the
+    /// constructor detection used for a plain `x = Cls(...)` assignment.
+    /// </summary>
+    private string? ResolveCtorClass(CallExpr call)
+    {
+        string resolvedClass = "";
+        if (call.Callee is VariableExpr calleeVar)
+            resolvedClass = ResolveCallee(calleeVar.Name);
+        else if (call.Callee is MemberAccessExpr { Object: VariableExpr objVar } calleeMem && modules.ContainsKey(objVar.Name))
+            resolvedClass = objVar.Name.Replace('.', '_') + "_" + calleeMem.Member;
+
+        if (!string.IsNullOrEmpty(resolvedClass)
+            && (inlineFunctions.ContainsKey(resolvedClass + "___init__")
+                || overloadedFunctions.Contains(resolvedClass + "___init__")))
+            return resolvedClass;
+        return null;
+    }
+
+    /// <summary>
+    /// Desugar a compile-time list comprehension into the concrete list of element
+    /// expressions by substituting the loop variable with each iterable item. Supports the
+    /// single-iterable, no-filter form over a tuple/list/range literal -- enough for
+    /// CircuitPython idioms like [DigitalInOut(p) for p in (board.D5, board.D6)]. Returns
+    /// null for anything it cannot expand so the caller falls back to the normal path.
+    /// </summary>
+    private List<Expression>? ExpandCtListComp(ListCompExpr lc)
+    {
+        if (!string.IsNullOrEmpty(lc.Var2Name) || lc.Iterable2 != null || lc.Filter != null)
+            return null;
+
+        List<Expression> items;
+        switch (lc.Iterable)
+        {
+            case TupleExpr te: items = te.Elements; break;
+            case ListExpr le:  items = le.Elements; break;
+            case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
+                int start = 0, stop;
+                if (rangeCall.Args.Count == 1) stop = EvaluateConstantExpr(rangeCall.Args[0]);
+                else if (rangeCall.Args.Count >= 2)
+                {
+                    start = EvaluateConstantExpr(rangeCall.Args[0]);
+                    stop = EvaluateConstantExpr(rangeCall.Args[1]);
+                }
+                else return null;
+                items = new List<Expression>();
+                for (int i = start; i < stop; ++i) items.Add(new IntegerLiteral(i));
+                break;
+            default: return null;
+        }
+
+        var result = new List<Expression>(items.Count);
+        foreach (var item in items)
+            result.Add(SubstituteVar(lc.Element, lc.VarName, item));
+        return result;
+    }
+
+    /// <summary>
+    /// Return a copy of <paramref name="expr"/> with every VariableExpr named
+    /// <paramref name="varName"/> replaced by <paramref name="repl"/>. Only the expression
+    /// shapes that appear in list-comp elements are rewritten; other nodes are returned as-is.
+    /// </summary>
+    private static Expression SubstituteVar(Expression expr, string varName, Expression repl)
+    {
+        Expression S(Expression e) => SubstituteVar(e, varName, repl);
+        return expr switch
+        {
+            VariableExpr v when v.Name == varName => repl,
+            CallExpr c => new CallExpr(S(c.Callee), c.Args.Select(S).ToList()),
+            MemberAccessExpr m => new MemberAccessExpr(S(m.Object), m.Member),
+            BinaryExpr b => new BinaryExpr(S(b.Left), b.Op, S(b.Right)),
+            UnaryExpr u => new UnaryExpr(u.Op, S(u.Operand)),
+            IndexExpr i => new IndexExpr(S(i.Target), S(i.Index)),
+            KeywordArgExpr k => new KeywordArgExpr(k.Key, S(k.Value)),
+            TupleExpr t => new TupleExpr(t.Elements.Select(S).ToList()),
+            ListExpr l => new ListExpr(l.Elements.Select(S).ToList()),
+            _ => expr
+        };
     }
 
     private void VisitAugAssign(AugAssignStmt stmt)
@@ -1150,6 +1713,43 @@ public partial class IRGenerator
 
             Emit(new BitWrite(tgtVal, bit, result));
         }
+    }
+
+    // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
+    // For offset > 0, emits a Binary ADD to compute the address then StoreIndirect.
+    internal void EmitListStore(Val basePtr, int offset, Val value)
+    {
+        if (offset == 0)
+        {
+            Emit(new StoreIndirect(value, basePtr));
+            return;
+        }
+
+        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                       : basePtr;
+        Temporary addrTmp = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        Emit(new StoreIndirect(value, addrTmp));
+    }
+
+    // Loads a UINT8 value from `basePtr + offset` into a new Temporary.
+    internal Temporary EmitListLoad(Val basePtr, int offset, DataType elemType = DataType.UINT8)
+    {
+        Temporary dst = MakeTemp(elemType);
+        if (offset == 0)
+        {
+            Emit(new LoadIndirect(basePtr, dst));
+            return dst;
+        }
+
+        Val ptrUint16 = basePtr is Temporary t ? t with { Type = DataType.UINT16 }
+                       : basePtr is Variable v ? v with { Type = DataType.UINT16 }
+                       : basePtr;
+        Temporary addrTmp = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
+        Emit(new LoadIndirect(addrTmp, dst));
+        return dst;
     }
 
     private void VisitExprStmt(ExprStmt stmt) => VisitExpression(stmt.Expr);

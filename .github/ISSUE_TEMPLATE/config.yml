@@ -1,0 +1,12 @@
+# Ref: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+blank_issues_enabled: false  # force contributors through the structured forms
+contact_links:
+  - name: Questions & Discussions
+    url: https://github.com/PyMCU/PyMCU/discussions
+    about: For usage questions, "how do I…", and general discussion. Please don't open a bug for these.
+  - name: Documentation
+    url: https://github.com/PyMCU/PyMCU/tree/main/docs
+    about: Language roadmap, limitations, and HAL reference. Check here before filing a bug.
+  - name: Report a security vulnerability
+    url: https://github.com/PyMCU/PyMCU/security/advisories/new
+    about: Please report security issues privately through GitHub Security Advisories, not as a public issue.

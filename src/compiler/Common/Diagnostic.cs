@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -31,21 +31,49 @@ public static class Diagnostic
     /// Format: file:line:column: severity: ErrorType: message
     public static void Report(CompilerError err, ReadOnlySpan<char> source, string filename)
     {
-        // Machine-readable line (matched by $pymcuc problem matcher)
         int column = Math.Max(err.Column, 1);
         string severity = SeverityFor(err.TypeName);
-        Console.Error.WriteLine($"{filename}:{err.Line}:{column}: {severity}: {err.TypeName}: {err.Message}");
+        bool useColor = !Console.IsErrorRedirected;
 
-        // Human-readable context
+        // Machine-readable header (VS Code problem matcher)
+        string header = $"{filename}:{err.Line}:{column}: {severity}: {err.TypeName}: {err.Message}";
+        if (useColor)
+            Console.Error.WriteLine($"\x1b[1;31m{header}\x1b[0m");
+        else
+            Console.Error.WriteLine(header);
+
         string lineContent = GetLine(source, err.Line);
-        if (!string.IsNullOrEmpty(lineContent))
+        if (string.IsNullOrEmpty(lineContent)) return;
+
+        int lineNumWidth = err.Line.ToString().Length;
+
+        // Context line N-1 (dimmed)
+        string prevLine = GetLine(source, err.Line - 1);
+        if (!string.IsNullOrEmpty(prevLine))
         {
-            Console.Error.WriteLine($"    {lineContent}");
-            if (err.Column > 0)
-            {
-                string pointer = new string(' ', err.Column + 4 - 1);
-                Console.Error.WriteLine($"{pointer}^");
-            }
+            string prevFmt = $"{(err.Line - 1).ToString().PadLeft(lineNumWidth)} | {prevLine}";
+            Console.Error.WriteLine(useColor ? $"\x1b[2m{prevFmt}\x1b[0m" : prevFmt);
+        }
+
+        // Current line
+        Console.Error.WriteLine($"{err.Line.ToString().PadLeft(lineNumWidth)} | {lineContent}");
+
+        // Pointer: lineNumWidth + " | " (3 chars) + (column - 1) spaces
+        string pointerPad = new string(' ', lineNumWidth + 3 + column - 1);
+        string underline = err.Length <= 1
+            ? "^"
+            : "^" + new string('~', err.Length - 1);
+        if (useColor)
+            Console.Error.WriteLine($"{pointerPad}\x1b[31m{underline}\x1b[0m");
+        else
+            Console.Error.WriteLine($"{pointerPad}{underline}");
+
+        // Context line N+1 (dimmed)
+        string nextLine = GetLine(source, err.Line + 1);
+        if (!string.IsNullOrEmpty(nextLine))
+        {
+            string nextFmt = $"{(err.Line + 1).ToString().PadLeft(lineNumWidth)} | {nextLine}";
+            Console.Error.WriteLine(useColor ? $"\x1b[2m{nextFmt}\x1b[0m" : nextFmt);
         }
     }
 

@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -33,10 +33,18 @@ public class IrGenerationPhase : CompilerPhaseBase
 
     protected override void Run(CompilationContext context)
     {
+        DataTypeExtensions.SetPointerWidth(context.DeviceConfig.PointerWidth);
+
         var irGen = new IRGenerator();
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines);
 
-        context.IntermediateRepresentation = Optimizer.Optimize(ir);
+        var optimized = Optimizer.Optimize(ir);
+
+        // CanFail analysis runs after optimization so that dead-code-eliminated
+        // functions and cloned bodies are the final IR seen by the backend.
+        CanFailAnalyzer.Analyze(optimized);
+
+        context.IntermediateRepresentation = optimized;
     }
 }

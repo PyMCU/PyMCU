@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -41,7 +41,17 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
 
             var (currentAst, currentPath) = queue.Dequeue();
 
-            foreach (var imp in currentAst.Imports)
+            // Collect imports from two sources:
+            //   1. Top-level ImportStmt nodes already in Imports (unconditional).
+            //   2. ImportStmt nodes inside compile-time if/match blocks in
+            //      GlobalStatements (conditional — only the winning branch).
+            // Both are needed so that chip-specific sub-modules referenced by
+            // module-level `if __CHIP__.name == "..."` guards are loaded before
+            // ConditionalCompilator runs and promotes the chosen imports.
+            var allImports = currentAst.Imports
+                .Concat(ConditionalImportExtractor.Extract(currentAst, context.DeviceConfig));
+
+            foreach (var imp in allImports)
             {
                 if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
 

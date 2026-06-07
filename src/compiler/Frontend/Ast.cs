@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -72,6 +72,7 @@ public class ClassDef : Statement
     public Statement Body { get; }
     public bool IsStatic { get; set; } = false;
     public bool IsDataclass { get; set; } = false;
+    public bool IsValue { get; set; } = false;
 
     public ClassDef(string name, List<string> bases, Statement body)
     {
@@ -516,6 +517,20 @@ public class RaiseStmt : Statement
     }
 }
 
+public class TryStmt : Statement
+{
+    public List<Statement> Body { get; }
+    public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
+    public List<Statement>? Finally { get; }
+
+    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers, List<Statement>? finally_ = null)
+    {
+        Body = body;
+        Handlers = handlers;
+        Finally = finally_;
+    }
+}
+
 public class Param
 {
     public string Name { get; }
@@ -556,8 +571,14 @@ public class FunctionDef : Statement
     public bool IsPropertySetter { get; set; } = false;
     public string PropertyName { get; set; } = "";
 
+    public bool IsNaked { get; set; } = false;
+
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
+
+    // @warning("..."): an informational diagnostic printed (once) when a call
+    // to this function is expanded. Does not abort compilation. Empty = none.
+    public string WarningMessage { get; set; } = "";
 
     public FunctionDef(string name, List<Param> parameters, string returnType,
         Block body, bool isInline = false, bool isInterrupt = false,

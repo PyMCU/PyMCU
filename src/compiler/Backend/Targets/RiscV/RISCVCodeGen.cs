@@ -3,7 +3,7 @@
  * PyMCU Compiler (pymcuc)
  * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
  *
- * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-License-Identifier: MIT
  *
  * -----------------------------------------------------------------------------
  * SAFETY WARNING / HIGH RISK ACTIVITIES:
@@ -171,9 +171,9 @@ public class RiscvCodeGen(DeviceConfig cfg) : CodeGen
             case BitWrite arg: CompileBitWrite(arg); break;
             case JumpIfBitSet arg: LoadIntoReg(arg.Source, "t0"); Emit("srli", "t0", "t0", arg.Bit.ToString()); Emit("andi", "t0", "t0", "1"); Emit("bnez", "t0", arg.Target); break;
             case JumpIfBitClear arg: LoadIntoReg(arg.Source, "t0"); Emit("srli", "t0", "t0", arg.Bit.ToString()); Emit("andi", "t0", "t0", "1"); Emit("beqz", "t0", arg.Target); break;
-            case AugAssign: throw new NotSupportedException("RISC-V: AugAssign is not yet implemented");
-            case LoadIndirect: throw new NotSupportedException("RISC-V: LoadIndirect is not yet implemented");
-            case StoreIndirect: throw new NotSupportedException("RISC-V: StoreIndirect is not yet implemented");
+            case AugAssign aa: CompileBinary(new Binary(aa.Op, aa.Target, aa.Operand, aa.Target)); break;
+            case LoadIndirect li: LoadIntoReg(li.SrcPtr, "t0"); Emit("lw", "t1", "0(t0)"); StoreRegInto("t1", li.Dst); break;
+            case StoreIndirect si: LoadIntoReg(si.DstPtr, "t0"); LoadIntoReg(si.Src, "t1"); Emit("sw", "t1", "0(t0)"); break;
             case InlineAsm arg: assembly.Add(RISCVAsmLine.MakeRaw(arg.Code)); break;
             case DebugLine arg:
                 if (!string.IsNullOrEmpty(arg.SourceFile)) EmitComment($"{arg.SourceFile}:{arg.Line}: {arg.Text}");

@@ -2,20 +2,8 @@
 # PyMCU CLI Driver
 # Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
 #
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-#
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # -----------------------------------------------------------------------------
 # SAFETY WARNING / HIGH RISK ACTIVITIES:
 # THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
@@ -47,6 +35,7 @@ _CHIP_INSTALL_HINTS: dict[str, str] = {
     "pic": "pip install pymcu[pic]",
     "ch32v": "pip install pymcu[riscv]",
     "riscv": "pip install pymcu[riscv]",
+    "rp2040": "pip install pymcu[rp2040]",
 }
 
 
@@ -140,6 +129,9 @@ def run_backend(
     interrupt_vector: int | None = None,
     verbose: bool = False,
     on_output=None,
+    emit_symbols_path: Path | None = None,
+    emit_linemap_path: Path | None = None,
+    emit_varmap_path: Path | None = None,
 ) -> None:
     """
     Invoke an external backend binary (e.g. pymcuc-avr) to translate a .mir
@@ -154,6 +146,7 @@ def run_backend(
         RuntimeError: If the backend exits with a non-zero status code.
     """
     import subprocess
+    import time
 
     cmd = [
         str(backend_binary),
@@ -170,21 +163,43 @@ def run_backend(
         cmd.extend(["--config", f"{key}={val}"])
     if verbose:
         cmd.append("--verbose")
+    if emit_symbols_path is not None:
+        cmd.extend(["--emit-symbols", str(emit_symbols_path)])
+    if emit_linemap_path is not None:
+        cmd.extend(["--emit-linemap", str(emit_linemap_path)])
+    if emit_varmap_path is not None:
+        cmd.extend(["--emit-varmap", str(emit_varmap_path)])
 
+    # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
+    # reclaims processes under load (jetsam) when many builds run in parallel. That is
+    # never a legitimate compiler result and is transient, so retry a few times before
+    # surfacing it. We deliberately do NOT retry other signals: a crash (SIGSEGV/SIGABRT)
+    # is a deterministic backend bug that should fail fast, and real codegen errors exit
+    # with a positive code (1, 2) reported on the first attempt.
+    SIGKILL_RETURNCODE = -9
+    max_signal_retries = 3
     try:
-        with subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=None,
-            text=True,
-            bufsize=1,
-        ) as proc:
-            if proc.stdout and on_output:
-                for raw in proc.stdout:
-                    on_output(raw.rstrip("\n").rstrip("\r"))
-            elif proc.stdout:
-                proc.stdout.read()
-            proc.wait()
+        for attempt in range(max_signal_retries + 1):
+            buffered: list[str] = []
+            with subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                bufsize=1,
+            ) as proc:
+                if proc.stdout:
+                    buffered = [raw.rstrip("\n").rstrip("\r") for raw in proc.stdout]
+                proc.wait()
+
+            if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
+                time.sleep(0.25 * (attempt + 1))
+                continue
+            break
+
+        if on_output:
+            for line in buffered:
+                on_output(line)
 
         if proc.returncode == 2:
             raise RuntimeError(
