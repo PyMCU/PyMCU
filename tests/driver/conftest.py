@@ -150,20 +150,13 @@ def mock_toolchain(monkeypatch, tmp_path):
         hex_out.write_text(":00000001FF\n")  # minimal valid HEX EOF record
         return hex_out
 
-    import pymcu.toolchain.avr.avrgas as avrgas
     import pymcu.toolchain.pic.gputils as gputils
-    monkeypatch.setattr(avrgas.AvrgasToolchain, "is_cached", fake_is_cached)
-    monkeypatch.setattr(avrgas.AvrgasToolchain, "install", fake_install)
-    monkeypatch.setattr(avrgas.AvrgasToolchain, "assemble", fake_assemble)
     monkeypatch.setattr(gputils.GputilsToolchain, "is_cached", fake_is_cached)
     monkeypatch.setattr(gputils.GputilsToolchain, "install", fake_install)
     monkeypatch.setattr(gputils.GputilsToolchain, "assemble", fake_assemble)
 
-    # Also make discover_plugins return the AVR and PIC plugins so the build
-    # command can resolve a toolchain without needing real entry points.
     from importlib.metadata import EntryPoint
     from unittest.mock import MagicMock
-    from pymcu.toolchain.avr import AvrToolchainPlugin
     from pymcu.toolchain.pic import PicToolchainPlugin
 
     def _make_ep(name, cls):
@@ -172,7 +165,19 @@ def mock_toolchain(monkeypatch, tmp_path):
         ep.load.return_value = cls
         return ep
 
-    eps = [_make_ep("avr", AvrToolchainPlugin), _make_ep("pic", PicToolchainPlugin)]
+    # pymcu-avr lives in a separate repo and may not be installed in this CI.
+    # Patch it when available; tests that require it use pytest.importorskip.
+    eps = [_make_ep("pic", PicToolchainPlugin)]
+    try:
+        import pymcu.toolchain.avr.avrgas as avrgas
+        from pymcu.toolchain.avr import AvrToolchainPlugin
+        monkeypatch.setattr(avrgas.AvrgasToolchain, "is_cached", fake_is_cached)
+        monkeypatch.setattr(avrgas.AvrgasToolchain, "install", fake_install)
+        monkeypatch.setattr(avrgas.AvrgasToolchain, "assemble", fake_assemble)
+        eps.append(_make_ep("avr", AvrToolchainPlugin))
+    except ImportError:
+        pass
+
     monkeypatch.setattr("src.driver.toolchains.entry_points", lambda **kw: eps)
 
     return calls
