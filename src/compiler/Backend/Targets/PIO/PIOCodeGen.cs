@@ -102,7 +102,10 @@ public class PIOCodeGen : CodeGen
                 case JumpIfBitClear a: Gather(a.Source); break;
                 case Call a:
                     foreach (var arg in a.Args) Gather(arg);
-                    Gather(a.Dst);
+                    // PIO intrinsics (pull, out, wait, …) produce dead Temporary
+                    // destinations that the IRGen emits but PIO never reads back.
+                    // Only gather named Variable returns, not Temporary artifacts.
+                    if (a.Dst is Variable) Gather(a.Dst);
                     break;
             }
         }
