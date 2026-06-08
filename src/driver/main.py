@@ -67,14 +67,26 @@ def _ensure_venv():
                 if local_exe.exists():
                     if is_verbose:
                         console.print(f"[debug] Switching to local venv: {local_exe}", style="dim")
-                    # Replace current process with the local venv version.
+                    # Hand off to the local venv version.
                     # Guard against symlink loops (e.g. project dir is itself a symlink).
                     try:
-                        os.execv(str(local_exe), [str(local_exe)] + sys.argv[1:])
+                        if sys.platform == "win32":
+                            # Windows has no real exec() that replaces the running
+                            # image: os.execv spawns a detached child and lets the
+                            # parent return asynchronously, so the shell regains the
+                            # prompt while the child is still writing -> interleaved
+                            # output and unreliable exit codes. Run the child
+                            # synchronously and propagate its exit code instead.
+                            import subprocess
+                            completed = subprocess.run([str(local_exe)] + sys.argv[1:])
+                            sys.exit(completed.returncode)
+                        else:
+                            # POSIX: replace the current process image in place.
+                            os.execv(str(local_exe), [str(local_exe)] + sys.argv[1:])
                     except (OSError, PermissionError) as exec_err:
                         if is_verbose:
                             console.print(
-                                f"[debug] execv failed ({exec_err}), continuing with current interpreter",
+                                f"[debug] exec/relaunch failed ({exec_err}), continuing with current interpreter",
                                 style="dim",
                             )
                 else:
