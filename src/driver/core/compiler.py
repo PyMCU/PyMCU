@@ -161,21 +161,28 @@ class PyMCUCompiler:
             #
             # returncode == -9 means the frontend was SIGKILL'd by the OS (jetsam under
             # heavy parallel-build load) -- transient and never a real result, so retry a
-            # few times. Other signals (crashes) and positive exit codes fail on the first
-            # attempt. Output is buffered and only emitted for the attempt we keep.
+            # few times. This only happens on POSIX; on Windows negative return codes do
+            # not map to signals, so the retry is simply inert there. Other signals
+            # (crashes) and positive exit codes fail on the first attempt. Output is
+            # buffered and only emitted for the attempt we keep.
             SIGKILL_RETURNCODE = -9
             max_signal_retries = 3
             for attempt in range(max_signal_retries + 1):
                 buffered: list[str] = []
+                # encoding is pinned to utf-8 because pymcuc always emits utf-8; without
+                # it Popen(text=True) decodes with the locale codepage (cp1252 on
+                # Windows), raising UnicodeDecodeError on non-ASCII diagnostics.
                 with subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=None,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     bufsize=1,
                 ) as proc:
                     if proc.stdout:
-                        buffered = [raw.rstrip("\n").rstrip("\r") for raw in proc.stdout]
+                        buffered = [raw.rstrip("\r\n") for raw in proc.stdout]
                     proc.wait()
 
                 if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:

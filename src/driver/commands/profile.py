@@ -312,7 +312,7 @@ def profile(
         cmd += ["--task-id-addr", str(cur_task_addr)]
 
     console.print(f"[cyan]Simulating...[/cyan]")
-    result = subprocess.run(cmd, text=True, capture_output=not verbose)
+    result = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace", capture_output=not verbose)
     if result.returncode != 0:
         console.print(f"[red]Profiler failed:[/red]")
         console.print(result.stderr or result.stdout)

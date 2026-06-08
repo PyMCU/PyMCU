@@ -173,23 +173,29 @@ def run_backend(
     # returncode == -9 means the backend was SIGKILL'd by the OS -- on macOS the kernel
     # reclaims processes under load (jetsam) when many builds run in parallel. That is
     # never a legitimate compiler result and is transient, so retry a few times before
-    # surfacing it. We deliberately do NOT retry other signals: a crash (SIGSEGV/SIGABRT)
-    # is a deterministic backend bug that should fail fast, and real codegen errors exit
-    # with a positive code (1, 2) reported on the first attempt.
+    # surfacing it. This only happens on POSIX; on Windows negative return codes do not
+    # map to signals, so the retry is simply inert there. We deliberately do NOT retry
+    # other signals: a crash (SIGSEGV/SIGABRT) is a deterministic backend bug that should
+    # fail fast, and real codegen errors exit with a positive code (1, 2) reported on the
+    # first attempt.
     SIGKILL_RETURNCODE = -9
     max_signal_retries = 3
     try:
         for attempt in range(max_signal_retries + 1):
             buffered: list[str] = []
+            # encoding pinned to utf-8: backends emit utf-8, and Popen(text=True) would
+            # otherwise decode with the locale codepage (cp1252 on Windows).
             with subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=None,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
             ) as proc:
                 if proc.stdout:
-                    buffered = [raw.rstrip("\n").rstrip("\r") for raw in proc.stdout]
+                    buffered = [raw.rstrip("\r\n") for raw in proc.stdout]
                 proc.wait()
 
             if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
