@@ -59,6 +59,15 @@ jobs:
             wheel_platform_tag: macosx_13_0_x86_64
           - name: windows-x64
             os: windows-latest
+          # Native arm64 build on a GitHub-hosted Windows on Arm runner (GA &
+          # free for public repos since Aug 2025). sysconfig.get_platform()
+          # resolves the wheel tag to win_arm64 automatically, and hatch_build.py
+          # publishes with -r win-arm64. NOTE: windows-11-arm runners are only
+          # available on public repositories. For a private repo, drop this entry
+          # and cross-compile from windows-latest with DOTNET_RID=win-arm64 +
+          # WHEEL_PLATFORM_TAG=win_arm64 (requires the VS 2022 C++ ARM64 build tools).
+          - name: windows-arm64
+            os: windows-11-arm
 
     steps:
       - name: Checkout code

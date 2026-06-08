@@ -86,6 +86,7 @@ def _get_rid() -> str | None:
         ("darwin",  "arm64"):   "osx-arm64",
         ("windows", "amd64"):   "win-x64",
         ("windows", "x86"):     "win-x86",
+        ("windows", "arm64"):   "win-arm64",
     }
     return table.get((s, m))
 
