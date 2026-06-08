@@ -17,7 +17,6 @@ from packaging.version import Version
 
 _CACHE_FILE = Path.home() / ".pymcu" / "update-check.json"
 _TTL_SECONDS = 86_400  # 24 h
-_PACKAGES = ["pymcu-compiler", "pymcu-avr", "pymcu-arm"]
 
 
 def _is_interactive() -> bool:
@@ -67,31 +66,66 @@ def _cache_is_fresh(cache: dict) -> bool:
         return False
 
 
+def get_installed_pymcu_versions() -> dict[str, str]:
+    """Return all installed pymcu-* packages in the current environment."""
+    import importlib.metadata as meta
+    result: dict[str, str] = {}
+    try:
+        for dist in meta.distributions():
+            name = dist.metadata.get("Name", "")
+            if name and name.lower().startswith("pymcu-"):
+                result[name] = dist.metadata.get("Version", "")
+    except Exception:
+        pass
+    return result
+
+
+def _fetch_parallel(packages: list[str]) -> dict[str, str]:
+    """Fetch latest versions for all packages concurrently (max 2 s wall time)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    result: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(packages))) as pool:
+        futures = {pool.submit(_fetch_latest_pre, pkg): pkg for pkg in packages}
+        for future in as_completed(futures, timeout=2.5):
+            pkg = futures[future]
+            try:
+                v = future.result()
+                if v:
+                    result[pkg] = v
+            except Exception:
+                pass
+    return result
+
+
 def get_available_updates(installed: dict[str, str]) -> dict[str, tuple[str, str]]:
     """Return {pkg: (installed, latest)} for packages with a newer version on PyPI.
 
-    Checks at most once per 24 h; subsequent calls within the window use the cache.
+    Refreshes at most once per 24 h. Any package installed after the last refresh
+    is fetched immediately so newly-added stdlibs are always covered.
     Returns an empty dict on any network failure so the caller is never blocked.
     """
-    if not _is_interactive():
+    if not _is_interactive() or not installed:
         return {}
 
     cache = _load_cache()
-    if not _cache_is_fresh(cache):
-        latest_map: dict[str, str] = {}
-        for pkg in _PACKAGES:
-            v = _fetch_latest_pre(pkg)
-            if v:
-                latest_map[pkg] = v
+    latest_map: dict[str, str] = dict(cache.get("latest", {}))
+
+    # Packages missing from the cache (newly installed since last refresh).
+    uncached = [pkg for pkg in installed if pkg not in latest_map]
+    needs_full_refresh = not _cache_is_fresh(cache)
+
+    packages_to_fetch = list(installed) if needs_full_refresh else uncached
+    if packages_to_fetch:
+        latest_map.update(_fetch_parallel(packages_to_fetch))
         cache = {
-            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "checked_at": datetime.now(timezone.utc).isoformat() if needs_full_refresh else cache.get("checked_at", ""),
             "latest": latest_map,
         }
         _save_cache(cache)
 
     updates: dict[str, tuple[str, str]] = {}
     for pkg, current_str in installed.items():
-        latest_str = cache.get("latest", {}).get(pkg)
+        latest_str = latest_map.get(pkg)
         if not latest_str:
             continue
         try:
@@ -100,15 +134,3 @@ def get_available_updates(installed: dict[str, str]) -> dict[str, tuple[str, str
         except Exception:
             pass
     return updates
-
-
-def get_installed_pymcu_versions() -> dict[str, str]:
-    """Return installed versions of known pymcu packages in the current env."""
-    from importlib.metadata import version, PackageNotFoundError
-    result: dict[str, str] = {}
-    for pkg in _PACKAGES:
-        try:
-            result[pkg] = version(pkg)
-        except PackageNotFoundError:
-            pass
-    return result
