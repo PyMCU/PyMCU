@@ -227,10 +227,11 @@ def uart_write_float(value: float):
     uart_write(frac + 48)
 
 
-@inline
 def uart_write_str(s: const[str]):
-    # s is a compile-time string constant. The compiler interns it as FlashData
-    # and iterates byte-by-byte via ArrayLoadFlash.
+    # Non-@inline on purpose: as a real subroutine, the compiler passes the string
+    # by reference (its flash address) and this single loop is emitted once and
+    # shared by every print() call site, instead of the whole loop being inlined
+    # per call. s[i] reads from flash at (s + i) via LPM (FlashLoadPtr).
     i: uint8 = 0
     b: uint8 = s[0]
     while b != 0:
