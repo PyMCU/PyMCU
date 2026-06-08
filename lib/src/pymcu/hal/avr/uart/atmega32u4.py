@@ -187,8 +187,9 @@ def uart_write_decimal_u32(value: uint32):
         uart_write(d + 48)
 
 
-@inline
 def uart_write_str(s: const[str]):
+    # Non-@inline: shared subroutine, the string is passed by reference (its flash
+    # address) so the byte-loop is emitted once instead of inlined per print() call.
     i: uint8 = 0
     b: uint8 = s[0]
     while b != 0:
