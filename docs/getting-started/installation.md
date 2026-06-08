@@ -99,31 +99,6 @@ RP2040 support is **alpha** — GPIO + UART0 on a single core. See
 {doc}`../language/limitations` for the exact scope and {doc}`../examples/rp2040` for
 runnable programs.
 
----
-
-## Option 2 — Docker image
-
-Pre-built images are published to GitHub Container Registry for every release.
-Docker is useful for CI pipelines or environments where you cannot install Python tools.
-
-| Flavor | Image | Stdlib included |
-|---|---|---|
-| `base` | `ghcr.io/pymcu/pymcu:latest` | Bare-metal PyMCU stdlib |
-| `micropython` | `ghcr.io/pymcu/pymcu:micropython` | + `machine`, `utime`, `micropython` compat |
-| `circuitpython` | `ghcr.io/pymcu/pymcu:circuitpython` | + `board`, `digitalio`, `analogio`, `pwmio` compat |
-
-```bash
-docker pull ghcr.io/pymcu/pymcu:latest
-```
-
-Mount your project and run `pymcu build`:
-
-```bash
-docker run --rm \
-    -v "$(pwd):/workspace" \
-    ghcr.io/pymcu/pymcu:latest \
-    sh -c "cd /workspace && pymcu build"
-```
 
 ---
 

@@ -18,7 +18,7 @@ Heap allocation, exceptions, closures, and dynamic features do not exist.
 :::
 
 ```bash
-pip install --pre pymcu-compiler   # one-line install — no Docker, no local build
+pip install --pre pymcu-compiler
 ```
 
 ```python
