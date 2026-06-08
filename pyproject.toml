@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pymcu-compiler"
-version = "0.1.0a1.post1"
+version = "0.1.0a1.post2"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
