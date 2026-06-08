@@ -22,7 +22,7 @@ import tomlkit
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 
 from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer, default_toolchain
 
@@ -50,6 +50,14 @@ def _select(message: str, choices: list, default=None):
     if answer is None:
         raise typer.Exit(0)
     return answer
+
+
+def _confirm(message: str, default: bool = False) -> bool:
+    """Y/N confirm via questionary. In non-TTY mode returns default silently."""
+    if not sys.stdin.isatty():
+        return default
+    answer = questionary.confirm(message, default=default).ask()
+    return bool(answer) if answer is not None else default
 
 
 def _detect_pkg_manager() -> str | None:
@@ -270,8 +278,7 @@ def new(
             console.print(
                 "[yellow]No package manager (uv or poetry) found in PATH.[/yellow]"
             )
-            install_uv = questionary.confirm("Install uv? (recommended)").ask()
-            if install_uv:
+            if _confirm("Install uv? (recommended)", default=True):
                 with console.status("[bold green]Installing uv via pip..."):
                     result = subprocess.run(
                         [sys.executable, "-m", "pip", "install", "uv"],
@@ -471,7 +478,7 @@ def new(
 
         # ── Git init + hooks ──────────────────────────────────────────
         git_inited = False
-        if not no_git and questionary.confirm("Initialize git repository?").ask():
+        if not no_git and _confirm("Initialize git repository?", default=False):
             try:
                 subprocess.run(
                     ["git", "init"], cwd=project_path, check=True, capture_output=True
@@ -500,7 +507,7 @@ def new(
                     hook_file.chmod(0o755)
 
         # ── Install dependencies ──────────────────────────────────────
-        if questionary.confirm(f"Install dependencies with {pkg_manager} now?").ask():
+        if _confirm(f"Install dependencies with {pkg_manager} now?", default=False):
             with console.status(
                 f"[bold green]Installing dependencies via {pkg_manager}..."
             ):

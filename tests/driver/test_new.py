@@ -217,7 +217,7 @@ class TestVSCodeSyncTask:
 # ---------------------------------------------------------------------------
 
 class TestBoardSelection:
-    def test_board_and_target_in_pyproject(self, tmp_path, monkeypatch):
+    def test_board_only_in_standard_mode(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         result = _invoke_new(
             "proj",
@@ -230,7 +230,8 @@ class TestBoardSelection:
         assert result.exit_code == 0
         toml = (tmp_path / "proj" / "pyproject.toml").read_text()
         assert 'board = "arduino_uno"' in toml
-        assert 'target = "atmega328p"' in toml
+        # Standard mode must NOT write target — build.py rejects both being set.
+        assert 'target = ' not in toml
 
     def test_arduino_nano_derives_atmega328p(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -245,7 +246,8 @@ class TestBoardSelection:
         assert result.exit_code == 0
         toml = (tmp_path / "proj" / "pyproject.toml").read_text()
         assert 'board = "arduino_nano"' in toml
-        assert 'target = "atmega328p"' in toml
+        # Standard mode: target is resolved by build.py from the board, not written here.
+        assert 'target = ' not in toml
 
 
 # ---------------------------------------------------------------------------
@@ -414,15 +416,17 @@ class TestFrequency:
 # ---------------------------------------------------------------------------
 
 class TestTargetKey:
-    def test_uses_target_not_chip_key(self, tmp_path, monkeypatch):
+    def test_uses_target_not_chip_key_advanced_mode(self, tmp_path, monkeypatch):
+        # In advanced (--chip) mode the TOML must use 'target = ' not 'chip = '.
         monkeypatch.chdir(tmp_path)
         _invoke_new(
             "proj",
-            "--board", "arduino_uno",
-            "--stdlib", "micropython",
+            "--chip", "atmega328p",
+            "--freq", "16000000",
             "--pkg-manager", "pip",
             "--no-git",
-            input_text="n\n",
+            input_text="none\nn\n",
         )
         toml = (tmp_path / "proj" / "pyproject.toml").read_text()
         assert 'target = "atmega328p"' in toml
+        assert 'chip = ' not in toml
