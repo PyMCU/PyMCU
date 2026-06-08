@@ -32,28 +32,6 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build-stdlib:
-    name: Build pymcu-stdlib
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build stdlib wheel
-        run: cd lib && uv build
-
-      - name: Upload stdlib artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-stdlib
-          path: lib/dist/*
-          retention-days: 15
-
   # One native job per platform — produces a single py3-none-<platform> wheel
   # per OS/arch. pymcuc is a .NET AOT binary with no Python ABI dependency, so
   # there is no need to build one wheel per Python version.
@@ -91,7 +69,7 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.x"
+          global-json-file: global.json
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -109,36 +87,12 @@ jobs:
           path: dist/*.whl
           retention-days: 15
 
-  # Merged Python SDK (backend + toolchain abstract base classes).
-  build-sdk:
-    name: Build pymcu-sdk
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build pymcu-sdk wheel + sdist
-        working-directory: extensions/pymcu-sdk
-        run: uv build
-
-      - name: Upload pymcu-sdk artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-sdk
-          path: extensions/pymcu-sdk/dist/*
-          retention-days: 15
-
   # Runs on any release — stable (vX.Y.Z) or pre-release (e.g. v0.1.0a1).
   # The public alpha ships on real PyPI so `pip install --pre pymcu-compiler[avr]`
   # resolves the whole set; TestPyPI is reserved for manual dispatch smoke tests.
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-sdk]
+    needs: [check-tag, build-wheels]
     if: needs.check-tag.outputs.is_stable == 'true' || needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: release
@@ -163,7 +117,7 @@ jobs:
   # longer fires on tags.
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-stdlib, build-wheels, build-sdk]
+    needs: [check-tag, build-wheels]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prerelease
@@ -182,42 +136,3 @@ jobs:
 
       - name: Publish to TestPyPI
         run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
-
-  # Publishes all wheels to the private Gitea index on every tag push or
-  # manual workflow_dispatch. The Gitea instance is only reachable via the
-  # Headscale network — the Tailscale action connects the runner before publishing.
-  publish-gitea:
-    name: Publish to Gitea (private index)
-    needs:
-      - build-stdlib
-      - build-wheels
-      - build-sdk
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    environment: gitea
-    permissions:
-      contents: read
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Connect to Headscale network
-        uses: tailscale/github-action@v4
-        with:
-          authkey: ${{ secrets.HEADSCALE_AUTH_KEY }}
-          args: --login-server ${{ secrets.HEADSCALE_URL }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Publish to Gitea
-        run: |
-          uv publish \
-            --publish-url "${{ secrets.PRIVATE_PYPI_URL }}" \
-            --username "${{ secrets.PRIVATE_PYPI_USERNAME }}" \
-            --password "${{ secrets.PRIVATE_PYPI_TOKEN }}" \
-            dist/*
