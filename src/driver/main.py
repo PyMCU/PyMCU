@@ -116,6 +116,7 @@ from .commands.backend import backend_app
 from .commands.profile import profile
 from .commands.bench import bench
 from .commands.upgrade import upgrade
+from .commands.coffee import coffee
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -138,6 +139,7 @@ app.command()(clean)
 app.command()(flash)
 app.command()(sync)
 app.command()(upgrade)
+app.command(hidden=True)(coffee)
 app.command()(profile)
 app.command()(bench)
 app.add_typer(toolchain_app)

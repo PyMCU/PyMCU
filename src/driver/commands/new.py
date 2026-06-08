@@ -110,21 +110,25 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
     is_pic = chip_lower.startswith("pic")
 
     if flavor == "micropython":
-        imports = "from machine import Pin"
+        imports = "from machine import Pin\nfrom time import sleep_ms"
         body = (
             "    led = Pin(13, Pin.OUT)\n"
             "    while True:\n"
             "        led.value(1)\n"
-            "        led.value(0)"
+            "        sleep_ms(500)\n"
+            "        led.value(0)\n"
+            "        sleep_ms(500)"
         )
     elif flavor == "circuitpython":
-        imports = "import board\nimport digitalio"
+        imports = "import board\nimport digitalio\nimport time"
         body = (
             "    led = digitalio.DigitalInOut(board.LED)\n"
             "    led.direction = digitalio.Direction.OUTPUT\n"
             "    while True:\n"
             "        led.value = True\n"
-            "        led.value = False"
+            "        time.sleep(0.5)\n"
+            "        led.value = False\n"
+            "        time.sleep(0.5)"
         )
     elif is_avr:
         imports = (
