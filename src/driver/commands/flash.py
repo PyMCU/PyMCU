@@ -31,7 +31,8 @@ def flash(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     port: Optional[str] = typer.Option(
         None, "--port", "-P",
-        help="Serial port for flashing (e.g. /dev/cu.usbmodem14101). "
+        help="Serial port for flashing (e.g. COM3 on Windows, /dev/cu.usbmodemXXXX on "
+             "macOS, /dev/ttyACM0 on Linux). "
              "Overrides [tool.pymcu.flash].port in pyproject.toml.",
     ),
 ):

@@ -151,6 +151,15 @@ class AvrdudeProgrammer(HardwareProgrammer):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _example_port() -> str:
+        """A platform-appropriate example serial port for help/error text."""
+        if sys.platform == "win32":
+            return "COM3"
+        if sys.platform.startswith("linux"):
+            return "/dev/ttyACM0"
+        return "/dev/cu.usbmodemXXXX"
+
+    @staticmethod
     def auto_detect_port() -> str | None:
         """
         Return the first detected serial port for a USB-connected AVR device,
@@ -160,6 +169,28 @@ class AvrdudeProgrammer(HardwareProgrammer):
             candidates = glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")
         elif sys.platform.startswith("linux"):
             candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
+        elif sys.platform == "win32":
+            # COM ports are not filesystem paths, so glob does not apply. The kernel
+            # publishes the currently-mapped serial ports under
+            # HKLM\HARDWARE\DEVICEMAP\SERIALCOMM (values like "\Device\USBSER000" ->
+            # "COM3"). Reading it needs no extra dependency (no pyserial).
+            candidates = []
+            try:
+                import winreg
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DEVICEMAP\SERIALCOMM",
+                ) as key:
+                    i = 0
+                    while True:
+                        try:
+                            _, value, _ = winreg.EnumValue(key, i)
+                            candidates.append(value)
+                            i += 1
+                        except OSError:
+                            break
+            except OSError:
+                candidates = []
         else:
             candidates = []
         return candidates[0] if candidates else None
@@ -259,11 +290,12 @@ class AvrdudeProgrammer(HardwareProgrammer):
         # Resolve port: caller > auto-detect > error
         resolved_port = port or self.auto_detect_port()
         if not resolved_port:
+            example = self._example_port()
             raise RuntimeError(
                 "No serial port specified and auto-detection found none.\n"
-                "Pass --port /dev/cu.usbmodemXXXX on the command line, or add:\n\n"
+                f"Pass --port {example} on the command line, or add:\n\n"
                 "  [tool.pymcu.flash]\n"
-                '  port = "/dev/cu.usbmodemXXXX"\n\n'
+                f'  port = "{example}"\n\n'
                 "to your pyproject.toml."
             )
 
