@@ -28,6 +28,7 @@ namespace PyMCU.IR;
 [JsonDerivedType(typeof(NoneVal),       "none")]
 [JsonDerivedType(typeof(FunctionRef),   "fref")]
 [JsonDerivedType(typeof(ArrayBase),     "abase")]
+[JsonDerivedType(typeof(FlashStrAddr),  "fstr")]
 public abstract record Val;
 
 public record Constant(int Value) : Val;
@@ -48,6 +49,13 @@ public record ArrayBase(string ArrayName) : Val;
 
 // Compile-time resolved function address (for funcref() intrinsic)
 public record FunctionRef(string FunctionName) : Val;
+
+// Address-of an interned flash string (null-terminated FlashData byte table).
+// Materializes the 16-bit flash byte-address lo8/hi8(__flash_<Name>) so a
+// const[str] argument can be passed by reference to a non-@inline function,
+// which then reads it byte-by-byte with FlashLoadPtr. Name matches the FlashData
+// label (same convention as ArrayLoadFlash's "__flash_" + name).
+public record FlashStrAddr(string Name) : Val;
 
 public enum UnaryOp
 {
@@ -107,6 +115,7 @@ public enum BinaryOp
 [JsonDerivedType(typeof(DebugLine),            "dbg")]
 [JsonDerivedType(typeof(ArrayLoad),            "ald")]
 [JsonDerivedType(typeof(ArrayLoadFlash),       "alf")]
+[JsonDerivedType(typeof(FlashLoadPtr),         "flp")]
 [JsonDerivedType(typeof(FlashData),            "fdata")]
 [JsonDerivedType(typeof(ArrayStore),           "ast")]
 [JsonDerivedType(typeof(BytearrayLoad),        "bald")]
@@ -196,6 +205,12 @@ public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType,
 
 // ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
 public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;
+
+// Runtime-base flash byte load: Dst = flash[Ptr + Index] via LPM. Ptr is a 16-bit
+// flash byte-address (e.g. a FlashStrAddr passed into a non-@inline function, held
+// in a uint16 parameter). Enables one shared subroutine to walk any flash string
+// instead of inlining the loop per call site.
+public record FlashLoadPtr(Val Ptr, Val Index, Val Dst) : Instruction;
 
 // Flash-resident read-only byte array (placed in .text / PROGMEM via const[uint8[N]]).
 // Bytes holds the literal initializer values; AVR codegen emits a .db table in flash.

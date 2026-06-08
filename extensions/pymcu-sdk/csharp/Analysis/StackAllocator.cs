@@ -229,6 +229,13 @@ public class StackAllocator
                     case RaiseExn re:
                         RegisterVar(re.Code);
                         break;
+                    case FlashLoadPtr flp:
+                        // Ptr is a 16-bit flash byte-address; register it (typically the
+                        // function's flash-string parameter) so it is sized as 2 bytes.
+                        RegisterVar(flp.Ptr);
+                        RegisterVar(flp.Index);
+                        RegisterVar(flp.Dst);
+                        break;
                     case BytearrayLoad bl:
                         // bytearray pointer params are UINT16 (2-byte address); must be sized explicitly
                         // because PtrName is a string, not a Val, so RegisterVar never sees it.

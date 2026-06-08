@@ -999,6 +999,7 @@ private static Function CloneFunction(Function f)
         LoadIndirect li => li.Dst,
         ArrayLoad al => al.Dst,
         ArrayLoadFlash alf => alf.Dst,
+        FlashLoadPtr flp => flp.Dst,
         BytearrayLoad bld => bld.Dst,
         _ => null,
     };
@@ -1014,6 +1015,7 @@ private static Function CloneFunction(Function f)
         LoadIndirect li => li with { Dst = newDst },
         ArrayLoad al => al with { Dst = newDst },
         ArrayLoadFlash alf => alf with { Dst = newDst },
+        FlashLoadPtr flp => flp with { Dst = newDst },
         BytearrayLoad bld => bld with { Dst = newDst },
         _ => instr,
     };
@@ -1083,6 +1085,7 @@ private static Function CloneFunction(Function f)
                 break;
             case ArrayLoad al: register(al.Index); break;
             case ArrayLoadFlash alf: register(alf.Index); break;
+            case FlashLoadPtr flp: register(flp.Ptr); register(flp.Index); break;
             case InlineAsm ia when ia.Operands != null:
                 foreach (var op in ia.Operands) register(op);
                 break;
@@ -1129,6 +1132,7 @@ private static Function CloneFunction(Function f)
             StoreIndirect si => si with { Src = replace(si.Src), DstPtr = replace(si.DstPtr) },
             ArrayLoad al => al with { Index = replace(al.Index) },
             ArrayLoadFlash alf => alf with { Index = replace(alf.Index) },
+            FlashLoadPtr flp => flp with { Ptr = replace(flp.Ptr), Index = replace(flp.Index) },
             InlineAsm ia when ia.Operands != null => ia with { Operands = ia.Operands.Select(replace).ToList() },
             ArrayStore ast => ast with { Index = replace(ast.Index), Src = replace(ast.Src) },
             BytearrayStore bst => bst with { Index = replace(bst.Index), Src = replace(bst.Src) },
