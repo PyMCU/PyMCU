@@ -84,8 +84,8 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 
 ## Supported hardware
 
-PyMCU currently targets **AVR microcontrollers**. The primary supported board is the
-**Arduino Uno / ATmega328P** — all integration tests run against this target.
+PyMCU's primary, fully-supported target is the **AVR** family. The reference board is the
+**Arduino Uno / ATmega328P** — all AVR integration tests run against it.
 
 | Board | Chip | Flash | SRAM |
 |---|---|---|---|
@@ -95,6 +95,24 @@ PyMCU currently targets **AVR microcontrollers**. The primary supported board is
 | ATtiny85 / 84 / 45 / 44 / 25 / 24 | ATtiny family | 2–8 KB | 256–512 B |
 | ATtiny2313 / 4313 | ATtiny family | 2–4 KB | 128–256 B |
 | Digispark | ATtiny85 @ 16 MHz | 8 KB | 512 B |
+
+### Raspberry Pi Pico (RP2040) — alpha
+
+The **RP2040** is supported through the {doc}`ARM backend <getting-started/installation>`
+(`pip install pymcu-arm`), which lowers PyMCU's IR to LLVM IR (`thumbv6m-none-eabi`,
+Cortex-M0+). It is **alpha** and intentionally minimal:
+
+| | RP2040 (alpha) |
+|---|---|
+| Cores | Core 0 only |
+| Peripherals | GPIO + UART0 |
+| Language | No heap `list[T]`, exceptions, or `float` yet |
+| Output | `dist/firmware.bin` (flat flash, boot2 at offset 0) |
+
+The same `Pin` / `UART` HAL — and the MicroPython (`machine`) and CircuitPython
+(`board`, `digitalio`, `busio`) shims — compile to the Pico. See
+{doc}`language/limitations` for the exact scope and {doc}`examples/rp2040` for runnable
+programs.
 
 ---
 

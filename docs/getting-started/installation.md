@@ -26,7 +26,7 @@ Verify:
 
 ```bash
 pymcu --version
-# pymcu, version 0.12.0
+# pymcu-compiler, version 0.1.0a1
 ```
 
 ### Compat layer extras
@@ -41,6 +41,30 @@ pip install pymcu-micropython
 # CircuitPython compat (board, digitalio, busio, neopixel, …)
 pip install pymcu-circuitpython
 ```
+
+### RP2040 / ARM backend (alpha)
+
+AVR support is built in. To compile for the **Raspberry Pi Pico (RP2040)**, install the
+ARM backend — it registers the `rp2040` target, toolchain and programmer with the
+compiler via entry points:
+
+```bash
+pip install pymcu-arm
+```
+
+This backend lowers PyMCU's IR to **LLVM IR** (`thumbv6m-none-eabi`, Cortex-M0+) and
+drives an LLVM toolchain (`opt` → `llc` → `ld.lld` → `llvm-objcopy`). On Linux x64/arm64,
+Windows x64 and macOS arm64 the prebuilt `pymcu-arm-toolchain` wheel is pulled in
+automatically. On other platforms, install a system LLVM instead:
+
+```bash
+brew install llvm lld        # macOS
+sudo apt install llvm lld    # Debian/Ubuntu
+```
+
+RP2040 support is **alpha** — GPIO + UART0 on a single core. See
+{doc}`../language/limitations` for the exact scope and {doc}`../examples/rp2040` for
+runnable programs.
 
 ---
 
@@ -102,7 +126,7 @@ Verify:
 
 ```bash
 pymcu --version
-# pymcu, version 0.12.0-dev
+# pymcu-compiler, version 0.1.0a1
 ```
 
 ---

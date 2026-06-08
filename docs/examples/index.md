@@ -2,9 +2,10 @@
 
 Annotated firmware examples showing real-world PyMCU patterns.
 
-All examples target **ATmega328P / Arduino Uno** unless otherwise noted.
-Each example in the repository ships with a cycle-accurate integration test
-(AVR8Sharp simulator) so you can run them without hardware.
+Unless otherwise noted, examples target **ATmega328P / Arduino Uno** and ship with a
+cycle-accurate integration test (AVR8Sharp simulator) so you can run them without
+hardware. {doc}`Raspberry Pi Pico (RP2040) <rp2040>` examples run on the alpha ARM
+backend and are validated with the RP2040Sharp emulator.
 
 ```{toctree}
 :maxdepth: 1
@@ -13,6 +14,7 @@ micropython
 circuitpython
 hal
 advanced
+rp2040
 ```
 
 ---
@@ -76,3 +78,12 @@ zero overhead.
 | {ref}`adv-sensor-dashboard` | ADC, Timer ISR, GPIOR flags, UART |
 | {ref}`adv-sleep-wakeup` | `sleep_idle`, `Pin.irq`, power management |
 | {ref}`adv-extern-call` | `@extern`, C FFI, `avr-gcc` linking |
+
+---
+
+## Raspberry Pi Pico (RP2040) — alpha
+
+Firmware for the **Raspberry Pi Pico** via the alpha {doc}`ARM backend
+<../getting-started/installation>` (`pip install pymcu-arm`) — GPIO + UART0 on core 0.
+All three API styles (native HAL, MicroPython, CircuitPython) are shown in
+{doc}`rp2040`.

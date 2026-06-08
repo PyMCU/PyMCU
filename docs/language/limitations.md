@@ -371,10 +371,10 @@ with the stage-2 boot loader at offset 0). It is **alpha** and intentionally lim
   exact.
 - **UART clock assumption:** the baud divisors assume `clk_peri = 125 MHz`
   (`clk_sys` at the pico-sdk default). A configurable clocks HAL is future work.
-- **Toolchain:** requires **LLVM** (`opt`, `llc`, `llvm-mc`, `ld.lld`,
-  `llvm-objcopy`) on the host, provided by the vendored
-  [`pymcu-rp2040-toolchain`](https://github.com/begeistert/pymcu-rp2040-toolchain)
-  wheel (`pip install pymcu[rp2040]`), analogous to `pymcu-avr-toolchain`. If the
-  wheel is not installed for your platform the toolchain falls back to a system
-  LLVM (e.g. `brew install llvm lld`).
+- **Toolchain:** the backend ships in the `pymcu-arm` package (`pip install pymcu-arm`),
+  which registers the `rp2040` target. It requires **LLVM** (`opt`, `llc`, `llvm-mc`,
+  `ld.lld`, `llvm-objcopy`) on the host, provided by the
+  [`pymcu-arm-toolchain`](https://github.com/PyMCU/pymcu-arm) wheel (analogous to
+  `pymcu-avr-toolchain`). If the wheel is not available for your platform the toolchain
+  falls back to a system LLVM (e.g. `brew install llvm lld`).
 - **No C/C++ interop (`@extern`) yet** on this backend.

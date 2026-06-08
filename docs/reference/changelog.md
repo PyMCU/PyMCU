@@ -31,6 +31,23 @@
   their name strings emitted in flash; no overhead when no `raise` is present in the program;
   chips without standard UART0 (attiny85 etc.) emit only the halt loop
 
+### RP2040 / ARM backend (new, alpha)
+
+- New `pymcu-arm` package adds the `rp2040` target (Raspberry Pi Pico) — lowers PyMCU's
+  target-agnostic IR to **LLVM IR** (`thumbv6m-none-eabi`, Cortex-M0+) and drives an LLVM
+  toolchain (`opt` → `llc` → `ld.lld` → `llvm-objcopy`) to a flat flash image
+  (`dist/firmware.bin`, generic crc32 boot2 at offset 0)
+- Supported HAL on RP2040: `pymcu.hal.gpio.Pin` (single-cycle IO) and
+  `pymcu.hal.uart.UART` (PL011) on core 0; `delay_ms` / `delay_us` via the hardware
+  microsecond TIMER
+- MicroPython (`machine.Pin` / `machine.UART`) and CircuitPython (`board`, `digitalio`,
+  `busio`) shims compile unmodified to RP2040 firmware
+- LLVM tools resolved from the `pymcu-arm-toolchain` wheel or a system LLVM
+- Not yet on this backend: GC `list[T]`, exceptions, soft-float, dual-core, `@extern`, and
+  every peripheral beyond GPIO/UART0 (SPI, I2C, PWM, ADC, PIO, USB, timers, EEPROM, watchdog)
+- Firmware images are validated headlessly by the
+  [RP2040Sharp](https://docs.pymcu.org/rp2040sharp/) emulator (`PicoSimulation.LoadFlash`) in CI
+
 ### HAL
 
 - `pymcu.hal.spi`, `pymcu.hal.eeprom`, `pymcu.hal.watchdog`, `pymcu.hal.power` — all
