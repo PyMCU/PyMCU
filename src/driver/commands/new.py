@@ -399,7 +399,9 @@ def new(
                 "install:\n"
                 "\tpip install -r requirements.txt && pymcu sync\n"
             )
-        with open(project_path / "Makefile", "w") as f:
+        # newline="\n": keep LF so the Makefile stays valid on macOS/Linux/WSL even
+        # when generated on Windows (Python text mode would otherwise write CRLF).
+        with open(project_path / "Makefile", "w", newline="\n") as f:
             f.write(makefile_content)
 
         # ── VS Code tasks ─────────────────────────────────────────────
@@ -478,8 +480,14 @@ def new(
             )
             for hook_name in ("post-merge", "post-checkout"):
                 hook_file = hooks_dir / hook_name
-                hook_file.write_text(hook_script)
-                hook_file.chmod(0o755)
+                # newline="\n": Git for Windows runs hooks through its bundled sh, which
+                # needs the "#!/bin/sh" shebang on an LF line. Python text mode would
+                # translate "\n" to CRLF on Windows and break the shebang.
+                hook_file.write_text(hook_script, encoding="utf-8", newline="\n")
+                # chmod's executable bit is meaningless on Windows (Git uses the shebang),
+                # so only set it where it matters.
+                if sys.platform != "win32":
+                    hook_file.chmod(0o755)
 
         # ── Install dependencies ──────────────────────────────────────
         if Confirm.ask(f"Install dependencies with {pkg_manager} now?", default=True):
@@ -496,8 +504,16 @@ def new(
                     subprocess.run(
                         [sys.executable, "-m", "venv", ".venv"], cwd=project_path
                     )
+                    # The venv layout differs by platform: Scripts/python.exe on
+                    # Windows, bin/python elsewhere. Invoke pip via "python -m pip" so
+                    # we don't depend on the exact pip executable name either.
+                    if sys.platform == "win32":
+                        venv_python = project_path / ".venv" / "Scripts" / "python.exe"
+                    else:
+                        venv_python = project_path / ".venv" / "bin" / "python"
                     pip_cmd = [
-                        str(project_path / ".venv" / "bin" / "pip"),
+                        str(venv_python),
+                        "-m", "pip",
                         "install", "-r", "requirements.txt",
                     ]
                     subprocess.run(pip_cmd, cwd=project_path, check=True)
@@ -516,6 +532,11 @@ def new(
         if stdlib:
             console.print(f"[blue]stdlib:[/blue]         {', '.join(stdlib)}")
         console.print("[dim]VS Code tasks created in .vscode/tasks.json[/dim]")
+        if sys.platform == "win32":
+            console.print(
+                "[dim]Windows: 'make' is not preinstalled — run [bold]pymcu sync[/bold] "
+                "directly instead of the Makefile.[/dim]"
+            )
 
     except typer.Exit:
         raise
