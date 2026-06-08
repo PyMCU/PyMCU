@@ -213,6 +213,7 @@ private static Function CloneFunction(Function f)
         for (var i = 0; i < 10; ++i)
         {
             PropagateCopies(func);
+            PropagateVarCopies(func, globalNames);
             FoldConstants(func);
             EliminateDeadVariableStores(func, globalNames);
             CoalesceInstructions(func);
@@ -682,6 +683,200 @@ private static Function CloneFunction(Function f)
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Global (CFG-aware) copy propagation for variable-to-variable copies — the alias
+    /// copies @inline expansion leaves behind, e.g. <c>inlineN.foo.result = inlineM.bar.result</c>.
+    /// The linear <see cref="PropagateCopies"/> stops at basic-block boundaries; this pass runs
+    /// an available-copies dataflow so a copy that dominates a use is propagated even when the
+    /// use sits in a later block (after which dead alias copies fall to EliminateDeadVariableStores).
+    ///
+    /// Soundness: only plain scalar locals are tracked. A variable is excluded if it is global,
+    /// GC_REF, modified in place (bit ops / inline asm), or address-taken (ArrayBase / pointer
+    /// store target) — so the value held by dst and src can never diverge between the copy and a
+    /// use where the copy is available, and only read positions are rewritten.
+    /// </summary>
+    private static void PropagateVarCopies(Function func, HashSet<string>? globalNames)
+    {
+        bool IsGlobal(string n) => globalNames != null && globalNames.Contains(n);
+
+        // Variables whose identity must not be rewritten: modified in place or address-taken.
+        var untrackable = new HashSet<string>();
+        void Mark(Val v) { if (v is Variable vv) untrackable.Add(vv.Name); }
+        foreach (var instr in func.Body)
+        {
+            switch (instr)
+            {
+                case BitSet bs: Mark(bs.Target); break;
+                case BitClear bc: Mark(bc.Target); break;
+                case BitWrite bw: Mark(bw.Target); break;
+                case StoreIndirect si: Mark(si.DstPtr); break;
+                case InlineAsm { Operands: not null } ia:
+                    foreach (var op in ia.Operands) Mark(op);
+                    break;
+            }
+            // ArrayBase(X) takes X's address; never propagate through it.
+            RegisterUses(instr, v => { if (v is ArrayBase ab) untrackable.Add(ab.ArrayName); });
+        }
+
+        bool Trackable(string dstName, DataType dstType, Val srcVal, out Variable src)
+        {
+            src = null!;
+            if (srcVal is not Variable s) return false;
+            if (dstType == DataType.GC_REF || s.Type == DataType.GC_REF) return false;
+            if (IsGlobal(dstName) || IsGlobal(s.Name)) return false;
+            if (untrackable.Contains(dstName) || untrackable.Contains(s.Name)) return false;
+            if (dstName == s.Name) return false;
+            src = s;
+            return true;
+        }
+
+        // Universal set of facts "dst holds src's value", keyed by (dst, src).
+        var factId = new Dictionary<(string, string), int>();
+        var factSrc = new List<Variable>();
+        var factDst = new List<string>();
+        int FactOf(string d, Variable s)
+        {
+            var key = (d, s.Name);
+            if (!factId.TryGetValue(key, out int id))
+            {
+                id = factSrc.Count;
+                factId[key] = id;
+                factSrc.Add(s);
+                factDst.Add(d);
+            }
+            return id;
+        }
+        foreach (var instr in func.Body)
+            if (instr is Copy { Dst: Variable d } c && Trackable(d.Name, d.Type, c.Src, out var s))
+                FactOf(d.Name, s);
+
+        int n = factSrc.Count;
+        if (n == 0) return;
+
+        // The variable (if any) this instruction redefines — kills facts about it.
+        string? DefVar(Instruction instr)
+        {
+            if (GetDst(instr) is Variable dv) return dv.Name;
+            return instr switch
+            {
+                AugAssign { Target: Variable v } => v.Name,
+                BitSet { Target: Variable v } => v.Name,
+                BitClear { Target: Variable v } => v.Name,
+                BitWrite { Target: Variable v } => v.Name,
+                _ => null
+            };
+        }
+        int? CopyFact(Instruction instr)
+            => instr is Copy { Dst: Variable d } c && Trackable(d.Name, d.Type, c.Src, out var s)
+                ? FactOf(d.Name, s) : null;
+
+        var cfg = BuildCfg(func);
+        var blocks = cfg.Blocks;
+        var idx = new Dictionary<BasicBlock, int>();
+        for (int i = 0; i < blocks.Count; i++) idx[blocks[i]] = i;
+        // BuildCfg drops unreachable blocks from cfg.Blocks but leaves them in the
+        // Predecessors lists of the survivors; keep only predecessors still present.
+        var predsOf = blocks
+            .Select(b => b.Predecessors.Where(p => idx.ContainsKey(p)).ToList())
+            .ToList();
+
+        // gen[B] = facts generated in B that survive to its end; kill[B] = facts B invalidates.
+        var gen = new bool[blocks.Count][];
+        var kill = new bool[blocks.Count][];
+        for (int b = 0; b < blocks.Count; b++)
+        {
+            var g = new bool[n];
+            var k = new bool[n];
+            foreach (var instr in blocks[b].Instructions)
+            {
+                var x = DefVar(instr);
+                if (x != null)
+                    for (int f = 0; f < n; f++)
+                        if (factDst[f] == x || factSrc[f].Name == x) { g[f] = false; k[f] = true; }
+                if (CopyFact(instr) is int cf) g[cf] = true;
+            }
+            gen[b] = g;
+            kill[b] = k;
+        }
+
+        // Forward "must" dataflow: out = gen ∪ (in − kill), in = ∩ out[preds]. Init out = all-true.
+        var outS = new bool[blocks.Count][];
+        var inS = new bool[blocks.Count][];
+        for (int b = 0; b < blocks.Count; b++)
+        {
+            outS[b] = new bool[n];
+            inS[b] = new bool[n];
+            for (int f = 0; f < n; f++) outS[b][f] = true;
+        }
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (int b = 0; b < blocks.Count; b++)
+            {
+                var preds = predsOf[b];
+                var inb = inS[b];
+                if (preds.Count == 0)
+                {
+                    for (int f = 0; f < n; f++) inb[f] = false;
+                }
+                else
+                {
+                    for (int f = 0; f < n; f++) inb[f] = true;
+                    foreach (var p in preds)
+                    {
+                        var op = outS[idx[p]];
+                        for (int f = 0; f < n; f++) inb[f] &= op[f];
+                    }
+                }
+                var ob = outS[b];
+                for (int f = 0; f < n; f++)
+                {
+                    bool nv = gen[b][f] || (inb[f] && !kill[b][f]);
+                    if (nv != ob[f]) { ob[f] = nv; changed = true; }
+                }
+            }
+        }
+
+        // Substitution: walk each block with the locally-available facts, rewriting reads.
+        foreach (var block in blocks)
+        {
+            var avail = (bool[])inS[idx[block]].Clone();
+            var instrs = block.Instructions;
+            for (int i = 0; i < instrs.Count; i++)
+            {
+                if (avail.Any(x => x))
+                {
+                    var map = new Dictionary<string, Val>();
+                    var conflict = new HashSet<string>();
+                    for (int f = 0; f < n; f++)
+                    {
+                        if (!avail[f]) continue;
+                        if (conflict.Contains(factDst[f])) continue;
+                        if (map.TryGetValue(factDst[f], out var prev) && !prev.Equals(factSrc[f]))
+                        {
+                            map.Remove(factDst[f]);
+                            conflict.Add(factDst[f]);
+                        }
+                        else map[factDst[f]] = factSrc[f];
+                    }
+                    if (map.Count > 0)
+                        instrs[i] = ReplaceUses(instrs[i],
+                            v => v is Variable var && map.TryGetValue(var.Name, out var rep) ? rep : v);
+                }
+
+                var instr = instrs[i];
+                var x = DefVar(instr);
+                if (x != null)
+                    for (int f = 0; f < n; f++)
+                        if (factDst[f] == x || factSrc[f].Name == x) avail[f] = false;
+                if (CopyFact(instr) is int cf) avail[cf] = true;
+            }
+        }
+
+        func.Body = blocks.SelectMany(b => b.Instructions).ToList();
     }
 
     private static void CoalesceInstructions(Function func)
