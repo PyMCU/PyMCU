@@ -1,5 +1,11 @@
 # Installation
 
+:::{note}
+**Alpha release** — PyMCU is currently in alpha (`0.1.0a1`). By default, `pip`, `uv` and
+`pipx` do not install pre-releases unless you pass a `--pre` flag. The commands on this
+page include the required flags. Once `0.1.0` stable ships, `--pre` will not be needed.
+:::
+
 ## Option 1 — pip (recommended)
 
 `pymcu-compiler` is distributed on PyPI. Install it with `pip` or `uv`:
@@ -7,17 +13,24 @@
 ::::{tab-set}
 :::{tab-item} uv (recommended)
 ```bash
-uv tool install pymcu-compiler
+uv tool install --pre pymcu-compiler
 ```
 
 `uv tool install` places the `pymcu` command on your PATH globally, isolated in its own
 virtual environment. No activation step needed.
+
+Requires **uv 0.11 or newer** — run `uv self update` if you are on an older version.
 :::
-:::{tab-item} pip / pipx
+:::{tab-item} pipx
 ```bash
-pipx install pymcu-compiler   # isolated install (recommended over plain pip)
-# — or —
-pip install pymcu-compiler    # install into the active environment
+pipx install pymcu-compiler --pip-args="--pre"
+```
+
+`pipx` installs into an isolated environment and puts `pymcu` on your PATH.
+:::
+:::{tab-item} pip
+```bash
+pip install --pre pymcu-compiler
 ```
 :::
 ::::
@@ -26,7 +39,7 @@ Verify:
 
 ```bash
 pymcu --version
-# pymcu-compiler, version 0.1.0a1
+# pymcu-compiler, version 0.1.0a1.post0
 ```
 
 ### Compat layer extras
@@ -48,8 +61,28 @@ AVR support is built in. To compile for the **Raspberry Pi Pico (RP2040)**, inst
 ARM backend — it registers the `rp2040` target, toolchain and programmer with the
 compiler via entry points:
 
+::::{tab-set}
+:::{tab-item} uv
 ```bash
-pip install pymcu-arm
+uv tool install --pre "pymcu-compiler[arm]"
+```
+:::
+:::{tab-item} pipx
+```bash
+pipx install "pymcu-compiler[arm]" --pip-args="--pre"
+```
+:::
+:::{tab-item} pip
+```bash
+pip install --pre "pymcu-compiler[arm]"
+```
+:::
+::::
+
+Or if `pymcu-compiler` is already installed:
+
+```bash
+pip install --pre pymcu-arm
 ```
 
 This backend lowers PyMCU's IR to **LLVM IR** (`thumbv6m-none-eabi`, Cortex-M0+) and
