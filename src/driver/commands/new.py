@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from ..core.boards import BOARD_CHIPS, default_programmer
+from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer
 from ..toolchains import get_toolchain_for_chip
 
 console = Console()
@@ -42,6 +42,24 @@ BOARD_FREQUENCIES: dict[str, int] = {
 _DEFAULT_FREQ = 8_000_000
 
 _COMPAT_FLAVORS = ("micropython", "circuitpython")
+
+
+def _pick(title: str, options: list, labels: list[str] | None = None) -> int:
+    """Numbered interactive menu. Returns the 0-based index of the chosen item."""
+    display = labels or [str(o) for o in options]
+    console.print(f"\n  [bold]{title}[/bold]")
+    for i, label in enumerate(display, 1):
+        console.print(f"  [cyan][{i}][/cyan]  {label}")
+    console.print()
+    while True:
+        raw = Prompt.ask(f"  Select [1-{len(display)}]").strip()
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(display):
+                return idx
+        except ValueError:
+            pass
+        console.print(f"  [red]Enter a number between 1 and {len(display)}[/red]")
 
 
 def _detect_pkg_manager() -> str | None:
@@ -193,21 +211,26 @@ def new(
             compat_options = [f for f in discovered if f in _COMPAT_FLAVORS]
             if not compat_options:
                 compat_options = list(_COMPAT_FLAVORS)
-            flavor_choice = Prompt.ask(
-                "Compatibility layer",
-                choices=compat_options,
-                default="micropython",
-            )
+            idx = _pick("Compatibility layer", compat_options)
+            flavor_choice = compat_options[idx]
+            console.print(f"  [dim]-> {flavor_choice}[/dim]")
             stdlib = [flavor_choice]
 
         # 2. Board selection — drives chip and frequency
         if board is None:
-            board_names = sorted(BOARD_CHIPS.keys())
-            board = Prompt.ask(
-                "Target board",
-                choices=board_names,
-                default="arduino_uno",
-            )
+            manufacturers = list(BOARD_GROUPS.keys())
+            mfr_idx = _pick("Manufacturer", manufacturers)
+            mfr = manufacturers[mfr_idx]
+            console.print(f"  [dim]-> {mfr}[/dim]")
+
+            board_keys = BOARD_GROUPS[mfr]
+            board_labels = [
+                f"{k:<22}  ({BOARD_CHIPS[k]}, {BOARD_FREQUENCIES.get(k, _DEFAULT_FREQ) // 1_000_000} MHz)"
+                for k in board_keys
+            ]
+            board_idx = _pick(f"{mfr} — select board", board_keys, labels=board_labels)
+            board = board_keys[board_idx]
+            console.print(f"  [dim]-> {board}[/dim]")
 
         chip = BOARD_CHIPS.get(board)
         if chip is None:
@@ -348,8 +371,9 @@ def new(
 
         pymcu_tool = tomlkit.table()
         if not advanced_mode:
-            pymcu_tool.add("board", board)
-        pymcu_tool.add("target", chip)
+            pymcu_tool.add("board", board)   # target is derived from board in build.py
+        else:
+            pymcu_tool.add("target", chip)   # advanced mode: chip set directly, no board
         pymcu_tool.add("frequency", freq)
         pymcu_tool.add("sources", sources_dir)
         pymcu_tool.add("entry", entry_file)
