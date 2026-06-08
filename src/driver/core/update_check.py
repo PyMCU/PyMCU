@@ -72,28 +72,44 @@ def get_installed_pymcu_versions() -> dict[str, str]:
     result: dict[str, str] = {}
     try:
         for dist in meta.distributions():
-            name = dist.metadata.get("Name", "")
-            if name and name.lower().startswith("pymcu-"):
-                result[name] = dist.metadata.get("Version", "")
+            try:
+                name = dist.metadata.get("Name") or ""
+                version = dist.metadata.get("Version") or ""
+                if name and version and name.lower().startswith("pymcu-"):
+                    result[name] = version
+            except Exception:
+                pass
     except Exception:
         pass
     return result
 
 
 def _fetch_parallel(packages: list[str]) -> dict[str, str]:
-    """Fetch latest versions for all packages concurrently (max 2 s wall time)."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """Fetch latest versions for all packages concurrently (max 2.5 s wall time).
+
+    Returns whatever was fetched before the timeout; never raises.
+    """
+    if not packages:
+        return {}
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
     result: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=min(8, len(packages))) as pool:
-        futures = {pool.submit(_fetch_latest_pre, pkg): pkg for pkg in packages}
-        for future in as_completed(futures, timeout=2.5):
-            pkg = futures[future]
+    try:
+        with ThreadPoolExecutor(max_workers=min(8, len(packages))) as pool:
+            futures = {pool.submit(_fetch_latest_pre, pkg): pkg for pkg in packages}
             try:
-                v = future.result()
-                if v:
-                    result[pkg] = v
-            except Exception:
+                for future in as_completed(futures, timeout=2.5):
+                    pkg = futures[future]
+                    try:
+                        v = future.result()
+                        if v:
+                            result[pkg] = v
+                    except Exception:
+                        pass
+            except (FuturesTimeout, TimeoutError):
+                # Some fetches didn't finish in time — return what we have.
                 pass
+    except Exception:
+        pass
     return result
 
 
