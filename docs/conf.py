@@ -20,7 +20,10 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", ".venv", "Thumbs.db", ".DS_Store"]
+
+# Served as a sub-path of the shared PyMCU docs site.
+html_baseurl = "https://docs.pymcu.org/pymcu/"
 
 # ---------------------------------------------------------------------------
 # MyST extensions
@@ -72,6 +75,13 @@ html_theme_options = {
             "icon": "fa-brands fa-python",
         },
     ],
+}
+
+html_context = {
+    "github_user": "PyMCU",
+    "github_repo": "PyMCU",
+    "github_version": "main",
+    "doc_path": "docs",
 }
 
 html_sidebars = {
