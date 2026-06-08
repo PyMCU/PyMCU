@@ -44,6 +44,17 @@ BOARD_CHIPS: dict[str, str] = {
 }
 
 
+BOARD_GROUPS: dict[str, list[str]] = {
+    "Arduino": ["arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro"],
+    "Raspberry Pi": ["raspberry_pi_pico"],
+    "Adafruit": ["adafruit_trinket"],
+    "Digispark": ["digispark"],
+    "ATtiny 8-pin (bare chip)":  ["attiny85",  "attiny45",  "attiny25",  "attiny13", "attiny13a"],
+    "ATtiny 14-pin (bare chip)": ["attiny84",  "attiny44",  "attiny24"],
+    "ATtiny 20-pin (bare chip)": ["attiny2313", "attiny4313"],
+}
+
+
 def default_programmer(chip: str) -> str:
     """Return the default programmer name for a given chip identifier."""
     return "avrdude" if chip.lower().startswith("at") else "pk2cmd"
