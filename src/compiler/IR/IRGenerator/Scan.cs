@@ -346,7 +346,8 @@ public partial class IRGenerator
                 bool hasZcaFirstParam = func.Params.Count > 0 &&
                     DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
                     func.Params[0].Type != "bytearray" &&
-                    !func.Params[0].Type.StartsWith("ptr");
+                    !func.Params[0].Type.StartsWith("ptr") &&
+                    func.Params[0].Type != "const[str]" && func.Params[0].Type != "str";
                 if (hasZcaFirstParam)
                 {
                     zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");

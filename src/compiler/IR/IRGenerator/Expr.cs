@@ -817,6 +817,18 @@ public partial class IRGenerator
             string localName = string.IsNullOrEmpty(currentInlinePrefix)
                 ? (string.IsNullOrEmpty(currentFunction) ? ve2.Name : currentFunction + "." + ve2.Name)
                 : currentInlinePrefix + ve2.Name;
+
+            // Runtime flash-string pointer parameter (const[str] on a non-@inline function):
+            // s[i] reads one byte from flash at (s + i) via LPM. Works for both literal and
+            // runtime indices since the base is only known at runtime.
+            if (flashStrPtrVars.Contains(localName))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary tmp = MakeTemp(DataType.UINT8);
+                Emit(new FlashLoadPtr(new Variable(localName, DataType.UINT16), idxVal, tmp));
+                return tmp;
+            }
+
             string? strVal = ResolveStrConstant(localName);
             if (strVal != null)
             {

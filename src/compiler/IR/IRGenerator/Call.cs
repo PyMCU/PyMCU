@@ -1673,9 +1673,32 @@ public partial class IRGenerator
             return new NoneVal();
         }
 
+        bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         var argValuesL = new List<Val>();
         foreach (var arg in expr.Args)
         {
+            // const[str] argument to a non-@inline function: intern the string and pass its
+            // flash address by reference (FlashStrAddr). The callee walks it with FlashLoadPtr,
+            // so the byte-loop lives in a single shared subroutine instead of being inlined at
+            // every call site. (Inline callees bind the literal via strConstantVariables and
+            // never reach this path.)
+            if (calleeIsKnownFunc)
+            {
+                string? argStr = arg switch
+                {
+                    StringLiteral sl => sl.Value,
+                    VariableExpr ve => ResolveStrConstant((!string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix
+                        : currentFunction + ".") + ve.Name),
+                    _ => null
+                };
+                if (argStr != null)
+                {
+                    argValuesL.Add(new FlashStrAddr(InternStringAsFlash(argStr)));
+                    continue;
+                }
+            }
+
             // If the argument is a bare variable name that refers to a local array,
             // pass its base address rather than trying to load it as a scalar.
             if (arg is VariableExpr argVe)
@@ -1720,6 +1743,10 @@ public partial class IRGenerator
                 string paramVarName = callee + "." + paramNames[i];
                 DataType ptype = i < paramTypes.Count ? paramTypes[i] : DataType.UINT8;
                 Val argVal = argValuesL[i];
+
+                // A flash-string-by-reference argument is a 16-bit flash address, regardless
+                // of how the const[str] param's nominal type folds.
+                if (argVal is FlashStrAddr) ptype = DataType.UINT16;
 
                 // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
                 // (which resolves as a UINT8 Variable rather than a FunctionRef), create the

@@ -134,9 +134,18 @@ public partial class IRGenerator
             string qualifiedParam = currentFunction + "." + param.Name;
             irFunc.Params.Add(qualifiedParam);
             DataType paramDt = DataTypeExtensions.StringToDataType(param.Type);
-            variableTypes[qualifiedParam] = paramDt;
             if (param.Type == "bytearray")
                 bytearrayParams.Add(qualifiedParam);
+            // A const[str] parameter of a non-@inline function is received by reference as
+            // a 16-bit flash byte-pointer (callers pass a FlashStrAddr); s[i] in the body
+            // lowers to FlashLoadPtr. (@inline functions still bind the literal at compile
+            // time via strConstantVariables, so this only applies to real subroutines.)
+            if (param.Type == "const[str]" && !funcNode.IsInline)
+            {
+                paramDt = DataType.UINT16;
+                flashStrPtrVars.Add(qualifiedParam);
+            }
+            variableTypes[qualifiedParam] = paramDt;
         }
 
         arraysWithVariableIndex.Clear();

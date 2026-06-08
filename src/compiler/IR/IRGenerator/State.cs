@@ -168,6 +168,12 @@ public partial class IRGenerator
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();
 
+    // const[str] parameters of NON-@inline functions: received as a runtime 16-bit flash
+    // byte-pointer (the caller passes a FlashStrAddr). Subscripting one (s[i]) emits a
+    // FlashLoadPtr so a single shared subroutine can walk any flash string instead of the
+    // loop being inlined per call site.
+    private HashSet<string> flashStrPtrVars = new();
+
     // Arrays that are subscripted with at least one non-constant index anywhere in the current function.
     private HashSet<string> arraysWithVariableIndex = new();
 
