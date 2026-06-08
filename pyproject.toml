@@ -22,9 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 avr = ["pymcu-avr>=0.1.0a1"]
+arm = ["pymcu-arm>=0.1.0a1"]
 pic = ["pymcu-toolchain-pic>=0.1.0a1"]
-rp2040 = ["pymcu-rp2040>=0.1.0a1"]
-all = ["pymcu-avr>=0.1.0a1", "pymcu-toolchain-pic>=0.1.0a1", "pymcu-rp2040>=0.1.0a1"]
+all = ["pymcu-avr>=0.1.0a1", "pymcu-arm>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
