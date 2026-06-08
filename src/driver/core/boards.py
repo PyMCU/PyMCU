@@ -55,6 +55,23 @@ BOARD_GROUPS: dict[str, list[str]] = {
 }
 
 
+def default_toolchain(chip: str) -> str:
+    """Return the toolchain name for a given chip without requiring plugins installed."""
+    chip_lower = chip.lower()
+    if chip_lower.startswith("at"):
+        return "avr"
+    if chip_lower == "rp2040":
+        return "rp2040"
+    if chip_lower.startswith("pic"):
+        return "gputils"
+    return "avr"
+
+
 def default_programmer(chip: str) -> str:
     """Return the default programmer name for a given chip identifier."""
-    return "avrdude" if chip.lower().startswith("at") else "pk2cmd"
+    chip_lower = chip.lower()
+    if chip_lower.startswith("at"):
+        return "avrdude"
+    if chip_lower == "rp2040":
+        return "rp2040"
+    return "pk2cmd"

@@ -17,14 +17,14 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import questionary
 import tomlkit
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer
-from ..toolchains import get_toolchain_for_chip
+from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer, default_toolchain
 
 console = Console()
 
@@ -44,22 +44,12 @@ _DEFAULT_FREQ = 8_000_000
 _COMPAT_FLAVORS = ("micropython", "circuitpython")
 
 
-def _pick(title: str, options: list, labels: list[str] | None = None) -> int:
-    """Numbered interactive menu. Returns the 0-based index of the chosen item."""
-    display = labels or [str(o) for o in options]
-    console.print(f"\n  [bold]{title}[/bold]")
-    for i, label in enumerate(display, 1):
-        console.print(f"  [cyan][{i}][/cyan]  {label}")
-    console.print()
-    while True:
-        raw = Prompt.ask(f"  Select [1-{len(display)}]").strip()
-        try:
-            idx = int(raw) - 1
-            if 0 <= idx < len(display):
-                return idx
-        except ValueError:
-            pass
-        console.print(f"  [red]Enter a number between 1 and {len(display)}[/red]")
+def _select(message: str, choices: list, default=None):
+    """Arrow-key interactive select. Raises typer.Exit on Ctrl-C."""
+    answer = questionary.select(message, choices=choices, default=default).ask()
+    if answer is None:
+        raise typer.Exit(0)
+    return answer
 
 
 def _detect_pkg_manager() -> str | None:
@@ -211,26 +201,23 @@ def new(
             compat_options = [f for f in discovered if f in _COMPAT_FLAVORS]
             if not compat_options:
                 compat_options = list(_COMPAT_FLAVORS)
-            idx = _pick("Compatibility layer", compat_options)
-            flavor_choice = compat_options[idx]
-            console.print(f"  [dim]-> {flavor_choice}[/dim]")
+            flavor_choice = _select("Compatibility layer:", compat_options, default=compat_options[0])
             stdlib = [flavor_choice]
 
-        # 2. Board selection — drives chip and frequency
+        # 2. Board selection — two-level: manufacturer → board
         if board is None:
             manufacturers = list(BOARD_GROUPS.keys())
-            mfr_idx = _pick("Manufacturer", manufacturers)
-            mfr = manufacturers[mfr_idx]
-            console.print(f"  [dim]-> {mfr}[/dim]")
+            mfr = _select("Manufacturer:", manufacturers)
 
             board_keys = BOARD_GROUPS[mfr]
-            board_labels = [
-                f"{k:<22}  ({BOARD_CHIPS[k]}, {BOARD_FREQUENCIES.get(k, _DEFAULT_FREQ) // 1_000_000} MHz)"
+            board_choices = [
+                questionary.Choice(
+                    title=f"{k:<22}  ({BOARD_CHIPS[k]}, {BOARD_FREQUENCIES.get(k, _DEFAULT_FREQ) // 1_000_000} MHz)",
+                    value=k,
+                )
                 for k in board_keys
             ]
-            board_idx = _pick(f"{mfr} — select board", board_keys, labels=board_labels)
-            board = board_keys[board_idx]
-            console.print(f"  [dim]-> {board}[/dim]")
+            board = _select(f"Board:", board_choices)
 
         chip = BOARD_CHIPS.get(board)
         if chip is None:
@@ -283,7 +270,7 @@ def new(
             console.print(
                 "[yellow]No package manager (uv or poetry) found in PATH.[/yellow]"
             )
-            install_uv = Confirm.ask("Install uv? (recommended)", default=True)
+            install_uv = questionary.confirm("Install uv? (recommended)").ask()
             if install_uv:
                 with console.status("[bold green]Installing uv via pip..."):
                     result = subprocess.run(
@@ -310,16 +297,9 @@ def new(
     # ------------------------------------------------------------------
     # Toolchain + programmer
     # ------------------------------------------------------------------
-    try:
-        toolchain_instance = get_toolchain_for_chip(chip, console)
-        toolchain_name = toolchain_instance.get_name()
-    except ValueError:
-        console.print(
-            f"[yellow]Warning: No specific toolchain known for '{chip}'. "
-            "Defaulting to 'gputils'.[/yellow]"
-        )
-        toolchain_name = "gputils"
-
+    # Derive toolchain name from chip prefix — do not rely on plugins being
+    # installed at scaffold time (the user may not have pymcu[avr] yet).
+    toolchain_name = default_toolchain(chip)
     programmer_name = default_programmer(chip)
 
     def _pin_version(pkg_name: str, fallback: str) -> str:
@@ -333,7 +313,13 @@ def new(
     # (the `pymcuc` binary it ships is NOT a distribution); installing it with
     # the backend extra (e.g. [avr]) pulls the codegen backend and toolchain so
     # a fresh `pip install` of the generated project is self-contained.
-    compiler_extra = "[avr]" if chip.lower().startswith("at") else ""
+    _chip_lower = chip.lower()
+    if _chip_lower.startswith("at"):
+        compiler_extra = "[avr]"
+    elif _chip_lower == "rp2040":
+        compiler_extra = "[arm]"
+    else:
+        compiler_extra = ""
 
     def _pin_compiler() -> str:
         try:
@@ -485,7 +471,7 @@ def new(
 
         # ── Git init + hooks ──────────────────────────────────────────
         git_inited = False
-        if not no_git and Confirm.ask("Initialize git repository?", default=True):
+        if not no_git and questionary.confirm("Initialize git repository?").ask():
             try:
                 subprocess.run(
                     ["git", "init"], cwd=project_path, check=True, capture_output=True
@@ -514,7 +500,7 @@ def new(
                     hook_file.chmod(0o755)
 
         # ── Install dependencies ──────────────────────────────────────
-        if Confirm.ask(f"Install dependencies with {pkg_manager} now?", default=True):
+        if questionary.confirm(f"Install dependencies with {pkg_manager} now?").ask():
             with console.status(
                 f"[bold green]Installing dependencies via {pkg_manager}..."
             ):
