@@ -32,7 +32,7 @@ def version():
 
     # Define packages to check
     packages = [
-        ("pymcuc", "Compiler & CLI Driver"),
+        ("pymcu-compiler", "Compiler & CLI Driver"),
         ("pymcu-stdlib", "Standard Library"),
     ]
 
