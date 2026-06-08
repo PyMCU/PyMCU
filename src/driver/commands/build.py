@@ -30,8 +30,26 @@ from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
 from ..core.boards import BOARD_CHIPS
+from ..core.update_check import get_available_updates, get_installed_pymcu_versions
 
 console = Console()
+
+
+def _show_update_hint() -> None:
+    """Non-blocking: show one-liner if newer pymcu packages are available on PyPI."""
+    try:
+        installed = get_installed_pymcu_versions()
+        updates = get_available_updates(installed)
+        if not updates:
+            return
+        parts = [f"{pkg} {cur} → {new}" for pkg, (cur, new) in updates.items()]
+        console.print(
+            f"\n[dim]💡 Updates available: {', '.join(parts)}\n"
+            "   Run [bold]pymcu upgrade[/bold] to update.[/dim]"
+        )
+    except Exception:
+        pass  # never let update check break a successful build
+
 
 # CI Diagnostic logger — active only when --verbose / PYMCU_VERBOSE=1.
 import sys as _sys_for_diag
@@ -968,6 +986,7 @@ def build(
                 _diag_log(f"firmware.hex size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
 
         console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
+        _show_update_hint()
 
     except Exception as e:
         _diag_log(f"BUILD FAILED with exception: {type(e).__name__}: {e}", verbose=is_verbose)

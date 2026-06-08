@@ -115,6 +115,7 @@ from .commands.toolchain import toolchain_app
 from .commands.backend import backend_app
 from .commands.profile import profile
 from .commands.bench import bench
+from .commands.upgrade import upgrade
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -136,12 +137,34 @@ app.command()(build)
 app.command()(clean)
 app.command()(flash)
 app.command()(sync)
+app.command()(upgrade)
 app.command()(profile)
 app.command()(bench)
 app.add_typer(toolchain_app)
 app.add_typer(backend_app)
 
+def _force_utf8_console():
+    """Make stdout/stderr UTF-8 on Windows.
+
+    The driver prints box-drawing characters, em dashes and arrows via rich.
+    When output is a real terminal rich handles encoding, but when it is
+    redirected or piped (CI logs, VS Code task output, `pymcu build > log`)
+    Python falls back to the locale code page (cp1252), turning non-ASCII into
+    mojibake (e.g. '—' -> '?'). Reconfiguring to UTF-8 fixes every such string
+    at once instead of de-Unicode-ing them one by one. No-op on POSIX, where the
+    default is already UTF-8.
+    """
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def run_cli():
+    _force_utf8_console()
     _ensure_venv()
     app()
 
