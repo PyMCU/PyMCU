@@ -18,7 +18,7 @@ Heap allocation, exceptions, closures, and dynamic features do not exist.
 :::
 
 ```bash
-pip install pymcu-compiler   # one-line install — no Docker, no local build
+pip install --pre pymcu-compiler   # one-line install — no Docker, no local build
 ```
 
 ```python
@@ -99,7 +99,7 @@ PyMCU's primary, fully-supported target is the **AVR** family. The reference boa
 ### Raspberry Pi Pico (RP2040) — alpha
 
 The **RP2040** is supported through the {doc}`ARM backend <getting-started/installation>`
-(`pip install pymcu-arm`), which lowers PyMCU's IR to LLVM IR (`thumbv6m-none-eabi`,
+(`pip install --pre pymcu-arm`), which lowers PyMCU's IR to LLVM IR (`thumbv6m-none-eabi`,
 Cortex-M0+). It is **alpha** and intentionally minimal:
 
 | | RP2040 (alpha) |
