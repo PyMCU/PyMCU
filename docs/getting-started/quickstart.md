@@ -59,8 +59,9 @@ pymcu build
 Output:
 
 ```
-[pymcu] Compiling src/main.py → dist/firmware.hex
-[pymcu] Flash: 124 bytes  SRAM: 0 bytes  (ATmega328P)
+Flash: 36 / 32768 bytes (0% of program storage)
+  Done! ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:00:02
+Build successful! Artifacts in: dist/
 ```
 
 The compiled `.hex` file is in `dist/firmware.hex`.

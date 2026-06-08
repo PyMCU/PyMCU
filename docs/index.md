@@ -33,7 +33,7 @@ def main():
 ```
 
 ```bash
-pymcu build   # → dist/firmware.hex  (124 bytes flash, 0 bytes SRAM)
+pymcu build   # → dist/firmware.hex  (36 bytes flash, 0 bytes SRAM)
 pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
@@ -57,7 +57,7 @@ interpreter loop, no bytecode dispatch.
 :::
 
 :::{grid-item-card} Minimal flash footprint
-A blink program compiles to ~124 bytes. MicroPython needs ~256 KB before your code even starts.
+A blink program compiles to ~36 bytes of user code (142 bytes total firmware). MicroPython needs ~256 KB before your code even starts.
 :::
 
 :::{grid-item-card} Python syntax you already know

@@ -2,7 +2,7 @@
 
 Toggles the built-in LED on Arduino Uno (pin 13 / PB5) at 1 Hz.
 
-**Flash:** 124 bytes &ensp; **SRAM:** 0 bytes
+**Flash:** 56 bytes (user code) &ensp; **SRAM:** 0 bytes
 
 ---
 
