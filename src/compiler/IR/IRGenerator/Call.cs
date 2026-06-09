@@ -1370,8 +1370,16 @@ public partial class IRGenerator
             }
 
             bool isForceInlined = func != null && !func.IsInline;
+            // @inline expansions are bracketed with a *tagged* marker so the
+            // generic parameterized-outlining pass (Optimizer) can collapse
+            // repeated copies that differ only in folded constants. The tag is
+            // stripped before IR is handed to any backend, so codegen is
+            // unaffected and the non-@inline markers above keep their meaning.
+            bool isInlineMethod = func != null && func.IsInline;
             if (isForceInlined)
                 Emit(new InlineExpansionMarker(callee, false));
+            else if (isInlineMethod)
+                Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, false));
 
             inlineDepth++;
             string savedPrefix = currentInlinePrefix;
@@ -1697,6 +1705,8 @@ public partial class IRGenerator
 
             if (isForceInlined)
                 Emit(new InlineExpansionMarker(callee, true));
+            else if (isInlineMethod)
+                Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, true));
 
             if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
                 lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
