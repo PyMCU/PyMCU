@@ -1083,9 +1083,33 @@ public partial class IRGenerator
                     Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
                     return;
                 }
-                Temporary tmp = MakeTemp();
+                // Select the decimal formatter by the value's width/signedness so a
+                // uint16/uint32 argument is not silently truncated to 8 bits.
+                DataType argType = val switch
+                {
+                    Variable v2 => v2.Type,
+                    Temporary t2 => t2.Type,
+                    Constant cc => cc.Value < 0 ? DataType.INT16
+                                 : cc.Value <= 0xFF ? DataType.UINT8
+                                 : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+                    _ => DataType.UINT8,
+                };
+                (string decBase, DataType tmpType) = argType switch
+                {
+                    DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
+                    DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
+                    DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
+                    DataType.INT32 => ("uart_write_decimal_i16", DataType.INT16),
+                    _ => ("uart_write_decimal_u8", DataType.UINT8),
+                };
+                string decFn = ResolveCallee(decBase);
+                if (decFn == decBase)
+                    foreach (var fnName in functionReturnTypes.Keys)
+                        if (fnName.EndsWith(decBase, StringComparison.Ordinal)) { decFn = fnName; break; }
+
+                Temporary tmp = MakeTemp(tmpType);
                 Emit(new Copy(val, tmp));
-                Emit(new Call(decimalWriteFn, new List<Val> { tmp }, tmp));
+                Emit(new Call(decFn, new List<Val> { tmp }, tmp));
             }
 
             if (posArgs.Count == 0)
