@@ -347,11 +347,49 @@ public partial class IRGenerator
             else
             {
                 var argCount = expr.Args.Count(a => a is not KeywordArgExpr);
-                foreach (var kvp in from kvp in inlineFunctions where kvp.Key.StartsWith(callee + "___") let candParams = kvp.Value.Params.Count<Param>(p => p.Name != "self") where candParams == argCount select kvp)
+
+                // 1) Existing behaviour: first overload whose parameter count equals the
+                //    number of supplied positional arguments exactly.
+                string? pick = null;
+                foreach (var kvp in inlineFunctions)
                 {
-                    callee = kvp.Key;
-                    break;
+                    if (!kvp.Key.StartsWith(callee + "___")) continue;
+                    if (kvp.Value.Params.Count(p => p.Name != "self") == argCount) { pick = kvp.Key; break; }
                 }
+
+                // 2) Default-aware fallback. When no exact-arity overload exists — e.g. a
+                //    one-arg Pin(14) against overloads whose trailing params have defaults —
+                //    accept an overload that defaults the missing trailing params, and prefer
+                //    the one whose leading parameter types match the argument types so the
+                //    int literal selects const[uint8], not the const[str] overload. Falls
+                //    back to the first arity-compatible overload. This only runs for calls
+                //    that previously resolved to nothing, so existing resolutions (AVR and
+                //    ARM alike) are unchanged.
+                if (pick is null)
+                {
+                    static string NormType(string t)
+                        => t.StartsWith("const[") && t.EndsWith("]") ? t[6..^1] : t;
+
+                    string? typed = null, anyArity = null;
+                    foreach (var kvp in inlineFunctions)
+                    {
+                        if (!kvp.Key.StartsWith(callee + "___")) continue;
+                        var ps = kvp.Value.Params.Where(p => p.Name != "self").ToList();
+                        if (argCount > ps.Count) continue;
+
+                        bool restDefaulted = true;
+                        for (int pi = argCount; pi < ps.Count; pi++)
+                            if (ps[pi].DefaultValue is null) { restDefaulted = false; break; }
+                        if (!restDefaulted) continue;
+
+                        anyArity ??= kvp.Key;
+                        string lead = string.Join("_", ps.Take(argCount).Select(p => NormType(p.Type)));
+                        if (argCount == 0 || lead == suffix) { typed = kvp.Key; break; }
+                    }
+                    pick = typed ?? anyArity;
+                }
+
+                if (pick != null) callee = pick;
             }
         }
 
