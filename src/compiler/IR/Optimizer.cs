@@ -510,6 +510,12 @@ private static Function CloneFunction(Function f)
             case BinaryOp.BitXor when k == 0: return Keep();
             case BinaryOp.Mul when k == 1: return Keep();
             case BinaryOp.Mul when k == 0: return Zero();
+            // Strength-reduce a power-of-two multiply to a shift: x * 2^n -> x << n.
+            // The backend lowers a constant shift to byte moves for multiples of 8
+            // (e.g. hi * 256 in the ADC read becomes a high-byte placement instead
+            // of a 16-bit MUL chain).
+            case BinaryOp.Mul when k > 1 && (k & (k - 1)) == 0:
+                return new Binary(BinaryOp.LShift, other, new Constant(System.Numerics.BitOperations.TrailingZeroCount(k)), b.Dst);
             case BinaryOp.BitAnd when k == 0: return Zero();
             case BinaryOp.BitAnd when fullMask >= 0 && (k & fullMask) == fullMask: return Keep();
             // Non-commutative: identity only when the constant is the right operand.
