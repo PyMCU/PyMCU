@@ -33,12 +33,11 @@ class MAX7219:
     @inline
     def _write_reg(self, reg: uint8, val: uint8):
         # Send one MAX7219 register write: CS low, addr byte, data byte, CS high.
+        # Routes to a real subroutine so the many register writes share one copy.
         match __CHIP__.arch:
             case "avr":
-                self._spi.select()
-                self._spi.write(reg)
-                self._spi.write(val)
-                self._spi.deselect()
+                from pymcu.drivers._max7219.spi import max7219_write_reg
+                max7219_write_reg(reg, val)
 
     @inline
     def init(self):

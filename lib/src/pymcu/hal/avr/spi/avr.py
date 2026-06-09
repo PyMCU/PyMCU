@@ -41,17 +41,14 @@ def spi_init():
     SPCR.value = 0x50
 
 
-@inline
 def spi_select():
     PORTB[2] = 0  # SS low -- activate device
 
 
-@inline
 def spi_deselect():
     PORTB[2] = 1  # SS high -- deactivate device
 
 
-@inline
 def spi_transfer(data: uint8) -> uint8:
     # Writing SPDR starts the 8-clock transfer; reading it returns received byte.
     SPDR.value = data          # OUT 0x2E, Rn  -- correct full-byte write
