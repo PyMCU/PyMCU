@@ -65,7 +65,6 @@ def i2c_init():
     TWCR.value = 0x04   # TWEN(2) = 1: enable TWI (takes over PC4/PC5 pins)
 
 
-@inline
 def i2c_start() -> uint8:
     # Transmit START condition: TWINT(7)|TWSTA(5)|TWEN(2) = 0xA4
     TWCR.value = 0xA4
@@ -75,14 +74,12 @@ def i2c_start() -> uint8:
     return status
 
 
-@inline
 def i2c_stop():
     # Transmit STOP condition: TWINT(7)|TWSTO(4)|TWEN(2) = 0x94
     # No need to wait; hardware releases the bus automatically
     TWCR.value = 0x94
 
 
-@inline
 def i2c_write(data: uint8) -> uint8:
     # Load byte into data register then kick off transmission
     TWDR.value = data
@@ -93,7 +90,6 @@ def i2c_write(data: uint8) -> uint8:
     return status
 
 
-@inline
 def i2c_read_ack() -> uint8:
     # Read one byte and send ACK (more bytes to follow)
     TWCR.value = 0xC4   # TWINT(7)|TWEA(6)|TWEN(2) - TWEA=1 -- generate ACK
@@ -103,7 +99,6 @@ def i2c_read_ack() -> uint8:
     return result
 
 
-@inline
 def i2c_read_nack() -> uint8:
     # Read last byte and send NACK (signals end of transfer to slave)
     TWCR.value = 0x84   # TWINT(7)|TWEN(2) - TWEA=0 -- generate NACK
