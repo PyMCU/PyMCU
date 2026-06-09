@@ -14,8 +14,14 @@
 # transactions. (A function that receives the ZCA I2C instance MUST be inlined -- the
 # instance has no runtime representation -- so the repetitive work has to live in a
 # helper that takes only primitives.)
-from pymcu.types import uint8, inline
+from pymcu.types import uint8, const, inline
 from pymcu.hal.avr.i2c.avr import i2c_start, i2c_write, i2c_stop
+
+
+# Standard SSD1306 128x64 init sequence, flash-resident (const -> LPM lookup).
+# Driven by a runtime loop in _ssd1306_init so the 25 commands cost one shared
+# call + a 25-byte table instead of 25 inlined LDI/RCALL sends.
+_SSD1306_INIT: const[uint8[25]] = [0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0x8D, 0x14, 0x20, 0x00, 0xA1, 0xC8, 0xDA, 0x12, 0x81, 0xCF, 0xD9, 0xF1, 0xDB, 0x40, 0xA4, 0xA6, 0xAF]
 
 
 def _ssd1306_cmd(addr: uint8, cmd: uint8):
@@ -46,34 +52,18 @@ def ssd1306_send_data(i2c: uint8, addr: uint8, dat: uint8):
     _ssd1306_data(addr, dat)
 
 
+def _ssd1306_init(addr: uint8):
+    # Loop the flash-resident init table: one shared command path for all 25 bytes.
+    i: uint8 = 0
+    while i < 25:
+        _ssd1306_cmd(addr, _SSD1306_INIT[i])
+        i = i + 1
+
+
 @inline
 def ssd1306_init_seq(i2c: uint8, addr: uint8):
-    # Standard SSD1306 128x64 initialization sequence.
-    _ssd1306_cmd(addr, 0xAE)
-    _ssd1306_cmd(addr, 0xD5)
-    _ssd1306_cmd(addr, 0x80)
-    _ssd1306_cmd(addr, 0xA8)
-    _ssd1306_cmd(addr, 0x3F)
-    _ssd1306_cmd(addr, 0xD3)
-    _ssd1306_cmd(addr, 0x00)
-    _ssd1306_cmd(addr, 0x40)
-    _ssd1306_cmd(addr, 0x8D)
-    _ssd1306_cmd(addr, 0x14)
-    _ssd1306_cmd(addr, 0x20)
-    _ssd1306_cmd(addr, 0x00)
-    _ssd1306_cmd(addr, 0xA1)
-    _ssd1306_cmd(addr, 0xC8)
-    _ssd1306_cmd(addr, 0xDA)
-    _ssd1306_cmd(addr, 0x12)
-    _ssd1306_cmd(addr, 0x81)
-    _ssd1306_cmd(addr, 0xCF)
-    _ssd1306_cmd(addr, 0xD9)
-    _ssd1306_cmd(addr, 0xF1)
-    _ssd1306_cmd(addr, 0xDB)
-    _ssd1306_cmd(addr, 0x40)
-    _ssd1306_cmd(addr, 0xA4)
-    _ssd1306_cmd(addr, 0xA6)
-    _ssd1306_cmd(addr, 0xAF)
+    # Standard SSD1306 128x64 initialization sequence (flash table + loop).
+    _ssd1306_init(addr)
 
 
 @inline
