@@ -1338,6 +1338,10 @@ private static Function CloneFunction(Function f)
 
     private const int MaxUnrollTripCount = 16;
 
+    // Max size increase (in IR instructions) allowed when unrolling a constant loop.
+    // Tiny bodies still unroll (loop overhead dominates); heavy bodies stay as loops.
+    private const int UnrollSizeBudget = 64;
+
     private static bool UnrollConstantLoops(Function func)
     {
         bool anyUnrolled = false;
@@ -1393,6 +1397,13 @@ private static Function CloneFunction(Function f)
 
                 int tripCount = tripN - initValue;
                 if (tripCount <= 0 || tripCount > MaxUnrollTripCount) continue;
+
+                // Size guard: unrolling replaces a (body + ~5 instr overhead) loop with
+                // tripCount copies of the body, so the size delta is ~(tripCount-1)*body.
+                // Only unroll when that increase is small — duplicating a heavy body (e.g.
+                // a per-iteration I2C/SPI write) explodes flash, the opposite of the intent.
+                int realBody = loopBody.Count(instr => instr is not (Label or DebugLine));
+                if ((tripCount - 1) * realBody > UnrollSizeBudget) continue;
 
                 var bodyLabels = new HashSet<string>(loopBody.OfType<Label>().Select(l => l.Name));
                 var unrolled = new List<Instruction>();

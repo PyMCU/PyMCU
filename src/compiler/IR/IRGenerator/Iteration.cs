@@ -38,6 +38,11 @@ public partial class IRGenerator
         return -1;
     }
 
+    // `for c in <const[str]>` unrolls at or below this length (each char a compile-time
+    // constant); longer strings emit a runtime loop over a flash table instead so a heavy
+    // body is not duplicated per character.
+    private const int StringForLoopUnrollLimit = 8;
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
@@ -62,6 +67,38 @@ public partial class IRGenerator
 
             if (GetStr(iter) is string strOpt)
             {
+                // Short strings unroll (each char a compile-time constant) — smallest code
+                // and preserves bodies that need a constant loop variable. Longer strings
+                // emit a RUNTIME loop that reads each byte from a flash table, so the body
+                // is generated ONCE instead of N times. This keeps idiomatic `for c in s`
+                // from exploding when the body is heavy (e.g. an I2C/SPI write per char).
+                if (strOpt.Length > StringForLoopUnrollLimit)
+                {
+                    string sFlash = InternStringAsFlash(strOpt);
+                    var sCharVar = new Variable(varKey, DataType.UINT8);
+                    var sIdxVar = new Variable(varKey + "__si", DataType.UINT8);
+
+                    constantVariables.Remove(varKey);
+                    variableTypes[varKey] = DataType.UINT8;
+
+                    Emit(new Copy(new Constant(0), sIdxVar));
+                    string sStart = MakeLabel();
+                    string sEnd = MakeLabel();
+                    loopStack.Add(new LoopLabels { ContinueLabel = sStart, BreakLabel = sEnd });
+
+                    Emit(new Label(sStart));
+                    Emit(new JumpIfGreaterOrEqual(sIdxVar, new Constant(strOpt.Length), sEnd));
+                    Emit(new ArrayLoadFlash(sFlash, sIdxVar, sCharVar));
+
+                    VisitStatement(stmt.Body);
+
+                    Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, sIdxVar, new Constant(1)));
+                    Emit(new Jump(sStart));
+                    Emit(new Label(sEnd));
+                    loopStack.RemoveAt(loopStack.Count - 1);
+                    return;
+                }
+
                 foreach (char c in strOpt)
                 {
                     constantVariables[varKey] = (int)c;
