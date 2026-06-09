@@ -90,6 +90,17 @@ def i2c_write(data: uint8) -> uint8:
     return status
 
 
+def i2c_write_byte(addr: uint8, data: uint8):
+    # One unconditional single-byte transaction (START, SLA+W, data, STOP) -- exactly the
+    # sequence machine.I2C.writeto used to inline, now a shared real subroutine so callers
+    # that send many bytes (display/sensor drivers) emit one RCALL per byte, not the whole
+    # transaction inline. (Distinct from i2c_write_to, which ACK-checks and skips data on NACK.)
+    i2c_start()
+    i2c_write(addr << 1)
+    i2c_write(data)
+    i2c_stop()
+
+
 def i2c_read_ack() -> uint8:
     # Read one byte and send ACK (more bytes to follow)
     TWCR.value = 0xC4   # TWINT(7)|TWEA(6)|TWEN(2) - TWEA=1 -- generate ACK
