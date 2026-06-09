@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using System.Text;
 using PyMCU.IR.CFG;
 
 namespace PyMCU.IR;
@@ -43,6 +44,17 @@ public static class Optimizer
 
         foreach (var func in optimized.Functions)
             OptimizeFunction(func, globalNames);
+
+        // Parameterized outlining of @inline expansions. Runs after the cleanup
+        // passes so the folded constants are visible (addresses/flags are baked,
+        // not live-in locals) and the regions are already dead-store-free; the
+        // freshly synthesised subroutines are then optimised individually.
+        // See OutlineInlineExpansions for the full contract.
+        var preOutline = new HashSet<string>(optimized.Functions.Select(f => f.Name));
+        OutlineInlineExpansions(optimized, globalNames);
+        foreach (var func in optimized.Functions)
+            if (!preOutline.Contains(func.Name))
+                OptimizeFunction(func, globalNames);
 
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
@@ -1558,5 +1570,552 @@ private static Function CloneFunction(Function f)
             JumpIfBitClear j => new JumpIfBitClear(j.Source, j.Bit, R(j.Target)),
             _ => instr,
         };
+    }
+
+    // =====================================================================
+    //  Parameterized outlining of @inline expansions  (generic / target-agnostic)
+    //
+    //  An @inline method on a zero-cost-abstraction object must be inlined (the
+    //  receiver has no runtime representation), so a driver that issues e.g.
+    //  command(0x28), command(0x0C), ... force-inlines one copy per call, each
+    //  copy differing only in the *folded* constant.  This pass detects those
+    //  repeated copies and collapses them into a single real subroutine whose
+    //  parameters are exactly the constants that vary across the call sites; every
+    //  site becomes an ordinary Call.
+    //
+    //  The frontend brackets each @inline expansion with a marker whose FuncName
+    //  carries InlineMarkerTag.  For each *innermost* tagged region this pass:
+    //    1. canonicalises it (drops debug/labels, runs region-local dead-store
+    //       elimination, alpha-renames region-internal variables) so two
+    //       expansions of the same method become byte-identical modulo constants;
+    //    2. groups structurally-identical regions and turns the constants that
+    //       vary across the group into parameters (invariant ones stay baked);
+    //    3. synthesises a void subroutine and rewrites each region to a Call.
+    //  It iterates to a fixpoint so that collapsing an inner expansion can expose
+    //  an outer one, then strips every remaining tagged marker.
+    //
+    //  Contracts:
+    //   * Conservative — anything it cannot prove safe (control flow, InlineAsm
+    //     timing, memory-aliasing loads/stores, GC, exceptions, non-global live-in,
+    //     any live-out, >4 varying constants, or a net size increase) is left
+    //     exactly as the inliner produced it.
+    //   * Idempotent — afterwards no tagged markers remain, so re-running is a
+    //     no-op.
+    //   * Target-independent — emits only standard Function/Call IR; no backend
+    //     needs to know this pass ran.
+    // =====================================================================
+    public const string InlineMarkerTag = "@inl:";
+
+    private static bool IsInlineTag(Instruction i) =>
+        i is InlineExpansionMarker m &&
+        m.FuncName.StartsWith(InlineMarkerTag, StringComparison.Ordinal);
+
+    // Only side-effect-free arithmetic plus Call may be moved into a subroutine.
+    private static bool IsOutlineable(Instruction i) =>
+        i is Copy or Binary or Unary or Bitcast or Call;
+
+    private static string? NameOf(Val? v) => v switch
+    {
+        Variable va => va.Name,
+        Temporary t => t.Name,
+        _ => null,
+    };
+
+    private static string? JumpTargetOf(Instruction i) => i switch
+    {
+        Jump j => j.Target,
+        JumpIfZero j => j.Target,
+        JumpIfNotZero j => j.Target,
+        JumpIfEqual j => j.Target,
+        JumpIfNotEqual j => j.Target,
+        JumpIfLessThan j => j.Target,
+        JumpIfLessOrEqual j => j.Target,
+        JumpIfGreaterThan j => j.Target,
+        JumpIfGreaterOrEqual j => j.Target,
+        JumpIfBitSet j => j.Target,
+        JumpIfBitClear j => j.Target,
+        _ => null,
+    };
+
+    private sealed class RegionCanon
+    {
+        public required Function Func;
+        public required int Start;          // index of the begin marker
+        public required int End;            // index of the end marker
+        public required string Callee;
+        public required List<Instruction> Core;          // post-DCE region body
+        public required Dictionary<string, int> Rename;  // local name -> canonical id
+        public required HashSet<string> Inputs;          // names that are live-in locals
+        public required List<Val> InputVals;             // live-in vals, canonical order
+        public required string Signature;                // constants blanked
+        public required List<long> HoleValues;           // one per blanked constant
+        public required List<DataType> HoleTypes;        // inferred slot type
+    }
+
+    private static void OutlineInlineExpansions(ProgramIR program, HashSet<string> globalNames)
+    {
+        int counter = 0;
+        // Fixpoint. Each step either outlines a viable group (rewriting its sites
+        // to Calls) or, when no group is viable, "promotes" the current innermost
+        // regions by dropping their boundary markers — which de-nests them and
+        // exposes the enclosing expansion as the next innermost candidate. Both
+        // operations strictly reduce the tagged-marker count, so this terminates;
+        // the bound is a safety net.
+        int budget = 100000;
+        while (budget-- > 0)
+        {
+            if (OutlineOneRound(program, globalNames, ref counter)) continue;
+            if (PromoteInnermostRegions(program)) continue;
+            break;
+        }
+
+        // Strip any stragglers; un-outlined @inline regions simply stay inline.
+        // After this the IR holds no tagged markers (idempotent) and backends only
+        // ever see the untouched non-@inline markers.
+        foreach (var func in program.Functions)
+            func.Body.RemoveAll(IsInlineTag);
+    }
+
+    private static bool OutlineOneRound(ProgramIR program, HashSet<string> globalNames, ref int counter)
+    {
+        // Every jump target in the program, so a region-internal label that some
+        // jump relies on is never dropped.
+        var jumpTargets = new HashSet<string>();
+        foreach (var func in program.Functions)
+            foreach (var instr in func.Body)
+                if (JumpTargetOf(instr) is string t) jumpTargets.Add(t);
+
+        var paramTypeMemo = new Dictionary<string, List<DataType>>();
+        var groups = new Dictionary<string, List<RegionCanon>>();
+        foreach (var func in program.Functions)
+            foreach (var (start, end, callee) in FindInnermostTaggedRegions(func))
+            {
+                var canon = TryCanonicalizeRegion(program, func, start, end, callee,
+                    globalNames, jumpTargets, paramTypeMemo);
+                if (canon == null) continue;
+                string key = callee + "" + canon.Signature;
+                if (!groups.TryGetValue(key, out var list))
+                    groups[key] = list = new List<RegionCanon>();
+                list.Add(canon);
+            }
+
+        foreach (var kv in groups)
+            if (kv.Value.Count >= 2 && TryOutlineGroup(program, kv.Value, ref counter))
+                return true;
+        return false;
+    }
+
+    // Drop the boundary markers of every innermost tagged region, promoting its
+    // body into the enclosing expansion (which becomes innermost next round).
+    // Returns whether anything was removed.
+    private static bool PromoteInnermostRegions(ProgramIR program)
+    {
+        bool any = false;
+        foreach (var func in program.Functions)
+        {
+            var regions = FindInnermostTaggedRegions(func);
+            if (regions.Count == 0) continue;
+            var drop = new List<int>();
+            foreach (var (start, end, _) in regions) { drop.Add(start); drop.Add(end); }
+            drop.Sort();
+            for (int i = drop.Count - 1; i >= 0; i--)
+                func.Body.RemoveAt(drop[i]);
+            any = true;
+        }
+        return any;
+    }
+
+    // Tagged regions that contain no nested tagged region (process these first;
+    // outlining them exposes the enclosing ones on the next fixpoint round).
+    private static List<(int start, int end, string callee)> FindInnermostTaggedRegions(Function func)
+    {
+        var body = func.Body;
+        var open = new List<int>();                       // stack of begin indices
+        var calleeOf = new Dictionary<int, string>();
+        var hasNested = new HashSet<int>();               // begin had a nested begin
+        var regions = new List<(int, int, string)>();
+        for (int i = 0; i < body.Count; i++)
+        {
+            if (body[i] is not InlineExpansionMarker m) continue;
+            if (!m.FuncName.StartsWith(InlineMarkerTag, StringComparison.Ordinal)) continue;
+            if (!m.IsEnd)
+            {
+                if (open.Count > 0) hasNested.Add(open[^1]);
+                open.Add(i);
+                calleeOf[i] = m.FuncName.Substring(InlineMarkerTag.Length);
+            }
+            else
+            {
+                if (open.Count == 0) continue;            // unbalanced; skip defensively
+                int start = open[^1];
+                open.RemoveAt(open.Count - 1);
+                if (!hasNested.Contains(start))
+                    regions.Add((start, i, calleeOf[start]));
+            }
+        }
+        return regions;
+    }
+
+    private static RegionCanon? TryCanonicalizeRegion(
+        ProgramIR program, Function func, int start, int end, string callee,
+        HashSet<string> globalNames, HashSet<string> jumpTargets,
+        Dictionary<string, List<DataType>> paramTypeMemo)
+    {
+        var body = func.Body;
+        var raw = new List<Instruction>();
+        var droppedLabels = new List<string>();
+        for (int i = start + 1; i < end; i++)
+        {
+            switch (body[i])
+            {
+                case DebugLine: continue;
+                case Label lab: droppedLabels.Add(lab.Name); continue;
+                case InlineExpansionMarker: return null;
+                default:
+                    if (!IsOutlineable(body[i])) return null;
+                    if (RegionHasUnsupportedVal(body[i])) return null;
+                    raw.Add(body[i]);
+                    break;
+            }
+        }
+        if (raw.Count == 0) return null;
+        foreach (var l in droppedLabels)
+            if (jumpTargets.Contains(l)) return null;
+
+        // Live-in / closed-region classification (on the pre-DCE body).
+        // A local read before it is defined in the region is a *live-in input*:
+        // it becomes a parameter and is passed by value at each call site. A
+        // local defined in the region whose value is read after the region is a
+        // live-out — the region is not closed, so we bail.
+        var defined = new HashSet<string>();
+        var liveIn = new HashSet<string>();
+        var liveInVal = new Dictionary<string, Val>();
+        foreach (var ins in raw)
+        {
+            RegisterUses(ins, v =>
+            {
+                if (NameOf(v) is string n && !defined.Contains(n) && !liveIn.Contains(n))
+                {
+                    liveIn.Add(n);
+                    liveInVal[n] = v;
+                }
+            });
+            if (NameOf(GetDst(ins)) is string d) defined.Add(d);
+        }
+        // Globals flow in/out by name; only *locals* may be inputs or escape.
+        var inputs = new HashSet<string>();
+        foreach (var n in liveIn)
+        {
+            if (globalNames.Contains(n)) continue;     // read-only global, referenced directly
+            if (defined.Contains(n)) return null;  // mixed role
+            inputs.Add(n);
+        }
+        // A region def escapes only if some path after the region reads it before
+        // redefining it. The inliner reuses names (e.g. inline2._nibble.base) across
+        // sibling expansions, so a plain "read anywhere outside" test gives false
+        // positives — the next expansion rewrites the name before reading it. Walk
+        // forward from the region end and decide per name.
+        foreach (var d in defined)
+        {
+            if (globalNames.Contains(d)) return null;
+            if (IsLiveAfter(body, end, d)) return null;
+        }
+
+        // Region-local dead-store elimination (removes folded-but-unused copies
+        // the inliner leaves behind, so sibling expansions canonicalise alike).
+        var core = new List<Instruction>(raw);
+        for (bool removed = true; removed;)
+        {
+            removed = false;
+            var readsAfter = new HashSet<string>();
+            for (int i = core.Count - 1; i >= 0; i--)
+            {
+                var ins = core[i];
+                bool pure = ins is Copy or Binary or Unary or Bitcast;
+                if (pure && NameOf(GetDst(ins)) is string dn && !readsAfter.Contains(dn))
+                {
+                    core.RemoveAt(i);
+                    removed = true;
+                    break;
+                }
+                RegisterUses(ins, v => { if (NameOf(v) is string n) readsAfter.Add(n); });
+            }
+        }
+        if (core.Count == 0) return null;
+
+        // Canonical local rename: id by first appearance (uses before dst, so an
+        // input gets a lower id than the value it feeds — and the ordering is
+        // identical for two structurally-equal regions).
+        var rename = new Dictionary<string, int>();
+        int next = 0;
+        void See(Val? v)
+        {
+            if (NameOf(v) is string n && !globalNames.Contains(n) && !rename.ContainsKey(n))
+                rename[n] = next++;
+        }
+        foreach (var ins in core)
+        {
+            RegisterUses(ins, See);
+            See(GetDst(ins));
+        }
+
+        // An input whose only uses were dead-store-eliminated no longer appears;
+        // keep only inputs that survive in the canonical body.
+        inputs.RemoveWhere(n => !rename.ContainsKey(n));
+        // Inputs in canonical (id) order, with the actual val each site passes.
+        var inputOrder = inputs.OrderBy(n => rename[n]).ToList();
+        var inputVals = inputOrder.Select(n => liveInVal[n]).ToList();
+
+        var sig = new StringBuilder();
+        var holeVals = new List<long>();
+        var holeTypes = new List<DataType>();
+        foreach (var ins in core)
+            EmitCanon(program, ins, rename, inputs, sig, holeVals, holeTypes, paramTypeMemo);
+
+        return new RegionCanon
+        {
+            Func = func, Start = start, End = end, Callee = callee,
+            Core = core, Rename = rename, Inputs = inputs, InputVals = inputVals,
+            Signature = sig.ToString(), HoleValues = holeVals, HoleTypes = holeTypes,
+        };
+    }
+
+    // True if `name` may be read after `endIdx` before being redefined. A straight
+    // forward walk suffices for the straight-line driver sequences we outline; any
+    // control flow before resolution is treated conservatively as live.
+    private static bool IsLiveAfter(List<Instruction> body, int endIdx, string name)
+    {
+        for (int i = endIdx + 1; i < body.Count; i++)
+        {
+            var ins = body[i];
+            bool reads = false;
+            RegisterUses(ins, v => { if (NameOf(v) == name) reads = true; });
+            if (reads) return true;
+            if (NameOf(GetDst(ins)) == name) return false;     // redefined before any read
+            if (JumpTargetOf(ins) != null) return true;        // branch -> conservative
+        }
+        return false;
+    }
+
+    // Reject vals the outliner does not model (floats, flash/array/funcref refs).
+    private static bool RegionHasUnsupportedVal(Instruction ins)
+    {
+        bool bad = false;
+        void Check(Val? v)
+        {
+            if (v is FloatConstant or ArrayBase or FunctionRef or FlashStrAddr) bad = true;
+        }
+        Check(GetDst(ins));
+        RegisterUses(ins, Check);
+        return bad;
+    }
+
+    // Serialise one instruction with constants blanked to '#'.  EmitCanon and
+    // RebuildOutlined MUST visit constant-bearing slots in the SAME order.
+    private static void EmitCanon(
+        ProgramIR program, Instruction ins, Dictionary<string, int> rename, HashSet<string> inputs,
+        StringBuilder sig, List<long> holeVals, List<DataType> holeTypes,
+        Dictionary<string, List<DataType>> paramTypeMemo)
+    {
+        void Slot(Val v, DataType ctx)
+        {
+            if (v is Constant c) { sig.Append('#'); holeVals.Add(c.Value); holeTypes.Add(ctx); }
+            else sig.Append(CanonTok(v, rename, inputs));
+        }
+
+        sig.Append(CanonTok(GetDst(ins), rename, inputs)).Append('=');
+        switch (ins)
+        {
+            case Copy c: sig.Append("cp,"); Slot(c.Src, GetDataType(c.Dst)); break;
+            case Bitcast bc: sig.Append("bc,"); Slot(bc.Src, GetDataType(bc.Dst)); break;
+            case Unary u: sig.Append("un").Append((int)u.Op).Append(','); Slot(u.Src, GetDataType(u.Dst)); break;
+            case Binary b:
+                sig.Append("bin").Append((int)b.Op).Append(',');
+                Slot(b.Src1, GetDataType(b.Dst));
+                Slot(b.Src2, GetDataType(b.Dst));
+                break;
+            case Call cl:
+                sig.Append("call:").Append(cl.FunctionName).Append('/').Append(cl.Args.Count).Append(',');
+                for (int i = 0; i < cl.Args.Count; i++)
+                    Slot(cl.Args[i], CalleeParamType(program, cl.FunctionName, i, paramTypeMemo));
+                break;
+        }
+        sig.Append(';');
+    }
+
+    private static string CanonTok(Val? v, Dictionary<string, int> rename, HashSet<string> inputs)
+    {
+        string Tok(string name) =>
+            rename.TryGetValue(name, out int id) ? (inputs.Contains(name) ? "p" + id : "t" + id)
+                                                 : "G:" + name;   // read-only global
+        return v switch
+        {
+            null => "_",
+            NoneVal => "_",
+            Variable va => Tok(va.Name),
+            Temporary t => Tok(t.Name),
+            MemoryAddress m => "M" + m.Address + "." + (int)m.Type,
+            _ => "?" + v.GetType().Name,
+        };
+    }
+
+    private static DataType CalleeParamType(
+        ProgramIR program, string callee, int idx, Dictionary<string, List<DataType>> memo)
+    {
+        if (!memo.TryGetValue(callee, out var types))
+        {
+            types = new List<DataType>();
+            var f = program.Functions.FirstOrDefault(x => x.Name == callee);
+            if (f != null)
+                foreach (var pn in f.Params)
+                {
+                    DataType t = DataType.UNKNOWN;
+                    foreach (var ins in f.Body)
+                    {
+                        if (NameOf(GetDst(ins)) == pn) { t = GetDataType(GetDst(ins)); if (t != DataType.UNKNOWN) break; }
+                        DataType found = DataType.UNKNOWN;
+                        RegisterUses(ins, v => { if (NameOf(v) == pn) { var dt = GetDataType(v); if (dt != DataType.UNKNOWN) found = dt; } });
+                        if (found != DataType.UNKNOWN) { t = found; break; }
+                    }
+                    types.Add(t);
+                }
+            memo[callee] = types;
+        }
+        return idx < types.Count ? types[idx] : DataType.UNKNOWN;
+    }
+
+    // Target-agnostic word-cost proxy for the size guard.
+    private static int InstrCost(Instruction i) => i switch
+    {
+        Call c => 1 + c.Args.Count,
+        _ => 1,
+    };
+
+    private static bool TryOutlineGroup(ProgramIR program, List<RegionCanon> regions, ref int counter)
+    {
+        var r0 = regions[0];
+        int nHoles = r0.HoleValues.Count;
+
+        // Which blanked constants actually vary across the call sites.
+        var variant = new List<int>();
+        for (int k = 0; k < nHoles; k++)
+        {
+            long v0 = r0.HoleValues[k];
+            if (regions.Any(r => r.HoleValues[k] != v0)) variant.Add(k);
+        }
+        // Live-in inputs (one parameter each) come first, then the varying
+        // constants.  Inputs and structure are identical across the group by
+        // construction (the signature encodes them), so r0 defines the layout.
+        var inputNames = r0.InputVals.Select(NameOf).ToList();
+        int nInputs = inputNames.Count;
+        int nParams = nInputs + variant.Count;
+        if (nParams is 0 or > 4) return false;                // nothing to share / arg limit
+
+        int nSites = regions.Count;
+        if (r0.Core.Count < 2) return false;
+        // Net size proof.  Cost is a target-agnostic word proxy: a Call costs
+        // 1 + argc (load each argument, then the call), every other instruction 1.
+        //   inline  = nSites * bodyCost
+        //   outline = bodyCost + 1 (ret) + nSites * (nParams + 1 call)
+        long bodyCost = r0.Core.Sum(InstrCost);
+        long inlineTotal = (long)nSites * bodyCost;
+        long outlineTotal = bodyCost + 1 + (long)nSites * (nParams + 1);
+        if (outlineTotal >= inlineTotal) return false;
+
+        // Parameter types.  Inputs take their val's type; varying constants take
+        // the inferred slot type widened to cover the actual values.
+        var inputParamIndex = new Dictionary<string, int>();
+        for (int i = 0; i < nInputs; i++)
+        {
+            string? n = inputNames[i];
+            if (n == null) return false;
+            inputParamIndex[n] = i;
+        }
+        var variantParamIndexOf = new Dictionary<int, int>();
+        var finalHoleTypes = new DataType[nHoles];
+        for (int k = 0; k < nHoles; k++) finalHoleTypes[k] = r0.HoleTypes[k];
+        for (int pi = 0; pi < variant.Count; pi++)
+        {
+            int k = variant[pi];
+            variantParamIndexOf[k] = pi;
+            DataType t = r0.HoleTypes[k];
+            long mx = regions.Max(r => Math.Abs(r.HoleValues[k]));
+            DataType vt = mx <= 0xFF ? DataType.UINT8 : mx <= 0xFFFF ? DataType.UINT16 : DataType.UINT32;
+            if (t is DataType.UNKNOWN or DataType.VOID) t = vt;
+            else if (t.SizeOf() < vt.SizeOf()) t = vt;
+            finalHoleTypes[k] = t;
+        }
+
+        string gName = "__pymcu_outline_" + counter++;
+        var g = new Function { Name = gName, ReturnType = DataType.VOID, IsInline = false };
+        for (int p = 0; p < nParams; p++) g.Params.Add(gName + ".p" + p);
+
+        var variantSet = new HashSet<int>(variant);
+        int ctr = 0;
+        foreach (var ins in r0.Core)
+            g.Body.Add(RebuildOutlined(ins, gName, r0.Rename, inputParamIndex, nInputs,
+                variantSet, variantParamIndexOf, finalHoleTypes, ref ctr));
+        g.Body.Add(new Return(new NoneVal()));
+        program.Functions.Add(g);
+
+        // Replace each region with a Call; splice high->low so indices stay valid.
+        // Args = [live-in vals at this site] ++ [varying constant values].
+        foreach (var byFunc in regions.GroupBy(r => r.Func))
+            foreach (var r in byFunc.OrderByDescending(r => r.Start))
+            {
+                var args = new List<Val>(nParams);
+                args.AddRange(r.InputVals);
+                args.AddRange(variant.Select(k => (Val)new Constant((int)r.HoleValues[k])));
+                r.Func.Body.RemoveRange(r.Start, r.End - r.Start + 1);
+                r.Func.Body.Insert(r.Start, new Call(gName, args, new NoneVal()));
+            }
+        return true;
+    }
+
+    // Rebuild one instruction for the synthesised subroutine: live-in inputs and
+    // varying constants become parameter references; region-internal locals get a
+    // g-qualified canonical name; invariant constants stay as-is.  Visits constant
+    // slots in EmitCanon order.
+    private static Instruction RebuildOutlined(
+        Instruction ins, string gName, Dictionary<string, int> rename,
+        Dictionary<string, int> inputParamIndex, int nInputs,
+        HashSet<int> variantSet, Dictionary<int, int> variantParamIndexOf,
+        DataType[] holeTypes, ref int ctr)
+    {
+        Val MapName(Val v)
+        {
+            string? n = NameOf(v);
+            if (n == null || !rename.ContainsKey(n)) return v;             // global / none / mem
+            DataType ty = GetDataType(v);
+            if (inputParamIndex.TryGetValue(n, out int pi))
+                return new Variable(gName + ".p" + pi, ty);                // live-in parameter
+            return v is Temporary ? new Temporary(gName + ".v" + rename[n], ty)
+                                  : new Variable(gName + ".v" + rename[n], ty);
+        }
+
+        int hk = ctr;     // capture for closure ordering
+        Val MapSlot(Val v)
+        {
+            if (v is Constant)
+            {
+                int k = hk++;
+                if (variantSet.Contains(k))
+                    return new Variable(gName + ".p" + (nInputs + variantParamIndexOf[k]), holeTypes[k]);
+                return v;     // invariant -> keep original constant
+            }
+            return MapName(v);
+        }
+
+        Instruction result = ins switch
+        {
+            Copy c => new Copy(MapSlot(c.Src), MapName(c.Dst)),
+            Bitcast bc => new Bitcast(MapSlot(bc.Src), MapName(bc.Dst)),
+            Unary u => new Unary(u.Op, MapSlot(u.Src), MapName(u.Dst)),
+            Binary b => new Binary(b.Op, MapSlot(b.Src1), MapSlot(b.Src2), MapName(b.Dst)),
+            Call cl => new Call(cl.FunctionName, cl.Args.Select(MapSlot).ToList(), MapName(cl.Dst)),
+            _ => ins,
+        };
+        ctr = hk;
+        return result;
     }
 }
