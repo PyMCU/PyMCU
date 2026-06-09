@@ -129,40 +129,21 @@ def uart_write_decimal_u8(value: uint8):
 
 def uart_write_decimal_u16(value: uint16):
     # Print uint16 value as decimal digits (0-65535).
-    if value >= 10000:
-        ten_k: uint8 = uint8(value // 10000)
-        uart_write(ten_k + 48)
-        thousands: uint8 = uint8((value // 1000) % 10)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 1000:
-        thousands: uint8 = uint8(value // 1000)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 100:
-        hundreds: uint8 = uint8(value // 100)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 10:
-        tens: uint8 = uint8(value // 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    else:
-        uart_write(uint8(value) + 48)
+    # Standard digit-extraction: peel least-significant digits into a buffer,
+    # then emit them in reverse. One division per digit (vs the unrolled
+    # divide-by-powers-of-ten form, which costs several divisions per call).
+    if value == 0:
+        uart_write(48)  # '0'
+        return
+    buf: uint8[5] = [0, 0, 0, 0, 0]
+    n: uint8 = 0
+    while value > 0:
+        buf[n] = uint8(value % 10) + 48
+        value = value // 10
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
 
 
 def uart_write_decimal_i16(value: int16):
