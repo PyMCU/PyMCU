@@ -224,9 +224,12 @@ private static Function CloneFunction(Function f)
     {
         for (var i = 0; i < 10; ++i)
         {
+            RemoveRedundantControlFlow(func);
             PropagateCopies(func);
             PropagateVarCopies(func, globalNames);
             FoldConstants(func);
+            EliminateRedundantMasks(func);
+            EliminateLocalDeadStores(func, globalNames);
             EliminateDeadVariableStores(func, globalNames);
             CoalesceInstructions(func);
 
@@ -301,7 +304,221 @@ private static Function CloneFunction(Function f)
             .ToList();
     }
 
+    // Removes "Jump L" immediately followed by "Label L" (a jump to the next
+    // instruction is a no-op) and then drops labels that no branch targets. The
+    // @inline expander leaves dead skip-jumps from statically-taken `if`s (e.g.
+    // move_to's `if row == 1` when row is constant), which split a straight-line
+    // computation into separate basic blocks; PropagateCopies conservatively
+    // clears variable constants at every Label, so the split blocks the constant
+    // folding that would otherwise collapse the whole inline-expanded chain.
+    // Merging the blocks lets the linear propagation flow across.
+    private static void RemoveRedundantControlFlow(Function func)
+    {
+        var body = func.Body;
+
+        // 1. Jump-to-next removal (skip over interleaved debug lines).
+        for (int i = 0; i < body.Count; i++)
+        {
+            if (body[i] is not Jump j) continue;
+            int k = i + 1;
+            while (k < body.Count && body[k] is DebugLine) k++;
+            if (k < body.Count && body[k] is Label lab && lab.Name == j.Target)
+            {
+                body.RemoveAt(i);
+                i--;
+            }
+        }
+
+        // 2. Drop labels no remaining branch / try / error-edge targets. Collect
+        //    every label reference: jumps (incl. JumpIfBit*), TryBegin catch and
+        //    BranchOnError edges.
+        var targets = new HashSet<string>();
+        foreach (var instr in body)
+        {
+            if (JumpTargetOf(instr) is string t) targets.Add(t);
+            if (instr is TryBegin tb) targets.Add(tb.CatchLabel);
+            if (instr is BranchOnError boe) targets.Add(boe.ErrorLabel);
+        }
+        body.RemoveAll(instr => instr is Label l && !targets.Contains(l.Name));
+    }
+
+    // Known-bits (masked-value) analysis that removes a redundant `x & m` when x's
+    // value already has every bit outside m clear. The @inline driver composition
+    // produces these constantly: _byte passes `val & 0xF0` into _nibble, which does
+    // `(nib & 0xF0) | ...` -> `(val & 0xF0) & 0xF0`. Constant folding can't touch it
+    // because val is a runtime char; a C compiler eliminates it via known-bits.
+    // Linear, per-basic-block (facts cleared at every label join); soundness rests
+    // on tracking an over-approximation of possibly-set bits and only rewriting an
+    // AND that provably removes nothing.
+    private static void EliminateRedundantMasks(Function func)
+    {
+        const long ALL = 0xFFFFFFFFL;
+        var bits = new Dictionary<string, long>();   // name -> possibly-set bits
+
+        long WidthMask(DataType t) => t switch
+        {
+            DataType.UINT8 or DataType.INT8 => 0xFF,
+            DataType.UINT16 or DataType.INT16 => 0xFFFF,
+            _ => ALL,
+        };
+        long Bits(Val v) => v switch
+        {
+            Constant c => (uint)c.Value,
+            Variable va => bits.TryGetValue(va.Name, out var m) ? m : ALL,
+            Temporary t => bits.TryGetValue(t.Name, out var m) ? m : ALL,
+            _ => ALL,
+        };
+        void Set(Val? dst, long m)
+        {
+            if (NameOf(dst) is string n) bits[n] = m & WidthMask(GetDataType(dst!));
+        }
+        void Clear(Val? dst) { if (NameOf(dst) is string n) bits.Remove(n); }
+
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            switch (func.Body[i])
+            {
+                case Label:
+                case Call { Args: var a } when a.Any(x => x is ArrayBase):
+                    bits.Clear();
+                    break;
+                case Copy c: Set(c.Dst, Bits(c.Src)); break;
+                case Binary b:
+                {
+                    // Redundant mask: `x & c` (c constant) where x's bits are a subset of c.
+                    if (b.Op == BinaryOp.BitAnd && (b.Src1 is Constant || b.Src2 is Constant))
+                    {
+                        bool leftC = b.Src1 is Constant;
+                        long c = (uint)((Constant)(leftC ? b.Src1 : b.Src2)).Value;
+                        Val x = leftC ? b.Src2 : b.Src1;
+                        long xm = Bits(x);
+                        if ((xm & ~c) == 0) { func.Body[i] = new Copy(x, b.Dst); Set(b.Dst, xm); break; }
+                        Set(b.Dst, xm & c);
+                        break;
+                    }
+                    long bm = b.Op switch
+                    {
+                        BinaryOp.BitOr => Bits(b.Src1) | Bits(b.Src2),
+                        BinaryOp.BitXor => Bits(b.Src1) | Bits(b.Src2),
+                        BinaryOp.BitAnd => Bits(b.Src1) & Bits(b.Src2),
+                        BinaryOp.LShift when b.Src2 is Constant s => Bits(b.Src1) << s.Value,
+                        BinaryOp.RShift when b.Src2 is Constant s => Bits(b.Src1) >> s.Value,
+                        _ => ALL,
+                    };
+                    Set(b.Dst, bm);
+                    break;
+                }
+                case AugAssign aa: Clear(aa.Target); break;
+                case BitSet bs: Clear(bs.Target); break;
+                case BitClear bc: Clear(bc.Target); break;
+                case BitWrite bw: Clear(bw.Target); break;
+                case InlineAsm { Operands: not null } ia:
+                    foreach (var op in ia.Operands) Clear(op);
+                    break;
+                default:
+                    if (GetDst(func.Body[i]) is Val d) Set(d, ALL);
+                    break;
+            }
+        }
+    }
+
+    // Local dead-store elimination: a pure store to a local that is overwritten
+    // later in the same basic block before any read is dead. The @inline expander
+    // reuses names across sibling expansions (e.g. the two `nib`/`base` of _byte's
+    // two _nibble calls), so the first write is dead every iteration — but the
+    // global "never read" DCE keeps it because the name *is* read after the later
+    // write. Once a value is overwritten within the block it cannot reach a
+    // successor, so no live-out analysis is needed.
+    private static void EliminateLocalDeadStores(Function func, HashSet<string>? globalNames)
+    {
+        bool IsGlobal(string n) => globalNames != null && globalNames.Contains(n);
+        var remove = new HashSet<int>();
+        var pending = new Dictionary<string, int>();   // local -> index of its unread pure store
+
+        void KillRead(Val v) { if (NameOf(v) is string n) pending.Remove(n); }
+
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            var instr = func.Body[i];
+            // Any control transfer ends the straight-line segment: a pending store
+            // may be read at a branch target (or after a backward edge), so it is
+            // NOT dead. Clearing here — not only at labels — keeps the pass sound
+            // when a conditional jump sits between two writes of the same name.
+            if (instr is Label or Jump or Return or TryBegin or RaiseExn
+                or BranchOnError or SignalError or SignalSuccess
+                || JumpTargetOf(instr) != null)
+            {
+                pending.Clear();
+                continue;
+            }
+
+            // Reads consume any pending store of the read name.
+            RegisterUses(instr, KillRead);
+            // In-place ops read their target too.
+            switch (instr)
+            {
+                case AugAssign aa: KillRead(aa.Target); break;
+                case BitSet bs: KillRead(bs.Target); break;
+                case BitClear bc: KillRead(bc.Target); break;
+                case BitWrite bw: KillRead(bw.Target); break;
+            }
+
+            // Definitions.
+            bool pure = instr is Copy or Binary or Unary or Bitcast;
+            if (NameOf(GetDst(instr)) is string d && !IsGlobal(d))
+            {
+                if (pending.TryGetValue(d, out int prev)) remove.Add(prev);  // overwritten unread
+                if (pure) pending[d] = i; else pending.Remove(d);
+            }
+        }
+
+        if (remove.Count == 0) return;
+        var kept = new List<Instruction>(func.Body.Count);
+        for (int i = 0; i < func.Body.Count; i++)
+            if (!remove.Contains(i)) kept.Add(func.Body[i]);
+        func.Body = kept;
+    }
+
     private static int? GetConstant(Val val) => val is Constant c ? c.Value : null;
+
+    // Algebraic identities for a Binary with exactly one constant operand. These
+    // collapse the redundant masking/OR-ing the @inline driver expansions emit on
+    // runtime values (e.g. (c & 0xF0) | 0 | _BL in the LCD nibble path), which
+    // constant folding cannot touch because the other operand is not constant.
+    // Returns a replacement Copy, or null when no identity applies.
+    private static Instruction? SimplifyBinary(Binary b)
+    {
+        bool leftConst = b.Src1 is Constant;
+        bool rightConst = b.Src2 is Constant;
+        if (leftConst == rightConst) return null;          // need exactly one constant
+        int k = (leftConst ? (Constant)b.Src1 : (Constant)b.Src2).Value;
+        Val other = leftConst ? b.Src2 : b.Src1;
+
+        Instruction Keep() => new Copy(other, b.Dst);
+        Instruction Zero() => new Copy(new Constant(0), b.Dst);
+
+        // Full-width mask for the destination type (an AND with it is identity).
+        DataType dt = GetDataType(b.Dst);
+        int fullMask = dt switch { DataType.UINT8 or DataType.INT8 => 0xFF,
+                                   DataType.UINT16 or DataType.INT16 => 0xFFFF, _ => -1 };
+
+        switch (b.Op)
+        {
+            // Commutative: the constant may be on either side.
+            case BinaryOp.Add when k == 0: return Keep();
+            case BinaryOp.BitOr when k == 0: return Keep();
+            case BinaryOp.BitXor when k == 0: return Keep();
+            case BinaryOp.Mul when k == 1: return Keep();
+            case BinaryOp.Mul when k == 0: return Zero();
+            case BinaryOp.BitAnd when k == 0: return Zero();
+            case BinaryOp.BitAnd when fullMask >= 0 && (k & fullMask) == fullMask: return Keep();
+            // Non-commutative: identity only when the constant is the right operand.
+            case BinaryOp.Sub when rightConst && k == 0: return Keep();
+            case BinaryOp.LShift when rightConst && k == 0: return Keep();
+            case BinaryOp.RShift when rightConst && k == 0: return Keep();
+            default: return null;
+        }
+    }
 
     private static void FoldConstants(Function func)
     {
@@ -361,6 +578,10 @@ private static Function CloneFunction(Function f)
                             if (dstType != DataType.UNKNOWN) result = WrapToType(result, dstType);
                             func.Body[i] = new Copy(new Constant(result), binary.Dst);
                         }
+                    }
+                    else if (SimplifyBinary(binary) is Instruction simplified)
+                    {
+                        func.Body[i] = simplified;
                     }
 
                     break;
