@@ -892,7 +892,12 @@ public partial class IRGenerator
     {
         if (expr.Object is VariableExpr varExpr)
         {
-            string mangledName = varExpr.Name + "_" + expr.Member;
+            // Resolve a module alias (import machine as m) to the real module name so
+            // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
+            string moduleBase = modules.ContainsKey(varExpr.Name)
+                && importedAliases.TryGetValue(varExpr.Name, out var realModName) && realModName != null
+                ? realModName : varExpr.Name;
+            string mangledName = moduleBase + "_" + expr.Member;
 
             if (globals.TryGetValue(mangledName, out var sym))
             {

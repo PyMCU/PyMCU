@@ -216,7 +216,11 @@ public partial class IRGenerator
                 {
                     if (modules.ContainsKey(objVar.Name))
                     {
-                        string mangled = objVar.Name.Replace('.', '_');
+                        // Resolve a module alias (import machine as m) to the real module
+                        // name so `m.Pin(...)` resolves the machine_Pin class.
+                        string realMod = importedAliases.TryGetValue(objVar.Name, out var rm) && rm != null
+                            ? rm : objVar.Name;
+                        string mangled = realMod.Replace('.', '_');
                         resolvedClass = mangled + "_" + calleeMem.Member;
                     }
                 }

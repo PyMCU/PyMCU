@@ -283,6 +283,9 @@ public partial class IRGenerator
             {
                 string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
                 modules[modKey] = new ModuleScope();
+                // Map the used name (alias or real) to the real module so member/method
+                // resolution mangles `t.sleep_ms` (import time as t) to time_sleep_ms.
+                importedAliases[modKey] = imp.ModuleName;
             }
 
             foreach (var sym in imp.Symbols)

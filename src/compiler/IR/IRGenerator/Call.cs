@@ -108,7 +108,10 @@ public partial class IRGenerator
             {
                 if (modules.ContainsKey(ve.Name))
                 {
-                    string mangledMod = ve.Name.Replace('.', '_');
+                    // Mangle with the real module name, not the alias: `import time as t`
+                    // registers modules["t"] but compiles functions as time_sleep_ms.
+                    string realMod = importedAliases.TryGetValue(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                    string mangledMod = realMod.Replace('.', '_');
                     callee = mangledMod + "_" + memC.Member;
                     resolvedAsModule = true;
                 }
