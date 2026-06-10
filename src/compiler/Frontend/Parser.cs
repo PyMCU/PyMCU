@@ -24,6 +24,10 @@ public class Parser
     private int pos = 0;
     private int functionDepth = 0;
 
+    // Extra modules from a comma-separated `import a, b, c`: ParseImportStatement returns
+    // the first and queues the rest here for the caller to drain.
+    private readonly Queue<ImportStmt> pendingImports = new();
+
     public Parser(IReadOnlyList<Token> tokens)
     {
         this.tokens = tokens;
@@ -40,6 +44,8 @@ public class Parser
             if (Check(TokenType.From) || Check(TokenType.Import))
             {
                 prog.Imports.Add(ParseImportStatement());
+                while (pendingImports.Count > 0)
+                    prog.Imports.Add(pendingImports.Dequeue());
             }
             else if (Check(TokenType.At) && DecoratorsLeadToClass())
             {
@@ -645,23 +651,29 @@ public class Parser
         return new AssertStmt(cond, message) { Line = line };
     }
 
+    // Parses a single dotted module name with an optional `as` alias (the `import`
+    // keyword is already consumed). Shared by single and comma-separated imports.
+    private ImportStmt ParseModuleImportSpec()
+    {
+        string modName = Consume(TokenType.Identifier, "Expected module name").Value;
+        while (Match(TokenType.Dot))
+            modName += "." + Consume(TokenType.Identifier, "Expected part name").Value;
+
+        var stmt = new ImportStmt(modName, new List<string>(), 0);
+        if (Match(TokenType.As))
+            stmt.ModuleAlias = Consume(TokenType.Identifier, "Expected alias name after 'as'").Value;
+        return stmt;
+    }
+
     private ImportStmt ParseImportStatement()
     {
         if (Match(TokenType.Import))
         {
-            string modName = Consume(TokenType.Identifier, "Expected module name").Value;
-            while (Match(TokenType.Dot))
-            {
-                modName += "." + Consume(TokenType.Identifier, "Expected part name").Value;
-            }
-
-            var stmt = new ImportStmt(modName, new List<string>(), 0);
-            if (Match(TokenType.As))
-            {
-                stmt.ModuleAlias = Consume(TokenType.Identifier, "Expected alias name after 'as'").Value;
-            }
-
-            return stmt;
+            var first = ParseModuleImportSpec();
+            // `import a, b, c`: queue the additional modules for the caller to drain.
+            while (Match(TokenType.Comma))
+                pendingImports.Enqueue(ParseModuleImportSpec());
+            return first;
         }
 
         Consume(TokenType.From, "Expected 'from'");
