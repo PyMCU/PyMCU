@@ -317,7 +317,11 @@ public partial class IRGenerator
             }
             else if (func.IsInline)
             {
-                if (inlineFunctions.ContainsKey(fullName))
+                // `|| overloadedFunctions.Contains` so that once a name is overloaded (its
+                // bare key removed below), a later same-named overload registers under its
+                // suffixed key instead of re-occupying the vacated bare key, where it would
+                // be invisible to suffix-based overload resolution.
+                if (inlineFunctions.ContainsKey(fullName) || overloadedFunctions.Contains(fullName))
                 {
                     if (!overloadedFunctions.Contains(fullName))
                     {
@@ -412,23 +416,27 @@ public partial class IRGenerator
                                 }
                                 else if (func.IsInline)
                                 {
-                                    if (!inlineFunctions.TryAdd(fullName, func))
+                                    // Once a name is overloaded its bare key is vacated, so a later
+                                    // same-named overload must register under its suffixed key — never
+                                    // re-occupy the bare key (a TryAdd there would succeed and hide the
+                                    // overload from suffix-based resolution; e.g. Pin's 3rd const[str]
+                                    // __init__ landing on the bare key and never being found).
+                                    if (overloadedFunctions.Contains(fullName))
                                     {
-                                        if (!overloadedFunctions.Contains(fullName))
+                                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
+                                    }
+                                    else if (!inlineFunctions.TryAdd(fullName, func))
+                                    {
+                                        var existing = inlineFunctions[fullName];
+                                        if (existing?.Params != null)
                                         {
-                                            var existing = inlineFunctions[fullName];
-                                            if (existing?.Params != null)
-                                            {
-                                                var existingSfx = BuildOverloadSuffix(existing.Params);
-                                                inlineFunctions[fullName + "___" + existingSfx] = existing;
-                                            }
-
-                                            inlineFunctions.Remove(fullName);
-                                            overloadedFunctions.Add(fullName);
+                                            var existingSfx = BuildOverloadSuffix(existing.Params);
+                                            inlineFunctions[fullName + "___" + existingSfx] = existing;
                                         }
 
-                                        string newSfx = BuildOverloadSuffix(func.Params);
-                                        inlineFunctions[fullName + "___" + newSfx] = func;
+                                        inlineFunctions.Remove(fullName);
+                                        overloadedFunctions.Add(fullName);
+                                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
                                     }
                                 }
                                 else
@@ -574,23 +582,24 @@ public partial class IRGenerator
                 }
                 else if (func.IsInline)
                 {
-                    if (!inlineFunctions.TryAdd(fullName, func))
+                    // See the top-level class path: once overloaded, register under the
+                    // suffixed key rather than re-occupying the vacated bare key.
+                    if (overloadedFunctions.Contains(fullName))
                     {
-                        if (!overloadedFunctions.Contains(fullName))
+                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
+                    }
+                    else if (!inlineFunctions.TryAdd(fullName, func))
+                    {
+                        var existing = inlineFunctions[fullName];
+                        if (existing?.Params != null)
                         {
-                            var existing = inlineFunctions[fullName];
-                            if (existing?.Params != null)
-                            {
-                                var existingSfx = BuildOverloadSuffix(existing.Params);
-                                inlineFunctions[fullName + "___" + existingSfx] = existing;
-                            }
-
-                            inlineFunctions.Remove(fullName);
-                            overloadedFunctions.Add(fullName);
+                            var existingSfx = BuildOverloadSuffix(existing.Params);
+                            inlineFunctions[fullName + "___" + existingSfx] = existing;
                         }
 
-                        string newSfx = BuildOverloadSuffix(func.Params);
-                        inlineFunctions[fullName + "___" + newSfx] = func;
+                        inlineFunctions.Remove(fullName);
+                        overloadedFunctions.Add(fullName);
+                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
                     }
                 }
                 else
