@@ -225,7 +225,7 @@ private static Function CloneFunction(Function f)
         for (var i = 0; i < 10; ++i)
         {
             RemoveRedundantControlFlow(func);
-            PropagateCopies(func);
+            PropagateCopies(func, globalNames);
             PropagateVarCopies(func, globalNames);
             FoldConstants(func);
             EliminateRedundantMasks(func);
@@ -243,7 +243,7 @@ private static Function CloneFunction(Function f)
         {
             for (var i = 0; i < 10; ++i)
             {
-                PropagateCopies(func);
+                PropagateCopies(func, globalNames);
                 FoldConstants(func);
                 EliminateDeadVariableStores(func, globalNames);
                 CoalesceInstructions(func);
@@ -809,7 +809,7 @@ private static Function CloneFunction(Function f)
         }
     }
 
-    private static void PropagateCopies(Function func)
+    private static void PropagateCopies(Function func, HashSet<string>? globalNames = null)
     {
         var tempCopies = new Dictionary<string, Val>();
         var blacklistedTemps = new HashSet<string>();
@@ -904,6 +904,15 @@ private static Function CloneFunction(Function f)
                 // conservatively invalidate all tracked variable constants.
                 case Call callInstr when callInstr.Args.Any(a => a is ArrayBase):
                     varConsts.Clear();
+                    break;
+                // Any other call may still reassign a module-level global (via `global x`),
+                // so its tracked constant is no longer valid past the call -- otherwise a
+                // read after the call folds to the pre-call value (e.g. a global seeded in
+                // main then bumped inside a callee). Locals cannot be touched by a callee,
+                // so only the globals are dropped.
+                case Call when globalNames is { Count: > 0 }:
+                    foreach (var g in varConsts.Keys.Where(globalNames.Contains).ToList())
+                        varConsts.Remove(g);
                     break;
             }
         }
