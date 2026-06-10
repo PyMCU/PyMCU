@@ -795,6 +795,24 @@ public partial class IRGenerator
             if (expr.Args.Count != 2) throw new Exception("divmod() expects exactly two arguments");
             Val aVal = VisitExpression(expr.Args[0]);
             Val bVal = VisitExpression(expr.Args[1]);
+            // Result width follows the wider operand, so divmod(uint16, ...) divides at
+            // 16-bit width and stores 16-bit results rather than truncating to 8 bits.
+            // Read the type off the resolved Vals (Variable/Temporary carry it; a constant
+            // is sized by its value) -- InferExprType keys on the unqualified name and
+            // misses prefixed locals.
+            static DataType ValType(Val v) => v switch
+            {
+                Variable x => x.Type,
+                Temporary x => x.Type,
+                Constant c => c.Value < 0 ? DataType.INT16
+                              : c.Value <= 0xFF ? DataType.UINT8
+                              : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+                _ => DataType.UINT8,
+            };
+            DataType ta = ValType(aVal), tb = ValType(bVal);
+            DataType rt = ta.SizeOf() >= tb.SizeOf() ? ta : tb;
+            if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
+
             if (aVal is Constant ca && bVal is Constant cb)
             {
                 if (cb.Value == 0) throw new Exception("divmod(): division by zero");
@@ -806,8 +824,8 @@ public partial class IRGenerator
                     string qn = bBase + ".divmod_q" + tempCounter;
                     string rn = bBase + ".divmod_r" + (tempCounter + 1);
                     tempCounter += 2;
-                    Emit(new Copy(new Constant(q), new Variable(qn, DataType.UINT8)));
-                    Emit(new Copy(new Constant(r), new Variable(rn, DataType.UINT8)));
+                    Emit(new Copy(new Constant(q), new Variable(qn, rt)));
+                    Emit(new Copy(new Constant(r), new Variable(rn, rt)));
                     lastTupleResults = new List<string> { qn, rn };
                     return new NoneVal();
                 }
@@ -821,17 +839,20 @@ public partial class IRGenerator
                 string qn = bBase + ".divmod_q" + tempCounter;
                 string rn = bBase + ".divmod_r" + (tempCounter + 1);
                 tempCounter += 2;
-                var qvar = new Variable(qn, DataType.UINT8);
-                var rvar = new Variable(rn, DataType.UINT8);
+                var qvar = new Variable(qn, rt);
+                var rvar = new Variable(rn, rt);
 
-                Emit(new Call("__div8", new List<Val> { aVal, bVal }, qvar));
-                Emit(new Call("__mod8", new List<Val> { aVal, bVal }, rvar));
+                // Emit the quotient and remainder as the same FloorDiv/Mod the // and %
+                // operators produce, adjacent and sharing operands, so the AVR backend's
+                // divmod fusion folds the pair into a single division call.
+                Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qvar));
+                Emit(new Binary(BinaryOp.Mod, aVal, bVal, rvar));
                 lastTupleResults = new List<string> { qn, rn };
                 return new NoneVal();
             }
 
-            Temporary qTmp = MakeTemp();
-            Emit(new Call("__div8", new List<Val> { aVal, bVal }, qTmp));
+            Temporary qTmp = MakeTemp(rt);
+            Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qTmp));
             return qTmp;
         }
 
