@@ -505,6 +505,25 @@ public partial class IRGenerator
                     .ToList();
                 for (int i = sramInits.Count - 1; i >= 0; i--)
                     mainFuncDef.Body.Statements.Insert(0, sramInits[i]);
+
+                // Inject scalar mutable-global initializers (e.g. `_seed: uint16 = 3007`)
+                // so a non-zero startup value is actually written. Without this the global
+                // lives in BSS, is zeroed by crt0, and silently reads 0. Module-level
+                // declarations parse as VarDecl; convert to an AnnAssign so the main-body
+                // handler writes the module global. Skip arrays (handled above), folded
+                // constant globals, and zero/false inits (BSS already zeroes them).
+                var globalInits = mainAst.GlobalStatements
+                    .OfType<VarDecl>()
+                    .Where(d => d.Init != null
+                             && !moduleSramArrays.Contains(d.Name)
+                             && !globals.ContainsKey(d.Name)
+                             && mutableGlobals.ContainsKey(d.Name)
+                             && !(d.Init is IntegerLiteral z && z.Value == 0)
+                             && !(d.Init is BooleanLiteral bz && !bz.Value))
+                    .Select(d => new AnnAssign(d.Name, d.VarType, d.Init))
+                    .ToList();
+                for (int i = globalInits.Count - 1; i >= 0; i--)
+                    mainFuncDef.Body.Statements.Insert(0, globalInits[i]);
             }
         }
 
