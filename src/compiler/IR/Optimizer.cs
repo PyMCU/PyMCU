@@ -1007,9 +1007,15 @@ private static Function CloneFunction(Function f)
                 _ => null
             };
         }
+        // Non-creating: the fact universe is frozen at `n` after the enumeration below, so
+        // this only ever returns an id already in factId. A copy formed by substitution
+        // (ReplaceUses can rewrite `d = a` into `d = b`) may key a fact that was never
+        // enumerated; tracking it here would index the fixed-size avail/gen arrays out of
+        // bounds. Returning null leaves it for the next optimizer iteration to enumerate.
         int? CopyFact(Instruction instr)
             => instr is Copy { Dst: Variable d } c && Trackable(d.Name, d.Type, c.Src, out var s)
-                ? FactOf(d.Name, s) : null;
+               && factId.TryGetValue((d.Name, s.Name), out int id)
+                ? id : null;
 
         var cfg = BuildCfg(func);
         var blocks = cfg.Blocks;
