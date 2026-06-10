@@ -1583,6 +1583,15 @@ public partial class IRGenerator
                 {
                     if (func.Params[paramIdx].Type == "const[str]")
                     {
+                        // The inline-prefix param key can be reused across call sites (two
+                        // Pin.__init__ overloads at the same depth share inlineN.__init__.pin_id),
+                        // so a prior site may have left a stale numeric/alias binding here.
+                        // Clear the complementary maps so only this string value is live --
+                        // otherwise a later `self._name = pin_id` reads the stale int first.
+                        constantVariables.Remove(paramName);
+                        floatConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+
                         if (i < rawStrArgs.Count && rawStrArgs[i] != null)
                         {
                             strConstantVariables[paramName] = rawStrArgs[i]!.Value;
@@ -1609,17 +1618,26 @@ public partial class IRGenerator
                         throw new Exception(
                             $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
                     constantVariables[paramName] = cArg2.Value;
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                     continue;
                 }
                 if (argValues[i] is Constant cArg3)
                 {
                     constantVariables[paramName] = cArg3.Value;
+                    strConstantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                     continue;
                 }
                 if (argValues[i] is MemoryAddress mArg)
                 {
                     constantAddressVariables[paramName] = mArg.Address;
                     constantAddressVariables.Remove(paramName + "_type");
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
                     continue;
                 }
 
