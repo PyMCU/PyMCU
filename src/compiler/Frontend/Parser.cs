@@ -208,6 +208,7 @@ public class Parser
     private FunctionDef ParseFunction()
     {
         bool isInline = false;
+        bool isOutline = false;
         bool isInterrupt = false;
         int vector = 0;
         bool isPropertyGetter = false;
@@ -297,6 +298,12 @@ public class Parser
             {
                 isNaked = true;
             }
+            else if (decorator.Value == "outline")
+            {
+                // RFC 0001 Model A: compile this ZCA method once as a shared
+                // subroutine taking the instance fields as params (no force-inline).
+                isOutline = true;
+            }
             else if (decorator.Value == "warning")
             {
                 // @warning("..."): record the message. The IR generator prints it
@@ -355,7 +362,8 @@ public class Parser
             IsNaked = isNaked,
             IsExtern = isExtern,
             ExternSymbol = externSymbol,
-            WarningMessage = warningMessage
+            WarningMessage = warningMessage,
+            IsOutline = isOutline
         };
         return func;
     }

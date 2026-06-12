@@ -123,11 +123,27 @@ public partial class IRGenerator
         irFunc.IsNaked = funcNode.IsNaked;
         irFunc.InterruptVector = funcNode.InterruptVector;
         irFunc.ReturnType = DataTypeExtensions.StringToDataType(funcNode.ReturnType);
+        // RFC 0001 Model B: a factory declared `-> C` (single-field ZCA) actually returns
+        // the packed field scalar, so the IR return type is the field type, not the class.
+        if (zcaFactoryClasses.TryGetValue(funcNode.ReturnType, out var handleFieldType))
+            irFunc.ReturnType = DataTypeExtensions.StringToDataType(handleFieldType);
 
         currentFunctionGlobals.Clear();
         currentInstructions.Clear();
         loopStack.Clear();
         lastLine = -1;
+
+        // RFC 0001 Model B (sret): a factory `-> C` for a MULTI-field (slot) ZCA gets a hidden
+        // leading `__self` pointer param. The caller allocates the slot and passes its address;
+        // the body stores fields through it and returns it (see VisitReturn). R24:R25 = __self.
+        if (slotClasses.Contains(funcNode.ReturnType))
+        {
+            string selfParam = currentFunction + ".__self";
+            irFunc.Params.Add(selfParam);
+            bytearrayParams.Add(selfParam);
+            variableTypes[selfParam] = DataType.UINT16;
+            irFunc.ReturnType = DataType.UINT16; // returns the slot pointer
+        }
 
         foreach (var param in funcNode.Params)
         {
@@ -418,6 +434,63 @@ public partial class IRGenerator
                 }
 
                 Emit(new Jump(ctx.ExitLabel));
+                return;
+            }
+        }
+
+        // RFC 0001 Model B: a non-@inline factory `def make() -> C: return C(args)` where
+        // C is a single-field ZCA. The instance has no runtime struct, so return the packed
+        // field as a scalar (the "handle"). The field value is the ctor arg that initializes
+        // it. The use site tracks `x = make()` as a handle instance (see Assign.cs).
+        if (inlineStack.Count == 0 && stmt.Value is CallExpr facCall
+            && facCall.Callee is VariableExpr facCallee
+            && functionReturnTypes.TryGetValue(currentFunction, out var curRt) && curRt != null)
+        {
+            string facCls = ResolveCallee(facCallee.Name);
+            if (curRt == facCls && zcaFactoryClasses.ContainsKey(facCls)
+                && classFieldLayout.TryGetValue(facCls, out var facLayout) && facLayout.Count == 1)
+            {
+                int argIdx = 0;
+                string srcParam = facLayout[0].SourceParam;
+                if (!string.IsNullOrEmpty(srcParam)
+                    && functionParams.TryGetValue(facCls + "___init__", out var initParams))
+                {
+                    int pIdx = initParams.IndexOf(srcParam);
+                    if (pIdx >= 1) argIdx = pIdx - 1; // drop implicit self
+                }
+
+                Val handleVal = argIdx < facCall.Args.Count
+                    ? VisitExpression(facCall.Args[argIdx])
+                    : new Constant(0);
+                Emit(new Return(handleVal));
+                return;
+            }
+
+            // Multi-field (slot) ZCA factory: store each field into the caller-allocated slot
+            // via the hidden __self pointer, then return that pointer (sret).
+            if (curRt == facCls && slotClasses.Contains(facCls)
+                && classFieldLayout.TryGetValue(facCls, out var slotLayout))
+            {
+                string selfPtr = currentFunction + ".__self";
+                functionParams.TryGetValue(facCls + "___init__", out var slotInit);
+                int off = 0;
+                foreach (var (field, type, srcParam) in slotLayout)
+                {
+                    int argIdx = 0;
+                    if (slotInit != null && !string.IsNullOrEmpty(srcParam))
+                    {
+                        int pIdx = slotInit.IndexOf(srcParam);
+                        if (pIdx >= 1) argIdx = pIdx - 1;
+                    }
+
+                    Val v = argIdx < facCall.Args.Count
+                        ? VisitExpression(facCall.Args[argIdx])
+                        : new Constant(0);
+                    Emit(new BytearrayStore(selfPtr, new Constant(off), v));
+                    off += DataTypeExtensions.StringToDataType(type).SizeOf();
+                }
+
+                Emit(new Return(new Variable(selfPtr, DataType.UINT16)));
                 return;
             }
         }

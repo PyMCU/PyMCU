@@ -104,6 +104,44 @@ public partial class IRGenerator
         else if (expr.Callee is MemberAccessExpr memC)
         {
             bool resolvedAsModule = false;
+
+            // RFC 0001 Model B (Class[N]): arr[i].method() -- compute the element address
+            // (base + i*stride) and call the shared slot method with it as the self pointer.
+            if (memC.Object is IndexExpr iaIdx && iaIdx.Target is VariableExpr iaArr)
+            {
+                string iaQ = !string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + iaArr.Name : iaArr.Name;
+                if (!instanceArrayClass.ContainsKey(iaQ) && instanceArrayClass.ContainsKey(iaArr.Name))
+                    iaQ = iaArr.Name;
+                if (instanceArrayClass.TryGetValue(iaQ, out var iaCls))
+                {
+                    string iaMethod = ResolveMROMethod(iaCls, memC.Member) + "_" + memC.Member;
+                    int stride = instanceArrayStride[iaQ];
+
+                    Val idxV = VisitExpression(iaIdx.Index);
+                    Temporary baseT = MakeTemp(DataType.UINT16);
+                    Emit(new Copy(new ArrayBase(iaQ), baseT));        // load slot-array base addr
+                    Temporary scaled = MakeTemp(DataType.UINT16);
+                    Emit(new Binary(BinaryOp.Mul, idxV, new Constant(stride), scaled));
+                    Temporary elemAddr = MakeTemp(DataType.UINT16);
+                    Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
+
+                    var iaArgs = new List<Val> { elemAddr };
+                    foreach (var a in expr.Args) iaArgs.Add(VisitExpression(a));
+
+                    bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
+                                  || iaRt == "void" || iaRt == "None";
+                    if (iaVoid)
+                    {
+                        Emit(new Call(iaMethod, iaArgs, new NoneVal()));
+                        return new NoneVal();
+                    }
+                    Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
+                    Emit(new Call(iaMethod, iaArgs, iaDst));
+                    return iaDst;
+                }
+            }
+
             if (memC.Object is VariableExpr ve)
             {
                 if (modules.ContainsKey(ve.Name))
@@ -152,6 +190,54 @@ public partial class IRGenerator
                         // non-existent <ConcreteClass>_<method> symbol.
                         string definingClass = ResolveMROMethod(clsC!, memC.Member);
                         callee = definingClass + "_" + memC.Member;
+
+                        // RFC 0001 Model A: an @outline method is a shared subroutine, not
+                        // inlined. Pass the instance's runtime field values as leading args
+                        // (self_<field>), then the user args, and emit a real Call. One body,
+                        // N call sites -- no per-instance bloat.
+                        if (outlinedMethods.Contains(callee))
+                        {
+                            var oArgs = new List<Val>();
+                            string instName = objVal is Variable iv ? iv.Name : "";
+                            if (slotMethods.Contains(callee)
+                                && slotInstances.TryGetValue(instName, out var slotName))
+                            {
+                                // Model B (SRAM slot): pass the slot base address as `self`;
+                                // the body reads fields via BytearrayLoad at offsets.
+                                oArgs.Add(new ArrayBase(slotName));
+                            }
+                            else
+                            {
+                                // Model B handle instance (from a factory): the instance IS its
+                                // single packed field, so pass the variable itself as the field arg.
+                                // Model A direct instance: read each field from <inst>_<field>.
+                                bool isHandle = !string.IsNullOrEmpty(instName)
+                                                && factoryHandleInstances.Contains(instName);
+                                foreach (var (fld, _, _) in outlineFieldLayout[callee])
+                                    oArgs.Add(isHandle
+                                        ? VisitExpression(memC.Object)
+                                        : VisitExpression(new MemberAccessExpr(memC.Object, fld)));
+                            }
+                            foreach (var a in expr.Args)
+                            {
+                                Val av = VisitExpression(a);
+                                if (av is FloatConstant fc) av = new Constant((int)Math.Round(fc.Value));
+                                oArgs.Add(av);
+                            }
+
+                            bool rVoid = !functionReturnTypes.TryGetValue(callee, out var rt)
+                                         || rt == "void" || rt == "None";
+                            if (rVoid)
+                            {
+                                Emit(new Call(callee, oArgs, new NoneVal()));
+                                return new NoneVal();
+                            }
+
+                            Temporary oDst = MakeTemp(DataTypeExtensions.StringToDataType(
+                                functionReturnTypes[callee]));
+                            Emit(new Call(callee, oArgs, oDst));
+                            return oDst;
+                        }
 
                         // ZCA force-inline: if the resolved callee is a non-inline instance
                         // method, add its AST to inlineFunctions on-demand so the standard

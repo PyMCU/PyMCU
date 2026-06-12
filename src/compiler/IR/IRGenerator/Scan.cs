@@ -386,6 +386,19 @@ public partial class IRGenerator
 
                     if (classDef.Body is Block block)
                     {
+                        // RFC 0001: derive the field layout once per class. A class with a
+                        // single primitive field is eligible to be returned by value from a
+                        // non-@inline factory (Model B register-packed handle).
+                        var clsLayout = DeriveFieldLayout(block);
+                        classFieldLayout[classKey] = clsLayout;
+                        // Note: slotClasses (>= 2 fields) is marked only when an @outline method
+                        // is actually present (below), so plain @inline HAL classes with multiple
+                        // fields keep their normal virtual-construction path. zcaFactoryClasses is
+                        // safe to mark eagerly: it is only consulted in factory-return contexts,
+                        // never in direct construction.
+                        if (clsLayout.Count == 1)
+                            zcaFactoryClasses[classKey] = clsLayout[0].Type;
+
                         foreach (var inner in block.Statements)
                         {
                             if (inner is FunctionDef func)
@@ -414,6 +427,14 @@ public partial class IRGenerator
                                     string className = classPrefix.Substring(0, classPrefix.Length - 1);
                                     propertySetters[className + "." + func.PropertyName] = setterKey;
                                 }
+                                else if (func.IsOutline)
+                                {
+                                    // RFC 0001: explicit @outline -- compile this method ONCE as a
+                                    // shared subroutine (Model A field-params, or Model B SRAM slot
+                                    // for >= 2 fields). After F4 this is redundant with the default
+                                    // for outline-safe methods; kept as an explicit request.
+                                    RegisterOutlinedMethod(func, classKey, DeriveFieldLayout(block), fullName);
+                                }
                                 else if (func.IsInline)
                                 {
                                     // Once a name is overloaded its bare key is vacated, so a later
@@ -441,12 +462,24 @@ public partial class IRGenerator
                                 }
                                 else
                                 {
-                                    functionsToCompile.Add(new FunctionEntry
-                                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
-                                    // Keep the AST so Call.cs can force-inline this method when
-                                    // it is called on a ZCA instance with a known concrete type.
-                                    // ZCA field aliasing requires inline expansion of self accesses.
-                                    instanceMethodDefs[fullName] = func;
+                                    // RFC 0001 F4: an undecorated method is OUTLINED BY DEFAULT when
+                                    // it is outline-safe (touches self only as self.<field>). This is
+                                    // why @inline now means something: without it, a representable
+                                    // method is shared, not silently force-inlined per instance.
+                                    var defLayout = DeriveFieldLayout(block);
+                                    if (IsOutlineSafe(func, defLayout))
+                                    {
+                                        RegisterOutlinedMethod(func, classKey, defLayout, fullName);
+                                    }
+                                    else
+                                    {
+                                        // Not representable as a shared body (uses self.method(),
+                                        // passes self, non-derivable field, or an unhandled construct):
+                                        // force-inline is the only way to give it a runtime form.
+                                        functionsToCompile.Add(new FunctionEntry
+                                            { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                                        instanceMethodDefs[fullName] = func;
+                                    }
                                 }
 
                                 if (!func.IsPropertySetter)
@@ -532,6 +565,158 @@ public partial class IRGenerator
                 }
             }
         }
+    }
+
+    // RFC 0001 Model A: derives the ordered runtime-field layout of a ZCA class
+    // from its __init__ body. Each `self.<field> = <expr>` becomes a (field, type)
+    // entry; the type is taken from the matching __init__ parameter when the RHS is
+    // that parameter, else defaults to uint8. Used to synthesize the leading params
+    // of an @outline method.
+    private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)
+    {
+        var layout = new List<(string, string, string)>();
+        var seen = new HashSet<string>();
+
+        FunctionDef? init = null;
+        foreach (var s in classBody.Statements)
+            if (s is FunctionDef f && f.Name == "__init__") { init = f; break; }
+        if (init == null) return layout;
+
+        var paramTypes = new Dictionary<string, string>();
+        foreach (var p in init.Params) paramTypes[p.Name] = p.Type;
+
+        foreach (var s in init.Body.Statements)
+        {
+            string? field = null;
+            Expression? rhs = null;
+            if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
+                && ma.Object is VariableExpr sv && sv.Name == "self")
+            {
+                field = ma.Member;
+                rhs = asg.Value;
+            }
+
+            if (field == null || !seen.Add(field)) continue;
+
+            // SourceParam: the __init__ param that directly initializes the field
+            // (RHS is a bare parameter), else "" -- needed for factory return lowering.
+            string type = "uint8";
+            string srcParam = "";
+            if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
+            {
+                srcParam = rv.Name;
+                type = pt.StartsWith("const[") && pt.EndsWith("]")
+                    ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
+                    : pt;
+            }
+            layout.Add((field, type, srcParam));
+        }
+
+        return layout;
+    }
+
+    // RFC 0001 F1-F3: register a method as an outlined shared subroutine. >= 2 fields ->
+    // Model B SRAM slot (self pointer + BytearrayLoad offsets); else Model A (one param per
+    // field). Used by both the explicit @outline branch and the F4 default (an outline-safe
+    // undecorated method).
+    private void RegisterOutlinedMethod(FunctionDef func, string classKey,
+        List<(string Field, string Type, string SourceParam)> layout, string fullName)
+    {
+        var synthParams = new List<Param>();
+        if (layout.Count >= 2) slotClasses.Add(classKey);
+        if (slotClasses.Contains(classKey))
+        {
+            synthParams.Add(new Param("self", "bytearray"));
+            var offsets = new Dictionary<string, int>();
+            int off = 0;
+            foreach (var (fld, ty, _) in layout)
+            {
+                offsets[fld] = off;
+                off += DataTypeExtensions.StringToDataType(ty).SizeOf();
+            }
+            slotMethods.Add(fullName);
+            slotMethodFieldOffsets[fullName] = offsets;
+        }
+        else
+        {
+            foreach (var (fld, ty, _) in layout)
+                synthParams.Add(new Param("self_" + fld, ty));
+        }
+        for (int pi = 1; pi < func.Params.Count; ++pi)
+            synthParams.Add(func.Params[pi]);
+
+        var synth = new FunctionDef(func.Name, synthParams, func.ReturnType, func.Body, isInline: false);
+        functionsToCompile.Add(new FunctionEntry
+            { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile });
+
+        outlinedMethods.Add(fullName);
+        outlineFieldLayout[fullName] = layout;
+        functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
+        functionParamTypes[fullName] = synthParams.Select(p => DataTypeExtensions.StringToDataType(p.Type)).ToList();
+    }
+
+    // RFC 0001 F4: is a method safe to outline (compile once, share) instead of force-inline?
+    // Safe iff its body touches `self` only as `self.<field>` where <field> is a derivable data
+    // field -- never `self.<method>()` and never bare `self` (passed as a value). Any unrecognized
+    // node makes it UNSAFE: outlining must be provably correct, otherwise we keep the existing
+    // force-inline behavior (zero regression). Methods with user params besides self stay safe
+    // (those params become trailing params of the shared body).
+    private bool IsOutlineSafe(FunctionDef method,
+        List<(string Field, string Type, string SourceParam)> layout)
+    {
+        if (layout.Count == 0) return false;
+        var fields = new HashSet<string>(layout.Select(f => f.Field));
+        bool safe = true;
+
+        void E(Expression? e)
+        {
+            if (!safe || e == null) return;
+            switch (e)
+            {
+                case MemberAccessExpr ma when ma.Object is VariableExpr sv && sv.Name == "self":
+                    if (!fields.Contains(ma.Member)) safe = false; // self.method() or non-field
+                    return; // do NOT descend into the `self` leaf -- it is a field access
+                case MemberAccessExpr ma2: E(ma2.Object); return;
+                case VariableExpr ve: if (ve.Name == "self") safe = false; return; // bare self
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+                case IntegerLiteral: case FloatLiteral: case BooleanLiteral:
+                case StringLiteral: return;
+                default: safe = false; return; // conservative: unknown node -> not outline-safe
+            }
+        }
+
+        void S(Statement? s)
+        {
+            if (!safe || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
+                case VarDecl vd: E(vd.Init); return; // typed local decl: `x: T = expr`
+                case AnnAssign a: E(a.Value); return;
+                case AssignStmt asg: E(asg.Target); E(asg.Value); return;
+                case AugAssignStmt aug: E(aug.Target); E(aug.Value); return;
+                case ReturnStmt r: E(r.Value); return;
+                case ExprStmt ex: E(ex.Expr); return;
+                case IfStmt iff:
+                    E(iff.Condition); S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                    S(iff.ElseBranch);
+                    return;
+                case WhileStmt wh: E(wh.Condition); S(wh.Body); return;
+                case BreakStmt: case ContinueStmt: case PassStmt: return;
+                default: safe = false; return; // conservative
+            }
+        }
+
+        foreach (var st in method.Body.Statements) S(st);
+        return safe;
     }
 
     // Registers a nested class (a class defined in the body of another class) so it

@@ -93,6 +93,43 @@ public partial class IRGenerator
     // Zero-Cost Abstraction: Virtual Instance Registry
     private HashSet<string> virtualInstances = new();
 
+    // RFC 0001 Model A (@outline): methods compiled once as shared subroutines.
+    // Key = mangled method symbol (e.g. "Counter_stepped"). The layout is the
+    // ordered list of instance fields (from __init__) that become leading params.
+    // SourceParam = the __init__ parameter whose value initializes the field (when the
+    // RHS is a bare parameter), used by Model B factory lowering to map ctor args.
+    private HashSet<string> outlinedMethods = new();
+    private Dictionary<string, List<(string Field, string Type, string SourceParam)>> outlineFieldLayout = new();
+
+    // Same layout keyed by class symbol (e.g. "Counter"), for factory return lowering.
+    private Dictionary<string, List<(string Field, string Type, string SourceParam)>> classFieldLayout = new();
+
+    // RFC 0001 Model B (register-packed handle): a non-@inline factory returning a ZCA
+    // returns the instance's single packed field as a scalar. Instances bound from such
+    // a factory are "handle instances": their field value IS the variable itself, so an
+    // @outline method call passes the variable (not a per-field constant) as the field arg.
+    private HashSet<string> factoryHandleInstances = new();
+    // Class symbol -> the field type its register-packed handle carries (single-field only).
+    private Dictionary<string, string> zcaFactoryClasses = new();
+
+    // RFC 0001 Model B (SRAM slot): a ZCA with >= 2 fields is "boxed" -- its fields live in
+    // a fixed SRAM slot and its @outline methods take a `self` pointer (bytearray), reading
+    // fields via BytearrayLoad at byte offsets. This is the multi-field analogue of the
+    // register handle (which only fits one small field in the return register).
+    private HashSet<string> slotClasses = new();
+    // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
+    private Dictionary<string, string> slotInstances = new();
+    // @outline method symbol -> field -> byte offset within the slot (for self.field loads).
+    private Dictionary<string, Dictionary<string, int>> slotMethodFieldOffsets = new();
+    // @outline method symbols compiled with the slot (self-ptr) ABI.
+    private HashSet<string> slotMethods = new();
+
+    // RFC 0001 Model B (Class[N]): an array of boxed ZCA instances laid out contiguously in
+    // SRAM. arr[i] is the slot at base + i*stride; arr[i].method() passes that element address
+    // as the self pointer. Maps the array's qualified name to its element class and byte stride.
+    private Dictionary<string, string> instanceArrayClass = new();
+    private Dictionary<string, int> instanceArrayStride = new();
+
     private List<LoopLabels> loopStack = new();
     private List<InlineContext> inlineStack = new();
 

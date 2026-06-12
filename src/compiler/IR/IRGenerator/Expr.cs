@@ -890,6 +890,17 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
+        // instance slot via the `self` pointer at the field's byte offset.
+        if (expr.Object is VariableExpr selfVe && selfVe.Name == "self"
+            && slotMethodFieldOffsets.TryGetValue(currentFunction, out var fieldOffs)
+            && fieldOffs.TryGetValue(expr.Member, out int fieldOff))
+        {
+            Temporary loaded = MakeTemp(DataType.UINT8);
+            Emit(new BytearrayLoad(currentFunction + ".self", new Constant(fieldOff), loaded));
+            return loaded;
+        }
+
         if (expr.Object is VariableExpr varExpr)
         {
             // Resolve a module alias (import machine as m) to the real module name so

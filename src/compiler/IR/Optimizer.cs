@@ -127,6 +127,12 @@ public static class Optimizer
                     {
                         if (val is Variable v && globalVarNames.Contains(v.Name))
                             referencedGlobals.Add(v.Name);
+                        // ArrayBase (address-of) keeps a global array alive even when it is
+                        // only ever passed by address -- e.g. a ZCA SRAM slot whose fields are
+                        // written/read through a self pointer inside a factory/method, never by
+                        // a direct ArrayStore in this function. (RFC 0001 Model B sret.)
+                        else if (val is ArrayBase ab && globalVarNames.Contains(ab.ArrayName))
+                            referencedGlobals.Add(ab.ArrayName);
                     });
                     // Also capture write destinations (Copy, AugAssign, etc.)
                     var dst = GetDst(instr);

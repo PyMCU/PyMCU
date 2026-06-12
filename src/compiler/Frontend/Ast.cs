@@ -576,6 +576,12 @@ public class FunctionDef : Statement
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
 
+    // @outline: RFC 0001 Model A. A ZCA method marked @outline is compiled ONCE
+    // as a real subroutine that receives the instance's runtime fields as leading
+    // parameters (self.<field> -> self_<field> param), instead of being force-inlined
+    // per call site. N instances => N calls to one shared body (no bloat).
+    public bool IsOutline { get; set; } = false;
+
     // @warning("..."): an informational diagnostic printed (once) when a call
     // to this function is expanded. Does not abort compilation. Empty = none.
     public string WarningMessage { get; set; } = "";

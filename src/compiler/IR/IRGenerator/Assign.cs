@@ -24,6 +24,49 @@ public partial class IRGenerator
 {
     private void VisitAssign(AssignStmt stmt)
     {
+        // RFC 0001 Model B (SRAM slot): `s = MultiFieldZCA(a, b)`. Box the instance into a
+        // fixed SRAM slot and store each field at its offset. Handled as a self-contained
+        // path (early return) so it never touches the virtual-constructor machinery.
+        if (stmt.Target is VariableExpr slotTgt && stmt.Value is CallExpr slotCall
+            && slotCall.Callee is VariableExpr slotCallee
+            && slotClasses.Contains(ResolveCallee(slotCallee.Name)))
+        {
+            EmitSlotConstruction(slotTgt, ResolveCallee(slotCallee.Name), slotCall.Args);
+            return;
+        }
+
+        // RFC 0001 Model B (sret): `s = make(args)` where make is a non-@inline factory
+        // returning a MULTI-field (slot) ZCA. The caller allocates the slot, passes its address
+        // as the hidden __self pointer, and tracks s as a slot instance. (Single-field factories
+        // return a register handle instead -- handled in the factory block below.)
+        if (stmt.Target is VariableExpr sfTgt && stmt.Value is CallExpr sfCall
+            && sfCall.Callee is VariableExpr sfCallee)
+        {
+            string sfFn = ResolveCallee(sfCallee.Name);
+            if (functionReturnTypes.TryGetValue(sfFn, out var sfRt) && sfRt != null
+                && slotClasses.Contains(sfRt) && !inlineFunctions.ContainsKey(sfFn))
+            {
+                EmitSlotFactoryCall(sfTgt, sfFn, sfRt, sfCall.Args);
+                return;
+            }
+        }
+
+        // RFC 0001 Model B (Class[N]): `arr[i] = C(args)` constructs into element i of an
+        // instance array -- store each field at i*stride + offset. Constant index uses a flat
+        // ArrayStore; a runtime index computes the element address and stores through it.
+        if (stmt.Target is IndexExpr ciTgt && ciTgt.Target is VariableExpr ciArr
+            && stmt.Value is CallExpr ciCall && ciCall.Callee is VariableExpr ciCallee)
+        {
+            string ciQ = string.IsNullOrEmpty(currentFunction) ? ciArr.Name : currentFunction + "." + ciArr.Name;
+            if (!instanceArrayClass.ContainsKey(ciQ) && instanceArrayClass.ContainsKey(ciArr.Name)) ciQ = ciArr.Name;
+            if (instanceArrayClass.TryGetValue(ciQ, out var ciCls)
+                && ResolveCallee(ciCallee.Name) == ciCls)
+            {
+                EmitInstanceArrayStore(ciQ, ciCls, ciTgt.Index, ciCall.Args);
+                return;
+            }
+        }
+
         if (stmt.Target is IndexExpr indexExpr)
         {
             if (indexExpr.Target is VariableExpr ve)
@@ -225,6 +268,25 @@ public partial class IRGenerator
                     }
                 }
 
+                // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
+                // to the returned ZCA class so the tracking below treats `a` as that
+                // instance and its methods inline (otherwise `a.read()` mangles to an
+                // undefined flattened name like main.a_read and fails at link).
+                if (!string.IsNullOrEmpty(resolvedClass)
+                    && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
+                    && !overloadedFunctions.Contains(resolvedClass + "___init__")
+                    && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
+                    && factoryFn?.Body?.Statements != null)
+                {
+                    foreach (var bs in factoryFn.Body.Statements)
+                        if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
+                        {
+                            var rc = ResolveCallee(rcv.Name);
+                            if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__"))
+                                resolvedClass = rc;
+                        }
+                }
+
                 if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
                                                              overloadedFunctions.Contains(resolvedClass + "___init__")))
                 {
@@ -245,6 +307,25 @@ public partial class IRGenerator
                     instanceClasses[qualifiedName] = resolvedClass;
                     pendingConstructorTarget = qualifiedName;
                     virtualInstances.Add(qualifiedName);
+                }
+                else if (call.Callee is VariableExpr facVar
+                         && functionReturnTypes.TryGetValue(ResolveCallee(facVar.Name), out var facRt)
+                         && facRt != null && zcaFactoryClasses.ContainsKey(facRt)
+                         && !inlineFunctions.ContainsKey(ResolveCallee(facVar.Name)))
+                {
+                    // RFC 0001 Model B: `x = make()` where make is a non-@inline factory
+                    // returning a single-field ZCA. The call yields the packed field as a
+                    // scalar; track `x` as a handle instance so x.method() (which must be
+                    // @outline) passes that scalar as the field arg. Crucially we do NOT set
+                    // pendingConstructorTarget or add to virtualInstances -- the assignment
+                    // proceeds normally so `x` actually receives the returned handle.
+                    string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + varExprCtor.Name
+                        : (!string.IsNullOrEmpty(currentFunction)
+                            ? currentFunction + "." + varExprCtor.Name
+                            : varExprCtor.Name);
+                    instanceClasses[qn] = facRt;
+                    factoryHandleInstances.Add(qn);
                 }
             }
         }
@@ -954,6 +1035,117 @@ public partial class IRGenerator
         throw new Exception("Array size '" + atom + "' is not a compile-time constant");
     }
 
+    // RFC 0001 Model B (SRAM slot): box a multi-field ZCA. Allocate a fixed SRAM byte slot
+    // for the instance and store each field at its byte offset, mapping the field's source
+    // __init__ parameter to the corresponding constructor argument. Tracks the instance so
+    // its @outline (self-ptr) methods receive the slot base address as `self`.
+    private void EmitSlotConstruction(VariableExpr targetVar, string cls, List<Expression> args)
+    {
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + targetVar.Name
+            : (!string.IsNullOrEmpty(currentFunction)
+                ? currentFunction + "." + targetVar.Name
+                : targetVar.Name);
+        string slot = qn + "__slot";
+
+        var layout = classFieldLayout[cls];
+        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        functionParams.TryGetValue(cls + "___init__", out var initParams);
+        int off = 0;
+        foreach (var (field, type, srcParam) in layout)
+        {
+            int argIdx = 0;
+            if (initParams != null && !string.IsNullOrEmpty(srcParam))
+            {
+                int pIdx = initParams.IndexOf(srcParam);
+                if (pIdx >= 1) argIdx = pIdx - 1; // drop implicit self
+            }
+
+            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
+            Emit(new ArrayStore(slot, new Constant(off), v, DataType.UINT8, total));
+            off += DataTypeExtensions.StringToDataType(type).SizeOf();
+        }
+
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+    }
+
+    // RFC 0001 Model B (sret): `s = make(args)` for a multi-field (slot) ZCA factory. Allocate
+    // the slot at the call site, pass its base address as the hidden __self pointer (first arg),
+    // and track s as a slot instance. The factory stores the fields through __self; we discard
+    // its returned pointer since we already hold the slot.
+    private void EmitSlotFactoryCall(VariableExpr targetVar, string facFn, string cls,
+        List<Expression> args)
+    {
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + targetVar.Name
+            : (!string.IsNullOrEmpty(currentFunction)
+                ? currentFunction + "." + targetVar.Name
+                : targetVar.Name);
+        string slot = qn + "__slot";
+
+        var layout = classFieldLayout[cls];
+        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        var callArgs = new List<Val> { new ArrayBase(slot) };
+        foreach (var a in args) callArgs.Add(VisitExpression(a));
+        Emit(new Call(facFn, callArgs, new NoneVal()));
+
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+    }
+
+    // RFC 0001 Model B (Class[N]): construct element `index` of an instance array in place,
+    // storing each field at index*stride + fieldOffset (flat byte offsets, since the array is a
+    // contiguous UINT8 SRAM block). Constant index folds the offset; a runtime index computes it.
+    private void EmitInstanceArrayStore(string arrQ, string cls, Expression indexExpr,
+        List<Expression> args)
+    {
+        var layout = classFieldLayout[cls];
+        int stride = instanceArrayStride[arrQ];
+        int total = arraySizes[arrQ];
+        functionParams.TryGetValue(cls + "___init__", out var init);
+
+        Val idx = VisitExpression(indexExpr);
+        var idxConst = idx as Constant;
+        int off = 0;
+        foreach (var (field, type, srcParam) in layout)
+        {
+            int argIdx = 0;
+            if (init != null && !string.IsNullOrEmpty(srcParam))
+            {
+                int p = init.IndexOf(srcParam);
+                if (p >= 1) argIdx = p - 1;
+            }
+
+            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
+            Val byteOff;
+            if (idxConst != null)
+            {
+                byteOff = new Constant(idxConst.Value * stride + off);
+            }
+            else
+            {
+                Temporary scaled = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Mul, idx, new Constant(stride), scaled));
+                Temporary addr = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Add, scaled, new Constant(off), addr));
+                byteOff = addr;
+            }
+
+            Emit(new ArrayStore(arrQ, byteOff, v, DataType.UINT8, total));
+            off += DataTypeExtensions.StringToDataType(type).SizeOf();
+        }
+    }
+
     private void VisitAnnAssign(AnnAssign stmt)
     {
         // Instance-member array declaration (self._buf: uint8[N]): reserve a
@@ -1133,6 +1325,30 @@ public partial class IRGenerator
         if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1)
         {
             string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
+
+            // RFC 0001 Model B (Class[N]): array of boxed ZCA instances. Lay out N contiguous
+            // slots (count * stride bytes) as a flat SRAM byte array; record the element class
+            // and stride so arr[i] = C(..) constructs into element i and arr[i].method() passes
+            // the element address as self.
+            string elemAnno = stmt.Annotation.Substring(0, bracket);
+            if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit)
+                && slotClasses.Contains(elemAnno))
+            {
+                int n = int.Parse(inner);
+                var layout = classFieldLayout[elemAnno];
+                int stride = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+                string arrQ = string.IsNullOrEmpty(currentFunction)
+                    ? stmt.Target : currentFunction + "." + stmt.Target;
+                arraySizes[arrQ] = n * stride;
+                arrayElemTypes[arrQ] = DataType.UINT8;
+                variableTypes[arrQ] = DataType.UINT8;
+                arraysWithVariableIndex.Add(arrQ);
+                moduleSramArrays.Add(arrQ);
+                instanceArrayClass[arrQ] = elemAnno;
+                instanceArrayStride[arrQ] = stride;
+                return;
+            }
+
             if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
             {
                 int count = int.Parse(inner);
