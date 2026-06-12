@@ -42,8 +42,14 @@ public static class Optimizer
         foreach (var arrName in optimized.GlobalArrays.Keys)
             globalNames.Add(arrName);
 
+        // Globals shared between ISR and non-ISR context carry volatile semantics:
+        // an ISR may rewrite them between any two instructions, so PropagateCopies
+        // must never fold a read to a previously stored constant. Computed before
+        // the per-function passes run so they see the full, unoptimized bodies.
+        var isrShared = ComputeIsrSharedGlobals(optimized);
+
         foreach (var func in optimized.Functions)
-            OptimizeFunction(func, globalNames);
+            OptimizeFunction(func, globalNames, isrShared);
 
         // Parameterized outlining of @inline expansions. Runs after the cleanup
         // passes so the folded constants are visible (addresses/flags are baked,
@@ -54,7 +60,7 @@ public static class Optimizer
         OutlineInlineExpansions(optimized, globalNames);
         foreach (var func in optimized.Functions)
             if (!preOutline.Contains(func.Name))
-                OptimizeFunction(func, globalNames);
+                OptimizeFunction(func, globalNames, isrShared);
 
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
@@ -192,6 +198,11 @@ public static class Optimizer
         // In the common case this list is empty (no vtable flash overhead).
         optimized.Vtables = BuildVtableSpecs(optimized);
 
+        // Publish the ISR-shared set for the backend (e.g. AVR GPIOR promotion),
+        // keeping only globals that survived DGE.
+        var survivingGlobals = new HashSet<string>(optimized.Globals.Select(g => g.Name));
+        optimized.IsrSharedGlobals = isrShared.Where(survivingGlobals.Contains).OrderBy(n => n, StringComparer.Ordinal).ToList();
+
         return optimized;
 
 
@@ -220,12 +231,91 @@ private static Function CloneFunction(Function f)
     };
 }
 
-    private static void OptimizeFunction(Function func, HashSet<string>? globalNames = null)
+    /// <summary>
+    /// Computes the module-level scalar globals that are referenced both in ISR
+    /// context (an ISR body or any function reachable from one) and in non-ISR
+    /// context (main, @export_c entry points, or functions reachable from them
+    /// without traversing into an ISR — a FunctionRef passed to an irq()
+    /// registration call is not a synchronous call). These globals behave like
+    /// C <c>volatile</c>: the optimizer must not cache their value, and backends
+    /// may promote single-byte entries to always-volatile storage (AVR GPIORn).
+    /// </summary>
+    private static HashSet<string> ComputeIsrSharedGlobals(ProgramIR program)
+    {
+        var globalNames = new HashSet<string>(program.Globals.Select(g => g.Name));
+        if (globalNames.Count == 0 || !program.Functions.Any(f => f.IsInterrupt))
+            return [];
+
+        var byName = new Dictionary<string, Function>();
+        foreach (var f in program.Functions)
+            byName.TryAdd(f.Name, f);
+
+        var callGraph = new Dictionary<string, HashSet<string>>();
+        foreach (var func in program.Functions)
+        {
+            var callees = new HashSet<string>();
+            foreach (var instr in func.Body)
+            {
+                if (instr is Call call) callees.Add(call.FunctionName);
+                RegisterUses(instr, val =>
+                {
+                    if (val is FunctionRef fref) callees.Add(fref.FunctionName);
+                });
+            }
+            callGraph[func.Name] = callees;
+        }
+
+        HashSet<string> Reach(IEnumerable<string> roots, bool enterIsrs)
+        {
+            var seen = new HashSet<string>();
+            var work = new Queue<string>();
+            foreach (var r in roots)
+                if (seen.Add(r)) work.Enqueue(r);
+            while (work.Count > 0)
+            {
+                if (!callGraph.TryGetValue(work.Dequeue(), out var callees)) continue;
+                foreach (var c in callees)
+                {
+                    if (!enterIsrs && byName.TryGetValue(c, out var cf) && cf.IsInterrupt) continue;
+                    if (seen.Add(c)) work.Enqueue(c);
+                }
+            }
+            return seen;
+        }
+
+        var isrFns = Reach(
+            program.Functions.Where(f => f.IsInterrupt).Select(f => f.Name),
+            enterIsrs: true);
+        var mainFns = Reach(
+            program.Functions.Where(f => !f.IsInterrupt && (f.Name == "main" || f.IsExportC)).Select(f => f.Name),
+            enterIsrs: false);
+
+        HashSet<string> RefsIn(HashSet<string> fns)
+        {
+            var refs = new HashSet<string>();
+            foreach (var func in program.Functions.Where(f => fns.Contains(f.Name)))
+                foreach (var instr in func.Body)
+                {
+                    RegisterUses(instr, val =>
+                    {
+                        if (val is Variable v && globalNames.Contains(v.Name)) refs.Add(v.Name);
+                    });
+                    if (GetDst(instr) is Variable d && globalNames.Contains(d.Name)) refs.Add(d.Name);
+                }
+            return refs;
+        }
+
+        var shared = RefsIn(isrFns);
+        shared.IntersectWith(RefsIn(mainFns));
+        return shared;
+    }
+
+    private static void OptimizeFunction(Function func, HashSet<string>? globalNames = null, HashSet<string>? volatileNames = null)
     {
         for (var i = 0; i < 10; ++i)
         {
             RemoveRedundantControlFlow(func);
-            PropagateCopies(func, globalNames);
+            PropagateCopies(func, globalNames, volatileNames);
             PropagateVarCopies(func, globalNames);
             FoldConstants(func);
             EliminateRedundantMasks(func);
@@ -243,7 +333,7 @@ private static Function CloneFunction(Function f)
         {
             for (var i = 0; i < 10; ++i)
             {
-                PropagateCopies(func, globalNames);
+                PropagateCopies(func, globalNames, volatileNames);
                 FoldConstants(func);
                 EliminateDeadVariableStores(func, globalNames);
                 CoalesceInstructions(func);
@@ -809,11 +899,16 @@ private static Function CloneFunction(Function f)
         }
     }
 
-    private static void PropagateCopies(Function func, HashSet<string>? globalNames = null)
+    private static void PropagateCopies(Function func, HashSet<string>? globalNames = null, HashSet<string>? volatileNames = null)
     {
         var tempCopies = new Dictionary<string, Val>();
         var blacklistedTemps = new HashSet<string>();
         var varConsts = new Dictionary<string, int>();
+        // ISR-shared globals: never track a stored constant (an ISR may rewrite the
+        // value between the store and a later read in the same basic block), and
+        // never forward a temp that holds their value (each source-level read must
+        // stay a single load — forwarding would duplicate or reorder reads).
+        bool IsVolatile(Val v) => v is Variable vv && volatileNames != null && volatileNames.Contains(vv.Name);
 
         for (var i = 0; i < func.Body.Count; ++i)
         {
@@ -842,7 +937,14 @@ private static Function CloneFunction(Function f)
             {
                 case Copy { Dst: Temporary tDst } copy:
                 {
-                    if (!blacklistedTemps.Contains(tDst.Name))
+                    if (IsVolatile(copy.Src))
+                    {
+                        // The temp holds a snapshot of a volatile global; forwarding the
+                        // global name to later uses would re-read it. Keep the load as-is.
+                        tempCopies.Remove(tDst.Name);
+                        blacklistedTemps.Add(tDst.Name);
+                    }
+                    else if (!blacklistedTemps.Contains(tDst.Name))
                     {
                         if (tempCopies.Remove(tDst.Name))
                             blacklistedTemps.Add(tDst.Name);
@@ -866,7 +968,9 @@ private static Function CloneFunction(Function f)
                 {
                     if (copy.Dst is Variable vDst)
                     {
-                        if (copy.Src is Constant c)
+                        if (IsVolatile(vDst))
+                            varConsts.Remove(vDst.Name);
+                        else if (copy.Src is Constant c)
                             varConsts[vDst.Name] = c.Value;
                         else if (copy.Src is FloatConstant fcVar && vDst.Type != DataType.FLOAT)
                         {

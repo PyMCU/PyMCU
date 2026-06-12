@@ -317,6 +317,14 @@ public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
 
+    // Names of module-level globals referenced both inside an ISR (or a function
+    // reachable from one) and in non-ISR code. These carry volatile semantics:
+    // the optimizer never caches their value across reads/writes, and backends
+    // may promote single-byte entries to fast always-volatile storage (e.g. the
+    // AVR GPIORn I/O registers). Absent in .mir files from older compilers —
+    // deserializes to empty, which simply disables the promotion.
+    public List<string> IsrSharedGlobals { get; set; } = new();
+
     // Module-level SRAM arrays (e.g. `_task_fns: Callable[4]`).
     // Stored separately because array types cannot be represented as a single DataType.
     // The StackAllocator allocates these in the global section (before any function locals)
