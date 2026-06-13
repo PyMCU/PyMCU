@@ -90,6 +90,13 @@ public partial class IRGenerator
     //                     (excludes methods inherited via the toInherit copy loop).
     private Dictionary<string, HashSet<string>> classChildren      = new();
     private Dictionary<string, HashSet<string>> classDirectMethods = new();
+    // Every member name that appears anywhere as an assignment target (`obj.X = ...`,
+    // `obj.X[i] = ...`, `obj.X: T = ...`, `obj.X += ...`), collected program-wide before IR
+    // generation. A real instance field is always assigned somewhere (in __init__ or a
+    // method), so this set is a superset of every class's fields — used to detect a read of
+    // an undefined instance attribute (a typo) without per-class layout completeness, which
+    // is unreliable. Unioned with method/property names at the check site.
+    private HashSet<string> assignedMemberNames = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)

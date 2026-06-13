@@ -339,6 +339,48 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void UndefinedInstanceAttribute_RaisesCompileError()
+    {
+        // Reading an attribute that is assigned nowhere in the program (a typo) must be a
+        // compile error instead of fabricating an undefined member read as 0. Gated to real
+        // chip targets (like the undefined-function check).
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Sensor:\n" +
+            "    def __init__(self):\n" +
+            "        self.a = 1\n" +
+            "        self.b = 2\n" +
+            "    def read(self):\n" +
+            "        return self.a\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    s: Sensor = Sensor()\n" +
+            "    out = s.nonexistent\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+    }
+
+    [Fact]
+    public void DefinedInstanceAttribute_DoesNotError()
+    {
+        // The flip side: reading a field that IS assigned (even in a non-__init__ method)
+        // must still compile — assignedMemberNames is collected across all methods.
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Sensor:\n" +
+            "    def __init__(self):\n" +
+            "        self.a = 1\n" +
+            "    def configure(self):\n" +
+            "        self.cfg = 5\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    s: Sensor = Sensor()\n" +
+            "    out = s.cfg\n";
+        // Should not throw (cfg is assigned in configure()).
+        GenerateIR(src, new DeviceConfig { Arch = "avr" });
+    }
+
+    [Fact]
     public void ModuleConstStr_Subscript_FoldsToCharCode()
     {
         // A module-level `const[str]` is owned by ScanGlobals, which previously never

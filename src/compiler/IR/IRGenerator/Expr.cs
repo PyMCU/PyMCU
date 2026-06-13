@@ -1200,9 +1200,34 @@ public partial class IRGenerator
             && !runtimePtrVars.ContainsKey(baseName))
             throw UserError($"'{expr.Member}' is not a member of a numeric value");
 
-        if (!globals.TryGetValue(flattenedName, out var sym5)) return new Variable(flattenedName, DataType.UINT8);
+        if (!globals.TryGetValue(flattenedName, out var sym5))
+        {
+            // Undefined attribute (a typo). This fallback is the last resort: every legitimate
+            // resolution (module member, .value/.name, ZCA fields, pointers, numeric-scalar
+            // guard) has already returned or thrown above, so reaching here fabricates an
+            // undefined `<base>_<member>` Variable read as 0. It is a genuine typo when the
+            // member is assigned NOWHERE in the program (assignedMemberNames is the superset of
+            // every class's fields — a real field is always written in some __init__/method)
+            // and is not a method or property getter. Gated to real chip targets (skip PIO and
+            // the empty-config unit compiles), like the undefined-function check.
+            if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
+                && !assignedMemberNames.Contains(expr.Member)
+                && !IsKnownMethodName(expr.Member))
+                throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)");
+
+            return new Variable(flattenedName, DataType.UINT8);
+        }
         if (sym5.IsMemoryAddress) return new MemoryAddress(sym5.Value, sym5.Type);
         return new Constant(sym5.Value);
 
+    }
+
+    // True if any class defines a method with this name (used to exclude method references
+    // from the undefined-attribute check, e.g. a bare `obj.method` used as a value).
+    private bool IsKnownMethodName(string member)
+    {
+        foreach (var methods in classDirectMethods.Values)
+            if (methods.Contains(member)) return true;
+        return false;
     }
 }

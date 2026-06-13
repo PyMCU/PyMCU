@@ -22,6 +22,12 @@ public partial class IRGenerator
 {
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
+        // Collect every member name used as an assignment target anywhere in this module
+        // (recursing into class methods and nested blocks). This forms the superset of all
+        // class fields used to flag a read of an undefined instance attribute.
+        foreach (var stmt in ast.GlobalStatements)
+            CollectAssignedMemberNames(stmt);
+
         foreach (var stmt in ast.GlobalStatements)
         {
             string name = "";
@@ -588,6 +594,55 @@ public partial class IRGenerator
     // entry; the type is taken from the matching __init__ parameter when the RHS is
     // that parameter, else defaults to uint8. Used to synthesize the leading params
     // of an @outline method.
+    // Recursively walk a statement (into class bodies, methods and nested blocks) and record
+    // every member name used as an assignment target. Defensive about statement types so it
+    // never UNDER-collects (a missed write would risk a false "no attribute" error).
+    private void CollectAssignedMemberNames(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) CollectAssignedMemberNames(st); return;
+            case ClassDef cd: CollectAssignedMemberNames(cd.Body); return;
+            case FunctionDef fd: CollectAssignedMemberNames(fd.Body); return;
+            case IfStmt iff:
+                CollectAssignedMemberNames(iff.ThenBranch);
+                foreach (var br in iff.ElifBranches) CollectAssignedMemberNames(br.Body);
+                CollectAssignedMemberNames(iff.ElseBranch);
+                return;
+            case WhileStmt w: CollectAssignedMemberNames(w.Body); return;
+            case ForStmt f:
+                // `for self.x in ...` (a member loop target) also writes the member.
+                if (f.VarName.Contains('.')) assignedMemberNames.Add(f.VarName[(f.VarName.LastIndexOf('.') + 1)..]);
+                CollectAssignedMemberNames(f.Body);
+                return;
+            case WithStmt wi: CollectAssignedMemberNames(wi.Body); return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectAssignedMemberNames(br.Body); return;
+            case TryStmt t:
+                foreach (var st in t.Body) CollectAssignedMemberNames(st);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectAssignedMemberNames(st);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectAssignedMemberNames(st);
+                return;
+            case AssignStmt a: RecordMemberAssignTarget(a.Target); return;
+            case AugAssignStmt ag: RecordMemberAssignTarget(ag.Target); return;
+            case AnnAssign an:
+                // AnnAssign.Target is a (possibly dotted) name string, e.g. "self._buf".
+                int dot = an.Target.LastIndexOf('.');
+                if (dot >= 0) assignedMemberNames.Add(an.Target[(dot + 1)..]);
+                return;
+        }
+    }
+
+    private void RecordMemberAssignTarget(Expression target)
+    {
+        switch (target)
+        {
+            case MemberAccessExpr ma: assignedMemberNames.Add(ma.Member); break;
+            case IndexExpr { Target: MemberAccessExpr ma2 }: assignedMemberNames.Add(ma2.Member); break;
+            case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e); break;
+        }
+    }
+
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)
     {
         var layout = new List<(string, string, string)>();
