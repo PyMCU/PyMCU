@@ -1060,10 +1060,7 @@ public partial class IRGenerator
                         {
                             count = le.Elements.Count;
                             foreach (var e in le.Elements)
-                            {
-                                if (e is IntegerLiteral il2) initVals.Add(il2.Value);
-                                else initVals.Add(0);
-                            }
+                                initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                         }
                     }
                     else if (callee.Name == "input")
@@ -1390,7 +1387,7 @@ public partial class IRGenerator
             var memInit = new List<int>(Enumerable.Repeat(0, memCount));
             if (stmt.Value is ListExpr mle)
                 for (int k = 0; k < Math.Min(memCount, mle.Elements.Count); k++)
-                    if (mle.Elements[k] is IntegerLiteral mil) memInit[k] = mil.Value;
+                    if (TryEvalElemConst(mle.Elements[k], out int mv)) memInit[k] = mv;
             for (int k = 0; k < memCount; ++k)
                 Emit(new ArrayStore(flat, new Constant(k), new Constant(memInit[k]), memElem, memCount));
             return;
@@ -1426,7 +1423,7 @@ public partial class IRGenerator
                         if (stmt.Value is ListExpr le)
                         {
                             for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                if (le.Elements[k] is IntegerLiteral il) bytes[k] = il.Value;
+                                if (TryEvalElemConst(le.Elements[k], out int v)) bytes[k] = v;
                         }
                         Emit(new FlashData(qualified, bytes));
                         return;
@@ -1452,7 +1449,7 @@ public partial class IRGenerator
                 else if (arg0 is ListExpr le)
                 {
                     count = le.Elements.Count;
-                    foreach (var e in le.Elements) initVals.Add(e is IntegerLiteral il2 ? il2.Value : 0);
+                    foreach (var e in le.Elements) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                 }
             }
 
@@ -1611,6 +1608,15 @@ public partial class IRGenerator
     // Fixed-size array annotation `T[N]` (incl. Class[N] slot arrays and Callable[N]):
     // register sizes/types and emit element initializers. Returns true when handled;
     // false to fall through (e.g. a ptr[...] annotation handled by the scalar path).
+    // Evaluate a list-literal initializer element to a constant int, handling negatives
+    // (`-1` is UnaryExpr(Negate), not an IntegerLiteral) and constant expressions — not just a
+    // bare IntegerLiteral. Returns false if it is not a compile-time constant (left as 0).
+    private bool TryEvalElemConst(Expression e, out int value)
+    {
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
+    }
+
     private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
     {
         string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
@@ -1754,9 +1760,7 @@ public partial class IRGenerator
                 if (stmt.Value is ListExpr le)
                 {
                     for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
-                    {
-                        if (le.Elements[k] is IntegerLiteral il) initVals[k] = il.Value;
-                    }
+                        if (TryEvalElemConst(le.Elements[k], out int v)) initVals[k] = v;
                 }
 
                 if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
@@ -1765,8 +1769,8 @@ public partial class IRGenerator
                     for (int k = 0; k < count; ++k)
                     {
                         int srcIdx = k % leRep.Elements.Count;
-                        if (srcIdx < leRep.Elements.Count && leRep.Elements[srcIdx] is IntegerLiteral il)
-                            initVals[k] = il.Value;
+                        if (srcIdx < leRep.Elements.Count && TryEvalElemConst(leRep.Elements[srcIdx], out int v))
+                            initVals[k] = v;
                     }
                 }
             }

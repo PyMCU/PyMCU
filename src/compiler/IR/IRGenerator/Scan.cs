@@ -109,8 +109,8 @@ public partial class IRGenerator
                                 if (initializer is ListExpr le)
                                 {
                                     for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                        if (le.Elements[k] is IntegerLiteral il)
-                                            bytes[k] = il.Value;
+                                        if (TryEvalElemConst(le.Elements[k], out int v))
+                                            bytes[k] = v;
                                 }
                                 pendingFlashData.Add(new FlashData(name, bytes));
                             }

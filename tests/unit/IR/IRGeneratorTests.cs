@@ -339,6 +339,27 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void NegativeArrayInitializers_AreStored()
+    {
+        // `arr: int8[3] = [-1, -2, -3]` — negative literals parse as UnaryExpr(Negate), not
+        // IntegerLiteral, and were silently dropped (every element initialized to 0). The
+        // initializer must evaluate constant expressions, so the stores carry -1, -2, -3.
+        const string src =
+            "arr: int8[3] = [-1, -2, -3]\n" +
+            "def main():\n" +
+            "    pass\n";
+        var prog = GenerateIR(src);
+        var stores = prog.Functions
+            .SelectMany(f => f.Body)
+            .OfType<ArrayStore>()
+            .Where(a => a.ArrayName == "arr")
+            .ToList();
+        Assert.Contains(stores, a => a.Src is Constant { Value: -1 });
+        Assert.Contains(stores, a => a.Src is Constant { Value: -2 });
+        Assert.Contains(stores, a => a.Src is Constant { Value: -3 });
+    }
+
+    [Fact]
     public void ConstructClassWithoutInit_RaisesClearError()
     {
         // Constructing a class that has no __init__ is reported specifically (PyMCU does not
