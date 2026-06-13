@@ -107,7 +107,7 @@ public partial class IRGenerator
             }
         }
 
-        throw new Exception("Not a constant expression");
+        throw UserError("Not a constant expression");
     }
 
     private Function VisitFunction(FunctionDef funcNode)
@@ -370,7 +370,7 @@ public partial class IRGenerator
 
         if (stmt is FunctionDef funcDef)
         {
-            if (!funcDef.IsInline) throw new Exception($"Nested function '{funcDef.Name}' must be @inline");
+            if (!funcDef.IsInline) throw UserError($"Nested function '{funcDef.Name}' must be @inline");
             inlineFunctions[funcDef.Name] = funcDef;
             functionReturnTypes[funcDef.Name] = funcDef.ReturnType;
             var @params = new List<string>();
@@ -408,7 +408,7 @@ public partial class IRGenerator
         }
         else
         {
-            throw new Exception($"IR Generation: Unknown Statement type: {stmt.GetType().Name}");
+            throw UserError($"IR Generation: Unknown Statement type: {stmt.GetType().Name}");
         }
     }
 
@@ -421,7 +421,7 @@ public partial class IRGenerator
                 var ctx = inlineStack.Last();
                 if (tup.Elements.Count != ctx.ResultVars.Count)
                 {
-                    throw new Exception($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements");
+                    throw UserError($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements");
                 }
 
                 for (int k = 0; k < tup.Elements.Count; ++k)

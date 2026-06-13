@@ -126,7 +126,7 @@ public partial class IRGenerator
                         constantVariables[varKey] = il.Value;
                         VisitStatement(stmt.Body);
                     }
-                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
+                    else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
 
                 constantVariables.Remove(varKey);
@@ -142,7 +142,7 @@ public partial class IRGenerator
                         constantVariables[varKey] = il.Value;
                         VisitStatement(stmt.Body);
                     }
-                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
+                    else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
 
                 constantVariables.Remove(varKey);
@@ -170,7 +170,7 @@ public partial class IRGenerator
                     {
                         var sv = EvalConst(call.Args[0]);
                         if (!sv.HasValue)
-                            throw new Exception("for-in range() argument must be a compile-time constant.");
+                            throw UserError("for-in range() argument must be a compile-time constant.");
                         stop = sv.Value;
                     }
                     else if (call.Args.Count >= 2)
@@ -178,20 +178,20 @@ public partial class IRGenerator
                         var sv = EvalConst(call.Args[0]);
                         var ev = EvalConst(call.Args[1]);
                         if (!sv.HasValue || !ev.HasValue)
-                            throw new Exception("for-in range() arguments must be compile-time constants.");
+                            throw UserError("for-in range() arguments must be compile-time constants.");
                         start = sv.Value;
                         stop = ev.Value;
                         if (call.Args.Count >= 3)
                         {
                             var stv = EvalConst(call.Args[2]);
                             if (!stv.HasValue)
-                                throw new Exception("for-in range() step must be a compile-time constant.");
+                                throw UserError("for-in range() step must be a compile-time constant.");
                             step = stv.Value;
                         }
                     }
-                    else throw new Exception("for-in range() requires at least one argument.");
+                    else throw UserError("for-in range() requires at least one argument.");
 
-                    if (step == 0) throw new Exception("for-in range() step cannot be zero.");
+                    if (step == 0) throw UserError("for-in range() step cannot be zero.");
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step)
                     {
                         constantVariables[varKey] = i;
@@ -219,7 +219,7 @@ public partial class IRGenerator
                                 VisitStatement(stmt.Body);
                             }
                             else
-                                throw new Exception(
+                                throw UserError(
                                     "enumerate() list elements must be compile-time integer constants.");
                         }
 
@@ -247,7 +247,7 @@ public partial class IRGenerator
                         {
                             var sv = EvalC(rcall.Args[0]);
                             if (!sv.HasValue)
-                                throw new Exception("enumerate(range()) argument must be compile-time constant.");
+                                throw UserError("enumerate(range()) argument must be compile-time constant.");
                             rstop = sv.Value;
                         }
                         else if (rcall.Args.Count >= 2)
@@ -255,14 +255,14 @@ public partial class IRGenerator
                             var sv = EvalC(rcall.Args[0]);
                             var ev = EvalC(rcall.Args[1]);
                             if (!sv.HasValue || !ev.HasValue)
-                                throw new Exception("enumerate(range()) arguments must be compile-time constants.");
+                                throw UserError("enumerate(range()) arguments must be compile-time constants.");
                             rstart = sv.Value;
                             rstop = ev.Value;
                             if (rcall.Args.Count >= 3)
                             {
                                 var stv = EvalC(rcall.Args[2]);
                                 if (!stv.HasValue)
-                                    throw new Exception("enumerate(range()) step must be compile-time constant.");
+                                    throw UserError("enumerate(range()) step must be compile-time constant.");
                                 rstep = stv.Value;
                             }
                         }
@@ -374,7 +374,7 @@ public partial class IRGenerator
                         }
                     }
 
-                    throw new Exception(
+                    throw UserError(
                         "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.");
                 }
                 else if (calleeVar.Name == "zip" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 2)
@@ -403,7 +403,7 @@ public partial class IRGenerator
                                     if (resolved is Constant rc)
                                         vals.Add(rc.Value);
                                     else
-                                        throw new Exception("zip() list elements must be compile-time integer constants.");
+                                        throw UserError("zip() list elements must be compile-time integer constants.");
                                 }
                             }
 
@@ -448,7 +448,7 @@ public partial class IRGenerator
                                     string elemKey = @base + "__" + k;
                                     if (constantVariables.TryGetValue(elemKey, out int cv)) vals.Add(cv);
                                     else
-                                        throw new Exception(
+                                        throw UserError(
                                             "zip() array elements must be compile-time integer constants.");
                                 }
 
@@ -456,7 +456,7 @@ public partial class IRGenerator
                             }
                         }
 
-                        throw new Exception("zip() arguments must be constant list literals or constant arrays.");
+                        throw UserError("zip() arguments must be constant list literals or constant arrays.");
                     }
 
                     // Try to interpret a list expression as a list of function references.
@@ -542,7 +542,7 @@ public partial class IRGenerator
                         {
                             if (le3.Elements[k] is IntegerLiteral il) constantVariables[valKey] = il.Value;
                             else
-                                throw new Exception("reversed() list elements must be compile-time integer constants.");
+                                throw UserError("reversed() list elements must be compile-time integer constants.");
                             VisitStatement(stmt.Body);
                         }
 
@@ -615,7 +615,7 @@ public partial class IRGenerator
                         }
                     }
 
-                    throw new Exception("reversed() argument must be a constant list literal or a constant array.");
+                    throw UserError("reversed() argument must be a constant list literal or a constant array.");
                 }
             }
 
@@ -731,7 +731,7 @@ public partial class IRGenerator
                 }
             }
 
-            throw new Exception(
+            throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), or reversed(iterable). Use 'const[str]' type annotation for string parameters.");
         }
 
@@ -796,7 +796,7 @@ public partial class IRGenerator
             int val = EvaluateConstantExpr(stmt.Condition);
             if (val == 0)
             {
-                throw new Exception("AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message));
+                throw UserError("AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message));
             }
         }
         catch (Exception e)

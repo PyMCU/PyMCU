@@ -440,7 +440,7 @@ public partial class IRGenerator
                 {
                     string arrName = "";
                     if (targetVal is Variable v) arrName = v.Name;
-                    else throw new Exception("match/case sequence pattern: subject must be an array variable");
+                    else throw UserError("match/case sequence pattern: subject must be an array variable");
 
                     int patSize = seq.Elements.Count;
                     if (arraySizes.TryGetValue(arrName, out int size) && size != patSize)
@@ -691,13 +691,13 @@ public partial class IRGenerator
 
     private void VisitBreak(BreakStmt stmt)
     {
-        if (loopStack.Count == 0) throw new Exception("Break statement outside of loop");
+        if (loopStack.Count == 0) throw UserError("Break statement outside of loop");
         Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).BreakLabel));
     }
 
     private void VisitContinue(ContinueStmt stmt)
     {
-        if (loopStack.Count == 0) throw new Exception("Continue statement outside of loop");
+        if (loopStack.Count == 0) throw UserError("Continue statement outside of loop");
         Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).ContinueLabel));
     }
 

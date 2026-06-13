@@ -723,6 +723,18 @@ public partial class IRGenerator
             _pendingFlashData.Clear();
         }
 
+        // Two functions compiled under the same name (e.g. `def f()` twice without an
+        // overload-distinguishing signature) would otherwise crash a downstream
+        // ToDictionary(f => f.Name) with a raw "An item with the same key has already been
+        // added" reported as an InternalCompilerError. Report it as a clean diagnostic.
+        var dupFn = irProgram.Functions
+            .GroupBy(f => f.Name)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (dupFn != null)
+            throw new PyMCU.Common.CompilerError("CompileError",
+                $"duplicate function definition: '{dupFn.Key}' is defined more than once " +
+                "(give the overloads different parameter types, or rename one)", 1, 1);
+
         // Propagate class hierarchy so the Optimizer devirt pass and AvrCodeGen
         // can work without access to IRGenerator-internal state.
         irProgram.ClassChildren = new Dictionary<string, HashSet<string>>(
