@@ -214,110 +214,7 @@ public partial class IRGenerator
             callee += "___init__";
         }
 
-        if (overloadedFunctions.Contains(callee))
-        {
-            string ShortClassName(string fullKey)
-            {
-                foreach (var cn in classNames)
-                {
-                    if (fullKey == cn) return cn;
-                    if (fullKey.Length > cn.Length && fullKey[fullKey.Length - cn.Length - 1] == '_' &&
-                        fullKey.EndsWith((string)cn)) return cn;
-                }
-
-                return fullKey;
-            }
-
-            string ArgTypeSuffix(Expression arg)
-            {
-                if (arg is StringLiteral) return "str";
-                if (arg is VariableExpr v)
-                {
-                    string key = currentInlinePrefix + v.Name;
-                    for (int depth = 0; depth < 20; depth++)
-                    {
-                        if (instanceClasses.TryGetValue(key, out string ic)) return ShortClassName(ic);
-                        if (strConstantVariables.ContainsKey(key)) return "str";
-                        if (variableAliases.TryGetValue(key, out string ak)) key = ak;
-                        else break;
-                    }
-
-                    // SRAM arrays (variable-indexed) are passed as buffer pointers — use
-                    // "bytearray" so overloads that accept bytearray parameters are selected.
-                    // Try all three qualified forms since the set may use different prefixes.
-                    string qKey = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name;
-                    if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
-                        arraysWithVariableIndex.Contains(v.Name) ||
-                        moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
-                        bytearrayParams.Contains(key) || bytearrayParams.Contains(qKey))
-                        return "bytearray";
-                }
-
-                return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));
-            }
-
-            string suffix = "";
-            bool first = true;
-            foreach (var arg in expr.Args)
-            {
-                if (arg is KeywordArgExpr) continue;
-                if (!first) suffix += "_";
-                first = false;
-                suffix += ArgTypeSuffix(arg);
-            }
-
-            if (string.IsNullOrEmpty(suffix)) suffix = "void";
-
-            var mangled = callee + "___" + suffix;
-            if (inlineFunctions.ContainsKey(mangled)) callee = mangled;
-            else
-            {
-                var argCount = expr.Args.Count(a => a is not KeywordArgExpr);
-
-                // 1) Existing behaviour: first overload whose parameter count equals the
-                //    number of supplied positional arguments exactly.
-                string? pick = null;
-                foreach (var kvp in inlineFunctions)
-                {
-                    if (!kvp.Key.StartsWith(callee + "___")) continue;
-                    if (kvp.Value.Params.Count(p => p.Name != "self") == argCount) { pick = kvp.Key; break; }
-                }
-
-                // 2) Default-aware fallback. When no exact-arity overload exists — e.g. a
-                //    one-arg Pin(14) against overloads whose trailing params have defaults —
-                //    accept an overload that defaults the missing trailing params, and prefer
-                //    the one whose leading parameter types match the argument types so the
-                //    int literal selects const[uint8], not the const[str] overload. Falls
-                //    back to the first arity-compatible overload. This only runs for calls
-                //    that previously resolved to nothing, so existing resolutions (AVR and
-                //    ARM alike) are unchanged.
-                if (pick is null)
-                {
-                    static string NormType(string t)
-                        => t.StartsWith("const[") && t.EndsWith("]") ? t[6..^1] : t;
-
-                    string? typed = null, anyArity = null;
-                    foreach (var kvp in inlineFunctions)
-                    {
-                        if (!kvp.Key.StartsWith(callee + "___")) continue;
-                        var ps = kvp.Value.Params.Where(p => p.Name != "self").ToList();
-                        if (argCount > ps.Count) continue;
-
-                        bool restDefaulted = true;
-                        for (int pi = argCount; pi < ps.Count; pi++)
-                            if (ps[pi].DefaultValue is null) { restDefaulted = false; break; }
-                        if (!restDefaulted) continue;
-
-                        anyArity ??= kvp.Key;
-                        string lead = string.Join("_", ps.Take(argCount).Select(p => NormType(p.Type)));
-                        if (argCount == 0 || lead == suffix) { typed = kvp.Key; break; }
-                    }
-                    pick = typed ?? anyArity;
-                }
-
-                if (pick != null) callee = pick;
-            }
-        }
+        callee = ResolveOverloadedCallee(callee, expr);
 
         {
             bool isSleepMs = callee == "sleep_ms" || callee == "time_sleep_ms" || callee == "pymcu_time_sleep_ms" || callee == "delay_ms" || callee == "time_delay_ms" || callee == "pymcu_time_delay_ms";
@@ -1033,6 +930,118 @@ public partial class IRGenerator
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
+    }
+
+    // Resolve an overloaded call to its concrete mangled name: build a type suffix
+    // from the positional arg types, prefer the exact match, else a default-aware
+    // arity fallback. Returns callee unchanged when it is not overloaded.
+    private string ResolveOverloadedCallee(string callee, CallExpr expr)
+    {
+        if (overloadedFunctions.Contains(callee))
+        {
+            string ShortClassName(string fullKey)
+            {
+                foreach (var cn in classNames)
+                {
+                    if (fullKey == cn) return cn;
+                    if (fullKey.Length > cn.Length && fullKey[fullKey.Length - cn.Length - 1] == '_' &&
+                        fullKey.EndsWith((string)cn)) return cn;
+                }
+
+                return fullKey;
+            }
+
+            string ArgTypeSuffix(Expression arg)
+            {
+                if (arg is StringLiteral) return "str";
+                if (arg is VariableExpr v)
+                {
+                    string key = currentInlinePrefix + v.Name;
+                    for (int depth = 0; depth < 20; depth++)
+                    {
+                        if (instanceClasses.TryGetValue(key, out string ic)) return ShortClassName(ic);
+                        if (strConstantVariables.ContainsKey(key)) return "str";
+                        if (variableAliases.TryGetValue(key, out string ak)) key = ak;
+                        else break;
+                    }
+
+                    // SRAM arrays (variable-indexed) are passed as buffer pointers — use
+                    // "bytearray" so overloads that accept bytearray parameters are selected.
+                    // Try all three qualified forms since the set may use different prefixes.
+                    string qKey = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name;
+                    if (arraysWithVariableIndex.Contains(key) || arraysWithVariableIndex.Contains(qKey) ||
+                        arraysWithVariableIndex.Contains(v.Name) ||
+                        moduleSramArrays.Contains(key) || moduleSramArrays.Contains(qKey) ||
+                        bytearrayParams.Contains(key) || bytearrayParams.Contains(qKey))
+                        return "bytearray";
+                }
+
+                return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));
+            }
+
+            string suffix = "";
+            bool first = true;
+            foreach (var arg in expr.Args)
+            {
+                if (arg is KeywordArgExpr) continue;
+                if (!first) suffix += "_";
+                first = false;
+                suffix += ArgTypeSuffix(arg);
+            }
+
+            if (string.IsNullOrEmpty(suffix)) suffix = "void";
+
+            var mangled = callee + "___" + suffix;
+            if (inlineFunctions.ContainsKey(mangled)) callee = mangled;
+            else
+            {
+                var argCount = expr.Args.Count(a => a is not KeywordArgExpr);
+
+                // 1) Existing behaviour: first overload whose parameter count equals the
+                //    number of supplied positional arguments exactly.
+                string? pick = null;
+                foreach (var kvp in inlineFunctions)
+                {
+                    if (!kvp.Key.StartsWith(callee + "___")) continue;
+                    if (kvp.Value.Params.Count(p => p.Name != "self") == argCount) { pick = kvp.Key; break; }
+                }
+
+                // 2) Default-aware fallback. When no exact-arity overload exists — e.g. a
+                //    one-arg Pin(14) against overloads whose trailing params have defaults —
+                //    accept an overload that defaults the missing trailing params, and prefer
+                //    the one whose leading parameter types match the argument types so the
+                //    int literal selects const[uint8], not the const[str] overload. Falls
+                //    back to the first arity-compatible overload. This only runs for calls
+                //    that previously resolved to nothing, so existing resolutions (AVR and
+                //    ARM alike) are unchanged.
+                if (pick is null)
+                {
+                    static string NormType(string t)
+                        => t.StartsWith("const[") && t.EndsWith("]") ? t[6..^1] : t;
+
+                    string? typed = null, anyArity = null;
+                    foreach (var kvp in inlineFunctions)
+                    {
+                        if (!kvp.Key.StartsWith(callee + "___")) continue;
+                        var ps = kvp.Value.Params.Where(p => p.Name != "self").ToList();
+                        if (argCount > ps.Count) continue;
+
+                        bool restDefaulted = true;
+                        for (int pi = argCount; pi < ps.Count; pi++)
+                            if (ps[pi].DefaultValue is null) { restDefaulted = false; break; }
+                        if (!restDefaulted) continue;
+
+                        anyArity ??= kvp.Key;
+                        string lead = string.Join("_", ps.Take(argCount).Select(p => NormType(p.Type)));
+                        if (argCount == 0 || lead == suffix) { typed = kvp.Key; break; }
+                    }
+                    pick = typed ?? anyArity;
+                }
+
+                if (pick != null) callee = pick;
+            }
+        }
+        return callee;
     }
 
     // super().method(args): expand the resolved base-class @inline method body in place,
