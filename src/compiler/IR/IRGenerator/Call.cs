@@ -24,77 +24,7 @@ public partial class IRGenerator
 {
     private Val VisitCall(CallExpr expr)
     {
-        if (expr.Callee is MemberAccessExpr mem)
-        {
-            if (mem.Object is CallExpr superCall)
-            {
-                if (superCall.Callee is VariableExpr superVar)
-                {
-                    if (superVar.Name == "super")
-                    {
-                        string childClass = string.IsNullOrEmpty(currentModulePrefix)
-                            ? ""
-                            : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
-                        if (classBasePrefixes.TryGetValue(childClass, out var basePrefix))
-                        {
-                            var baseMethod = basePrefix + mem.Member;
-                            var calleeSuper = baseMethod;
-
-                            if (inlineFunctions.TryGetValue(calleeSuper, out var funcSuper))
-                            {
-                                var exitLabel = MakeLabel();
-                                var newDepth = inlineDepth + 1;
-                                var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
-
-                                var selfAlias = currentInlinePrefix + "self";
-                                if (variableAliases.TryGetValue(selfAlias, out var vAlias))
-                                    variableAliases[newPrefix + "self"] = vAlias;
-                                else if (!string.IsNullOrEmpty(pendingConstructorTarget))
-                                    variableAliases[newPrefix + "self"] = pendingConstructorTarget;
-
-                                var paramIdx = 0;
-                                foreach (var p in funcSuper.Params)
-                                {
-                                    if (p.Name == "self") continue;
-                                    if (paramIdx >= expr.Args.Count) continue;
-                                    var argVal = VisitExpression(expr.Args[paramIdx]);
-                                    var paramKey = newPrefix + p.Name;
-                                    if (argVal is Variable vArg)
-                                    {
-                                        variableAliases[paramKey] = vArg.Name;
-                                    }
-                                    else
-                                    {
-                                        var paramVar = new Variable(paramKey, DataType.UINT8);
-                                        Emit(new Copy(argVal, paramVar));
-                                    }
-
-                                    paramIdx++;
-                                }
-
-                                var savedPrefix = currentInlinePrefix;
-                                var savedMod = currentModulePrefix;
-                                var savedDepth = inlineDepth;
-
-                                currentInlinePrefix = newPrefix;
-                                currentModulePrefix = basePrefix;
-                                inlineDepth = newDepth;
-                                inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
-
-                                VisitBlock(funcSuper.Body);
-                                Emit(new Label(exitLabel));
-                                inlineStack.RemoveAt(inlineStack.Count - 1);
-
-                                currentInlinePrefix = savedPrefix;
-                                currentModulePrefix = savedMod;
-                                inlineDepth = savedDepth;
-                                return new NoneVal();
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
 
         string callee = "";
         if (expr.Callee is VariableExpr varE)
@@ -105,71 +35,11 @@ public partial class IRGenerator
         {
             bool resolvedAsModule = false;
 
-            // RFC 0001 Model B (Class[N]): arr[i].method() -- compute the element address
-            // (base + i*stride) and call the shared slot method with it as the self pointer.
-            if (memC.Object is IndexExpr iaIdx && iaIdx.Target is VariableExpr iaArr)
-            {
-                string iaQ = !string.IsNullOrEmpty(currentFunction)
-                    ? currentFunction + "." + iaArr.Name : iaArr.Name;
-                if (!instanceArrayClass.ContainsKey(iaQ) && instanceArrayClass.ContainsKey(iaArr.Name))
-                    iaQ = iaArr.Name;
-                if (instanceArrayClass.TryGetValue(iaQ, out var iaCls))
-                {
-                    string iaMethod = ResolveMROMethod(iaCls, memC.Member) + "_" + memC.Member;
-                    int stride = instanceArrayStride[iaQ];
+            // RFC 0001 Model B (Class[N]): arr[i].method() dispatch.
+            if (TryEmitInstanceArrayMethodCall(expr, memC) is { } iaResult) return iaResult;
 
-                    Val idxV = VisitExpression(iaIdx.Index);
-                    Temporary baseT = MakeTemp(DataType.UINT16);
-                    Emit(new Copy(new ArrayBase(iaQ), baseT));        // load slot-array base addr
-                    Temporary scaled = MakeTemp(DataType.UINT16);
-                    Emit(new Binary(BinaryOp.Mul, idxV, new Constant(stride), scaled));
-                    Temporary elemAddr = MakeTemp(DataType.UINT16);
-                    Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
-
-                    var iaArgs = new List<Val> { elemAddr };
-                    foreach (var a in expr.Args) iaArgs.Add(VisitExpression(a));
-
-                    bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
-                                  || iaRt == "void" || iaRt == "None";
-                    if (iaVoid)
-                    {
-                        Emit(new Call(iaMethod, iaArgs, new NoneVal()));
-                        return new NoneVal();
-                    }
-                    Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
-                    Emit(new Call(iaMethod, iaArgs, iaDst));
-                    return iaDst;
-                }
-            }
-
-            // self.method(args) inside an outlined method: call the sibling outlined
-            // method, forwarding this method's own self — the slot pointer (Model B) or
-            // the field params (Model A). This keeps the call a shared subroutine instead
-            // of force-inlining the whole containing method at each call site.
-            if (memC.Object is VariableExpr { Name: "self" }
-                && outlinedMethods.Contains(currentFunction)
-                && methodInstanceTypes.TryGetValue(currentFunction, out var selfCls))
-            {
-                string target = ResolveMROMethod(selfCls, memC.Member) + "_" + memC.Member;
-                if (outlinedMethods.Contains(target))
-                {
-                    var fwdArgs = new List<Val>();
-                    if (slotMethods.Contains(currentFunction))
-                        fwdArgs.Add(new Variable(currentFunction + ".self", DataType.UINT16));
-                    else
-                        foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
-                            fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
-                                DataTypeExtensions.StringToDataType(ty)));
-                    foreach (var a in expr.Args) fwdArgs.Add(VisitExpression(a));
-
-                    bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
-                                 || tRt == "void" || tRt == "None";
-                    if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
-                    Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
-                    Emit(new Call(target, fwdArgs, tDst));
-                    return tDst;
-                }
-            }
+            // self.method(args) inside an outlined method: call the sibling outlined method.
+            if (TryEmitSelfOutlinedMethodCall(expr, memC) is { } selfResult) return selfResult;
 
             if (memC.Object is VariableExpr ve)
             {
@@ -2077,6 +1947,144 @@ public partial class IRGenerator
         Temporary dstC = MakeTemp();
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
+    }
+
+    // super().method(args): expand the resolved base-class @inline method body in place,
+    // aliasing self and binding the args into the new inline frame (single-inheritance
+    // ZCA super-call). Returns NoneVal when handled; null to fall through to normal call
+    // resolution (not a super call, or the base method is not an inline function).
+    private Val? TryEmitSuperMethodCall(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr mem) return null;
+        if (mem.Object is not CallExpr { Callee: VariableExpr { Name: "super" } }) return null;
+
+        string childClass = string.IsNullOrEmpty(currentModulePrefix)
+            ? ""
+            : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+        if (!classBasePrefixes.TryGetValue(childClass, out var basePrefix)) return null;
+
+        var calleeSuper = basePrefix + mem.Member;
+        if (!inlineFunctions.TryGetValue(calleeSuper, out var funcSuper)) return null;
+
+        var exitLabel = MakeLabel();
+        var newDepth = inlineDepth + 1;
+        var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
+
+        var selfAlias = currentInlinePrefix + "self";
+        if (variableAliases.TryGetValue(selfAlias, out var vAlias))
+            variableAliases[newPrefix + "self"] = vAlias;
+        else if (!string.IsNullOrEmpty(pendingConstructorTarget))
+            variableAliases[newPrefix + "self"] = pendingConstructorTarget;
+
+        var paramIdx = 0;
+        foreach (var p in funcSuper.Params)
+        {
+            if (p.Name == "self") continue;
+            if (paramIdx >= expr.Args.Count) continue;
+            var argVal = VisitExpression(expr.Args[paramIdx]);
+            var paramKey = newPrefix + p.Name;
+            if (argVal is Variable vArg)
+            {
+                variableAliases[paramKey] = vArg.Name;
+            }
+            else
+            {
+                var paramVar = new Variable(paramKey, DataType.UINT8);
+                Emit(new Copy(argVal, paramVar));
+            }
+
+            paramIdx++;
+        }
+
+        var savedPrefix = currentInlinePrefix;
+        var savedMod = currentModulePrefix;
+        var savedDepth = inlineDepth;
+
+        currentInlinePrefix = newPrefix;
+        currentModulePrefix = basePrefix;
+        inlineDepth = newDepth;
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+
+        VisitBlock(funcSuper.Body);
+        Emit(new Label(exitLabel));
+        inlineStack.RemoveAt(inlineStack.Count - 1);
+
+        currentInlinePrefix = savedPrefix;
+        currentModulePrefix = savedMod;
+        inlineDepth = savedDepth;
+        return new NoneVal();
+    }
+
+    // RFC 0001 Model B (Class[N]): `arr[i].method(args)` — compute the element address
+    // (base + i*stride) and call the shared slot method with it as the self pointer.
+    // Returns the call result when handled; null when the receiver is not an instance
+    // array (fall through to normal member-call resolution).
+    private Val? TryEmitInstanceArrayMethodCall(CallExpr expr, MemberAccessExpr memC)
+    {
+        if (memC.Object is not IndexExpr { Target: VariableExpr iaArr } iaIdx) return null;
+
+        string iaQ = !string.IsNullOrEmpty(currentFunction)
+            ? currentFunction + "." + iaArr.Name : iaArr.Name;
+        if (!instanceArrayClass.ContainsKey(iaQ) && instanceArrayClass.ContainsKey(iaArr.Name))
+            iaQ = iaArr.Name;
+        if (!instanceArrayClass.TryGetValue(iaQ, out var iaCls)) return null;
+
+        string iaMethod = ResolveMROMethod(iaCls, memC.Member) + "_" + memC.Member;
+        int stride = instanceArrayStride[iaQ];
+
+        Val idxV = VisitExpression(iaIdx.Index);
+        Temporary baseT = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new ArrayBase(iaQ), baseT));        // load slot-array base addr
+        Temporary scaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, idxV, new Constant(stride), scaled));
+        Temporary elemAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr)); // base + i*stride
+
+        var iaArgs = new List<Val> { elemAddr };
+        foreach (var a in expr.Args) iaArgs.Add(VisitExpression(a));
+
+        bool iaVoid = !functionReturnTypes.TryGetValue(iaMethod, out var iaRt)
+                      || iaRt == "void" || iaRt == "None";
+        if (iaVoid)
+        {
+            Emit(new Call(iaMethod, iaArgs, new NoneVal()));
+            return new NoneVal();
+        }
+        Temporary iaDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[iaMethod]));
+        Emit(new Call(iaMethod, iaArgs, iaDst));
+        return iaDst;
+    }
+
+    // `self.method(args)` inside an outlined method: call the sibling outlined method,
+    // forwarding this method's own self — the slot pointer (Model B) or the field params
+    // (Model A). Keeps the call a shared subroutine instead of force-inlining the whole
+    // containing method at each call site. Returns the call result when handled; null to
+    // fall through (not a self-call, the containing method is not outlined, or the target
+    // is not itself outlined).
+    private Val? TryEmitSelfOutlinedMethodCall(CallExpr expr, MemberAccessExpr memC)
+    {
+        if (memC.Object is not VariableExpr { Name: "self" }) return null;
+        if (!outlinedMethods.Contains(currentFunction)) return null;
+        if (!methodInstanceTypes.TryGetValue(currentFunction, out var selfCls)) return null;
+
+        string target = ResolveMROMethod(selfCls, memC.Member) + "_" + memC.Member;
+        if (!outlinedMethods.Contains(target)) return null;
+
+        var fwdArgs = new List<Val>();
+        if (slotMethods.Contains(currentFunction))
+            fwdArgs.Add(new Variable(currentFunction + ".self", DataType.UINT16));
+        else
+            foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
+                fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
+                    DataTypeExtensions.StringToDataType(ty)));
+        foreach (var a in expr.Args) fwdArgs.Add(VisitExpression(a));
+
+        bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
+                     || tRt == "void" || tRt == "None";
+        if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
+        Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
+        Emit(new Call(target, fwdArgs, tDst));
+        return tDst;
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
