@@ -339,6 +339,17 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FloatBitwiseOperand_RaisesTypeError()
+    {
+        // A bitwise/shift operator on a float operand is undefined (Python raises TypeError).
+        // It was silently folded to 0.0 and the whole assignment was dropped.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 1.5 & 2\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void FlashArrayConstIndexOutOfRange_RaisesIndexError()
     {
         // A compile-time out-of-bounds index into a const[uint8[N]] flash array emitted an

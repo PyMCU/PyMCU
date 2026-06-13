@@ -555,6 +555,15 @@ public partial class IRGenerator
             || GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT;
         if (eitherFloat)
         {
+            // Bitwise and shift operators are undefined on floats (Python raises TypeError).
+            // Without this guard the constant fold below hit its `_ => 0.0` default, silently
+            // folding e.g. `1.5 & 2` to 0.0 and then dropping the whole assignment.
+            if (expr.Op is AstBinOp.BitAnd or AstBinOp.BitOr or AstBinOp.BitXor
+                or AstBinOp.LShift or AstBinOp.RShift)
+                throw new TypeError(
+                    $"unsupported operand type for {BinaryOpSymbol(expr.Op)}: 'float'",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
             if (f1.HasValue && f2.HasValue)
