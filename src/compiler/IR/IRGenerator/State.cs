@@ -165,6 +165,14 @@ public partial class IRGenerator
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
 
+    // Builds a located user-facing compile error from inside IR generation. Using this
+    // instead of `throw new Exception(...)` means the message is reported as a clean
+    // `file:line: error: CompileError: ...` diagnostic (with the current source line and
+    // a caret) rather than a location-less "InternalCompilerError" that looks like a
+    // compiler bug. For genuine compiler-invariant violations keep `throw new Exception`.
+    private PyMCU.Common.CompilerError UserError(string message) =>
+        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1), 1);
+
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
 

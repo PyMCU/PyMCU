@@ -74,7 +74,7 @@ public partial class IRGenerator
         if (expr is FloatLiteral floatLit)
             return new FloatConstant(floatLit.Value);
 
-        throw new Exception($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
+        throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 
     private Val VisitLambdaExpr(LambdaExpr expr)
@@ -355,7 +355,7 @@ public partial class IRGenerator
             }
 
             if (!(expr.Right is ListExpr rlist))
-                throw new Exception("'in' / 'not in' requires a list literal on the right-hand side");
+                throw UserError("'in' / 'not in' requires a list literal on the right-hand side");
             if (rlist.Elements.Count == 0) return new Constant(negate ? 1 : 0);
 
             var elems = new List<Val>();
@@ -479,10 +479,10 @@ public partial class IRGenerator
             Val bv = VisitExpression(expr.Left);
             Val ev = VisitExpression(expr.Right);
             if (!(bv is Constant cb) || !(ev is Constant ce))
-                throw new Exception("** operator requires compile-time constant operands");
+                throw UserError("** operator requires compile-time constant operands");
             int @base = cb.Value;
             int exp = ce.Value;
-            if (exp < 0) throw new Exception("** operator: negative exponent not supported");
+            if (exp < 0) throw UserError("** operator: negative exponent not supported");
             int res = 1;
             for (int k = 0; k < exp; ++k) res *= @base;
             return new Constant(res);
@@ -602,6 +602,13 @@ public partial class IRGenerator
         Temporary dst = MakeTemp(resType);
         if (v1 is Constant cA && v2 is Constant cB)
         {
+            // Division/modulo by a constant zero is a compile-time error (Python raises
+            // ZeroDivisionError). Guard before folding so we report a clean diagnostic
+            // instead of leaking a C# DivideByZeroException as an InternalCompilerError.
+            if (cB.Value == 0 && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
+                throw new ValueError("integer division or modulo by zero",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             switch (expr.Op)
             {
                 case AstBinOp.Add: return new Constant(cA.Value + cB.Value);
@@ -617,7 +624,6 @@ public partial class IRGenerator
                 case AstBinOp.Mod:
                     // Python's % follows the sign of the divisor (floored), unlike C#'s
                     // truncated %. e.g. -7 % 3 == 2, not -1. Match Python at fold time.
-                    if (cB.Value == 0) return new Constant(0);
                     int rem = cA.Value % cB.Value;
                     if (rem != 0 && ((rem ^ cB.Value) < 0)) rem += cB.Value;
                     return new Constant(rem);
@@ -721,7 +727,7 @@ public partial class IRGenerator
 
     private Val VisitYield(YieldExpr expr)
     {
-        throw new Exception("Yield not yet implemented");
+        throw UserError("Yield not yet implemented");
     }
 
     // Resolves a variable name to the bytes/list/tuple literal bound to it as an
@@ -754,7 +760,7 @@ public partial class IRGenerator
                     int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
                     int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
                     int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                    if (step == 0) throw new Exception("Slice step cannot be zero");
+                    if (step == 0) throw UserError("Slice step cannot be zero");
                     if (start < 0) start += srcSize;
                     if (stop < 0) stop += srcSize;
                     start = Math.Max(0, Math.Min(start, srcSize));
@@ -790,7 +796,7 @@ public partial class IRGenerator
                 }
             }
 
-            throw new Exception("Slice indexing is only supported on named fixed-size arrays");
+            throw UserError("Slice indexing is only supported on named fixed-size arrays");
         }
 
         if (expr.Target is VariableExpr ve)
@@ -804,10 +810,10 @@ public partial class IRGenerator
                 int li;
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
-                else throw new Exception("Tuple/list parameter subscript must be a compile-time constant");
+                else throw UserError("Tuple/list parameter subscript must be a compile-time constant");
                 if (li < 0) li += litArg.Elements.Count;
                 if (li < 0 || li >= litArg.Elements.Count)
-                    throw new Exception("Tuple/list parameter subscript index out of range");
+                    throw UserError("Tuple/list parameter subscript index out of range");
                 return VisitExpression(litArg.Elements[li]);
             }
 
@@ -883,7 +889,7 @@ public partial class IRGenerator
                 else
                 {
                     if (idxVal is not Constant cc2)
-                        throw new Exception("Array subscript must be a compile-time constant");
+                        throw UserError("Array subscript must be a compile-time constant");
                     int elemIdx = cc2.Value;
                     if (elemIdx < 0 || elemIdx >= sz)
                         throw new IndexError(
@@ -944,7 +950,7 @@ public partial class IRGenerator
                 if (expr.Index is IntegerLiteral ic)
                 {
                     if (ic.Value < 0 || ic.Value >= strVal.Length)
-                        throw new Exception("String subscript index out of range");
+                        throw UserError("String subscript index out of range");
                     return new Constant((int)strVal[ic.Value]);
                 }
 
@@ -989,7 +995,7 @@ public partial class IRGenerator
             bool resolved = false;
             if (indexVal2 is Temporary t) resolved = TryConst(t.Name);
             else if (indexVal2 is Variable v) resolved = TryConst(v.Name);
-            if (!resolved) throw new Exception("Bit index must be constant for reading");
+            if (!resolved) throw UserError("Bit index must be constant for reading");
         }
 
         Temporary dst = MakeTemp();
@@ -1043,7 +1049,7 @@ public partial class IRGenerator
                     if (key.StartsWith(classPrefix)) return new Variable(mangledName, DataType.UINT8);
                 }
 
-                throw new Exception("Unknown module member: " + mangledName);
+                throw UserError("Unknown module member: " + mangledName);
             }
 
             if (functionParams.ContainsKey(mangledName) || functionReturnTypes.ContainsKey(mangledName))
@@ -1130,7 +1136,7 @@ public partial class IRGenerator
             return strConst;
         }
 
-        if (string.IsNullOrEmpty(baseName)) throw new Exception("Unknown member access: " + expr.Member);
+        if (string.IsNullOrEmpty(baseName)) throw UserError("Unknown member access: " + expr.Member);
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {
             if (next != null && next.StartsWith("tmp_")) break;

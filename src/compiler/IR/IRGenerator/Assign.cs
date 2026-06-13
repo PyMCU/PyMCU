@@ -212,7 +212,7 @@ public partial class IRGenerator
             Val ptr = VisitExpression(unExpr.Operand);
             Emit(new StoreIndirect(value, ptr));
         }
-        else throw new Exception("Invalid assignment target");
+        else throw UserError("Invalid assignment target");
     }
 
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
@@ -518,7 +518,7 @@ public partial class IRGenerator
                     Emit(new Copy(value, target));
                     break;
                 case 1:
-                    throw new Exception("Cannot assign to .value of this expression type");
+                    throw UserError("Cannot assign to .value of this expression type");
                 case 2 when target is MemoryAddress addr:
                 {
                     // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
@@ -541,7 +541,7 @@ public partial class IRGenerator
                     break;
                 }
                 case 2:
-                    throw new Exception("16-bit .value assignment requires constant address");
+                    throw UserError("16-bit .value assignment requires constant address");
                 case 4 when target is MemoryAddress addr32:
                 {
                     // See the 16-bit case: keep 32-bit MMIO stores atomic on
@@ -560,9 +560,9 @@ public partial class IRGenerator
                     break;
                 }
                 case 4:
-                    throw new Exception("32-bit .value assignment requires constant address");
+                    throw UserError("32-bit .value assignment requires constant address");
                 default:
-                    throw new Exception("Unsupported type size for .value assignment");
+                    throw UserError("Unsupported type size for .value assignment");
             }
         }
         else
@@ -570,7 +570,7 @@ public partial class IRGenerator
             var objVal = VisitExpression(memExpr2.Object);
             var baseName = objVal is Variable v3 ? v3.Name : (objVal is Temporary t3 ? t3.Name : "");
             if (string.IsNullOrEmpty(baseName))
-                throw new Exception("Unknown member access in assignment: " + memExpr2.Member);
+                throw UserError("Unknown member access in assignment: " + memExpr2.Member);
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
 
@@ -784,7 +784,7 @@ public partial class IRGenerator
                     else if (VisitExpression(indexExpr.Index) is Constant cc)
                         elemIdx = cc.Value;
                     else
-                        throw new Exception("Array subscript must be a compile-time constant");
+                        throw UserError("Array subscript must be a compile-time constant");
                     string elemName = qualified + "__" + elemIdx;
                     Val srcVal = VisitExpression(stmt.Value);
                     Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
@@ -1044,7 +1044,7 @@ public partial class IRGenerator
                                 else if (kw.Key == "maxlen" && kw.Value is IntegerLiteral kil) inputMaxLen = kil.Value;
                             }
                             else
-                                throw new Exception("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
+                                throw UserError("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
                         }
                         count = inputMaxLen;
                         initVals.AddRange(Enumerable.Repeat(0, count));
@@ -1052,7 +1052,7 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0) throw new Exception("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
 
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.Name
@@ -1183,7 +1183,7 @@ public partial class IRGenerator
         if (atom.Length > 0 && atom.All(char.IsDigit)) return int.Parse(atom);
         if (constantVariables.TryGetValue(currentInlinePrefix + atom, out int cv)) return cv;
         if (constantVariables.TryGetValue(atom, out int cv2)) return cv2;
-        throw new Exception("Array size '" + atom + "' is not a compile-time constant");
+        throw UserError("Array size '" + atom + "' is not a compile-time constant");
     }
 
     // RFC 0001 Model B (SRAM slot): box a multi-field ZCA. Allocate a fixed SRAM byte slot
@@ -1313,7 +1313,7 @@ public partial class IRGenerator
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
             if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
-                throw new Exception("Instance-member annotation must be an array type, e.g. uint8[N]");
+                throw UserError("Instance-member annotation must be an array type, e.g. uint8[N]");
             string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
             int memCount = ResolveArraySizeExpr(memSz);
             DataType memElem = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, mb));
@@ -1322,7 +1322,7 @@ public partial class IRGenerator
             string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             if (string.IsNullOrEmpty(baseName))
-                throw new Exception("Cannot resolve instance for member array '" + stmt.Target + "'");
+                throw UserError("Cannot resolve instance for member array '" + stmt.Target + "'");
             string flat = baseName + "_" + member;
 
             arraySizes[flat] = memCount;
@@ -1401,7 +1401,7 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0) throw new Exception("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
             string qualified = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;
@@ -1660,7 +1660,7 @@ public partial class IRGenerator
                         int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
                         int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
                         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                        if (step == 0) throw new Exception("Slice step cannot be zero");
+                        if (step == 0) throw UserError("Slice step cannot be zero");
                         if (start < 0) start += srcSize;
                         if (stop < 0) stop += srcSize;
                         start = Math.Max(0, Math.Min(start, srcSize));
@@ -1693,7 +1693,7 @@ public partial class IRGenerator
                         return true;
                     }
 
-                    throw new Exception("Slice initializer target must be a named fixed-size array");
+                    throw UserError("Slice initializer target must be a named fixed-size array");
                 }
 
                 if (stmt.Value is ListExpr le)
@@ -1800,14 +1800,14 @@ public partial class IRGenerator
                 if (call.Args.Count == 1)
                 {
                     var sv = EvalConst(call.Args[0]);
-                    if (sv == null) throw new Exception("List comprehension const err");
+                    if (sv == null) throw UserError("List comprehension const err");
                     stop = sv.Value;
                 }
                 else if (call.Args.Count >= 2)
                 {
                     var sv = EvalConst(call.Args[0]);
                     var ev = EvalConst(call.Args[1]);
-                    if (sv == null || ev == null) throw new Exception("List comprehension const err");
+                    if (sv == null || ev == null) throw UserError("List comprehension const err");
                     start = sv.Value;
                     stop = ev.Value;
                 }
@@ -1819,7 +1819,7 @@ public partial class IRGenerator
                 foreach (var e in le.Elements)
                 {
                     var v = EvalConst(e);
-                    if (v == null) throw new Exception("List comprehension const err");
+                    if (v == null) throw UserError("List comprehension const err");
                     vals.Add(v.Value);
                 }
             }
@@ -1845,7 +1845,7 @@ public partial class IRGenerator
                     if (lc.Filter != null)
                     {
                         var fv = EvalConst(lc.Filter);
-                        if (fv == null) throw new Exception("filter error");
+                        if (fv == null) throw UserError("filter error");
                         if (fv == 0) continue;
                     }
 
@@ -1859,7 +1859,7 @@ public partial class IRGenerator
                 if (lc.Filter != null)
                 {
                     var fv = EvalConst(lc.Filter);
-                    if (fv == null) throw new Exception("filter error");
+                    if (fv == null) throw UserError("filter error");
                     if (fv == 0) continue;
                 }
 
@@ -1870,7 +1870,7 @@ public partial class IRGenerator
         constantVariables.Remove(outerKey);
 
         if (entries.Count != count)
-            throw new Exception($"List comprehension generated {entries.Count} but array is {count}");
+            throw UserError($"List comprehension generated {entries.Count} but array is {count}");
         bool useSram = arraysWithVariableIndex.Contains(qualifiedName) || moduleSramArrays.Contains(qualifiedName);
 
         for (int k = 0; k < count; ++k)
@@ -2055,7 +2055,7 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        if (!(ie.Index is IntegerLiteral il)) throw new Exception("Array subscript must be const");
+                        if (!(ie.Index is IntegerLiteral il)) throw UserError("Array subscript must be const");
                         string elemName = qualified + "__" + il.Value;
                         Emit(new Copy(result, new Variable(elemName, arrayElemTypes[qualified])));
                     }
@@ -2100,7 +2100,7 @@ public partial class IRGenerator
                 bool resolved = false;
                 if (idxVal2 is Temporary t) resolved = TryConst(t.Name);
                 else if (idxVal2 is Variable v) resolved = TryConst(v.Name);
-                if (!resolved) throw new Exception("Bit index must be constant for augmented assignment");
+                if (!resolved) throw UserError("Bit index must be constant for augmented assignment");
             }
 
             Emit(new BitWrite(tgtVal, bit, result));
@@ -2142,7 +2142,7 @@ public partial class IRGenerator
                 return;
             }
 
-            throw new Exception("augmented assignment to .value requires a pointer or register target");
+            throw UserError("augmented assignment to .value requires a pointer or register target");
         }
     }
 
@@ -2217,7 +2217,7 @@ public partial class IRGenerator
 
             if (stmt.StarredIndex < 0)
             {
-                if (nTup != nTgt) throw new Exception($"Tuple size mismatch");
+                if (nTup != nTgt) throw UserError($"Tuple size mismatch");
                 // Python evaluates the whole RHS tuple before assigning, so snapshot
                 // each runtime value into a temporary first. Otherwise `a, b = b, a`
                 // would assign a = b and then read the already-overwritten a.
@@ -2246,7 +2246,7 @@ public partial class IRGenerator
             else
             {
                 int nFixed = nTgt - 1;
-                if (nTup < nFixed) throw new Exception("Not enough values to unpack");
+                if (nTup < nFixed) throw UserError("Not enough values to unpack");
                 int starIdx = stmt.StarredIndex;
                 int starCount = nTup - nFixed;
 
@@ -2288,13 +2288,13 @@ public partial class IRGenerator
         {
             pendingTupleCount = stmt.Targets.Count;
             if (stmt.StarredIndex >= 0)
-                throw new Exception("Starred expressions not supported with inline multi-return.");
+                throw UserError("Starred expressions not supported with inline multi-return.");
 
             Val ignored = VisitExpression(call);
             pendingTupleCount = 0;
 
             if (lastTupleResults.Count != stmt.Targets.Count)
-                throw new Exception($"Expected {stmt.Targets.Count} tuple results, got {lastTupleResults.Count}");
+                throw UserError($"Expected {stmt.Targets.Count} tuple results, got {lastTupleResults.Count}");
 
             for (int k = 0; k < stmt.Targets.Count; ++k)
             {
@@ -2306,7 +2306,7 @@ public partial class IRGenerator
             }
         }
         else
-            throw new Exception(
+            throw UserError(
                 "Tuple unpacking RHS must be a tuple literal or an inline function call returning a tuple.");
     }
 

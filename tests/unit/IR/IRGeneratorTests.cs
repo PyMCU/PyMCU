@@ -306,6 +306,26 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ConstDivisionByZero_RaisesValueError()
+    {
+        // `5 // 0` must fold to a clean ValueError diagnostic, not leak a C#
+        // DivideByZeroException that the pipeline reports as an InternalCompilerError.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 5 // 0\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ConstModuloByZero_RaisesValueError()
+    {
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 7 % 0\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void PtrUint16_Param_BitSet_PreservesType()
     {
         // A function parameter declared as ptr[uint16] must propagate its type
