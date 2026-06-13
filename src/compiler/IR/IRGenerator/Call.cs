@@ -393,149 +393,16 @@ public partial class IRGenerator
         }
 
         if ((callee == "funcref" || callee == "pymcu_types_funcref") && intrinsicNames.Contains("funcref"))
-        {
-            if (expr.Args.Count != 1)
-                throw new Exception("funcref() expects exactly one argument: a function name");
-            if (expr.Args[0] is not VariableExpr fnRefExpr)
-                throw new Exception("funcref() argument must be a function name identifier");
-
-            // Resolve alias chain (same as compile_isr) to find the canonical function name.
-            string key = currentInlinePrefix + fnRefExpr.Name;
-            for (int d = 0; d < 20; ++d)
-                if (variableAliases.TryGetValue(key, out string nx)) key = nx;
-                else break;
-
-            string resolvedName = key;
-            int lastDot = resolvedName.LastIndexOf('.');
-            if (lastDot >= 0) resolvedName = resolvedName.Substring(lastDot + 1);
-            string fnName = ResolveCallee(resolvedName);
-
-            return new FunctionRef(fnName);
-        }
+            return EmitFuncrefIntrinsic(expr);
 
         if (callee == "_set_irq_zca_arg" && intrinsicNames.Contains("_set_irq_zca_arg"))
-        {
-            // _set_irq_zca_arg(handler, zca_instance): records the ZCA variable that
-            // should be bound to handler's first parameter when the ISR wrapper is synthesized.
-            if (expr.Args.Count == 2)
-            {
-                // Resolve handler name (same alias-chase as compile_isr arg0)
-                string hKey = "";
-                if (expr.Args[0] is VariableExpr v0)
-                {
-                    hKey = currentInlinePrefix + v0.Name;
-                    for (int d = 0; d < 20; d++)
-                        if (variableAliases.TryGetValue(hKey, out string? nk) && nk != null) hKey = nk; else break;
-                    int ld = hKey.LastIndexOf('.');
-                    if (ld >= 0) hKey = hKey[(ld + 1)..];
-                    hKey = ResolveCallee(hKey);
-                }
-                // Resolve ZCA instance to its root variable key (follow alias chain)
-                Val zcaVal = VisitExpression(expr.Args[1]);
-                string zcaKey = "";
-                if (zcaVal is Variable vz) zcaKey = vz.Name;
-                else if (zcaVal is Temporary tz) zcaKey = tz.Name;
-                for (int d = 0; d < 20; d++)
-                    if (variableAliases.TryGetValue(zcaKey, out string? nz) && nz != null) zcaKey = nz; else break;
-
-                if (!string.IsNullOrEmpty(hKey) && !string.IsNullOrEmpty(zcaKey))
-                    pendingZcaIsrBindings[hKey] = zcaKey;
-            }
-            return new NoneVal();
-        }
+            return EmitSetIrqZcaArgIntrinsic(expr);
 
         if (callee == "compile_isr" && intrinsicNames.Contains("compile_isr"))
-        {
-            if (expr.Args.Count != 2)
-                throw new Exception("compile_isr() expects exactly 2 arguments: compile_isr(handler, vector)");
-            Val vecVal = VisitExpression(expr.Args[1]);
-            int vector = 0;
-            if (vecVal is Constant c) vector = c.Value;
-            else throw new Exception("compile_isr() second argument (vector) must be a compile-time constant");
+            return EmitCompileIsrIntrinsic(expr);
 
-            string handlerFuncName = "";
-            bool handlerProvided = false;
-
-            if (expr.Args[0] is VariableExpr v)
-            {
-                string key = currentInlinePrefix + v.Name;
-                if (constantVariables.TryGetValue(key, out int cv) && cv == 0) return new NoneVal();
-
-                for (int depth = 0; depth < 20; ++depth)
-                {
-                    if (variableAliases.TryGetValue(key, out string next)) key = next;
-                    else break;
-                }
-
-                // When compile_isr() is called inside an inlined function, the
-                // handler parameter is an alias chain (e.g. handler -> main.int0_isr).
-                // After alias resolution above, `key` holds the resolved name which
-                // may be scope-qualified (e.g. "main.int0_isr" for a function defined
-                // at top-level in main.py).  Extract the bare function name (after
-                // the last dot) and resolve it via ResolveCallee so it gets the
-                // correct module-qualified IR name.
-                string resolvedName = key;
-                int lastDot = resolvedName.LastIndexOf('.');
-                if (lastDot >= 0)
-                    resolvedName = resolvedName.Substring(lastDot + 1);
-                handlerFuncName = ResolveCallee(resolvedName);
-                handlerProvided = !string.IsNullOrEmpty(handlerFuncName);
-            }
-            else
-            {
-                Val arg0 = VisitExpression(expr.Args[0]);
-                if (arg0 is Constant c0 && c0.Value == 0) return new NoneVal();
-                throw new Exception("compile_isr() first argument must be a function reference or 0");
-            }
-
-            if (!handlerProvided) return new NoneVal();
-
-            // ZCA ISR synthesis: if a ZCA binding was registered via _set_irq_zca_arg,
-            // synthesize a parameterless wrapper that inline-expands handler with the
-            // ZCA constants bound. The wrapper is what gets registered at the vector.
-            if (pendingZcaIsrBindings.TryGetValue(handlerFuncName, out string? zcaRootKey) &&
-                !string.IsNullOrEmpty(zcaRootKey))
-            {
-                pendingZcaIsrBindings.Remove(handlerFuncName);
-                string synthName = SynthesizeZcaIsrWrapper(handlerFuncName, zcaRootKey);
-                if (!string.IsNullOrEmpty(synthName))
-                {
-                    pendingIsrRegistrations[synthName] = vector;
-                    return new NoneVal();
-                }
-                // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
-            }
-
-            pendingIsrRegistrations[handlerFuncName] = vector;
-            return new NoneVal();
-        }
-
-        string cSym;
-        if (externFunctionMap.TryGetValue(callee, out cSym))
-        {
-            var extArgs = new List<Val>();
-            foreach (var arg in expr.Args)
-            {
-                Val av = VisitExpression(arg);
-                if (av is FloatConstant avFc)
-                    av = new Constant((int)Math.Round(avFc.Value));
-                else if (av is Variable v && floatConstantVariables.TryGetValue(v.Name, out double fv))
-                    av = new Constant((int)Math.Round(fv));
-                extArgs.Add(av);
-            }
-
-            bool returnsVoid = !functionReturnTypes.ContainsKey(callee) || functionReturnTypes[callee] == "void" ||
-                               functionReturnTypes[callee] == "None";
-            if (returnsVoid)
-            {
-                Emit(new Call(cSym, extArgs, new NoneVal()));
-                return new NoneVal();
-            }
-
-            Temporary extDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[callee]));
-            Emit(new Call(cSym, extArgs, extDst));
-            return extDst;
-        }
+        if (externFunctionMap.TryGetValue(callee, out string cSym))
+            return EmitExternCall(expr, callee, cSym);
 
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
@@ -2162,6 +2029,156 @@ public partial class IRGenerator
 
         EmitStr(endStr);
         return new NoneVal();
+    }
+
+    // funcref(fn): resolve a function name (through any alias chain) to a FunctionRef
+    // value (a function pointer usable in Callable[N] arrays / indirect calls).
+    private Val EmitFuncrefIntrinsic(CallExpr expr)
+    {
+        if (expr.Args.Count != 1)
+            throw new Exception("funcref() expects exactly one argument: a function name");
+        if (expr.Args[0] is not VariableExpr fnRefExpr)
+            throw new Exception("funcref() argument must be a function name identifier");
+
+        // Resolve alias chain (same as compile_isr) to find the canonical function name.
+        string key = currentInlinePrefix + fnRefExpr.Name;
+        for (int d = 0; d < 20; ++d)
+            if (variableAliases.TryGetValue(key, out string nx)) key = nx;
+            else break;
+
+        string resolvedName = key;
+        int lastDot = resolvedName.LastIndexOf('.');
+        if (lastDot >= 0) resolvedName = resolvedName.Substring(lastDot + 1);
+        string fnName = ResolveCallee(resolvedName);
+
+        return new FunctionRef(fnName);
+    }
+
+    // _set_irq_zca_arg(handler, zca_instance): record the ZCA variable to bind to the
+    // handler's first parameter when its ISR wrapper is synthesized (see compile_isr).
+    private Val EmitSetIrqZcaArgIntrinsic(CallExpr expr)
+    {
+        if (expr.Args.Count == 2)
+        {
+            // Resolve handler name (same alias-chase as compile_isr arg0)
+            string hKey = "";
+            if (expr.Args[0] is VariableExpr v0)
+            {
+                hKey = currentInlinePrefix + v0.Name;
+                for (int d = 0; d < 20; d++)
+                    if (variableAliases.TryGetValue(hKey, out string? nk) && nk != null) hKey = nk; else break;
+                int ld = hKey.LastIndexOf('.');
+                if (ld >= 0) hKey = hKey[(ld + 1)..];
+                hKey = ResolveCallee(hKey);
+            }
+            // Resolve ZCA instance to its root variable key (follow alias chain)
+            Val zcaVal = VisitExpression(expr.Args[1]);
+            string zcaKey = "";
+            if (zcaVal is Variable vz) zcaKey = vz.Name;
+            else if (zcaVal is Temporary tz) zcaKey = tz.Name;
+            for (int d = 0; d < 20; d++)
+                if (variableAliases.TryGetValue(zcaKey, out string? nz) && nz != null) zcaKey = nz; else break;
+
+            if (!string.IsNullOrEmpty(hKey) && !string.IsNullOrEmpty(zcaKey))
+                pendingZcaIsrBindings[hKey] = zcaKey;
+        }
+        return new NoneVal();
+    }
+
+    // compile_isr(handler, vector): register handler at the interrupt vector (or a
+    // synthesized ZCA wrapper when a _set_irq_zca_arg binding was recorded).
+    private Val EmitCompileIsrIntrinsic(CallExpr expr)
+    {
+        if (expr.Args.Count != 2)
+            throw new Exception("compile_isr() expects exactly 2 arguments: compile_isr(handler, vector)");
+        Val vecVal = VisitExpression(expr.Args[1]);
+        int vector = 0;
+        if (vecVal is Constant c) vector = c.Value;
+        else throw new Exception("compile_isr() second argument (vector) must be a compile-time constant");
+
+        string handlerFuncName = "";
+        bool handlerProvided = false;
+
+        if (expr.Args[0] is VariableExpr v)
+        {
+            string key = currentInlinePrefix + v.Name;
+            if (constantVariables.TryGetValue(key, out int cv) && cv == 0) return new NoneVal();
+
+            for (int depth = 0; depth < 20; ++depth)
+            {
+                if (variableAliases.TryGetValue(key, out string next)) key = next;
+                else break;
+            }
+
+            // When compile_isr() is called inside an inlined function, the
+            // handler parameter is an alias chain (e.g. handler -> main.int0_isr).
+            // After alias resolution above, `key` holds the resolved name which
+            // may be scope-qualified (e.g. "main.int0_isr" for a function defined
+            // at top-level in main.py).  Extract the bare function name (after
+            // the last dot) and resolve it via ResolveCallee so it gets the
+            // correct module-qualified IR name.
+            string resolvedName = key;
+            int lastDot = resolvedName.LastIndexOf('.');
+            if (lastDot >= 0)
+                resolvedName = resolvedName.Substring(lastDot + 1);
+            handlerFuncName = ResolveCallee(resolvedName);
+            handlerProvided = !string.IsNullOrEmpty(handlerFuncName);
+        }
+        else
+        {
+            Val arg0 = VisitExpression(expr.Args[0]);
+            if (arg0 is Constant c0 && c0.Value == 0) return new NoneVal();
+            throw new Exception("compile_isr() first argument must be a function reference or 0");
+        }
+
+        if (!handlerProvided) return new NoneVal();
+
+        // ZCA ISR synthesis: if a ZCA binding was registered via _set_irq_zca_arg,
+        // synthesize a parameterless wrapper that inline-expands handler with the
+        // ZCA constants bound. The wrapper is what gets registered at the vector.
+        if (pendingZcaIsrBindings.TryGetValue(handlerFuncName, out string? zcaRootKey) &&
+            !string.IsNullOrEmpty(zcaRootKey))
+        {
+            pendingZcaIsrBindings.Remove(handlerFuncName);
+            string synthName = SynthesizeZcaIsrWrapper(handlerFuncName, zcaRootKey);
+            if (!string.IsNullOrEmpty(synthName))
+            {
+                pendingIsrRegistrations[synthName] = vector;
+                return new NoneVal();
+            }
+            // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
+        }
+
+        pendingIsrRegistrations[handlerFuncName] = vector;
+        return new NoneVal();
+    }
+
+    // Call into a C extern function (@extern): coerce float args to ints per the C ABI
+    // and emit a direct Call to the resolved C symbol.
+    private Val EmitExternCall(CallExpr expr, string callee, string cSym)
+    {
+        var extArgs = new List<Val>();
+        foreach (var arg in expr.Args)
+        {
+            Val av = VisitExpression(arg);
+            if (av is FloatConstant avFc)
+                av = new Constant((int)Math.Round(avFc.Value));
+            else if (av is Variable v && floatConstantVariables.TryGetValue(v.Name, out double fv))
+                av = new Constant((int)Math.Round(fv));
+            extArgs.Add(av);
+        }
+
+        bool returnsVoid = !functionReturnTypes.ContainsKey(callee) || functionReturnTypes[callee] == "void" ||
+                           functionReturnTypes[callee] == "None";
+        if (returnsVoid)
+        {
+            Emit(new Call(cSym, extArgs, new NoneVal()));
+            return new NoneVal();
+        }
+
+        Temporary extDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[callee]));
+        Emit(new Call(cSym, extArgs, extDst));
+        return extDst;
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
