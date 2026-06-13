@@ -339,6 +339,19 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FlashArrayConstIndexOutOfRange_RaisesIndexError()
+    {
+        // A compile-time out-of-bounds index into a const[uint8[N]] flash array emitted an
+        // out-of-bounds flash load with no diagnostic (the fixed-SRAM path checked bounds,
+        // the flash path did not). It must now raise IndexError like any other array.
+        const string src =
+            "A: const[uint8[3]] = [1, 2, 3]\n" +
+            "def main():\n" +
+            "    y: uint8 = A[5]\n";
+        Assert.Throws<PyMCU.Common.IndexError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void ConstAugmentedAssignment_RaisesCompileError()
     {
         // `K += 1` mutates a const-declared name just like `K = ...`; both must be rejected.

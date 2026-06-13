@@ -885,6 +885,14 @@ public partial class IRGenerator
                     idxVal = new Constant(adj);
                 }
 
+                // Bounds-check a compile-time positive index for every array kind. The
+                // fixed-array path below already does this, but the flash and SRAM paths
+                // emitted an out-of-bounds load with no diagnostic (reading past the array).
+                if (idxVal is Constant cidx && (cidx.Value < 0 || cidx.Value >= sz))
+                    throw new IndexError(
+                        $"array index {cidx.Value} out of range for size {sz}",
+                        expr.Line > 0 ? expr.Line : lastLine, 1);
+
                 if (flashArrays.Contains(qualified))
                 {
                     Temporary tmp = MakeTemp(DataType.UINT8);
