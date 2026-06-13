@@ -327,6 +327,24 @@ public partial class IRGenerator
     // fill defaulted params and copy each arg into the callee's param slot, then Call.
     private Val EmitRegularFunctionCall(CallExpr expr, string callee)
     {
+        // A call that resolved to no known function (not inline, extern, a builtin or an
+        // intrinsic — those return earlier) is a typo or a missing import. Report it now
+        // instead of emitting a Call to an undefined symbol that fails much later with a
+        // cryptic linker "undefined reference". `__`-prefixed runtime helpers are exempt.
+        // Gated to real chip targets (skip PIO, whose mnemonics like pull/push compile as
+        // calls resolved by the PIO backend, and the empty-config compiles used in tests).
+        bool checkUndefined = deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio");
+        if (checkUndefined
+            && !functionParams.ContainsKey(callee)
+            && !functionReturnTypes.ContainsKey(callee)
+            && !inlineFunctions.ContainsKey(callee)
+            && !externFunctionMap.ContainsKey(callee)
+            && !callee.StartsWith("__"))
+        {
+            string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
+            throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
+        }
+
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         var argValuesL = new List<Val>();
         foreach (var arg in expr.Args)

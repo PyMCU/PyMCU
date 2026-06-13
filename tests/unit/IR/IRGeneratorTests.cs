@@ -326,6 +326,19 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void UndefinedFunctionCall_RaisesCompileError()
+    {
+        // A call to a function that resolves to nothing must be reported at compile time
+        // (typo / missing import) instead of emitting a Call to an undefined symbol that
+        // only fails at link. Gated to real chip targets, so pass an AVR config.
+        const string src =
+            "def main():\n" +
+            "    nonexistent_func(1)\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+    }
+
+    [Fact]
     public void PtrUint16_Param_BitSet_PreservesType()
     {
         // A function parameter declared as ptr[uint16] must propagate its type
