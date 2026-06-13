@@ -353,134 +353,13 @@ public partial class IRGenerator
 
         if (callee == "sum") return EmitSumBuiltin(expr);
 
-        if (callee == "any")
-        {
-            if (expr.Args.Count != 1) throw new Exception("any() expects exactly one argument");
-            if (!(expr.Args[0] is ListExpr le)) throw new Exception("any() requires a list literal argument");
-            if (le.Elements.Count == 0) return new Constant(0);
-            bool allConst = true;
-            foreach (var e in le.Elements)
-            {
-                Val v = VisitExpression(e);
-                if (v is Constant c)
-                {
-                    if (c.Value != 0) return new Constant(1);
-                }
-                else allConst = false;
-            }
+        if (callee == "any") return EmitAnyBuiltin(expr);
+        if (callee == "all") return EmitAllBuiltin(expr);
 
-            if (allConst) return new Constant(0);
-            Temporary result = MakeTemp();
-            Emit(new Copy(new Constant(0), result));
-            foreach (var e in le.Elements)
-            {
-                Val v = VisitExpression(e);
-                Temporary cmp = MakeTemp();
-                Emit(new Binary(BinaryOp.NotEqual, v, new Constant(0), cmp));
-                string endLbl = MakeLabel();
-                Emit(new JumpIfNotZero(result, endLbl));
-                Emit(new Copy(cmp, result));
-                Emit(new Label(endLbl));
-            }
-
-            return result;
-        }
-
-        if (callee == "all")
-        {
-            if (expr.Args.Count != 1) throw new Exception("all() expects exactly one argument");
-            if (!(expr.Args[0] is ListExpr le)) throw new Exception("all() requires a list literal argument");
-            if (le.Elements.Count == 0) return new Constant(1);
-            bool allConst = true;
-            foreach (var e in le.Elements)
-            {
-                Val v = VisitExpression(e);
-                if (v is Constant c)
-                {
-                    if (c.Value == 0) return new Constant(0);
-                }
-                else allConst = false;
-            }
-
-            if (allConst) return new Constant(1);
-            Temporary result = MakeTemp();
-            Emit(new Copy(new Constant(1), result));
-            foreach (var e in le.Elements)
-            {
-                Val v = VisitExpression(e);
-                Temporary cmp = MakeTemp();
-                Emit(new Binary(BinaryOp.NotEqual, v, new Constant(0), cmp));
-                string endLbl = MakeLabel();
-                Emit(new JumpIfZero(result, endLbl));
-                Emit(new Copy(cmp, result));
-                Emit(new Label(endLbl));
-            }
-
-            return result;
-        }
-
-        if (callee == "hex")
-        {
-            if (expr.Args.Count != 1) throw new Exception("hex() expects exactly one argument");
-            Val v = VisitExpression(expr.Args[0]);
-            if (!(v is Constant c)) throw new Exception("hex() argument must be a compile-time constant integer");
-            string hexstr = "0x" + c.Value.ToString("x");
-            if (!stringLiteralIds.ContainsKey(hexstr))
-            {
-                stringLiteralIds[hexstr] = nextStringId;
-                stringIdToStr[nextStringId] = hexstr;
-                nextStringId++;
-            }
-
-            return new Constant(stringLiteralIds[hexstr]);
-        }
-
-        if (callee == "bin")
-        {
-            if (expr.Args.Count != 1) throw new Exception("bin() expects exactly one argument");
-            Val v = VisitExpression(expr.Args[0]);
-            if (!(v is Constant c)) throw new Exception("bin() argument must be a compile-time constant integer");
-            string binstr = "0b" + Convert.ToString(c.Value, 2);
-            if (!stringLiteralIds.ContainsKey(binstr))
-            {
-                stringLiteralIds[binstr] = nextStringId;
-                stringIdToStr[nextStringId] = binstr;
-                nextStringId++;
-            }
-
-            return new Constant(stringLiteralIds[binstr]);
-        }
-
-        if (callee == "str")
-        {
-            if (expr.Args.Count != 1) throw new Exception("str() expects exactly one argument");
-            Val v = VisitExpression(expr.Args[0]);
-            if (!(v is Constant c)) throw new Exception("str() argument must be a compile-time constant integer");
-            string decstr = c.Value.ToString();
-            if (!stringLiteralIds.ContainsKey(decstr))
-            {
-                stringLiteralIds[decstr] = nextStringId;
-                stringIdToStr[nextStringId] = decstr;
-                nextStringId++;
-            }
-
-            return new Constant(stringLiteralIds[decstr]);
-        }
-
-        if (callee == "pow")
-        {
-            if (expr.Args.Count != 2) throw new Exception("pow() expects exactly two arguments");
-            Val bv = VisitExpression(expr.Args[0]);
-            Val ev = VisitExpression(expr.Args[1]);
-            if (!(bv is Constant cb) || !(ev is Constant ce))
-                throw new Exception("pow() arguments must be compile-time constant integers");
-            int @base = cb.Value;
-            int exp = ce.Value;
-            if (exp < 0) throw new Exception("pow() negative exponent not supported");
-            int res = 1;
-            for (int k = 0; k < exp; ++k) res *= @base;
-            return new Constant(res);
-        }
+        if (callee == "hex") return EmitHexBuiltin(expr);
+        if (callee == "bin") return EmitBinBuiltin(expr);
+        if (callee == "str") return EmitStrBuiltin(expr);
+        if (callee == "pow") return EmitPowBuiltin(expr);
 
         if (callee == "divmod")
         {
@@ -2125,6 +2004,143 @@ public partial class IRGenerator
             default:
                 throw new Exception("sum() requires a list literal or fixed-size array");
         }
+    }
+
+    // any(list-literal): compile-time fold when all elements are constant, else an
+    // OR-reduction over the elements.
+    private Val EmitAnyBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("any() expects exactly one argument");
+        if (!(expr.Args[0] is ListExpr le)) throw new Exception("any() requires a list literal argument");
+        if (le.Elements.Count == 0) return new Constant(0);
+        bool allConst = true;
+        foreach (var e in le.Elements)
+        {
+            Val v = VisitExpression(e);
+            if (v is Constant c)
+            {
+                if (c.Value != 0) return new Constant(1);
+            }
+            else allConst = false;
+        }
+
+        if (allConst) return new Constant(0);
+        Temporary result = MakeTemp();
+        Emit(new Copy(new Constant(0), result));
+        foreach (var e in le.Elements)
+        {
+            Val v = VisitExpression(e);
+            Temporary cmp = MakeTemp();
+            Emit(new Binary(BinaryOp.NotEqual, v, new Constant(0), cmp));
+            string endLbl = MakeLabel();
+            Emit(new JumpIfNotZero(result, endLbl));
+            Emit(new Copy(cmp, result));
+            Emit(new Label(endLbl));
+        }
+
+        return result;
+    }
+
+    // all(list-literal): compile-time fold when all elements are constant, else an
+    // AND-reduction over the elements.
+    private Val EmitAllBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("all() expects exactly one argument");
+        if (!(expr.Args[0] is ListExpr le)) throw new Exception("all() requires a list literal argument");
+        if (le.Elements.Count == 0) return new Constant(1);
+        bool allConst = true;
+        foreach (var e in le.Elements)
+        {
+            Val v = VisitExpression(e);
+            if (v is Constant c)
+            {
+                if (c.Value == 0) return new Constant(0);
+            }
+            else allConst = false;
+        }
+
+        if (allConst) return new Constant(1);
+        Temporary result = MakeTemp();
+        Emit(new Copy(new Constant(1), result));
+        foreach (var e in le.Elements)
+        {
+            Val v = VisitExpression(e);
+            Temporary cmp = MakeTemp();
+            Emit(new Binary(BinaryOp.NotEqual, v, new Constant(0), cmp));
+            string endLbl = MakeLabel();
+            Emit(new JumpIfZero(result, endLbl));
+            Emit(new Copy(cmp, result));
+            Emit(new Label(endLbl));
+        }
+
+        return result;
+    }
+
+    // hex(const): intern "0x…" as a flash string literal, return its id (compile-time only).
+    private Val EmitHexBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("hex() expects exactly one argument");
+        Val v = VisitExpression(expr.Args[0]);
+        if (!(v is Constant c)) throw new Exception("hex() argument must be a compile-time constant integer");
+        string hexstr = "0x" + c.Value.ToString("x");
+        if (!stringLiteralIds.ContainsKey(hexstr))
+        {
+            stringLiteralIds[hexstr] = nextStringId;
+            stringIdToStr[nextStringId] = hexstr;
+            nextStringId++;
+        }
+
+        return new Constant(stringLiteralIds[hexstr]);
+    }
+
+    // bin(const): intern "0b…" as a flash string literal, return its id (compile-time only).
+    private Val EmitBinBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("bin() expects exactly one argument");
+        Val v = VisitExpression(expr.Args[0]);
+        if (!(v is Constant c)) throw new Exception("bin() argument must be a compile-time constant integer");
+        string binstr = "0b" + Convert.ToString(c.Value, 2);
+        if (!stringLiteralIds.ContainsKey(binstr))
+        {
+            stringLiteralIds[binstr] = nextStringId;
+            stringIdToStr[nextStringId] = binstr;
+            nextStringId++;
+        }
+
+        return new Constant(stringLiteralIds[binstr]);
+    }
+
+    // str(const): intern the decimal form as a flash string literal (compile-time only).
+    private Val EmitStrBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("str() expects exactly one argument");
+        Val v = VisitExpression(expr.Args[0]);
+        if (!(v is Constant c)) throw new Exception("str() argument must be a compile-time constant integer");
+        string decstr = c.Value.ToString();
+        if (!stringLiteralIds.ContainsKey(decstr))
+        {
+            stringLiteralIds[decstr] = nextStringId;
+            stringIdToStr[nextStringId] = decstr;
+            nextStringId++;
+        }
+
+        return new Constant(stringLiteralIds[decstr]);
+    }
+
+    // pow(base, exp): compile-time integer exponentiation (both args must be constant).
+    private Val EmitPowBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2) throw new Exception("pow() expects exactly two arguments");
+        Val bv = VisitExpression(expr.Args[0]);
+        Val ev = VisitExpression(expr.Args[1]);
+        if (!(bv is Constant cb) || !(ev is Constant ce))
+            throw new Exception("pow() arguments must be compile-time constant integers");
+        int @base = cb.Value;
+        int exp = ce.Value;
+        if (exp < 0) throw new Exception("pow() negative exponent not supported");
+        int res = 1;
+        for (int k = 0; k < exp; ++k) res *= @base;
+        return new Constant(res);
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
