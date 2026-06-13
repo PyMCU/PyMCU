@@ -64,6 +64,42 @@ public class OptimizerTests
     }
 
     [Fact]
+    public void RedundantArrayLoad_SameIndex_IsEliminated()
+    {
+        // Two reads of arr[i] with no intervening write collapse to a single load (CSE).
+        var prog = GenerateAndOptimize(
+            "arr: uint8[8] = [0,0,0,0,0,0,0,0]\n" +
+            "out: uint8 = 0\n" +
+            "def access(i: uint8):\n" +
+            "    global out\n" +
+            "    out = arr[i] + arr[i]\n" +
+            "def main():\n" +
+            "    access(3)\n");
+        var access = prog.Functions.First(f => f.Name.EndsWith("access"));
+        // The two arr[i] reads must collapse to one ArrayLoad.
+        Assert.Equal(1, access.Body.OfType<ArrayLoad>().Count(a => a.ArrayName == "arr"));
+    }
+
+    [Fact]
+    public void ArrayLoad_AcrossStore_IsNotEliminated()
+    {
+        // A store to the same array between two reads of arr[i] must invalidate the cache:
+        // the second read sees the new value, so both loads must survive.
+        var prog = GenerateAndOptimize(
+            "arr: uint8[8] = [0,0,0,0,0,0,0,0]\n" +
+            "total: uint16 = 0\n" +
+            "def upd(i: uint8, v: uint8):\n" +
+            "    global total\n" +
+            "    total = total - arr[i]\n" +
+            "    arr[i] = v\n" +
+            "    total = total + arr[i]\n" +
+            "def main():\n" +
+            "    upd(2, 50)\n");
+        var upd = prog.Functions.First(f => f.Name.EndsWith("upd"));
+        Assert.Equal(2, upd.Body.OfType<ArrayLoad>().Count(a => a.ArrayName == "arr"));
+    }
+
+    [Fact]
     public void DivByConstFoldedZeroVariable_RaisesValueError()
     {
         // End-to-end: `z: uint8 = 0; out = 10 // z`. z is a Variable at IR-gen time (the

@@ -402,6 +402,7 @@ private static Function CloneFunction(Function f)
             PropagateVarCopies(func, globalNames);
             FoldConstants(func);
             EliminateRedundantMasks(func);
+            EliminateRedundantArrayLoads(func, volatileNames);
             EliminateLocalDeadStores(func, globalNames);
             EliminateDeadVariableStores(func, globalNames);
             CoalesceInstructions(func);
@@ -1623,6 +1624,80 @@ private static Function CloneFunction(Function f)
         if (a is Temporary t && t.Name == tmpName && b is Constant c)
             return (t, c);
         return (null, null);
+    }
+
+    // Within-block redundant array-load elimination (common-subexpression elimination).
+    // Two identical ArrayLoad / ArrayLoadFlash of the same array and index, with no intervening
+    // write that could change the result, collapse: the later load becomes a Copy of the
+    // earlier load's destination (the existing copy-propagation/DCE then cleans up). Conservative
+    // by construction — the availability table is cleared at every control-flow boundary, call,
+    // indirect/opaque store or unrecognized instruction; a store to an array drops that array's
+    // cached loads; writing a register drops entries holding or indexing on it. Volatile
+    // (ISR-shared) arrays are never cached. Pure-flash loads are immutable so only their index
+    // can invalidate them.
+    private static void EliminateRedundantArrayLoads(Function func, HashSet<string>? volatileNames)
+    {
+        var avail = new Dictionary<(string Arr, string Idx), Val>();
+
+        static string? ValKey(Val v) => v switch
+        {
+            Constant c  => "c" + c.Value,
+            Variable vv => "v" + vv.Name,
+            Temporary t => "t" + t.Name,
+            _ => null,
+        };
+        static string? ValName(Val v) => v switch
+        {
+            Variable vv => vv.Name,
+            Temporary t => t.Name,
+            _ => null,
+        };
+
+        bool IsVol(string arr) => volatileNames != null && volatileNames.Contains(arr);
+
+        for (int i = 0; i < func.Body.Count; i++)
+        {
+            var instr = func.Body[i];
+
+            // (1) Invalidate based on the instruction's memory/control effect — BEFORE recording
+            // this load, so a load never invalidates the very entry it is about to create.
+            switch (instr)
+            {
+                case ArrayStore ast:
+                    foreach (var k in avail.Keys.Where(k => k.Arr == ast.ArrayName).ToList()) avail.Remove(k);
+                    break;
+                case ArrayLoad or ArrayLoadFlash or Binary or Unary or Copy or Bitcast or BitCheck:
+                    break; // side-effect-free data ops; register effects handled next
+                default:
+                    avail.Clear(); // call / branch / label / indirect store / GC / asm / unknown
+                    break;
+            }
+
+            // (2) A register write invalidates entries that hold that value or index on it.
+            string? wn = GetDst(instr) is { } w ? ValName(w) : null;
+            if (wn != null && avail.Count > 0)
+                foreach (var k in avail.Keys
+                             .Where(k => ValName(avail[k]) == wn || k.Idx == "v" + wn || k.Idx == "t" + wn)
+                             .ToList())
+                    avail.Remove(k);
+
+            // (3) Reuse a previously loaded value, or record this one.
+            string? arr = instr switch { ArrayLoad al => al.ArrayName, ArrayLoadFlash alf => alf.ArrayName, _ => null };
+            if (arr != null)
+            {
+                Val idx = instr is ArrayLoad a ? a.Index : ((ArrayLoadFlash)instr).Index;
+                Val dst = instr is ArrayLoad a2 ? a2.Dst : ((ArrayLoadFlash)instr).Dst;
+                string? ik = ValKey(idx);
+                if (ik != null && !IsVol(arr))
+                {
+                    var key = (arr, ik);
+                    if (avail.TryGetValue(key, out var prev) && !Equals(prev, dst))
+                        func.Body[i] = new Copy(prev, dst);
+                    else
+                        avail[key] = dst;
+                }
+            }
+        }
     }
 
     private static Val? GetDst(Instruction instr) => instr switch
