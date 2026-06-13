@@ -343,249 +343,15 @@ public partial class IRGenerator
             }
         }
 
-        if (callee == "len")
-        {
-            if (expr.Args.Count != 1) throw new Exception("len() expects exactly one argument");
-            if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
-            if (expr.Args[0] is VariableExpr vLen)
-            {
-                if (!string.IsNullOrEmpty(currentInlinePrefix) &&
-                    arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1)) return new Constant(s1);
-                if (!string.IsNullOrEmpty(currentFunction) &&
-                    arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
-                if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+        if (callee == "len") return EmitLenBuiltin(expr);
+        if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
+        if (callee == "abs") return EmitAbsBuiltin(expr);
+        if (callee == "min") return EmitMinBuiltin(expr);
+        if (callee == "max") return EmitMaxBuiltin(expr);
+        if (callee == "ord") return EmitOrdBuiltin(expr);
+        if (callee == "chr") return EmitChrBuiltin(expr);
 
-                // Follow variableAliases to resolve through @inline parameter bindings
-                // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
-                string lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                    ? currentInlinePrefix + vLen.Name
-                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
-                string lenResolved = lenKey;
-                for (int depth = 0; depth < 20; depth++)
-                {
-                    if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
-                    lenResolved = lenNext;
-                    if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
-                }
-            }
-
-            Val argVal = VisitExpression(expr.Args[0]);
-            string cls = GetValClass(argVal);
-            if (!string.IsNullOrEmpty(cls))
-            {
-                string funcKey = cls + "_" + "__len__";
-                if (inlineFunctions.ContainsKey(funcKey))
-                {
-                    string selfName = argVal is Variable v ? v.Name : (argVal is Temporary t ? t.Name : "");
-                    return EmitDunderCall(selfName, cls, funcKey, new List<Val>());
-                }
-            }
-
-            // Handle list[T] variable: len(x) → load length from offset 0 of heap header
-            if (expr.Args[0] is VariableExpr vListLen)
-            {
-                string listQual = ResolveListVarQualified(vListLen.Name);
-                if (!string.IsNullOrEmpty(listQual))
-                {
-                    Val listPtr = new Variable(listQual, DataType.GC_REF);
-                    return EmitListLoad(listPtr, 0, DataType.UINT8);
-                }
-            }
-
-            throw new Exception("len() argument must be a fixed-size array or list literal");
-        }
-
-        if (callee == "int_from_bytes")
-        {
-            if (expr.Args.Count != 2)
-                throw new Exception("int.from_bytes() expects exactly two arguments (bytes, endian)");
-            bool littleEndian = true;
-            if (expr.Args[1] is StringLiteral estr)
-            {
-                if (estr.Value == "big") littleEndian = false;
-                else if (estr.Value != "little")
-                    throw new Exception("int.from_bytes() endian must be 'little' or 'big'");
-            }
-            else throw new Exception("int.from_bytes() endian argument must be a string literal");
-
-            if (expr.Args[0] is ListExpr le)
-            {
-                if (le.Elements.Count < 2) throw new Exception("int.from_bytes() requires at least 2 bytes");
-                Val b0 = VisitExpression(le.Elements[0]);
-                Val b1 = VisitExpression(le.Elements[1]);
-
-                if (b0 is Constant c0 && b1 is Constant c1)
-                {
-                    int val = littleEndian
-                        ? ((c1.Value & 0xFF) << 8) | (c0.Value & 0xFF)
-                        : ((c0.Value & 0xFF) << 8) | (c1.Value & 0xFF);
-                    return new Constant(val);
-                }
-
-                Val loVal = littleEndian ? b0 : b1;
-                Val hiVal = littleEndian ? b1 : b0;
-                Temporary hiShifted = MakeTemp(DataType.UINT16);
-                Temporary resT = MakeTemp(DataType.UINT16);
-                Emit(new Binary(BinaryOp.LShift, hiVal, new Constant(8), hiShifted));
-                Emit(new Binary(BinaryOp.BitOr, hiShifted, loVal, resT));
-                return resT;
-            }
-
-            throw new Exception("int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]");
-        }
-
-        if (callee == "abs")
-        {
-            if (expr.Args.Count != 1) throw new Exception("abs() expects exactly one argument");
-            var v = VisitExpression(expr.Args[0]);
-            if (v is Constant c) return new Constant(c.Value < 0 ? -c.Value : c.Value);
-            var negLabel = MakeLabel();
-            var endLabel = MakeLabel();
-            var result = MakeTemp();
-            var negv = MakeTemp();
-            Emit(new Binary(BinaryOp.LessThan, v, new Constant(0), negv));
-            Emit(new JumpIfNotZero(negv, negLabel));
-            Emit(new Copy(v, result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(negLabel));
-            Temporary negResult = MakeTemp();
-            Emit(new Binary(BinaryOp.Sub, new Constant(0), v, negResult));
-            Emit(new Copy(negResult, result));
-            Emit(new Label(endLabel));
-            return result;
-        }
-
-        if (callee == "min")
-        {
-            if (expr.Args.Count != 2) throw new Exception("min() expects exactly two arguments");
-            Val a = VisitExpression(expr.Args[0]);
-            Val b = VisitExpression(expr.Args[1]);
-            if (a is Constant ca && b is Constant cb) return new Constant(ca.Value < cb.Value ? ca.Value : cb.Value);
-            string elseLabel = MakeLabel();
-            string endLabel = MakeLabel();
-            Temporary result = MakeTemp();
-            Temporary cmp = MakeTemp();
-            Emit(new Binary(BinaryOp.LessThan, a, b, cmp));
-            Emit(new JumpIfZero(cmp, elseLabel));
-            Emit(new Copy(a, result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(elseLabel));
-            Emit(new Copy(b, result));
-            Emit(new Label(endLabel));
-            return result;
-        }
-
-        if (callee == "max")
-        {
-            if (expr.Args.Count != 2) throw new Exception("max() expects exactly two arguments");
-            var a = VisitExpression(expr.Args[0]);
-            var b = VisitExpression(expr.Args[1]);
-            if (a is Constant ca && b is Constant cb) return new Constant(ca.Value > cb.Value ? ca.Value : cb.Value);
-            var elseLabel = MakeLabel();
-            var endLabel = MakeLabel();
-            var result = MakeTemp();
-            var cmp = MakeTemp();
-            Emit(new Binary(BinaryOp.GreaterThan, a, b, cmp));
-            Emit(new JumpIfZero(cmp, elseLabel));
-            Emit(new Copy(a, result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(elseLabel));
-            Emit(new Copy(b, result));
-            Emit(new Label(endLabel));
-            return result;
-        }
-
-        if (callee == "ord")
-        {
-            if (expr.Args.Count != 1) throw new Exception("ord() expects exactly one argument");
-            if (expr.Args[0] is StringLiteral sl)
-            {
-                if (sl.Value.Length != 1) throw new Exception("ord() argument must be a single character");
-                return new Constant((int)sl.Value[0]);
-            }
-
-            return VisitExpression(expr.Args[0]);
-        }
-
-        if (callee == "chr")
-        {
-            if (expr.Args.Count != 1) throw new Exception("chr() expects exactly one argument");
-            return VisitExpression(expr.Args[0]);
-        }
-
-        if (callee == "sum")
-        {
-            if (expr.Args.Count != 1) throw new Exception("sum() expects exactly one argument");
-            switch (expr.Args[0])
-            {
-                case ListExpr { Elements.Count: 0 }:
-                    return new Constant(0);
-                case ListExpr le:
-                {
-                    var acc = VisitExpression(le.Elements[0]);
-                    for (var i = 1; i < le.Elements.Count; ++i)
-                    {
-                        var v = VisitExpression(le.Elements[i]);
-                        if (acc is Constant ca && v is Constant cv)
-                        {
-                            acc = new Constant(ca.Value + cv.Value);
-                            continue;
-                        }
-
-                        var t = MakeTemp();
-                        Emit(new Binary(BinaryOp.Add, acc, v, t));
-                        acc = t;
-                    }
-
-                    return acc;
-                }
-                case VariableExpr sumVar:
-                {
-                    int arrSize = -1;
-                    string arrBase = "";
-                    if (!string.IsNullOrEmpty(currentInlinePrefix))
-                    {
-                        string key = currentInlinePrefix + sumVar.Name;
-                        if (arraySizes.TryGetValue(key, out int s))
-                        {
-                            arrSize = s;
-                            arrBase = key;
-                        }
-                    }
-
-                    if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
-                    {
-                        string key = currentFunction + "." + sumVar.Name;
-                        if (arraySizes.TryGetValue(key, out int s))
-                        {
-                            arrSize = s;
-                            arrBase = key;
-                        }
-                    }
-
-                    if (arrSize < 0 && arraySizes.TryGetValue(sumVar.Name, out int s2))
-                    {
-                        arrSize = s2;
-                        arrBase = sumVar.Name;
-                    }
-
-                    if (arrSize <= 0) throw new Exception("sum() requires a list literal or fixed-size array");
-
-                    Val acc = new Variable(arrBase + "__0", DataType.UINT8);
-                    for (int i = 1; i < arrSize; ++i)
-                    {
-                        Val vi = new Variable(arrBase + "__" + i, DataType.UINT8);
-                        Temporary t = MakeTemp();
-                        Emit(new Binary(BinaryOp.Add, acc, vi, t));
-                        acc = t;
-                    }
-
-                    return acc;
-                }
-                default:
-                    throw new Exception("sum() requires a list literal or fixed-size array");
-            }
-        }
+        if (callee == "sum") return EmitSumBuiltin(expr);
 
         if (callee == "any")
         {
@@ -2104,6 +1870,261 @@ public partial class IRGenerator
             return indDst;
         }
         throw new Exception($"Callable array '{idxArr.Name}' not found or element type is not Callable");
+    }
+
+    // ── Built-in functions (each handled when callee matches; always returns or throws) ──
+
+    // len(x): compile-time constant for fixed-size arrays / list literals; runtime header
+    // load for list[T]; __len__ dunder for ZCA instances.
+    private Val EmitLenBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("len() expects exactly one argument");
+        if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
+        if (expr.Args[0] is VariableExpr vLen)
+        {
+            if (!string.IsNullOrEmpty(currentInlinePrefix) &&
+                arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1)) return new Constant(s1);
+            if (!string.IsNullOrEmpty(currentFunction) &&
+                arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
+            if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+
+            // Follow variableAliases to resolve through @inline parameter bindings
+            // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
+            string lenKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + vLen.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
+            string lenResolved = lenKey;
+            for (int depth = 0; depth < 20; depth++)
+            {
+                if (!variableAliases.TryGetValue(lenResolved, out string lenNext)) break;
+                lenResolved = lenNext;
+                if (arraySizes.TryGetValue(lenResolved, out int sAlias)) return new Constant(sAlias);
+            }
+        }
+
+        Val argVal = VisitExpression(expr.Args[0]);
+        string cls = GetValClass(argVal);
+        if (!string.IsNullOrEmpty(cls))
+        {
+            string funcKey = cls + "_" + "__len__";
+            if (inlineFunctions.ContainsKey(funcKey))
+            {
+                string selfName = argVal is Variable v ? v.Name : (argVal is Temporary t ? t.Name : "");
+                return EmitDunderCall(selfName, cls, funcKey, new List<Val>());
+            }
+        }
+
+        // Handle list[T] variable: len(x) → load length from offset 0 of heap header
+        if (expr.Args[0] is VariableExpr vListLen)
+        {
+            string listQual = ResolveListVarQualified(vListLen.Name);
+            if (!string.IsNullOrEmpty(listQual))
+            {
+                Val listPtr = new Variable(listQual, DataType.GC_REF);
+                return EmitListLoad(listPtr, 0, DataType.UINT8);
+            }
+        }
+
+        throw new Exception("len() argument must be a fixed-size array or list literal");
+    }
+
+    // int.from_bytes(bytes, endian): assemble a uint16 from a two-byte literal/list.
+    private Val EmitIntFromBytesBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2)
+            throw new Exception("int.from_bytes() expects exactly two arguments (bytes, endian)");
+        bool littleEndian = true;
+        if (expr.Args[1] is StringLiteral estr)
+        {
+            if (estr.Value == "big") littleEndian = false;
+            else if (estr.Value != "little")
+                throw new Exception("int.from_bytes() endian must be 'little' or 'big'");
+        }
+        else throw new Exception("int.from_bytes() endian argument must be a string literal");
+
+        if (expr.Args[0] is ListExpr le)
+        {
+            if (le.Elements.Count < 2) throw new Exception("int.from_bytes() requires at least 2 bytes");
+            Val b0 = VisitExpression(le.Elements[0]);
+            Val b1 = VisitExpression(le.Elements[1]);
+
+            if (b0 is Constant c0 && b1 is Constant c1)
+            {
+                int val = littleEndian
+                    ? ((c1.Value & 0xFF) << 8) | (c0.Value & 0xFF)
+                    : ((c0.Value & 0xFF) << 8) | (c1.Value & 0xFF);
+                return new Constant(val);
+            }
+
+            Val loVal = littleEndian ? b0 : b1;
+            Val hiVal = littleEndian ? b1 : b0;
+            Temporary hiShifted = MakeTemp(DataType.UINT16);
+            Temporary resT = MakeTemp(DataType.UINT16);
+            Emit(new Binary(BinaryOp.LShift, hiVal, new Constant(8), hiShifted));
+            Emit(new Binary(BinaryOp.BitOr, hiShifted, loVal, resT));
+            return resT;
+        }
+
+        throw new Exception("int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]");
+    }
+
+    // abs(x): compile-time fold for constants, else a branchless-ish negate-if-negative.
+    private Val EmitAbsBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("abs() expects exactly one argument");
+        var v = VisitExpression(expr.Args[0]);
+        if (v is Constant c) return new Constant(c.Value < 0 ? -c.Value : c.Value);
+        var negLabel = MakeLabel();
+        var endLabel = MakeLabel();
+        var result = MakeTemp();
+        var negv = MakeTemp();
+        Emit(new Binary(BinaryOp.LessThan, v, new Constant(0), negv));
+        Emit(new JumpIfNotZero(negv, negLabel));
+        Emit(new Copy(v, result));
+        Emit(new Jump(endLabel));
+        Emit(new Label(negLabel));
+        Temporary negResult = MakeTemp();
+        Emit(new Binary(BinaryOp.Sub, new Constant(0), v, negResult));
+        Emit(new Copy(negResult, result));
+        Emit(new Label(endLabel));
+        return result;
+    }
+
+    // min(a, b): compile-time fold for constants, else compare-and-select.
+    private Val EmitMinBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2) throw new Exception("min() expects exactly two arguments");
+        Val a = VisitExpression(expr.Args[0]);
+        Val b = VisitExpression(expr.Args[1]);
+        if (a is Constant ca && b is Constant cb) return new Constant(ca.Value < cb.Value ? ca.Value : cb.Value);
+        string elseLabel = MakeLabel();
+        string endLabel = MakeLabel();
+        Temporary result = MakeTemp();
+        Temporary cmp = MakeTemp();
+        Emit(new Binary(BinaryOp.LessThan, a, b, cmp));
+        Emit(new JumpIfZero(cmp, elseLabel));
+        Emit(new Copy(a, result));
+        Emit(new Jump(endLabel));
+        Emit(new Label(elseLabel));
+        Emit(new Copy(b, result));
+        Emit(new Label(endLabel));
+        return result;
+    }
+
+    // max(a, b): compile-time fold for constants, else compare-and-select.
+    private Val EmitMaxBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2) throw new Exception("max() expects exactly two arguments");
+        var a = VisitExpression(expr.Args[0]);
+        var b = VisitExpression(expr.Args[1]);
+        if (a is Constant ca && b is Constant cb) return new Constant(ca.Value > cb.Value ? ca.Value : cb.Value);
+        var elseLabel = MakeLabel();
+        var endLabel = MakeLabel();
+        var result = MakeTemp();
+        var cmp = MakeTemp();
+        Emit(new Binary(BinaryOp.GreaterThan, a, b, cmp));
+        Emit(new JumpIfZero(cmp, elseLabel));
+        Emit(new Copy(a, result));
+        Emit(new Jump(endLabel));
+        Emit(new Label(elseLabel));
+        Emit(new Copy(b, result));
+        Emit(new Label(endLabel));
+        return result;
+    }
+
+    // ord(c): single-character string literal -> its code point; otherwise pass through.
+    private Val EmitOrdBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("ord() expects exactly one argument");
+        if (expr.Args[0] is StringLiteral sl)
+        {
+            if (sl.Value.Length != 1) throw new Exception("ord() argument must be a single character");
+            return new Constant((int)sl.Value[0]);
+        }
+
+        return VisitExpression(expr.Args[0]);
+    }
+
+    // chr(n): a byte value treated as a character; pass the value through unchanged.
+    private Val EmitChrBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("chr() expects exactly one argument");
+        return VisitExpression(expr.Args[0]);
+    }
+
+    // sum(seq): fold a list literal or sum a fixed-size array's unrolled elements.
+    private Val EmitSumBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("sum() expects exactly one argument");
+        switch (expr.Args[0])
+        {
+            case ListExpr { Elements.Count: 0 }:
+                return new Constant(0);
+            case ListExpr le:
+            {
+                var acc = VisitExpression(le.Elements[0]);
+                for (var i = 1; i < le.Elements.Count; ++i)
+                {
+                    var v = VisitExpression(le.Elements[i]);
+                    if (acc is Constant ca && v is Constant cv)
+                    {
+                        acc = new Constant(ca.Value + cv.Value);
+                        continue;
+                    }
+
+                    var t = MakeTemp();
+                    Emit(new Binary(BinaryOp.Add, acc, v, t));
+                    acc = t;
+                }
+
+                return acc;
+            }
+            case VariableExpr sumVar:
+            {
+                int arrSize = -1;
+                string arrBase = "";
+                if (!string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string key = currentInlinePrefix + sumVar.Name;
+                    if (arraySizes.TryGetValue(key, out int s))
+                    {
+                        arrSize = s;
+                        arrBase = key;
+                    }
+                }
+
+                if (arrSize < 0 && !string.IsNullOrEmpty(currentFunction))
+                {
+                    string key = currentFunction + "." + sumVar.Name;
+                    if (arraySizes.TryGetValue(key, out int s))
+                    {
+                        arrSize = s;
+                        arrBase = key;
+                    }
+                }
+
+                if (arrSize < 0 && arraySizes.TryGetValue(sumVar.Name, out int s2))
+                {
+                    arrSize = s2;
+                    arrBase = sumVar.Name;
+                }
+
+                if (arrSize <= 0) throw new Exception("sum() requires a list literal or fixed-size array");
+
+                Val acc = new Variable(arrBase + "__0", DataType.UINT8);
+                for (int i = 1; i < arrSize; ++i)
+                {
+                    Val vi = new Variable(arrBase + "__" + i, DataType.UINT8);
+                    Temporary t = MakeTemp();
+                    Emit(new Binary(BinaryOp.Add, acc, vi, t));
+                    acc = t;
+                }
+
+                return acc;
+            }
+            default:
+                throw new Exception("sum() requires a list literal or fixed-size array");
+        }
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
