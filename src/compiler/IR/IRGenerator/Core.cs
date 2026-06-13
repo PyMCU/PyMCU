@@ -958,6 +958,13 @@ public partial class IRGenerator
             else break;
         }
 
+        // Fall back to the module-global / bare-name forms, mirroring how integer globals
+        // resolve (ResolveBinding): a qualified `localName` like "main.S" should still find a
+        // module-level string `S` registered by ScanGlobals as `currentModulePrefix + "S"`.
+        string bare = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+        if (strConstantVariables.TryGetValue(currentModulePrefix + bare, out var mv)) return mv;
+        if (strConstantVariables.TryGetValue(bare, out var bv)) return bv;
+
         return null;
     }
 

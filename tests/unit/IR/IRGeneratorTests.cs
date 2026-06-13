@@ -339,6 +339,48 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ModuleConstStr_Subscript_FoldsToCharCode()
+    {
+        // A module-level `const[str]` is owned by ScanGlobals, which previously never
+        // recorded its value, so `S[i]` / len(S) silently dropped. It now resolves: S[1]
+        // of "abc" folds to the char code 'b' (98).
+        const string src =
+            "S: const[str] = \"abc\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = S[1]\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 98 } });
+    }
+
+    [Fact]
+    public void ModuleConstStr_SubscriptOutOfRange_RaisesCompileError()
+    {
+        const string src =
+            "S: const[str] = \"abc\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = S[10]\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void LenOfStringConstant_FoldsToLength()
+    {
+        // len() of a compile-time string (literal or a str/const[str] variable) is its length.
+        const string src =
+            "S: const[str] = \"abcd\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = len(S)\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 4 } });
+    }
+
+    [Fact]
     public void RuntimeRangeZeroStep_RaisesCompileError()
     {
         // range(start, stop, 0) never advances the loop variable (Python raises ValueError).

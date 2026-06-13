@@ -69,6 +69,15 @@ public partial class IRGenerator
                 if (type.StartsWith("const[") && type.EndsWith("]"))
                     declaredConstants.Add(name);
 
+                // A module-level string constant (`str` or `const[str]`). Register its
+                // compile-time value under the module-global key so ResolveStrConstant resolves
+                // it for subscripting (S[i]), len(S) and iteration — previously these silently
+                // dropped because ScanGlobals (which owns module globals) never recorded it.
+                // (Done before the const[...] dispatch below, which would otherwise consume
+                // const[str] as a malformed flash array.)
+                if ((type == "str" || type == "const[str]") && initializer is StringLiteral strLit)
+                    strConstantVariables[currentModulePrefix + name] = strLit.Value;
+
                 // Detect const[uint8[N]] flash array annotation.
                 if (type.StartsWith("const[") && type.EndsWith("]"))
                 {

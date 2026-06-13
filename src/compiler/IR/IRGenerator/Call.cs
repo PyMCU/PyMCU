@@ -1403,6 +1403,9 @@ public partial class IRGenerator
     {
         if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument");
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
+        // A compile-time string constant (literal or a str / const[str] variable) has a
+        // statically known length.
+        if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
         if (expr.Args[0] is VariableExpr vLen)
         {
             if (!string.IsNullOrEmpty(currentInlinePrefix) &&
@@ -1410,6 +1413,11 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(currentFunction) &&
                 arraySizes.TryGetValue(currentFunction + "." + vLen.Name, out int s2)) return new Constant(s2);
             if (arraySizes.TryGetValue(vLen.Name, out int s3)) return new Constant(s3);
+
+            string lenStrKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + vLen.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + vLen.Name : vLen.Name);
+            if (ResolveStrConstant(lenStrKey) is string svLen) return new Constant(svLen.Length);
 
             // Follow variableAliases to resolve through @inline parameter bindings
             // (e.g. len(buf) inside write(buf: bytearray) where buf aliases main.out_buf).
