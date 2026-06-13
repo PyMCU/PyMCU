@@ -139,10 +139,12 @@ docs: add @extern / C interop to roadmap and limitations
 3. Use `match __CHIP__.arch:` for architecture dispatch.
 4. No non-ASCII characters in source (compiler lexer is ASCII-only).
 5. No multiline docstrings with code examples — use `# comments` instead.
-6. After editing stdlib, rsync to the local virtualenv:
+6. Install the stdlib editable once; after that, `lib/src/pymcu/` edits are live:
    ```bash
-   rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/
+   just sync-stdlib   # = uv pip install --no-deps -e lib/
    ```
+   Do not rsync a copy into `site-packages/pymcu/` — a physical copy there shadows
+   the editable `.pth` and your stdlib edits silently stop taking effect.
 
 ## HAL Coding Rules
 

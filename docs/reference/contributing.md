@@ -54,11 +54,14 @@ When contributing to the standard library or adding new drivers, please adhere t
 4. Use `match __CHIP__.arch:` for architecture dispatch.
 5. No non-ASCII characters — the compiler lexer is ASCII-only.
 6. No multiline docstrings with code examples — use `# comments` instead.
-7. After editing stdlib, sync to the local virtualenv:
+7. Install the stdlib editable once; after that, `lib/src/pymcu/` edits are live:
 
 ```bash
-rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/
+just sync-stdlib   # = uv pip install --no-deps -e lib/
 ```
+
+Do not rsync a copy into `site-packages/pymcu/` — a physical copy there shadows the
+editable `.pth` and your stdlib edits silently stop taking effect.
 
 ---
 

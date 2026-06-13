@@ -126,7 +126,7 @@ dotnet publish extensions/pymcu-avr/src/csharp/cli/PyMCU.AVR.csproj -c Release -
 # Set up Python environment
 uv venv && source .venv/bin/activate
 uv sync
-rsync -av lib/src/pymcu/ .venv/lib/python3.*/site-packages/pymcu/
+just sync-stdlib   # editable stdlib (uv pip install --no-deps -e lib/); edits are then live
 pip install -e src/driver
 ```
 

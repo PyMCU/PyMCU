@@ -46,7 +46,7 @@ Describe what you ran. For most changes, the integration suite must be green:
 
 - [ ] Commits follow [Conventional Commits](https://www.conventionalcommits.org/) and are small and focused.
 - [ ] After a compiler change, I rebuilt: `dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo`.
-- [ ] After a stdlib change, I synced the editable install (`rsync -a --delete lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/`).
+- [ ] The stdlib is installed editable (`just sync-stdlib`); I did **not** rsync a copy into `site-packages/pymcu/` (a physical copy shadows the editable `.pth`).
 - [ ] Stdlib sources are **ASCII-only** (no em dashes / non-ASCII — the lexer rejects them).
 - [ ] I fixed root causes in the compiler rather than working around codegen bugs in Python source.
 - [ ] New source files carry the MIT SPDX license header.

@@ -93,8 +93,9 @@ The integration test suite uses AVR8Sharp (cycle-accurate AVR simulator) and .NE
 # Run all tests (must stay green — currently 691 passing)
 dotnet test tests/integration/PyMCU.IntegrationTests.csproj
 
-# After any stdlib change, rsync to the virtualenv first:
-rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/
+# Install the stdlib editable once; lib/src edits are then picked up live.
+# Do NOT rsync a copy into site-packages/pymcu/ — it shadows the editable .pth.
+just sync-stdlib   # = uv pip install --no-deps -e lib/
 ```
 
 Add a test for every new compiler or HAL feature in `tests/integration/Tests/AVR/`.
