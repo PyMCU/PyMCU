@@ -983,6 +983,24 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `c: ClassName = ClassName(...)` — a type-annotated instance construction (a typed
+        // local parses as a VarDecl). The annotation is just the (redundant) declared type;
+        // route through the normal assignment path so the instance->class link and constructor
+        // lowering are set up exactly like the unannotated `c = ClassName(...)`. Without this,
+        // the annotated form fell through to the scalar path and never registered the instance,
+        // so a later `c.method()` mangled to an undefined `c_method` and failed at link.
+        if (stmt.Init is CallExpr vdCtor && vdCtor.Callee is VariableExpr vdCallee)
+        {
+            string vdClass = ResolveCallee(vdCallee.Name);
+            if (classNames.Contains(vdClass)
+                || inlineFunctions.ContainsKey(vdClass + "___init__")
+                || overloadedFunctions.Contains(vdClass + "___init__"))
+            {
+                VisitAssign(new AssignStmt(new VariableExpr(stmt.Name), stmt.Init) { Line = stmt.Line });
+                return;
+            }
+        }
+
         // `x: <scalar> = None` is a type error: None is the null value, not an
         // integer. (Reference/Callable/class-typed locals defaulting to None are
         // handled where such optionals are bound, not here.)

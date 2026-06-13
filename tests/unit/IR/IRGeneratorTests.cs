@@ -339,6 +339,29 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void TypeAnnotatedLocalInstance_ResolvesMethodCall()
+    {
+        // `c: Counter = Counter(5)` (a type-annotated local instance) must register the
+        // instance->class link exactly like the unannotated `c = Counter(5)`, so `c.get()`
+        // resolves to the class method `Counter_get` — not a fabricated, undefined `c_get`
+        // that fails at link.
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Counter:\n" +
+            "    def __init__(self, start: uint8):\n" +
+            "        self.n = start\n" +
+            "    def get(self) -> uint8:\n" +
+            "        return self.n\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    c: Counter = Counter(5)\n" +
+            "    out = c.get()\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Call { FunctionName: "Counter_get" });
+        Assert.DoesNotContain(body, i => i is Call { FunctionName: "c_get" });
+    }
+
+    [Fact]
     public void UndefinedInstanceAttribute_RaisesCompileError()
     {
         // Reading an attribute that is assigned nowhere in the program (a typo) must be a
