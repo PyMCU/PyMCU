@@ -70,9 +70,17 @@ public class StackAllocator
         if (_callGraph.ContainsKey("main"))
             CalculateOffsets("main", globalOffset);
 
+        // An interrupt handler can preempt main (or any function) at any instant, so its
+        // locals are live CONCURRENTLY with the interrupted function's. Allocating it at the
+        // same base as main (the old behavior) aliased the ISR's stack slots with main's
+        // locals, so an ISR with its own locals corrupted the interrupted code's SRAM
+        // variables. Give each ISR call-tree its own region ABOVE main's high-water mark
+        // (and above each other ISR's, in case nested interrupts are enabled).
+        var isrBase = _maxStackUsage;
         foreach (var func in program.Functions.Where(func => func.IsInterrupt && _callGraph.ContainsKey(func.Name)))
         {
-            CalculateOffsets(func.Name, globalOffset);
+            CalculateOffsets(func.Name, isrBase);
+            isrBase = _maxStackUsage;
         }
 
         // Allocate locals for functions whose address was taken via FunctionRef (Callable).
