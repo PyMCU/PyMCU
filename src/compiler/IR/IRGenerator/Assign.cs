@@ -168,88 +168,8 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is MemberAccessExpr memTarget && propertySetters.Count > 0)
-        {
-            bool isCtor = false;
-            if (stmt.Value is CallExpr call)
-            {
-                if (call.Callee is VariableExpr cv)
-                {
-                    string rc = ResolveCallee(cv.Name);
-                    if (!string.IsNullOrEmpty(rc) && (inlineFunctions.ContainsKey(rc + "___init__") ||
-                                                      overloadedFunctions.Contains(rc + "___init__")))
-                        isCtor = true;
-                }
-            }
-
-            if (!isCtor)
-            {
-                var objVal = VisitExpression(memTarget.Object);
-                var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-                while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
-                    @base = alias;
-                if (!string.IsNullOrEmpty(@base) && instanceClasses.TryGetValue(@base, out var cls))
-                {
-                    var setterKey = cls + "." + memTarget.Member;
-                    string? inlineKey;
-                    if (propertySetters.TryGetValue(setterKey, out inlineKey))
-                    {
-                        var argVal = VisitExpression(stmt.Value);
-                        if (inlineKey == null) return;
-                        var setter = inlineFunctions[inlineKey];
-                        var exitLabel = MakeLabel();
-                        var newDepth = inlineDepth + 1;
-                        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
-
-                        variableAliases[newPrefix + "self"] = @base;
-                        instanceClasses[newPrefix + "self"] = cls;
-
-                        if (setter is { Params.Count: >= 2 })
-                        {
-                            var paramName = newPrefix + setter.Params[1].Name;
-                            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
-                            variableTypes[paramName] = paramType;
-                            constantVariables.Remove(paramName);
-                            variableAliases.Remove(paramName);
-                            switch (argVal)
-                            {
-                                case Constant c:
-                                    constantVariables[paramName] = c.Value;
-                                    break;
-                                case Variable vv:
-                                    variableAliases[paramName] = vv.Name;
-                                    break;
-                                case Temporary tt:
-                                    // Materialize the runtime value into the param's own SRAM slot.
-                                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
-                                    // across the inline boundary, so the setter body would read an
-                                    // uninitialized variable (always 0) -- the root cause of
-                                    // `led.value = buf[0] & 1` collapsing to a single branch.
-                                    Emit(new Copy(tt, new Variable(paramName, paramType)));
-                                    break;
-                            }
-                        }
-
-                        inlineDepth++;
-                        var savedPrefix = currentInlinePrefix;
-                        var savedModulePrefix = currentModulePrefix;
-                        currentInlinePrefix = newPrefix;
-                        currentModulePrefix = cls + "_";
-
-                        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
-                        if (setter?.Body != null) VisitBlock(setter.Body);
-                        Emit(new Label(exitLabel));
-                        inlineStack.RemoveAt(inlineStack.Count - 1);
-
-                        inlineDepth--;
-                        currentInlinePrefix = savedPrefix;
-                        currentModulePrefix = savedModulePrefix;
-
-                        return;
-                    }
-                }
-            }
-        }
+        if (stmt.Target is MemberAccessExpr memTarget && propertySetters.Count > 0
+            && EmitPropertySetterAssign(stmt, memTarget)) return;
 
         if (stmt.Value is LambdaExpr lamRhs)
         {
@@ -293,6 +213,93 @@ public partial class IRGenerator
             Emit(new StoreIndirect(value, ptr));
         }
         else throw new Exception("Invalid assignment target");
+    }
+
+    // `obj.prop = v` where prop has a registered @property setter: expand the setter.
+    // Returns true when a matching setter was applied; false to fall through to the
+    // normal member/assignment handling.
+    private bool EmitPropertySetterAssign(AssignStmt stmt, MemberAccessExpr memTarget)
+    {
+        bool isCtor = false;
+        if (stmt.Value is CallExpr call)
+        {
+            if (call.Callee is VariableExpr cv)
+            {
+                string rc = ResolveCallee(cv.Name);
+                if (!string.IsNullOrEmpty(rc) && (inlineFunctions.ContainsKey(rc + "___init__") ||
+                                                  overloadedFunctions.Contains(rc + "___init__")))
+                    isCtor = true;
+            }
+        }
+
+        if (!isCtor)
+        {
+            var objVal = VisitExpression(memTarget.Object);
+            var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+            while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
+                @base = alias;
+            if (!string.IsNullOrEmpty(@base) && instanceClasses.TryGetValue(@base, out var cls))
+            {
+                var setterKey = cls + "." + memTarget.Member;
+                string? inlineKey;
+                if (propertySetters.TryGetValue(setterKey, out inlineKey))
+                {
+                    var argVal = VisitExpression(stmt.Value);
+                    if (inlineKey == null) return true;
+                    var setter = inlineFunctions[inlineKey];
+                    var exitLabel = MakeLabel();
+                    var newDepth = inlineDepth + 1;
+                    var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
+
+                    variableAliases[newPrefix + "self"] = @base;
+                    instanceClasses[newPrefix + "self"] = cls;
+
+                    if (setter is { Params.Count: >= 2 })
+                    {
+                        var paramName = newPrefix + setter.Params[1].Name;
+                        var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
+                        variableTypes[paramName] = paramType;
+                        constantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        switch (argVal)
+                        {
+                            case Constant c:
+                                constantVariables[paramName] = c.Value;
+                                break;
+                            case Variable vv:
+                                variableAliases[paramName] = vv.Name;
+                                break;
+                            case Temporary tt:
+                                // Materialize the runtime value into the param's own SRAM slot.
+                                // A bare alias (val -> tmp_N) would resolve to a dead temporary
+                                // across the inline boundary, so the setter body would read an
+                                // uninitialized variable (always 0) -- the root cause of
+                                // `led.value = buf[0] & 1` collapsing to a single branch.
+                                Emit(new Copy(tt, new Variable(paramName, paramType)));
+                                break;
+                        }
+                    }
+
+                    inlineDepth++;
+                    var savedPrefix = currentInlinePrefix;
+                    var savedModulePrefix = currentModulePrefix;
+                    currentInlinePrefix = newPrefix;
+                    currentModulePrefix = cls + "_";
+
+                    inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+                    if (setter?.Body != null) VisitBlock(setter.Body);
+                    Emit(new Label(exitLabel));
+                    inlineStack.RemoveAt(inlineStack.Count - 1);
+
+                    inlineDepth--;
+                    currentInlinePrefix = savedPrefix;
+                    currentModulePrefix = savedModulePrefix;
+
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
