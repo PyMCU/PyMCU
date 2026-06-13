@@ -536,6 +536,11 @@ public partial class IRGenerator
             {
                 foreach (var sym in imp.Symbols)
                 {
+                    // A symbol that is already a known compile-time constant (e.g. the
+                    // builtin exception codes ValueError=1, …, predefined regardless of
+                    // import) must NOT be re-imported as a data global — doing so shadows
+                    // the constant with an undefined symbol and breaks `raise ValueError`.
+                    if (constantVariables.ContainsKey(sym)) continue;
                     if (srcScope.Globals.TryGetValue(sym, out var globalSym))
                     {
                         globals[sym] = globalSym;
