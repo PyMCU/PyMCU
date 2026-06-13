@@ -404,504 +404,7 @@ public partial class IRGenerator
         if (externFunctionMap.TryGetValue(callee, out string cSym))
             return EmitExternCall(expr, callee, cSym);
 
-        if (inlineFunctions.TryGetValue(callee, out var func))
-        {
-            // Recursion guard: if this callee is already being expanded further up the
-            // chain, inlining it again would never terminate and overflow the compiler
-            // stack (SIGSEGV). PyMCU has no call frame for inlined/ZCA methods, so this
-            // recursion is unsupported — report it clearly instead of crashing.
-            if (!activeInlineExpansions.Add(callee))
-            {
-                string rn = func?.Name ?? callee;
-                throw new RecursionError(
-                    $"function '{rn}' is recursive; PyMCU has no call frame for inlined " +
-                    "or ZCA methods, so recursion is not supported — rewrite it as a loop",
-                    currentStmtLine > 0 ? currentStmtLine : 1, 1);
-            }
-
-            // @warning("..."): print the author-supplied note (once per function)
-            // when a call to this function is expanded. Informational only -- it
-            // does NOT abort compilation, so flagged-but-usable features (soft-float,
-            // reduced bare-metal behaviour) still build.
-            if (func != null && !string.IsNullOrEmpty(func.WarningMessage) && warningNoticed.Add(func.Name))
-            {
-                Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
-            }
-
-            var exitLabel = MakeLabel();
-            var newDepth = inlineDepth + 1;
-            var newPrefix = $"inline{newDepth}.{func?.Name}.";
-
-            Temporary? result = null;
-            var tupleResultNames = new List<string>();
-
-            if (pendingTupleCount > 0)
-            {
-                string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-                for (int k = 0; k < pendingTupleCount; ++k)
-                {
-                    tupleResultNames.Add($"{bBase}.iret_{newDepth}_{k}");
-                }
-            }
-            else if (func.ReturnType != "void" && func.ReturnType != "None")
-            {
-                result = MakeTemp(DataTypeExtensions.StringToDataType(func.ReturnType));
-            }
-
-            var argValues = new List<Val>();
-
-            bool isConstructor = callee.EndsWith("___init__") || callee.Contains("___init____");
-            int paramOffset = 0;
-
-            if (!isConstructor)
-            {
-                if (expr.Callee is MemberAccessExpr mem2)
-                {
-                    Val objVal = VisitExpression(mem2.Object);
-                    if (objVal is Variable v2 && instanceClasses.ContainsKey(v2.Name))
-                    {
-                        string selfName = newPrefix + "self";
-                        variableAliases[selfName] = v2.Name;
-                        instanceClasses[selfName] = instanceClasses[v2.Name];
-                        paramOffset = 1;
-                    }
-                }
-            }
-            else paramOffset = 1;
-
-            var kwArgValues = new Dictionary<string, Val>();
-            var rawKwStrArgs = new Dictionary<string, string?>();
-            var rawStrArgs = new List<StringLiteral?>();
-            var rawListArgs = new List<ListExpr?>();
-
-            foreach (var arg in expr.Args)
-            {
-                if (arg is KeywordArgExpr kw)
-                {
-                    string savedOuterPct = pendingConstructorTarget;
-                    pendingConstructorTarget = "";
-                    kwArgValues[kw.Key] = VisitExpression(kw.Value);
-                    if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
-                    // Always restore: inner ctor targets (anonymous __cN) must not
-                    // overwrite the outer assignment target (e.g. "main.spi").
-                    pendingConstructorTarget = savedOuterPct;
-                }
-                else
-                {
-                    rawStrArgs.Add(arg as StringLiteral);
-                    // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
-                    // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
-                    // and bind it to the inline parameter so the callee can consume
-                    // it via `for x in param` (unrolled) or `param[const]` indexing.
-                    ListExpr? seqLit = arg as ListExpr
-                        ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
-                    rawListArgs.Add(seqLit);
-                    if (seqLit != null)
-                    {
-                        // Visiting the literal as an expression is unsupported; the raw
-                        // AST is bound below. Push a placeholder to keep argValues
-                        // index-aligned with the parameter list.
-                        argValues.Add(new NoneVal());
-                    }
-                    else
-                    {
-                        string savedOuterPct = pendingConstructorTarget;
-                        pendingConstructorTarget = "";
-                        argValues.Add(VisitExpression(arg));
-                        // Always restore: same reason as kwarg case above.
-                        pendingConstructorTarget = savedOuterPct;
-                    }
-                }
-            }
-
-            bool isForceInlined = func != null && !func.IsInline;
-            // @inline expansions are bracketed with a *tagged* marker so the
-            // generic parameterized-outlining pass (Optimizer) can collapse
-            // repeated copies that differ only in folded constants. The tag is
-            // stripped before IR is handed to any backend, so codegen is
-            // unaffected and the non-@inline markers above keep their meaning.
-            bool isInlineMethod = func != null && func.IsInline;
-            if (isForceInlined)
-                Emit(new InlineExpansionMarker(callee, false));
-            else if (isInlineMethod)
-                Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, false));
-
-            inlineDepth++;
-            string savedPrefix = currentInlinePrefix;
-            currentInlinePrefix = newPrefix;
-
-            var savedModulePrefix = currentModulePrefix;
-            // Resolve the body's calls in the module where the function was DEFINED,
-            // not where its (possibly re-exported) callee name lives. A facade like
-            // pymcu.hal.tone re-exports tone_start from pymcu.hal.avr.tone; deriving
-            // the prefix from the re-exported callee would look for tone_start's
-            // internal helper (_tone_ocr) in the wrong module and emit an unresolved
-            // call. functionModulePrefix preserves the defining module across re-export.
-            if (functionModulePrefix.TryGetValue(callee, out var definingPrefix))
-            {
-                currentModulePrefix = definingPrefix;
-            }
-            else if (func.Name.Length < callee.Length)
-            {
-                currentModulePrefix = callee.Substring(0, callee.Length - func.Name.Length);
-            }
-
-            if (methodInstanceTypes.TryGetValue(callee, out var mit))
-            {
-                instanceClasses[newPrefix + "self"] = mit;
-            }
-
-            string? ctorSubexprSynth = null;
-            if (isConstructor)
-            {
-                var selfName = newPrefix + "self";
-                var initPos = callee.IndexOf("___init____", StringComparison.Ordinal);
-                var classPrefix =
-                    initPos != -1 ? callee[..initPos] : callee[..^9];
-                string target;
-                if (!string.IsNullOrEmpty(pendingConstructorTarget))
-                {
-                    target = pendingConstructorTarget;
-                    pendingConstructorTarget = "";
-                }
-                else
-                {
-                    string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-                    target = bBase + ".__c" + (++ctorAnonId);
-                    ctorSubexprSynth = target;
-                }
-
-                variableAliases[selfName] = target;
-                instanceClasses[selfName] = classPrefix;
-                instanceClasses[target] = classPrefix;
-                virtualInstances.Add(target);
-            }
-
-            inlineStack.Add(new InlineContext
-                { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames, CalleeName = callee });
-
-            var boundParams = new HashSet<int>();
-
-            for (int i = 0; i < argValues.Count; ++i)
-            {
-                int paramIdx = i + paramOffset;
-                if (paramIdx >= func.Params.Count) break;
-                string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
-                boundParams.Add(paramIdx);
-
-                if (i < rawListArgs.Count && rawListArgs[i] != null)
-                {
-                    // Bytes/list/tuple literal bound to this parameter: record the raw AST
-                    // so `for x in param` unrolls it and `param[const]` folds. Clear any
-                    // stale scalar bindings.
-                    listLiteralParams[paramName] = rawListArgs[i]!;
-                    constantVariables.Remove(paramName);
-                    strConstantVariables.Remove(paramName);
-                    variableAliases.Remove(paramName);
-                    continue;
-                }
-                listLiteralParams.Remove(paramName);
-
-                if (argValues[i] is FloatConstant fcArg)
-                {
-                    var fcPType = func.Params[paramIdx].Type;
-                    bool fcIsInt = fcPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
-                    if (fcIsInt)
-                    {
-                        constantVariables[paramName] = (int)fcArg.Value;
-                        floatConstantVariables.Remove(paramName);
-                    }
-                    else
-                    {
-                        floatConstantVariables[paramName] = fcArg.Value;
-                        constantVariables.Remove(paramName);
-                    }
-                    strConstantVariables.Remove(paramName);
-                    variableAliases.Remove(paramName);
-                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(fcPType);
-                    continue;
-                }
-
-                if (argValues[i] is Variable vArg)
-                {
-                    if (func.Params[paramIdx].Type == "const[str]")
-                    {
-                        string? strVal = ResolveStrConstant(vArg.Name);
-                        if (strVal != null)
-                        {
-                            strConstantVariables[paramName] = strVal;
-                            constantVariables.Remove(paramName);
-                            variableAliases.Remove(paramName);
-                            continue;
-                        }
-                    }
-
-                    if (floatConstantVariables.TryGetValue(vArg.Name, out double fv))
-                    {
-                        var fvPType = func.Params[paramIdx].Type;
-                        bool fvIsInt = fvPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
-                        if (fvIsInt)
-                        {
-                            constantVariables[paramName] = (int)fv;
-                            floatConstantVariables.Remove(paramName);
-                        }
-                        else
-                        {
-                            floatConstantVariables[paramName] = fv;
-                            constantVariables.Remove(paramName);
-                        }
-                        strConstantVariables.Remove(paramName);
-                        variableAliases.Remove(paramName);
-                        variableTypes[paramName] = DataTypeExtensions.StringToDataType(fvPType);
-                        continue;
-                    }
-
-                    variableAliases[paramName] = vArg.Name;
-                    constantVariables.Remove(paramName);
-                    strConstantVariables.Remove(paramName);
-                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
-                    continue;
-                }
-
-                if (argValues[i] is Temporary tArg)
-                {
-                    // A Temporary can carry a compile-time string or numeric constant
-                    // when it is the result of a DCE'd @inline function (e.g.,
-                    // _arduino_pin_name(13) → "PB5").  Without this block the value
-                    // would fall through to the runtime Copy, losing the constant.
-                    string? tStr = ResolveStrConstant(tArg.Name);
-                    if (tStr == null && constantVariables.TryGetValue(tArg.Name, out int tId))
-                        stringIdToStr.TryGetValue(tId, out tStr);
-                    if (tStr != null)
-                    {
-                        strConstantVariables[paramName] = tStr;
-                        constantVariables.Remove(paramName);
-                        variableAliases.Remove(paramName);
-                        continue;
-                    }
-                    if (constantVariables.TryGetValue(tArg.Name, out int tNum))
-                    {
-                        constantVariables[paramName] = tNum;
-                        strConstantVariables.Remove(paramName);
-                        variableAliases.Remove(paramName);
-                        continue;
-                    }
-                    // Non-constant Temporary: fall through to runtime Copy
-                }
-
-                if (IsConstType(func.Params[paramIdx].Type))
-                {
-                    if (func.Params[paramIdx].Type == "const[str]")
-                    {
-                        // The inline-prefix param key can be reused across call sites (two
-                        // Pin.__init__ overloads at the same depth share inlineN.__init__.pin_id),
-                        // so a prior site may have left a stale numeric/alias binding here.
-                        // Clear the complementary maps so only this string value is live --
-                        // otherwise a later `self._name = pin_id` reads the stale int first.
-                        constantVariables.Remove(paramName);
-                        floatConstantVariables.Remove(paramName);
-                        variableAliases.Remove(paramName);
-
-                        if (i < rawStrArgs.Count && rawStrArgs[i] != null)
-                        {
-                            strConstantVariables[paramName] = rawStrArgs[i]!.Value;
-                            continue;
-                        }
-
-                        if (argValues[i] is Variable vArg2 && ResolveStrConstant(vArg2.Name) is string sv2)
-                        {
-                            strConstantVariables[paramName] = sv2;
-                            continue;
-                        }
-
-                        if (argValues[i] is Constant cArg && stringIdToStr.TryGetValue(cArg.Value, out string sv3))
-                        {
-                            strConstantVariables[paramName] = sv3;
-                            continue;
-                        }
-
-                        throw new Exception(
-                            $"Parameter '{func.Params[paramIdx].Name}' is declared as const[str] and requires a compile-time string constant value");
-                    }
-
-                    if (!(argValues[i] is Constant cArg2))
-                        throw new Exception(
-                            $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
-                    constantVariables[paramName] = cArg2.Value;
-                    strConstantVariables.Remove(paramName);
-                    floatConstantVariables.Remove(paramName);
-                    variableAliases.Remove(paramName);
-                    continue;
-                }
-                if (argValues[i] is Constant cArg3)
-                {
-                    constantVariables[paramName] = cArg3.Value;
-                    strConstantVariables.Remove(paramName);
-                    floatConstantVariables.Remove(paramName);
-                    variableAliases.Remove(paramName);
-                    continue;
-                }
-                if (argValues[i] is MemoryAddress mArg)
-                {
-                    constantAddressVariables[paramName] = mArg.Address;
-                    constantAddressVariables.Remove(paramName + "_type");
-                    constantVariables.Remove(paramName);
-                    strConstantVariables.Remove(paramName);
-                    variableAliases.Remove(paramName);
-                    continue;
-                }
-
-                constantVariables.Remove(paramName);
-                strConstantVariables.Remove(paramName);
-                variableAliases.Remove(paramName);
-                DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
-                variableTypes[paramName] = paramType;
-                Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
-            }
-
-            foreach (var kvp in kwArgValues)
-            {
-                bool found = false;
-                for (int pi = paramOffset; pi < func.Params.Count; ++pi)
-                {
-                    if (func.Params[pi].Name == kvp.Key)
-                    {
-                        string paramName = currentInlinePrefix + func.Params[pi].Name;
-                        boundParams.Add(pi);
-                        found = true;
-
-                        if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
-
-                        if (IsConstType(func.Params[pi].Type))
-                        {
-                            if (func.Params[pi].Type == "const[str]")
-                            {
-                                if (rawKwStrArgs.TryGetValue(kvp.Key, out var skw))
-                                    strConstantVariables[paramName] = skw;
-                                else if (kvp.Value is Variable vkw2 && ResolveStrConstant(vkw2.Name) is { } svkw)
-                                    strConstantVariables[paramName] = svkw;
-                                else
-                                    throw new Exception(
-                                        $"Parameter '{func.Params[pi].Name}' is declared as const[str] and requires a compile-time string constant value");
-                            }
-                            else
-                            {
-                                if (!(kvp.Value is Constant ckw))
-                                    throw new Exception(
-                                        $"Parameter '{func.Params[pi].Name}' is declared as const and requires a compile-time constant value");
-                                constantVariables[paramName] = ckw.Value;
-                            }
-                        }
-                        else if (kvp.Value is Constant ckw2)
-                        {
-                            constantVariables[paramName] = ckw2.Value;
-                        }
-                        else
-                        {
-                            constantVariables.Remove(paramName);
-                            strConstantVariables.Remove(paramName);
-                            DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
-                            variableTypes[paramName] = paramType;
-                            if (kvp.Value is Variable)
-                            {
-                                // Variable arg (including ZCA instances): preserve the alias
-                                // set above and skip the Copy, same as positional arg handling.
-                            }
-                            else
-                            {
-                                variableAliases.Remove(paramName);
-                                Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
-                            }
-                        }
-
-                        break;
-                    }
-                }
-
-                if (!found) throw new Exception($"Unknown keyword argument '{kvp.Key}' in call to {callee}");
-            }
-
-            for (int i = paramOffset; i < func.Params.Count; ++i)
-            {
-                if (boundParams.Contains(i)) continue;
-                if (func.Params[i].DefaultValue != null)
-                {
-                    string paramName = currentInlinePrefix + func.Params[i].Name;
-                    // A parameter defaulting to None (e.g. `cs: Pin = None`) is bound as
-                    // None, not as a value: track it so `cs is None` folds correctly and
-                    // emit no Copy (None has no runtime representation for a reference).
-                    if (func.Params[i].DefaultValue is NoneLiteral)
-                    {
-                        noneValuedNames.Add(paramName);
-                        continue;
-                    }
-                    Val defaultVal = VisitExpression(func.Params[i].DefaultValue!);
-
-                    if (IsConstType(func.Params[i].Type))
-                    {
-                        if (func.Params[i].Type == "const[str]")
-                        {
-                            if (defaultVal is Variable vdf && ResolveStrConstant(vdf.Name) is string svdf)
-                            {
-                                strConstantVariables[paramName] = svdf;
-                                continue;
-                            }
-                        }
-
-                        if (!(defaultVal is Constant cdf))
-                            throw new Exception(
-                                $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant");
-                        constantVariables[paramName] = cdf.Value;
-                        continue;
-                    }
-
-                    if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
-                    else
-                    {
-                        DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);
-                        Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
-                    }
-                }
-            }
-
-            int savedLastLine = lastLine;
-            lastLine = -1;
-            try
-            {
-                VisitBlock(func.Body);
-            }
-            catch (CompilerError)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                int callLine = currentStmtLine > 0 ? currentStmtLine : 1;
-                throw new CompilerError("CompileError", ex.Message, callLine, 1);
-            }
-
-            lastLine = savedLastLine;
-
-            Emit(new Label(exitLabel));
-
-            if (isForceInlined)
-                Emit(new InlineExpansionMarker(callee, true));
-            else if (isInlineMethod)
-                Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, true));
-
-            if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
-                lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
-            inlineStack.RemoveAt(inlineStack.Count - 1);
-            activeInlineExpansions.Remove(callee);
-
-            currentInlinePrefix = savedPrefix;
-            currentModulePrefix = savedModulePrefix;
-            inlineDepth--;
-
-            if (result != null) return result;
-            if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
-            return new NoneVal();
-        }
+        if (inlineFunctions.TryGetValue(callee, out var func)) return EmitInlineFunctionCall(expr, callee, func);
 
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         var argValuesL = new List<Val>();
@@ -1027,6 +530,509 @@ public partial class IRGenerator
         Temporary dstC = MakeTemp();
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
+    }
+
+    // Expand a known @inline function/ZCA method call in place: bind positional,
+    // keyword and defaulted args into a fresh inline frame, alias self for instance
+    // methods, run the body, and yield the (possibly tuple) result. The big ZCA
+    // call-expansion core; always returns (result / constructed instance / None).
+    private Val EmitInlineFunctionCall(CallExpr expr, string callee, FunctionDef? func)
+    {
+        // Recursion guard: if this callee is already being expanded further up the
+        // chain, inlining it again would never terminate and overflow the compiler
+        // stack (SIGSEGV). PyMCU has no call frame for inlined/ZCA methods, so this
+        // recursion is unsupported — report it clearly instead of crashing.
+        if (!activeInlineExpansions.Add(callee))
+        {
+            string rn = func?.Name ?? callee;
+            throw new RecursionError(
+                $"function '{rn}' is recursive; PyMCU has no call frame for inlined " +
+                "or ZCA methods, so recursion is not supported — rewrite it as a loop",
+                currentStmtLine > 0 ? currentStmtLine : 1, 1);
+        }
+
+        // @warning("..."): print the author-supplied note (once per function)
+        // when a call to this function is expanded. Informational only -- it
+        // does NOT abort compilation, so flagged-but-usable features (soft-float,
+        // reduced bare-metal behaviour) still build.
+        if (func != null && !string.IsNullOrEmpty(func.WarningMessage) && warningNoticed.Add(func.Name))
+        {
+            Console.Error.WriteLine($"[pymcuc] warning: {func.WarningMessage}");
+        }
+
+        var exitLabel = MakeLabel();
+        var newDepth = inlineDepth + 1;
+        var newPrefix = $"inline{newDepth}.{func?.Name}.";
+
+        Temporary? result = null;
+        var tupleResultNames = new List<string>();
+
+        if (pendingTupleCount > 0)
+        {
+            string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+            for (int k = 0; k < pendingTupleCount; ++k)
+            {
+                tupleResultNames.Add($"{bBase}.iret_{newDepth}_{k}");
+            }
+        }
+        else if (func.ReturnType != "void" && func.ReturnType != "None")
+        {
+            result = MakeTemp(DataTypeExtensions.StringToDataType(func.ReturnType));
+        }
+
+        var argValues = new List<Val>();
+
+        bool isConstructor = callee.EndsWith("___init__") || callee.Contains("___init____");
+        int paramOffset = 0;
+
+        if (!isConstructor)
+        {
+            if (expr.Callee is MemberAccessExpr mem2)
+            {
+                Val objVal = VisitExpression(mem2.Object);
+                if (objVal is Variable v2 && instanceClasses.ContainsKey(v2.Name))
+                {
+                    string selfName = newPrefix + "self";
+                    variableAliases[selfName] = v2.Name;
+                    instanceClasses[selfName] = instanceClasses[v2.Name];
+                    paramOffset = 1;
+                }
+            }
+        }
+        else paramOffset = 1;
+
+        var kwArgValues = new Dictionary<string, Val>();
+        var rawKwStrArgs = new Dictionary<string, string?>();
+        var rawStrArgs = new List<StringLiteral?>();
+        var rawListArgs = new List<ListExpr?>();
+
+        foreach (var arg in expr.Args)
+        {
+            if (arg is KeywordArgExpr kw)
+            {
+                string savedOuterPct = pendingConstructorTarget;
+                pendingConstructorTarget = "";
+                kwArgValues[kw.Key] = VisitExpression(kw.Value);
+                if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
+                // Always restore: inner ctor targets (anonymous __cN) must not
+                // overwrite the outer assignment target (e.g. "main.spi").
+                pendingConstructorTarget = savedOuterPct;
+            }
+            else
+            {
+                rawStrArgs.Add(arg as StringLiteral);
+                // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
+                // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
+                // and bind it to the inline parameter so the callee can consume
+                // it via `for x in param` (unrolled) or `param[const]` indexing.
+                ListExpr? seqLit = arg as ListExpr
+                    ?? (arg is TupleExpr tple ? new ListExpr(tple.Elements) : null);
+                rawListArgs.Add(seqLit);
+                if (seqLit != null)
+                {
+                    // Visiting the literal as an expression is unsupported; the raw
+                    // AST is bound below. Push a placeholder to keep argValues
+                    // index-aligned with the parameter list.
+                    argValues.Add(new NoneVal());
+                }
+                else
+                {
+                    string savedOuterPct = pendingConstructorTarget;
+                    pendingConstructorTarget = "";
+                    argValues.Add(VisitExpression(arg));
+                    // Always restore: same reason as kwarg case above.
+                    pendingConstructorTarget = savedOuterPct;
+                }
+            }
+        }
+
+        bool isForceInlined = func != null && !func.IsInline;
+        // @inline expansions are bracketed with a *tagged* marker so the
+        // generic parameterized-outlining pass (Optimizer) can collapse
+        // repeated copies that differ only in folded constants. The tag is
+        // stripped before IR is handed to any backend, so codegen is
+        // unaffected and the non-@inline markers above keep their meaning.
+        bool isInlineMethod = func != null && func.IsInline;
+        if (isForceInlined)
+            Emit(new InlineExpansionMarker(callee, false));
+        else if (isInlineMethod)
+            Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, false));
+
+        inlineDepth++;
+        string savedPrefix = currentInlinePrefix;
+        currentInlinePrefix = newPrefix;
+
+        var savedModulePrefix = currentModulePrefix;
+        // Resolve the body's calls in the module where the function was DEFINED,
+        // not where its (possibly re-exported) callee name lives. A facade like
+        // pymcu.hal.tone re-exports tone_start from pymcu.hal.avr.tone; deriving
+        // the prefix from the re-exported callee would look for tone_start's
+        // internal helper (_tone_ocr) in the wrong module and emit an unresolved
+        // call. functionModulePrefix preserves the defining module across re-export.
+        if (functionModulePrefix.TryGetValue(callee, out var definingPrefix))
+        {
+            currentModulePrefix = definingPrefix;
+        }
+        else if (func.Name.Length < callee.Length)
+        {
+            currentModulePrefix = callee.Substring(0, callee.Length - func.Name.Length);
+        }
+
+        if (methodInstanceTypes.TryGetValue(callee, out var mit))
+        {
+            instanceClasses[newPrefix + "self"] = mit;
+        }
+
+        string? ctorSubexprSynth = null;
+        if (isConstructor)
+        {
+            var selfName = newPrefix + "self";
+            var initPos = callee.IndexOf("___init____", StringComparison.Ordinal);
+            var classPrefix =
+                initPos != -1 ? callee[..initPos] : callee[..^9];
+            string target;
+            if (!string.IsNullOrEmpty(pendingConstructorTarget))
+            {
+                target = pendingConstructorTarget;
+                pendingConstructorTarget = "";
+            }
+            else
+            {
+                string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+                target = bBase + ".__c" + (++ctorAnonId);
+                ctorSubexprSynth = target;
+            }
+
+            variableAliases[selfName] = target;
+            instanceClasses[selfName] = classPrefix;
+            instanceClasses[target] = classPrefix;
+            virtualInstances.Add(target);
+        }
+
+        inlineStack.Add(new InlineContext
+            { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames, CalleeName = callee });
+
+        var boundParams = new HashSet<int>();
+
+        for (int i = 0; i < argValues.Count; ++i)
+        {
+            int paramIdx = i + paramOffset;
+            if (paramIdx >= func.Params.Count) break;
+            string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
+            boundParams.Add(paramIdx);
+
+            if (i < rawListArgs.Count && rawListArgs[i] != null)
+            {
+                // Bytes/list/tuple literal bound to this parameter: record the raw AST
+                // so `for x in param` unrolls it and `param[const]` folds. Clear any
+                // stale scalar bindings.
+                listLiteralParams[paramName] = rawListArgs[i]!;
+                constantVariables.Remove(paramName);
+                strConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                continue;
+            }
+            listLiteralParams.Remove(paramName);
+
+            if (argValues[i] is FloatConstant fcArg)
+            {
+                var fcPType = func.Params[paramIdx].Type;
+                bool fcIsInt = fcPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                if (fcIsInt)
+                {
+                    constantVariables[paramName] = (int)fcArg.Value;
+                    floatConstantVariables.Remove(paramName);
+                }
+                else
+                {
+                    floatConstantVariables[paramName] = fcArg.Value;
+                    constantVariables.Remove(paramName);
+                }
+                strConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                variableTypes[paramName] = DataTypeExtensions.StringToDataType(fcPType);
+                continue;
+            }
+
+            if (argValues[i] is Variable vArg)
+            {
+                if (func.Params[paramIdx].Type == "const[str]")
+                {
+                    string? strVal = ResolveStrConstant(vArg.Name);
+                    if (strVal != null)
+                    {
+                        strConstantVariables[paramName] = strVal;
+                        constantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        continue;
+                    }
+                }
+
+                if (floatConstantVariables.TryGetValue(vArg.Name, out double fv))
+                {
+                    var fvPType = func.Params[paramIdx].Type;
+                    bool fvIsInt = fvPType is "uint8" or "uint16" or "uint32" or "int8" or "int16" or "int32" or "int";
+                    if (fvIsInt)
+                    {
+                        constantVariables[paramName] = (int)fv;
+                        floatConstantVariables.Remove(paramName);
+                    }
+                    else
+                    {
+                        floatConstantVariables[paramName] = fv;
+                        constantVariables.Remove(paramName);
+                    }
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(fvPType);
+                    continue;
+                }
+
+                variableAliases[paramName] = vArg.Name;
+                constantVariables.Remove(paramName);
+                strConstantVariables.Remove(paramName);
+                variableTypes[paramName] = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+                continue;
+            }
+
+            if (argValues[i] is Temporary tArg)
+            {
+                // A Temporary can carry a compile-time string or numeric constant
+                // when it is the result of a DCE'd @inline function (e.g.,
+                // _arduino_pin_name(13) → "PB5").  Without this block the value
+                // would fall through to the runtime Copy, losing the constant.
+                string? tStr = ResolveStrConstant(tArg.Name);
+                if (tStr == null && constantVariables.TryGetValue(tArg.Name, out int tId))
+                    stringIdToStr.TryGetValue(tId, out tStr);
+                if (tStr != null)
+                {
+                    strConstantVariables[paramName] = tStr;
+                    constantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    continue;
+                }
+                if (constantVariables.TryGetValue(tArg.Name, out int tNum))
+                {
+                    constantVariables[paramName] = tNum;
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    continue;
+                }
+                // Non-constant Temporary: fall through to runtime Copy
+            }
+
+            if (IsConstType(func.Params[paramIdx].Type))
+            {
+                if (func.Params[paramIdx].Type == "const[str]")
+                {
+                    // The inline-prefix param key can be reused across call sites (two
+                    // Pin.__init__ overloads at the same depth share inlineN.__init__.pin_id),
+                    // so a prior site may have left a stale numeric/alias binding here.
+                    // Clear the complementary maps so only this string value is live --
+                    // otherwise a later `self._name = pin_id` reads the stale int first.
+                    constantVariables.Remove(paramName);
+                    floatConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+
+                    if (i < rawStrArgs.Count && rawStrArgs[i] != null)
+                    {
+                        strConstantVariables[paramName] = rawStrArgs[i]!.Value;
+                        continue;
+                    }
+
+                    if (argValues[i] is Variable vArg2 && ResolveStrConstant(vArg2.Name) is string sv2)
+                    {
+                        strConstantVariables[paramName] = sv2;
+                        continue;
+                    }
+
+                    if (argValues[i] is Constant cArg && stringIdToStr.TryGetValue(cArg.Value, out string sv3))
+                    {
+                        strConstantVariables[paramName] = sv3;
+                        continue;
+                    }
+
+                    throw new Exception(
+                        $"Parameter '{func.Params[paramIdx].Name}' is declared as const[str] and requires a compile-time string constant value");
+                }
+
+                if (!(argValues[i] is Constant cArg2))
+                    throw new Exception(
+                        $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
+                constantVariables[paramName] = cArg2.Value;
+                strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                continue;
+            }
+            if (argValues[i] is Constant cArg3)
+            {
+                constantVariables[paramName] = cArg3.Value;
+                strConstantVariables.Remove(paramName);
+                floatConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                continue;
+            }
+            if (argValues[i] is MemoryAddress mArg)
+            {
+                constantAddressVariables[paramName] = mArg.Address;
+                constantAddressVariables.Remove(paramName + "_type");
+                constantVariables.Remove(paramName);
+                strConstantVariables.Remove(paramName);
+                variableAliases.Remove(paramName);
+                continue;
+            }
+
+            constantVariables.Remove(paramName);
+            strConstantVariables.Remove(paramName);
+            variableAliases.Remove(paramName);
+            DataType paramType = DataTypeExtensions.StringToDataType(func.Params[paramIdx].Type);
+            variableTypes[paramName] = paramType;
+            Emit(new Copy(argValues[i], new Variable(paramName, paramType)));
+        }
+
+        foreach (var kvp in kwArgValues)
+        {
+            bool found = false;
+            for (int pi = paramOffset; pi < func.Params.Count; ++pi)
+            {
+                if (func.Params[pi].Name == kvp.Key)
+                {
+                    string paramName = currentInlinePrefix + func.Params[pi].Name;
+                    boundParams.Add(pi);
+                    found = true;
+
+                    if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
+
+                    if (IsConstType(func.Params[pi].Type))
+                    {
+                        if (func.Params[pi].Type == "const[str]")
+                        {
+                            if (rawKwStrArgs.TryGetValue(kvp.Key, out var skw))
+                                strConstantVariables[paramName] = skw;
+                            else if (kvp.Value is Variable vkw2 && ResolveStrConstant(vkw2.Name) is { } svkw)
+                                strConstantVariables[paramName] = svkw;
+                            else
+                                throw new Exception(
+                                    $"Parameter '{func.Params[pi].Name}' is declared as const[str] and requires a compile-time string constant value");
+                        }
+                        else
+                        {
+                            if (!(kvp.Value is Constant ckw))
+                                throw new Exception(
+                                    $"Parameter '{func.Params[pi].Name}' is declared as const and requires a compile-time constant value");
+                            constantVariables[paramName] = ckw.Value;
+                        }
+                    }
+                    else if (kvp.Value is Constant ckw2)
+                    {
+                        constantVariables[paramName] = ckw2.Value;
+                    }
+                    else
+                    {
+                        constantVariables.Remove(paramName);
+                        strConstantVariables.Remove(paramName);
+                        DataType paramType = DataTypeExtensions.StringToDataType(func.Params[pi].Type);
+                        variableTypes[paramName] = paramType;
+                        if (kvp.Value is Variable)
+                        {
+                            // Variable arg (including ZCA instances): preserve the alias
+                            // set above and skip the Copy, same as positional arg handling.
+                        }
+                        else
+                        {
+                            variableAliases.Remove(paramName);
+                            Emit(new Copy(kvp.Value, new Variable(paramName, paramType)));
+                        }
+                    }
+
+                    break;
+                }
+            }
+
+            if (!found) throw new Exception($"Unknown keyword argument '{kvp.Key}' in call to {callee}");
+        }
+
+        for (int i = paramOffset; i < func.Params.Count; ++i)
+        {
+            if (boundParams.Contains(i)) continue;
+            if (func.Params[i].DefaultValue != null)
+            {
+                string paramName = currentInlinePrefix + func.Params[i].Name;
+                // A parameter defaulting to None (e.g. `cs: Pin = None`) is bound as
+                // None, not as a value: track it so `cs is None` folds correctly and
+                // emit no Copy (None has no runtime representation for a reference).
+                if (func.Params[i].DefaultValue is NoneLiteral)
+                {
+                    noneValuedNames.Add(paramName);
+                    continue;
+                }
+                Val defaultVal = VisitExpression(func.Params[i].DefaultValue!);
+
+                if (IsConstType(func.Params[i].Type))
+                {
+                    if (func.Params[i].Type == "const[str]")
+                    {
+                        if (defaultVal is Variable vdf && ResolveStrConstant(vdf.Name) is string svdf)
+                        {
+                            strConstantVariables[paramName] = svdf;
+                            continue;
+                        }
+                    }
+
+                    if (!(defaultVal is Constant cdf))
+                        throw new Exception(
+                            $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant");
+                    constantVariables[paramName] = cdf.Value;
+                    continue;
+                }
+
+                if (defaultVal is Constant cdf2) constantVariables[paramName] = cdf2.Value;
+                else
+                {
+                    DataType paramType = DataTypeExtensions.StringToDataType(func.Params[i].Type);
+                    Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
+                }
+            }
+        }
+
+        int savedLastLine = lastLine;
+        lastLine = -1;
+        try
+        {
+            VisitBlock(func.Body);
+        }
+        catch (CompilerError)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            int callLine = currentStmtLine > 0 ? currentStmtLine : 1;
+            throw new CompilerError("CompileError", ex.Message, callLine, 1);
+        }
+
+        lastLine = savedLastLine;
+
+        Emit(new Label(exitLabel));
+
+        if (isForceInlined)
+            Emit(new InlineExpansionMarker(callee, true));
+        else if (isInlineMethod)
+            Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, true));
+
+        if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
+            lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
+        inlineStack.RemoveAt(inlineStack.Count - 1);
+        activeInlineExpansions.Remove(callee);
+
+        currentInlinePrefix = savedPrefix;
+        currentModulePrefix = savedModulePrefix;
+        inlineDepth--;
+
+        if (result != null) return result;
+        if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
+        return new NoneVal();
     }
 
     // super().method(args): expand the resolved base-class @inline method body in place,
