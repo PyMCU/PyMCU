@@ -187,7 +187,7 @@ dunders).
 |---|---|---|
 | `complex` numbers | Requires float | Not available |
 | `Decimal` | Requires heap | Not available |
-| `None` as a runtime-checked value | Folds to `Constant{-1}` | Use a sentinel value (e.g. `0xFF`) |
+| `None` assigned to a scalar (`int` / `uintN`) | `None` is a real null literal, not the integer `-1` | Use a sentinel value (e.g. `0xFF`), or keep `None` for reference / optional-typed values where `is None` / `== None` checks work |
 | `Optional[T]` at runtime | No heap, no runtime type tag | Sentinel value pattern |
 | `Union` types | Runtime type tag required | Separate functions per type |
 | `TypeVar` / `Generic` | Runtime generics | Separate `@inline` functions per type |

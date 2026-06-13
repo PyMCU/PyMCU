@@ -35,7 +35,8 @@ Everything in this section is shipped and tested in the current alpha build.
 | Feature | Notes |
 |---------|-------|
 | Integer literals | Decimal, hex, binary, octal, `_` separators |
-| `True` / `False` / `None` | Folded to `Constant{1/0/-1}` |
+| `True` / `False` | Folded to `Constant{1/0}` |
+| `None` | Real null literal (not the integer `-1`). `x is None` / `== None` / `!= None` compile to a null check; assigning `None` to a scalar (`int` / `uintN`) is a `TypeError` — `None` is for reference / optional-typed values |
 | String literals | Single- and double-quoted; mapped to stable compile-time IDs |
 | Arithmetic `+ - * / % //` | Full constant folding. `%` and `//` follow Python's floored sign (`-7 % 3 == 2`, `-7 // 2 == -4`). **`/` on two integers is integer (floor) division, not Python's float division** — there is no implicit float result; use a float operand if you need one. |
 | Comparison `== != < <= > >=` | Chained comparisons (`lo < x < hi`) evaluate as `(lo < x) and (x < hi)`, Python semantics |
