@@ -988,6 +988,10 @@ def build(
         console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
         _show_update_hint()
 
+    except typer.Exit:
+        # An inner handler already printed a specific diagnostic and asked to exit;
+        # re-raise without the generic "Error:" line (which prints empty for Exit).
+        raise
     except Exception as e:
         _diag_log(f"BUILD FAILED with exception: {type(e).__name__}: {e}", verbose=is_verbose)
         if is_verbose:

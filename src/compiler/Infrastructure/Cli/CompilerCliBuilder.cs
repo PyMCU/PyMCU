@@ -127,9 +127,12 @@ public static class CompilerCliBuilder
                 EmitIrPath: parseResult.GetValue(emitIrOption)
             );
 
-            var exitCode = compilerRunner(options);
-
-            Environment.ExitCode = exitCode;
+            // Return the exit code so Invoke() (and thus the process) actually fails
+            // on a compile error. Setting Environment.ExitCode alone was ignored
+            // because Main returns Invoke()'s own result — which is why a frontend
+            // diagnostic still exited 0, letting the driver run the backend on a
+            // missing .mir and pile on "Failed to read IR file" cascade errors.
+            return compilerRunner(options);
         });
 
         return rootCommand;
