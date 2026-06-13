@@ -285,82 +285,7 @@ public partial class IRGenerator
 
         Val value = VisitExpression(stmt.Value);
 
-        if (stmt.Target is VariableExpr varExpr)
-        {
-            Val target;
-            if (!string.IsNullOrEmpty(currentFunction))
-            {
-                if (currentFunctionGlobals.Contains(varExpr.Name))
-                {
-                    target = ResolveBinding(varExpr.Name);
-                }
-                else
-                {
-                    if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
-                    else
-                    {
-                        // Check if the variable is a module-level mutable global.
-                        // e.g. _millis_count defined at module scope should be accessed
-                        // as a global even when assigned inside a non-inline function.
-                        string moduleGlobalName = currentModulePrefix + varExpr.Name;
-                        if (mutableGlobals.ContainsKey(moduleGlobalName))
-                        {
-                            // Assigning to a module-level global inside a regular function
-                            // without a `global` declaration is the silent-divergence trap:
-                            // Python would create a local; PyMCU would write the global. Make
-                            // the user choose. `main` is exempt — it is the module's top-level
-                            // scope, where bare assignment to a global is the expected init.
-                            if (currentFunction != "main")
-                                throw new NameError(
-                                    $"'{varExpr.Name}' is a module-level global; to assign it inside " +
-                                    $"'{currentFunction}' add a 'global {varExpr.Name}' declaration, " +
-                                    "or rename the variable if a local was intended",
-                                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
-
-                            target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
-                        }
-                        else
-                        {
-                            string qualifiedName = currentFunction + "." + varExpr.Name;
-                            DataType type = DataType.UINT8;
-                            if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
-                            else
-                            {
-                                if (value is Temporary tmp) type = tmp.Type;
-                                else if (value is Variable vv) type = vv.Type;
-                                else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
-                                variableTypes[qualifiedName] = type;
-                                if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
-                                    Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
-                            }
-
-                            target = new Variable(qualifiedName, type);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                target = ResolveBinding(varExpr.Name);
-            }
-
-            if (!(value is NoneVal)) Emit(new Copy(value, target));
-
-            if (value is Variable vv2 && target is Variable tv2) variableAliases[tv2.Name] = vv2.Name;
-            else if (value is Temporary tSrc && target is Variable tDst) variableAliases[tDst.Name] = tSrc.Name;
-
-            if (string.IsNullOrEmpty(currentFunction))
-            {
-                if (value is Constant c && target is Variable tv3)
-                {
-                    if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
-                }
-            }
-            else
-            {
-                if (target is Variable tv4) constantVariables.Remove(tv4.Name);
-            }
-        }
+        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
         else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
@@ -368,6 +293,86 @@ public partial class IRGenerator
             Emit(new StoreIndirect(value, ptr));
         }
         else throw new Exception("Invalid assignment target");
+    }
+
+    // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
+    // tracking and the Copy. Receives the pre-computed rhs `value`. Terminal for the
+    // chain (completes -> VisitAssign returns).
+    private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
+    {
+        Val target;
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            if (currentFunctionGlobals.Contains(varExpr.Name))
+            {
+                target = ResolveBinding(varExpr.Name);
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
+                else
+                {
+                    // Check if the variable is a module-level mutable global.
+                    // e.g. _millis_count defined at module scope should be accessed
+                    // as a global even when assigned inside a non-inline function.
+                    string moduleGlobalName = currentModulePrefix + varExpr.Name;
+                    if (mutableGlobals.ContainsKey(moduleGlobalName))
+                    {
+                        // Assigning to a module-level global inside a regular function
+                        // without a `global` declaration is the silent-divergence trap:
+                        // Python would create a local; PyMCU would write the global. Make
+                        // the user choose. `main` is exempt — it is the module's top-level
+                        // scope, where bare assignment to a global is the expected init.
+                        if (currentFunction != "main")
+                            throw new NameError(
+                                $"'{varExpr.Name}' is a module-level global; to assign it inside " +
+                                $"'{currentFunction}' add a 'global {varExpr.Name}' declaration, " +
+                                "or rename the variable if a local was intended",
+                                stmt.Line > 0 ? stmt.Line : lastLine, 1);
+
+                        target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
+                    }
+                    else
+                    {
+                        string qualifiedName = currentFunction + "." + varExpr.Name;
+                        DataType type = DataType.UINT8;
+                        if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                        else
+                        {
+                            if (value is Temporary tmp) type = tmp.Type;
+                            else if (value is Variable vv) type = vv.Type;
+                            else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
+                            variableTypes[qualifiedName] = type;
+                            if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
+                                Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
+                        }
+
+                        target = new Variable(qualifiedName, type);
+                    }
+                }
+            }
+        }
+        else
+        {
+            target = ResolveBinding(varExpr.Name);
+        }
+
+        if (!(value is NoneVal)) Emit(new Copy(value, target));
+
+        if (value is Variable vv2 && target is Variable tv2) variableAliases[tv2.Name] = vv2.Name;
+        else if (value is Temporary tSrc && target is Variable tDst) variableAliases[tDst.Name] = tSrc.Name;
+
+        if (string.IsNullOrEmpty(currentFunction))
+        {
+            if (value is Constant c && target is Variable tv3)
+            {
+                if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
+            }
+        }
+        else
+        {
+            if (target is Variable tv4) constantVariables.Remove(tv4.Name);
+        }
     }
 
     // `x = ClassName(args)` constructor target: set up the (virtual) constructor
