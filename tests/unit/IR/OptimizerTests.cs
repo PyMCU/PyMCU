@@ -63,6 +63,20 @@ public class OptimizerTests
         Assert.DoesNotContain(optimized.Functions[0].Body, i => i is Binary);
     }
 
+    [Fact]
+    public void DivByConstFoldedZeroVariable_RaisesValueError()
+    {
+        // End-to-end: `z: uint8 = 0; out = 10 // z`. z is a Variable at IR-gen time (the
+        // front-end guard can't see it); constant propagation folds the divisor to 0, which
+        // the optimizer must reject rather than leave as a runtime divide-by-zero.
+        Assert.Throws<ValueError>(() => GenerateAndOptimize(
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    z: uint8 = 0\n" +
+            "    out = 10 // z\n"));
+    }
+
     // ─── Copy Propagation (via Optimize) ──────────────────────────────────
 
     [Fact]
@@ -219,14 +233,15 @@ public class OptimizerPassTests
     // ─── FoldConstants — Binary edge cases ───────────────────────────────────
 
     [Fact]
-    public void FoldConstants_DivByZero_IsNotFolded()
+    public void FoldConstants_DivByZero_RaisesValueError()
     {
-        var body = Optimize(
+        // A divisor that constant propagation proves to be zero is a guaranteed fault.
+        // Previously the optimizer left it as a runtime Binary with a const-0 divisor
+        // (silent miscompile); it now raises a clean ValueError, catching zeros that only
+        // become visible after folding (e.g. `z = 0; x // z`), not just literal `x / 0`.
+        Assert.Throws<ValueError>(() => Optimize(
             new Binary(IrBinaryOp.Div, new Constant(10), new Constant(0), new Temporary("t1")),
-            new Return(new Temporary("t1")));
-
-        body.OfType<Binary>().Should().ContainSingle(b =>
-            b.Op == IrBinaryOp.Div && b.Src2 == new Constant(0));
+            new Return(new Temporary("t1"))));
     }
 
     [Fact]

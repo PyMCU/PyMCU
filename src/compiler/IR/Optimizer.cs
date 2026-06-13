@@ -699,9 +699,11 @@ private static Function CloneFunction(Function f)
 
     private static void FoldConstants(Function func)
     {
+        int curLine = 0;
         for (var i = 0; i < func.Body.Count; ++i)
         {
             var instr = func.Body[i];
+            if (instr is DebugLine dbg) curLine = dbg.Line;
             switch (instr)
             {
                 case Binary binary:
@@ -717,24 +719,25 @@ private static Function CloneFunction(Function f)
                             case BinaryOp.Add: result = c1.Value + c2.Value; break;
                             case BinaryOp.Sub: result = c1.Value - c2.Value; break;
                             case BinaryOp.Mul: result = c1.Value * c2.Value; break;
+                            // Division/modulo by a divisor that constant propagation has
+                            // proven to be zero is a guaranteed fault. VisitBinary catches
+                            // literal `x / 0`, but a zero that only becomes visible here
+                            // (a folded local/param, e.g. `z = 0; x // z`) would otherwise be
+                            // left as a runtime Binary with a const-0 divisor and miscompile.
+                            case BinaryOp.Div or BinaryOp.FloorDiv or BinaryOp.Mod when c2.Value == 0:
+                                throw new ValueError("integer division or modulo by zero",
+                                    curLine > 0 ? curLine : 1, 1);
                             case BinaryOp.Div:
-                                if (c2.Value != 0) result = c1.Value / c2.Value;
-                                else foldable = false;
+                                result = c1.Value / c2.Value;
                                 break;
                             case BinaryOp.FloorDiv:
-                                if (c2.Value != 0)
-                                {
-                                    int q = c1.Value / c2.Value;
-                                    if ((c1.Value ^ c2.Value) < 0 && q * c2.Value != c1.Value) q--;
-                                    result = q;
-                                }
-                                else foldable = false;
-
+                            {
+                                int q = c1.Value / c2.Value;
+                                if ((c1.Value ^ c2.Value) < 0 && q * c2.Value != c1.Value) q--;
+                                result = q;
                                 break;
-                            case BinaryOp.Mod:
-                                if (c2.Value != 0) result = c1.Value % c2.Value;
-                                else foldable = false;
-                                break;
+                            }
+                            case BinaryOp.Mod: result = c1.Value % c2.Value; break;
                             case BinaryOp.Equal: result = c1.Value == c2.Value ? 1 : 0; break;
                             case BinaryOp.NotEqual: result = c1.Value != c2.Value ? 1 : 0; break;
                             case BinaryOp.LessThan: result = c1.Value < c2.Value ? 1 : 0; break;
