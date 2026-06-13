@@ -339,6 +339,36 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ConstructClassWithoutInit_RaisesClearError()
+    {
+        // Constructing a class that has no __init__ is reported specifically (PyMCU does not
+        // synthesize a default constructor), not as a generic 'undefined function'.
+        const string src =
+            "class Math:\n" +
+            "    def double(self, x: uint8) -> uint8:\n" +
+            "        return x * 2\n" +
+            "def main():\n" +
+            "    m = Math()\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("__init__", ex.Message);
+    }
+
+    [Fact]
+    public void CallNonCallableVariable_RaisesClearError()
+    {
+        // Calling a value (`x(3)` where x is uint8) reports 'not callable', not 'undefined
+        // function' (x is defined, just not a function).
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 5\n" +
+            "    y: uint8 = x(3)\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("not callable", ex.Message);
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the

@@ -411,6 +411,25 @@ public partial class IRGenerator
             && !callee.StartsWith("__"))
         {
             string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
+
+            // A known class invoked but with no __init__ to construct it — Python would use a
+            // default constructor, which PyMCU does not synthesize. Be specific.
+            if (classNames.Contains(callee) || classNames.Contains(shown))
+                throw UserError(
+                    $"class '{shown}' cannot be constructed: it has no __init__ method (PyMCU does " +
+                    "not synthesize a default constructor — add `def __init__(self): ...`)");
+
+            // A known variable used as if it were callable (`x(3)` where x is a value).
+            if (expr.Callee is VariableExpr cv)
+            {
+                string vq = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + cv.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + cv.Name : cv.Name);
+                if (variableTypes.ContainsKey(vq) || variableTypes.ContainsKey(cv.Name)
+                    || mutableGlobals.ContainsKey(currentModulePrefix + cv.Name) || mutableGlobals.ContainsKey(cv.Name))
+                    throw UserError($"'{shown}' is not callable (it is a value, not a function)");
+            }
+
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
         }
 
