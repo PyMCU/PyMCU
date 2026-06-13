@@ -1391,57 +1391,7 @@ public partial class IRGenerator
         }
 
         // list[T] annotation → heap-allocated GC list
-        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
-        {
-            string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
-            DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
-            int elemSize = elemDt.SizeOf();
-
-            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + stmt.Target
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
-
-            listVarElemTypes[qualified] = elemDt;
-            variableTypes[qualified] = DataType.GC_REF;
-
-            if (stmt.Value != null)
-            {
-                int capacity = 8;
-                List<Val>? initElements = null;
-
-                if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
-                    calleeV.Name == "list")
-                {
-                    if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
-                        capacity = capLit.Value;
-                }
-                else if (stmt.Value is ListExpr le)
-                {
-                    initElements = new List<Val>();
-                    foreach (var e in le.Elements)
-                        initElements.Add(VisitExpression(e));
-                    if (le.Elements.Count > capacity) capacity = le.Elements.Count;
-                }
-
-                int allocSize = 2 + capacity * elemSize;
-                Temporary tmpPtr = MakeTemp(DataType.GC_REF);
-                Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
-
-                int initCount = initElements?.Count ?? 0;
-                EmitListStore(tmpPtr, 0, new Constant(initCount));
-                EmitListStore(tmpPtr, 1, new Constant(capacity));
-
-                if (initElements != null)
-                {
-                    for (int k = 0; k < initElements.Count; k++)
-                        EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
-                }
-
-                Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
-            }
-
-            return;
-        }
+        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]")) { EmitListAnnAssign(stmt); return; }
 
         int bracket = stmt.Annotation.IndexOf('[');
         int close = stmt.Annotation.LastIndexOf(']');
@@ -1509,6 +1459,59 @@ public partial class IRGenerator
                 if (sv != null) strConstantVariables[qualified2] = sv;
             }
         }
+    }
+
+    // list[T] annotation -> a heap-allocated GC list (bounded bump allocator).
+    private void EmitListAnnAssign(AnnAssign stmt)
+    {
+        string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
+        DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+        int elemSize = elemDt.SizeOf();
+
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + stmt.Target
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+
+        listVarElemTypes[qualified] = elemDt;
+        variableTypes[qualified] = DataType.GC_REF;
+
+        if (stmt.Value != null)
+        {
+            int capacity = 8;
+            List<Val>? initElements = null;
+
+            if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
+                calleeV.Name == "list")
+            {
+                if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                    capacity = capLit.Value;
+            }
+            else if (stmt.Value is ListExpr le)
+            {
+                initElements = new List<Val>();
+                foreach (var e in le.Elements)
+                    initElements.Add(VisitExpression(e));
+                if (le.Elements.Count > capacity) capacity = le.Elements.Count;
+            }
+
+            int allocSize = 2 + capacity * elemSize;
+            Temporary tmpPtr = MakeTemp(DataType.GC_REF);
+            Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
+
+            int initCount = initElements?.Count ?? 0;
+            EmitListStore(tmpPtr, 0, new Constant(initCount));
+            EmitListStore(tmpPtr, 1, new Constant(capacity));
+
+            if (initElements != null)
+            {
+                for (int k = 0; k < initElements.Count; k++)
+                    EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
+            }
+
+            Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
+        }
+
+        return;
     }
 
     // Fixed-size array annotation `T[N]` (incl. Class[N] slot arrays and Callable[N]):
