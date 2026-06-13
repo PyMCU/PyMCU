@@ -478,6 +478,18 @@ public partial class IRGenerator
             var varType = DataType.UINT8;
             var originalName = memExpr2.Object is VariableExpr veObj ? veObj.Name : null;
 
+            // Runtime pointer (from ptr(<runtime addr>), e.g. ptr(BASE + x)): the target
+            // Val holds a 16-bit address computed at runtime, so write through it with a
+            // StoreIndirect rather than to a compile-time MemoryAddress.
+            string? rptName = target switch { Variable rv => rv.Name, Temporary rt => rt.Name, _ => null };
+            if (rptName != null && runtimePtrVars.TryGetValue(rptName, out var rptElem))
+            {
+                Temporary sv = MakeTemp(rptElem);
+                Emit(new Copy(value, sv));
+                Emit(new StoreIndirect(sv, target));
+                return;
+            }
+
             // Resolve local ptr[T] compile-time constant address variable
             if (target is Variable ptrVar && constantAddressVariables.TryGetValue(ptrVar.Name, out int ptrAddr))
             {
@@ -1459,6 +1471,17 @@ public partial class IRGenerator
                 return;
             }
 
+            // ptr[T] = <runtime address> (e.g. ptr(BASE + x) with a non-constant offset):
+            // the variable holds a 16-bit runtime address. Record it as a runtime pointer so
+            // a later `.value` read / write / augmented-assign lowers to Load/StoreIndirect.
+            if (isPtrAnnotation)
+            {
+                Emit(new Copy(rhs, new Variable(qualified2, DataType.UINT16)));
+                variableTypes[qualified2] = DataType.UINT16;
+                runtimePtrVars[qualified2] = ptrElemType;
+                return;
+            }
+
             if (rhs is MemoryAddress addr) rhs = addr with { Type = type };
             Emit(new Copy(rhs, new Variable(qualified2, type)));
 
@@ -2081,6 +2104,45 @@ public partial class IRGenerator
             }
 
             Emit(new BitWrite(tgtVal, bit, result));
+        }
+        else if (stmt.Target is MemberAccessExpr mae && mae.Member == "value")
+        {
+            // `<ptr>.value OP= operand`: read-modify-write through the pointer. Without this
+            // case a member-target augmented assignment was silently dropped.
+            Val ptrObj = VisitExpression(mae.Object);
+            string? pn = ptrObj switch { Variable pv => pv.Name, Temporary pt => pt.Name, _ => null };
+
+            if (pn != null && runtimePtrVars.TryGetValue(pn, out var rElem))
+            {
+                // Runtime pointer (ptr(<runtime addr>)): LoadIndirect -> op -> StoreIndirect.
+                Temporary cur = MakeTemp(rElem);
+                Emit(new LoadIndirect(ptrObj, cur));
+                Temporary res = MakeTemp(rElem);
+                Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
+                Emit(new StoreIndirect(res, ptrObj));
+                return;
+            }
+
+            // Compile-time address: a ptr[T] const-address variable or a register MemoryAddress.
+            DataType elem = DataType.UINT8;
+            if (pn != null && constantAddressVariables.TryGetValue(pn, out int caddr))
+            {
+                if (variableTypes.TryGetValue(pn, out var pet)) elem = pet;
+                ptrObj = new MemoryAddress(caddr, elem);
+            }
+            else if (ptrObj is MemoryAddress mma) elem = mma.Type;
+
+            if (ptrObj is MemoryAddress maddr)
+            {
+                // Reading a MemoryAddress operand dereferences it (IN/LDS); writing back
+                // via Copy stores it (OUT/STS).
+                Temporary res = MakeTemp(elem);
+                Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), maddr, operand, res));
+                Emit(new Copy(res, new MemoryAddress(maddr.Address, elem)));
+                return;
+            }
+
+            throw new Exception("augmented assignment to .value requires a pointer or register target");
         }
     }
 

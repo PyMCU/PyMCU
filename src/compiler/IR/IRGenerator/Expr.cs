@@ -1091,6 +1091,17 @@ public partial class IRGenerator
         if (expr.Member == "value")
         {
             Val obj = VisitExpression(expr.Object);
+
+            // Runtime pointer (ptr(<runtime addr>), e.g. ptr(BASE + x)): read the value at
+            // the held address with a LoadIndirect rather than via a compile-time address.
+            string? rpn = obj switch { Variable rpv => rpv.Name, Temporary rpt => rpt.Name, _ => null };
+            if (rpn != null && runtimePtrVars.TryGetValue(rpn, out var rpElem))
+            {
+                Temporary ld = MakeTemp(rpElem);
+                Emit(new LoadIndirect(obj, ld));
+                return ld;
+            }
+
             DataType varType = DataType.UINT8;
             if (obj is Variable v)
             {

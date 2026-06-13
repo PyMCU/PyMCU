@@ -274,9 +274,15 @@ public partial class IRGenerator
             // A bare register contributes its address here (not its dereferenced value).
             if (TryEvalConstAddress(expr.Args[0]) is int addr)
                 return new MemoryAddress(addr, DataType.UINT8);
-            throw new Exception(
-                "ptr() argument must be a compile-time address: a constant, or a register/" +
-                "constant base with constant +/- offsets (e.g. ptr(BASE + 6))");
+
+            // Runtime address, e.g. ptr(BASE + x) with a non-constant offset. Materialize
+            // the 16-bit address into a temp and mark it a runtime pointer; a subsequent
+            // `.value` read/write lowers to Load/StoreIndirect through the held address.
+            Val addrVal = VisitExpression(expr.Args[0]);
+            Temporary ptrTmp = MakeTemp(DataType.UINT16);
+            Emit(new Copy(addrVal, ptrTmp));
+            runtimePtrVars[ptrTmp.Name] = DataType.UINT8;
+            return ptrTmp;
         }
 
         if (callee == "ptr" && !intrinsicNames.Contains("ptr"))

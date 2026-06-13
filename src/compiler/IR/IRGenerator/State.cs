@@ -201,6 +201,12 @@ public partial class IRGenerator
     // Tracks temporaries/variables that hold MemoryAddress values from inline returns.
     private Dictionary<string, int> constantAddressVariables = new();
 
+    // Tracks Vals that hold a RUNTIME pointer address (from ptr(<runtime expr>), e.g.
+    // ptr(BASE + x) with a non-constant offset). Maps the Val name to the pointed-at
+    // element type. Reading/writing `.value` on such a Val lowers to Load/StoreIndirect
+    // through the held address, rather than a direct store to a compile-time MemoryAddress.
+    private Dictionary<string, DataType> runtimePtrVars = new();
+
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
