@@ -37,10 +37,10 @@ Everything in this section is shipped and tested in the current alpha build.
 | Integer literals | Decimal, hex, binary, octal, `_` separators |
 | `True` / `False` / `None` | Folded to `Constant{1/0/-1}` |
 | String literals | Single- and double-quoted; mapped to stable compile-time IDs |
-| Arithmetic `+ - * / % //` | Full constant folding |
-| Comparison `== != < <= > >=` | |
+| Arithmetic `+ - * / % //` | Full constant folding. `%` and `//` follow Python's floored sign (`-7 % 3 == 2`, `-7 // 2 == -4`). **`/` on two integers is integer (floor) division, not Python's float division** — there is no implicit float result; use a float operand if you need one. |
+| Comparison `== != < <= > >=` | Chained comparisons (`lo < x < hi`) evaluate as `(lo < x) and (x < hi)`, Python semantics |
 | Bitwise `& | ^ ~ << >>` | |
-| Logical `and` / `or` / `not` | Full short-circuit evaluation |
+| Logical `and` / `or` / `not` | Short-circuit; `and`/`or` evaluate to the **operand**, not a bool (`a or default`, `x and x.field` work as in Python) |
 | Ternary `x if cond else y` | Compiles to JumpIfZero chain |
 | Unary `- ~ not` | Constant folding |
 | Augmented assignment `+= -= *= //= &= |= ^= <<= >>=` | Variable, subscript, and member targets |
@@ -51,9 +51,9 @@ Everything in this section is shipped and tested in the current alpha build.
 | Multiple assignment `a = b = 0` | Left-to-right Copy chain |
 | Walrus `:=` | Assign-and-return; essential for UART / sensor polling loops |
 | Bit indexing `port[n]` | `n` must be compile-time constant |
-| Array indexing `arr[i]` | Constant-index: zero overhead; variable-index: SRAM |
+| Array indexing `arr[i]` | Constant-index: zero overhead; variable-index: SRAM. Negative constant index `arr[-1]` is the last element (Python); out-of-range constant index is a compile error |
 | List comprehension `[x*2 for x in range(n)]` | Compile-time unroll; constant iterable only |
-| Tuple literal `(a, b)` / unpacking `a, b = f()` | Stack-allocated; multi-return |
+| Tuple literal `(a, b)` / unpacking `a, b = f()` / `a, b = b, a` | Stack-allocated; multi-return; bare-tuple RHS supported, so swap evaluates the RHS before assigning |
 | Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
