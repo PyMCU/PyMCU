@@ -361,201 +361,11 @@ public partial class IRGenerator
         if (callee == "str") return EmitStrBuiltin(expr);
         if (callee == "pow") return EmitPowBuiltin(expr);
 
-        if (callee == "divmod")
-        {
-            if (expr.Args.Count != 2) throw new Exception("divmod() expects exactly two arguments");
-            Val aVal = VisitExpression(expr.Args[0]);
-            Val bVal = VisitExpression(expr.Args[1]);
-            // Result width follows the wider operand, so divmod(uint16, ...) divides at
-            // 16-bit width and stores 16-bit results rather than truncating to 8 bits.
-            // Read the type off the resolved Vals (Variable/Temporary carry it; a constant
-            // is sized by its value) -- InferExprType keys on the unqualified name and
-            // misses prefixed locals.
-            static DataType ValType(Val v) => v switch
-            {
-                Variable x => x.Type,
-                Temporary x => x.Type,
-                Constant c => c.Value < 0 ? DataType.INT16
-                              : c.Value <= 0xFF ? DataType.UINT8
-                              : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
-                _ => DataType.UINT8,
-            };
-            DataType ta = ValType(aVal), tb = ValType(bVal);
-            DataType rt = ta.SizeOf() >= tb.SizeOf() ? ta : tb;
-            if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
-
-            if (aVal is Constant ca && bVal is Constant cb)
-            {
-                if (cb.Value == 0) throw new Exception("divmod(): division by zero");
-                int q = ca.Value / cb.Value;
-                int r = ca.Value % cb.Value;
-                if (pendingTupleCount == 2)
-                {
-                    string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-                    string qn = bBase + ".divmod_q" + tempCounter;
-                    string rn = bBase + ".divmod_r" + (tempCounter + 1);
-                    tempCounter += 2;
-                    Emit(new Copy(new Constant(q), new Variable(qn, rt)));
-                    Emit(new Copy(new Constant(r), new Variable(rn, rt)));
-                    lastTupleResults = new List<string> { qn, rn };
-                    return new NoneVal();
-                }
-
-                return new Constant(q);
-            }
-
-            if (pendingTupleCount == 2)
-            {
-                string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
-                string qn = bBase + ".divmod_q" + tempCounter;
-                string rn = bBase + ".divmod_r" + (tempCounter + 1);
-                tempCounter += 2;
-                var qvar = new Variable(qn, rt);
-                var rvar = new Variable(rn, rt);
-
-                // Emit the quotient and remainder as the same FloorDiv/Mod the // and %
-                // operators produce, adjacent and sharing operands, so the AVR backend's
-                // divmod fusion folds the pair into a single division call.
-                Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qvar));
-                Emit(new Binary(BinaryOp.Mod, aVal, bVal, rvar));
-                lastTupleResults = new List<string> { qn, rn };
-                return new NoneVal();
-            }
-
-            Temporary qTmp = MakeTemp(rt);
-            Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qTmp));
-            return qTmp;
-        }
-
-        var castTypes = new Dictionary<string, DataType>
-        {
-            { "uint8", DataType.UINT8 }, { "uint16", DataType.UINT16 }, { "uint32", DataType.UINT32 },
-            { "int8", DataType.INT8 }, { "int16", DataType.INT16 }, { "int32", DataType.INT32 },
-            { "int", DataType.INT16 }
-        };
-        if (castTypes.TryGetValue(callee, out DataType dstType))
-        {
-            if (expr.Args.Count != 1) throw new Exception(callee + "() expects exactly one argument");
-            Val v = VisitExpression(expr.Args[0]);
-            if (v is Constant c)
-            {
-                int val = c.Value;
-                switch (dstType)
-                {
-                    case DataType.UINT8: val = (byte)val; break;
-                    case DataType.UINT16: val = (ushort)val; break;
-                    case DataType.INT8: val = (sbyte)val; break;
-                    case DataType.INT16: val = (short)val; break;
-                }
-
-                return new Constant(val);
-            }
-
-            // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
-            if (v is FloatConstant fc && dstType != DataType.FLOAT)
-            {
-                int val = (int)fc.Value;
-                switch (dstType)
-                {
-                    case DataType.UINT8: val = (byte)val; break;
-                    case DataType.UINT16: val = (ushort)val; break;
-                    case DataType.INT8: val = (sbyte)val; break;
-                    case DataType.INT16: val = (short)val; break;
-                }
-                return new Constant(val);
-            }
-
-            Temporary dst = MakeTemp(dstType);
-            Emit(new Copy(v, dst));
-            return dst;
-        }
-
-        if (callee == "bitcast")
-        {
-            if (expr.Args.Count != 2) throw new Exception("bitcast() expects exactly two arguments: bitcast(type, value)");
-            string typeName = (expr.Args[0] as VariableExpr)?.Name
-                ?? throw new Exception("bitcast() first argument must be a type name");
-            DataType bcDstType;
-            if (typeName == "float")
-                bcDstType = DataType.FLOAT;
-            else if (!castTypes.TryGetValue(typeName, out bcDstType))
-                throw new Exception($"bitcast(): unknown type '{typeName}'");
-
-            Val srcVal = VisitExpression(expr.Args[1]);
-
-            // Compile-time constant folding
-            if (bcDstType == DataType.UINT32 && srcVal is FloatConstant fcBc)
-            {
-                uint bits = BitConverter.SingleToUInt32Bits((float)fcBc.Value);
-                return new Constant((int)bits);
-            }
-            if (bcDstType == DataType.FLOAT && srcVal is Constant cBc)
-                return new FloatConstant(BitConverter.Int32BitsToSingle(cBc.Value));
-
-            Temporary bcDst = MakeTemp(bcDstType);
-            Emit(new Bitcast(srcVal, bcDst));
-            return bcDst;
-        }
-
-        if (callee == "gc_alloc")
-        {
-            if (expr.Args.Count != 1) throw new Exception("gc_alloc() expects exactly one argument: gc_alloc(size)");
-            Val sizeVal = VisitExpression(expr.Args[0]);
-            Temporary gcDst = MakeTemp(DataType.GC_REF);
-            Emit(new GcAlloc(sizeVal, gcDst));
-            return gcDst;
-        }
-
-        if (callee == "asm")
-        {
-            // asm("code")                  — bare inline assembly (no constraints)
-            // asm("code", op0, op1, ...)   — assembly with %N register constraints
-            if (expr.Args.Count < 1) throw new Exception("asm() requires at least one string argument");
-
-            string? code = null;
-            if (expr.Args[0] is StringLiteral str2)
-                code = str2.Value;
-            else if (expr.Args[0] is FStringExpr fstr2)
-            {
-                var resolved = VisitFStringExpr(fstr2);
-                if (resolved is Constant c2 && stringIdToStr.TryGetValue(c2.Value, out var s2))
-                    code = s2;
-                else
-                    throw new Exception("asm() f-string did not resolve to a string constant");
-            }
-            else if (expr.Args[0] is VariableExpr ve2)
-                throw new Exception($"asm() argument must be a string literal, got variable '{ve2.Name}'");
-            else
-                throw new Exception("asm() argument must be a compile-time string literal");
-
-            if (code == null) return new NoneVal();
-
-            if (expr.Args.Count == 1)
-            {
-                Emit(new InlineAsm(code));
-            }
-            else
-            {
-                // Collect constraint operands (%0, %1, …).
-                // Operands must resolve to Variables (not Constants) so that
-                // the backend can both load the current value and store back
-                // the modified result after the inline assembly executes.
-                var operands = new List<Val>();
-                for (int i = 1; i < expr.Args.Count; i++)
-                {
-                    if (expr.Args[i] is VariableExpr ve)
-                    {
-                        operands.Add(ResolveAsmOperand(ve.Name));
-                    }
-                    else
-                    {
-                        operands.Add(VisitExpression(expr.Args[i]));
-                    }
-                }
-                Emit(new InlineAsm(code, operands));
-            }
-            return new NoneVal();
-        }
+        if (callee == "divmod") return EmitDivmodBuiltin(expr);
+        if (CastTypes.ContainsKey(callee)) return EmitNumericCastBuiltin(expr, callee);
+        if (callee == "bitcast") return EmitBitcastBuiltin(expr);
+        if (callee == "gc_alloc") return EmitGcAllocBuiltin(expr);
+        if (callee == "asm") return EmitAsmBuiltin(expr);
 
         if (callee == "print")
         {
@@ -2141,6 +1951,213 @@ public partial class IRGenerator
         int res = 1;
         for (int k = 0; k < exp; ++k) res *= @base;
         return new Constant(res);
+    }
+
+    // Numeric-cast builtins: uint8/uint16/uint32/int8/int16/int32/int.
+    private static readonly Dictionary<string, DataType> CastTypes = new()
+    {
+        { "uint8", DataType.UINT8 }, { "uint16", DataType.UINT16 }, { "uint32", DataType.UINT32 },
+        { "int8", DataType.INT8 }, { "int16", DataType.INT16 }, { "int32", DataType.INT32 },
+        { "int", DataType.INT16 }
+    };
+
+    // divmod(a, b): wider-operand result width; constant-folds, emits a fused
+    // FloorDiv+Mod pair for the 2-tuple target, else just the quotient.
+    private Val EmitDivmodBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2) throw new Exception("divmod() expects exactly two arguments");
+        Val aVal = VisitExpression(expr.Args[0]);
+        Val bVal = VisitExpression(expr.Args[1]);
+        // Result width follows the wider operand, so divmod(uint16, ...) divides at
+        // 16-bit width and stores 16-bit results rather than truncating to 8 bits.
+        // Read the type off the resolved Vals (Variable/Temporary carry it; a constant
+        // is sized by its value) -- InferExprType keys on the unqualified name and
+        // misses prefixed locals.
+        static DataType ValType(Val v) => v switch
+        {
+            Variable x => x.Type,
+            Temporary x => x.Type,
+            Constant c => c.Value < 0 ? DataType.INT16
+                          : c.Value <= 0xFF ? DataType.UINT8
+                          : c.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+            _ => DataType.UINT8,
+        };
+        DataType ta = ValType(aVal), tb = ValType(bVal);
+        DataType rt = ta.SizeOf() >= tb.SizeOf() ? ta : tb;
+        if (rt == DataType.UNKNOWN || rt.SizeOf() == 0) rt = DataType.UINT8;
+
+        if (aVal is Constant ca && bVal is Constant cb)
+        {
+            if (cb.Value == 0) throw new Exception("divmod(): division by zero");
+            int q = ca.Value / cb.Value;
+            int r = ca.Value % cb.Value;
+            if (pendingTupleCount == 2)
+            {
+                string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+                string qn = bBase + ".divmod_q" + tempCounter;
+                string rn = bBase + ".divmod_r" + (tempCounter + 1);
+                tempCounter += 2;
+                Emit(new Copy(new Constant(q), new Variable(qn, rt)));
+                Emit(new Copy(new Constant(r), new Variable(rn, rt)));
+                lastTupleResults = new List<string> { qn, rn };
+                return new NoneVal();
+            }
+
+            return new Constant(q);
+        }
+
+        if (pendingTupleCount == 2)
+        {
+            string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
+            string qn = bBase + ".divmod_q" + tempCounter;
+            string rn = bBase + ".divmod_r" + (tempCounter + 1);
+            tempCounter += 2;
+            var qvar = new Variable(qn, rt);
+            var rvar = new Variable(rn, rt);
+
+            // Emit the quotient and remainder as the same FloorDiv/Mod the // and %
+            // operators produce, adjacent and sharing operands, so the AVR backend's
+            // divmod fusion folds the pair into a single division call.
+            Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qvar));
+            Emit(new Binary(BinaryOp.Mod, aVal, bVal, rvar));
+            lastTupleResults = new List<string> { qn, rn };
+            return new NoneVal();
+        }
+
+        Temporary qTmp = MakeTemp(rt);
+        Emit(new Binary(BinaryOp.FloorDiv, aVal, bVal, qTmp));
+        return qTmp;
+    }
+
+    // uint8(x)/int16(x)/… numeric cast: constant- and float-constant-fold, else a
+    // width-changing Copy. `callee` is guaranteed to be a key of CastTypes.
+    private Val EmitNumericCastBuiltin(CallExpr expr, string callee)
+    {
+        DataType dstType = CastTypes[callee];
+        if (expr.Args.Count != 1) throw new Exception(callee + "() expects exactly one argument");
+        Val v = VisitExpression(expr.Args[0]);
+        if (v is Constant c)
+        {
+            int val = c.Value;
+            switch (dstType)
+            {
+                case DataType.UINT8: val = (byte)val; break;
+                case DataType.UINT16: val = (ushort)val; break;
+                case DataType.INT8: val = (sbyte)val; break;
+                case DataType.INT16: val = (short)val; break;
+            }
+
+            return new Constant(val);
+        }
+
+        // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
+        if (v is FloatConstant fc && dstType != DataType.FLOAT)
+        {
+            int val = (int)fc.Value;
+            switch (dstType)
+            {
+                case DataType.UINT8: val = (byte)val; break;
+                case DataType.UINT16: val = (ushort)val; break;
+                case DataType.INT8: val = (sbyte)val; break;
+                case DataType.INT16: val = (short)val; break;
+            }
+            return new Constant(val);
+        }
+
+        Temporary dst = MakeTemp(dstType);
+        Emit(new Copy(v, dst));
+        return dst;
+    }
+
+    // bitcast(type, value): reinterpret bits between float and integer widths.
+    private Val EmitBitcastBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 2) throw new Exception("bitcast() expects exactly two arguments: bitcast(type, value)");
+        string typeName = (expr.Args[0] as VariableExpr)?.Name
+            ?? throw new Exception("bitcast() first argument must be a type name");
+        DataType bcDstType;
+        if (typeName == "float")
+            bcDstType = DataType.FLOAT;
+        else if (!CastTypes.TryGetValue(typeName, out bcDstType))
+            throw new Exception($"bitcast(): unknown type '{typeName}'");
+
+        Val srcVal = VisitExpression(expr.Args[1]);
+
+        // Compile-time constant folding
+        if (bcDstType == DataType.UINT32 && srcVal is FloatConstant fcBc)
+        {
+            uint bits = BitConverter.SingleToUInt32Bits((float)fcBc.Value);
+            return new Constant((int)bits);
+        }
+        if (bcDstType == DataType.FLOAT && srcVal is Constant cBc)
+            return new FloatConstant(BitConverter.Int32BitsToSingle(cBc.Value));
+
+        Temporary bcDst = MakeTemp(bcDstType);
+        Emit(new Bitcast(srcVal, bcDst));
+        return bcDst;
+    }
+
+    // gc_alloc(size): allocate from the bounded GC heap, returning a GC_REF.
+    private Val EmitGcAllocBuiltin(CallExpr expr)
+    {
+        if (expr.Args.Count != 1) throw new Exception("gc_alloc() expects exactly one argument: gc_alloc(size)");
+        Val sizeVal = VisitExpression(expr.Args[0]);
+        Temporary gcDst = MakeTemp(DataType.GC_REF);
+        Emit(new GcAlloc(sizeVal, gcDst));
+        return gcDst;
+    }
+
+    // asm("code" [, op0, op1, …]): emit inline assembly, optionally with %N constraint
+    // operands (resolved to Variables so the backend can load/store them).
+    private Val EmitAsmBuiltin(CallExpr expr)
+    {
+        // asm("code")                  — bare inline assembly (no constraints)
+        // asm("code", op0, op1, ...)   — assembly with %N register constraints
+        if (expr.Args.Count < 1) throw new Exception("asm() requires at least one string argument");
+
+        string? code = null;
+        if (expr.Args[0] is StringLiteral str2)
+            code = str2.Value;
+        else if (expr.Args[0] is FStringExpr fstr2)
+        {
+            var resolved = VisitFStringExpr(fstr2);
+            if (resolved is Constant c2 && stringIdToStr.TryGetValue(c2.Value, out var s2))
+                code = s2;
+            else
+                throw new Exception("asm() f-string did not resolve to a string constant");
+        }
+        else if (expr.Args[0] is VariableExpr ve2)
+            throw new Exception($"asm() argument must be a string literal, got variable '{ve2.Name}'");
+        else
+            throw new Exception("asm() argument must be a compile-time string literal");
+
+        if (code == null) return new NoneVal();
+
+        if (expr.Args.Count == 1)
+        {
+            Emit(new InlineAsm(code));
+        }
+        else
+        {
+            // Collect constraint operands (%0, %1, …).
+            // Operands must resolve to Variables (not Constants) so that
+            // the backend can both load the current value and store back
+            // the modified result after the inline assembly executes.
+            var operands = new List<Val>();
+            for (int i = 1; i < expr.Args.Count; i++)
+            {
+                if (expr.Args[i] is VariableExpr ve)
+                {
+                    operands.Add(ResolveAsmOperand(ve.Name));
+                }
+                else
+                {
+                    operands.Add(VisitExpression(expr.Args[i]));
+                }
+            }
+            Emit(new InlineAsm(code, operands));
+        }
+        return new NoneVal();
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
