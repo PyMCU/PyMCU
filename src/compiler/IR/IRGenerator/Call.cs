@@ -189,102 +189,21 @@ public partial class IRGenerator
                 }
             }
         }
-        else if (expr.Callee is IndexExpr idxCallee0 && idxCallee0.Target is VariableExpr idxArrVe0)
+        else if (expr.Callee is IndexExpr { Target: VariableExpr idxArrVe0 } idxCallee0)
         {
-            // Callable[N] array call: _tasks[i]() — load function address from SRAM, then ICALL.
-            string arrKey0 = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + idxArrVe0.Name
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + idxArrVe0.Name : idxArrVe0.Name);
-            if (!arraySizes.ContainsKey(arrKey0) && arraySizes.ContainsKey(idxArrVe0.Name))
-                arrKey0 = idxArrVe0.Name;
-            if (arraySizes.TryGetValue(arrKey0, out int arrSz0)
-                && arrayElemTypes.TryGetValue(arrKey0, out DataType arrElemDt0)
-                && arrElemDt0 == DataType.FUNCREF)
-            {
-                Val idxVal0 = VisitExpression(idxCallee0.Index);
-                Temporary tmpFn0 = MakeTemp(DataType.FUNCREF);
-                Emit(new ArrayLoad(arrKey0, idxVal0, tmpFn0, DataType.FUNCREF, arrSz0));
-                var indArgs0 = new List<Val>();
-                foreach (var a in expr.Args)
-                    indArgs0.Add(VisitExpression(a));
-                Val indDst0 = new NoneVal();
-                Emit(new IndirectCall(tmpFn0, indArgs0, indDst0));
-                return indDst0;
-            }
-            throw new Exception($"Callable array '{idxArrVe0.Name}' not found or element type is not Callable");
+            return EmitCallableArrayCall(expr, idxCallee0, idxArrVe0);
         }
         else
         {
             throw new Exception("Indirect calls not yet supported");
         }
 
-        {
-            string qcallee = "";
-            if (expr.Callee is VariableExpr ve2)
-            {
-                if (!string.IsNullOrEmpty(currentInlinePrefix)) qcallee = currentInlinePrefix + ve2.Name;
-                else if (!string.IsNullOrEmpty(currentFunction)) qcallee = currentFunction + "." + ve2.Name;
-                else qcallee = ve2.Name;
-            }
-
-            string lambdaKey = "";
-            if (!string.IsNullOrEmpty(qcallee) && lambdaVariableNames.TryGetValue(qcallee, out string lk1))
-                lambdaKey = lk1;
-            else if (lambdaVariableNames.TryGetValue(callee, out string lk2)) lambdaKey = lk2;
-
-            if (!string.IsNullOrEmpty(lambdaKey) && lambdaFunctionsMap.TryGetValue(lambdaKey, out var lam))
-            {
-                string pfx = "__lam" + lambdaCounter++ + "_";
-                for (int i = 0; i < lam.Params.Count && i < expr.Args.Count; ++i)
-                {
-                    string paramKey = pfx + lam.Params[i].Name;
-                    Val argVal = VisitExpression(expr.Args[i]);
-                    DataType dt = DataTypeExtensions.StringToDataType(lam.Params[i].Type);
-                    if (argVal is Constant c) constantVariables[paramKey] = c.Value;
-                    else
-                    {
-                        Emit(new Copy(argVal, new Variable(paramKey, dt)));
-                        variableTypes[paramKey] = dt;
-                    }
-                }
-
-                string savedInline = currentInlinePrefix;
-                currentInlinePrefix = pfx;
-                Val resultL = VisitExpression(lam.Body);
-                currentInlinePrefix = savedInline;
-
-                foreach (var p in lam.Params)
-                {
-                    string pk = pfx + p.Name;
-                    constantVariables.Remove(pk);
-                    variableTypes.Remove(pk);
-                }
-
-                return resultL;
-            }
-        }
+        // Lambda call: a variable bound to a lambda expands the lambda body in place.
+        if (TryEmitLambdaCall(expr, callee) is { } lambdaResult) return lambdaResult;
 
         // Indirect call via FUNCREF-typed variable (function pointer via funcref() intrinsic).
         // After the lambda check so lambdas take priority; before all intrinsics/inline expansion.
-        if (expr.Callee is VariableExpr fvExpr)
-        {
-            // Build qualified key matching Assign.cs (currentFunction + "." + name when not inline)
-            string fvKey = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + fvExpr.Name
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fvExpr.Name : fvExpr.Name);
-            for (int d = 0; d < 20; ++d)
-                if (variableAliases.TryGetValue(fvKey, out string nx)) fvKey = nx;
-                else break;
-            if (variableTypes.TryGetValue(fvKey, out DataType fvType) && fvType == DataType.FUNCREF)
-            {
-                var indArgs = new List<Val>();
-                foreach (var a in expr.Args)
-                    indArgs.Add(VisitExpression(a));
-                Temporary indDst = MakeTemp();
-                Emit(new IndirectCall(new Variable(fvKey, DataType.FUNCREF), indArgs, indDst));
-                return indDst;
-            }
-        }
+        if (TryEmitFuncrefVariableCall(expr) is { } funcrefResult) return funcrefResult;
 
         // Indirect call via Callable[N] array: _tasks[i]()
         // Note: this path is unreachable now since the IndexExpr case above handles
@@ -2085,6 +2004,106 @@ public partial class IRGenerator
         Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
         Emit(new Call(target, fwdArgs, tDst));
         return tDst;
+    }
+
+    // A variable bound to a lambda: expand the lambda body in place with the args bound
+    // into a fresh inline frame. Returns the lambda's result when handled; null when the
+    // callee is not a lambda variable (fall through).
+    private Val? TryEmitLambdaCall(CallExpr expr, string callee)
+    {
+        string qcallee = "";
+        if (expr.Callee is VariableExpr ve2)
+        {
+            if (!string.IsNullOrEmpty(currentInlinePrefix)) qcallee = currentInlinePrefix + ve2.Name;
+            else if (!string.IsNullOrEmpty(currentFunction)) qcallee = currentFunction + "." + ve2.Name;
+            else qcallee = ve2.Name;
+        }
+
+        string lambdaKey = "";
+        if (!string.IsNullOrEmpty(qcallee) && lambdaVariableNames.TryGetValue(qcallee, out string lk1))
+            lambdaKey = lk1;
+        else if (lambdaVariableNames.TryGetValue(callee, out string lk2)) lambdaKey = lk2;
+
+        if (string.IsNullOrEmpty(lambdaKey) || !lambdaFunctionsMap.TryGetValue(lambdaKey, out var lam))
+            return null;
+
+        string pfx = "__lam" + lambdaCounter++ + "_";
+        for (int i = 0; i < lam.Params.Count && i < expr.Args.Count; ++i)
+        {
+            string paramKey = pfx + lam.Params[i].Name;
+            Val argVal = VisitExpression(expr.Args[i]);
+            DataType dt = DataTypeExtensions.StringToDataType(lam.Params[i].Type);
+            if (argVal is Constant c) constantVariables[paramKey] = c.Value;
+            else
+            {
+                Emit(new Copy(argVal, new Variable(paramKey, dt)));
+                variableTypes[paramKey] = dt;
+            }
+        }
+
+        string savedInline = currentInlinePrefix;
+        currentInlinePrefix = pfx;
+        Val resultL = VisitExpression(lam.Body);
+        currentInlinePrefix = savedInline;
+
+        foreach (var p in lam.Params)
+        {
+            string pk = pfx + p.Name;
+            constantVariables.Remove(pk);
+            variableTypes.Remove(pk);
+        }
+
+        return resultL;
+    }
+
+    // Indirect call through a FUNCREF-typed variable (a function pointer from funcref()).
+    // Returns the call result when the callee variable is a funcref; null otherwise.
+    private Val? TryEmitFuncrefVariableCall(CallExpr expr)
+    {
+        if (expr.Callee is not VariableExpr fvExpr) return null;
+
+        // Build qualified key matching Assign.cs (currentFunction + "." + name when not inline)
+        string fvKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + fvExpr.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fvExpr.Name : fvExpr.Name);
+        for (int d = 0; d < 20; ++d)
+            if (variableAliases.TryGetValue(fvKey, out string nx)) fvKey = nx;
+            else break;
+        if (!variableTypes.TryGetValue(fvKey, out DataType fvType) || fvType != DataType.FUNCREF)
+            return null;
+
+        var indArgs = new List<Val>();
+        foreach (var a in expr.Args)
+            indArgs.Add(VisitExpression(a));
+        Temporary indDst = MakeTemp();
+        Emit(new IndirectCall(new Variable(fvKey, DataType.FUNCREF), indArgs, indDst));
+        return indDst;
+    }
+
+    // Callable[N] array call: `_tasks[i]()` — load the function address from SRAM and ICALL.
+    // Always handles the call (returns the result) or throws if the array is not Callable.
+    private Val EmitCallableArrayCall(CallExpr expr, IndexExpr idxCallee, VariableExpr idxArr)
+    {
+        string arrKey = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + idxArr.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + idxArr.Name : idxArr.Name);
+        if (!arraySizes.ContainsKey(arrKey) && arraySizes.ContainsKey(idxArr.Name))
+            arrKey = idxArr.Name;
+        if (arraySizes.TryGetValue(arrKey, out int arrSz)
+            && arrayElemTypes.TryGetValue(arrKey, out DataType arrElemDt)
+            && arrElemDt == DataType.FUNCREF)
+        {
+            Val idxVal = VisitExpression(idxCallee.Index);
+            Temporary tmpFn = MakeTemp(DataType.FUNCREF);
+            Emit(new ArrayLoad(arrKey, idxVal, tmpFn, DataType.FUNCREF, arrSz));
+            var indArgs = new List<Val>();
+            foreach (var a in expr.Args)
+                indArgs.Add(VisitExpression(a));
+            Val indDst = new NoneVal();
+            Emit(new IndirectCall(tmpFn, indArgs, indDst));
+            return indDst;
+        }
+        throw new Exception($"Callable array '{idxArr.Name}' not found or element type is not Callable");
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
