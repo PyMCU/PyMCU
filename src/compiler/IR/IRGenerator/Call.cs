@@ -303,6 +303,14 @@ public partial class IRGenerator
 
         if (inlineFunctions.TryGetValue(callee, out var func)) return EmitInlineFunctionCall(expr, callee, func);
 
+        return EmitRegularFunctionCall(expr, callee);
+    }
+
+    // Emit a call to a known non-@inline function (a real subroutine): build the arg
+    // list (flash-string-by-ref, array base addresses), mangle module-dotted names,
+    // fill defaulted params and copy each arg into the callee's param slot, then Call.
+    private Val EmitRegularFunctionCall(CallExpr expr, string callee)
+    {
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         var argValuesL = new List<Val>();
         foreach (var arg in expr.Args)
