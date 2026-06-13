@@ -1495,6 +1495,8 @@ public partial class IRGenerator
     private Val EmitAbsBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("abs() expects exactly one argument");
+        if (expr.Args[0] is StringLiteral or FStringExpr)
+            throw UserError("abs() argument must be numeric, not a string");
         var v = VisitExpression(expr.Args[0]);
         if (v is Constant c) return new Constant(c.Value < 0 ? -c.Value : c.Value);
         var negLabel = MakeLabel();
@@ -1869,6 +1871,10 @@ public partial class IRGenerator
     {
         DataType dstType = CastTypes[callee];
         if (expr.Args.Count != 1) throw UserError(callee + "() expects exactly one argument");
+        // A string/f-string argument would otherwise fold to its flash string-id and be
+        // silently used as that (wrong) integer; the whole assignment then gets dropped.
+        if (expr.Args[0] is StringLiteral or FStringExpr)
+            throw UserError($"{callee}() argument must be numeric, not a string");
         Val v = VisitExpression(expr.Args[0]);
         if (v is Constant c)
         {

@@ -339,6 +339,26 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void NumericCastOfString_RaisesCompileError()
+    {
+        // uint8("hello") folded the string to its flash id and used it as an integer, then
+        // dropped the assignment. A string argument to a numeric cast must be rejected.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = uint8(\"hello\")\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void AbsOfString_RaisesCompileError()
+    {
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = abs(\"foo\")\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void FloatBitwiseNot_RaisesTypeError()
     {
         // Unary bitwise NOT (`~`) on a float is undefined (Python raises TypeError); it
