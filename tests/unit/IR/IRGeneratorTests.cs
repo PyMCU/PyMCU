@@ -339,6 +339,17 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FloatBitwiseNot_RaisesTypeError()
+    {
+        // Unary bitwise NOT (`~`) on a float is undefined (Python raises TypeError); it
+        // previously fell through to a Unary BitNot over a FloatConstant (silent miscompile).
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = ~1.5\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void FloatBitwiseOperand_RaisesTypeError()
     {
         // A bitwise/shift operator on a float operand is undefined (Python raises TypeError).

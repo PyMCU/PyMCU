@@ -719,6 +719,15 @@ public partial class IRGenerator
             }
         }
 
+        // Bitwise NOT is undefined on a float (Python raises TypeError). Without this guard
+        // `~1.5` fell through to a Unary BitNot over a FloatConstant — a silent miscompile.
+        if (expr.Op == AstUnOp.BitNot
+            && (operand is FloatConstant
+                || (operand is Variable fv && floatConstantVariables.ContainsKey(fv.Name))
+                || GetValType(operand) == DataType.FLOAT))
+            throw new TypeError("unsupported operand type for ~: 'float'",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
+
         if (operand is Constant c)
         {
             switch (expr.Op)
