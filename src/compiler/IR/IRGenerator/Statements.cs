@@ -414,6 +414,15 @@ public partial class IRGenerator
 
     private void VisitReturn(ReturnStmt stmt)
     {
+        // Returning a (multi-char) string from a function declared to return an integer is
+        // a type confusion — the string folds to its flash id and would be returned as that
+        // numeric id. (A single-char string is its code point, which is a valid integer.)
+        if (stmt.Value is StringLiteral retStr && retStr.Value.Length != 1
+            && functionReturnTypes.TryGetValue(currentFunction, out var retRt) && retRt != null
+            && retRt is "uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32")
+            throw UserError(
+                $"cannot return a string from a function declared to return {retRt}");
+
         if (stmt.Value != null && inlineStack.Count > 0 && inlineStack.Last().ResultVars.Count > 0)
         {
             if (stmt.Value is TupleExpr tup)
