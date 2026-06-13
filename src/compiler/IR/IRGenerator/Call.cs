@@ -367,168 +367,7 @@ public partial class IRGenerator
         if (callee == "gc_alloc") return EmitGcAllocBuiltin(expr);
         if (callee == "asm") return EmitAsmBuiltin(expr);
 
-        if (callee == "print")
-        {
-            string endStr = "\n";
-            string sepStr = " ";
-            var posArgs = new List<Expression>();
-            foreach (var arg in expr.Args)
-            {
-                if (arg is KeywordArgExpr kw)
-                {
-                    if (kw.Key == "end" || kw.Key == "sep")
-                    {
-                        if (kw.Value is StringLiteral lit)
-                        {
-                            if (kw.Key == "end") endStr = lit.Value;
-                            else sepStr = lit.Value;
-                        }
-                        else throw new Exception($"print() '{kw.Key}' must be a compile-time string literal");
-                    }
-                }
-                else posArgs.Add(arg);
-            }
-
-            // Resolve the string-output function.  Prefer the arch-dispatched
-            // console.print_str injected by the build driver; fall back to
-            // uart_write_str for projects that initialise UART manually.
-            string writeStrFn = ResolveCallee("print_str");
-            if (writeStrFn == "print_str")
-            {
-                writeStrFn = ResolveCallee("uart_write_str");
-                if (writeStrFn == "uart_write_str")
-                {
-                    foreach (var fnName in inlineFunctions.Keys)
-                    {
-                        if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
-                        {
-                            writeStrFn = fnName;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            void EmitStr(string s)
-            {
-                if (string.IsNullOrEmpty(s)) return;
-                var synthCall = new CallExpr(
-                    new VariableExpr(writeStrFn),
-                    new List<Expression> { new StringLiteral(s) });
-                VisitCall(synthCall);
-            }
-
-            // Integer output: uart_write_decimal_u8 is non-inline and works with direct Emit.
-            // print_u8 from console.py is @inline and requires VisitCall; deferred to a
-            // future refactor of EmitPrintArg to use VisitCall for all write functions.
-            string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
-            if (decimalWriteFn == "uart_write_decimal_u8")
-            {
-                string decSuffix = "uart_write_decimal_u8";
-                foreach (var fnName in functionReturnTypes.Keys)
-                {
-                    if (fnName.EndsWith(decSuffix))
-                    {
-                        decimalWriteFn = fnName;
-                        break;
-                    }
-                }
-            }
-
-            // Float output: same rationale — use the non-inline uart function.
-            string floatWriteFn = ResolveCallee("uart_write_float");
-            if (floatWriteFn == "uart_write_float")
-            {
-                foreach (var fnName in functionReturnTypes.Keys)
-                {
-                    if (fnName.EndsWith("uart_write_float"))
-                    {
-                        floatWriteFn = fnName;
-                        break;
-                    }
-                }
-            }
-
-            void EmitPrintArg(Expression arg)
-            {
-                if (arg is StringLiteral lit)
-                {
-                    var synthCall = new CallExpr(
-                        new VariableExpr(writeStrFn),
-                        new List<Expression> { lit });
-                    VisitCall(synthCall);
-                    return;
-                }
-
-                if (arg is VariableExpr v)
-                {
-                    string key = currentInlinePrefix + v.Name;
-                    string? strVal = ResolveStrConstant(key);
-                    if (strVal != null)
-                    {
-                        var synthCall = new CallExpr(
-                            new VariableExpr(writeStrFn),
-                            new List<Expression> { new StringLiteral(strVal) });
-                        VisitCall(synthCall);
-                        return;
-                    }
-                }
-
-                Val val = VisitExpression(arg);
-                bool isFloat = val is FloatConstant ||
-                               (val is Variable vf && vf.Type == DataType.FLOAT) ||
-                               (val is Temporary tf && tf.Type == DataType.FLOAT);
-                if (isFloat)
-                {
-                    Temporary ftmp = MakeTemp(DataType.FLOAT);
-                    Emit(new Copy(val, ftmp));
-                    Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
-                    return;
-                }
-                // Select the decimal formatter by the value's width/signedness so a
-                // uint16/uint32 argument is not silently truncated to 8 bits.
-                DataType argType = val switch
-                {
-                    Variable v2 => v2.Type,
-                    Temporary t2 => t2.Type,
-                    Constant cc => cc.Value < 0 ? DataType.INT16
-                                 : cc.Value <= 0xFF ? DataType.UINT8
-                                 : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
-                    _ => DataType.UINT8,
-                };
-                (string decBase, DataType tmpType) = argType switch
-                {
-                    DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
-                    DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
-                    DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
-                    DataType.INT32 => ("uart_write_decimal_i16", DataType.INT16),
-                    _ => ("uart_write_decimal_u8", DataType.UINT8),
-                };
-                string decFn = ResolveCallee(decBase);
-                if (decFn == decBase)
-                    foreach (var fnName in functionReturnTypes.Keys)
-                        if (fnName.EndsWith(decBase, StringComparison.Ordinal)) { decFn = fnName; break; }
-
-                Temporary tmp = MakeTemp(tmpType);
-                Emit(new Copy(val, tmp));
-                Emit(new Call(decFn, new List<Val> { tmp }, tmp));
-            }
-
-            if (posArgs.Count == 0)
-            {
-                EmitStr(endStr);
-                return new NoneVal();
-            }
-
-            for (int i = 0; i < posArgs.Count; ++i)
-            {
-                if (i > 0) EmitStr(sepStr);
-                EmitPrintArg(posArgs[i]);
-            }
-
-            EmitStr(endStr);
-            return new NoneVal();
-        }
+        if (callee == "print") return EmitPrintBuiltin(expr);
 
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
         {
@@ -2157,6 +1996,171 @@ public partial class IRGenerator
             }
             Emit(new InlineAsm(code, operands));
         }
+        return new NoneVal();
+    }
+
+    // print(*args, sep=" ", end="\n"): write each argument via the resolved string/
+    // decimal/float UART helpers, separated by sep and terminated by end.
+    private Val EmitPrintBuiltin(CallExpr expr)
+    {
+        string endStr = "\n";
+        string sepStr = " ";
+        var posArgs = new List<Expression>();
+        foreach (var arg in expr.Args)
+        {
+            if (arg is KeywordArgExpr kw)
+            {
+                if (kw.Key == "end" || kw.Key == "sep")
+                {
+                    if (kw.Value is StringLiteral lit)
+                    {
+                        if (kw.Key == "end") endStr = lit.Value;
+                        else sepStr = lit.Value;
+                    }
+                    else throw new Exception($"print() '{kw.Key}' must be a compile-time string literal");
+                }
+            }
+            else posArgs.Add(arg);
+        }
+
+        // Resolve the string-output function.  Prefer the arch-dispatched
+        // console.print_str injected by the build driver; fall back to
+        // uart_write_str for projects that initialise UART manually.
+        string writeStrFn = ResolveCallee("print_str");
+        if (writeStrFn == "print_str")
+        {
+            writeStrFn = ResolveCallee("uart_write_str");
+            if (writeStrFn == "uart_write_str")
+            {
+                foreach (var fnName in inlineFunctions.Keys)
+                {
+                    if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
+                    {
+                        writeStrFn = fnName;
+                        break;
+                    }
+                }
+            }
+        }
+
+        void EmitStr(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return;
+            var synthCall = new CallExpr(
+                new VariableExpr(writeStrFn),
+                new List<Expression> { new StringLiteral(s) });
+            VisitCall(synthCall);
+        }
+
+        // Integer output: uart_write_decimal_u8 is non-inline and works with direct Emit.
+        // print_u8 from console.py is @inline and requires VisitCall; deferred to a
+        // future refactor of EmitPrintArg to use VisitCall for all write functions.
+        string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
+        if (decimalWriteFn == "uart_write_decimal_u8")
+        {
+            string decSuffix = "uart_write_decimal_u8";
+            foreach (var fnName in functionReturnTypes.Keys)
+            {
+                if (fnName.EndsWith(decSuffix))
+                {
+                    decimalWriteFn = fnName;
+                    break;
+                }
+            }
+        }
+
+        // Float output: same rationale — use the non-inline uart function.
+        string floatWriteFn = ResolveCallee("uart_write_float");
+        if (floatWriteFn == "uart_write_float")
+        {
+            foreach (var fnName in functionReturnTypes.Keys)
+            {
+                if (fnName.EndsWith("uart_write_float"))
+                {
+                    floatWriteFn = fnName;
+                    break;
+                }
+            }
+        }
+
+        void EmitPrintArg(Expression arg)
+        {
+            if (arg is StringLiteral lit)
+            {
+                var synthCall = new CallExpr(
+                    new VariableExpr(writeStrFn),
+                    new List<Expression> { lit });
+                VisitCall(synthCall);
+                return;
+            }
+
+            if (arg is VariableExpr v)
+            {
+                string key = currentInlinePrefix + v.Name;
+                string? strVal = ResolveStrConstant(key);
+                if (strVal != null)
+                {
+                    var synthCall = new CallExpr(
+                        new VariableExpr(writeStrFn),
+                        new List<Expression> { new StringLiteral(strVal) });
+                    VisitCall(synthCall);
+                    return;
+                }
+            }
+
+            Val val = VisitExpression(arg);
+            bool isFloat = val is FloatConstant ||
+                           (val is Variable vf && vf.Type == DataType.FLOAT) ||
+                           (val is Temporary tf && tf.Type == DataType.FLOAT);
+            if (isFloat)
+            {
+                Temporary ftmp = MakeTemp(DataType.FLOAT);
+                Emit(new Copy(val, ftmp));
+                Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
+                return;
+            }
+            // Select the decimal formatter by the value's width/signedness so a
+            // uint16/uint32 argument is not silently truncated to 8 bits.
+            DataType argType = val switch
+            {
+                Variable v2 => v2.Type,
+                Temporary t2 => t2.Type,
+                Constant cc => cc.Value < 0 ? DataType.INT16
+                             : cc.Value <= 0xFF ? DataType.UINT8
+                             : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+                _ => DataType.UINT8,
+            };
+            (string decBase, DataType tmpType) = argType switch
+            {
+                DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
+                DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
+                DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
+                DataType.INT32 => ("uart_write_decimal_i16", DataType.INT16),
+                _ => ("uart_write_decimal_u8", DataType.UINT8),
+            };
+            string decFn = ResolveCallee(decBase);
+            if (decFn == decBase)
+                foreach (var fnName in functionReturnTypes.Keys)
+                    if (fnName.EndsWith(decBase, StringComparison.Ordinal)) { decFn = fnName; break; }
+
+            Temporary tmp = MakeTemp(tmpType);
+            Emit(new Copy(val, tmp));
+            Emit(new Call(decFn, new List<Val> { tmp }, tmp));
+        }
+
+        if (posArgs.Count == 0)
+        {
+            EmitStr(endStr);
+            return new NoneVal();
+        }
+
+        for (int i = 0; i < posArgs.Count; ++i)
+        {
+            if (i > 0) EmitStr(sepStr);
+            EmitPrintArg(posArgs[i]);
+        }
+
+        EmitStr(endStr);
         return new NoneVal();
     }
 
