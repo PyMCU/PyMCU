@@ -38,6 +38,11 @@ public partial class IRGenerator
     // work for real subroutines and not just @inline functions.
     private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
+    // Names currently bound to None (the real null, not the integer -1). Used to
+    // resolve `x is None` / `x is not None` at compile time: a name here IS None,
+    // an integer or a concrete instance is NOT. This is what keeps None from
+    // colliding with a real value like 255 / 0xFFFF / -1.
+    private HashSet<string> noneValuedNames = new();
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
     private int inlineDepth = 0;

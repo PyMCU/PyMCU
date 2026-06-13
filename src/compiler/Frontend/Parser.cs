@@ -1550,7 +1550,7 @@ public class Parser
 
         if (Match(TokenType.True)) return new BooleanLiteral(true);
         if (Match(TokenType.False)) return new BooleanLiteral(false);
-        if (Match(TokenType.None)) return new IntegerLiteral(-1);
+        if (Match(TokenType.None)) return new NoneLiteral();
 
         if (Match(TokenType.Identifier))
         {

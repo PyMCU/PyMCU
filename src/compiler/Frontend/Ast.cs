@@ -100,6 +100,13 @@ public class BooleanLiteral : Expression
     public BooleanLiteral(bool value) => Value = value;
 }
 
+// The `None` literal as a distinct node — NOT an integer. Keeping it separate
+// from IntegerLiteral(-1) is what lets the IR generator give it real None
+// semantics (an integer is never None) instead of colliding with the value -1.
+public class NoneLiteral : Expression
+{
+}
+
 public class StringLiteral : Expression
 {
     public string Value { get; }

@@ -1825,6 +1825,14 @@ public partial class IRGenerator
                 if (func.Params[i].DefaultValue != null)
                 {
                     string paramName = currentInlinePrefix + func.Params[i].Name;
+                    // A parameter defaulting to None (e.g. `cs: Pin = None`) is bound as
+                    // None, not as a value: track it so `cs is None` folds correctly and
+                    // emit no Copy (None has no runtime representation for a reference).
+                    if (func.Params[i].DefaultValue is NoneLiteral)
+                    {
+                        noneValuedNames.Add(paramName);
+                        continue;
+                    }
                     Val defaultVal = VisitExpression(func.Params[i].DefaultValue!);
 
                     if (IsConstType(func.Params[i].Type))

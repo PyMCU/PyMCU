@@ -897,6 +897,25 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `x: <scalar> = None` is a type error: None is the null value, not an
+        // integer. (Reference/Callable/class-typed locals defaulting to None are
+        // handled where such optionals are bound, not here.)
+        if (stmt.Init is NoneLiteral)
+        {
+            DataType vt = DataTypeExtensions.StringToDataType(stmt.VarType);
+            if (vt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                  or DataType.UINT32 or DataType.INT32 or DataType.FLOAT)
+                throw new TypeError(
+                    $"None is not a value of type {stmt.VarType}; None is only valid for " +
+                    "comparisons (is/== None) and optional reference parameters",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+            string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
+            noneValuedNames.Add(qn);
+            return;
+        }
+
         CheckIntLiteralRange(stmt.Init, DataTypeExtensions.StringToDataType(stmt.VarType), stmt.Line);
 
         if (stmt.VarType == "bytearray")

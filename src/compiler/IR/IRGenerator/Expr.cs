@@ -38,6 +38,8 @@ public partial class IRGenerator
 
         if (expr is BooleanLiteral boolean) return new Constant(boolean.Value ? 1 : 0);
 
+        if (expr is NoneLiteral) return new NoneVal();
+
         if (expr is StringLiteral str)
         {
             if (str.Value.Length == 1) return new Constant((int)str.Value[0]);
@@ -264,8 +266,48 @@ public partial class IRGenerator
         };
     }
 
+    // True when an expression is None: the None literal, or a name currently bound
+    // to None (a param defaulted to None, a variable assigned None). An integer or
+    // a concrete instance is never None.
+    private bool IsNoneValued(Expression e)
+    {
+        if (e is NoneLiteral) return true;
+        if (e is not VariableExpr ve) return false;
+
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        if (noneValuedNames.Contains(q)) return true;
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(q, out var a); d++)
+        {
+            q = a;
+            if (noneValuedNames.Contains(q)) return true;
+        }
+        return noneValuedNames.Contains(ve.Name);
+    }
+
     private Val VisitBinary(BinaryExpr expr)
     {
+        // None comparisons resolve at compile time with real null semantics: an
+        // integer or a concrete instance is never None; only a name bound to None
+        // (or the None literal itself) is. This replaces the old None==-1 model,
+        // which made `x == None` collide with a real value of -1 / 255 / 0xFFFF.
+        bool leftNone = expr.Left is NoneLiteral;
+        bool rightNone = expr.Right is NoneLiteral;
+        if (leftNone || rightNone)
+        {
+            if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
+            {
+                bool isEq = expr.Op is AstBinOp.Equal or AstBinOp.Is;
+                bool otherIsNone = leftNone && rightNone
+                    || IsNoneValued(leftNone ? expr.Right : expr.Left);
+                return new Constant(otherIsNone == isEq ? 1 : 0);
+            }
+            throw new TypeError(
+                "None supports only ==, !=, is and is not comparisons",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
+        }
+
         string? dunder = BinaryOpDunder(expr.Op);
         if (dunder != null && expr.Left is VariableExpr lv)
         {
