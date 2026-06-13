@@ -447,6 +447,16 @@ public partial class IRGenerator
             }
         }
 
+        // A multi-value (tuple) return is only lowered through the @inline expansion path
+        // above (the caller's unpack targets become the ResultVars). From a regular
+        // subroutine there are no per-call result slots, so it cannot be supported; report it
+        // clearly instead of letting the TupleExpr reach VisitExpression as an unknown node.
+        if (stmt.Value is TupleExpr)
+            throw UserError(
+                "returning multiple values is only supported from an @inline function " +
+                "(the caller's unpack targets receive them); mark the function @inline or " +
+                "return a single value");
+
         // RFC 0001 Model B: a non-@inline factory `def make() -> C: return C(args)` where
         // C is a single-field ZCA. The instance has no runtime struct, so return the packed
         // field as a scalar (the "handle"). The field value is the ctor arg that initializes

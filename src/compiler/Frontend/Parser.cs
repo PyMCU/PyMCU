@@ -549,6 +549,20 @@ public class Parser
         if (!Check(TokenType.Newline) && !Check(TokenType.Semicolon))
         {
             value = ParseExpression();
+            // A bare comma-separated return is a tuple: `return a, b` is `return (a, b)`.
+            // Without this the parser stopped at the first element and choked on the comma,
+            // so multi-value return required explicit parentheses.
+            if (Check(TokenType.Comma))
+            {
+                var elems = new List<Expression> { value };
+                while (Match(TokenType.Comma))
+                {
+                    if (Check(TokenType.Newline) || Check(TokenType.Semicolon) || Check(TokenType.EndOfFile))
+                        break; // trailing comma
+                    elems.Add(ParseExpression());
+                }
+                value = new TupleExpr(elems) { Line = line };
+            }
         }
 
         ConsumeStatementEnd();

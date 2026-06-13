@@ -339,6 +339,39 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void BareTupleReturn_ParsesAndLowersInInlineFunction()
+    {
+        // `return a, b` (a bare comma-separated tuple, no parens) must parse and, from an
+        // @inline function, lower into the caller's unpack targets — previously the parser
+        // rejected the bare form and required explicit parentheses.
+        const string src =
+            "ra: uint8 = 0\n" +
+            "rb: uint8 = 0\n" +
+            "@inline\n" +
+            "def swap(a: uint8, b: uint8):\n" +
+            "    return b, a\n" +
+            "def main():\n" +
+            "    global ra, rb\n" +
+            "    ra, rb = swap(3, 7)\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
+    public void TupleReturnFromRegularFunction_RaisesClearError()
+    {
+        // Returning multiple values from a non-@inline subroutine is unsupported; it must be
+        // a clear error, not the cryptic "Unknown Expression type: TupleExpr".
+        const string src =
+            "def minmax(a: uint8, b: uint8):\n" +
+            "    return a, b\n" +
+            "def main():\n" +
+            "    x: uint8 = 0\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("multiple values", ex.Message);
+    }
+
+    [Fact]
     public void TypeAnnotatedLocalInstance_ResolvesMethodCall()
     {
         // `c: Counter = Counter(5)` (a type-annotated local instance) must register the
