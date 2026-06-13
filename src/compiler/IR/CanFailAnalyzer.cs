@@ -104,7 +104,10 @@ public static class CanFailAnalyzer
         // For now we use a conservative rule: if ANY SignalError exists and there
         // are no local BranchOnError handlers covering the same region, we mark
         // CanFail. A future DFA pass can refine this to a per-path analysis.
-        bool hasSignalError = func.Body.OfType<SignalError>().Any();
+        // Only SignalErrors that propagate to the caller (CatchLabel == null) can make
+        // this function CanFail. A SignalError with a CatchLabel is a raise caught inside
+        // this same function (delivered to a local catch dispatcher) — it never escapes.
+        bool hasSignalError = func.Body.OfType<SignalError>().Any(se => se.CatchLabel is null);
         bool hasCatchAll = localCatchLabels.Count > 0;
 
         // If there are no local handlers at all, every SignalError escapes.
@@ -116,7 +119,7 @@ public static class CanFailAnalyzer
         // using the existing CFG infrastructure in IR/CFG/.
         if (hasSignalError && hasCatchAll)
         {
-            int raiseCount  = func.Body.OfType<SignalError>().Count();
+            int raiseCount  = func.Body.OfType<SignalError>().Count(se => se.CatchLabel is null);
             int guardCount  = func.Body.OfType<BranchOnError>().Count();
             // More raises than guards → at least one path escapes.
             if (raiseCount > guardCount) return true;

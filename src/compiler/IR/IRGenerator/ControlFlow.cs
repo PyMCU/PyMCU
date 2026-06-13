@@ -727,7 +727,11 @@ public partial class IRGenerator
         }
 
         Val code = ResolveBinding(stmt.ErrorType);
-        Emit(new SignalError(code));
+
+        // Inside a try body in the same function -> deliver to the local catch
+        // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        Emit(new SignalError(code, localCatch));
     }
 
     private void VisitTry(TryStmt stmt)
@@ -762,8 +766,13 @@ public partial class IRGenerator
         // that any SignalError from the callee jumps to the catch dispatcher.
         int bodyStart = currentInstructions.Count;
 
+        // A `raise` lexically inside this body is caught here (delivered straight to
+        // catchDispatch) rather than propagated to the caller. Scope this to the body
+        // only: a `raise` in a handler/finally is a re-raise and must propagate.
+        tryCatchStack.Add(catchDispatch);
         foreach (var s in stmt.Body)
             VisitStatement(s);
+        tryCatchStack.RemoveAt(tryCatchStack.Count - 1);
 
         // Post-process: find every Call emitted inside the try body and insert a
         // BranchOnError guard immediately after it. We iterate in reverse so that

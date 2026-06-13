@@ -151,6 +151,13 @@ public partial class IRGenerator
     private List<LoopLabels> loopStack = new();
     private List<InlineContext> inlineStack = new();
 
+    // Catch-dispatch labels of the `try` blocks whose BODY is currently being
+    // lowered (innermost last). A `raise` lexically inside a try body is delivered
+    // to the top label instead of propagating to the caller. Pushed/popped by
+    // VisitTry around the body only — not around handler/finally blocks, where a
+    // `raise` is a re-raise that must propagate.
+    private List<string> tryCatchStack = new();
+
     // Debugging
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();

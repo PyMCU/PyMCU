@@ -244,10 +244,14 @@ public record RaiseExn(Val Code) : Instruction;
 
 // --- Error propagation (T-flag / Result model, architecture-agnostic) ---
 
-// Signal that this function is raising an error propagating to the caller.
-// Backend AVR : emits SET  (sets T flag in SREG).
-// Backend Cortex-M0 : emits MOV R1, code.
-public record SignalError(Val Code) : Instruction;
+// Signal an error.
+// When CatchLabel is null the error propagates to the caller:
+//   Backend AVR : load code into the error register, set the T flag, RET.
+// When CatchLabel is non-null the raise is caught inside the SAME function (a
+// `raise` lexically inside that function's `try` body): the error is delivered
+// directly to the local catch dispatcher without touching the T flag.
+//   Backend AVR : load code into the error register, JMP CatchLabel (no SET, no RET).
+public record SignalError(Val Code, string? CatchLabel = null) : Instruction;
 
 // Signal that this function is returning successfully (happy path).
 // Must appear immediately before every Return inside a CanFail function.
