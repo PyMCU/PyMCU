@@ -64,6 +64,11 @@ public partial class IRGenerator
                 type = annAssign.Annotation;
                 initializer = annAssign.Value;
 
+                // A `const[...]` annotation marks the name immutable; record it so a later
+                // assignment to it is rejected (see VisitAssign's reassignment guard).
+                if (type.StartsWith("const[") && type.EndsWith("]"))
+                    declaredConstants.Add(name);
+
                 // Detect const[uint8[N]] flash array annotation.
                 if (type.StartsWith("const[") && type.EndsWith("]"))
                 {

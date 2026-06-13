@@ -339,6 +339,18 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ConstReassignment_RaisesCompileError()
+    {
+        // A name declared with a `const[...]` annotation is immutable; reassigning it
+        // must be a clean compile error, not a silent overwrite of the constant.
+        const string src =
+            "K: const[uint8] = 5\n" +
+            "def main():\n" +
+            "    K = 7\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void PtrUint16_Param_BitSet_PreservesType()
     {
         // A function parameter declared as ptr[uint16] must propagate its type

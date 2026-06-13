@@ -93,6 +93,10 @@ public partial class IRGenerator
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+    // Tracks names declared with a `const[...]` annotation (scalar or array). These are
+    // immutable by definition, so any later assignment to one is a user error. Distinct
+    // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).
+    private HashSet<string> declaredConstants = new();
     // Tracks loop variables that are function references (from zip() over function lists).
     // Key = loop variable name (e.g. "fn"), Value = resolved mangled function name (e.g. "blink_task").
     private Dictionary<string, string> loopFunctionAliases = new();

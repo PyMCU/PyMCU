@@ -24,6 +24,11 @@ public partial class IRGenerator
 {
     private void VisitAssign(AssignStmt stmt)
     {
+        // A name declared with a `const[...]` annotation is immutable; reassigning it is a
+        // user error (previously this was silently accepted, overwriting the constant).
+        if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
+            throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)");
+
         // RFC 0001 Model B (SRAM slot): `s = MultiFieldZCA(a, b)`. Box the instance into a
         // fixed SRAM slot and store each field at its offset. Handled as a self-contained
         // path (early return) so it never touches the virtual-constructor machinery.
@@ -1313,6 +1318,11 @@ public partial class IRGenerator
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // A `const[...]` annotation marks the name immutable; record it so a later
+        // assignment to it is rejected (see VisitAssign's reassignment guard).
+        if (!stmt.Target.Contains('.') && IsConstType(stmt.Annotation))
+            declaredConstants.Add(stmt.Target);
+
         // Instance-member array declaration (self._buf: uint8[N]): reserve a
         // per-instance SRAM framebuffer. The parser encodes the target as a
         // dotted name ("self._buf"); resolve the instance to its flattened
