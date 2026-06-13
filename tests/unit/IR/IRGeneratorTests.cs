@@ -339,6 +339,20 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void RuntimeRangeZeroStep_RaisesCompileError()
+    {
+        // range(start, stop, 0) never advances the loop variable (Python raises ValueError).
+        // The compile-time-unrolled path rejected this; the runtime-loop path (range over a
+        // non-constant bound) emitted an infinite loop. A literal-zero step must be rejected.
+        const string src =
+            "def f(n: uint8):\n" +
+            "    x: uint8 = 0\n" +
+            "    for i in range(0, n, 0):\n" +
+            "        x += 1\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void ComputedFloatToIntVariable_RaisesTypeError()
     {
         // `y: uint8 = 5 // 2.0` folds to a FloatConstant; the bare-float-literal check only

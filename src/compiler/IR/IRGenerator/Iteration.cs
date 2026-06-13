@@ -739,6 +739,12 @@ public partial class IRGenerator
         Val stopVal = VisitExpression(stmt.RangeStop!);
         Val stepVal = stmt.RangeStep != null ? VisitExpression(stmt.RangeStep) : new Constant(1);
 
+        // A zero step never advances the loop variable (Python raises ValueError). The
+        // compile-time-unrolled path above already rejects this; mirror it for the runtime
+        // loop, where a literal-zero step would otherwise emit an infinite loop.
+        if (stepVal is Constant stepZero && stepZero.Value == 0)
+            throw UserError("for-in range() step cannot be zero.");
+
         string varName = string.IsNullOrEmpty(currentInlinePrefix) ? stmt.VarName : currentInlinePrefix + stmt.VarName;
         var loopVar = new Variable(varName, DataType.UINT8);
         Emit(new Copy(startVal, loopVar));
