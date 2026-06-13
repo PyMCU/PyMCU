@@ -339,6 +339,32 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void RegularFunctionKeywordArg_BindsByName()
+    {
+        // A keyword argument to a regular (non-@inline) subroutine must bind by parameter
+        // name (Python-style), not surface the cryptic "Unknown Expression type" from
+        // evaluating the KeywordArgExpr node as an expression.
+        const string src =
+            "def f(a: uint8, b: uint8, c: uint8):\n" +
+            "    return a + b + c\n" +
+            "def main():\n" +
+            "    y: uint8 = f(1, c=3, b=2)\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
+    public void RegularFunctionUnknownKeywordArg_RaisesCompileError()
+    {
+        const string src =
+            "def f(x: uint8):\n" +
+            "    return x\n" +
+            "def main():\n" +
+            "    y: uint8 = f(zzz=3)\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void ConstReassignment_RaisesCompileError()
     {
         // A name declared with a `const[...]` annotation is immutable; reassigning it

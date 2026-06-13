@@ -322,6 +322,75 @@ public partial class IRGenerator
         return EmitRegularFunctionCall(expr, callee);
     }
 
+    // Resolve keyword arguments in a call to a regular (non-@inline) function into a flat
+    // positional argument list (Python-style binding). Positional args fill leading params;
+    // keyword args bind by parameter name; any gap before the last supplied arg is filled
+    // from the parameter default. Returns the original list unchanged when there are no
+    // keyword args. Reports unknown/duplicate/missing keyword bindings as clean user errors
+    // (the inline path already does this; previously a kwarg to a real subroutine reached
+    // VisitExpression and surfaced the cryptic "Unknown Expression type: KeywordArgExpr").
+    private List<Expression> ReorderCallArgs(List<Expression> args, string callee)
+    {
+        if (!args.Any(a => a is KeywordArgExpr)) return args;
+
+        // Look up the callee's parameter names, trying the module-mangled form too
+        // (a dotted "mod.fn" is stored as "mod_fn").
+        List<string>? paramNames = null;
+        if (!functionParams.TryGetValue(callee, out paramNames))
+        {
+            int dot = callee.IndexOf('.');
+            if (dot != -1)
+                functionParams.TryGetValue(
+                    callee.Substring(0, dot) + "_" + callee.Substring(dot + 1), out paramNames);
+        }
+        string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
+        if (paramNames == null)
+            throw UserError($"keyword arguments are not supported in call to '{shown}'");
+
+        var positional = new List<Expression>();
+        var byName = new Dictionary<string, Expression>();
+        foreach (var a in args)
+        {
+            if (a is KeywordArgExpr kw)
+            {
+                if (!paramNames.Contains(kw.Key))
+                    throw UserError($"unknown keyword argument '{kw.Key}' in call to '{shown}'");
+                if (!byName.TryAdd(kw.Key, kw.Value))
+                    throw UserError($"keyword argument '{kw.Key}' repeated in call to '{shown}'");
+            }
+            else positional.Add(a);
+        }
+
+        // Highest parameter index that receives an explicit value.
+        int lastIdx = positional.Count - 1;
+        for (int i = 0; i < paramNames.Count; i++)
+            if (byName.ContainsKey(paramNames[i])) lastIdx = Math.Max(lastIdx, i);
+
+        functionParamDefaults.TryGetValue(callee, out var defaults);
+        var ordered = new List<Expression>();
+        for (int i = 0; i <= lastIdx; i++)
+        {
+            if (i < positional.Count)
+            {
+                if (byName.ContainsKey(paramNames[i]))
+                    throw UserError($"multiple values for argument '{paramNames[i]}' in call to '{shown}'");
+                ordered.Add(positional[i]);
+            }
+            else if (byName.TryGetValue(paramNames[i], out var kwVal))
+            {
+                ordered.Add(kwVal);
+            }
+            else
+            {
+                var def = defaults != null && i < defaults.Count ? defaults[i] : null;
+                if (def == null)
+                    throw UserError($"missing argument '{paramNames[i]}' in call to '{shown}'");
+                ordered.Add(def);
+            }
+        }
+        return ordered;
+    }
+
     // Emit a call to a known non-@inline function (a real subroutine): build the arg
     // list (flash-string-by-ref, array base addresses), mangle module-dotted names,
     // fill defaulted params and copy each arg into the callee's param slot, then Call.
@@ -346,8 +415,10 @@ public partial class IRGenerator
         }
 
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
+        // Resolve any keyword arguments into positional order before evaluating them.
+        var callArgs = ReorderCallArgs(expr.Args, callee);
         var argValuesL = new List<Val>();
-        foreach (var arg in expr.Args)
+        foreach (var arg in callArgs)
         {
             // const[str] argument to a non-@inline function: intern the string and pass its
             // flash address by reference (FlashStrAddr). The callee walks it with FlashLoadPtr,
@@ -406,9 +477,9 @@ public partial class IRGenerator
 
         if (functionParams.TryGetValue(callee, out var paramNames))
         {
-            if (expr.Args.Count > paramNames.Count)
+            if (callArgs.Count > paramNames.Count)
                 throw UserError(
-                    $"Function '{callee}' expects {paramNames.Count} arguments, but {expr.Args.Count} were provided");
+                    $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided");
             // Fill omitted trailing arguments from the parameter defaults (Python-style),
             // so defaults work for real subroutines, not only @inline functions.
             if (argValuesL.Count < paramNames.Count)
@@ -419,7 +490,7 @@ public partial class IRGenerator
                     var def = defaults != null && i < defaults.Count ? defaults[i] : null;
                     if (def is null)
                         throw UserError(
-                            $"Function '{callee}' expects {paramNames.Count} arguments, but {expr.Args.Count} were provided");
+                            $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided");
                     argValuesL.Add(VisitExpression(def));
                 }
             }
