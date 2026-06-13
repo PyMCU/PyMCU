@@ -214,9 +214,18 @@ public partial class IRGenerator
                 };
                 if (!resolved)
                 {
-                    // Runtime bit index (e.g. `port[i] = 1`). SBI/CBI require a constant
+                    // Runtime bit index (e.g. `PORTB[i] = 1`). SBI/CBI require a constant
                     // bit, so build a runtime mask (1 << i) and read-modify-write the
-                    // target. Enables register-indexed bit-banging instead of erroring.
+                    // register. Supported for a MemoryAddress target (a chip register —
+                    // every real use). A runtime POINTER target (a ptr held in a variable,
+                    // e.g. a boxed Pin's port) would need a dereferenced LD/ST and proper
+                    // pointer typing; reject it clearly for now instead of miscompiling
+                    // the pointer value as if it were the port data.
+                    if (target is not MemoryAddress)
+                        throw new TypeError(
+                            "runtime bit index is only supported on a chip register (a constant " +
+                            "port address); indexing a bit through a runtime pointer is not yet supported",
+                            stmt.Line > 0 ? stmt.Line : lastLine, 1);
                     Val rmwVal = VisitExpression(stmt.Value);
                     Temporary mask = MakeTemp(DataType.UINT8);
                     Emit(new Binary(BinaryOp.LShift, new Constant(1), indexVal, mask));

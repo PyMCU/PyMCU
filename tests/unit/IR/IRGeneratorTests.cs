@@ -292,19 +292,17 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void RuntimeBitIndex_ReadModifyWrite()
+    public void RuntimeBitIndex_ThroughPointer_Rejected()
     {
-        // A runtime bit index (port[bit] = 1) is now supported: SBI/CBI need a
-        // constant bit, so it lowers to a runtime mask (1 << bit) and a read-
-        // modify-write of the target — a shift plus bitwise ops, no crash/throw.
+        // A runtime bit index on a chip register (PORTB[bit]=1, a MemoryAddress) is
+        // supported — it lowers to a runtime mask (1 << bit) + read-modify-write
+        // (exercised by the AVR examples). Through a RUNTIME POINTER it is rejected
+        // with a clear error rather than miscompiling the pointer value as the port.
         const string src =
             "def f(port: ptr[uint8], bit: uint8):\n" +
             "    port[bit] = 1\n";
 
-        var ir = GenerateIR(src);
-        var body = ir.Functions.First(fn => fn.Name == "f").Body;
-        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.LShift }); // build 1 << bit
-        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.BitOr });  // set the bit
+        Assert.ThrowsAny<Exception>(() => GenerateIR(src));
     }
 
     [Fact]
