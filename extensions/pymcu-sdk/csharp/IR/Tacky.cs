@@ -125,8 +125,6 @@ public enum BinaryOp
 [JsonDerivedType(typeof(GcAlloc),              "galloc")]
 [JsonDerivedType(typeof(GcRoot),               "groot")]
 [JsonDerivedType(typeof(GcUnroot),             "gunroot")]
-[JsonDerivedType(typeof(TryBegin),             "trybegin")]
-[JsonDerivedType(typeof(RaiseExn),             "raise")]
 [JsonDerivedType(typeof(SignalError),          "sigerr")]
 [JsonDerivedType(typeof(SignalSuccess),        "sigok")]
 [JsonDerivedType(typeof(BranchOnError),        "boe")]
@@ -234,15 +232,9 @@ public record GcRoot(Val Var) : Instruction;
 // GC: deregister a GC_REF root (shadow-stack pop before Return)
 public record GcUnroot(Val Var) : Instruction;
 
-// Exception handling (SJLJ — legacy, being replaced by T-flag propagation model).
-// _setjmp(jmpbuf) == 0 → normal; != 0 → longjmp fired, jump to CatchLabel.
-// ExnCodeVar receives the exception code passed to longjmp.
-public record TryBegin(Val JmpBufVar, string CatchLabel, Val ExnCodeVar) : Instruction;
-
-// Exception handling (SJLJ — legacy). Raise via longjmp.
-public record RaiseExn(Val Code) : Instruction;
-
 // --- Error propagation (T-flag / Result model, architecture-agnostic) ---
+// (The legacy SJLJ TryBegin/RaiseExn instructions were removed: try/except now
+// lowers to SignalError/BranchOnError/SignalSuccess, the T-flag model below.)
 
 // Signal an error.
 // When CatchLabel is null the error propagates to the caller:

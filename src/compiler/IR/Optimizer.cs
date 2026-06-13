@@ -502,14 +502,12 @@ private static Function CloneFunction(Function f)
             }
         }
 
-        // 2. Drop labels no remaining branch / try / error-edge targets. Collect
-        //    every label reference: jumps (incl. JumpIfBit*), TryBegin catch and
-        //    BranchOnError edges.
+        // 2. Drop labels no remaining branch / error-edge targets. Collect every
+        //    label reference: jumps (incl. JumpIfBit*) and BranchOnError edges.
         var targets = new HashSet<string>();
         foreach (var instr in body)
         {
             if (JumpTargetOf(instr) is string t) targets.Add(t);
-            if (instr is TryBegin tb) targets.Add(tb.CatchLabel);
             if (instr is BranchOnError boe) targets.Add(boe.ErrorLabel);
         }
         body.RemoveAll(instr => instr is Label l && !targets.Contains(l.Name));
@@ -617,7 +615,7 @@ private static Function CloneFunction(Function f)
             // may be read at a branch target (or after a backward edge), so it is
             // NOT dead. Clearing here — not only at labels — keeps the pass sound
             // when a conditional jump sits between two writes of the same name.
-            if (instr is Label or Jump or Return or TryBegin or RaiseExn
+            if (instr is Label or Jump or Return
                 or BranchOnError or SignalError or SignalSuccess
                 || JumpTargetOf(instr) != null)
             {
