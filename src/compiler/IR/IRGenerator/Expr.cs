@@ -392,52 +392,36 @@ public partial class IRGenerator
 
         if (expr.Op == AstBinOp.And)
         {
+            // Python `a and b` evaluates to the OPERAND, not a bool: falsy a -> a,
+            // otherwise b. Short-circuits b. (`if a and b:` is unaffected since it
+            // only tests truthiness; the difference shows in `x = a and b`.)
             Val v1a = VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-            {
-                if (c1a.Value == 0) return new Constant(0);
-                Val v2a = VisitExpression(expr.Right);
-                if (v2a is Constant c2a) return new Constant(c2a.Value != 0 ? 1 : 0);
-                Temporary r = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2a, new Constant(0), r));
-                return r;
-            }
+                return c1a.Value == 0 ? c1a : VisitExpression(expr.Right);
 
-            string falseLabel = MakeLabel();
+            Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
-            Temporary result = MakeTemp(DataType.UINT8);
-            Emit(new JumpIfZero(v1a, falseLabel));
+            Emit(new Copy(v1a, result));                 // tentatively a
+            Emit(new JumpIfZero(result, endLabel));      // a falsy -> keep a
             Val v2b = VisitExpression(expr.Right);
-            Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2b, new Constant(0), result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(falseLabel));
-            Emit(new Copy(new Constant(0), result));
+            Emit(new Copy(v2b, result));                 // a truthy -> b
             Emit(new Label(endLabel));
             return result;
         }
 
         if (expr.Op == AstBinOp.Or)
         {
+            // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b.
             Val v1a = VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-            {
-                if (c1a.Value != 0) return new Constant(1);
-                Val v2a = VisitExpression(expr.Right);
-                if (v2a is Constant c2a) return new Constant(c2a.Value != 0 ? 1 : 0);
-                Temporary r = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2a, new Constant(0), r));
-                return r;
-            }
+                return c1a.Value != 0 ? c1a : VisitExpression(expr.Right);
 
-            string trueLabel = MakeLabel();
+            Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
-            Temporary result = MakeTemp(DataType.UINT8);
-            Emit(new JumpIfNotZero(v1a, trueLabel));
+            Emit(new Copy(v1a, result));                 // tentatively a
+            Emit(new JumpIfNotZero(result, endLabel));   // a truthy -> keep a
             Val v2b = VisitExpression(expr.Right);
-            Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2b, new Constant(0), result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(trueLabel));
-            Emit(new Copy(new Constant(1), result));
+            Emit(new Copy(v2b, result));                 // a falsy -> b
             Emit(new Label(endLabel));
             return result;
         }
@@ -582,7 +566,13 @@ public partial class IRGenerator
                     int q = cA.Value / cB.Value;
                     if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
                     return new Constant(q);
-                case AstBinOp.Mod: return new Constant(cA.Value % cB.Value);
+                case AstBinOp.Mod:
+                    // Python's % follows the sign of the divisor (floored), unlike C#'s
+                    // truncated %. e.g. -7 % 3 == 2, not -1. Match Python at fold time.
+                    if (cB.Value == 0) return new Constant(0);
+                    int rem = cA.Value % cB.Value;
+                    if (rem != 0 && ((rem ^ cB.Value) < 0)) rem += cB.Value;
+                    return new Constant(rem);
                 case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
                 case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
@@ -815,9 +805,22 @@ public partial class IRGenerator
 
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
+                // Evaluate the index once and normalize a negative compile-time index
+                // (Python a[-1] -> a[len-1]) before any load path sees it; a runtime
+                // index is left as-is (negative runtime indexing is not supported).
+                Val idxVal = VisitExpression(expr.Index);
+                if (idxVal is Constant negc && negc.Value < 0)
+                {
+                    int adj = negc.Value + sz;
+                    if (adj < 0)
+                        throw new IndexError(
+                            $"array index {negc.Value} out of range for size {sz}",
+                            expr.Line > 0 ? expr.Line : lastLine, 1);
+                    idxVal = new Constant(adj);
+                }
+
                 if (flashArrays.Contains(qualified))
                 {
-                    Val idxVal = VisitExpression(expr.Index);
                     Temporary tmp = MakeTemp(DataType.UINT8);
                     Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
                     return tmp;
@@ -825,22 +828,19 @@ public partial class IRGenerator
 
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                 {
-                    Val idxVal = VisitExpression(expr.Index);
                     Temporary tmp = MakeTemp(arrayElemTypes[qualified]);
                     Emit(new ArrayLoad(qualified, idxVal, tmp, arrayElemTypes[qualified], sz));
                     return tmp;
                 }
                 else
                 {
-                    // Accept a literal subscript or a variable that folds to a compile-time
-                    // constant (e.g. the index of an unrolled enumerate() loop).
-                    int elemIdx;
-                    if (expr.Index is IntegerLiteral c2)
-                        elemIdx = c2.Value;
-                    else if (VisitExpression(expr.Index) is Constant cc2)
-                        elemIdx = cc2.Value;
-                    else
+                    if (idxVal is not Constant cc2)
                         throw new Exception("Array subscript must be a compile-time constant");
+                    int elemIdx = cc2.Value;
+                    if (elemIdx < 0 || elemIdx >= sz)
+                        throw new IndexError(
+                            $"array index {elemIdx} out of range for size {sz}",
+                            expr.Line > 0 ? expr.Line : lastLine, 1);
                     string elemName = qualified + "__" + elemIdx;
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }

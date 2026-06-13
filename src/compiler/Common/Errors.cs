@@ -48,3 +48,6 @@ public class RecursionError(string message, int line, int column, int length = 1
 
 public class NameError(string message, int line, int column, int length = 1)
     : CompilerError("NameError", message, line, column, length);
+
+public class IndexError(string message, int line, int column, int length = 1)
+    : CompilerError("IndexError", message, line, column, length);

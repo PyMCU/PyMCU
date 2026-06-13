@@ -890,6 +890,17 @@ public class Parser
         return new MatchStmt(target, branches);
     }
 
+    // The loop `else` clause (runs when the loop finishes without `break`) is not
+    // modelled. Reject it with a clear message instead of a confusing "Expected
+    // expression" syntax error from trying to parse `else` as a statement.
+    private void RejectLoopElse(string kind)
+    {
+        if (Check(TokenType.Else))
+            throw new SyntaxError(
+                $"'{kind} ... else' is not supported; move the else body to after the loop",
+                Peek().Line, 1);
+    }
+
     private Statement ParseWhileStatement()
     {
         int line = Peek().Line;
@@ -898,6 +909,7 @@ public class Parser
         Consume(TokenType.Colon, "Expected ':'");
         Consume(TokenType.Newline, "Expected newline");
         var body = ParseBlock();
+        RejectLoopElse("while");
         return new WhileStmt(condition, body) { Line = line };
     }
 
@@ -955,6 +967,7 @@ public class Parser
             }
 
             var stmt = new ForStmt(varTok.Value, start, stop, step, blockBody) { Var2Name = var2Name, Line = line };
+            RejectLoopElse("for");
             return stmt;
         }
 
@@ -963,6 +976,7 @@ public class Parser
         Consume(TokenType.Newline, "Expected newline");
         var ibody = ParseBlock();
 
+        RejectLoopElse("for");
         return new ForStmt(varTok.Value, iterable, ibody) { Var2Name = var2Name, Line = line };
     }
 
@@ -1023,6 +1037,19 @@ public class Parser
 
                 Consume(TokenType.Equal, "Expected '=' in tuple unpack assignment");
                 var valueExpr = ParseExpression();
+                // A bare comma-separated RHS is a tuple literal: `a, b = b, a`.
+                // Without this it parsed only the first element and choked on the
+                // comma, so tuple swap / multi-assign never worked.
+                if (Check(TokenType.Comma))
+                {
+                    var elems = new List<Expression> { valueExpr };
+                    while (Match(TokenType.Comma))
+                    {
+                        if (Check(TokenType.Newline) || Check(TokenType.EndOfFile)) break; // trailing comma
+                        elems.Add(ParseExpression());
+                    }
+                    valueExpr = new TupleExpr(elems) { Line = line };
+                }
                 ConsumeStatementEnd();
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
             }
@@ -1188,7 +1215,13 @@ public class Parser
 
     private Expression ParseComparison()
     {
-        var left = ParseBitwiseOr();
+        var first = ParseBitwiseOr();
+
+        // Collect a comparison chain so `a < b < c` becomes (a<b) and (b<c) — the
+        // Python semantics — instead of the left-associative (a<b)<c. operands[i]
+        // and ops[i] line up so the chain is operands[0] ops[0] operands[1] ...
+        var ops = new List<BinaryOp>();
+        var operands = new List<Expression> { first };
 
         while (Check(TokenType.EqualEqual) || Check(TokenType.BangEqual) ||
                Check(TokenType.Less) || Check(TokenType.LessEqual) ||
@@ -1237,10 +1270,21 @@ public class Parser
             }
 
             var right = ParseBitwiseOr();
-            left = new BinaryExpr(left, op, right);
+            ops.Add(op);
+            operands.Add(right);
         }
 
-        return left;
+        if (ops.Count == 0) return first;
+        if (ops.Count == 1) return new BinaryExpr(operands[0], ops[0], operands[1]);
+
+        // Chained: build ((o0 op0 o1) and (o1 op1 o2)) and ...  The shared middle
+        // operands are reused as AST nodes; with side-effect-free operands (the
+        // usual case) this matches Python's single-evaluation semantics closely.
+        Expression chain = new BinaryExpr(operands[0], ops[0], operands[1]);
+        for (int i = 1; i < ops.Count; i++)
+            chain = new BinaryExpr(chain, BinaryOp.And,
+                new BinaryExpr(operands[i], ops[i], operands[i + 1]));
+        return chain;
     }
 
     private Expression ParseBitwiseOr()

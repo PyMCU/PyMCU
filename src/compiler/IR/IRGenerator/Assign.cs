@@ -2058,13 +2058,29 @@ public partial class IRGenerator
             if (stmt.StarredIndex < 0)
             {
                 if (nTup != nTgt) throw new Exception($"Tuple size mismatch");
+                // Python evaluates the whole RHS tuple before assigning, so snapshot
+                // each runtime value into a temporary first. Otherwise `a, b = b, a`
+                // would assign a = b and then read the already-overwritten a.
+                var snapshots = new List<Val>(nTup);
+                foreach (var el in tup.Elements)
+                {
+                    Val v = VisitExpression(el);
+                    if (v is Variable or Temporary)
+                    {
+                        Temporary snap = MakeTemp(GetValType(v));
+                        Emit(new Copy(v, snap));
+                        snapshots.Add(snap);
+                    }
+                    else snapshots.Add(v);
+                }
                 for (int k = 0; k < nTgt; ++k)
                 {
-                    Val v = VisitExpression(tup.Elements[k]);
                     string qualified = QualifyTarget(stmt.Targets[k]);
-                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : DataType.UINT8;
-                    Emit(new Copy(v, new Variable(qualified, dt)));
-                    if (v is Constant c) constantVariables[qualified] = c.Value;
+                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : GetValType(snapshots[k]);
+                    variableTypes[qualified] = dt;
+                    Emit(new Copy(snapshots[k], new Variable(qualified, dt)));
+                    if (snapshots[k] is Constant c) constantVariables[qualified] = c.Value;
+                    else constantVariables.Remove(qualified);
                 }
             }
             else
