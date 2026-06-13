@@ -292,15 +292,19 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void RuntimeBitIndex_Throws()
+    public void RuntimeBitIndex_ReadModifyWrite()
     {
-        // Using a runtime variable as bit index on a non-array must fail at
-        // compile time -- bit indices must be compile-time constants.
+        // A runtime bit index (port[bit] = 1) is now supported: SBI/CBI need a
+        // constant bit, so it lowers to a runtime mask (1 << bit) and a read-
+        // modify-write of the target — a shift plus bitwise ops, no crash/throw.
         const string src =
             "def f(port: ptr[uint8], bit: uint8):\n" +
             "    port[bit] = 1\n";
 
-        Assert.ThrowsAny<Exception>(() => GenerateIR(src));
+        var ir = GenerateIR(src);
+        var body = ir.Functions.First(fn => fn.Name == "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.LShift }); // build 1 << bit
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.BitOr });  // set the bit
     }
 
     [Fact]

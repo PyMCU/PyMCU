@@ -212,7 +212,43 @@ public partial class IRGenerator
                     Variable v => TryConst(v.Name),
                     _ => false
                 };
-                if (!resolved) throw new Exception("Bit index must be constant");
+                if (!resolved)
+                {
+                    // Runtime bit index (e.g. `port[i] = 1`). SBI/CBI require a constant
+                    // bit, so build a runtime mask (1 << i) and read-modify-write the
+                    // target. Enables register-indexed bit-banging instead of erroring.
+                    Val rmwVal = VisitExpression(stmt.Value);
+                    Temporary mask = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(BinaryOp.LShift, new Constant(1), indexVal, mask));
+                    Temporary cur = MakeTemp(DataType.UINT8);
+                    Emit(new Copy(target, cur));
+                    Temporary res = MakeTemp(DataType.UINT8);
+                    if (rmwVal is Constant rc && rc.Value == 0)
+                    {
+                        Temporary inv = MakeTemp(DataType.UINT8);
+                        Emit(new Unary(UnaryOp.BitNot, mask, inv));            // ~mask
+                        Emit(new Binary(BinaryOp.BitAnd, cur, inv, res));      // clear bit
+                    }
+                    else if (rmwVal is Constant)
+                    {
+                        Emit(new Binary(BinaryOp.BitOr, cur, mask, res));      // set bit
+                    }
+                    else
+                    {
+                        // res = (cur & ~mask) | ((val & 1) * mask)
+                        Temporary inv = MakeTemp(DataType.UINT8);
+                        Emit(new Unary(UnaryOp.BitNot, mask, inv));
+                        Temporary cleared = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(BinaryOp.BitAnd, cur, inv, cleared));
+                        Temporary vbit = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(BinaryOp.BitAnd, rmwVal, new Constant(1), vbit));
+                        Temporary vmask = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(BinaryOp.Mul, vbit, mask, vmask));
+                        Emit(new Binary(BinaryOp.BitOr, cleared, vmask, res));
+                    }
+                    Emit(new Copy(res, target));
+                    return;
+                }
             }
 
             var val = VisitExpression(stmt.Value);
