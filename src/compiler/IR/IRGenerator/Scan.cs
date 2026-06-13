@@ -665,6 +665,17 @@ public partial class IRGenerator
         List<(string Field, string Type, string SourceParam)> layout)
     {
         if (layout.Count == 0) return false;
+
+        // A field whose type is not a scalar is another ZCA instance (e.g. a Pin
+        // stored as `self.pin`). An outlined body shares one copy across instances
+        // by passing each field as a runtime parameter, but a ZCA field is
+        // compile-time per-instance (a Pin is just its const pin name, no runtime
+        // value) — it cannot be passed as a parameter. Such methods must stay
+        // force-inlined so `self.pin.<method>()` resolves at each call site.
+        var scalarTypes = new HashSet<string>
+            { "uint8", "int8", "uint16", "int16", "uint32", "int32", "float", "bool" };
+        if (layout.Any(f => !scalarTypes.Contains(f.Type))) return false;
+
         var fields = new HashSet<string>(layout.Select(f => f.Field));
         bool safe = true;
 

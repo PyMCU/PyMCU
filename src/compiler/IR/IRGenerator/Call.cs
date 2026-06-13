@@ -267,7 +267,15 @@ public partial class IRGenerator
                 }
                 else
                 {
-                    throw new Exception("Complex member access in call not yet supported");
+                    // Reached when the receiver of a value-returning method is itself a
+                    // ZCA field (e.g. `self.pin.pulse_in()` — a Pin stored in a field of
+                    // another ZCA). The chained access resolves to a temporary, which the
+                    // current model can't dispatch through. Name the member to make the
+                    // limitation actionable instead of opaque.
+                    throw new Exception(
+                        $"calling .{memC.Member}() on a nested member access is not yet supported " +
+                        "(a ZCA field that is itself a ZCA, like self.pin.pulse_in()); " +
+                        "void methods on such a field work, but value-returning ones do not yet");
                 }
             }
         }
