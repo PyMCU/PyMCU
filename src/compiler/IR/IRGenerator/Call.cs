@@ -269,9 +269,14 @@ public partial class IRGenerator
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
         {
             if (expr.Args.Count != 1) throw new Exception("ptr() expects exactly one argument");
-            Val argVal = VisitExpression(expr.Args[0]);
-            if (argVal is Constant c) return new MemoryAddress(c.Value, DataType.UINT8);
-            throw new Exception("ptr() argument must be a constant expression");
+            // Evaluate the argument as a compile-time ADDRESS: a literal, a const, or a
+            // register/MMIO base combined with constant +/- offsets, e.g. ptr(PORTB + 6).
+            // A bare register contributes its address here (not its dereferenced value).
+            if (TryEvalConstAddress(expr.Args[0]) is int addr)
+                return new MemoryAddress(addr, DataType.UINT8);
+            throw new Exception(
+                "ptr() argument must be a compile-time address: a constant, or a register/" +
+                "constant base with constant +/- offsets (e.g. ptr(BASE + 6))");
         }
 
         if (callee == "ptr" && !intrinsicNames.Contains("ptr"))
@@ -2202,6 +2207,39 @@ public partial class IRGenerator
         Temporary extDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[callee]));
         Emit(new Call(cSym, extArgs, extDst));
         return extDst;
+    }
+
+    // Evaluate an expression as a compile-time address for ptr(...): an integer literal,
+    // a const or register/MMIO name, or those combined with constant +/- offsets — e.g.
+    // ptr(0x100 + 6), ptr(BASE + 6), ptr(PORTB + 6). A bare register name contributes its
+    // ADDRESS (via MemoryAddress.Address), NOT its dereferenced runtime value, so this must
+    // resolve operands itself rather than going through arithmetic VisitBinary (which would
+    // emit a runtime read of the register). Returns null if the expression is not a
+    // compile-time address. Resolving a bare name/literal here emits no IR.
+    private int? TryEvalConstAddress(Expression e)
+    {
+        switch (e)
+        {
+            case IntegerLiteral il:
+                return il.Value;
+            case BinaryExpr be when be.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub:
+            {
+                if (TryEvalConstAddress(be.Left) is not int l) return null;
+                if (TryEvalConstAddress(be.Right) is not int r) return null;
+                return be.Op == PyMCU.Frontend.BinaryOp.Add ? l + r : l - r;
+            }
+            case VariableExpr:
+                // A const folds to a Constant; a register/MMIO symbol resolves to a
+                // MemoryAddress. Name resolution is side-effect free (no IR emitted).
+                return VisitExpression(e) switch
+                {
+                    Constant c => c.Value,
+                    MemoryAddress m => m.Address,
+                    _ => null,
+                };
+            default:
+                return null;
+        }
     }
 
     // Resolves a short variable name to its fully qualified list variable name,
