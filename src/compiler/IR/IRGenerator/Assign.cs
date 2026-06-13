@@ -1157,6 +1157,19 @@ public partial class IRGenerator
                 }
             }
             Val val = VisitExpression(stmt.Init);
+
+            // A compile-time float result assigned to an integer variable (e.g.
+            // `y: uint8 = 5 // 2.0`) is the same mistake as a bare float literal, but the
+            // literal check above only sees a direct FloatLiteral — a folded FloatConstant
+            // slipped through and the Copy was silently dropped. Require an explicit cast.
+            if (val is FloatConstant
+                && dt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                      or DataType.UINT32 or DataType.INT32)
+                throw new TypeError(
+                    $"cannot assign a float value to integer variable '{stmt.Name}' of type " +
+                    $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+
             Val target = ResolveBinding(stmt.Name);
             if (target is Variable v) target = v with { Type = dt };
             Emit(new Copy(val, target));

@@ -339,6 +339,18 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ComputedFloatToIntVariable_RaisesTypeError()
+    {
+        // `y: uint8 = 5 // 2.0` folds to a FloatConstant; the bare-float-literal check only
+        // sees a direct FloatLiteral, so the folded float slipped through and the Copy was
+        // silently dropped. A compile-time float result into an int var must require a cast.
+        const string src =
+            "def main():\n" +
+            "    y: uint8 = 5 // 2.0\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void ChrArgumentOutOfByteRange_RaisesValueError()
     {
         // chr(300) passed the value through as a Constant(300); since it is a folded constant
