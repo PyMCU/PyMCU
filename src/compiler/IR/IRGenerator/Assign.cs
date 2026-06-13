@@ -69,89 +69,7 @@ public partial class IRGenerator
 
         if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
-        if (stmt.Target is VariableExpr varExprCtor)
-        {
-            if (stmt.Value is CallExpr call)
-            {
-                string resolvedClass = "";
-                if (call.Callee is VariableExpr calleeVar)
-                {
-                    resolvedClass = ResolveCallee(calleeVar.Name);
-                }
-                else if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
-                {
-                    if (modules.ContainsKey(objVar.Name))
-                    {
-                        // Resolve a module alias (import machine as m) to the real module
-                        // name so `m.Pin(...)` resolves the machine_Pin class.
-                        string realMod = importedAliases.TryGetValue(objVar.Name, out var rm) && rm != null
-                            ? rm : objVar.Name;
-                        string mangled = realMod.Replace('.', '_');
-                        resolvedClass = mangled + "_" + calleeMem.Member;
-                    }
-                }
-
-                // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
-                // to the returned ZCA class so the tracking below treats `a` as that
-                // instance and its methods inline (otherwise `a.read()` mangles to an
-                // undefined flattened name like main.a_read and fails at link).
-                if (!string.IsNullOrEmpty(resolvedClass)
-                    && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
-                    && !overloadedFunctions.Contains(resolvedClass + "___init__")
-                    && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
-                    && factoryFn?.Body?.Statements != null)
-                {
-                    foreach (var bs in factoryFn.Body.Statements)
-                        if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
-                        {
-                            var rc = ResolveCallee(rcv.Name);
-                            if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__"))
-                                resolvedClass = rc;
-                        }
-                }
-
-                if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
-                                                             overloadedFunctions.Contains(resolvedClass + "___init__")))
-                {
-                    string qualifiedName = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + varExprCtor.Name
-                        : (!string.IsNullOrEmpty(currentFunction)
-                            ? currentFunction + "." + varExprCtor.Name
-                            : varExprCtor.Name);
-                    // When the target variable is a module-level mutable global (e.g. declared at
-                    // top level in an entrypoint-less script), use its global name so that later
-                    // method lookups on the global variable resolve the class type correctly.
-                    if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
-                    {
-                        string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
-                        if (mutableGlobals.ContainsKey(mutableGlobalKey))
-                            qualifiedName = mutableGlobalKey;
-                    }
-                    instanceClasses[qualifiedName] = resolvedClass;
-                    pendingConstructorTarget = qualifiedName;
-                    virtualInstances.Add(qualifiedName);
-                }
-                else if (call.Callee is VariableExpr facVar
-                         && functionReturnTypes.TryGetValue(ResolveCallee(facVar.Name), out var facRt)
-                         && facRt != null && zcaFactoryClasses.ContainsKey(facRt)
-                         && !inlineFunctions.ContainsKey(ResolveCallee(facVar.Name)))
-                {
-                    // RFC 0001 Model B: `x = make()` where make is a non-@inline factory
-                    // returning a single-field ZCA. The call yields the packed field as a
-                    // scalar; track `x` as a handle instance so x.method() (which must be
-                    // @outline) passes that scalar as the field arg. Crucially we do NOT set
-                    // pendingConstructorTarget or add to virtualInstances -- the assignment
-                    // proceeds normally so `x` actually receives the returned handle.
-                    string qn = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + varExprCtor.Name
-                        : (!string.IsNullOrEmpty(currentFunction)
-                            ? currentFunction + "." + varExprCtor.Name
-                            : varExprCtor.Name);
-                    instanceClasses[qn] = facRt;
-                    factoryHandleInstances.Add(qn);
-                }
-            }
-        }
+        if (stmt.Target is VariableExpr varExprCtor) { EmitConstructorTargetSetup(stmt, varExprCtor); }
 
         if (!string.IsNullOrEmpty(pendingConstructorTarget))
         {
@@ -450,6 +368,92 @@ public partial class IRGenerator
             Emit(new StoreIndirect(value, ptr));
         }
         else throw new Exception("Invalid assignment target");
+    }
+
+    // `x = ClassName(args)` constructor target: set up the (virtual) constructor
+    // expansion state. Falls through to the inline-expansion path that follows.
+    private void EmitConstructorTargetSetup(AssignStmt stmt, VariableExpr varExprCtor)
+    {
+        if (stmt.Value is CallExpr call)
+        {
+            string resolvedClass = "";
+            if (call.Callee is VariableExpr calleeVar)
+            {
+                resolvedClass = ResolveCallee(calleeVar.Name);
+            }
+            else if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
+            {
+                if (modules.ContainsKey(objVar.Name))
+                {
+                    // Resolve a module alias (import machine as m) to the real module
+                    // name so `m.Pin(...)` resolves the machine_Pin class.
+                    string realMod = importedAliases.TryGetValue(objVar.Name, out var rm) && rm != null
+                        ? rm : objVar.Name;
+                    string mangled = realMod.Replace('.', '_');
+                    resolvedClass = mangled + "_" + calleeMem.Member;
+                }
+            }
+
+            // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
+            // to the returned ZCA class so the tracking below treats `a` as that
+            // instance and its methods inline (otherwise `a.read()` mangles to an
+            // undefined flattened name like main.a_read and fails at link).
+            if (!string.IsNullOrEmpty(resolvedClass)
+                && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
+                && !overloadedFunctions.Contains(resolvedClass + "___init__")
+                && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
+                && factoryFn?.Body?.Statements != null)
+            {
+                foreach (var bs in factoryFn.Body.Statements)
+                    if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
+                    {
+                        var rc = ResolveCallee(rcv.Name);
+                        if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__"))
+                            resolvedClass = rc;
+                    }
+            }
+
+            if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
+                                                         overloadedFunctions.Contains(resolvedClass + "___init__")))
+            {
+                string qualifiedName = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + varExprCtor.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + varExprCtor.Name
+                        : varExprCtor.Name);
+                // When the target variable is a module-level mutable global (e.g. declared at
+                // top level in an entrypoint-less script), use its global name so that later
+                // method lookups on the global variable resolve the class type correctly.
+                if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
+                    if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                        qualifiedName = mutableGlobalKey;
+                }
+                instanceClasses[qualifiedName] = resolvedClass;
+                pendingConstructorTarget = qualifiedName;
+                virtualInstances.Add(qualifiedName);
+            }
+            else if (call.Callee is VariableExpr facVar
+                     && functionReturnTypes.TryGetValue(ResolveCallee(facVar.Name), out var facRt)
+                     && facRt != null && zcaFactoryClasses.ContainsKey(facRt)
+                     && !inlineFunctions.ContainsKey(ResolveCallee(facVar.Name)))
+            {
+                // RFC 0001 Model B: `x = make()` where make is a non-@inline factory
+                // returning a single-field ZCA. The call yields the packed field as a
+                // scalar; track `x` as a handle instance so x.method() (which must be
+                // @outline) passes that scalar as the field arg. Crucially we do NOT set
+                // pendingConstructorTarget or add to virtualInstances -- the assignment
+                // proceeds normally so `x` actually receives the returned handle.
+                string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + varExprCtor.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + varExprCtor.Name
+                        : varExprCtor.Name);
+                instanceClasses[qn] = facRt;
+                factoryHandleInstances.Add(qn);
+            }
+        }
     }
 
     // `obj.member = v`: assign through a member-access target — ZCA field stores
