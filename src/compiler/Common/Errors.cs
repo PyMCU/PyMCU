@@ -36,3 +36,15 @@ public class LexicalError(string message, int line, int column, int length = 1)
 
 public class ArchitectureError(string message, int line, int column, int length = 1)
     : CompilerError("CompileError", message, line, column, length);
+
+public class ValueError(string message, int line, int column, int length = 1)
+    : CompilerError("ValueError", message, line, column, length);
+
+public class TypeError(string message, int line, int column, int length = 1)
+    : CompilerError("TypeError", message, line, column, length);
+
+public class RecursionError(string message, int line, int column, int length = 1)
+    : CompilerError("RecursionError", message, line, column, length);
+
+public class NameError(string message, int line, int column, int length = 1)
+    : CompilerError("NameError", message, line, column, length);

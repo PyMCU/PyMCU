@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common;
 using PyMCU.Frontend;
 using PyMCU.IR;
 using AstBinOp = PyMCU.Frontend.BinaryOp;
@@ -219,6 +220,18 @@ public partial class IRGenerator
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
 
     private Val VisitVariable(VariableExpr expr) => ResolveBinding(expr.Name);
+
+    private static string BinaryOpSymbol(AstBinOp op) => op switch
+    {
+        AstBinOp.Add => "+", AstBinOp.Sub => "-", AstBinOp.Mul => "*",
+        AstBinOp.Div => "/", AstBinOp.FloorDiv => "//", AstBinOp.Mod => "%",
+        AstBinOp.BitAnd => "&", AstBinOp.BitOr => "|", AstBinOp.BitXor => "^",
+        AstBinOp.LShift => "<<", AstBinOp.RShift => ">>",
+        AstBinOp.Equal => "==", AstBinOp.NotEqual => "!=",
+        AstBinOp.Less => "<", AstBinOp.LessEq => "<=",
+        AstBinOp.Greater => ">", AstBinOp.GreaterEq => ">=",
+        _ => op.ToString(),
+    };
 
     private string? BinaryOpDunder(AstBinOp op)
     {
@@ -445,6 +458,54 @@ public partial class IRGenerator
 
         Val v1 = VisitExpression(expr.Left);
         Val v2 = VisitExpression(expr.Right);
+
+        // String literals are interned as integer IDs (>= 256); see VisitExpression.
+        // Plain arithmetic on those IDs is meaningless — '+' would add the IDs and
+        // silently emit garbage. We only treat an operand as a string when there is
+        // a real string literal in the source expression: an interned ID can collide
+        // with an ordinary integer (e.g. `x * 256`), so the value alone is not enough.
+        // This still covers the real cases ("a" + "b", s + "x", name == "PB5").
+        bool HasStringLiteral = (expr.Left is StringLiteral sll && sll.Value.Length != 1)
+                             || (expr.Right is StringLiteral srl && srl.Value.Length != 1);
+        bool IsStringId(Val v) => v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
+        if (HasStringLiteral && (IsStringId(v1) || IsStringId(v2)))
+        {
+            bool bothStr = IsStringId(v1) && IsStringId(v2);
+
+            // Equality folds at compile time: interning gives identical strings the
+            // same ID, and a string is never equal to a non-string. This keeps the
+            // `if pin_name == "PB5"` / `__CHIP__ == "..."` dispatch idiom working.
+            if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual)
+            {
+                bool equal = bothStr && ((Constant)v1).Value == ((Constant)v2).Value;
+                bool isEq = expr.Op == AstBinOp.Equal;
+                return new Constant(equal == isEq ? 1 : 0);
+            }
+
+            // Compile-time concatenation of two string literals.
+            if (expr.Op == AstBinOp.Add && bothStr)
+            {
+                string joined = stringIdToStr[((Constant)v1).Value] + stringIdToStr[((Constant)v2).Value];
+                if (!stringLiteralIds.TryGetValue(joined, out int joinedId))
+                {
+                    joinedId = nextStringId++;
+                    stringLiteralIds[joined] = joinedId;
+                    stringIdToStr[joinedId] = joined;
+                }
+                return new Constant(joinedId);
+            }
+
+            int errLine = expr.Line > 0 ? expr.Line : lastLine;
+            if (expr.Op == AstBinOp.Add)
+                throw new TypeError(
+                    "cannot concatenate a string with a non-string value; both operands of '+' " +
+                    "must be compile-time string literals (runtime string building is not supported)",
+                    errLine, 1);
+
+            throw new TypeError(
+                $"operator '{BinaryOpSymbol(expr.Op)}' is not supported on string values",
+                errLine, 1);
+        }
 
         double? AsFloatCt(Val v)
         {

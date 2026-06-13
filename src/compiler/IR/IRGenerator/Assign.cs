@@ -564,6 +564,18 @@ public partial class IRGenerator
                         string moduleGlobalName = currentModulePrefix + varExpr.Name;
                         if (mutableGlobals.ContainsKey(moduleGlobalName))
                         {
+                            // Assigning to a module-level global inside a regular function
+                            // without a `global` declaration is the silent-divergence trap:
+                            // Python would create a local; PyMCU would write the global. Make
+                            // the user choose. `main` is exempt — it is the module's top-level
+                            // scope, where bare assignment to a global is the expected init.
+                            if (currentFunction != "main")
+                                throw new NameError(
+                                    $"'{varExpr.Name}' is a module-level global; to assign it inside " +
+                                    $"'{currentFunction}' add a 'global {varExpr.Name}' declaration, " +
+                                    "or rename the variable if a local was intended",
+                                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+
                             target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
                         }
                         else
@@ -846,8 +858,47 @@ public partial class IRGenerator
         else throw new Exception("Invalid assignment target");
     }
 
+    // Folds a literal-only integer expression (decimal/hex/bool, optionally negated)
+    // to its value. Returns null for anything that is not a direct literal — we only
+    // range-check literals the user typed, never folded mask/shift expressions, to
+    // avoid false positives on idioms like `~0` or `0xFFFF & 0xFF`.
+    private static long? TryLiteralInt(Expression e) => e switch
+    {
+        IntegerLiteral il                                  => il.Value,
+        BooleanLiteral b                                   => b.Value ? 1 : 0,
+        UnaryExpr { Op: Frontend.UnaryOp.Negate } u when TryLiteralInt(u.Operand) is { } v => -v,
+        _                                                  => null,
+    };
+
+    // Rejects an integer literal that cannot be represented in its annotated type
+    // (e.g. `x: uint8 = 300`), which the backend would otherwise truncate silently.
+    private void CheckIntLiteralRange(Expression? init, DataType type, int line)
+    {
+        if (init == null) return;
+        if (TryLiteralInt(init) is not { } v) return;
+
+        (long Min, long Max, string Name)? range = type switch
+        {
+            DataType.UINT8  => (0L, 255L, "uint8"),
+            DataType.INT8   => (-128L, 127L, "int8"),
+            DataType.UINT16 => (0L, 65535L, "uint16"),
+            DataType.INT16  => (-32768L, 32767L, "int16"),
+            DataType.UINT32 => (0L, 4294967295L, "uint32"),
+            DataType.INT32  => (-2147483648L, 2147483647L, "int32"),
+            _               => null,
+        };
+        if (range is not { } r) return;
+
+        if (v < r.Min || v > r.Max)
+            throw new ValueError(
+                $"integer literal {v} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
+                line, 1);
+    }
+
     private void VisitVarDecl(VarDecl stmt)
     {
+        CheckIntLiteralRange(stmt.Init, DataTypeExtensions.StringToDataType(stmt.VarType), stmt.Line);
+
         if (stmt.VarType == "bytearray")
         {
             int count = 0;

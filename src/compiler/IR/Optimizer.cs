@@ -15,6 +15,7 @@
  */
 
 using System.Text;
+using PyMCU.Common;
 using PyMCU.IR.CFG;
 
 namespace PyMCU.IR;
@@ -23,6 +24,11 @@ public static class Optimizer
 {
     public static ProgramIR Optimize(ProgramIR program)
     {
+        // PyMCU lays out locals in a static (overlay) frame, so a function that can
+        // reach itself through synchronous calls would alias its own storage. Reject
+        // it up front with a clear diagnostic instead of emitting silently-broken code.
+        DetectRecursion(program);
+
         var optimized = new ProgramIR
         {
             Globals = [..program.Globals],
@@ -217,6 +223,57 @@ public static class Optimizer
             if (reachable.Add(name)) worklist.Enqueue(name);
         }
     }
+
+// Detects a synchronous-call cycle (direct or mutual recursion) in the call graph.
+// Only Call edges count: a FunctionRef (a function pointer handed to a scheduler or
+// irq registration) is not a synchronous self-call, so callback/RTOS patterns are not
+// flagged. Throws RecursionError on the first back edge found.
+private static void DetectRecursion(ProgramIR program)
+{
+    var byName = new Dictionary<string, Function>();
+    foreach (var f in program.Functions) byName.TryAdd(f.Name, f);
+
+    var callees = new Dictionary<string, List<string>>();
+    foreach (var f in program.Functions)
+    {
+        var list = new List<string>();
+        foreach (var instr in f.Body)
+            if (instr is Call c && byName.ContainsKey(c.FunctionName))
+                list.Add(c.FunctionName);
+        callees[f.Name] = list;
+    }
+
+    // DFS three-coloring: 0 = unvisited, 1 = on the current path, 2 = done.
+    var color = new Dictionary<string, int>();
+    foreach (var f in program.Functions) color[f.Name] = 0;
+
+    void Visit(string u)
+    {
+        color[u] = 1;
+        foreach (var v in callees[u])
+        {
+            if (color[v] == 1) ReportRecursion(v);   // back edge into the active path
+            if (color[v] == 0) Visit(v);
+        }
+        color[u] = 2;
+    }
+
+    void ReportRecursion(string fn)
+    {
+        var f = byName[fn];
+        string name = !string.IsNullOrEmpty(f.OriginalName) ? f.OriginalName! : fn;
+        int line = 0;
+        foreach (var instr in f.Body)
+            if (instr is DebugLine dl) { line = dl.Line; break; }
+        throw new RecursionError(
+            $"function '{name}' is recursive; PyMCU uses a static stack layout " +
+            "(no per-call frames), so recursion is not supported — rewrite it as a loop",
+            line, 1);
+    }
+
+    foreach (var f in program.Functions)
+        if (color[f.Name] == 0) Visit(f.Name);
+}
 
 private static Function CloneFunction(Function f)
 {
