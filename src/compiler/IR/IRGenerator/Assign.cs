@@ -1445,185 +1445,8 @@ public partial class IRGenerator
 
         int bracket = stmt.Annotation.IndexOf('[');
         int close = stmt.Annotation.LastIndexOf(']');
-        if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1)
-        {
-            string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
-
-            // RFC 0001 Model B (Class[N]): array of boxed ZCA instances. Lay out N contiguous
-            // slots (count * stride bytes) as a flat SRAM byte array; record the element class
-            // and stride so arr[i] = C(..) constructs into element i and arr[i].method() passes
-            // the element address as self.
-            string elemAnno = stmt.Annotation.Substring(0, bracket);
-            if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit)
-                && slotClasses.Contains(elemAnno))
-            {
-                int n = int.Parse(inner);
-                var layout = classFieldLayout[elemAnno];
-                int stride = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
-                string arrQ = string.IsNullOrEmpty(currentFunction)
-                    ? stmt.Target : currentFunction + "." + stmt.Target;
-                arraySizes[arrQ] = n * stride;
-                arrayElemTypes[arrQ] = DataType.UINT8;
-                variableTypes[arrQ] = DataType.UINT8;
-                arraysWithVariableIndex.Add(arrQ);
-                moduleSramArrays.Add(arrQ);
-                instanceArrayClass[arrQ] = elemAnno;
-                instanceArrayStride[arrQ] = stride;
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
-            {
-                int count = int.Parse(inner);
-                DataType elemDt = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, bracket));
-                string qualified = string.IsNullOrEmpty(currentFunction)
-                    ? stmt.Target
-                    : currentFunction + "." + stmt.Target;
-                // Synthesized main: fall back to the module-level name registered by ScanGlobals.
-                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
-                    qualified = stmt.Target;
-                arraySizes[qualified] = count;
-                arrayElemTypes[qualified] = elemDt;
-                variableTypes[qualified] = elemDt;
-
-                // Callable[N]: array of function references stored in SRAM.
-                if (elemDt == DataType.FUNCREF)
-                {
-                    bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
-                    if (stmt.Value is ListExpr callableList)
-                    {
-                        for (int k = 0; k < count; ++k)
-                        {
-                            Val fnVal;
-                            if (k < callableList.Elements.Count)
-                            {
-                                var elem = callableList.Elements[k];
-                                if (elem is VariableExpr fnVe)
-                                    fnVal = new FunctionRef(fnVe.Name);
-                                else if (elem is CallExpr funcrefCall
-                                         && funcrefCall.Callee is VariableExpr funcrefCallee
-                                         && funcrefCallee.Name == "funcref"
-                                         && funcrefCall.Args.Count == 1
-                                         && funcrefCall.Args[0] is VariableExpr refVe)
-                                    fnVal = new FunctionRef(refVe.Name);
-                                else
-                                    fnVal = new Constant(0);
-                            }
-                            else
-                            {
-                                fnVal = new Constant(0);
-                            }
-
-                            if (isSramCallable)
-                                Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
-                            else
-                            {
-                                string elemName = qualified + "__" + k;
-                                variableTypes[elemName] = DataType.FUNCREF;
-                                Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                var initVals = new List<int>(Enumerable.Repeat(0, count));
-                if (stmt.Value != null)
-                {
-                    if (stmt.Value is ListCompExpr lc)
-                    {
-                        VisitListComp(lc, qualified, count, elemDt);
-                        return;
-                    }
-
-                    if (stmt.Value is IndexExpr idxRhs && idxRhs.Index is SliceExpr sl &&
-                        idxRhs.Target is VariableExpr srcVe)
-                    {
-                        string srcQ = string.IsNullOrEmpty(currentFunction)
-                            ? srcVe.Name
-                            : currentFunction + "." + srcVe.Name;
-                        if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
-                        if (arraySizes.TryGetValue(srcQ, out int srcSize))
-                        {
-                            DataType srcEdt = arrayElemTypes[srcQ];
-                            int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
-                            int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
-                            int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                            if (step == 0) throw new Exception("Slice step cannot be zero");
-                            if (start < 0) start += srcSize;
-                            if (stop < 0) stop += srcSize;
-                            start = Math.Max(0, Math.Min(start, srcSize));
-                            stop = Math.Max(0, Math.Min(stop, srcSize));
-                            bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
-                            int k = 0;
-                            for (int i = start; (step > 0 ? i < stop : i > stop) && k < count; i += step, ++k)
-                            {
-                                string dstElem = qualified + "__" + k;
-                                variableTypes[dstElem] = elemDt;
-                                Val srcVal;
-                                if (srcSram)
-                                {
-                                    Temporary tmp = MakeTemp(srcEdt);
-                                    Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
-                                    srcVal = tmp;
-                                }
-                                else srcVal = new Variable(srcQ + "__" + i, srcEdt);
-
-                                Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
-                            }
-
-                            for (; k < count; ++k)
-                            {
-                                string dstElem = qualified + "__" + k;
-                                variableTypes[dstElem] = elemDt;
-                                Emit(new Copy(new Constant(0), new Variable(dstElem, elemDt)));
-                            }
-
-                            return;
-                        }
-
-                        throw new Exception("Slice initializer target must be a named fixed-size array");
-                    }
-
-                    if (stmt.Value is ListExpr le)
-                    {
-                        for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
-                        {
-                            if (le.Elements[k] is IntegerLiteral il) initVals[k] = il.Value;
-                        }
-                    }
-
-                    if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
-                        be.Right is IntegerLiteral repeatLit && repeatLit.Value > 0)
-                    {
-                        for (int k = 0; k < count; ++k)
-                        {
-                            int srcIdx = k % leRep.Elements.Count;
-                            if (srcIdx < leRep.Elements.Count && leRep.Elements[srcIdx] is IntegerLiteral il)
-                                initVals[k] = il.Value;
-                        }
-                    }
-                }
-
-                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
-                {
-                    for (int k = 0; k < count; ++k)
-                        Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), elemDt, count));
-                }
-                else
-                {
-                    for (int k = 0; k < count; ++k)
-                    {
-                        string elemName = qualified + "__" + k;
-                        var elemVar = new Variable(elemName, elemDt);
-                        variableTypes[elemName] = elemDt;
-                        Emit(new Copy(new Constant(initVals[k]), elemVar));
-                    }
-                }
-
-                return;
-            }
-        }
+        if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1
+            && EmitFixedArrayAnnAssign(stmt, bracket, close)) return;
 
         DataType type = DataType.UINT8;
         bool isPtrAnnotation = stmt.Annotation.StartsWith("ptr[") && stmt.Annotation.EndsWith("]");
@@ -1686,6 +1509,190 @@ public partial class IRGenerator
                 if (sv != null) strConstantVariables[qualified2] = sv;
             }
         }
+    }
+
+    // Fixed-size array annotation `T[N]` (incl. Class[N] slot arrays and Callable[N]):
+    // register sizes/types and emit element initializers. Returns true when handled;
+    // false to fall through (e.g. a ptr[...] annotation handled by the scalar path).
+    private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
+    {
+        string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
+
+        // RFC 0001 Model B (Class[N]): array of boxed ZCA instances. Lay out N contiguous
+        // slots (count * stride bytes) as a flat SRAM byte array; record the element class
+        // and stride so arr[i] = C(..) constructs into element i and arr[i].method() passes
+        // the element address as self.
+        string elemAnno = stmt.Annotation.Substring(0, bracket);
+        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit)
+            && slotClasses.Contains(elemAnno))
+        {
+            int n = int.Parse(inner);
+            var layout = classFieldLayout[elemAnno];
+            int stride = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+            string arrQ = string.IsNullOrEmpty(currentFunction)
+                ? stmt.Target : currentFunction + "." + stmt.Target;
+            arraySizes[arrQ] = n * stride;
+            arrayElemTypes[arrQ] = DataType.UINT8;
+            variableTypes[arrQ] = DataType.UINT8;
+            arraysWithVariableIndex.Add(arrQ);
+            moduleSramArrays.Add(arrQ);
+            instanceArrayClass[arrQ] = elemAnno;
+            instanceArrayStride[arrQ] = stride;
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+        {
+            int count = int.Parse(inner);
+            DataType elemDt = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, bracket));
+            string qualified = string.IsNullOrEmpty(currentFunction)
+                ? stmt.Target
+                : currentFunction + "." + stmt.Target;
+            // Synthesized main: fall back to the module-level name registered by ScanGlobals.
+            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+                qualified = stmt.Target;
+            arraySizes[qualified] = count;
+            arrayElemTypes[qualified] = elemDt;
+            variableTypes[qualified] = elemDt;
+
+            // Callable[N]: array of function references stored in SRAM.
+            if (elemDt == DataType.FUNCREF)
+            {
+                bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
+                if (stmt.Value is ListExpr callableList)
+                {
+                    for (int k = 0; k < count; ++k)
+                    {
+                        Val fnVal;
+                        if (k < callableList.Elements.Count)
+                        {
+                            var elem = callableList.Elements[k];
+                            if (elem is VariableExpr fnVe)
+                                fnVal = new FunctionRef(fnVe.Name);
+                            else if (elem is CallExpr funcrefCall
+                                     && funcrefCall.Callee is VariableExpr funcrefCallee
+                                     && funcrefCallee.Name == "funcref"
+                                     && funcrefCall.Args.Count == 1
+                                     && funcrefCall.Args[0] is VariableExpr refVe)
+                                fnVal = new FunctionRef(refVe.Name);
+                            else
+                                fnVal = new Constant(0);
+                        }
+                        else
+                        {
+                            fnVal = new Constant(0);
+                        }
+
+                        if (isSramCallable)
+                            Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
+                        else
+                        {
+                            string elemName = qualified + "__" + k;
+                            variableTypes[elemName] = DataType.FUNCREF;
+                            Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
+                        }
+                    }
+                }
+                return true;
+            }
+
+            var initVals = new List<int>(Enumerable.Repeat(0, count));
+            if (stmt.Value != null)
+            {
+                if (stmt.Value is ListCompExpr lc)
+                {
+                    VisitListComp(lc, qualified, count, elemDt);
+                    return true;
+                }
+
+                if (stmt.Value is IndexExpr idxRhs && idxRhs.Index is SliceExpr sl &&
+                    idxRhs.Target is VariableExpr srcVe)
+                {
+                    string srcQ = string.IsNullOrEmpty(currentFunction)
+                        ? srcVe.Name
+                        : currentFunction + "." + srcVe.Name;
+                    if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
+                    if (arraySizes.TryGetValue(srcQ, out int srcSize))
+                    {
+                        DataType srcEdt = arrayElemTypes[srcQ];
+                        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+                        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+                        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+                        if (step == 0) throw new Exception("Slice step cannot be zero");
+                        if (start < 0) start += srcSize;
+                        if (stop < 0) stop += srcSize;
+                        start = Math.Max(0, Math.Min(start, srcSize));
+                        stop = Math.Max(0, Math.Min(stop, srcSize));
+                        bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
+                        int k = 0;
+                        for (int i = start; (step > 0 ? i < stop : i > stop) && k < count; i += step, ++k)
+                        {
+                            string dstElem = qualified + "__" + k;
+                            variableTypes[dstElem] = elemDt;
+                            Val srcVal;
+                            if (srcSram)
+                            {
+                                Temporary tmp = MakeTemp(srcEdt);
+                                Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
+                                srcVal = tmp;
+                            }
+                            else srcVal = new Variable(srcQ + "__" + i, srcEdt);
+
+                            Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
+                        }
+
+                        for (; k < count; ++k)
+                        {
+                            string dstElem = qualified + "__" + k;
+                            variableTypes[dstElem] = elemDt;
+                            Emit(new Copy(new Constant(0), new Variable(dstElem, elemDt)));
+                        }
+
+                        return true;
+                    }
+
+                    throw new Exception("Slice initializer target must be a named fixed-size array");
+                }
+
+                if (stmt.Value is ListExpr le)
+                {
+                    for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
+                    {
+                        if (le.Elements[k] is IntegerLiteral il) initVals[k] = il.Value;
+                    }
+                }
+
+                if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
+                    be.Right is IntegerLiteral repeatLit && repeatLit.Value > 0)
+                {
+                    for (int k = 0; k < count; ++k)
+                    {
+                        int srcIdx = k % leRep.Elements.Count;
+                        if (srcIdx < leRep.Elements.Count && leRep.Elements[srcIdx] is IntegerLiteral il)
+                            initVals[k] = il.Value;
+                    }
+                }
+            }
+
+            if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+            {
+                for (int k = 0; k < count; ++k)
+                    Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), elemDt, count));
+            }
+            else
+            {
+                for (int k = 0; k < count; ++k)
+                {
+                    string elemName = qualified + "__" + k;
+                    var elemVar = new Variable(elemName, elemDt);
+                    variableTypes[elemName] = elemDt;
+                    Emit(new Copy(new Constant(initVals[k]), elemVar));
+                }
+            }
+
+            return true;
+        }
+        return false;
     }
 
     private void VisitListComp(ListCompExpr lc, string qualifiedName, int count, DataType elemDt)
