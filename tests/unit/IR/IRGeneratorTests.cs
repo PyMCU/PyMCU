@@ -339,6 +339,18 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ChrArgumentOutOfByteRange_RaisesValueError()
+    {
+        // chr(300) passed the value through as a Constant(300); since it is a folded constant
+        // (not an IntegerLiteral) the literal-range check never fired, so it was silently
+        // truncated into the uint8. chr() must be limited to a single byte (0..255).
+        const string src =
+            "def main():\n" +
+            "    c: uint8 = chr(300)\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void NumericCastOfString_RaisesCompileError()
     {
         // uint8("hello") folded the string to its flash id and used it as an integer, then

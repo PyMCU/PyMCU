@@ -1574,7 +1574,13 @@ public partial class IRGenerator
     private Val EmitChrBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 1) throw UserError("chr() expects exactly one argument");
-        return VisitExpression(expr.Args[0]);
+        Val v = VisitExpression(expr.Args[0]);
+        // A char on an 8-bit target is a single byte; a compile-time argument outside 0..255
+        // would otherwise pass through as a too-large Constant and be silently truncated.
+        if (v is Constant c && (c.Value < 0 || c.Value > 255))
+            throw new ValueError($"chr() arg not in range(256): {c.Value}",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
+        return v;
     }
 
     // sum(seq): fold a list literal or sum a fixed-size array's unrolled elements.
