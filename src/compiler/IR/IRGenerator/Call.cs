@@ -1539,7 +1539,17 @@ public partial class IRGenerator
             currentInlinePrefix = newPrefix;
 
             var savedModulePrefix = currentModulePrefix;
-            if (func.Name.Length < callee.Length)
+            // Resolve the body's calls in the module where the function was DEFINED,
+            // not where its (possibly re-exported) callee name lives. A facade like
+            // pymcu.hal.tone re-exports tone_start from pymcu.hal.avr.tone; deriving
+            // the prefix from the re-exported callee would look for tone_start's
+            // internal helper (_tone_ocr) in the wrong module and emit an unresolved
+            // call. functionModulePrefix preserves the defining module across re-export.
+            if (functionModulePrefix.TryGetValue(callee, out var definingPrefix))
+            {
+                currentModulePrefix = definingPrefix;
+            }
+            else if (func.Name.Length < callee.Length)
             {
                 currentModulePrefix = callee.Substring(0, callee.Length - func.Name.Length);
             }

@@ -37,6 +37,10 @@ public partial class IRGenerator
     // Lets a non-inline call site fill in omitted trailing arguments, so defaults
     // work for real subroutines and not just @inline functions.
     private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
+    // Module prefix where each function was DEFINED, preserved across re-export so
+    // inlining resolves the body's internal calls (e.g. a private @inline helper) in
+    // the right module rather than the facade that re-exported the function.
+    private Dictionary<string, string> functionModulePrefix = new();
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
     // Names currently bound to None (the real null, not the integer -1). Used to
     // resolve `x is None` / `x is not None` at compile time: a name here IS None,

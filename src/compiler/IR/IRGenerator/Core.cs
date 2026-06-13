@@ -578,6 +578,9 @@ public partial class IRGenerator
                         if (functionReturnTypes.TryGetValue(srcExact, out var ert)) functionReturnTypes[dstExact] = ert;
                         if (functionParamTypes.TryGetValue(srcExact, out var ept)) functionParamTypes[dstExact] = ept;
                         if (methodInstanceTypes.TryGetValue(srcExact, out var emit)) methodInstanceTypes[dstExact] = emit;
+                        // Keep the DEFINING module so inlining the re-exported function
+                        // still resolves its internal helper calls in the original module.
+                        if (functionModulePrefix.TryGetValue(srcExact, out var emp)) functionModulePrefix[dstExact] = emp;
                     }
 
                     string srcClassPrefix = srcPrefix + sym + "_";
