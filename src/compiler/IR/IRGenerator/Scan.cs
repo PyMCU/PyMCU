@@ -304,6 +304,7 @@ public partial class IRGenerator
 
             functionParams[fullName] = @params;
             functionParamTypes[fullName] = paramTypes;
+            functionParamDefaults[fullName] = func.Params.Select(p => p.DefaultValue).ToList();
 
             if (scope != null)
             {

@@ -1942,11 +1942,25 @@ public partial class IRGenerator
 
         if (functionParams.TryGetValue(callee, out var paramNames))
         {
-            if (expr.Args.Count != paramNames.Count)
+            if (expr.Args.Count > paramNames.Count)
                 throw new Exception(
                     $"Function '{callee}' expects {paramNames.Count} arguments, but {expr.Args.Count} were provided");
+            // Fill omitted trailing arguments from the parameter defaults (Python-style),
+            // so defaults work for real subroutines, not only @inline functions.
+            if (argValuesL.Count < paramNames.Count)
+            {
+                functionParamDefaults.TryGetValue(callee, out var defaults);
+                for (int i = argValuesL.Count; i < paramNames.Count; ++i)
+                {
+                    var def = defaults != null && i < defaults.Count ? defaults[i] : null;
+                    if (def is null)
+                        throw new Exception(
+                            $"Function '{callee}' expects {paramNames.Count} arguments, but {expr.Args.Count} were provided");
+                    argValuesL.Add(VisitExpression(def));
+                }
+            }
             var paramTypes = functionParamTypes.TryGetValue(callee, out var pt) ? pt : new List<DataType>();
-            for (int i = 0; i < expr.Args.Count; ++i)
+            for (int i = 0; i < argValuesL.Count; ++i)
             {
                 string paramVarName = callee + "." + paramNames[i];
                 DataType ptype = i < paramTypes.Count ? paramTypes[i] : DataType.UINT8;

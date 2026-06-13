@@ -33,6 +33,10 @@ public partial class IRGenerator
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();
     private Dictionary<string, List<DataType>> functionParamTypes = new();
+    // Per-function default value expressions (null where a param has no default).
+    // Lets a non-inline call site fill in omitted trailing arguments, so defaults
+    // work for real subroutines and not just @inline functions.
+    private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
