@@ -54,13 +54,24 @@ compile-time constants, `const[str]` runtime subscript (reads byte from flash).
 
 ## Exception handling
 
-`try / except / raise / finally` are **supported** on AVR targets via avr-libc
-`setjmp` / `longjmp`. No stack unwinding — the handler is a simple `longjmp` destination.
+`try / except / raise / finally` are **supported** on AVR targets via a zero-cost
+**T-flag error-propagation** model (the `SET` / `CLT` / `BRTS` ABI) — *not* `setjmp` /
+`longjmp`. A function that raises sets the AVR T flag and returns normally; every call site
+inside a `try` tests the flag and branches to the matching `except`. There is no `jmp_buf`
+and no stack unwinding, so the happy path costs a single skipped branch per guarded call.
+
+Because propagation rides on the function return, raise from a helper and catch it where you
+call that helper:
 
 ```python
+def read_sensor(raw: uint16) -> uint8:
+    if raw > 1000:
+        raise ValueError        # sets the T flag, returns to the caller
+    return uint8(raw)
+
 try:
-    if val > 255:
-        raise ValueError
+    v: uint8 = read_sensor(adc.read())   # caught here if read_sensor raised
+    handle(v)
 except ValueError:
     handle_error()
 finally:
@@ -70,28 +81,24 @@ finally:
 `ValueError`, `TypeError`, `IndexError`, `KeyError`, and `NotImplementedError` are builtins
 — no import required, exactly like CPython.
 
-**Limitations:**
+**How it works / limits:**
 
-| Limitation | Notes |
+| Property | Notes |
 |---|---|
-| SRAM cost: ~21 bytes per `try` block | `setjmp` saves 20 registers + PC to SRAM; on ATmega328P (2 KB) this is non-trivial |
-| `raise` and `except` must be in the same function | Only one `jmp_buf` active at a time — no handler chain; cross-function propagation is unsafe |
-| AVR only | PIC18 and other backends: use return codes or sentinel values instead |
-| Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime |
+| Zero SRAM, zero happy-path cost | No `jmp_buf`; each guarded call is followed by one `BRTS`, skipped when no error was raised |
+| Propagates across calls | A `raise` inside a called function is caught at the call site in the caller's `try` — cross-function propagation **is** the model; there is no same-function restriction |
+| Caught at call sites | An exception is detected after a **function call** inside the `try`. Raise from a helper and catch it where you call it (rather than `raise`-ing directly in the `try` body) |
+| AVR only | PIC and other backends: use return codes or sentinel values instead |
+| Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime; handlers match by integer code |
+| Unmatched exception | Falls through to a runtime last-resort handler (`__pymcu_unhandled_exn`), not a silent continue |
 
-:::{admonition} Prefer return codes for firmware
-:class: warning
+:::{admonition} Return codes are still often clearer for firmware
+:class: note
 
-`try / except` is valid Python but misaligned with bare-metal best practices. Every `try`
-block spends 21 bytes of SRAM on a `jmp_buf` even when no exception is raised. On a 2 KB
-device this adds up fast.
-
-Because there is only **one active `jmp_buf` at a time** (no handler chain), `raise` and
-`except` must be in the **same function**. Cross-function propagation is not safe: if an
-inner function has its own `try` block, its `jmp_buf` overwrites the caller's, and an
-unhandled raise will not reach the outer handler.
-
-The idiomatic alternative is a status return value:
+`try / except` is now zero-cost on the happy path (no `jmp_buf`, one skipped branch per
+guarded call), so the old "21 bytes of SRAM per `try`" objection no longer applies. Even so,
+an explicit status return is frequently the clearest bare-metal style, reads the same on
+every backend (not just AVR), and makes the error path obvious at each call:
 
 ```python
 # Idiomatic: zero SRAM overhead, works across any call depth
@@ -112,8 +119,8 @@ match read_sensor():
 **`CompileError` — compile-time intrinsic:**
 
 `raise CompileError("msg")` is intercepted by the compiler and **aborts compilation** with a
-`CompileError:` diagnostic. It never generates any runtime code or `longjmp`. Used in all
-HAL modules to reject unsupported configurations at compile time:
+`CompileError:` diagnostic. It never generates any runtime code or error-propagation
+instruction. Used in all HAL modules to reject unsupported configurations at compile time:
 
 ```python
 from pymcu.exceptions import CompileError

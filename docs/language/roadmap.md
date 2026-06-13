@@ -26,7 +26,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `global` / `nonlocal` | Cross-function variable access; `nonlocal` in `@inline` |
-| `try / except / raise / finally` | AVR only; `setjmp`/`longjmp`; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
+| `try / except / raise / finally` | AVR only; zero-cost T-flag propagation (`SET`/`CLT`/`BRTS`, no `setjmp`/`longjmp`); errors propagate across calls and are caught at the call site; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
