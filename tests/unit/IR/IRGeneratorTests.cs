@@ -339,6 +339,22 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void InOperator_AcceptsTupleLiteral()
+    {
+        // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the
+        // same as `x in [1, 2, 3]` — previously only a list literal was accepted.
+        const string src =
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    x: uint8 = 3\n" +
+            "    if x in (1, 2, 3):\n" +
+            "        out = 1\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
     public void BareTupleReturn_ParsesAndLowersInInlineFunction()
     {
         // `return a, b` (a bare comma-separated tuple, no parens) must parse and, from an

@@ -354,15 +354,21 @@ public partial class IRGenerator
                 }
             }
 
-            if (!(expr.Right is ListExpr rlist))
-                throw UserError("'in' / 'not in' requires a list literal on the right-hand side");
-            if (rlist.Elements.Count == 0) return new Constant(negate ? 1 : 0);
+            // The RHS may be a list `[...]` or a tuple `(...)` literal — both are valid in
+            // Python (`x in (1, 2, 3)`). Normalize to the element list.
+            List<Frontend.Expression> rhsElems = expr.Right switch
+            {
+                ListExpr rl => rl.Elements,
+                Frontend.TupleExpr rt => rt.Elements,
+                _ => throw UserError("'in' / 'not in' requires a list or tuple literal on the right-hand side")
+            };
+            if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
 
             var elems = new List<Val>();
             bool allConst = true;
             if (lhs is Constant lc)
             {
-                foreach (var e in rlist.Elements)
+                foreach (var e in rhsElems)
                 {
                     Val ev = VisitExpression(e);
                     if (ev is Constant ec)
@@ -378,7 +384,7 @@ public partial class IRGenerator
             }
             else
             {
-                foreach (var e in rlist.Elements) elems.Add(VisitExpression(e));
+                foreach (var e in rhsElems) elems.Add(VisitExpression(e));
             }
 
             Temporary result = MakeTemp(DataType.UINT8);
