@@ -142,6 +142,35 @@ public partial class IRGenerator
                 }
             }
 
+            // self.method(args) inside an outlined method: call the sibling outlined
+            // method, forwarding this method's own self — the slot pointer (Model B) or
+            // the field params (Model A). This keeps the call a shared subroutine instead
+            // of force-inlining the whole containing method at each call site.
+            if (memC.Object is VariableExpr { Name: "self" }
+                && outlinedMethods.Contains(currentFunction)
+                && methodInstanceTypes.TryGetValue(currentFunction, out var selfCls))
+            {
+                string target = ResolveMROMethod(selfCls, memC.Member) + "_" + memC.Member;
+                if (outlinedMethods.Contains(target))
+                {
+                    var fwdArgs = new List<Val>();
+                    if (slotMethods.Contains(currentFunction))
+                        fwdArgs.Add(new Variable(currentFunction + ".self", DataType.UINT16));
+                    else
+                        foreach (var (fld, ty, _) in outlineFieldLayout[currentFunction])
+                            fwdArgs.Add(new Variable(currentFunction + ".self_" + fld,
+                                DataTypeExtensions.StringToDataType(ty)));
+                    foreach (var a in expr.Args) fwdArgs.Add(VisitExpression(a));
+
+                    bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
+                                 || tRt == "void" || tRt == "None";
+                    if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
+                    Temporary tDst = MakeTemp(DataTypeExtensions.StringToDataType(functionReturnTypes[target]));
+                    Emit(new Call(target, fwdArgs, tDst));
+                    return tDst;
+                }
+            }
+
             if (memC.Object is VariableExpr ve)
             {
                 if (modules.ContainsKey(ve.Name))

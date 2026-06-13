@@ -693,6 +693,12 @@ public partial class IRGenerator
                 case VariableExpr ve: if (ve.Name == "self") safe = false; return; // bare self
                 case BinaryExpr b: E(b.Left); E(b.Right); return;
                 case UnaryExpr u: E(u.Operand); return;
+                // self.method(args): a sibling-method call. Allowed in an outlined body —
+                // it lowers to a call that forwards this method's own self (field params
+                // or slot pointer). Validate only the args, not the self.<method> callee.
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } } selfCall:
+                    foreach (var a in selfCall.Args) E(a);
+                    return;
                 case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
                 case KeywordArgExpr kw: E(kw.Value); return;
                 case IndexExpr ix: E(ix.Target); E(ix.Index); return;
