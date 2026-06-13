@@ -155,10 +155,30 @@ public static class Optimizer
                     // never contains global variable names, so DGE still fires.
                     if (instr is InlineAsm { Operands: null or { Count: 0 }, Code: var asmStr })
                     {
+                        // The asm string references globals two ways: by their full
+                        // mangled name, or via a {placeholder} the backend interpolates.
+                        // A placeholder uses the BARE name (e.g. {_tick}) while the global
+                        // key is module-prefixed (rtos__tick), so also match a global whose
+                        // name equals or ends with "_<placeholder>". Missing this dropped
+                        // asm-only globals as dead, leaving {_tick} unresolved in the output.
+                        var placeholders = new HashSet<string>();
+                        foreach (System.Text.RegularExpressions.Match pm in
+                                 System.Text.RegularExpressions.Regex.Matches(asmStr, @"\{([A-Za-z_][A-Za-z0-9_]*)\}"))
+                            placeholders.Add(pm.Groups[1].Value);
+
                         foreach (var gName in globalVarNames)
                         {
                             if (asmStr.Contains(gName.Replace('.', '_')))
+                            {
                                 referencedGlobals.Add(gName);
+                                continue;
+                            }
+                            foreach (var ph in placeholders)
+                                if (gName == ph || gName.EndsWith("_" + ph, StringComparison.Ordinal))
+                                {
+                                    referencedGlobals.Add(gName);
+                                    break;
+                                }
                         }
                     }
                 }

@@ -80,9 +80,20 @@ public class StackAllocator
         // main call-graph DFS and would otherwise have no SRAM region for their locals.
         // Each one gets its own non-overlapping region so concurrent executions don't alias.
         var funcRefTargets = new HashSet<string>();
+        void CollectFuncRef(Val? v) { if (v is FunctionRef fr) funcRefTargets.Add(fr.FunctionName); }
         foreach (var func in program.Functions)
             foreach (var instr in func.Body)
-                if (instr is Copy { Src: FunctionRef fr }) funcRefTargets.Add(fr.FunctionName);
+                switch (instr)
+                {
+                    // A function's address can be taken not only by `f = fn` but also by
+                    // passing it as an argument (e.g. add_task(task)) or storing it into a
+                    // Callable[] array — those tasks are entered via IJMP and still need
+                    // their locals allocated, or STS/LDS to them resolve to no .equ.
+                    case Copy c: CollectFuncRef(c.Src); break;
+                    case Call call: foreach (var a in call.Args) CollectFuncRef(a); break;
+                    case IndirectCall ic: foreach (var a in ic.Args) CollectFuncRef(a); break;
+                    case ArrayStore ast: CollectFuncRef(ast.Src); break;
+                }
 
         var taskBase = _maxStackUsage;
         foreach (var func in program.Functions)
