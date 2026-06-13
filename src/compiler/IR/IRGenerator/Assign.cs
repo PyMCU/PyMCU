@@ -722,6 +722,13 @@ public partial class IRGenerator
     // subscript on a register, with target-address resolution. Always terminal.
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
+        // Slice assignment (`arr[1:3] = [...]`) is not supported — there is no dynamic memmove
+        // on bare metal. Report it clearly instead of letting the SliceExpr reach
+        // VisitExpression as an unknown node. Assign elements individually.
+        if (indexExpr.Index is SliceExpr)
+            throw UserError(
+                "slice assignment (arr[a:b] = ...) is not supported; assign elements individually");
+
         if (indexExpr.Target is VariableExpr ve)
         {
             string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;

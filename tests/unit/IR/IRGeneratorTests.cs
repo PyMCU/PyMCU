@@ -339,6 +339,19 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void SliceAssignment_RaisesClearError()
+    {
+        // `arr[1:3] = [...]` is unsupported; it must report clearly, not surface the cryptic
+        // "Unknown Expression type: SliceExpr" from evaluating the slice node.
+        const string src =
+            "arr: uint8[5] = [1, 2, 3, 4, 5]\n" +
+            "def main():\n" +
+            "    arr[1:3] = [9, 9]\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("slice assignment", ex.Message);
+    }
+
+    [Fact]
     public void NegativeArrayInitializers_AreStored()
     {
         // `arr: int8[3] = [-1, -2, -3]` — negative literals parse as UnaryExpr(Negate), not
