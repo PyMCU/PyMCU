@@ -203,7 +203,13 @@ public partial class IRGenerator
                     if (stringIdToStr.TryGetValue(c.Value, out var s)) result += s;
                     else result += c.Value.ToString();
                 }
-                else throw new Exception("f-string interpolation requires a compile-time constant expression");
+                else throw new TypeError(
+                    "f-string interpolates a runtime value, which PyMCU does not support: " +
+                    "building a string at runtime needs a dynamic formatter/buffer that is " +
+                    "not generated on bare-metal targets. Use uart.write_str(\"...\") and " +
+                    "uart.write(value) / uart.write_hex(value) separately, or keep all " +
+                    "interpolated values compile-time constant.",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
             }
         }
 

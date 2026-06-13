@@ -258,6 +258,17 @@ public partial class IRGenerator
                     }
                     else
                     {
+                        // A list mutation method on something that is not a typed list:
+                        // the usual cause is an untyped `[]`, which has no runtime list to
+                        // mutate (it would emit a call to a nonexistent <var>_append symbol
+                        // and fail at link). Surface it clearly. These method names are never
+                        // valid on a non-list value, so this never flags a real symbol.
+                        if (memC.Member is "append" or "pop" or "insert" or "remove" or "extend" or "clear")
+                            throw new NameError(
+                                $"'.{memC.Member}()' requires a typed list; an untyped '[]' has no " +
+                                "runtime list. Declare it like `x: list[uint8] = []`, or use a " +
+                                "fixed-size array `x: uint8[N]`.",
+                                expr.Line > 0 ? expr.Line : lastLine, 1);
                         callee = vObj.Name + "_" + memC.Member;
                     }
                 }
@@ -1995,7 +2006,7 @@ public partial class IRGenerator
         }
 
         bool returnsVoidEnd = functionReturnTypes.TryGetValue(callee, out string? rType) && (rType == "void" || rType == "None");
-        
+
         if (returnsVoidEnd)
         {
             Emit(new Call(callee, argValuesL, new NoneVal()));
