@@ -2042,6 +2042,11 @@ public partial class IRGenerator
 
     private void VisitAugAssign(AugAssignStmt stmt)
     {
+        // A const-declared name is immutable; an augmented assignment (`K += 1`) mutates it
+        // just like a plain assignment, so reject it with the same located error.
+        if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
+            throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)");
+
         Val operand = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr ve)

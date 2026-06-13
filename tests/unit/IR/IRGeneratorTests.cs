@@ -339,6 +339,17 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ConstAugmentedAssignment_RaisesCompileError()
+    {
+        // `K += 1` mutates a const-declared name just like `K = ...`; both must be rejected.
+        const string src =
+            "K: const[uint8] = 5\n" +
+            "def main():\n" +
+            "    K += 1\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
     public void RegularFunctionKeywordArg_BindsByName()
     {
         // A keyword argument to a regular (non-@inline) subroutine must bind by parameter
