@@ -609,6 +609,13 @@ public partial class IRGenerator
                 throw new ValueError("integer division or modulo by zero",
                     expr.Line > 0 ? expr.Line : lastLine, 1);
 
+            // A shift count outside 0..31 has no meaning for PyMCU's fixed-width ints and
+            // would otherwise fold to a wrong value (C# masks the count to 5 bits, so
+            // `1 << 99` silently becomes `1 << 3`).
+            if (expr.Op is AstBinOp.LShift or AstBinOp.RShift && (cB.Value < 0 || cB.Value >= 32))
+                throw new ValueError($"shift count {cB.Value} out of range (expected 0..31)",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             switch (expr.Op)
             {
                 case AstBinOp.Add: return new Constant(cA.Value + cB.Value);
@@ -748,6 +755,11 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // A string subscript is a mistake — a single-char string would otherwise fold to
+        // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
+        if (expr.Index is StringLiteral)
+            throw UserError("array index must be an integer, not a string");
+
         if (expr.Index is SliceExpr sl)
         {
             if (expr.Target is VariableExpr srcVe)
