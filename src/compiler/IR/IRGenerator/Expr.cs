@@ -1160,6 +1160,20 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);
         if (constantAddressVariables.TryGetValue(flattenedName, out int ca))
             return new MemoryAddress(ca, DataType.UINT16);
+
+        // Member access on a plain numeric scalar (e.g. `x.foo` where x: uint8) is invalid:
+        // .value/.name are handled above, ZCA instance fields resolve through instanceClasses,
+        // pointers through constantAddressVariables/runtimePtrVars — so a numeric-typed base
+        // here means the member would fabricate an undefined `<base>_<member>` that reads as 0.
+        if (!globals.ContainsKey(flattenedName)
+            && variableTypes.TryGetValue(baseName, out var baseTy)
+            && baseTy is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                      or DataType.UINT32 or DataType.INT32
+            && !instanceClasses.ContainsKey(baseName)
+            && !constantAddressVariables.ContainsKey(baseName)
+            && !runtimePtrVars.ContainsKey(baseName))
+            throw UserError($"'{expr.Member}' is not a member of a numeric value");
+
         if (!globals.TryGetValue(flattenedName, out var sym5)) return new Variable(flattenedName, DataType.UINT8);
         if (sym5.IsMemoryAddress) return new MemoryAddress(sym5.Value, sym5.Type);
         return new Constant(sym5.Value);

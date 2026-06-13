@@ -997,6 +997,20 @@ public partial class IRGenerator
             return;
         }
 
+        // A float literal assigned to an integer-typed variable is a mistake — it would
+        // otherwise be silently dropped (the store never materializes). Require an explicit
+        // cast (e.g. uint8(3.5)) to make the truncation intentional.
+        if (stmt.Init is FloatLiteral)
+        {
+            DataType ft = DataTypeExtensions.StringToDataType(stmt.VarType);
+            if (ft is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                  or DataType.UINT32 or DataType.INT32)
+                throw new TypeError(
+                    $"cannot assign a float literal to integer variable '{stmt.Name}' of type " +
+                    $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+        }
+
         CheckIntLiteralRange(stmt.Init, DataTypeExtensions.StringToDataType(stmt.VarType), stmt.Line);
 
         if (stmt.VarType == "bytearray")
