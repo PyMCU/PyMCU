@@ -37,6 +37,11 @@ public partial class IRGenerator
     // Lets a non-inline call site fill in omitted trailing arguments, so defaults
     // work for real subroutines and not just @inline functions.
     private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
+    // Functions currently being inline/force-inline expanded up the call chain.
+    // If a callee is already here, expanding it again is recursion through inlined
+    // calls — which would loop forever and segfault the compiler. Detected here so
+    // a recursive @inline/ZCA method gets a clear error instead of a crash.
+    private HashSet<string> activeInlineExpansions = new();
     // Module prefix where each function was DEFINED, preserved across re-export so
     // inlining resolves the body's internal calls (e.g. a private @inline helper) in
     // the right module rather than the facade that re-exported the function.

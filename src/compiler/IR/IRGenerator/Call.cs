@@ -1427,6 +1427,19 @@ public partial class IRGenerator
 
         if (inlineFunctions.TryGetValue(callee, out var func))
         {
+            // Recursion guard: if this callee is already being expanded further up the
+            // chain, inlining it again would never terminate and overflow the compiler
+            // stack (SIGSEGV). PyMCU has no call frame for inlined/ZCA methods, so this
+            // recursion is unsupported — report it clearly instead of crashing.
+            if (!activeInlineExpansions.Add(callee))
+            {
+                string rn = func?.Name ?? callee;
+                throw new RecursionError(
+                    $"function '{rn}' is recursive; PyMCU has no call frame for inlined " +
+                    "or ZCA methods, so recursion is not supported — rewrite it as a loop",
+                    currentStmtLine > 0 ? currentStmtLine : 1, 1);
+            }
+
             // @warning("..."): print the author-supplied note (once per function)
             // when a call to this function is expanded. Informational only -- it
             // does NOT abort compilation, so flagged-but-usable features (soft-float,
@@ -1900,6 +1913,7 @@ public partial class IRGenerator
             if (Enumerable.Last<InlineContext>(inlineStack).ResultVars.Count > 0)
                 lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
             inlineStack.RemoveAt(inlineStack.Count - 1);
+            activeInlineExpansions.Remove(callee);
 
             currentInlinePrefix = savedPrefix;
             currentModulePrefix = savedModulePrefix;
