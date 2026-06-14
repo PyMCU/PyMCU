@@ -1827,7 +1827,7 @@ public partial class IRGenerator
     {
         { "uint8", DataType.UINT8 }, { "uint16", DataType.UINT16 }, { "uint32", DataType.UINT32 },
         { "int8", DataType.INT8 }, { "int16", DataType.INT16 }, { "int32", DataType.INT32 },
-        { "int", DataType.INT16 }
+        { "int", DataType.INT16 }, { "float", DataType.FLOAT }
     };
 
     // divmod(a, b): wider-operand result width; constant-folds, emits a fused
@@ -1911,6 +1911,8 @@ public partial class IRGenerator
         Val v = VisitExpression(expr.Args[0]);
         if (v is Constant c)
         {
+            // float(int_literal) -> a float constant (e.g. float(5) -> 5.0).
+            if (dstType == DataType.FLOAT) return new FloatConstant(c.Value);
             int val = c.Value;
             switch (dstType)
             {
@@ -1922,6 +1924,9 @@ public partial class IRGenerator
 
             return new Constant(val);
         }
+
+        // float(float_const) is the identity.
+        if (v is FloatConstant fcId && dstType == DataType.FLOAT) return fcId;
 
         // Float constant to integer cast: fold at compile time (e.g. uint16(0.5 * 1000) -> 500).
         if (v is FloatConstant fc && dstType != DataType.FLOAT)
