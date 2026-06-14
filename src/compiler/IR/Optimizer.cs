@@ -738,7 +738,18 @@ private static Function CloneFunction(Function f)
                                 result = q;
                                 break;
                             }
-                            case BinaryOp.Mod: result = c1.Value % c2.Value; break;
+                            case BinaryOp.Mod:
+                            {
+                                // Python's % follows the sign of the divisor (floor-mod),
+                                // not C#'s truncating remainder which follows the dividend.
+                                // Mirror the FloorDiv adjustment above so -7 % 2 folds to 1,
+                                // not -1. (For non-negative operands — all unsigned values —
+                                // the adjustment never triggers.)
+                                int r = c1.Value % c2.Value;
+                                if (r != 0 && (r < 0) != (c2.Value < 0)) r += c2.Value;
+                                result = r;
+                                break;
+                            }
                             case BinaryOp.Equal: result = c1.Value == c2.Value ? 1 : 0; break;
                             case BinaryOp.NotEqual: result = c1.Value != c2.Value ? 1 : 0; break;
                             case BinaryOp.LessThan: result = c1.Value < c2.Value ? 1 : 0; break;
