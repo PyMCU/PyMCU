@@ -48,7 +48,13 @@ public partial class IRGenerator
         if (stmt.Iterable != null)
         {
             var iter = stmt.Iterable;
-            string varKey = currentInlinePrefix + stmt.VarName;
+            // Qualify like the body resolves variable references (func-scoped names get the
+            // `func.` prefix when not inline-expanded), so a constant the unrolled loop binds to
+            // the loop variable is found when the body reads it. The inline-only prefix left a
+            // top-level loop variable bare while the body read "func.<name>".
+            string varKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
 
             string? GetStr(Expression e)
             {
@@ -745,7 +751,14 @@ public partial class IRGenerator
         if (stepVal is Constant stepZero && stepZero.Value == 0)
             throw UserError("for-in range() step cannot be zero.");
 
-        string varName = string.IsNullOrEmpty(currentInlinePrefix) ? stmt.VarName : currentInlinePrefix + stmt.VarName;
+        // Qualify the loop variable the same way the body resolves a variable reference:
+        // function-scoped names get the `func.` prefix when not inline-expanded. Using the
+        // inline-only prefix left a top-level loop variable bare ("i") while the body read it
+        // as "func.i", so the counter and the body's reads were different registers — using `i`
+        // in the body read 0 (e.g. `for i in range(n): acc += i` produced 0).
+        string varName = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + stmt.VarName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
         var loopVar = new Variable(varName, DataType.UINT8);
         Emit(new Copy(startVal, loopVar));
 
@@ -754,7 +767,13 @@ public partial class IRGenerator
         loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel });
 
         Emit(new Label(startLabel));
-        Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
+        // A negative step counts down, so the loop ends when the variable drops to or below
+        // stop (Python's range(hi, lo, -1)); a positive step ends at/above stop. The previous
+        // unconditional `>= stop` test made any negative-step runtime range exit immediately.
+        if (stepVal is Constant stepC && stepC.Value < 0)
+            Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+        else
+            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
 
         VisitStatement(stmt.Body);
 
