@@ -890,6 +890,18 @@ private static Function CloneFunction(Function f)
         return DataType.UNKNOWN;
     }
 
+    // True if forwarding `src` in place of a value of type `dstType` would change the
+    // value's representation — a different byte width or signedness. Such a copy is a
+    // numeric cast / reinterpret whose type must be preserved (it governs sign/zero
+    // extension, signed comparisons, and the print formatter); copy propagation must not
+    // forward through it. Unknown types are treated as non-changing to avoid over-blocking.
+    private static bool ChangesRepr(Val src, DataType dstType)
+    {
+        DataType st = GetDataType(src);
+        if (st == DataType.UNKNOWN || dstType == DataType.UNKNOWN) return false;
+        return st.SizeOf() != dstType.SizeOf() || st.IsSigned() != dstType.IsSigned();
+    }
+
     private static int WrapToType(int value, DataType type)
     {
         switch (type)
@@ -1042,6 +1054,14 @@ private static Function CloneFunction(Function f)
                                 func.Body[i] = new Copy(intConst, tDst);
                                 tempCopies[tDst.Name] = intConst;
                             }
+                            // A width- or signedness-changing copy is a numeric cast/reinterpret
+                            // (e.g. int8(uint8_var) emits Copy(uint8 -> int8 temp)). Forwarding
+                            // the source would discard the cast's type, so later sign/zero
+                            // extension at a call boundary, a signed comparison, or the print
+                            // formatter would read the source's signedness instead of the cast's.
+                            // Keep the temp materialized.
+                            else if (ChangesRepr(copy.Src, tDst.Type))
+                                blacklistedTemps.Add(tDst.Name);
                             else
                                 tempCopies[tDst.Name] = copy.Src;
                         }
@@ -1165,6 +1185,9 @@ private static Function CloneFunction(Function f)
             if (IsGlobal(dstName) || IsGlobal(s.Name)) return false;
             if (untrackable.Contains(dstName) || untrackable.Contains(s.Name)) return false;
             if (dstName == s.Name) return false;
+            // A width-/signedness-changing copy is a cast/reinterpret; forwarding the
+            // source would discard the type the cast established (see ChangesRepr).
+            if (ChangesRepr(s, dstType)) return false;
             src = s;
             return true;
         }
