@@ -30,7 +30,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.attiny2313 import UCSRA, UCSRB, UCSRC, UBRRL, UBRRH, UDR, DDRD, SREG
-from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
+from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 _rx_buf:  uint8[16] = bytearray(16)
@@ -175,25 +175,34 @@ def uart_write_decimal_i16(value: int16):
 
 
 def uart_write_decimal_u32(value: uint32):
-    # Print uint32 value as decimal digits (0-4294967295).
-    # Split into high group (value // 100000, printed without leading zeros)
-    # and zero-padded low group (value % 100000, always 5 digits).
-    if value < 100000:
-        uart_write_decimal_u16(uint16(value))
+    # Print uint32 value as decimal digits (0-4294967295). Peel least-significant digits into a
+    # buffer, then emit them in reverse (same shape as uart_write_decimal_u16). The accumulator
+    # stays uint32 throughout: a uint16 intermediate would truncate any value whose low group is
+    # 65536..99999 (e.g. 83647 -> 18111), corrupting large values.
+    if value == 0:
+        uart_write(48)  # '0'
+        return
+    buf: uint8[10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    n: uint8 = 0
+    while value > 0:
+        buf[n] = uint8(value % 10) + 48
+        value = value // 10
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
+
+
+def uart_write_decimal_i32(value: int32):
+    # Print int32 value as decimal digits with optional minus sign (-2147483648 to 2147483647).
+    # value == INT32_MIN: 0 - value wraps to 0x80000000, whose uint32 reading (2147483648) is the
+    # correct magnitude, so "-2147483648" still prints correctly.
+    if value < 0:
+        uart_write(45)  # '-'
+        abs_val: uint32 = uint32(0 - value)
+        uart_write_decimal_u32(abs_val)
     else:
-        high: uint16 = uint16(value // 100000)
-        low5: uint16 = uint16(value % 100000)
-        uart_write_decimal_u16(high)
-        d: uint8 = uint8(low5 // 10000)
-        uart_write(d + 48)
-        d = uint8((low5 // 1000) % 10)
-        uart_write(d + 48)
-        d = uint8((low5 // 100) % 10)
-        uart_write(d + 48)
-        d = uint8((low5 // 10) % 10)
-        uart_write(d + 48)
-        d = uint8(low5 % 10)
-        uart_write(d + 48)
+        uart_write_decimal_u32(uint32(value))
 
 
 def uart_write_str(s: const[str]):

@@ -2169,7 +2169,7 @@ public partial class IRGenerator
                 DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
                 DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
                 DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
-                DataType.INT32 => ("uart_write_decimal_i16", DataType.INT16),
+                DataType.INT32 => ("uart_write_decimal_i32", DataType.INT32),
                 // int8 has no dedicated signed formatter: widen to int16 (the Copy below
                 // sign-extends a signed source) so a negative value prints with its sign
                 // instead of being read as an unsigned byte (e.g. -1 as 255).
