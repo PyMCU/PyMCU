@@ -422,6 +422,71 @@ public partial class IRGenerator
                     Expression arg0 = call.Args[0];
                     Expression arg1 = call.Args[1];
 
+                    // zip(a, b) over two fixed arrays whose elements may be runtime values:
+                    // iterate element-wise, binding each loop variable to the element (Copy from
+                    // arr__k, or ArrayLoad for SRAM arrays). The all-constant fast paths below
+                    // still apply to list literals / function-reference lists.
+                    (string Base, int Size, DataType Elem)? ResolveArr(Expression e)
+                    {
+                        if (e is not VariableExpr ve) return null;
+                        foreach (var k in new[]
+                        {
+                            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                            ve.Name,
+                        })
+                        {
+                            if (k != null && arraySizes.TryGetValue(k, out int sz))
+                                return (k, sz, arrayElemTypes.TryGetValue(k, out var dt) ? dt : DataType.UINT8);
+                        }
+                        int sz2 = ResolveAliasedArraySize(ve.Name, out var b2);
+                        if (sz2 > 0) return (b2, sz2, arrayElemTypes.TryGetValue(b2, out var dt2) ? dt2 : DataType.UINT8);
+                        return null;
+                    }
+
+                    if (ResolveArr(arg0) is var ra && ra is not null
+                        && ResolveArr(arg1) is var rb && rb is not null)
+                    {
+                        string qk1 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key1 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                        string qk2 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key2 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                        variableTypes[qk1] = ra.Value.Elem;
+                        variableTypes[qk2] = rb.Value.Elem;
+                        bool sram0 = arraysWithVariableIndex.Contains(ra.Value.Base) || moduleSramArrays.Contains(ra.Value.Base);
+                        bool sram1 = arraysWithVariableIndex.Contains(rb.Value.Base) || moduleSramArrays.Contains(rb.Value.Base);
+                        int zlen = Math.Min(ra.Value.Size, rb.Value.Size);
+                        bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string zBreak = zbrk ? MakeLabel() : "";
+
+                        void Bind(string qk, (string Base, int Size, DataType Elem) arr, bool sram, int k)
+                        {
+                            string ek = arr.Base + "__" + k;
+                            if (sram)
+                            {
+                                Temporary tmp = MakeTemp(arr.Elem);
+                                Emit(new ArrayLoad(arr.Base, new Constant(k), tmp, arr.Elem, arr.Size));
+                                Emit(new Copy(tmp, new Variable(qk, arr.Elem)));
+                            }
+                            else if (constantVariables.TryGetValue(ek, out int cv)) constantVariables[qk] = cv;
+                            else Emit(new Copy(new Variable(ek, arr.Elem), new Variable(qk, arr.Elem)));
+                        }
+
+                        for (int k = 0; k < zlen; ++k)
+                        {
+                            string zCont = zbrk ? MakeLabel() : "";
+                            if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak });
+                            Bind(qk1, ra.Value, sram0, k);
+                            Bind(qk2, rb.Value, sram1, k);
+                            VisitStatement(stmt.Body);
+                            if (zbrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(zCont)); }
+                            constantVariables.Remove(qk1);
+                            constantVariables.Remove(qk2);
+                        }
+                        if (zbrk) Emit(new Label(zBreak));
+                        return;
+                    }
+
                     List<int> CollectInts(Expression e)
                     {
                         if (e is ListExpr le2)
