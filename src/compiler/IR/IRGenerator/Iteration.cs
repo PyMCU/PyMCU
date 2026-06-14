@@ -43,6 +43,35 @@ public partial class IRGenerator
     // body is not duplicated per character.
     private const int StringForLoopUnrollLimit = 8;
 
+    // True if `s` has a break/continue that targets the *enclosing* loop — i.e. one not nested
+    // inside its own for/while (which owns its break/continue). A compile-time-unrolled loop
+    // must, only when this holds, bracket each iteration with a continue label and share a break
+    // label so those statements have somewhere to jump; when it does not, the plain unroll is
+    // kept so per-iteration constant folding is not split across label boundaries.
+    private static bool LoopBodyHasBreakOrContinue(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return false;
+            case BreakStmt:
+            case ContinueStmt: return true;
+            case ForStmt:
+            case WhileStmt: return false;            // nested loop owns its break/continue
+            case Block b: return b.Statements.Any(LoopBodyHasBreakOrContinue);
+            case IfStmt i:
+                return LoopBodyHasBreakOrContinue(i.ThenBranch)
+                       || i.ElifBranches.Any(e => LoopBodyHasBreakOrContinue(e.Body))
+                       || LoopBodyHasBreakOrContinue(i.ElseBranch);
+            case MatchStmt m: return m.Branches.Any(br => LoopBodyHasBreakOrContinue(br.Body));
+            case WithStmt w: return LoopBodyHasBreakOrContinue(w.Body);
+            case TryStmt t:
+                return t.Body.Any(LoopBodyHasBreakOrContinue)
+                       || t.Handlers.Any(h => h.Handler.Any(LoopBodyHasBreakOrContinue))
+                       || (t.Finally?.Any(LoopBodyHasBreakOrContinue) ?? false);
+            default: return false;
+        }
+    }
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
@@ -722,8 +751,17 @@ public partial class IRGenerator
                     DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
                     variableTypes[forVarKey] = elemDt2;
 
+                    // Only bracket iterations with labels when the body actually uses break/continue
+                    // (else keep the plain unroll so constant folding is not split by labels).
+                    bool forBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                    string forBreakLabel = forBrk ? MakeLabel() : "";
+
                     for (int fk = 0; fk < forSize; fk++)
                     {
+                        string forContLabel = forBrk ? MakeLabel() : "";
+                        if (forBrk)
+                            loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel });
+
                         string elemKey2 = forBase + "__" + fk;
                         bool isZca = instanceClasses.ContainsKey(elemKey2) ||
                                      instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
@@ -736,9 +774,15 @@ public partial class IRGenerator
 
                         VisitStatement(stmt.Body);
 
+                        if (forBrk)
+                        {
+                            loopStack.RemoveAt(loopStack.Count - 1);
+                            Emit(new Label(forContLabel));   // continue lands here: end of this iteration
+                        }
                         CleanCtState(forVarKey);
                         constantVariables.Remove(forVarKey);
                     }
+                    if (forBrk) Emit(new Label(forBreakLabel));
                     return;
                 }
             }
@@ -780,8 +824,15 @@ public partial class IRGenerator
                         : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
                     variableTypes[slKey] = slElem;
 
+                    bool slBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                    string slBreakLabel = slBrk ? MakeLabel() : "";
+
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step)
                     {
+                        string slContLabel = slBrk ? MakeLabel() : "";
+                        if (slBrk)
+                            loopStack.Add(new LoopLabels { ContinueLabel = slContLabel, BreakLabel = slBreakLabel });
+
                         string elemKey = slBase + "__" + i;
                         if (slSram)
                         {
@@ -795,8 +846,15 @@ public partial class IRGenerator
                             Emit(new Copy(new Variable(elemKey, slElem), new Variable(slKey, slElem)));
 
                         VisitStatement(stmt.Body);
+
+                        if (slBrk)
+                        {
+                            loopStack.RemoveAt(loopStack.Count - 1);
+                            Emit(new Label(slContLabel));
+                        }
                         constantVariables.Remove(slKey);
                     }
+                    if (slBrk) Emit(new Label(slBreakLabel));
 
                     return;
                 }
