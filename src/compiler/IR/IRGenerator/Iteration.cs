@@ -743,8 +743,67 @@ public partial class IRGenerator
                 }
             }
 
+            // for v in arr[lo:hi:step]: — unroll over a fixed-array slice (constant bounds).
+            if (iter is IndexExpr { Target: VariableExpr sliceVar, Index: SliceExpr slc })
+            {
+                string slBase = "";
+                int slSize = -1;
+                if (!string.IsNullOrEmpty(currentInlinePrefix)
+                    && arraySizes.TryGetValue(currentInlinePrefix + sliceVar.Name, out int ss0))
+                { slSize = ss0; slBase = currentInlinePrefix + sliceVar.Name; }
+                if (slSize < 0 && !string.IsNullOrEmpty(currentFunction)
+                    && arraySizes.TryGetValue(currentFunction + "." + sliceVar.Name, out int ss1))
+                { slSize = ss1; slBase = currentFunction + "." + sliceVar.Name; }
+                if (slSize < 0 && arraySizes.TryGetValue(sliceVar.Name, out int ss2))
+                { slSize = ss2; slBase = sliceVar.Name; }
+                if (slSize < 0)
+                {
+                    int ss3 = ResolveAliasedArraySize(sliceVar.Name, out var sb3);
+                    if (ss3 > 0) { slSize = ss3; slBase = sb3; }
+                }
+
+                if (slSize > 0)
+                {
+                    int start = slc.Start != null ? EvaluateConstantExpr(slc.Start) : 0;
+                    int stop = slc.Stop != null ? EvaluateConstantExpr(slc.Stop) : slSize;
+                    int step = slc.Step != null ? EvaluateConstantExpr(slc.Step) : 1;
+                    if (step == 0) throw UserError("for-in slice step cannot be zero.");
+                    if (start < 0) start += slSize;
+                    if (stop < 0) stop += slSize;
+                    start = Math.Max(0, Math.Min(start, slSize));
+                    stop = Math.Max(0, Math.Min(stop, slSize));
+
+                    DataType slElem = arrayElemTypes.TryGetValue(slBase, out var sdt) ? sdt : DataType.UINT8;
+                    bool slSram = arraysWithVariableIndex.Contains(slBase) || moduleSramArrays.Contains(slBase);
+                    string slKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + stmt.VarName
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                    variableTypes[slKey] = slElem;
+
+                    for (int i = start; step > 0 ? i < stop : i > stop; i += step)
+                    {
+                        string elemKey = slBase + "__" + i;
+                        if (slSram)
+                        {
+                            Temporary tmp = MakeTemp(slElem);
+                            Emit(new ArrayLoad(slBase, new Constant(i), tmp, slElem, slSize));
+                            Emit(new Copy(tmp, new Variable(slKey, slElem)));
+                        }
+                        else if (constantVariables.TryGetValue(elemKey, out int cv))
+                            constantVariables[slKey] = cv;
+                        else
+                            Emit(new Copy(new Variable(elemKey, slElem), new Variable(slKey, slElem)));
+
+                        VisitStatement(stmt.Body);
+                        constantVariables.Remove(slKey);
+                    }
+
+                    return;
+                }
+            }
+
             throw UserError(
-                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), or reversed(iterable). Use 'const[str]' type annotation for string parameters.");
+                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
         }
 
         Val startVal = stmt.RangeStart != null ? VisitExpression(stmt.RangeStart) : new Constant(0);
