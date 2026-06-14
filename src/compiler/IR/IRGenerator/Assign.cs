@@ -2290,15 +2290,22 @@ public partial class IRGenerator
             {
                 if (nTup != nTgt) throw UserError($"Tuple size mismatch");
                 // Python evaluates the whole RHS tuple before assigning, so snapshot
-                // each runtime value into a temporary first. Otherwise `a, b = b, a`
-                // would assign a = b and then read the already-overwritten a.
+                // each runtime value first. Otherwise `a, b = b, a` would assign a = b and
+                // then read the already-overwritten a. The snapshot must be a named Variable,
+                // not a Temporary: the linear copy-propagation forwards a temp aliasing a
+                // variable past that variable's reassignment (it would turn `b = snap` back
+                // into `b = a` after `a = ...`), whereas a variable-to-variable copy is left to
+                // the CFG-aware pass, whose dataflow correctly kills the alias when the source
+                // is redefined. The name is globally unique (tempCounter), so it never collides.
                 var snapshots = new List<Val>(nTup);
                 foreach (var el in tup.Elements)
                 {
                     Val v = VisitExpression(el);
                     if (v is Variable or Temporary)
                     {
-                        Temporary snap = MakeTemp(GetValType(v));
+                        DataType st = GetValType(v);
+                        var snap = new Variable($"__unpack{tempCounter++}", st);
+                        variableTypes[snap.Name] = st;
                         Emit(new Copy(v, snap));
                         snapshots.Add(snap);
                     }
