@@ -2170,6 +2170,10 @@ public partial class IRGenerator
                 DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
                 DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
                 DataType.INT32 => ("uart_write_decimal_i16", DataType.INT16),
+                // int8 has no dedicated signed formatter: widen to int16 (the Copy below
+                // sign-extends a signed source) so a negative value prints with its sign
+                // instead of being read as an unsigned byte (e.g. -1 as 255).
+                DataType.INT8 => ("uart_write_decimal_i16", DataType.INT16),
                 _ => ("uart_write_decimal_u8", DataType.UINT8),
             };
             string decFn = ResolveCallee(decBase);
