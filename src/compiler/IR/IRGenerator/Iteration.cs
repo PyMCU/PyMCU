@@ -366,8 +366,13 @@ public partial class IRGenerator
                             else qualifiedVal = stmt.Var2Name;
 
                             variableTypes[qualifiedVal] = elemDt;
+                            bool enBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                            string enBreakLabel = enBrk ? MakeLabel() : "";
                             for (int k = 0; k < arrSize; ++k)
                             {
+                                string enContLabel = enBrk ? MakeLabel() : "";
+                                if (enBrk)
+                                    loopStack.Add(new LoopLabels { ContinueLabel = enContLabel, BreakLabel = enBreakLabel });
                                 constantVariables[idxKey] = k;
                                 if (useSram)
                                 {
@@ -403,9 +408,11 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
+                                if (enBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(enContLabel)); }
                                 CleanCtState(qualifiedVal);
                                 constantVariables.Remove(qualifiedVal);
                             }
+                            if (enBrk) Emit(new Label(enBreakLabel));
 
                             constantVariables.Remove(idxKey);
                             return;
@@ -700,8 +707,13 @@ public partial class IRGenerator
                                     ? currentFunction + "." + stmt.VarName
                                     : valKey);
                             variableTypes[qValKey] = elemDt;
+                            bool rvBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                            string rvBreakLabel = rvBrk ? MakeLabel() : "";
                             for (int k = arrSize - 1; k >= 0; --k)
                             {
+                                string rvContLabel = rvBrk ? MakeLabel() : "";
+                                if (rvBrk)
+                                    loopStack.Add(new LoopLabels { ContinueLabel = rvContLabel, BreakLabel = rvBreakLabel });
                                 string elemKey = @base + "__" + k;
                                 if (constantVariables.TryGetValue(elemKey, out int cv))
                                     constantVariables[valKey] = cv;
@@ -711,9 +723,11 @@ public partial class IRGenerator
                                 else
                                     Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
+                                if (rvBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rvContLabel)); }
                                 CleanCtState(qValKey);
                                 constantVariables.Remove(valKey);
                             }
+                            if (rvBrk) Emit(new Label(rvBreakLabel));
                             return;
                         }
                     }
