@@ -89,8 +89,10 @@ public partial class IRGenerator
 
                     Emit(new Copy(new Constant(0), sIdxVar));
                     string sStart = MakeLabel();
+                    string sCont = MakeLabel();
                     string sEnd = MakeLabel();
-                    loopStack.Add(new LoopLabels { ContinueLabel = sStart, BreakLabel = sEnd });
+                    // continue advances the index then re-tests (else the loop spins on one char).
+                    loopStack.Add(new LoopLabels { ContinueLabel = sCont, BreakLabel = sEnd });
 
                     Emit(new Label(sStart));
                     Emit(new JumpIfGreaterOrEqual(sIdxVar, new Constant(strOpt.Length), sEnd));
@@ -98,6 +100,7 @@ public partial class IRGenerator
 
                     VisitStatement(stmt.Body);
 
+                    Emit(new Label(sCont));
                     Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, sIdxVar, new Constant(1)));
                     Emit(new Jump(sStart));
                     Emit(new Label(sEnd));
@@ -657,8 +660,10 @@ public partial class IRGenerator
                     variableTypes[elemVarName] = elemDt;
 
                     string loopStart = MakeLabel();
+                    string loopCont = MakeLabel();
                     string loopEnd = MakeLabel();
-                    loopStack.Add(new LoopLabels { ContinueLabel = loopStart, BreakLabel = loopEnd });
+                    // continue advances the index then re-tests (else the loop spins on one elem).
+                    loopStack.Add(new LoopLabels { ContinueLabel = loopCont, BreakLabel = loopEnd });
 
                     Emit(new Label(loopStart));
                     Temporary cmpTmp = MakeTemp(DataType.UINT8);
@@ -672,6 +677,7 @@ public partial class IRGenerator
 
                     VisitStatement(stmt.Body);
 
+                    Emit(new Label(loopCont));
                     Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, idxVar, new Constant(1)));
                     Emit(new Jump(loopStart));
                     Emit(new Label(loopEnd));
@@ -763,8 +769,12 @@ public partial class IRGenerator
         Emit(new Copy(startVal, loopVar));
 
         string startLabel = MakeLabel();
+        string contLabel = MakeLabel();
         string endLabel = MakeLabel();
-        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel });
+        // `continue` must run the step before re-testing, otherwise the loop variable never
+        // advances and the loop spins forever — so the continue target is the step, not the
+        // condition check at the top.
+        loopStack.Add(new LoopLabels { ContinueLabel = contLabel, BreakLabel = endLabel });
 
         Emit(new Label(startLabel));
         // A negative step counts down, so the loop ends when the variable drops to or below
@@ -777,6 +787,7 @@ public partial class IRGenerator
 
         VisitStatement(stmt.Body);
 
+        Emit(new Label(contLabel));
         Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, loopVar, stepVal));
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
