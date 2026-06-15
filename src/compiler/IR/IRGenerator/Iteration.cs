@@ -848,6 +848,11 @@ public partial class IRGenerator
                         : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
                     DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
                     variableTypes[forVarKey] = elemDt2;
+                    // An SRAM-resident array (runtime-indexed or module-level) has no per-element
+                    // arr__k vars — its elements live in memory and must be read with an indexed
+                    // load, exactly as the enumerate path does. Without this a `for v in arr` over
+                    // such an array read 0 from the missing element vars.
+                    bool forSram = arraysWithVariableIndex.Contains(forBase) || moduleSramArrays.Contains(forBase);
 
                     // Only bracket iterations with labels when the body actually uses break/continue
                     // (else keep the plain unroll so constant folding is not split by labels).
@@ -863,7 +868,13 @@ public partial class IRGenerator
                         string elemKey2 = forBase + "__" + fk;
                         bool isZca = instanceClasses.ContainsKey(elemKey2) ||
                                      instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
-                        if (isZca)
+                        if (forSram)
+                        {
+                            Temporary tmp = MakeTemp(elemDt2);
+                            Emit(new ArrayLoad(forBase, new Constant(fk), tmp, elemDt2, forSize));
+                            Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
+                        }
+                        else if (isZca)
                             PropagateCtState(elemKey2, forVarKey);
                         else if (constantVariables.TryGetValue(elemKey2, out int cv2))
                             constantVariables[forVarKey] = cv2;
