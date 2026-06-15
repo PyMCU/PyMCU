@@ -1191,6 +1191,23 @@ public partial class IRGenerator
             baseName = next;
         }
 
+        // RFC 0001 Model B (SRAM slot): a direct field read on a slot instance OUTSIDE a method
+        // (`p.x` where p is a multi-field ZCA) must load from the instance slot. Without this it
+        // fell through to a flattened `p_x` variable that no store ever wrote -- a 0 read, or an
+        // undefined-symbol link error once the dead var was DCE'd.
+        if (baseName != null && slotInstances.TryGetValue(baseName, out var slotArrR)
+            && instanceClasses.TryGetValue(baseName, out var slotClsR)
+            && TryGetSlotFieldOffset(slotClsR, expr.Member, out int slotOffR, out DataType slotTyR))
+        {
+            // The slot is a direct SRAM array here (not a pointer as inside a method), so use a
+            // byte-offset ArrayLoad -- matching EmitSlotConstruction's ArrayStore. (A BytearrayLoad
+            // would dereference main.p__slot as a pointer and read 0.)
+            int slotTotR = arraySizes.TryGetValue(slotArrR, out var tszR) ? tszR : 0;
+            Temporary slotLoaded = MakeTemp(slotTyR);
+            Emit(new ArrayLoad(slotArrR, new Constant(slotOffR), slotLoaded, DataType.UINT8, slotTotR));
+            return slotLoaded;
+        }
+
         var flattenedName = baseName + "_" + expr.Member;
 
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);

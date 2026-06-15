@@ -477,6 +477,36 @@ public partial class IRGenerator
     // (slot/Model A), property-less member writes, and the related dispatch.
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
+        // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field> = v` stores back to
+        // the instance slot via the `self` pointer at the field's byte offset. The read side
+        // (VisitMemberAccess) had this but the write side did not, so a multi-field ZCA's mutating
+        // method compiled to nothing -- the mutation was silently dropped (move() left x/y intact).
+        if (memExpr2.Object is VariableExpr slotSelf && slotSelf.Name == "self"
+            && slotMethodFieldOffsets.TryGetValue(currentFunction, out var slotOffs)
+            && slotOffs.TryGetValue(memExpr2.Member, out int slotOff))
+        {
+            Emit(new BytearrayStore(currentFunction + ".self", new Constant(slotOff), value));
+            return;
+        }
+
+        // Direct field write on a slot instance outside a method (`p.x = v`): store into the
+        // instance slot, mirroring the direct read in VisitMemberAccess. Otherwise it wrote a
+        // flattened `p_x` variable disjoint from the slot the methods read.
+        if (memExpr2.Object is VariableExpr slotInst)
+        {
+            string sb = slotInst.Name;
+            while (sb != null && variableAliases.TryGetValue(sb, out var sa)) sb = sa;
+            if (sb != null && slotInstances.TryGetValue(sb, out var slotArrW)
+                && instanceClasses.TryGetValue(sb, out var slotClsW)
+                && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out _))
+            {
+                // Direct SRAM array (not a pointer): byte-offset ArrayStore, matching construction.
+                int slotTotW = arraySizes.TryGetValue(slotArrW, out var tszW) ? tszW : 0;
+                Emit(new ArrayStore(slotArrW, new Constant(slotOffW), value, DataType.UINT8, slotTotW));
+                return;
+            }
+        }
+
         if (memExpr2.Member == "value")
         {
             var target = VisitExpression(memExpr2.Object);
@@ -755,6 +785,25 @@ public partial class IRGenerator
 
             if (variableAliases.TryGetValue(key, out var next)) key = next;
             else break;
+        }
+
+        return false;
+    }
+
+    // RFC 0001 Model B (SRAM slot): byte offset and declared type of <field> within <cls>'s slot,
+    // matching the layout order used by EmitSlotConstruction and the outlined methods. Used to
+    // resolve a direct field access on a slot instance (outside a method) to a slot load/store.
+    private bool TryGetSlotFieldOffset(string? cls, string field, out int offset, out DataType type)
+    {
+        offset = 0;
+        type = DataType.UINT8;
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return false;
+        int off = 0;
+        foreach (var (f, ty, _) in layout)
+        {
+            var dt = DataTypeExtensions.StringToDataType(ty);
+            if (f == field) { offset = off; type = dt; return true; }
+            off += dt.SizeOf();
         }
 
         return false;
