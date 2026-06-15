@@ -758,7 +758,8 @@ def build(
                     # routines (__divs*/__mods*) wrap the unsigned core, which lives in
                     # the same .S file, so pulling in their file also brings the core.
                     runtime_funcs = ["__div8", "__mod8", "__mul8", "__div16", "__mod16", "__div32", "__mod32",
-                                     "__divs8", "__mods8", "__divs16", "__mods16", "__divs32", "__mods32"]
+                                     "__divs8", "__mods8", "__divs16", "__mods16", "__divs32", "__mods32",
+                                     "__mul32"]
                     needed_funcs = [f for f in runtime_funcs if f in asm_content]
 
                     if needed_funcs:
@@ -777,6 +778,7 @@ def build(
                             "__mod32": "div32.S",
                             "__divs32": "div32.S",
                             "__mods32": "div32.S",
+                            "__mul32": "mul32.S",
                         }
                         math_runtime_text = "\n; --- PyMCU AVR Math Runtime ---\n"
                         included_files = set()
