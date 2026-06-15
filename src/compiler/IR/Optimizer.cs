@@ -1443,13 +1443,24 @@ private static Function CloneFunction(Function f)
 
     private static void CollapseBoolJumps(Function func)
     {
+        // Labels that some jump can land on. Fusing a comparison into a jump that sits AFTER such
+        // a label is unsound: control reaching the jump via the label never executed the
+        // comparison, yet the fused compare-branch would re-test the (now unrelated) operands.
+        // This is exactly the `a or b` short-circuit shape -- `jnz a, end; ...; end: jz orResult`
+        // -- where folding the `b` comparison into the post-`end` jump drops the `a`-true path.
+        var jumpTargets = new HashSet<string>();
+        foreach (var instr in func.Body)
+            if (JumpTargetOf(instr) is string tgt) jumpTargets.Add(tgt);
+
         for (var i = 0; i + 1 < func.Body.Count; ++i)
         {
             if (func.Body[i] is not Binary bin) continue;
             if (bin.Dst is not Temporary dstTmp) continue;
 
             var j = i + 1;
-            while (j < func.Body.Count && func.Body[j] is Label) j++;
+            // Skip only labels that are NOT jump targets; a target label is a barrier (the jump
+            // past it has another predecessor, so the comparison does not dominate it).
+            while (j < func.Body.Count && func.Body[j] is Label lbl && !jumpTargets.Contains(lbl.Name)) j++;
             if (j >= func.Body.Count) continue;
 
             string target;
