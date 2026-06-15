@@ -491,7 +491,24 @@ public partial class IRGenerator
                                     var defLayout = DeriveFieldLayout(block);
                                     if (IsOutlineSafe(func, defLayout))
                                     {
-                                        RegisterOutlinedMethod(func, classKey, defLayout, fullName);
+                                        // A single-field mutator that ALSO has explicit returns
+                                        // cannot use write-back-via-return (one return slot can't
+                                        // carry both a value and the field). Force-inline it so
+                                        // self.field aliasing persists the mutation. Registered in
+                                        // inlineFunctions ONLY (never functionsToCompile) so it is
+                                        // expanded per call site, not compiled standalone (which
+                                        // would treat self as numeric and fail).
+                                        if (defLayout.Count == 1
+                                            && MethodMutatesField(func, defLayout[0].Field)
+                                            && MethodHasReturnStmt(func))
+                                        {
+                                            inlineFunctions[fullName] = func;
+                                            instanceMethodDefs[fullName] = func;
+                                        }
+                                        else
+                                        {
+                                            RegisterOutlinedMethod(func, classKey, defLayout, fullName);
+                                        }
                                     }
                                     else
                                     {
@@ -716,12 +733,35 @@ public partial class IRGenerator
         for (int pi = 1; pi < func.Params.Count; ++pi)
             synthParams.Add(func.Params[pi]);
 
-        var synth = new FunctionDef(func.Name, synthParams, func.ReturnType, func.Body, isInline: false);
+        // RFC 0001 (write-back): a single-field (Model A) method that mutates its field but
+        // never returns a value loses the mutation, because the field is passed BY VALUE.
+        // Rewrite the shared body to RETURN the (updated) field and record the field so the
+        // call site copies it back to the instance. The caller routes mutators that have
+        // explicit returns to force-inline instead, so here the body always falls through:
+        // appending a single `return self.<field>` is sufficient.
+        Block body = func.Body;
+        string returnType = func.ReturnType;
+        if (!slotClasses.Contains(classKey) && layout.Count == 1
+            && MethodMutatesField(func, layout[0].Field) && !MethodHasReturnStmt(func))
+        {
+            var (field, ftype, _) = layout[0];
+            body = new Block();
+            body.Statements.AddRange(func.Body.Statements);
+            body.Statements.Add(new ReturnStmt(new MemberAccessExpr(new VariableExpr("self"), field)));
+            returnType = ftype;
+            outlineWriteBack[fullName] = (field, DataTypeExtensions.StringToDataType(ftype));
+            if (!zcaWriteBackFields.TryGetValue(classKey, out var wf))
+                zcaWriteBackFields[classKey] = wf = new HashSet<string>();
+            wf.Add(field);
+        }
+
+        var synth = new FunctionDef(func.Name, synthParams, returnType, body, isInline: false);
         functionsToCompile.Add(new FunctionEntry
             { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile });
 
         outlinedMethods.Add(fullName);
         outlineFieldLayout[fullName] = layout;
+        functionReturnTypes[fullName] = returnType;
         functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
         functionParamTypes[fullName] = synthParams.Select(p => DataTypeExtensions.StringToDataType(p.Type)).ToList();
     }
@@ -805,6 +845,63 @@ public partial class IRGenerator
 
         foreach (var st in method.Body.Statements) S(st);
         return safe;
+    }
+
+    // True if the method assigns `self.<field>` anywhere (a plain or augmented assignment).
+    // Such a method mutates instance state; if its single field is passed by value it loses
+    // the mutation unless we write it back (see RegisterOutlinedMethod).
+    private static bool MethodMutatesField(FunctionDef method, string field)
+    {
+        static bool IsSelfField(Expression e, string fld) =>
+            e is MemberAccessExpr ma && ma.Member == fld
+            && ma.Object is VariableExpr sv && sv.Name == "self";
+
+        bool found = false;
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                case AssignStmt asg when IsSelfField(asg.Target, field): found = true; break;
+                case AugAssignStmt aug when IsSelfField(aug.Target, field): found = true; break;
+                case IfStmt iff:
+                    S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) S(br.Body);
+                    S(iff.ElseBranch);
+                    break;
+                case WhileStmt wh: S(wh.Body); break;
+                case ForStmt fr: S(fr.Body); break;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
+    }
+
+    // True if the method contains any return statement (value-returning or bare). Write-back
+    // via return is applied only to fall-through void mutators; a mutator with explicit
+    // returns can't carry both a value and the field in one return slot, so it is force-inlined.
+    private static bool MethodHasReturnStmt(FunctionDef method)
+    {
+        bool found = false;
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                case ReturnStmt: found = true; break;
+                case IfStmt iff:
+                    S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) S(br.Body);
+                    S(iff.ElseBranch);
+                    break;
+                case WhileStmt wh: S(wh.Body); break;
+                case ForStmt fr: S(fr.Body); break;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
     }
 
     // Registers a nested class (a class defined in the body of another class) so it

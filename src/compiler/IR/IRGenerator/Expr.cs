@@ -1225,6 +1225,12 @@ public partial class IRGenerator
                 && !IsKnownMethodName(expr.Member))
                 throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)");
 
+            // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
+            // its declared width in variableTypes; read it at that width so a uint16/uint32
+            // field isn't truncated to a byte.
+            if (variableTypes.TryGetValue(flattenedName, out var ft))
+                return new Variable(flattenedName, ft);
+
             return new Variable(flattenedName, DataType.UINT8);
         }
         if (sym5.IsMemoryAddress) return new MemoryAddress(sym5.Value, sym5.Type);

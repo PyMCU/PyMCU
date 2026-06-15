@@ -124,6 +124,30 @@ public partial class IRGenerator
                                 oArgs.Add(av);
                             }
 
+                            // RFC 0001 (write-back): a single-field void mutator returns its
+                            // (updated) field. The Python expression is still void, so emit the
+                            // call into a temp, copy that temp back to the instance field, and
+                            // yield None. The field's runtime home was promoted at construction
+                            // (zcaWriteBackFields), so later reads -- including the next loop
+                            // iteration -- pick up the new value.
+                            if (outlineWriteBack.TryGetValue(callee, out var wb)
+                                && !slotMethods.Contains(callee)
+                                && !factoryHandleInstances.Contains(instName))
+                            {
+                                string fieldBase = instName;
+                                while (fieldBase != null
+                                       && variableAliases.TryGetValue(fieldBase, out var fa)) fieldBase = fa;
+                                string fieldVar = fieldBase + "_" + wb.Field;
+
+                                Temporary wDst = MakeTemp(wb.Type);
+                                Emit(new Call(callee, oArgs, wDst));
+                                Emit(new Copy(wDst, new Variable(fieldVar, wb.Type)));
+                                constantVariables.Remove(fieldVar);
+                                killedConstants.Add(fieldVar);
+                                variableTypes[fieldVar] = wb.Type;
+                                return new NoneVal();
+                            }
+
                             bool rVoid = !functionReturnTypes.TryGetValue(callee, out var rt)
                                          || rt == "void" || rt == "None";
                             if (rVoid)

@@ -153,6 +153,18 @@ public partial class IRGenerator
     // @outline method symbols compiled with the slot (self-ptr) ABI.
     private HashSet<string> slotMethods = new();
 
+    // RFC 0001 (write-back): a single-field (Model A) void method that mutates its field
+    // (e.g. `def inc(self, by): self.count += by`). The field is passed BY VALUE, so the
+    // outlined body mutates only its local copy. To persist the mutation we make the body
+    // RETURN the (updated) field and copy it back to the instance field at the call site.
+    // Key = method symbol -> (field name, field type).
+    private Dictionary<string, (string Field, DataType Type)> outlineWriteBack = new();
+    // Class symbol -> the set of fields that a write-back method mutates. Such fields must
+    // have a real runtime home (not a folded compile-time constant) so the write-back copy
+    // has somewhere to write and later reads pick up the runtime value -- including across
+    // loop iterations. Construction promotes these fields from constant to runtime storage.
+    private Dictionary<string, HashSet<string>> zcaWriteBackFields = new();
+
     // RFC 0001 Model B (Class[N]): an array of boxed ZCA instances laid out contiguously in
     // SRAM. arr[i] is the slot at base + i*stride; arr[i].method() passes that element address
     // as the self pointer. Maps the array's qualified name to its element class and byte stride.

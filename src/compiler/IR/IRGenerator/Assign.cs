@@ -579,6 +579,21 @@ public partial class IRGenerator
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
 
+            // RFC 0001 (write-back): a field mutated by a write-back method needs a real runtime
+            // home, not a folded compile-time constant -- otherwise the write-back copy has
+            // nowhere to land and later reads (including loop iterations) would see the stale
+            // constant. Promote it here: emit a real store at construction and stop tracking it
+            // as a constant. Narrowly scoped to write-back fields, so non-mutated ZCA fields keep
+            // their exact zero-cost folding.
+            if (TryGetWriteBackFieldType(baseName, memExpr2.Member, out var wbType))
+            {
+                Emit(new Copy(value, new Variable(flattenedName, wbType)));
+                constantVariables.Remove(flattenedName);
+                killedConstants.Add(flattenedName);
+                variableTypes[flattenedName] = wbType;
+                return;
+            }
+
             if (value is Constant c)
             {
                 if (baseName != null && !virtualInstances.Contains(baseName))
@@ -716,6 +731,33 @@ public partial class IRGenerator
                 return true;
             }
         }
+    }
+
+    // RFC 0001 (write-back): true (with the field's declared type) when `<baseName>.<member>`
+    // is a field that a write-back mutator updates -- such fields must live at runtime, not as
+    // a folded constant. Follows instance aliases to find the owning class, then matches the
+    // field against zcaWriteBackFields and reads its type from the class layout.
+    private bool TryGetWriteBackFieldType(string? baseName, string member, out DataType type)
+    {
+        type = DataType.UINT8;
+        string? key = baseName;
+        for (int depth = 0; depth < 20 && key != null; ++depth)
+        {
+            if (instanceClasses.TryGetValue(key, out var cls)
+                && zcaWriteBackFields.TryGetValue(cls, out var fields)
+                && fields.Contains(member))
+            {
+                if (classFieldLayout.TryGetValue(cls, out var layout))
+                    foreach (var (f, t, _) in layout)
+                        if (f == member) { type = DataTypeExtensions.StringToDataType(t); break; }
+                return true;
+            }
+
+            if (variableAliases.TryGetValue(key, out var next)) key = next;
+            else break;
+        }
+
+        return false;
     }
 
     // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
