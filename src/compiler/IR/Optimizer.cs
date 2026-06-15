@@ -1379,17 +1379,27 @@ private static Function CloneFunction(Function f)
                     var dst = GetDst(func.Body[i]);
                     if (dst is Temporary tDst && tDst.Name == tSrc.Name)
                     {
-                        // A producer that is itself a reinterpret/convert Copy (`copy src -> tDst`
-                        // where src and tDst differ in width or signedness) followed by a second
-                        // converting copy is a TWO-step conversion. Retargeting the producer onto
-                        // the final dst collapses it to ONE step with a different result, e.g.
-                        // `int8(u8)` then widen for print: `copy u8 -> i8; copy i8 -> i16` would
-                        // become `copy u8 -> i16`, zero-extending instead of sign-extending.
-                        // Block only that double-conversion case; all other coalesces are intact.
-                        bool doubleConvert = func.Body[i] is Copy prod
-                            && ChangesRepr(prod.Src, GetDataType(tDst))
-                            && ChangesRepr(tDst, GetDataType(nextCopy.Dst));
-                        if (!doubleConvert)
+                        // Retargeting the producer onto the copy's dst is unsound when it changes
+                        // the value's representation. Two cases:
+                        //  (a) the producer is itself a reinterpret/convert Copy and the second
+                        //      copy converts again -- a two-step conversion that must not collapse
+                        //      (`copy u8 -> i8; copy i8 -> i16` is sign-extend; `copy u8 -> i16` is
+                        //      zero-extend).
+                        //  (b) the producer is a fixed-width load or a call (its result width is
+                        //      the element/pointee/return type, not its dst). Retargeting to a
+                        //      wider/narrower/differently-signed dst leaves it mismatched (an int8
+                        //      element/return loaded into an int16 temp never sign-extends the high
+                        //      byte -> garbage; e.g. `print(neg_of(x))` for an int8-returning fn).
+                        // Binary/Unary adopt their dst type as the compute width, so they are fine.
+                        DataType newDstT = GetDataType(nextCopy.Dst);
+                        bool blockCoalesce =
+                            (func.Body[i] is Copy prod
+                                && ChangesRepr(prod.Src, GetDataType(tDst))
+                                && ChangesRepr(tDst, newDstT))
+                            || (func.Body[i] is ArrayLoad or ArrayLoadFlash or BytearrayLoad
+                                    or LoadIndirect or Call
+                                && ChangesRepr(tDst, newDstT));
+                        if (!blockCoalesce)
                         {
                             newBody.Add(ReplaceDst(func.Body[i], nextCopy.Dst));
                             i++; // skip the copy
