@@ -508,6 +508,15 @@ public partial class IRGenerator
             }
         }
 
+        // RFC 0001 Model B (Class[N]): a direct field write on an instance-array element,
+        // `arr[i].x = v`. Store through the computed element field address.
+        if (memExpr2.Object is IndexExpr iaIdxW
+            && TryInstanceArrayFieldAddr(iaIdxW, memExpr2.Member, out _) is { } iaAddrW)
+        {
+            Emit(new StoreIndirect(value, iaAddrW));
+            return;
+        }
+
         if (memExpr2.Member == "value")
         {
             var target = VisitExpression(memExpr2.Object);
@@ -789,6 +798,32 @@ public partial class IRGenerator
         }
 
         return false;
+    }
+
+    // RFC 0001 Model B (Class[N]): the runtime address of `arr[idx].<member>` for an instance
+    // array -- base + idx*stride + fieldOffset. Returns null when arr is not an instance array.
+    // Mirrors the element-address computation used for arr[i].method() calls.
+    private Val? TryInstanceArrayFieldAddr(IndexExpr idx, string member, out DataType fieldType)
+    {
+        fieldType = DataType.UINT8;
+        if (idx.Target is not VariableExpr arrVe) return null;
+        string q = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name;
+        if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
+        if (!instanceArrayClass.TryGetValue(q, out var cls)) return null;
+        if (!TryGetSlotFieldOffset(cls, member, out int fieldOff, out fieldType)) return null;
+
+        int stride = instanceArrayStride[q];
+        Val idxV = VisitExpression(idx.Index);
+        Temporary baseT = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new ArrayBase(q), baseT));
+        Temporary scaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, idxV, new Constant(stride), scaled));
+        Temporary elemAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr));
+        if (fieldOff == 0) return elemAddr;
+        Temporary fieldAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, elemAddr, new Constant(fieldOff), fieldAddr));
+        return fieldAddr;
     }
 
     // RFC 0001 Model B (SRAM slot): byte offset and declared type of <field> within <cls>'s slot,

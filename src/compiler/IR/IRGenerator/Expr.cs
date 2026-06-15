@@ -1074,6 +1074,17 @@ public partial class IRGenerator
                 SlotMethodFieldType(currentFunction, expr.Member), 0);
         }
 
+        // RFC 0001 Model B (Class[N]): a direct field read on an instance-array element,
+        // `arr[i].x`. Compute the element field address and load through it. Without this the
+        // member access fell through to a flattened name and read 0.
+        if (expr.Object is IndexExpr iaIdxRead
+            && TryInstanceArrayFieldAddr(iaIdxRead, expr.Member, out var iaFieldTy) is { } iaAddr)
+        {
+            Temporary iaLoaded = MakeTemp(iaFieldTy);
+            Emit(new LoadIndirect(iaAddr, iaLoaded));
+            return iaLoaded;
+        }
+
         if (expr.Object is VariableExpr varExpr)
         {
             // Resolve a module alias (import machine as m) to the real module name so
