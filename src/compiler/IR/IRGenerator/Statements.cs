@@ -505,7 +505,8 @@ public partial class IRGenerator
                     Val v = argIdx < facCall.Args.Count
                         ? VisitExpression(facCall.Args[argIdx])
                         : new Constant(0);
-                    Emit(new BytearrayStore(selfPtr, new Constant(off), v));
+                    EmitSlotFieldStore(selfPtr, true, off,
+                        DataTypeExtensions.StringToDataType(type), v, 0);
                     off += DataTypeExtensions.StringToDataType(type).SizeOf();
                 }
 

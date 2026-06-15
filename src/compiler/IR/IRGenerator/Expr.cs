@@ -1059,9 +1059,8 @@ public partial class IRGenerator
             && slotMethodFieldOffsets.TryGetValue(currentFunction, out var fieldOffs)
             && fieldOffs.TryGetValue(expr.Member, out int fieldOff))
         {
-            Temporary loaded = MakeTemp(DataType.UINT8);
-            Emit(new BytearrayLoad(currentFunction + ".self", new Constant(fieldOff), loaded));
-            return loaded;
+            return EmitSlotFieldLoad(currentFunction + ".self", true, fieldOff,
+                SlotMethodFieldType(currentFunction, expr.Member), 0);
         }
 
         if (expr.Object is VariableExpr varExpr)
@@ -1201,11 +1200,10 @@ public partial class IRGenerator
         {
             // The slot is a direct SRAM array here (not a pointer as inside a method), so use a
             // byte-offset ArrayLoad -- matching EmitSlotConstruction's ArrayStore. (A BytearrayLoad
-            // would dereference main.p__slot as a pointer and read 0.)
+            // would dereference main.p__slot as a pointer and read 0.) Multi-byte fields assemble
+            // from consecutive bytes.
             int slotTotR = arraySizes.TryGetValue(slotArrR, out var tszR) ? tszR : 0;
-            Temporary slotLoaded = MakeTemp(slotTyR);
-            Emit(new ArrayLoad(slotArrR, new Constant(slotOffR), slotLoaded, DataType.UINT8, slotTotR));
-            return slotLoaded;
+            return EmitSlotFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTotR);
         }
 
         var flattenedName = baseName + "_" + expr.Member;

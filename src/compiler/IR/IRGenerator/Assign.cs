@@ -485,7 +485,8 @@ public partial class IRGenerator
             && slotMethodFieldOffsets.TryGetValue(currentFunction, out var slotOffs)
             && slotOffs.TryGetValue(memExpr2.Member, out int slotOff))
         {
-            Emit(new BytearrayStore(currentFunction + ".self", new Constant(slotOff), value));
+            EmitSlotFieldStore(currentFunction + ".self", true, slotOff,
+                SlotMethodFieldType(currentFunction, memExpr2.Member), value, 0);
             return;
         }
 
@@ -498,11 +499,11 @@ public partial class IRGenerator
             while (sb != null && variableAliases.TryGetValue(sb, out var sa)) sb = sa;
             if (sb != null && slotInstances.TryGetValue(sb, out var slotArrW)
                 && instanceClasses.TryGetValue(sb, out var slotClsW)
-                && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out _))
+                && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out var slotTyW))
             {
-                // Direct SRAM array (not a pointer): byte-offset ArrayStore, matching construction.
+                // Direct SRAM array (not a pointer): byte-offset store, matching construction.
                 int slotTotW = arraySizes.TryGetValue(slotArrW, out var tszW) ? tszW : 0;
-                Emit(new ArrayStore(slotArrW, new Constant(slotOffW), value, DataType.UINT8, slotTotW));
+                EmitSlotFieldStore(slotArrW, false, slotOffW, slotTyW, value, slotTotW);
                 return;
             }
         }
@@ -807,6 +808,85 @@ public partial class IRGenerator
         }
 
         return false;
+    }
+
+    // The declared type of an outlined slot method's field (for multi-byte slot access). The
+    // method's field layout carries the types; slotMethodFieldOffsets only carries offsets.
+    private DataType SlotMethodFieldType(string method, string field)
+    {
+        if (outlineFieldLayout.TryGetValue(method, out var layout))
+            foreach (var (f, t, _) in layout)
+                if (f == field) return DataTypeExtensions.StringToDataType(t);
+        return DataType.UINT8;
+    }
+
+    // RFC 0001 Model B (SRAM slot): load a field of `fieldTy` at BYTE offset `off`. The slot is
+    // byte-packed, so a multi-byte field is assembled from consecutive bytes (b0 | b1<<8 | ...).
+    // `isPtr`: arrName is a `self` pointer (BytearrayLoad); else it is the slot array (ArrayLoad).
+    private Val EmitSlotFieldLoad(string arrName, bool isPtr, int off, DataType fieldTy, int slotTotal)
+    {
+        Val LoadByte(int boff)
+        {
+            Temporary b = MakeTemp(DataType.UINT8);
+            if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(boff), b));
+            else Emit(new ArrayLoad(arrName, new Constant(boff), b, DataType.UINT8, slotTotal));
+            return b;
+        }
+
+        int sz = fieldTy.SizeOf();
+        if (sz <= 1)
+        {
+            Temporary b = MakeTemp(fieldTy);
+            if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(off), b));
+            else Emit(new ArrayLoad(arrName, new Constant(off), b, DataType.UINT8, slotTotal));
+            return b;
+        }
+
+        Temporary acc = MakeTemp(fieldTy);
+        Emit(new Copy(LoadByte(off), acc));            // byte 0, zero-extended to fieldTy
+        for (int i = 1; i < sz; ++i)
+        {
+            Temporary widened = MakeTemp(fieldTy);
+            Emit(new Copy(LoadByte(off + i), widened));
+            Emit(new Binary(BinaryOp.LShift, widened, new Constant(8 * i), widened));
+            Emit(new Binary(BinaryOp.BitOr, acc, widened, acc));
+        }
+
+        return acc;
+    }
+
+    // RFC 0001 Model B (SRAM slot): store a field of `fieldTy` at BYTE offset `off`, splitting a
+    // multi-byte value into consecutive bytes. Counterpart of EmitSlotFieldLoad.
+    private void EmitSlotFieldStore(string arrName, bool isPtr, int off, DataType fieldTy,
+        Val value, int slotTotal)
+    {
+        void StoreByte(int boff, Val b)
+        {
+            if (isPtr) Emit(new BytearrayStore(arrName, new Constant(boff), b));
+            else Emit(new ArrayStore(arrName, new Constant(boff), b, DataType.UINT8, slotTotal));
+        }
+
+        int sz = fieldTy.SizeOf();
+        if (sz <= 1) { StoreByte(off, value); return; }
+
+        for (int i = 0; i < sz; ++i)
+        {
+            Temporary b = MakeTemp(DataType.UINT8);
+            if (i == 0)
+            {
+                Emit(new Copy(value, b));   // low byte (truncating copy)
+            }
+            else
+            {
+                // Byte i = (value >> 8*i) & 0xFF. The truncating Copy to UINT8 keeps the low byte,
+                // which equals byte i of value regardless of the shift's sign behaviour.
+                Temporary sh = MakeTemp(fieldTy);
+                Emit(new Binary(BinaryOp.RShift, value, new Constant(8 * i), sh));
+                Emit(new Copy(sh, b));
+            }
+
+            StoreByte(off + i, b);
+        }
     }
 
     // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
@@ -1363,7 +1443,7 @@ public partial class IRGenerator
             }
 
             Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
-            Emit(new ArrayStore(slot, new Constant(off), v, DataType.UINT8, total));
+            EmitSlotFieldStore(slot, false, off, DataTypeExtensions.StringToDataType(type), v, total);
             off += DataTypeExtensions.StringToDataType(type).SizeOf();
         }
 
