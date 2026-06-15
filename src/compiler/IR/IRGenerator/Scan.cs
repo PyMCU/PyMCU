@@ -318,6 +318,16 @@ public partial class IRGenerator
             var paramTypes = new List<DataType>();
             foreach (var p in func.Params)
             {
+                // A fixed-array parameter type (`uint8[4]`) is not a real subroutine ABI: it has
+                // no scalar register form and was silently misread as a ZCA handler param, so the
+                // body was never compiled and the call failed only at link time. Reject it with a
+                // pointer to the supported idiom (an array argument is passed by reference as a
+                // `bytearray`), instead of emitting a dangling `undefined reference`.
+                if (IsFixedArrayParamType(p.Type))
+                    throw UserError(
+                        $"parameter '{p.Name}' of '{func.Name}' has a fixed-array type '{p.Type}'; " +
+                        "pass an array to a function as a 'bytearray' (by reference), " +
+                        $"e.g. `def {func.Name}({p.Name}: bytearray, ...)`");
                 @params.Add(p.Name);
                 paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
             }
@@ -850,6 +860,21 @@ public partial class IRGenerator
     // True if the method assigns `self.<field>` anywhere (a plain or augmented assignment).
     // Such a method mutates instance state; if its single field is passed by value it loses
     // the mutation unless we write it back (see RegisterOutlinedMethod).
+    // A fixed-array parameter type like `uint8[4]` / `int16[10]`: a scalar element type followed
+    // by a bracketed size. `const[...]`, `ptr[...]`, `list[...]`, `bytearray` and class names are
+    // NOT this shape. Such a type is valid for a local/field but not for a by-value parameter.
+    private static bool IsFixedArrayParamType(string? type)
+    {
+        if (string.IsNullOrEmpty(type)) return false;
+        int lb = type.IndexOf('[');
+        if (lb <= 0 || !type.EndsWith("]")) return false;
+        string elem = type.Substring(0, lb);
+        if (elem is not ("uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32"
+                         or "float" or "bool")) return false;
+        string inner = type.Substring(lb + 1, type.Length - lb - 2);
+        return inner.Length > 0 && inner.All(char.IsDigit);
+    }
+
     private static bool MethodMutatesField(FunctionDef method, string field)
     {
         static bool IsSelfField(Expression e, string fld) =>
