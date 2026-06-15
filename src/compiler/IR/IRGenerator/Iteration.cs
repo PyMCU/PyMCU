@@ -72,6 +72,19 @@ public partial class IRGenerator
         }
     }
 
+    // Emits one unrolled-iteration body. When `breakLabel` is non-empty (the body uses
+    // break/continue), a fresh continue label brackets the iteration and a shared break label
+    // is active, so continue lands at the end of this iteration and break exits the loop.
+    private void EmitUnrolledIteration(Statement body, string breakLabel)
+    {
+        if (breakLabel.Length == 0) { VisitStatement(body); return; }
+        string cont = MakeLabel();
+        loopStack.Add(new LoopLabels { ContinueLabel = cont, BreakLabel = breakLabel });
+        VisitStatement(body);
+        loopStack.RemoveAt(loopStack.Count - 1);
+        Emit(new Label(cont));
+    }
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
@@ -137,11 +150,13 @@ public partial class IRGenerator
                     return;
                 }
 
+                string strBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (char c in strOpt)
                 {
                     constantVariables[varKey] = (int)c;
-                    VisitStatement(stmt.Body);
+                    EmitUnrolledIteration(stmt.Body, strBrk);
                 }
+                if (strBrk.Length > 0) Emit(new Label(strBrk));
 
                 constantVariables.Remove(varKey);
                 return;
@@ -157,15 +172,17 @@ public partial class IRGenerator
 
             if (GetListParam(iter) is ListExpr boundList)
             {
+                string lpBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in boundList.Elements)
                 {
                     if (elem is IntegerLiteral il)
                     {
                         constantVariables[varKey] = il.Value;
-                        VisitStatement(stmt.Body);
+                        EmitUnrolledIteration(stmt.Body, lpBrk);
                     }
                     else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
+                if (lpBrk.Length > 0) Emit(new Label(lpBrk));
 
                 constantVariables.Remove(varKey);
                 return;
@@ -173,15 +190,17 @@ public partial class IRGenerator
 
             if (iter is ListExpr le)
             {
+                string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in le.Elements)
                 {
                     if (elem is IntegerLiteral il)
                     {
                         constantVariables[varKey] = il.Value;
-                        VisitStatement(stmt.Body);
+                        EmitUnrolledIteration(stmt.Body, llBrk);
                     }
                     else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
+                if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
                 return;
