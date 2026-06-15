@@ -59,12 +59,16 @@ public partial class IRGenerator
         if (expr is WalrusExpr walrus)
         {
             Val rhs = VisitExpression(walrus.Value);
-            string key = string.IsNullOrEmpty(currentInlinePrefix)
-                ? walrus.VarName
-                : currentInlinePrefix + walrus.VarName;
+            // Qualify like a normal variable reference the body resolves: a function-scoped
+            // name gets the `func.` prefix when not inline-expanded. Using the bare name stored
+            // the walrus target under "w" while later reads resolved "func.w" -> read 0.
+            string key = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + walrus.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + walrus.VarName : walrus.VarName);
             DataType dt = DataType.UINT8;
             if (variableTypes.TryGetValue(key, out var t)) dt = t;
             var vr = new Variable(key, dt);
+            variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
             return vr;
         }
