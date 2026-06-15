@@ -2386,6 +2386,19 @@ public partial class IRGenerator
 
             throw UserError("augmented assignment to .value requires a pointer or register target");
         }
+        else if (stmt.Target is MemberAccessExpr mfield)
+        {
+            // `obj.field OP= v` for a ZCA field (slot, scalar, or flattened): read-modify-write.
+            // Only `.value` had a case, so an augmented assignment to any other member was
+            // silently dropped (e.g. `box.x += 3` left box.x unchanged). Reuse the field read and
+            // write paths so the slot-aware load/store is applied for multi-field instances.
+            Val cur = VisitMemberAccess(mfield);
+            DataType dt = GetValType(cur);
+            if (dt == DataType.UNKNOWN) dt = DataType.UINT8;
+            Temporary res = MakeTemp(dt);
+            Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
+            EmitMemberAssign(new AssignStmt(mfield, mfield) { Line = stmt.Line }, mfield, res);
+        }
     }
 
     // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
