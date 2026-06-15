@@ -1120,19 +1120,24 @@ private static Function CloneFunction(Function f)
                 case Label:
                     varConsts.Clear();
                     break;
-                // A call with ArrayBase args may modify variables through the pointer;
-                // conservatively invalidate all tracked variable constants.
-                case Call callInstr when callInstr.Args.Any(a => a is ArrayBase):
-                    varConsts.Clear();
-                    break;
-                // Any other call may still reassign a module-level global (via `global x`),
-                // so its tracked constant is no longer valid past the call -- otherwise a
-                // read after the call folds to the pre-call value (e.g. a global seeded in
-                // main then bumped inside a callee). Locals cannot be touched by a callee,
-                // so only the globals are dropped.
-                case Call when globalNames is { Count: > 0 }:
-                    foreach (var g in varConsts.Keys.Where(globalNames.Contains).ToList())
-                        varConsts.Remove(g);
+                case Call callInstr:
+                    // The call's result is a runtime value, so the dst no longer holds its
+                    // previously-tracked constant. Without this, `x = 0; x = f(x); g(x)` folds
+                    // g's argument to the pre-call 0 -- which silently breaks write-back
+                    // mutators (`c = Counter(); c.inc(1); c.inc(1)` keeps reading 0).
+                    InvalidateVar(callInstr.Dst);
+                    // A call with ArrayBase args may modify variables through the pointer;
+                    // conservatively invalidate all tracked variable constants.
+                    if (callInstr.Args.Any(a => a is ArrayBase))
+                        varConsts.Clear();
+                    // Any other call may still reassign a module-level global (via `global x`),
+                    // so its tracked constant is no longer valid past the call -- otherwise a
+                    // read after the call folds to the pre-call value (e.g. a global seeded in
+                    // main then bumped inside a callee). Locals cannot be touched by a callee,
+                    // so only the globals are dropped.
+                    else if (globalNames is { Count: > 0 })
+                        foreach (var g in varConsts.Keys.Where(globalNames.Contains).ToList())
+                            varConsts.Remove(g);
                     break;
             }
         }
