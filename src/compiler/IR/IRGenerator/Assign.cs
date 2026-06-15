@@ -755,7 +755,11 @@ public partial class IRGenerator
                 }
             }
 
-            Emit(new Copy(value, new Variable(flattenedName, DataType.UINT8)));
+            // Store the flattened field at its declared width; hard-coding uint8 truncated a
+            // uint16/uint32 field (a no-method multi-field struct's `total` read back as total&0xFF).
+            DataType fdt = FlattenedFieldType(baseName, memExpr2.Member);
+            Emit(new Copy(value, new Variable(flattenedName, fdt)));
+            if (fdt != DataType.UINT8) variableTypes[flattenedName] = fdt;
             return;
 
             bool TryTempName(string tname)
@@ -798,6 +802,23 @@ public partial class IRGenerator
         }
 
         return false;
+    }
+
+    // Declared type of a flattened (non-slot) ZCA field `<inst>.<member>`, from the owning class's
+    // layout. The flattened store path otherwise hard-codes uint8, truncating a uint16/uint32 field.
+    private DataType FlattenedFieldType(string? baseName, string member)
+    {
+        string? key = baseName;
+        for (int d = 0; d < 20 && key != null; ++d)
+        {
+            if (instanceClasses.TryGetValue(key, out var cls) && classFieldLayout.TryGetValue(cls, out var layout))
+                foreach (var (f, t, _) in layout)
+                    if (f == member) return DataTypeExtensions.StringToDataType(t);
+            if (variableAliases.TryGetValue(key, out var nx)) key = nx;
+            else break;
+        }
+
+        return DataType.UINT8;
     }
 
     // RFC 0001 Model B (Class[N]): the runtime address of `arr[idx].<member>` for an instance
@@ -1552,8 +1573,40 @@ public partial class IRGenerator
                 byteOff = addr;
             }
 
-            Emit(new ArrayStore(arrQ, byteOff, v, DataType.UINT8, total));
-            off += DataTypeExtensions.StringToDataType(type).SizeOf();
+            // Store the field at its declared width, splitting a multi-byte value into
+            // consecutive bytes (a uint16/uint32 element field was otherwise truncated to 1 byte).
+            DataType fdt = DataTypeExtensions.StringToDataType(type);
+            int fsz = fdt.SizeOf();
+            for (int k = 0; k < fsz; ++k)
+            {
+                Temporary b = MakeTemp(DataType.UINT8);
+                if (k == 0)
+                {
+                    Emit(new Copy(v, b));
+                }
+                else
+                {
+                    Temporary sh = MakeTemp(fdt);
+                    Emit(new Binary(BinaryOp.RShift, v, new Constant(8 * k), sh));
+                    Emit(new Copy(sh, b));
+                }
+
+                Val offK = byteOff;
+                if (k > 0)
+                {
+                    if (byteOff is Constant bc) offK = new Constant(bc.Value + k);
+                    else
+                    {
+                        Temporary a = MakeTemp(DataType.UINT16);
+                        Emit(new Binary(BinaryOp.Add, byteOff, new Constant(k), a));
+                        offK = a;
+                    }
+                }
+
+                Emit(new ArrayStore(arrQ, offK, b, DataType.UINT8, total));
+            }
+
+            off += fdt.SizeOf();
         }
     }
 
@@ -1839,8 +1892,14 @@ public partial class IRGenerator
         // and stride so arr[i] = C(..) constructs into element i and arr[i].method() passes
         // the element address as self.
         string elemAnno = stmt.Annotation.Substring(0, bracket);
-        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit)
-            && slotClasses.Contains(elemAnno))
+        // A Class[N] of a multi-field class is an instance (slot) array. The class qualifies via
+        // slotClasses (multi-field with an outlined method) OR simply by having >= 2 fields -- a
+        // pure-data struct with no methods is never added to slotClasses, but its Class[N] array
+        // still needs the contiguous slot layout, else arr[i] falls back to a value-array and a
+        // runtime index / field access fails.
+        bool elemIsMultiField = slotClasses.Contains(elemAnno)
+            || (classFieldLayout.TryGetValue(elemAnno, out var elemLay) && elemLay.Count >= 2);
+        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit) && elemIsMultiField)
         {
             int n = int.Parse(inner);
             var layout = classFieldLayout[elemAnno];
