@@ -1399,6 +1399,19 @@ public partial class IRGenerator
                 ScanExpr(aug.Target);
                 ScanExpr(aug.Value);
             }
+            else if (stmt is VarDecl vd)
+            {
+                // `v: T = arr[idx]` declares v with a runtime-indexed read in its initializer.
+                // Without scanning it, arr is never marked variable-indexed and the read demands
+                // a constant subscript -- yet `v: T = 0; v = arr[idx]` works. Scan the init.
+                ScanExpr(vd.Init);
+            }
+            else if (stmt is ForStmt fr)
+            {
+                ScanExpr(fr.RangeStart); ScanExpr(fr.RangeStop); ScanExpr(fr.RangeStep);
+                ScanExpr(fr.Iterable);
+                ScanStmt(fr.Body);
+            }
         }
 
         foreach (var s in stmts) ScanStmt(s);
