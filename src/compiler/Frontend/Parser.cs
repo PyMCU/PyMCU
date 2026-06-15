@@ -198,6 +198,18 @@ public class Parser
                 Error("Expected type name or array size inside '['");
             }
 
+            // Comma-separated subscript args, e.g. a tuple type tuple[uint8, uint16] used as a
+            // function return annotation. Accepted (and recorded textually); for an @inline
+            // function returning multiple values the annotation is documentation — the caller's
+            // unpack targets receive the values.
+            while (Match(TokenType.Comma))
+            {
+                typeStr += ",";
+                if (Check(TokenType.Identifier)) typeStr += Consume(TokenType.Identifier, "Expected type name").Value;
+                else if (Check(TokenType.Number)) typeStr += Consume(TokenType.Number, "Expected array size").Value;
+                else Error("Expected type name or size after ',' in '['");
+            }
+
             Consume(TokenType.RBracket, "Expected ']'");
             typeStr += "]";
         }
