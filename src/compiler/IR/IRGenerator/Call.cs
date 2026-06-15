@@ -580,7 +580,12 @@ public partial class IRGenerator
             return new NoneVal();
         }
 
-        Temporary dstC = MakeTemp();
+        // Type the result temp with the callee's declared return type. Defaulting to uint8 lost
+        // the signedness/width of a direct call result (e.g. `print(neg_of(x))` where neg_of
+        // returns int8 picked the unsigned formatter, showing 251 instead of -5).
+        DataType retDt = rType != null && rType.Length > 0
+            ? DataTypeExtensions.StringToDataType(rType) : DataType.UINT8;
+        Temporary dstC = MakeTemp(retDt);
         Emit(new Call(callee, argValuesL, dstC));
         return dstC;
     }
