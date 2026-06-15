@@ -616,7 +616,18 @@ public partial class IRGenerator
 
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
-        DataType resType = t1.SizeOf() >= t2.SizeOf() ? t1 : t2;
+        // A literal operand is type-agnostic (it defaults to uint8), so on a same-size op it
+        // would wrongly win and drop the other operand's signedness: `int8(0) - int8(x)` became
+        // uint8, making a later `< 0` test unsigned (abs() then returned the value unchanged).
+        // Take the non-constant operand's type when exactly one side is a constant.
+        bool lConst = v1 is Constant or FloatConstant;
+        bool rConst = v2 is Constant or FloatConstant;
+        DataType resType;
+        if (t1.SizeOf() != t2.SizeOf())
+            resType = t1.SizeOf() > t2.SizeOf() ? t1 : t2;   // the wider operand wins (e.g. 256 * u8 -> u16)
+        else if (lConst && !rConst) resType = t2;            // same size: a literal is type-agnostic,
+        else if (rConst && !lConst) resType = t1;            // so take the typed operand (keeps its sign)
+        else resType = t1;                                   // both/neither constant: keep left (prior behaviour)
 
         Temporary dst = MakeTemp(resType);
         if (v1 is Constant cA && v2 is Constant cB)
