@@ -478,6 +478,15 @@ public partial class IRGenerator
                                 functionParams[fullName] = @params;
                                 functionParamTypes[fullName] = paramTypes;
 
+                                if (func.IsPropertyGetter)
+                                {
+                                    // Record the getter so a bare `obj.<prop>` read is desugared
+                                    // into a getter call. @property forces IsInline, so the inline
+                                    // registration in the branch below still runs.
+                                    string getterClass = classPrefix.Substring(0, classPrefix.Length - 1);
+                                    propertyGetters.Add(getterClass + "." + func.Name);
+                                }
+
                                 if (func.IsPropertySetter)
                                 {
                                     string setterKey = fullName + "___setter";

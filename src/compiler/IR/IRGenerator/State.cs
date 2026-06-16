@@ -69,6 +69,11 @@ public partial class IRGenerator
     // Used by visitAssign to desugar "obj.attr = val" into an inline setter call.
     private Dictionary<string, string?> propertySetters = new();
 
+    // Set of "ClassName.property_name" for every @property getter. Populated by
+    // scan_functions; used by VisitMemberAccess to desugar a bare `obj.prop` read
+    // into an inline getter call instead of reading a non-existent data field.
+    private HashSet<string> propertyGetters = new();
+
     // Function overloading: tracks qualified function names that have multiple
     // @inline overloads distinguished by parameter types.
     // scan_functions populates this; visitCall uses it for type-based dispatch.

@@ -1212,6 +1212,16 @@ public partial class IRGenerator
             baseName = next;
         }
 
+        // @property getter: a bare `obj.prop` read where `prop` is a registered getter on the
+        // instance's class is desugared into a call to the getter method. Without this it would
+        // fall through to a non-existent flattened `<base>_<prop>` data field and read 0.
+        if (baseName != null && propertyGetters.Count > 0
+            && instanceClasses.TryGetValue(baseName, out var getterCls)
+            && propertyGetters.Contains(getterCls + "." + expr.Member))
+        {
+            return VisitCall(new CallExpr(expr, new List<Expression>()));
+        }
+
         // RFC 0001 Model B (SRAM slot): a direct field read on a slot instance OUTSIDE a method
         // (`p.x` where p is a multi-field ZCA) must load from the instance slot. Without this it
         // fell through to a flattened `p_x` variable that no store ever wrote -- a 0 read, or an
