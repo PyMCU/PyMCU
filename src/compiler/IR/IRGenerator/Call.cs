@@ -90,11 +90,24 @@ public partial class IRGenerator
                         string definingClass = ResolveMROMethod(clsC!, memC.Member);
                         callee = definingClass + "_" + memC.Member;
 
+                        // Virtual dispatch: an inherited method (defined in a base, reached on a
+                        // subclass instance) that calls self.<m>() must be force-inlined, not run
+                        // as the shared outlined body. The shared body bound self to the DEFINING
+                        // class, so its self-call resolved statically (Shape.total() always ran
+                        // Shape.unit, never the Square.unit override). Force-inlining rebinds self
+                        // to the concrete instance so the inner call dispatches to the override.
+                        // Same-class calls (clsC == definingClass) keep the shared outlined body.
+                        bool needsVirtualInline = clsC != definingClass
+                            && methodsWithSelfCall.Contains(callee);
+                        if (needsVirtualInline && !inlineFunctions.ContainsKey(callee)
+                            && methodAstByName.TryGetValue(callee, out var virtImpl))
+                            inlineFunctions[callee] = virtImpl;
+
                         // RFC 0001 Model A: an @outline method is a shared subroutine, not
                         // inlined. Pass the instance's runtime field values as leading args
                         // (self_<field>), then the user args, and emit a real Call. One body,
                         // N call sites -- no per-instance bloat.
-                        if (outlinedMethods.Contains(callee))
+                        if (outlinedMethods.Contains(callee) && !needsVirtualInline)
                         {
                             var oArgs = new List<Val>();
                             string instName = objVal is Variable iv ? iv.Name : "";

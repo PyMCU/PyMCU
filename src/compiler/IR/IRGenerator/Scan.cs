@@ -609,6 +609,7 @@ public partial class IRGenerator
                                     // super().<method>() can inline-expand the base body even when
                                     // the base method is outlined (not in inlineFunctions).
                                     methodAstByName[fullName] = func;
+                                    if (MethodCallsSelfMethod(func)) methodsWithSelfCall.Add(fullName);
                                 }
                             }
                             else if (inner is ClassDef nestedClass)
@@ -742,6 +743,54 @@ public partial class IRGenerator
             case IndexExpr { Target: MemberAccessExpr ma2 }: assignedMemberNames.Add(ma2.Member); break;
             case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e); break;
         }
+    }
+
+    // True when the method body calls a sibling method on self (self.<m>(...)). Such a method,
+    // if outlined, binds the self-call statically to its defining class; called on a subclass
+    // instance it must be force-inlined instead so the call dispatches to the concrete override.
+    private static bool MethodCallsSelfMethod(FunctionDef method)
+    {
+        bool found = false;
+        void E(Expression? e)
+        {
+            if (found || e == null) return;
+            switch (e)
+            {
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } }:
+                    found = true; return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case MemberAccessExpr ma: E(ma.Object); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+            }
+        }
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
+                case VarDecl vd: E(vd.Init); return;
+                case AnnAssign a: E(a.Value); return;
+                case AssignStmt asg: E(asg.Value); return;
+                case AugAssignStmt aug: E(aug.Value); return;
+                case ReturnStmt r: E(r.Value); return;
+                case ExprStmt ex: E(ex.Expr); return;
+                case IfStmt iff:
+                    E(iff.Condition); S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                    S(iff.ElseBranch); return;
+                case WhileStmt wh: E(wh.Condition); S(wh.Body); return;
+                case ForStmt fr: S(fr.Body); return;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
     }
 
     // True when the class's own __init__ delegates to its base via super().__init__(...).

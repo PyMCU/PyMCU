@@ -88,6 +88,11 @@ public partial class IRGenerator
     // on a ZCA instance with a known concrete type (field aliasing requires inlining).
     private Dictionary<string, FunctionDef> instanceMethodDefs = new();
 
+    // Mangled symbols of methods whose body calls a sibling method on self (self.<m>()). When
+    // such a method is reached on a subclass instance (concrete type != defining class), it must
+    // be force-inlined so the inner self-call dispatches to the concrete override (virtual call).
+    private HashSet<string> methodsWithSelfCall = new();
+
     // Every instance method's AST keyed by mangled symbol (e.g. "Base_score"), regardless of
     // inline/outline/force-inline. Lets super().<method>() inline-expand the base body even when
     // the base method is outlined (and thus absent from inlineFunctions).
