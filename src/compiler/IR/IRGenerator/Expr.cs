@@ -136,6 +136,12 @@ public partial class IRGenerator
                 continue;
             }
             listLiteralParams.Remove(paramKey);
+            // Clear any binding left from a PRIOR call to this same dunder at the same inline
+            // depth (the prefix, hence paramKey, is reused). Without this, a stale alias from a
+            // previous call (e.g. b[0]=s aliased v->s) survived and shadowed a fresh Copy on the
+            // next call (b[1]=s+10), so the body read the old value -- the +10 silently vanished.
+            constantVariables.Remove(paramKey);
+            variableAliases.Remove(paramKey);
             if (extraArgs[extraIdx] is Constant c)
             {
                 constantVariables[paramKey] = c.Value;

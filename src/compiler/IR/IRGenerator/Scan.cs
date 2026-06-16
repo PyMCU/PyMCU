@@ -850,6 +850,13 @@ public partial class IRGenerator
                 // self.method(args): a sibling-method call. Allowed in an outlined body —
                 // it lowers to a call that forwards this method's own self (field params
                 // or slot pointer). Validate only the args, not the self.<method> callee.
+                // LIMITATION: the outlined body is compiled once with `self` bound to the
+                // DEFINING class, so this self-call binds statically to that class's version.
+                // If the sibling is overridden in a subclass, virtual dispatch does NOT happen
+                // (Shape.total() calling self.unit() always runs Shape.unit). See the codegen
+                // backlog (virtual-dispatch-via-outlined-self-call) -- fixing it needs a
+                // post-scan, override-aware force-inline of just the virtual cases, preserving
+                // shared outlining for non-overridden sibling calls.
                 case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } } selfCall:
                     foreach (var a in selfCall.Args) E(a);
                     return;
