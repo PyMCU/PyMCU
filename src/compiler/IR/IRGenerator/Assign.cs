@@ -29,6 +29,13 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
             throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)");
 
+        // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
+        // the result is built as a Model-A (flattened) instance, so a later method call on c
+        // passes the fields where a self pointer is expected. Remember the target/class so that,
+        // after the construction, c is materialized into a real slot (see end of VisitAssign).
+        string slotMatName = "";    // unqualified target name
+        string slotMatCls = "";     // slot class of the result
+
         // RFC 0001 Model B (SRAM slot): `s = MultiFieldZCA(a, b)`. Box the instance into a
         // fixed SRAM slot and store each field at its offset. Handled as a self-contained
         // path (early return) so it never touches the virtual-constructor machinery.
@@ -139,6 +146,10 @@ public partial class IRGenerator
                                     instanceClasses[qualifiedName] = cls;
                                     pendingConstructorTarget = qualifiedName;
                                     virtualInstances.Add(qualifiedName);
+                                    // A65: a slot class can't live as flattened Model-A fields and
+                                    // still answer method calls (which pass a self pointer).
+                                    // Materialize it into a slot after the construction.
+                                    if (slotClasses.Contains(cls)) { slotMatName = varExprBin.Name; slotMatCls = cls; }
                                 }
                             }
                         }
@@ -218,6 +229,50 @@ public partial class IRGenerator
             Emit(new StoreIndirect(value, ptr));
         }
         else throw UserError("Invalid assignment target");
+
+        if (!string.IsNullOrEmpty(slotMatName))
+            MaterializeSlotFromFlattened(slotMatName, slotMatCls);
+    }
+
+    // A65: turn a slot-class instance that was built as Model-A flattened fields (the result of an
+    // operator dunder, e.g. `c = a + b`) into a real SRAM slot: read each field at its current
+    // (flattened) location, allocate the slot, store the fields, and register c as a slot instance
+    // so method calls pass the slot pointer instead of the flattened fields. Reads happen first,
+    // while the flattened alias is still in place.
+    private void MaterializeSlotFromFlattened(string name, string cls)
+    {
+        if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        if (slotInstances.ContainsKey(qn)) return;   // already a slot
+
+        // Snapshot current field values (flattened/aliased) before we repoint the instance.
+        var fieldVals = new List<(int Off, DataType Ty, Val V)>();
+        int off = 0;
+        foreach (var (field, type, _) in layout)
+        {
+            DataType dt = DataTypeExtensions.StringToDataType(type);
+            Val v = VisitExpression(new MemberAccessExpr(new VariableExpr(name), field));
+            fieldVals.Add((off, dt, v));
+            off += dt.SizeOf();
+        }
+
+        int total = off;
+        string slot = qn + "__slot";
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        // Repoint the instance to the slot BEFORE storing, so the stores (and later reads) resolve
+        // through the slot rather than the now-stale flattened alias.
+        variableAliases.Remove(qn);
+        virtualInstances.Remove(qn);
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+
+        foreach (var (foff, fty, fv) in fieldVals)
+            EmitSlotFieldStore(slot, false, foff, fty, fv, total);
     }
 
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
