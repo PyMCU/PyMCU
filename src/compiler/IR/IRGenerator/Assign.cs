@@ -293,73 +293,78 @@ public partial class IRGenerator
         }
 
         if (!isCtor)
+            return TryExpandPropertySetter(memTarget, () => VisitExpression(stmt.Value));
+        return false;
+    }
+
+    // Expand a `@property` setter for `obj.prop` when one is registered for the instance's
+    // class, binding `self` to the instance and the setter's value param to `getArg()`.
+    // `getArg` is invoked lazily, only once a matching setter is confirmed (so the rhs is not
+    // evaluated for a non-property member). Returns true when a setter was applied. Shared by
+    // plain assignment (`obj.prop = v`) and augmented assignment (`obj.prop OP= v`).
+    private bool TryExpandPropertySetter(MemberAccessExpr memTarget, Func<Val> getArg)
+    {
+        var objVal = VisitExpression(memTarget.Object);
+        var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
+            @base = alias;
+        if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out var cls))
+            return false;
+        if (!propertySetters.TryGetValue(cls + "." + memTarget.Member, out string? inlineKey))
+            return false;
+
+        var argVal = getArg();
+        if (inlineKey == null) return true;
+        var setter = inlineFunctions[inlineKey];
+        var exitLabel = MakeLabel();
+        var newDepth = inlineDepth + 1;
+        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
+
+        variableAliases[newPrefix + "self"] = @base;
+        instanceClasses[newPrefix + "self"] = cls;
+
+        if (setter is { Params.Count: >= 2 })
         {
-            var objVal = VisitExpression(memTarget.Object);
-            var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-            while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
-                @base = alias;
-            if (!string.IsNullOrEmpty(@base) && instanceClasses.TryGetValue(@base, out var cls))
+            var paramName = newPrefix + setter.Params[1].Name;
+            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
+            variableTypes[paramName] = paramType;
+            constantVariables.Remove(paramName);
+            variableAliases.Remove(paramName);
+            switch (argVal)
             {
-                var setterKey = cls + "." + memTarget.Member;
-                string? inlineKey;
-                if (propertySetters.TryGetValue(setterKey, out inlineKey))
-                {
-                    var argVal = VisitExpression(stmt.Value);
-                    if (inlineKey == null) return true;
-                    var setter = inlineFunctions[inlineKey];
-                    var exitLabel = MakeLabel();
-                    var newDepth = inlineDepth + 1;
-                    var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
-
-                    variableAliases[newPrefix + "self"] = @base;
-                    instanceClasses[newPrefix + "self"] = cls;
-
-                    if (setter is { Params.Count: >= 2 })
-                    {
-                        var paramName = newPrefix + setter.Params[1].Name;
-                        var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
-                        variableTypes[paramName] = paramType;
-                        constantVariables.Remove(paramName);
-                        variableAliases.Remove(paramName);
-                        switch (argVal)
-                        {
-                            case Constant c:
-                                constantVariables[paramName] = c.Value;
-                                break;
-                            case Variable vv:
-                                variableAliases[paramName] = vv.Name;
-                                break;
-                            case Temporary tt:
-                                // Materialize the runtime value into the param's own SRAM slot.
-                                // A bare alias (val -> tmp_N) would resolve to a dead temporary
-                                // across the inline boundary, so the setter body would read an
-                                // uninitialized variable (always 0) -- the root cause of
-                                // `led.value = buf[0] & 1` collapsing to a single branch.
-                                Emit(new Copy(tt, new Variable(paramName, paramType)));
-                                break;
-                        }
-                    }
-
-                    inlineDepth++;
-                    var savedPrefix = currentInlinePrefix;
-                    var savedModulePrefix = currentModulePrefix;
-                    currentInlinePrefix = newPrefix;
-                    currentModulePrefix = cls + "_";
-
-                    inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
-                    if (setter?.Body != null) VisitBlock(setter.Body);
-                    Emit(new Label(exitLabel));
-                    inlineStack.RemoveAt(inlineStack.Count - 1);
-
-                    inlineDepth--;
-                    currentInlinePrefix = savedPrefix;
-                    currentModulePrefix = savedModulePrefix;
-
-                    return true;
-                }
+                case Constant c:
+                    constantVariables[paramName] = c.Value;
+                    break;
+                case Variable vv:
+                    variableAliases[paramName] = vv.Name;
+                    break;
+                case Temporary tt:
+                    // Materialize the runtime value into the param's own SRAM slot.
+                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
+                    // across the inline boundary, so the setter body would read an
+                    // uninitialized variable (always 0) -- the root cause of
+                    // `led.value = buf[0] & 1` collapsing to a single branch.
+                    Emit(new Copy(tt, new Variable(paramName, paramType)));
+                    break;
             }
         }
-        return false;
+
+        inlineDepth++;
+        var savedPrefix = currentInlinePrefix;
+        var savedModulePrefix = currentModulePrefix;
+        currentInlinePrefix = newPrefix;
+        currentModulePrefix = cls + "_";
+
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+        if (setter?.Body != null) VisitBlock(setter.Body);
+        Emit(new Label(exitLabel));
+        inlineStack.RemoveAt(inlineStack.Count - 1);
+
+        inlineDepth--;
+        currentInlinePrefix = savedPrefix;
+        currentModulePrefix = savedModulePrefix;
+
+        return true;
     }
 
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
@@ -2545,11 +2550,14 @@ public partial class IRGenerator
             // Only `.value` had a case, so an augmented assignment to any other member was
             // silently dropped (e.g. `box.x += 3` left box.x unchanged). Reuse the field read and
             // write paths so the slot-aware load/store is applied for multi-field instances.
-            Val cur = VisitMemberAccess(mfield);
+            Val cur = VisitMemberAccess(mfield);   // a @property read goes through the getter (A67)
             DataType dt = GetValType(cur);
             if (dt == DataType.UNKNOWN) dt = DataType.UINT8;
             Temporary res = MakeTemp(dt);
             Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
+            // A @property must write back through its setter, not a phantom data field. The
+            // getter read above already produced `cur`; route the new value through the setter.
+            if (TryExpandPropertySetter(mfield, () => res)) return;
             EmitMemberAssign(new AssignStmt(mfield, mfield) { Line = stmt.Line }, mfield, res);
         }
     }
