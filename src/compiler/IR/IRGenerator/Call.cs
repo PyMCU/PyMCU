@@ -1666,7 +1666,7 @@ public partial class IRGenerator
                         continue;
                     }
 
-                    var t = MakeTemp();
+                    var t = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(v)));
                     Emit(new Binary(BinaryOp.Add, acc, v, t));
                     acc = t;
                 }
@@ -1705,11 +1705,14 @@ public partial class IRGenerator
 
                 if (arrSize <= 0) throw UserError("sum() requires a list literal or fixed-size array");
 
-                Val acc = new Variable(arrBase + "__0", DataType.UINT8);
+                // Read each element at the array's real element type; a hardcoded UINT8 here
+                // truncated every element of a uint16/int16 array (and the running sum).
+                DataType elemTy = arrayElemTypes.TryGetValue(arrBase, out var et) ? et : DataType.UINT8;
+                Val acc = new Variable(arrBase + "__0", elemTy);
                 for (int i = 1; i < arrSize; ++i)
                 {
-                    Val vi = new Variable(arrBase + "__" + i, DataType.UINT8);
-                    Temporary t = MakeTemp();
+                    Val vi = new Variable(arrBase + "__" + i, elemTy);
+                    Temporary t = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(acc), elemTy));
                     Emit(new Binary(BinaryOp.Add, acc, vi, t));
                     acc = t;
                 }
