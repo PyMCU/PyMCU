@@ -448,7 +448,35 @@ public partial class IRGenerator
                                     break;
                                 }
                             }
+
+                        // A subclass __init__ that calls super().__init__() also owns the base's
+                        // fields (the base ctor sets them on the same self). Merge the base layout
+                        // AHEAD of the subclass's own fields (base ctor runs first), so an outlined
+                        // method on the subclass receives every field and `self.<inherited>` resolves
+                        // instead of erroring "not a member". Skipped when the subclass already
+                        // inherited the whole layout above (its own __init__ added nothing new).
+                        if (clsLayout.Count > 0 && InitCallsSuperInit(block))
+                            foreach (var baseName in classDef.Bases)
+                            {
+                                if (baseName is "Enum" or "IntEnum") continue;
+                                List<(string Field, string Type, string SourceParam)>? baseLayout = null;
+                                if (classFieldLayout.TryGetValue(oldPrefix + baseName, out var blm) && blm.Count > 0)
+                                    baseLayout = blm;
+                                else if (classFieldLayout.TryGetValue(baseName, out var blm2) && blm2.Count > 0)
+                                    baseLayout = blm2;
+                                if (baseLayout == null) continue;
+
+                                var ownFields = new HashSet<string>(clsLayout.Select(f => f.Field));
+                                var merged = new List<(string Field, string Type, string SourceParam)>();
+                                foreach (var bf in baseLayout)
+                                    if (!ownFields.Contains(bf.Field)) merged.Add(bf);
+                                merged.AddRange(clsLayout);
+                                clsLayout = merged;
+                                break;
+                            }
+
                         classFieldLayout[classKey] = clsLayout;
+                        if (InitCallsSuperInit(block)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
                         // fields keep their normal virtual-construction path. zcaFactoryClasses is
@@ -703,6 +731,24 @@ public partial class IRGenerator
             case IndexExpr { Target: MemberAccessExpr ma2 }: assignedMemberNames.Add(ma2.Member); break;
             case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e); break;
         }
+    }
+
+    // True when the class's own __init__ delegates to its base via super().__init__(...).
+    // Such a subclass gains the base's fields (set by the base ctor) in addition to its own,
+    // so its slot layout must merge the base fields ahead of its own.
+    private static bool InitCallsSuperInit(Block classBody)
+    {
+        FunctionDef? init = null;
+        foreach (var s in classBody.Statements)
+            if (s is FunctionDef f && f.Name == "__init__") { init = f; break; }
+        if (init == null) return false;
+        foreach (var st in init.Body.Statements)
+        {
+            if (st is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr {
+                    Member: "__init__", Object: CallExpr { Callee: VariableExpr { Name: "super" } } } } })
+                return true;
+        }
+        return false;
     }
 
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)

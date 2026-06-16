@@ -43,8 +43,21 @@ public partial class IRGenerator
             && slotCall.Callee is VariableExpr slotCallee
             && slotClasses.Contains(ResolveCallee(slotCallee.Name)))
         {
-            EmitSlotConstruction(slotTgt, ResolveCallee(slotCallee.Name), slotCall.Args);
-            return;
+            string slotCls = ResolveCallee(slotCallee.Name);
+            if (classInitCallsSuper.Contains(slotCls))
+            {
+                // The ctor delegates to super().__init__(): the positional slot fill can't see a
+                // base-set field (it has no param of this class). Run the real __init__ via the
+                // normal (flattened) constructor machinery -- where super expansion works -- then
+                // materialize the resulting fields into the slot (see the slotMat hook below).
+                slotMatName = slotTgt.Name;
+                slotMatCls = slotCls;
+            }
+            else
+            {
+                EmitSlotConstruction(slotTgt, slotCls, slotCall.Args);
+                return;
+            }
         }
 
         // RFC 0001 Model B (sret): `s = make(args)` where make is a non-@inline factory

@@ -88,6 +88,11 @@ public partial class IRGenerator
     // on a ZCA instance with a known concrete type (field aliasing requires inlining).
     private Dictionary<string, FunctionDef> instanceMethodDefs = new();
 
+    // Class keys whose own __init__ delegates to the base via super().__init__(). Their slot
+    // construction can't use the positional fast-path (a base-set field has no constructor
+    // param of this class); run the real __init__ (flattened) and materialize into the slot.
+    private HashSet<string> classInitCallsSuper = new();
+
     // Class hierarchy graph (both populated by ScanFunctions).
     // Keys use the unqualified class name WITHOUT trailing underscore (e.g. "dht_DHT11").
     // classChildren:      parent → set of direct subclass names.
