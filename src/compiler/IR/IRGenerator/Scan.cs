@@ -422,6 +422,32 @@ public partial class IRGenerator
                         // single primitive field is eligible to be returned by value from a
                         // non-@inline factory (Model B register-packed handle).
                         var clsLayout = DeriveFieldLayout(block);
+                        // A subclass with no __init__ of its own inherits the base's fields, so an
+                        // OVERRIDDEN method can resolve them (`self.a` otherwise errors "not a
+                        // member"). Inherit the layout ONLY when the base is a slot class: that is
+                        // the case where the override would be outlined and needs the field layout.
+                        // Plain virtual/@inline HAL classes (base NOT in slotClasses) keep an empty
+                        // layout so their construction model is unchanged (inheriting it there
+                        // wrongly promotes the subclass to a slot and crashes codegen).
+                        if (clsLayout.Count == 0)
+                            foreach (var baseName in classDef.Bases)
+                            {
+                                if (baseName is "Enum" or "IntEnum") continue;
+                                string bk = oldPrefix + baseName;
+                                if (classFieldLayout.TryGetValue(bk, out var bl) && bl.Count > 0
+                                    && slotClasses.Contains(bk))
+                                {
+                                    clsLayout = bl;
+                                    break;
+                                }
+
+                                if (classFieldLayout.TryGetValue(baseName, out var bl2) && bl2.Count > 0
+                                    && slotClasses.Contains(baseName))
+                                {
+                                    clsLayout = bl2;
+                                    break;
+                                }
+                            }
                         classFieldLayout[classKey] = clsLayout;
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
@@ -465,7 +491,7 @@ public partial class IRGenerator
                                     // shared subroutine (Model A field-params, or Model B SRAM slot
                                     // for >= 2 fields). After F4 this is redundant with the default
                                     // for outline-safe methods; kept as an explicit request.
-                                    RegisterOutlinedMethod(func, classKey, DeriveFieldLayout(block), fullName);
+                                    RegisterOutlinedMethod(func, classKey, clsLayout, fullName);
                                 }
                                 else if (func.IsInline)
                                 {
@@ -498,7 +524,7 @@ public partial class IRGenerator
                                     // it is outline-safe (touches self only as self.<field>). This is
                                     // why @inline now means something: without it, a representable
                                     // method is shared, not silently force-inlined per instance.
-                                    var defLayout = DeriveFieldLayout(block);
+                                    var defLayout = clsLayout;
                                     if (IsOutlineSafe(func, defLayout))
                                     {
                                         // A single-field mutator that ALSO has explicit returns
