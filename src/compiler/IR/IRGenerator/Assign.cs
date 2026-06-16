@@ -1457,6 +1457,10 @@ public partial class IRGenerator
                 {
                     string fnName = ResolveCallee(fnExpr.Name);
                     Emit(new Copy(new FunctionRef(fnName), new Variable(q2, DataType.FUNCREF)));
+                    // Remember the pointee's return width so an ICALL through q2 doesn't
+                    // truncate a uint16/int16 return to the default uint8 result temp.
+                    if (functionReturnTypes.TryGetValue(fnName, out var frt) && frt != null)
+                        funcrefReturnTypes[q2] = DataTypeExtensions.StringToDataType(frt);
                     return;
                 }
             }

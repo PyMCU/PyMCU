@@ -112,6 +112,10 @@ public partial class IRGenerator
     // Tracks loop variables that are function references (from zip() over function lists).
     // Key = loop variable name (e.g. "fn"), Value = resolved mangled function name (e.g. "blink_task").
     private Dictionary<string, string> loopFunctionAliases = new();
+    // Return type of the function each FUNCREF-typed variable points to (qualified var key ->
+    // return DataType). Lets an indirect call (ICALL) type its result temp to the callee's
+    // return width instead of a default uint8, which would truncate a uint16/int16 return.
+    private Dictionary<string, DataType> funcrefReturnTypes = new();
     // Tracks instance fields that have been written with different constant values
     // (i.e., mutable at runtime). Once a field is killed it is never re-admitted
     // to constantVariables, preventing incorrect DCE of branches like

@@ -1412,7 +1412,10 @@ public partial class IRGenerator
         var indArgs = new List<Val>();
         foreach (var a in expr.Args)
             indArgs.Add(VisitExpression(a));
-        Temporary indDst = MakeTemp();
+        // Type the result temp to the pointee's return width; without this a uint16/int16
+        // return read only its low byte (the default uint8 temp).
+        DataType retTy = funcrefReturnTypes.TryGetValue(fvKey, out var rt) ? rt : DataType.UINT8;
+        Temporary indDst = MakeTemp(retTy);
         Emit(new IndirectCall(new Variable(fvKey, DataType.FUNCREF), indArgs, indDst));
         return indDst;
     }
