@@ -709,15 +709,24 @@ public partial class IRGenerator
         string falseLabel = MakeLabel();
         string endLabel = MakeLabel();
 
+        // The result temp must be as wide as the WIDER of the two branches, not just the
+        // true branch: `7 if c else wide` (true=uint8, false=uint16) typed the temp uint8
+        // and truncated the 16-bit false value (500 -> 244). Visit both branches to learn
+        // their real types, promote, then splice the true-branch copy into the true block
+        // (the false branch is emitted between the true tail and the join).
         Emit(new JumpIfZero(cond, falseLabel));
         Val trueVal = VisitExpression(expr.TrueVal);
-        Temporary result = MakeTemp(GetValType(trueVal));
-        Emit(new Copy(trueVal, result));
-        Emit(new Jump(endLabel));
+        int trueTail = currentInstructions.Count;   // where the true copy + jump belong
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
+        Temporary result = MakeTemp(
+            DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
         Emit(new Copy(falseVal, result));
         Emit(new Label(endLabel));
+        // Splice [Copy trueVal->result; Jump end] just after the true-branch body, ahead of
+        // the false label. Insert in reverse so the first index stays valid.
+        currentInstructions.Insert(trueTail, new Jump(endLabel));
+        currentInstructions.Insert(trueTail, new Copy(trueVal, result));
         return result;
     }
 
