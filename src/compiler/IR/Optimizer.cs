@@ -1118,7 +1118,17 @@ private static Function CloneFunction(Function f)
                     foreach (var op in ia.Operands) InvalidateVar(op);
                     break;
                 case Label:
+                    // A label is a basic-block boundary (a control-flow join). Tracked temp
+                    // copies are only valid along the straight-line path that produced them:
+                    // a temp assigned on one incoming edge and differently on another (e.g. a
+                    // ternary/min/max/abs result temp, or a value returned by a call on one
+                    // path and a constant on the other) must NOT forward one edge's value past
+                    // the join. varConsts was already cleared here; tempCopies was not, which
+                    // leaked a branch-local constant across the merge (`big() if c else 7`
+                    // collapsed to a constant 7). RemoveRedundantControlFlow merges trivial
+                    // straight-line blocks first, so genuine single-def forwarding survives.
                     varConsts.Clear();
+                    tempCopies.Clear();
                     break;
                 case Call callInstr:
                     // The call's result is a runtime value, so the dst no longer holds its
