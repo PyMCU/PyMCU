@@ -1555,16 +1555,19 @@ public partial class IRGenerator
             throw UserError("abs() argument must be numeric, not a string");
         var v = VisitExpression(expr.Args[0]);
         if (v is Constant c) return new Constant(c.Value < 0 ? -c.Value : c.Value);
+        // The result carries the operand's width/signedness. A bare uint8 temp here
+        // truncated abs() of any int16/int32 value (e.g. abs(-500) -> 244).
+        DataType absType = GetValType(v);
         var negLabel = MakeLabel();
         var endLabel = MakeLabel();
-        var result = MakeTemp();
+        var result = MakeTemp(absType);
         var negv = MakeTemp();
         Emit(new Binary(BinaryOp.LessThan, v, new Constant(0), negv));
         Emit(new JumpIfNotZero(negv, negLabel));
         Emit(new Copy(v, result));
         Emit(new Jump(endLabel));
         Emit(new Label(negLabel));
-        Temporary negResult = MakeTemp();
+        Temporary negResult = MakeTemp(absType);
         Emit(new Binary(BinaryOp.Sub, new Constant(0), v, negResult));
         Emit(new Copy(negResult, result));
         Emit(new Label(endLabel));
@@ -1578,9 +1581,11 @@ public partial class IRGenerator
         Val a = VisitExpression(expr.Args[0]);
         Val b = VisitExpression(expr.Args[1]);
         if (a is Constant ca && b is Constant cb) return new Constant(ca.Value < cb.Value ? ca.Value : cb.Value);
+        // Result holds whichever operand wins, so it must be at least as wide as the
+        // wider operand; a bare uint8 temp truncated min/max of int16/int32 values.
         string elseLabel = MakeLabel();
         string endLabel = MakeLabel();
-        Temporary result = MakeTemp();
+        Temporary result = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(a), GetValType(b)));
         Temporary cmp = MakeTemp();
         Emit(new Binary(BinaryOp.LessThan, a, b, cmp));
         Emit(new JumpIfZero(cmp, elseLabel));
@@ -1599,9 +1604,11 @@ public partial class IRGenerator
         var a = VisitExpression(expr.Args[0]);
         var b = VisitExpression(expr.Args[1]);
         if (a is Constant ca && b is Constant cb) return new Constant(ca.Value > cb.Value ? ca.Value : cb.Value);
+        // Result holds whichever operand wins, so it must be at least as wide as the
+        // wider operand; a bare uint8 temp truncated min/max of int16/int32 values.
         var elseLabel = MakeLabel();
         var endLabel = MakeLabel();
-        var result = MakeTemp();
+        var result = MakeTemp(DataTypeExtensions.GetPromotedType(GetValType(a), GetValType(b)));
         var cmp = MakeTemp();
         Emit(new Binary(BinaryOp.GreaterThan, a, b, cmp));
         Emit(new JumpIfZero(cmp, elseLabel));
