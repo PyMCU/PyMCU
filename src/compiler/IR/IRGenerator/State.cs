@@ -88,6 +88,11 @@ public partial class IRGenerator
     // on a ZCA instance with a known concrete type (field aliasing requires inlining).
     private Dictionary<string, FunctionDef> instanceMethodDefs = new();
 
+    // Every instance method's AST keyed by mangled symbol (e.g. "Base_score"), regardless of
+    // inline/outline/force-inline. Lets super().<method>() inline-expand the base body even when
+    // the base method is outlined (and thus absent from inlineFunctions).
+    private Dictionary<string, FunctionDef> methodAstByName = new();
+
     // Class keys whose own __init__ delegates to the base via super().__init__(). Their slot
     // construction can't use the positional fast-path (a base-set field has no constructor
     // param of this class); run the real __init__ (flattened) and materialize into the slot.

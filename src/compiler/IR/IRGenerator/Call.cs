@@ -1214,13 +1214,28 @@ public partial class IRGenerator
         if (expr.Callee is not MemberAccessExpr mem) return null;
         if (mem.Object is not CallExpr { Callee: VariableExpr { Name: "super" } }) return null;
 
-        string childClass = string.IsNullOrEmpty(currentModulePrefix)
-            ? ""
-            : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+        // When an OUTLINED method body is compiled standalone, currentModulePrefix is not the
+        // class prefix, so derive the child class from the method's recorded instance type first
+        // (this is what makes super().<method>() resolve inside an outlined override). Fall back
+        // to currentModulePrefix for the inline construction path (super().__init__()).
+        string childClass = methodInstanceTypes.TryGetValue(currentFunction, out var mitChild)
+            ? mitChild
+            : (string.IsNullOrEmpty(currentModulePrefix)
+                ? ""
+                : currentModulePrefix.Substring(0, currentModulePrefix.Length - 1));
         if (!classBasePrefixes.TryGetValue(childClass, out var basePrefix)) return null;
 
         var calleeSuper = basePrefix + mem.Member;
-        if (!inlineFunctions.TryGetValue(calleeSuper, out var funcSuper)) return null;
+        // The base method may be @inline (in inlineFunctions) OR a default-outlined method
+        // (only its AST is in instanceMethodDefs). Either way, expand its BODY in place with
+        // self aliased to the current instance -- this sidesteps the outlined-call ABI and
+        // works whether the OVERRIDING method is itself outlined or force-inlined. Before,
+        // only an @inline base method resolved; a non-inline one fell through to an undefined
+        // 'super' (super().<method>() only worked for __init__).
+        if (!inlineFunctions.TryGetValue(calleeSuper, out var funcSuper)
+            && !instanceMethodDefs.TryGetValue(calleeSuper, out funcSuper)
+            && !methodAstByName.TryGetValue(calleeSuper, out funcSuper))
+            return null;
 
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
@@ -1231,6 +1246,9 @@ public partial class IRGenerator
             variableAliases[newPrefix + "self"] = vAlias;
         else if (!string.IsNullOrEmpty(pendingConstructorTarget))
             variableAliases[newPrefix + "self"] = pendingConstructorTarget;
+        // Propagate the concrete instance type so the base body's self.<field> resolves.
+        if (instanceClasses.TryGetValue(selfAlias, out var selfClsSuper) && selfClsSuper != null)
+            instanceClasses[newPrefix + "self"] = selfClsSuper;
 
         var paramIdx = 0;
         foreach (var p in funcSuper.Params)
@@ -1239,18 +1257,33 @@ public partial class IRGenerator
             if (paramIdx >= expr.Args.Count) continue;
             var argVal = VisitExpression(expr.Args[paramIdx]);
             var paramKey = newPrefix + p.Name;
-            if (argVal is Variable vArg)
+            constantVariables.Remove(paramKey);
+            variableAliases.Remove(paramKey);
+            if (argVal is Constant cArg)
             {
-                variableAliases[paramKey] = vArg.Name;
+                constantVariables[paramKey] = cArg.Value;
             }
             else
             {
-                var paramVar = new Variable(paramKey, DataType.UINT8);
+                // Materialize the value into the param's own var (do NOT merely alias a
+                // Variable arg). When the base __init__ field is later consumed by an outlined
+                // (Model-A) method call, the field is read by literal name -- a compile-time
+                // alias is never written, so it read 0 and a forwarded super().__init__(v, ...)
+                // dropped the runtime `v` (constants survived, variables became 0).
+                var paramVar = new Variable(paramKey,
+                    DataTypeExtensions.StringToDataType(p.Type));
                 Emit(new Copy(argVal, paramVar));
+                variableTypes[paramKey] = DataTypeExtensions.StringToDataType(p.Type);
             }
 
             paramIdx++;
         }
+
+        // A value-returning super method needs a result temp; the base body's `return`
+        // copies into it via the inline frame's ResultTemp. Without this the value was lost.
+        Temporary? superResult = null;
+        if (funcSuper.ReturnType != "void" && funcSuper.ReturnType != "None")
+            superResult = MakeTemp(DataTypeExtensions.StringToDataType(funcSuper.ReturnType));
 
         var savedPrefix = currentInlinePrefix;
         var savedMod = currentModulePrefix;
@@ -1259,7 +1292,7 @@ public partial class IRGenerator
         currentInlinePrefix = newPrefix;
         currentModulePrefix = basePrefix;
         inlineDepth = newDepth;
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult });
 
         VisitBlock(funcSuper.Body);
         Emit(new Label(exitLabel));
@@ -1268,7 +1301,7 @@ public partial class IRGenerator
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedMod;
         inlineDepth = savedDepth;
-        return new NoneVal();
+        return superResult ?? (Val)new NoneVal();
     }
 
     // RFC 0001 Model B (Class[N]): `arr[i].method(args)` — compute the element address

@@ -433,16 +433,23 @@ public partial class IRGenerator
                             foreach (var baseName in classDef.Bases)
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
+                                // Inherit the base's field layout so an inherited/overridden method
+                                // can resolve `self.<field>`. Allow it for a real ZCA data class --
+                                // a slot (>= 2 fields) OR a single-field data class (zcaFactoryClasses)
+                                // -- but NOT for a virtual/@inline HAL class (neither), whose multi-
+                                // field layout would wrongly promote the subclass to a slot (A66).
+                                bool IsDataClass(string k) =>
+                                    slotClasses.Contains(k) || zcaFactoryClasses.ContainsKey(k);
                                 string bk = oldPrefix + baseName;
                                 if (classFieldLayout.TryGetValue(bk, out var bl) && bl.Count > 0
-                                    && slotClasses.Contains(bk))
+                                    && IsDataClass(bk))
                                 {
                                     clsLayout = bl;
                                     break;
                                 }
 
                                 if (classFieldLayout.TryGetValue(baseName, out var bl2) && bl2.Count > 0
-                                    && slotClasses.Contains(baseName))
+                                    && IsDataClass(baseName))
                                 {
                                     clsLayout = bl2;
                                     break;
@@ -598,6 +605,10 @@ public partial class IRGenerator
                                 {
                                     methodInstanceTypes[fullName] =
                                         currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+                                    // Keep every instance method's AST reachable by symbol so a
+                                    // super().<method>() can inline-expand the base body even when
+                                    // the base method is outlined (not in inlineFunctions).
+                                    methodAstByName[fullName] = func;
                                 }
                             }
                             else if (inner is ClassDef nestedClass)
