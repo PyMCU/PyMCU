@@ -510,6 +510,11 @@ private static Function CloneFunction(Function f)
         {
             if (JumpTargetOf(instr) is string t) targets.Add(t);
             if (instr is BranchOnError boe) targets.Add(boe.ErrorLabel);
+            // A locally-caught `raise` (SignalError with a CatchLabel) jumps to the catch
+            // dispatcher. Without counting it, a try whose body has no Call (so no BranchOnError
+            // edge) — e.g. `try: raise X` or `try: x // y` — would drop the catch label here and
+            // leave a dangling jump (link error: undefined reference).
+            if (instr is SignalError { CatchLabel: { } cl }) targets.Add(cl);
         }
         body.RemoveAll(instr => instr is Label l && !targets.Contains(l.Name));
     }
@@ -860,7 +865,20 @@ private static Function CloneFunction(Function f)
                     if (c1.HasValue)
                     {
                         if (c1.Value != 0) func.Body[i] = new Jump(jnz.Target);
-                        else func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                        else
+                        {
+                            // The runtime divide/modulo zero-guard is JumpIfNotZero(divisor, ok)
+                            // followed by SignalError(ZeroDivisionError). If the divisor proved to
+                            // be 0 here, the guard would always fault at runtime — but a provably-
+                            // zero divisor is better caught at compile time (same diagnostic as the
+                            // literal `x // 0`), so report it instead of leaving the dead guard.
+                            int n = i + 1;
+                            while (n < func.Body.Count && func.Body[n] is DebugLine) n++;
+                            if (n < func.Body.Count && func.Body[n] is SignalError { Code: Constant { Value: 6 } })
+                                throw new ValueError("integer division or modulo by zero",
+                                    curLine > 0 ? curLine : 1, 1);
+                            func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
+                        }
                     }
                     break;
                 }
@@ -1629,6 +1647,15 @@ private static Function CloneFunction(Function f)
                 if (i + 1 < blocks.Count)
                     Connect(block, blocks[i + 1]);
             }
+            else if (lastInstr is SignalError sigErr)
+            {
+                // A locally-caught raise (CatchLabel set) is an unconditional jump to the catch
+                // dispatcher — connect there, no fall-through. A propagating SignalError compiles
+                // to RET, so it is terminal with no successor. Without this edge the catch block
+                // looked unreachable and was deleted, leaving a dangling jump (link error).
+                if (sigErr.CatchLabel != null && labelToBlock.TryGetValue(sigErr.CatchLabel, out var catchBlock))
+                    Connect(block, catchBlock);
+            }
             else if (lastInstr is not Return)
             {
                 if (i + 1 < blocks.Count)
@@ -1658,7 +1685,7 @@ private static Function CloneFunction(Function f)
     }
 
     private static bool IsTerminator(Instruction instr) =>
-        instr is Jump || instr is Return || IsConditionalJump(instr, out _);
+        instr is Jump || instr is Return || instr is SignalError || IsConditionalJump(instr, out _);
 
     private static bool IsConditionalJump(Instruction instr, out string target)
     {
