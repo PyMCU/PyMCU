@@ -594,8 +594,17 @@ public partial class IRGenerator
         // flattened `p_x` variable disjoint from the slot the methods read.
         if (memExpr2.Object is VariableExpr slotInst)
         {
-            string sb = slotInst.Name;
-            while (sb != null && variableAliases.TryGetValue(sb, out var sa)) sb = sa;
+            // Resolve the instance like the read side does: qualify with the inline prefix /
+            // current function FIRST (so `self` inside a force-inlined method resolves to the
+            // bound slot instance), then fall back to the bare name. Without the qualified form,
+            // `self._field = v` in a force-inlined method chased a non-existent alias for bare
+            // "self" and the slot store was silently dropped (e.g. sample()'s self._reads += 1).
+            string Chase(string s) { while (s != null && variableAliases.TryGetValue(s, out var a)) s = a; return s; }
+            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + slotInst.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + slotInst.Name : slotInst.Name);
+            string sb = Chase(qualified);
+            if (sb == null || !slotInstances.ContainsKey(sb)) sb = Chase(slotInst.Name);
             if (sb != null && slotInstances.TryGetValue(sb, out var slotArrW)
                 && instanceClasses.TryGetValue(sb, out var slotClsW)
                 && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out var slotTyW))
