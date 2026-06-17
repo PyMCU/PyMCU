@@ -933,17 +933,34 @@ public partial class IRGenerator
         // only runs when no inline prefix is active — so without this it fell through to an
         // unbound (zero) local, silently dropping the capture. Resolve it to the enclosing
         // function's binding when the inline-qualified name is genuinely unknown.
-        if (!string.IsNullOrEmpty(currentInlinePrefix) && !string.IsNullOrEmpty(currentFunction)
-            && !variableTypes.ContainsKey(finalLocalName))
+        if (!string.IsNullOrEmpty(currentInlinePrefix) && !variableTypes.ContainsKey(finalLocalName))
         {
-            string enclosing = currentFunction + "." + name;
-            if (enclosing != finalLocalName)
+            // Candidate enclosing scopes, innermost first: each enclosing inline expansion's
+            // prefix (so a capture from an enclosing @inline like `outer` resolves), then the
+            // enclosing plain function. The topmost stack entry is THIS expansion — skip it.
+            for (int si = inlineStack.Count - 2; si >= 0; --si)
             {
-                if (constantVariables.TryGetValue(enclosing, out int encConst)) return new Constant(encConst);
-                if (constantAddressVariables.TryGetValue(enclosing, out int encAddr))
-                    return new MemoryAddress(encAddr,
-                        variableTypes.TryGetValue(enclosing, out var encAddrDt) ? encAddrDt : DataType.UINT16);
-                if (variableTypes.TryGetValue(enclosing, out var encType)) return new Variable(enclosing, encType);
+                string p = inlineStack[si].Prefix;
+                if (string.IsNullOrEmpty(p)) continue;
+                string enc = p + name;
+                if (enc == finalLocalName) continue;
+                if (constantVariables.TryGetValue(enc, out int ec)) return new Constant(ec);
+                if (constantAddressVariables.TryGetValue(enc, out int ea2))
+                    return new MemoryAddress(ea2, variableTypes.TryGetValue(enc, out var ead) ? ead : DataType.UINT16);
+                if (variableTypes.TryGetValue(enc, out var et)) return new Variable(enc, et);
+            }
+
+            if (!string.IsNullOrEmpty(currentFunction))
+            {
+                string enclosing = currentFunction + "." + name;
+                if (enclosing != finalLocalName)
+                {
+                    if (constantVariables.TryGetValue(enclosing, out int encConst)) return new Constant(encConst);
+                    if (constantAddressVariables.TryGetValue(enclosing, out int encAddr))
+                        return new MemoryAddress(encAddr,
+                            variableTypes.TryGetValue(enclosing, out var encAddrDt) ? encAddrDt : DataType.UINT16);
+                    if (variableTypes.TryGetValue(enclosing, out var encType)) return new Variable(enclosing, encType);
+                }
             }
         }
 

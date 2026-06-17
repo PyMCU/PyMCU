@@ -28,6 +28,10 @@ public class InlineContext
     public List<string> ResultVars { get; set; } = [];
     public string CalleeName { get; set; } = "";
     public bool ResultAssigned { get; set; } = false;
+
+    // The inline name-prefix active inside this expansion's body (e.g. "inline1.outer.").
+    // Used to resolve a free variable captured from an enclosing INLINE scope.
+    public string Prefix { get; set; } = "";
 }
 
 public class ModuleScope
