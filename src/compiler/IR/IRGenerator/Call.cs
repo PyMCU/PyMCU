@@ -739,6 +739,15 @@ public partial class IRGenerator
         string savedPrefix = currentInlinePrefix;
         currentInlinePrefix = newPrefix;
 
+        // Register the callee's runtime-indexed local arrays so they are allocated as SRAM (not
+        // register element-vars). An inlined fixed array is qualified with the enclosing function
+        // (currentFunction), same as the load site, so scan under that prefix. The per-function
+        // prescan only sees the caller's own body, never an inlined callee's locals, so without
+        // this a runtime-indexed local array inside an @inline hit "subscript must be constant".
+        if (func != null)
+            ScanForVariableIndexedArrays(func.Body.Statements,
+                string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".");
+
         var savedModulePrefix = currentModulePrefix;
         // Resolve the body's calls in the module where the function was DEFINED,
         // not where its (possibly re-exported) callee name lives. A facade like

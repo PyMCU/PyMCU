@@ -18,13 +18,6 @@ from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint32, int32, inline, const
 
 
-# Scratch digit buffer for LCD.print_fmt (f-string format specs). A module global because the
-# formatter is @inline (it bakes in the instance pins) and an @inline body cannot own a
-# runtime-indexed local array. 16 bytes covers decimal/hex of a uint32; only allocated when the
-# LCD driver is imported. Used transiently within a single print_fmt call.
-_lcd_fmt_buf: uint8[16] = [0] * 16
-
-
 class LCD:
 
     @inline
@@ -98,27 +91,28 @@ class LCD:
             self.write_char(45)  # '-'
             if width > 0:
                 width = width - 1
+        buf: uint8[16] = [0] * 16
         n: uint8 = 0
         if mag == 0:
-            _lcd_fmt_buf[0] = 48
+            buf[0] = 48
             n = 1
         else:
             while mag > 0:
                 d: uint8 = uint8(mag % base)
                 if d < 10:
-                    _lcd_fmt_buf[n] = d + 48
+                    buf[n] = d + 48
                 elif flags & 0x01:
-                    _lcd_fmt_buf[n] = d - 10 + 65
+                    buf[n] = d - 10 + 65
                 else:
-                    _lcd_fmt_buf[n] = d - 10 + 97
+                    buf[n] = d - 10 + 97
                 mag = mag // base
                 n = n + 1
         if neg != 0 and zero_pad == 0:
-            _lcd_fmt_buf[n] = 45
+            buf[n] = 45
             n = n + 1
         while n < width and n < 16:
-            _lcd_fmt_buf[n] = pad
+            buf[n] = pad
             n = n + 1
         while n > 0:
             n = n - 1
-            self.write_char(_lcd_fmt_buf[n])
+            self.write_char(buf[n])
