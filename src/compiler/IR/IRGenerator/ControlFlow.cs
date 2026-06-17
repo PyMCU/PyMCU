@@ -784,7 +784,12 @@ public partial class IRGenerator
         for (int i = callIndices.Count - 1; i >= 0; i--)
             currentInstructions.Insert(callIndices[i] + 1, new BranchOnError(catchDispatch));
 
-        // Happy path: run finally block (if any), then skip catch section.
+        // Happy path: the try body raised nothing. Run the `else` block (if any) FIRST — it is
+        // emitted here, after the body's BranchOnError guards were inserted above, so a raise in
+        // `else` is NOT caught by this try (it propagates), matching Python. Then the finally.
+        if (stmt.ElseBody != null)
+            foreach (var s in stmt.ElseBody)
+                VisitStatement(s);
         EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
 

@@ -627,6 +627,16 @@ public class Parser
             handlers.Add((exnType, handlerBlock.Statements));
         }
 
+        // Optional `else`: runs when the try body raised no exception (Python order: except* else? finally?).
+        List<Statement>? elseBody = null;
+        if (Check(TokenType.Else))
+        {
+            Consume(TokenType.Else, "Expected 'else'");
+            Consume(TokenType.Colon, "Expected ':' after 'else'");
+            ConsumeStatementEnd();
+            elseBody = ParseBlock().Statements;
+        }
+
         List<Statement>? finallyBody = null;
         if (Check(TokenType.Finally))
         {
@@ -636,7 +646,7 @@ public class Parser
             finallyBody = ParseBlock().Statements;
         }
 
-        return new TryStmt(body, handlers, finallyBody) { Line = line };
+        return new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
     }
 
     private Statement ParseWithStatement()

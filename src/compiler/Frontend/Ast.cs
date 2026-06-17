@@ -533,11 +533,17 @@ public class TryStmt : Statement
     public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
     public List<Statement>? Finally { get; }
 
-    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers, List<Statement>? finally_ = null)
+    // `else` block: runs only if the try body completed without an exception. Its own exceptions
+    // are NOT caught by this try's handlers (they propagate), matching Python.
+    public List<Statement>? ElseBody { get; }
+
+    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers,
+                   List<Statement>? finally_ = null, List<Statement>? elseBody = null)
     {
         Body = body;
         Handlers = handlers;
         Finally = finally_;
+        ElseBody = elseBody;
     }
 }
 
