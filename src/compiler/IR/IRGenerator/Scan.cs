@@ -440,7 +440,7 @@ public partial class IRGenerator
                         // Plain virtual/@inline HAL classes (base NOT in slotClasses) keep an empty
                         // layout so their construction model is unchanged (inheriting it there
                         // wrongly promotes the subclass to a slot and crashes codegen).
-                        if (clsLayout.Count == 0)
+                        if (clsLayout.Count == 0 && !InitCallsSuperInit(block))
                             foreach (var baseName in classDef.Bases)
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
@@ -471,9 +471,11 @@ public partial class IRGenerator
                         // fields (the base ctor sets them on the same self). Merge the base layout
                         // AHEAD of the subclass's own fields (base ctor runs first), so an outlined
                         // method on the subclass receives every field and `self.<inherited>` resolves
-                        // instead of erroring "not a member". Skipped when the subclass already
-                        // inherited the whole layout above (its own __init__ added nothing new).
-                        if (clsLayout.Count > 0 && InitCallsSuperInit(block))
+                        // instead of erroring "not a member". Runs even when the subclass adds no own
+                        // field (a super-only __init__, common at intermediate/leaf levels of a deep
+                        // chain) -- merged becomes the full base layout, which keeps the chain
+                        // propagating through any number of levels (L0->L1->...->Ln).
+                        if (InitCallsSuperInit(block))
                             foreach (var baseName in classDef.Bases)
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
