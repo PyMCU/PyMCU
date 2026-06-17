@@ -810,9 +810,21 @@ public partial class IRGenerator
             Emit(new Label(skipLabel));
         }
 
-        // No handler matched or finally-only: run finally then halt.
+        // No handler matched (or finally-only): the error is NOT handled here, so it must keep
+        // propagating — not halt unconditionally. Run finally, then re-deliver the still-pending
+        // error (R22 holds its code; SignalError code 0 leaves R22 untouched):
+        //   - an enclosing try in this function catches it (re-deliver to its dispatcher);
+        //   - otherwise re-raise to the caller (RET with T set) so normal uncaught propagation
+        //     carries it up — reaching main, where it halts via __pymcu_unhandled_exn;
+        //   - in main itself there is no caller, so halt directly.
         if (hasFinally) EmitFinallyBody(stmt);
-        Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+        string? enclosingCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        if (enclosingCatch != null)
+            Emit(new SignalError(new Constant(0), enclosingCatch));
+        else if (currentFunction != "main")
+            Emit(new SignalError(new Constant(0), null));
+        else
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
 
         Emit(new Label(afterLabel));
     }
