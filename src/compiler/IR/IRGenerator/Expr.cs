@@ -512,14 +512,49 @@ public partial class IRGenerator
         {
             Val bv = VisitExpression(expr.Left);
             Val ev = VisitExpression(expr.Right);
-            if (!(bv is Constant cb) || !(ev is Constant ce))
-                throw UserError("** operator requires compile-time constant operands");
-            int @base = cb.Value;
+            if (ev is not Constant ce)
+                throw UserError("** operator: the exponent must be a compile-time constant integer");
             int exp = ce.Value;
-            if (exp < 0) throw UserError("** operator: negative exponent not supported");
-            int res = 1;
-            for (int k = 0; k < exp; ++k) res *= @base;
-            return new Constant(res);
+            if (exp < 0)
+                throw UserError("** operator: negative exponent not supported (Python would return a float)");
+
+            // Both operands constant: fold the whole power at compile time (table sizes, masks...).
+            if (bv is Constant cb)
+            {
+                int res = 1;
+                for (int k = 0; k < exp; ++k) res *= cb.Value;
+                return new Constant(res);
+            }
+
+            // Runtime base with a constant exponent: lower to repeated multiplication so the common
+            // idiom (s ** 2, x ** 3) works. Python-faithful — the base is evaluated exactly once and
+            // each multiply promotes to the next wider type, so the result never silently overflows
+            // the base's width. Large exponents are rejected rather than emitting a huge unrolled
+            // chain (use an explicit loop); the realistic faithful cases are small.
+            if (exp == 0) return new Constant(1);
+            if (exp == 1) return bv;
+            if (exp > 16)
+                throw UserError("** operator: exponent too large to unroll (max 16 for a runtime base); use a loop");
+
+            static DataType BumpTier(DataType t) => t switch
+            {
+                DataType.UINT8 => DataType.UINT16,
+                DataType.INT8 => DataType.INT16,
+                DataType.UINT16 => DataType.UINT32,
+                DataType.INT16 => DataType.INT32,
+                _ => t,
+            };
+
+            Val acc = bv;
+            for (int k = 1; k < exp; ++k)
+            {
+                DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
+                if (mt is not DataType.FLOAT) mt = BumpTier(mt);
+                Temporary md = MakeTemp(mt);
+                Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
+                acc = md;
+            }
+            return acc;
         }
 
         Val v1 = VisitExpression(expr.Left);
