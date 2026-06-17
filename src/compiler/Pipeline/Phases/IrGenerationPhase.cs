@@ -45,6 +45,10 @@ public class IrGenerationPhase : CompilerPhaseBase
         // functions and cloned bodies are the final IR seen by the backend.
         CanFailAnalyzer.Analyze(optimized);
 
+        // Guard every unguarded CanFail call so an uncaught error halts (top-level) or re-raises
+        // to the caller, instead of being silently swallowed by the next happy-path CLT.
+        CanFailAnalyzer.InsertUncaughtPropagation(optimized);
+
         context.IntermediateRepresentation = optimized;
     }
 }

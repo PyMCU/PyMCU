@@ -88,6 +88,61 @@ public static class CanFailAnalyzer
         }
     }
 
+    /// <summary>
+    /// Makes uncaught errors fail loudly instead of being silently ignored. After CanFail is
+    /// known, every call to a CanFail callee that is NOT already guarded (no BranchOnError after
+    /// it — i.e. it is not inside a try) gets a guard:
+    ///   - in main / an ISR / an @export_c entry (no caller to propagate to): branch to
+    ///     __pymcu_unhandled_exn, which halts (and prints the exception name where a UART exists);
+    ///   - in any other (propagating) function: branch to a per-function epilogue that returns with
+    ///     the T-flag still set, re-raising the SAME error (R22 untouched) to the caller.
+    /// Without this, an error raised outside any try set T but no one checked it: the next CanFail
+    /// callee's happy-path CLT cleared T and execution continued with a garbage value.
+    /// </summary>
+    public static void InsertUncaughtPropagation(ProgramIR program)
+    {
+        var canFail = program.Functions.Where(f => !f.IsExtern).Select(f => f.Name).ToHashSet();
+
+        foreach (var func in program.Functions)
+        {
+            if (func.IsExtern) continue;
+
+            // A function that can propagate (not a top-level/boundary frame) re-raises via an
+            // epilogue; main/ISR/@export_c cannot propagate, so an uncaught error halts there.
+            bool propagates = func.CanFail && func.Name != "main"
+                              && !func.IsInterrupt && !func.IsExportC;
+            string propLabel = $"__exn_prop_{func.Name}";
+            string target = propagates ? propLabel : "__pymcu_unhandled_exn";
+
+            bool usedProp = false;
+            var body = func.Body;
+            for (int i = 0; i < body.Count; i++)
+            {
+                if (body[i] is not Call call) continue;
+                if (!canFail.Contains(call.FunctionName)) continue;
+                if (!program.Functions.First(f => f.Name == call.FunctionName).CanFail) continue;
+
+                // Already guarded (a BranchOnError follows — this call is inside a try)?
+                int j = i + 1;
+                while (j < body.Count && body[j] is DebugLine) j++;
+                if (j < body.Count && body[j] is BranchOnError) continue;
+
+                body.Insert(i + 1, new BranchOnError(target));
+                usedProp |= propagates;
+                i++;  // skip past the inserted guard
+            }
+
+            // Re-raise epilogue: keep the caller-set error code (SignalError with code 0 does not
+            // reload R22) and return with T still set (SignalError emits RET without the CLT that
+            // a normal CanFail return injects).
+            if (usedProp)
+            {
+                body.Add(new Label(propLabel));
+                body.Add(new SignalError(new Constant(0), null));
+            }
+        }
+    }
+
     // Returns true if `func` contains a SignalError that is not covered by a local
     // BranchOnError that jumps to a label inside the same function body.
     private static bool HasUnhandledSignalError(Function func)
