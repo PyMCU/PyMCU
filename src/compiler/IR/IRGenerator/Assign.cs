@@ -1359,15 +1359,21 @@ public partial class IRGenerator
         }
     }
 
-    // Folds a literal-only integer expression (decimal/hex/bool, optionally negated)
-    // to its value. Returns null for anything that is not a direct literal — we only
-    // range-check literals the user typed, never folded mask/shift expressions, to
-    // avoid false positives on idioms like `~0` or `0xFFFF & 0xFF`.
+    // Folds a literal integer expression to its value for the out-of-range check. Handles direct
+    // literals (decimal/hex/bool, optionally negated) AND pure ARITHMETIC (+, -, *) of such, so an
+    // overflowing constant value like `uint8 = 50 * 20` (= 1000) is caught exactly like a bare
+    // out-of-range literal. Bitwise and shift operators are deliberately NOT folded here, so idioms
+    // that intentionally use the full width (`~0`, `0xFFFF & 0xFF`, `1 << 7`) are never false-
+    // flagged. The explicit `uint8(...)` cast is a CallExpr (not folded here), so it stays the
+    // escape hatch for intentional wraparound. long arithmetic avoids masking the true magnitude.
     private static long? TryLiteralInt(Expression e) => e switch
     {
         IntegerLiteral il                                  => il.Value,
         BooleanLiteral b                                   => b.Value ? 1 : 0,
         UnaryExpr { Op: Frontend.UnaryOp.Negate } u when TryLiteralInt(u.Operand) is { } v => -v,
+        BinaryExpr { Op: Frontend.BinaryOp.Add } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l + r,
+        BinaryExpr { Op: Frontend.BinaryOp.Sub } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l - r,
+        BinaryExpr { Op: Frontend.BinaryOp.Mul } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l * r,
         _                                                  => null,
     };
 

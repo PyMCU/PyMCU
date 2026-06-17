@@ -375,6 +375,38 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FoldedArithmeticConstant_OutOfRange_RaisesError()
+    {
+        // 50 * 20 = 1000 folds at compile time and overflows uint8: caught like a bare literal.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 50 * 20\n";
+        var ex = Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+        Assert.Contains("out of range", ex.Message);
+    }
+
+    [Fact]
+    public void FoldedBitwiseConstant_FullWidth_StillCompiles()
+    {
+        // Bitwise/shift idioms that use the full width must NOT be range-flagged.
+        var ir = GenerateIR(
+            "def main():\n" +
+            "    a: uint8 = 0xFFFF & 0xFF\n" +
+            "    b: uint8 = 1 << 7\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FoldedArithmeticConstant_ExplicitCast_Wraps()
+    {
+        // The uint8(...) cast is the escape hatch for intentional wraparound; it must compile.
+        var ir = GenerateIR(
+            "def main():\n" +
+            "    x: uint8 = uint8(50 * 20)\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
     public void FStringWithRuntimeValue_InPrint_Compiles()
     {
         // print(f"...") lowers each part to a direct stream write, so a runtime interpolation
