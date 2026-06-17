@@ -593,14 +593,20 @@ public class Parser
     {
         int line = Peek().Line;
         Consume(TokenType.Raise, "Expected 'raise'");
-        string errorType = Consume(TokenType.Identifier, "Expected error type after 'raise'").Value;
+        // A bare `raise` (no type) re-raises the current exception inside an except handler.
+        // ErrorType "" marks that re-raise; VisitRaise re-signals the pending code (in R22).
+        string errorType = "";
         string message = "";
-        if (Check(TokenType.LParen))
+        if (Check(TokenType.Identifier))
         {
-            Advance();
-            if (Check(TokenType.String))
-                message = Advance().Value;
-            Consume(TokenType.RParen, "Expected ')' after error message");
+            errorType = Advance().Value;
+            if (Check(TokenType.LParen))
+            {
+                Advance();
+                if (Check(TokenType.String))
+                    message = Advance().Value;
+                Consume(TokenType.RParen, "Expected ')' after error message");
+            }
         }
 
         ConsumeStatementEnd();

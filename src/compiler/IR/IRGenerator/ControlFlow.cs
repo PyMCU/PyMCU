@@ -731,7 +731,9 @@ public partial class IRGenerator
             return;
         }
 
-        Val code = ResolveBinding(stmt.ErrorType);
+        // A bare `raise` (no type) re-raises the exception currently being handled: its code is
+        // still in the error register, so signal with code 0 (the "keep R22" sentinel).
+        Val code = string.IsNullOrEmpty(stmt.ErrorType) ? new Constant(0) : ResolveBinding(stmt.ErrorType);
 
         // Inside a try body in the same function -> deliver to the local catch
         // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
