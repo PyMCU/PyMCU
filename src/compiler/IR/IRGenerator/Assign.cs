@@ -92,6 +92,14 @@ public partial class IRGenerator
             }
         }
 
+        // `b = a[lo:hi]` with no array annotation: infer `b` as a fixed-size array of the slice's
+        // length and copy its elements (Python needs no annotation). Without this the slice built
+        // element temps that were never bound to `b`, so a later `b[i]` silently read 0.
+        if (stmt.Target is VariableExpr sliceTgt
+            && stmt.Value is IndexExpr { Index: SliceExpr sliceIdx, Target: VariableExpr sliceSrc }
+            && TryEmitInferredSliceArray(sliceTgt, sliceSrc, sliceIdx))
+            return;
+
         if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
         if (stmt.Target is VariableExpr varExprCtor) { EmitConstructorTargetSetup(stmt, varExprCtor); }
@@ -1063,6 +1071,59 @@ public partial class IRGenerator
 
             StoreByte(off + i, b);
         }
+    }
+
+    // `b = a[lo:hi]` without an array annotation. Infer `b` as a fixed-size array whose length is
+    // the (compile-time) slice length and copy the selected elements, mirroring the annotated
+    // `b: T[N] = a[lo:hi]` path but inferring N and the element type from the source. Returns false
+    // when the source is not a known array (the normal scalar path then handles/reports it). A
+    // target that needs SRAM (it is indexed by a runtime value elsewhere) requires the annotated
+    // form's allocation, so that case is reported clearly rather than mis-lowered.
+    private bool TryEmitInferredSliceArray(VariableExpr target, VariableExpr src, SliceExpr sl)
+    {
+        string srcQ = string.IsNullOrEmpty(currentFunction) ? src.Name : currentFunction + "." + src.Name;
+        if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
+        if (!arraySizes.TryGetValue(srcQ, out int srcSize)) return false;
+
+        string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
+
+        if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+            throw UserError($"'{target.Name}' is indexed by a runtime value, so a slice assigned to "
+                + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'");
+
+        DataType srcEdt = arrayElemTypes[srcQ];
+        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+        if (step == 0) throw UserError("Slice step cannot be zero");
+        if (start < 0) start += srcSize;
+        if (stop < 0) stop += srcSize;
+        start = Math.Max(0, Math.Min(start, srcSize));
+        stop = Math.Max(0, Math.Min(stop, srcSize));
+        int count = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++count;
+
+        arraySizes[qualified] = count;
+        arrayElemTypes[qualified] = srcEdt;
+        variableTypes[qualified] = srcEdt;
+
+        bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
+        int k = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step, ++k)
+        {
+            string dstElem = qualified + "__" + k;
+            variableTypes[dstElem] = srcEdt;
+            Val srcVal;
+            if (srcSram)
+            {
+                Temporary tmp = MakeTemp(srcEdt);
+                Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
+                srcVal = tmp;
+            }
+            else srcVal = new Variable(srcQ + "__" + i, srcEdt);
+            Emit(new Copy(srcVal, new Variable(dstElem, srcEdt)));
+        }
+        return true;
     }
 
     // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
