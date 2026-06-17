@@ -673,6 +673,15 @@ public partial class IRGenerator
             return floatDst;
         }
 
+        // Reaching here means both operands are integers. Python 3's `/` is TRUE division and
+        // always yields a float (5 / 2 == 2.5), while `//` is floor division. PyMCU has no
+        // implicit int->float `/`, so an integer `/` would silently compute integer division
+        // (a wrong value vs Python) or, if made faithful, drag float routines into integer-only
+        // firmware. Reject it with an actionable message instead of diverging silently.
+        if (expr.Op == AstBinOp.Div)
+            throw UserError("'/' is true (float) division in Python and always yields a float; "
+                + "for integer division use '//', or write float(a) / b to divide as floats");
+
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
         // A literal operand is type-agnostic (it defaults to uint8), so on a same-size op it

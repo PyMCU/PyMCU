@@ -352,6 +352,29 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void IntegerTrueDivision_RaisesClearError()
+    {
+        // Python 3's `/` is true (float) division; integer `/` must be rejected pointing at `//`
+        // (so a naive `count / 10` does not silently compute integer division, diverging from
+        // Python where it would be a float).
+        const string src =
+            "def main(a: uint16, b: uint16) -> uint16:\n" +
+            "    return a / b\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("'//'", ex.Message);
+    }
+
+    [Fact]
+    public void FloorDivision_StillCompiles()
+    {
+        // `//` is the integer-division operator and must keep working.
+        var ir = GenerateIR(
+            "def main(a: uint16, b: uint16) -> uint16:\n" +
+            "    return a // b\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
     public void NegativeArrayInitializers_AreStored()
     {
         // `arr: int8[3] = [-1, -2, -3]` — negative literals parse as UnaryExpr(Negate), not
