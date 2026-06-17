@@ -658,7 +658,8 @@ public partial class IRGenerator
     {
         string startLabel = MakeLabel();
         string endLabel = MakeLabel();
-        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel });
+        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel,
+                                       FinallyDepth = finallyStack.Count });
 
         Emit(new Label(startLabel));
 
@@ -692,13 +693,17 @@ public partial class IRGenerator
     private void VisitBreak(BreakStmt stmt)
     {
         if (loopStack.Count == 0) throw UserError("Break statement outside of loop");
-        Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).BreakLabel));
+        var loop = Enumerable.Last<LoopLabels>(loopStack);
+        EmitPendingFinally(loop.FinallyDepth);   // run finallys between this break and the loop
+        Emit(new Jump(loop.BreakLabel));
     }
 
     private void VisitContinue(ContinueStmt stmt)
     {
         if (loopStack.Count == 0) throw UserError("Continue statement outside of loop");
-        Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).ContinueLabel));
+        var loop = Enumerable.Last<LoopLabels>(loopStack);
+        EmitPendingFinally(loop.FinallyDepth);   // run finallys between this continue and the loop
+        Emit(new Jump(loop.ContinueLabel));
     }
 
     private void VisitRaise(RaiseStmt stmt)
@@ -847,15 +852,18 @@ public partial class IRGenerator
             VisitStatement(s);
     }
 
-    // Run the finally blocks of every enclosing try (innermost first) on a `return` that escapes
-    // them. The stack is emptied while running so a `return` inside a finally does not recurse.
-    private void EmitPendingFinally()
+    // Run the pending finally blocks above `floor` (innermost first) on a control-flow exit that
+    // escapes them: `return` runs all (floor 0); `break`/`continue` run only those between the
+    // statement and the loop. The run slice is removed while running so a return inside one of
+    // those finallys does not re-run it (outer finallys below `floor` stay pending).
+    private void EmitPendingFinally(int floor = 0)
     {
-        if (finallyStack.Count == 0) return;
+        if (finallyStack.Count <= floor) return;
+        var slice = finallyStack.GetRange(floor, finallyStack.Count - floor);
         var saved = finallyStack;
-        finallyStack = new List<List<Statement>>();
-        for (int k = saved.Count - 1; k >= 0; k--)
-            foreach (var s in saved[k])
+        finallyStack = finallyStack.GetRange(0, floor);
+        for (int k = slice.Count - 1; k >= 0; k--)
+            foreach (var s in slice[k])
                 VisitStatement(s);
         finallyStack = saved;
     }

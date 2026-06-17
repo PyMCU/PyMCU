@@ -79,7 +79,7 @@ public partial class IRGenerator
     {
         if (breakLabel.Length == 0) { VisitStatement(body); return; }
         string cont = MakeLabel();
-        loopStack.Add(new LoopLabels { ContinueLabel = cont, BreakLabel = breakLabel });
+        loopStack.Add(new LoopLabels { ContinueLabel = cont, BreakLabel = breakLabel, FinallyDepth = finallyStack.Count });
         VisitStatement(body);
         loopStack.RemoveAt(loopStack.Count - 1);
         Emit(new Label(cont));
@@ -134,7 +134,7 @@ public partial class IRGenerator
                     string sCont = MakeLabel();
                     string sEnd = MakeLabel();
                     // continue advances the index then re-tests (else the loop spins on one char).
-                    loopStack.Add(new LoopLabels { ContinueLabel = sCont, BreakLabel = sEnd });
+                    loopStack.Add(new LoopLabels { ContinueLabel = sCont, BreakLabel = sEnd, FinallyDepth = finallyStack.Count });
 
                     Emit(new Label(sStart));
                     Emit(new JumpIfGreaterOrEqual(sIdxVar, new Constant(strOpt.Length), sEnd));
@@ -391,7 +391,7 @@ public partial class IRGenerator
                             {
                                 string enContLabel = enBrk ? MakeLabel() : "";
                                 if (enBrk)
-                                    loopStack.Add(new LoopLabels { ContinueLabel = enContLabel, BreakLabel = enBreakLabel });
+                                    loopStack.Add(new LoopLabels { ContinueLabel = enContLabel, BreakLabel = enBreakLabel, FinallyDepth = finallyStack.Count });
                                 constantVariables[idxKey] = k;
                                 if (useSram)
                                 {
@@ -501,7 +501,7 @@ public partial class IRGenerator
                         for (int k = 0; k < zlen; ++k)
                         {
                             string zCont = zbrk ? MakeLabel() : "";
-                            if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak });
+                            if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak, FinallyDepth = finallyStack.Count });
                             Bind(qk1, ra.Value, sram0, k);
                             Bind(qk2, rb.Value, sram1, k);
                             VisitStatement(stmt.Body);
@@ -732,7 +732,7 @@ public partial class IRGenerator
                             {
                                 string rvContLabel = rvBrk ? MakeLabel() : "";
                                 if (rvBrk)
-                                    loopStack.Add(new LoopLabels { ContinueLabel = rvContLabel, BreakLabel = rvBreakLabel });
+                                    loopStack.Add(new LoopLabels { ContinueLabel = rvContLabel, BreakLabel = rvBreakLabel, FinallyDepth = finallyStack.Count });
                                 string elemKey = @base + "__" + k;
                                 if (constantVariables.TryGetValue(elemKey, out int cv))
                                     constantVariables[valKey] = cv;
@@ -790,7 +790,7 @@ public partial class IRGenerator
                     string loopCont = MakeLabel();
                     string loopEnd = MakeLabel();
                     // continue advances the index then re-tests (else the loop spins on one elem).
-                    loopStack.Add(new LoopLabels { ContinueLabel = loopCont, BreakLabel = loopEnd });
+                    loopStack.Add(new LoopLabels { ContinueLabel = loopCont, BreakLabel = loopEnd, FinallyDepth = finallyStack.Count });
 
                     Emit(new Label(loopStart));
                     Temporary cmpTmp = MakeTemp(DataType.UINT8);
@@ -863,7 +863,7 @@ public partial class IRGenerator
                     {
                         string forContLabel = forBrk ? MakeLabel() : "";
                         if (forBrk)
-                            loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel });
+                            loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel, FinallyDepth = finallyStack.Count });
 
                         string elemKey2 = forBase + "__" + fk;
                         bool isZca = instanceClasses.ContainsKey(elemKey2) ||
@@ -940,7 +940,7 @@ public partial class IRGenerator
                     {
                         string slContLabel = slBrk ? MakeLabel() : "";
                         if (slBrk)
-                            loopStack.Add(new LoopLabels { ContinueLabel = slContLabel, BreakLabel = slBreakLabel });
+                            loopStack.Add(new LoopLabels { ContinueLabel = slContLabel, BreakLabel = slBreakLabel, FinallyDepth = finallyStack.Count });
 
                         string elemKey = slBase + "__" + i;
                         if (slSram)
@@ -1000,7 +1000,7 @@ public partial class IRGenerator
         // `continue` must run the step before re-testing, otherwise the loop variable never
         // advances and the loop spins forever — so the continue target is the step, not the
         // condition check at the top.
-        loopStack.Add(new LoopLabels { ContinueLabel = contLabel, BreakLabel = endLabel });
+        loopStack.Add(new LoopLabels { ContinueLabel = contLabel, BreakLabel = endLabel, FinallyDepth = finallyStack.Count });
 
         Emit(new Label(startLabel));
         // A negative step counts down, so the loop ends when the variable drops to or below

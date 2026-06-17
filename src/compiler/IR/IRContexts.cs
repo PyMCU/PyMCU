@@ -47,6 +47,10 @@ public class LoopLabels
 {
     public string ContinueLabel { get; set; } = "";
     public string BreakLabel { get; set; } = "";
+
+    // finallyStack depth when the loop was entered: a break/continue runs the finally blocks
+    // pushed since then (the try-with-finally blocks between it and the loop), not outer ones.
+    public int FinallyDepth { get; set; }
 }
 
 public class FunctionEntry
