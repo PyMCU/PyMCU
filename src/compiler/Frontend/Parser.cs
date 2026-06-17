@@ -146,6 +146,9 @@ public class Parser
 
     private string ParseTypeAnnotation()
     {
+        if (Check(TokenType.String))
+            Error("string ('forward reference') type annotations are not supported; " +
+                  "use the bare class name (e.g. `-> Vec`, not `-> " + (char)34 + "Vec" + (char)34 + "`)");
         var t = Consume(TokenType.Identifier, "Expected type identifier");
         string typeStr = t.Value;
 
@@ -305,6 +308,11 @@ public class Parser
             else if (decorator.Value == "staticmethod")
             {
                 // Ignored
+            }
+            else if (decorator.Value == "classmethod")
+            {
+                Error("@classmethod is not supported (no runtime class object on bare metal); " +
+                      "use a module-level factory function, or a @staticmethod that calls the constructor");
             }
             else if (decorator.Value == "naked")
             {

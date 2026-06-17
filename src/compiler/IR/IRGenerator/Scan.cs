@@ -405,6 +405,17 @@ public partial class IRGenerator
 
                 if (classDef.Body != null)
                 {
+                    // Multiple inheritance is not supported (the ZCA model assumes a single base
+                    // for layout + dispatch). Reject it clearly instead of later failing with an
+                    // opaque "undefined function 'C_foo'" when a second base's method is called.
+                    var realBases = classDef.Bases
+                        .Where(b => b is not ("Enum" or "IntEnum" or "object")).ToList();
+                    if (realBases.Count > 1)
+                        throw UserError(
+                            $"class '{classDef.Name}' uses multiple inheritance " +
+                            $"({string.Join(", ", realBases)}), which PyMCU does not support; " +
+                            "use composition (hold an instance as a field) or a single base class");
+
                     classNames.Add(classDef.Name);
                     if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
