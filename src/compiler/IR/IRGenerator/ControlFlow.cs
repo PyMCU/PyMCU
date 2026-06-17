@@ -817,8 +817,13 @@ public partial class IRGenerator
             Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
             Emit(new JumpIfZero(matchTemp, skipLabel));
 
+            // The finally is pending while the handler body runs, so a `return`/`break`/`continue`
+            // inside the handler runs it first. Pop before the explicit finally on the handler's
+            // normal exit (and so a return inside the finally does not re-trigger it).
+            if (pushedFinally) finallyStack.Add(stmt.Finally!);
             foreach (var s in handlerBody)
                 VisitStatement(s);
+            if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
             EmitFinallyBody(stmt);
             Emit(new Jump(afterLabel));
