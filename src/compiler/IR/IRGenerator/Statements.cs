@@ -423,6 +423,26 @@ public partial class IRGenerator
             throw UserError(
                 $"cannot return a string from a function declared to return {retRt}");
 
+        // A `return` escaping a try-with-finally must run the pending finally block(s) first
+        // (Python semantics). Evaluate the value, materialize it so the finally can't change it,
+        // run the finallies, then return. Handles the common non-inline, non-constructor return;
+        // the specialized inline/factory return shapes below are a rare combination with finally.
+        bool ctorReturn = stmt.Value is CallExpr ccr && ccr.Callee is VariableExpr ccrv
+                          && classNames.Contains(ResolveCallee(ccrv.Name));
+        if (finallyStack.Count > 0 && inlineStack.Count == 0 && !ctorReturn)
+        {
+            Val rfv = stmt.Value != null ? VisitExpression(stmt.Value) : new NoneVal();
+            if (rfv is not (Constant or NoneVal or FloatConstant))
+            {
+                Temporary rt = MakeTemp(GetValType(rfv));
+                Emit(new Copy(rfv, rt));
+                rfv = rt;
+            }
+            EmitPendingFinally();
+            Emit(new Return(rfv));
+            return;
+        }
+
         if (stmt.Value != null && inlineStack.Count > 0 && inlineStack.Last().ResultVars.Count > 0)
         {
             if (stmt.Value is TupleExpr tup)

@@ -210,6 +210,10 @@ public partial class IRGenerator
     // `raise` is a re-raise that must propagate.
     private List<string> tryCatchStack = new();
 
+    // Pending `finally` blocks of the enclosing try statements (innermost last). A `return` that
+    // escapes a try-with-finally must run these before returning (Python semantics).
+    private List<List<Statement>> finallyStack = new();
+
     // Debugging
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();

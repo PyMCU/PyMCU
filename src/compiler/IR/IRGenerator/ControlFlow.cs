@@ -769,6 +769,9 @@ public partial class IRGenerator
         // A `raise` lexically inside this body is caught here (delivered straight to
         // catchDispatch) rather than propagated to the caller. Scope this to the body
         // only: a `raise` in a handler/finally is a re-raise and must propagate.
+        // A finally is also pushed so a `return` escaping the body (or else) runs it first.
+        bool pushedFinally = hasFinally;
+        if (pushedFinally) finallyStack.Add(stmt.Finally!);
         tryCatchStack.Add(catchDispatch);
         foreach (var s in stmt.Body)
             VisitStatement(s);
@@ -790,6 +793,9 @@ public partial class IRGenerator
         if (stmt.ElseBody != null)
             foreach (var s in stmt.ElseBody)
                 VisitStatement(s);
+        // Pop the pending finally now: the remaining exits (happy, handlers, unmatched) emit it
+        // explicitly, and a `return` inside the finally itself must not re-trigger it.
+        if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
         EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
 
@@ -839,5 +845,18 @@ public partial class IRGenerator
         if (stmt.Finally == null) return;
         foreach (var s in stmt.Finally)
             VisitStatement(s);
+    }
+
+    // Run the finally blocks of every enclosing try (innermost first) on a `return` that escapes
+    // them. The stack is emptied while running so a `return` inside a finally does not recurse.
+    private void EmitPendingFinally()
+    {
+        if (finallyStack.Count == 0) return;
+        var saved = finallyStack;
+        finallyStack = new List<List<Statement>>();
+        for (int k = saved.Count - 1; k >= 0; k--)
+            foreach (var s in saved[k])
+                VisitStatement(s);
+        finallyStack = saved;
     }
 }
