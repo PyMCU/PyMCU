@@ -26,6 +26,11 @@ public partial class IRGenerator
     {
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
 
+        // uart.write_str(f"...") / uart.println(f"...") with a runtime f-string: lower it to direct
+        // stream writes instead of letting it reach the const[str] parameter (which would reject the
+        // runtime interpolation). Same generic lowering as print().
+        if (TryEmitStreamMethodFString(expr) is { } streamResult) return streamResult;
+
         string callee = "";
         if (expr.Callee is VariableExpr varE)
         {
@@ -2146,6 +2151,140 @@ public partial class IRGenerator
         return new NoneVal();
     }
 
+    // ── Generic stream lowering ──────────────────────────────────────────────────────────────
+    // Shared by print() and by uart.write_str/println(f"..."). There are no UART-specific IR
+    // instructions: text and values lower to ordinary Call instructions targeting the resolved
+    // string/decimal/float write helpers, so any stream sink reuses the same machinery.
+
+    // Resolve the target's string-write function: console.print_str, else uart_write_str, else a
+    // module-suffixed variant injected by the build driver.
+    private string ResolveWriteStrFn()
+    {
+        string writeStrFn = ResolveCallee("print_str");
+        if (writeStrFn == "print_str")
+        {
+            writeStrFn = ResolveCallee("uart_write_str");
+            if (writeStrFn == "uart_write_str")
+                foreach (var fnName in inlineFunctions.Keys)
+                    if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str")) { writeStrFn = fnName; break; }
+        }
+        return writeStrFn;
+    }
+
+    private string ResolveFloatWriteFn()
+    {
+        string floatWriteFn = ResolveCallee("uart_write_float");
+        if (floatWriteFn == "uart_write_float")
+            foreach (var fnName in functionReturnTypes.Keys)
+                if (fnName.EndsWith("uart_write_float")) { floatWriteFn = fnName; break; }
+        return floatWriteFn;
+    }
+
+    // Pick the decimal formatter (and the temp width to widen into) for a value's type, so a
+    // uint16/uint32 argument is not silently truncated to 8 bits.
+    private (string fn, DataType tmpType) ResolveDecimalWriteFn(DataType argType)
+    {
+        (string decBase, DataType tmpType) = argType switch
+        {
+            DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
+            DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
+            DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
+            DataType.INT32 => ("uart_write_decimal_i32", DataType.INT32),
+            // int8 has no dedicated signed formatter: widen to int16 (the Copy sign-extends a
+            // signed source) so a negative value prints with its sign, not as an unsigned byte.
+            DataType.INT8 => ("uart_write_decimal_i16", DataType.INT16),
+            _ => ("uart_write_decimal_u8", DataType.UINT8),
+        };
+        string decFn = ResolveCallee(decBase);
+        if (decFn == decBase)
+            foreach (var fnName in functionReturnTypes.Keys)
+                if (fnName.EndsWith(decBase, StringComparison.Ordinal)) { decFn = fnName; break; }
+        return (decFn, tmpType);
+    }
+
+    private void EmitStreamStr(string writeStrFn, string s)
+    {
+        if (string.IsNullOrEmpty(s)) return;
+        VisitCall(new CallExpr(new VariableExpr(writeStrFn), new List<Expression> { new StringLiteral(s) }));
+    }
+
+    // Write an already-evaluated value to the stream as a number/float.
+    private void EmitStreamVal(string floatFn, Val val)
+    {
+        bool isFloat = val is FloatConstant ||
+                       (val is Variable vf && vf.Type == DataType.FLOAT) ||
+                       (val is Temporary tf && tf.Type == DataType.FLOAT);
+        if (isFloat)
+        {
+            Temporary ftmp = MakeTemp(DataType.FLOAT);
+            Emit(new Copy(val, ftmp));
+            Emit(new Call(floatFn, new List<Val> { ftmp }, ftmp));
+            return;
+        }
+        DataType argType = val switch
+        {
+            Variable v2 => v2.Type,
+            Temporary t2 => t2.Type,
+            Constant cc => cc.Value < 0 ? DataType.INT16
+                         : cc.Value <= 0xFF ? DataType.UINT8
+                         : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
+            _ => DataType.UINT8,
+        };
+        (string decFn, DataType tmpType) = ResolveDecimalWriteFn(argType);
+        Temporary tmp = MakeTemp(tmpType);
+        Emit(new Copy(val, tmp));
+        Emit(new Call(decFn, new List<Val> { tmp }, tmp));
+    }
+
+    // Compile-time string text of an expression if it is statically a string (literal or const
+    // string variable); else null. AST-based to avoid the string-id/int ambiguity of a Val.
+    private string? StaticStringOf(Expression e)
+    {
+        if (e is StringLiteral sl) return sl.Value;
+        if (e is VariableExpr ve) return ResolveStrConstant(currentInlinePrefix + ve.Name) ?? ResolveStrConstant(ve.Name);
+        return null;
+    }
+
+    // Lower an f-string to direct stream writes: literal text and constant-string interpolations
+    // coalesce into one write_str; a runtime value is emitted via its width-typed formatter. This
+    // is the bare-metal equivalent of building the string — no buffer, only the itoa printing pays.
+    private void EmitStreamFString(string writeStrFn, string floatFn, FStringExpr fs)
+    {
+        string pending = "";
+        void Flush() { if (pending.Length > 0) { EmitStreamStr(writeStrFn, pending); pending = ""; } }
+        foreach (var part in fs.Parts)
+        {
+            if (!part.IsExpr) { pending += part.Text; continue; }
+            if (part.Expr is FStringExpr nested) { Flush(); EmitStreamFString(writeStrFn, floatFn, nested); continue; }
+            string? sv = StaticStringOf(part.Expr!);
+            if (sv != null) { pending += sv; continue; }
+            Flush();
+            EmitStreamVal(floatFn, VisitExpression(part.Expr!));
+        }
+        Flush();
+    }
+
+    // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes
+    // (println appends a newline). Returns null when this is not a stream method on a UART instance
+    // with an f-string argument, so the normal const[str] method path handles those calls.
+    private Val? TryEmitStreamMethodFString(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr sm) return null;
+        if (sm.Member is not ("write_str" or "println")) return null;
+        if (expr.Args.Count != 1 || expr.Args[0] is not FStringExpr sfs) return null;
+        if (sm.Object is not VariableExpr) return null;
+
+        Val sObj = VisitExpression(sm.Object);
+        if (sObj is not Variable svObj) return null;
+        if (!instanceClasses.TryGetValue(svObj.Name, out var sCls) || !sCls.EndsWith("UART")) return null;
+
+        string wfn = ResolveWriteStrFn();
+        string ffn = ResolveFloatWriteFn();
+        EmitStreamFString(wfn, ffn, sfs);
+        if (sm.Member == "println") EmitStreamStr(wfn, "\n");
+        return new NoneVal();
+    }
+
     // print(*args, sep=" ", end="\n"): write each argument via the resolved string/
     // decimal/float UART helpers, separated by sep and terminated by end.
     private Val EmitPrintBuiltin(CallExpr expr)
@@ -2170,182 +2309,44 @@ public partial class IRGenerator
             else posArgs.Add(arg);
         }
 
-        // Resolve the string-output function.  Prefer the arch-dispatched
-        // console.print_str injected by the build driver; fall back to
-        // uart_write_str for projects that initialise UART manually.
-        string writeStrFn = ResolveCallee("print_str");
-        if (writeStrFn == "print_str")
-        {
-            writeStrFn = ResolveCallee("uart_write_str");
-            if (writeStrFn == "uart_write_str")
-            {
-                foreach (var fnName in inlineFunctions.Keys)
-                {
-                    if (fnName.EndsWith("_print_str") || fnName.EndsWith("_uart_write_str"))
-                    {
-                        writeStrFn = fnName;
-                        break;
-                    }
-                }
-            }
-        }
-
-        void EmitStr(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return;
-            var synthCall = new CallExpr(
-                new VariableExpr(writeStrFn),
-                new List<Expression> { new StringLiteral(s) });
-            VisitCall(synthCall);
-        }
-
-        // Integer output: uart_write_decimal_u8 is non-inline and works with direct Emit.
-        // print_u8 from console.py is @inline and requires VisitCall; deferred to a
-        // future refactor of EmitPrintArg to use VisitCall for all write functions.
-        string decimalWriteFn = ResolveCallee("uart_write_decimal_u8");
-        if (decimalWriteFn == "uart_write_decimal_u8")
-        {
-            string decSuffix = "uart_write_decimal_u8";
-            foreach (var fnName in functionReturnTypes.Keys)
-            {
-                if (fnName.EndsWith(decSuffix))
-                {
-                    decimalWriteFn = fnName;
-                    break;
-                }
-            }
-        }
-
-        // Float output: same rationale — use the non-inline uart function.
-        string floatWriteFn = ResolveCallee("uart_write_float");
-        if (floatWriteFn == "uart_write_float")
-        {
-            foreach (var fnName in functionReturnTypes.Keys)
-            {
-                if (fnName.EndsWith("uart_write_float"))
-                {
-                    floatWriteFn = fnName;
-                    break;
-                }
-            }
-        }
-
-        // Emit an already-evaluated value to the stream as a number/float, picking the formatter
-        // by width/signedness so a uint16/uint32 argument is not silently truncated to 8 bits.
-        void EmitValToStream(Val val)
-        {
-            bool isFloat = val is FloatConstant ||
-                           (val is Variable vf && vf.Type == DataType.FLOAT) ||
-                           (val is Temporary tf && tf.Type == DataType.FLOAT);
-            if (isFloat)
-            {
-                Temporary ftmp = MakeTemp(DataType.FLOAT);
-                Emit(new Copy(val, ftmp));
-                Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
-                return;
-            }
-            DataType argType = val switch
-            {
-                Variable v2 => v2.Type,
-                Temporary t2 => t2.Type,
-                Constant cc => cc.Value < 0 ? DataType.INT16
-                             : cc.Value <= 0xFF ? DataType.UINT8
-                             : cc.Value <= 0xFFFF ? DataType.UINT16 : DataType.UINT32,
-                _ => DataType.UINT8,
-            };
-            (string decBase, DataType tmpType) = argType switch
-            {
-                DataType.UINT16 => ("uart_write_decimal_u16", DataType.UINT16),
-                DataType.INT16 => ("uart_write_decimal_i16", DataType.INT16),
-                DataType.UINT32 => ("uart_write_decimal_u32", DataType.UINT32),
-                DataType.INT32 => ("uart_write_decimal_i32", DataType.INT32),
-                // int8 has no dedicated signed formatter: widen to int16 (the Copy below
-                // sign-extends a signed source) so a negative value prints with its sign
-                // instead of being read as an unsigned byte (e.g. -1 as 255).
-                DataType.INT8 => ("uart_write_decimal_i16", DataType.INT16),
-                _ => ("uart_write_decimal_u8", DataType.UINT8),
-            };
-            string decFn = ResolveCallee(decBase);
-            if (decFn == decBase)
-                foreach (var fnName in functionReturnTypes.Keys)
-                    if (fnName.EndsWith(decBase, StringComparison.Ordinal)) { decFn = fnName; break; }
-
-            Temporary tmp = MakeTemp(tmpType);
-            Emit(new Copy(val, tmp));
-            Emit(new Call(decFn, new List<Val> { tmp }, tmp));
-        }
-
-        // An interpolation that is statically a string (literal, const-str variable, or a nested
-        // f-string) is written as text; returns false for a numeric/float value so the caller
-        // formats it. AST-based detection avoids the string-id/int ambiguity of inspecting Val.
-        bool EmitStringValuedExpr(Expression e)
-        {
-            if (e is StringLiteral sl) { EmitStr(sl.Value); return true; }
-            if (e is FStringExpr) { EmitPrintArg(e); return true; }
-            if (e is VariableExpr ve)
-            {
-                string? sv = ResolveStrConstant(currentInlinePrefix + ve.Name) ?? ResolveStrConstant(ve.Name);
-                if (sv != null) { EmitStr(sv); return true; }
-            }
-            return false;
-        }
+        // Resolve the target's write helpers once; the lowering itself is the shared, sink-agnostic
+        // machinery (print, uart.write_str/println all reuse it — see the EmitStream* methods).
+        string writeStrFn = ResolveWriteStrFn();
+        string floatWriteFn = ResolveFloatWriteFn();
 
         void EmitPrintArg(Expression arg)
         {
-            // f-string -> stream: lower each part to a direct write (literal text via write_str,
-            // an interpolated value via its width-typed formatter). This is the bare-metal
-            // equivalent of building a string: no buffer, only the itoa that printing already
-            // pays. `print(f"v={x}")` becomes write_str("v=") + write_decimal(x).
+            // f-string -> stream: lower each part to a direct write.
             if (arg is FStringExpr fs)
             {
-                foreach (var part in fs.Parts)
-                {
-                    if (!part.IsExpr) { EmitStr(part.Text); continue; }
-                    if (EmitStringValuedExpr(part.Expr!)) continue;
-                    EmitValToStream(VisitExpression(part.Expr!));
-                }
+                EmitStreamFString(writeStrFn, floatWriteFn, fs);
                 return;
             }
 
-            if (arg is StringLiteral lit)
+            // A plain string literal or const-string variable: one write_str.
+            string? staticStr = StaticStringOf(arg);
+            if (staticStr != null)
             {
-                var synthCall = new CallExpr(
-                    new VariableExpr(writeStrFn),
-                    new List<Expression> { lit });
-                VisitCall(synthCall);
+                EmitStreamStr(writeStrFn, staticStr);
                 return;
             }
 
-            if (arg is VariableExpr v)
-            {
-                string key = currentInlinePrefix + v.Name;
-                string? strVal = ResolveStrConstant(key);
-                if (strVal != null)
-                {
-                    var synthCall = new CallExpr(
-                        new VariableExpr(writeStrFn),
-                        new List<Expression> { new StringLiteral(strVal) });
-                    VisitCall(synthCall);
-                    return;
-                }
-            }
-
-            EmitValToStream(VisitExpression(arg));
+            EmitStreamVal(floatWriteFn, VisitExpression(arg));
         }
 
         if (posArgs.Count == 0)
         {
-            EmitStr(endStr);
+            EmitStreamStr(writeStrFn, endStr);
             return new NoneVal();
         }
 
         for (int i = 0; i < posArgs.Count; ++i)
         {
-            if (i > 0) EmitStr(sepStr);
+            if (i > 0) EmitStreamStr(writeStrFn, sepStr);
             EmitPrintArg(posArgs[i]);
         }
 
-        EmitStr(endStr);
+        EmitStreamStr(writeStrFn, endStr);
         return new NoneVal();
     }
 
