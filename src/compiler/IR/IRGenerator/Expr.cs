@@ -282,6 +282,18 @@ public partial class IRGenerator
     private bool IsNoneValued(Expression e)
     {
         if (e is NoneLiteral) return true;
+
+        // `obj.field is None`: a field assigned None is tracked under its flattened name
+        // (<base>_<field>) by EmitMemberAssign. Resolve the same name without emitting code.
+        if (e is MemberAccessExpr ma && ma.Object is VariableExpr mo)
+        {
+            string b = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + mo.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + mo.Name : mo.Name);
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
+            return noneValuedNames.Contains(b + "_" + ma.Member);
+        }
+
         if (e is not VariableExpr ve) return false;
 
         string q = !string.IsNullOrEmpty(currentInlinePrefix)

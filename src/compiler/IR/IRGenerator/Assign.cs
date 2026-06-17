@@ -702,6 +702,18 @@ public partial class IRGenerator
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
 
+            // A field assigned None has no runtime value; record the flattened name so
+            // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None
+            // write clears the mark (the field now holds a real value). Without this the field
+            // read 0 and `is None` silently returned False (broke optional/sentinel fields).
+            if (value is NoneVal)
+            {
+                noneValuedNames.Add(flattenedName);
+                constantVariables.Remove(flattenedName);
+                return;
+            }
+            noneValuedNames.Remove(flattenedName);
+
             // RFC 0001 (write-back): a field mutated by a write-back method needs a real runtime
             // home, not a folded compile-time constant -- otherwise the write-back copy has
             // nowhere to land and later reads (including loop iterations) would see the stale
