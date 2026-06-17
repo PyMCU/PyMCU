@@ -23,6 +23,7 @@ if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
         uart_rx_available, uart_rx_read,
         uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
         uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+        uart_write_fmt,
     )
 elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import (
@@ -32,6 +33,7 @@ elif __CHIP__.name == "atmega32u4":
         uart_rx_available, uart_rx_read,
         uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
         uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+        uart_write_fmt,
     )
 else:
     from pymcu.hal.avr.uart.avr import (

@@ -196,6 +196,51 @@ def uart_write_decimal_i32(value: int32):
         uart_write_decimal_u32(uint32(value))
 
 
+def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
+    # Generic integer formatter for f-string format specs. See avr.py for the full contract:
+    # flags bit0=upper, bit1=signed, bit2=zero-pad; base 2/8/10/16; width-padded; minimal at width<=1.
+    zero_pad: uint8 = flags & 0x04
+    pad: uint8 = 32
+    if zero_pad != 0:
+        pad = 48
+    neg: uint8 = 0
+    mag: uint32 = 0
+    if (flags & 0x02) and value < 0:
+        neg = 1
+        mag = uint32(0 - value)
+    else:
+        mag = uint32(value)
+    if neg != 0 and zero_pad != 0:
+        uart_write(45)
+        if width > 0:
+            width = width - 1
+    buf: uint8[32] = [0] * 32
+    n: uint8 = 0
+    if mag == 0:
+        buf[0] = 48
+        n = 1
+    else:
+        while mag > 0:
+            d: uint8 = uint8(mag % base)
+            if d < 10:
+                buf[n] = d + 48
+            elif flags & 0x01:
+                buf[n] = d - 10 + 65
+            else:
+                buf[n] = d - 10 + 97
+            mag = mag // base
+            n = n + 1
+    if neg != 0 and zero_pad == 0:
+        buf[n] = 45
+        n = n + 1
+    while n < width and n < 32:
+        buf[n] = pad
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
+
+
 def uart_write_str(s: const[str]):
     # Non-@inline: shared subroutine, the string is passed by reference (its flash
     # address) so the byte-loop is emitted once instead of inlined per print() call.
