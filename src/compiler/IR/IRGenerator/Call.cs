@@ -1065,6 +1065,19 @@ public partial class IRGenerator
                     Emit(new Copy(defaultVal, new Variable(paramName, paramType)));
                 }
             }
+            else
+            {
+                // Required parameter with no argument and no default. Python raises TypeError;
+                // reject clearly instead of leaving it uninitialised (read as 0) -- e.g. P(5)
+                // for __init__(self, x, y) silently set y = 0.
+                int initPos2 = callee.IndexOf("___init__", StringComparison.Ordinal);
+                string what = initPos2 > 0
+                    ? $"constructor of '{callee[..initPos2]}'"
+                    : $"'{func.Name}'";
+                throw UserError(
+                    $"missing required argument '{func.Params[i].Name}' in call to {what} " +
+                    $"(expects {func.Params.Count - paramOffset} argument(s))");
+            }
         }
 
         int savedLastLine = lastLine;

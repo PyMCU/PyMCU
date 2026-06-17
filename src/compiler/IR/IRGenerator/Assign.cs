@@ -197,7 +197,8 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is MemberAccessExpr memTarget && propertySetters.Count > 0
+        if (stmt.Target is MemberAccessExpr memTarget
+            && (propertySetters.Count > 0 || propertyGetters.Count > 0)
             && EmitPropertySetterAssign(stmt, memTarget)) return;
 
         if (stmt.Value is LambdaExpr lamRhs)
@@ -324,7 +325,16 @@ public partial class IRGenerator
         if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out var cls))
             return false;
         if (!propertySetters.TryGetValue(cls + "." + memTarget.Member, out string? inlineKey))
+        {
+            // No setter. If the member IS a @property getter, the assignment targets a read-only
+            // property -- Python raises AttributeError. Reject clearly instead of silently writing
+            // a phantom field that then shadows the getter (r.value = 200 used to "stick" as 200).
+            if (propertyGetters.Contains(cls + "." + memTarget.Member))
+                throw UserError(
+                    $"cannot assign to read-only property '{memTarget.Member}': it has a @property " +
+                    $"getter but no @{memTarget.Member}.setter");
             return false;
+        }
 
         var argVal = getArg();
         if (inlineKey == null) return true;
