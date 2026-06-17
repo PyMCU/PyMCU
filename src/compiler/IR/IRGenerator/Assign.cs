@@ -560,6 +560,22 @@ public partial class IRGenerator
     // (slot/Model A), property-less member writes, and the related dispatch.
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
+        // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
+        // to the mutable class global (via classModuleMap); mirror it here with a real store.
+        // Without this the write fell through to the ZCA-field path and was constant-folded into
+        // oblivion -- `Counter.count = Counter.count + 1` emitted nothing and the counter stayed 0.
+        if (memExpr2.Object is VariableExpr clsVar && classNames.Contains(clsVar.Name))
+        {
+            string cvPfx = classModuleMap.TryGetValue(clsVar.Name, out var p) ? p : currentModulePrefix;
+            string cvName = cvPfx + clsVar.Name + "_" + memExpr2.Member;
+            if (mutableGlobals.TryGetValue(cvName, out var cvType))
+            {
+                Emit(new Copy(value, new Variable(cvName, cvType)));
+                constantVariables.Remove(cvName);
+                return;
+            }
+        }
+
         // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field> = v` stores back to
         // the instance slot via the `self` pointer at the field's byte offset. The read side
         // (VisitMemberAccess) had this but the write side did not, so a multi-field ZCA's mutating
