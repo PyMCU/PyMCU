@@ -375,6 +375,29 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FStringWithRuntimeValue_InPrint_Compiles()
+    {
+        // print(f"...") lowers each part to a direct stream write, so a runtime interpolation
+        // is allowed in a stream context (no buffer, no string built at runtime).
+        var ir = GenerateIR(
+            "def main(x: uint16):\n" +
+            "    print(f\"v={x}\")\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FStringWithRuntimeValue_AsValue_RaisesClearError()
+    {
+        // Outside a stream context there is still no runtime string builder; assigning a runtime
+        // f-string to a name must report clearly rather than silently producing garbage.
+        const string src =
+            "def main(x: uint16):\n" +
+            "    name = f\"v={x}\"\n";
+        var ex = Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+        Assert.Contains("runtime", ex.Message);
+    }
+
+    [Fact]
     public void NegativeArrayInitializers_AreStored()
     {
         // `arr: int8[3] = [-1, -2, -3]` — negative literals parse as UnaryExpr(Negate), not

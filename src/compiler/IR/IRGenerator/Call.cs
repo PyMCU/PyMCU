@@ -2230,32 +2230,10 @@ public partial class IRGenerator
             }
         }
 
-        void EmitPrintArg(Expression arg)
+        // Emit an already-evaluated value to the stream as a number/float, picking the formatter
+        // by width/signedness so a uint16/uint32 argument is not silently truncated to 8 bits.
+        void EmitValToStream(Val val)
         {
-            if (arg is StringLiteral lit)
-            {
-                var synthCall = new CallExpr(
-                    new VariableExpr(writeStrFn),
-                    new List<Expression> { lit });
-                VisitCall(synthCall);
-                return;
-            }
-
-            if (arg is VariableExpr v)
-            {
-                string key = currentInlinePrefix + v.Name;
-                string? strVal = ResolveStrConstant(key);
-                if (strVal != null)
-                {
-                    var synthCall = new CallExpr(
-                        new VariableExpr(writeStrFn),
-                        new List<Expression> { new StringLiteral(strVal) });
-                    VisitCall(synthCall);
-                    return;
-                }
-            }
-
-            Val val = VisitExpression(arg);
             bool isFloat = val is FloatConstant ||
                            (val is Variable vf && vf.Type == DataType.FLOAT) ||
                            (val is Temporary tf && tf.Type == DataType.FLOAT);
@@ -2266,8 +2244,6 @@ public partial class IRGenerator
                 Emit(new Call(floatWriteFn, new List<Val> { ftmp }, ftmp));
                 return;
             }
-            // Select the decimal formatter by the value's width/signedness so a
-            // uint16/uint32 argument is not silently truncated to 8 bits.
             DataType argType = val switch
             {
                 Variable v2 => v2.Type,
@@ -2297,6 +2273,64 @@ public partial class IRGenerator
             Temporary tmp = MakeTemp(tmpType);
             Emit(new Copy(val, tmp));
             Emit(new Call(decFn, new List<Val> { tmp }, tmp));
+        }
+
+        // An interpolation that is statically a string (literal, const-str variable, or a nested
+        // f-string) is written as text; returns false for a numeric/float value so the caller
+        // formats it. AST-based detection avoids the string-id/int ambiguity of inspecting Val.
+        bool EmitStringValuedExpr(Expression e)
+        {
+            if (e is StringLiteral sl) { EmitStr(sl.Value); return true; }
+            if (e is FStringExpr) { EmitPrintArg(e); return true; }
+            if (e is VariableExpr ve)
+            {
+                string? sv = ResolveStrConstant(currentInlinePrefix + ve.Name) ?? ResolveStrConstant(ve.Name);
+                if (sv != null) { EmitStr(sv); return true; }
+            }
+            return false;
+        }
+
+        void EmitPrintArg(Expression arg)
+        {
+            // f-string -> stream: lower each part to a direct write (literal text via write_str,
+            // an interpolated value via its width-typed formatter). This is the bare-metal
+            // equivalent of building a string: no buffer, only the itoa that printing already
+            // pays. `print(f"v={x}")` becomes write_str("v=") + write_decimal(x).
+            if (arg is FStringExpr fs)
+            {
+                foreach (var part in fs.Parts)
+                {
+                    if (!part.IsExpr) { EmitStr(part.Text); continue; }
+                    if (EmitStringValuedExpr(part.Expr!)) continue;
+                    EmitValToStream(VisitExpression(part.Expr!));
+                }
+                return;
+            }
+
+            if (arg is StringLiteral lit)
+            {
+                var synthCall = new CallExpr(
+                    new VariableExpr(writeStrFn),
+                    new List<Expression> { lit });
+                VisitCall(synthCall);
+                return;
+            }
+
+            if (arg is VariableExpr v)
+            {
+                string key = currentInlinePrefix + v.Name;
+                string? strVal = ResolveStrConstant(key);
+                if (strVal != null)
+                {
+                    var synthCall = new CallExpr(
+                        new VariableExpr(writeStrFn),
+                        new List<Expression> { new StringLiteral(strVal) });
+                    VisitCall(synthCall);
+                    return;
+                }
+            }
+
+            EmitValToStream(VisitExpression(arg));
         }
 
         if (posArgs.Count == 0)
