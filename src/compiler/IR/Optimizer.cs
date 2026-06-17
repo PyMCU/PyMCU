@@ -1087,7 +1087,15 @@ private static Function CloneFunction(Function f)
                         if (IsVolatile(vDst))
                             varConsts.Remove(vDst.Name);
                         else if (copy.Src is Constant c)
-                            varConsts[vDst.Name] = c.Value;
+                        {
+                            // Narrow at the store: a variable physically cannot hold more than its
+                            // declared width, so mask the tracked constant to it. With arithmetic
+                            // promotion, `e: uint16 = 65535 + 1` folds to 65536; without masking,
+                            // `e == 0` then folded to false even though the stored uint16 is 0.
+                            int wrapped = WrapToType(c.Value, vDst.Type);
+                            varConsts[vDst.Name] = wrapped;
+                            if (wrapped != c.Value) func.Body[i] = new Copy(new Constant(wrapped), vDst);
+                        }
                         else if (copy.Src is FloatConstant fcVar && vDst.Type != DataType.FLOAT)
                         {
                             // Float constant to integer variable: fold at optimizer time.

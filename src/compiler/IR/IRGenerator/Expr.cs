@@ -310,6 +310,12 @@ public partial class IRGenerator
 
     private Val VisitBinary(BinaryExpr expr)
     {
+        // Capture and CLEAR any explicit-cast width hint up front: it applies to THIS op only,
+        // so operands (visited below) and nested ops promote normally. `uint8(a + b)` then makes
+        // the `+` an 8-bit op (wrap + 8-bit flags), the escape hatch from default promotion.
+        DataType? widthHint = castWidthHint;
+        castWidthHint = null;
+
         // None comparisons resolve at compile time with real null semantics: an
         // integer or a concrete instance is never None; only a name bound to None
         // (or the None literal itself) is. This replaces the old None==-1 model,
@@ -646,6 +652,27 @@ public partial class IRGenerator
         else if (lConst && !rConst) resType = t2;            // same size: a literal is type-agnostic,
         else if (rConst && !lConst) resType = t1;            // so take the typed operand (keeps its sign)
         else resType = t1;                                   // both/neither constant: keep left (prior behaviour)
+
+        // Python-fidelity: integer add/sub/mul/shift PROMOTES the result to the next wider type so
+        // a same-width op never silently overflows (uint8+uint8 -> uint16 = 300, not 44; uint16*
+        // uint16 -> uint32). The declared type is a STORAGE width; narrowing happens only at an
+        // explicit store or cast. Capped at 32-bit (64-bit is impractical on AVR, wraps there).
+        // Bitwise/compare/div/mod cannot overflow their width and are not promoted. The backend
+        // widens narrower operands into the result width when loading them.
+        if (resType is not DataType.FLOAT
+            && expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift)
+            resType = resType switch
+            {
+                DataType.UINT8 => DataType.UINT16,
+                DataType.INT8 => DataType.INT16,
+                DataType.UINT16 => DataType.UINT32,
+                DataType.INT16 => DataType.INT32,
+                _ => resType,
+            };
+
+        // An explicit cast around this op (`uint8(a + b)`) forces fixed-width: compute at the
+        // cast's width, overriding promotion. Gives wraparound + the matching 8/16-bit flags.
+        if (widthHint is DataType hint && hint is not DataType.FLOAT) resType = hint;
 
         Temporary dst = MakeTemp(resType);
         if (v1 is Constant cA && v2 is Constant cB)

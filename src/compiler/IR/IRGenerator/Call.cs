@@ -2009,7 +2009,13 @@ public partial class IRGenerator
         // silently used as that (wrong) integer; the whole assignment then gets dropped.
         if (expr.Args[0] is StringLiteral or FStringExpr)
             throw UserError($"{callee}() argument must be numeric, not a string");
+        // Casting an arithmetic expression to an integer width is the explicit "compute at this
+        // width" signal (fixed-width wrap + flags) -- the escape hatch from arithmetic promotion.
+        // Hint the immediate binary op via castWidthHint (VisitBinary consumes/clears it).
+        if (dstType is not DataType.FLOAT && expr.Args[0] is BinaryExpr)
+            castWidthHint = dstType;
         Val v = VisitExpression(expr.Args[0]);
+        castWidthHint = null;
         if (v is Constant c)
         {
             // float(int_literal) -> a float constant (e.g. float(5) -> 5.0).

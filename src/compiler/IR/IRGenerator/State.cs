@@ -58,6 +58,11 @@ public partial class IRGenerator
     private int ctorAnonId = 0; // Counter for synthetic ZCA constructor-as-arg targets
     private string currentInlinePrefix = "";
     private string? currentModulePrefix = "";
+    // Set by an explicit numeric cast wrapping an arithmetic expression (e.g. `uint8(a + b)`):
+    // the wrapped binary op is computed AT this width instead of promoting, giving fixed-width
+    // wraparound (and the matching 8/16-bit ADD/SUB flags). The escape hatch from default
+    // arithmetic promotion. Consumed (cleared) by the immediate binary op so nested ops promote.
+    private DataType? castWidthHint = null;
 
     private Dictionary<string, ModuleScope> modules = new();
 
