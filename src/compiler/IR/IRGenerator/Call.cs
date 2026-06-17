@@ -30,6 +30,7 @@ public partial class IRGenerator
         // stream writes instead of letting it reach the const[str] parameter (which would reject the
         // runtime interpolation). Same generic lowering as print().
         if (TryEmitStreamMethodFString(expr) is { } streamResult) return streamResult;
+        if (TryEmitLcdMethodFString(expr) is { } lcdResult) return lcdResult;
 
         string callee = "";
         if (expr.Callee is VariableExpr varE)
@@ -2336,6 +2337,52 @@ public partial class IRGenerator
         string ffn = ResolveFloatWriteFn();
         EmitStreamFString(wfn, ffn, sfs);
         if (sm.Member == "println") EmitStreamStr(wfn, "\n");
+        return new NoneVal();
+    }
+
+    // lcd.print_str(f"...") on an LCD-like instance: lower the f-string to method calls on the
+    // SAME object — print_str("literal") for text, print_fmt(value, base, width, flags) for a
+    // value — so the instance's pins flow through the @inline expansion. Returns null when this is
+    // not an LCD f-string call (the normal const[str] path handles a plain string).
+    private Val? TryEmitLcdMethodFString(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr sm) return null;
+        if (sm.Member != "print_str") return null;
+        if (expr.Args.Count != 1 || expr.Args[0] is not FStringExpr sfs) return null;
+        if (sm.Object is not VariableExpr) return null;
+
+        Val obj = VisitExpression(sm.Object);
+        if (obj is not Variable vobj) return null;
+        if (!instanceClasses.TryGetValue(vobj.Name, out var cls) || !cls.EndsWith("LCD")) return null;
+
+        string pending = "";
+        void FlushStr()
+        {
+            if (pending.Length == 0) return;
+            VisitCall(new CallExpr(new MemberAccessExpr(sm.Object, "print_str"),
+                new List<Expression> { new StringLiteral(pending) }));
+            pending = "";
+        }
+
+        foreach (var part in sfs.Parts)
+        {
+            if (!part.IsExpr) { pending += part.Text; continue; }
+            string? sv = StaticStringOf(part.Expr!);
+            if (sv != null && string.IsNullOrEmpty(part.FormatSpec)) { pending += sv; continue; }
+
+            int width = 0, radix = 10; char pad = ' '; bool upper = false;
+            if (!string.IsNullOrEmpty(part.FormatSpec))
+                (width, radix, pad, upper) = ParseFormatSpec(part.FormatSpec);
+            if (InferExprType(part.Expr!) == DataType.FLOAT)
+                throw UserError("f-string format on an LCD is not supported for float values");
+            bool signed = InferExprType(part.Expr!) is DataType.INT8 or DataType.INT16 or DataType.INT32;
+            int flags = (upper ? 0x01 : 0) | (signed ? 0x02 : 0) | (pad == '0' ? 0x04 : 0);
+
+            FlushStr();
+            VisitCall(new CallExpr(new MemberAccessExpr(sm.Object, "print_fmt"),
+                new List<Expression> { part.Expr!, new IntegerLiteral(radix), new IntegerLiteral(width), new IntegerLiteral(flags) }));
+        }
+        FlushStr();
         return new NoneVal();
     }
 
