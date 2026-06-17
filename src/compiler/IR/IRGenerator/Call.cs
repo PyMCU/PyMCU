@@ -2245,6 +2245,58 @@ public partial class IRGenerator
         return null;
     }
 
+    private string ResolveFmtFn()
+    {
+        string fn = ResolveCallee("uart_write_fmt");
+        if (fn == "uart_write_fmt")
+            foreach (var k in functionReturnTypes.Keys)
+                if (k.EndsWith("uart_write_fmt", StringComparison.Ordinal)) { fn = k; break; }
+        return fn;
+    }
+
+    // Parse the supported f-string format-spec subset: [0][width][type], type in d/x/X/b/o (c is
+    // rejected for now). Returns the radix, field width, pad char and upper-case flag.
+    private (int Width, int Base, char Pad, bool Upper) ParseFormatSpec(string spec)
+    {
+        int i = 0;
+        char pad = ' ';
+        if (i < spec.Length && spec[i] == '0') { pad = '0'; i++; }
+        int width = 0;
+        while (i < spec.Length && spec[i] is >= '0' and <= '9') { width = width * 10 + (spec[i] - '0'); i++; }
+        char type = i < spec.Length ? spec[i++] : 'd';
+        if (i != spec.Length)
+            throw UserError($"unsupported f-string format spec ':{spec}'");
+        int radix = type switch { 'd' => 10, 'x' or 'X' => 16, 'b' => 2, 'o' => 8, _ => -1 };
+        if (radix < 0)
+            throw UserError($"unsupported f-string format type '{type}' (supported: d, x, X, b, o)");
+        return (width, radix, pad, type == 'X');
+    }
+
+    // Emit an interpolated value formatted per its spec, via the generic uart_write_fmt helper.
+    private void EmitFormattedExpr(Expression e, string spec)
+    {
+        var (width, radix, pad, upper) = ParseFormatSpec(spec);
+        Val v = VisitExpression(e);
+        DataType vt = GetValType(v);
+        if (vt == DataType.FLOAT || v is FloatConstant)
+            throw UserError("f-string format spec is not supported for float values");
+
+        bool signed = vt is DataType.INT8 or DataType.INT16 or DataType.INT32;
+        // Pack the options into one flags byte: bit0 upper, bit1 signed, bit2 zero-pad. Keeping the
+        // call to 4 args (int32 + 3 bytes) avoids losing trailing args in AVR argument passing.
+        int flags = (upper ? 0x01 : 0) | (signed ? 0x02 : 0) | (pad == '0' ? 0x04 : 0);
+        Temporary valArg = MakeTemp(DataType.INT32);   // widen (sign/zero-extend by source type)
+        Emit(new Copy(v, valArg));
+        string fmtFn = ResolveFmtFn();
+        Emit(new Call(fmtFn, new List<Val>
+        {
+            valArg,
+            new Constant(radix),
+            new Constant(width),
+            new Constant(flags),
+        }, MakeTemp(DataType.UINT8)));
+    }
+
     // Lower an f-string to direct stream writes: literal text and constant-string interpolations
     // coalesce into one write_str; a runtime value is emitted via its width-typed formatter. This
     // is the bare-metal equivalent of building the string — no buffer, only the itoa printing pays.
@@ -2255,6 +2307,8 @@ public partial class IRGenerator
         foreach (var part in fs.Parts)
         {
             if (!part.IsExpr) { pending += part.Text; continue; }
+            // A format spec (e.g. {reg:02x}) routes through the generic formatter.
+            if (!string.IsNullOrEmpty(part.FormatSpec)) { Flush(); EmitFormattedExpr(part.Expr!, part.FormatSpec); continue; }
             if (part.Expr is FStringExpr nested) { Flush(); EmitStreamFString(writeStrFn, floatFn, nested); continue; }
             string? sv = StaticStringOf(part.Expr!);
             if (sv != null) { pending += sv; continue; }

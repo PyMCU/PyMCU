@@ -1642,12 +1642,30 @@ public class Parser
                     if (j >= raw.Length) Error("Unterminated '{' in f-string");
                     string exprSrc = raw.Substring(i + 1, j - i - 1);
 
+                    // Split off a format spec at the first ':' that is at bracket-nesting depth 0,
+                    // so slices/subscripts inside the expression (e.g. {a[1:2]}) are not mistaken
+                    // for a spec. `{value:02x}` -> expr "value", spec "02x".
+                    string fmtSpec = "";
+                    int depth = 0;
+                    for (int k = 0; k < exprSrc.Length; k++)
+                    {
+                        char ch = exprSrc[k];
+                        if (ch == '(' || ch == '[' || ch == '{') depth++;
+                        else if (ch == ')' || ch == ']' || ch == '}') depth--;
+                        else if (ch == ':' && depth == 0)
+                        {
+                            fmtSpec = exprSrc.Substring(k + 1);
+                            exprSrc = exprSrc.Substring(0, k);
+                            break;
+                        }
+                    }
+
                     var subLex = new Lexer(exprSrc.AsSpan());
                     var subTokens = subLex.Tokenize();
                     var subParser = new Parser(subTokens);
                     var innerExpr = subParser.ParseExpressionPublic();
 
-                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr });
+                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr, FormatSpec = fmtSpec });
                     i = j + 1;
                 }
                 else if (raw[i] == '}')

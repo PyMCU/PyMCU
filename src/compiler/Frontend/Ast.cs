@@ -118,6 +118,9 @@ public class FStringPart
     public bool IsExpr { get; set; }
     public string Text { get; set; } = "";
     public Expression? Expr { get; set; }
+
+    // Format spec after a ':' in an interpolation, e.g. "02x" in {reg:02x}. Empty when none.
+    public string FormatSpec { get; set; } = "";
 }
 
 public class FStringExpr : Expression

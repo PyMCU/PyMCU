@@ -230,6 +230,57 @@ def uart_write_str(s: const[str]):
         b = s[i]
 
 
+def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
+    # Generic integer formatter backing f-string format specs ({x:02x}, {x:b}, {x:04d}, {x:5d}...).
+    # Emits `value` in `base` (2/8/10/16) right-justified to at least `width` chars. `flags` packs
+    # the options into one byte (fewer call args = robust AVR argument passing):
+    #   bit 0 = upper-case hex digits, bit 1 = signed (emit '-' for negatives), bit 2 = zero-pad.
+    # Minimal digits when width <= 1. Only linked when a format spec is actually used. A non-signed
+    # call reinterprets the bits as unsigned, so hex/bin print the raw bit pattern.
+    zero_pad: uint8 = flags & 0x04
+    pad: uint8 = 32          # ' '
+    if zero_pad != 0:
+        pad = 48             # '0'
+    neg: uint8 = 0
+    mag: uint32 = 0
+    if (flags & 0x02) and value < 0:
+        neg = 1
+        mag = uint32(0 - value)
+    else:
+        mag = uint32(value)
+    # Zero-padded negatives put the sign first, then zeros fill the field ('-' + '008').
+    if neg != 0 and zero_pad != 0:
+        uart_write(45)       # '-'
+        if width > 0:
+            width = width - 1
+    buf: uint8[32] = [0] * 32
+    n: uint8 = 0
+    if mag == 0:
+        buf[0] = 48  # '0'
+        n = 1
+    else:
+        while mag > 0:
+            d: uint8 = uint8(mag % base)
+            if d < 10:
+                buf[n] = d + 48        # '0'..'9'
+            elif flags & 0x01:
+                buf[n] = d - 10 + 65   # 'A'..'F'
+            else:
+                buf[n] = d - 10 + 97   # 'a'..'f'
+            mag = mag // base
+            n = n + 1
+    # Space-padded negatives keep the sign next to the digits, inside the padded field ('   -8').
+    if neg != 0 and zero_pad == 0:
+        buf[n] = 45          # '-'
+        n = n + 1
+    while n < width and n < 32:
+        buf[n] = pad
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
+
+
 @inline
 def uart_available() -> uint8:
     # Returns 1 if a byte is waiting in the UART receive buffer (RXC0, bit 7 of UCSR0A)
