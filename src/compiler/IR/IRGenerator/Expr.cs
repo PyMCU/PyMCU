@@ -804,6 +804,19 @@ public partial class IRGenerator
             }
         }
 
+        // Runtime divide/modulo by zero raises ZeroDivisionError, matching Python (a constant
+        // zero divisor is already a compile-time error above). The check guards only a runtime
+        // divisor — a non-zero constant divisor pays nothing. SignalError delivers to the local
+        // catch dispatcher inside a try, else propagates to the caller via the T-flag.
+        if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod && v2 is not Constant)
+        {
+            string divOk = MakeLabel();
+            Emit(new JumpIfNotZero(v2, divOk));
+            string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+            Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatch));
+            Emit(new Label(divOk));
+        }
+
         Emit(new Binary(MapBinaryOp(expr.Op), v1, v2, dst));
         return dst;
     }

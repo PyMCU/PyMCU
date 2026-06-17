@@ -262,6 +262,7 @@ public partial class IRGenerator
         constantVariables["IndexError"]          = 3;
         constantVariables["KeyError"]            = 4;
         constantVariables["NotImplementedError"] = 5;
+        constantVariables["ZeroDivisionError"]   = 6;
 
         foreach (var imp in mainAst.Imports)
         {
