@@ -927,6 +927,26 @@ public partial class IRGenerator
             }
         }
 
+        // Closure capture: a nested @inline function may read a variable from the ENCLOSING
+        // function (e.g. `return x + base`, where base is a local of the caller). Such a free
+        // variable is not bound under this inline prefix, and the earlier enclosing-scope lookup
+        // only runs when no inline prefix is active — so without this it fell through to an
+        // unbound (zero) local, silently dropping the capture. Resolve it to the enclosing
+        // function's binding when the inline-qualified name is genuinely unknown.
+        if (!string.IsNullOrEmpty(currentInlinePrefix) && !string.IsNullOrEmpty(currentFunction)
+            && !variableTypes.ContainsKey(finalLocalName))
+        {
+            string enclosing = currentFunction + "." + name;
+            if (enclosing != finalLocalName)
+            {
+                if (constantVariables.TryGetValue(enclosing, out int encConst)) return new Constant(encConst);
+                if (constantAddressVariables.TryGetValue(enclosing, out int encAddr))
+                    return new MemoryAddress(encAddr,
+                        variableTypes.TryGetValue(enclosing, out var encAddrDt) ? encAddrDt : DataType.UINT16);
+                if (variableTypes.TryGetValue(enclosing, out var encType)) return new Variable(enclosing, encType);
+            }
+        }
+
         return new Variable(finalLocalName, type);
     }
 
