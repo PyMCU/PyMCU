@@ -214,6 +214,11 @@ public partial class IRGenerator
     // escapes a try-with-finally must run these before returning (Python semantics).
     private List<List<Statement>> finallyStack = new();
 
+    // Per-handler saved exception-code variable (innermost last): a bare `raise` re-raises this,
+    // so the code survives handler body code that clobbers the error register (R22).
+    private List<string> handlerCodeStack = new();
+    private int exnCodeId = 0;
+
     // Debugging
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();

@@ -731,9 +731,14 @@ public partial class IRGenerator
             return;
         }
 
-        // A bare `raise` (no type) re-raises the exception currently being handled: its code is
-        // still in the error register, so signal with code 0 (the "keep R22" sentinel).
-        Val code = string.IsNullOrEmpty(stmt.ErrorType) ? new Constant(0) : ResolveBinding(stmt.ErrorType);
+        // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from
+        // the handler's saved code variable (SignalError reloads R22 from it), so it is correct even
+        // if the handler clobbered R22. Outside a handler (no saved code) fall back to keeping R22.
+        Val code = !string.IsNullOrEmpty(stmt.ErrorType)
+            ? ResolveBinding(stmt.ErrorType)
+            : handlerCodeStack.Count > 0
+                ? new Variable(handlerCodeStack[^1], DataType.UINT8)
+                : new Constant(0);
 
         // Inside a try body in the same function -> deliver to the local catch
         // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
@@ -764,10 +769,11 @@ public partial class IRGenerator
         // for that register: the backend compiles LoadIntoReg("__exn_r22_capture", "R24")
         // as MOV R24, R22, with zero SRAM overhead.
         //
-        // This avoids the stack-overlay collision that would occur if we saved R22 to an
-        // SRAM slot that the StackAllocator might alias with a callee's local variable.
-        // The comparison chain runs before any handler body, so R22 is stable throughout.
-        Val exnCode = new Variable("__exn_r22_capture", DataType.UINT8);
+        // The code is saved to a stable per-try variable at the dispatcher (below) so it survives
+        // handler body code — which may clobber R22 — for a bare `raise` and the dispatch compares.
+        string exnCodeVar = "__exn_code_" + (exnCodeId++);
+        variableTypes[exnCodeVar] = DataType.UINT8;   // so the allocator gives it a home
+        Val exnCode = new Variable(exnCodeVar, DataType.UINT8);
 
         // Compile the try body. After each Call instruction, insert BranchOnError so
         // that any SignalError from the callee jumps to the catch dispatcher.
@@ -809,6 +815,11 @@ public partial class IRGenerator
         // ── Catch dispatcher ─────────────────────────────────────────────────
         Emit(new Label(catchDispatch));
 
+        // Save the error code (still in R22) to a stable variable so a bare `raise` and the
+        // comparisons below survive handler code that clobbers R22. __exn_r22_capture is the
+        // read-only R22 alias; the copy's destination gets a normal (call-surviving) home.
+        Emit(new Copy(new Variable("__exn_r22_capture", DataType.UINT8), new Variable(exnCodeVar, DataType.UINT8)));
+
         for (int i = 0; i < stmt.Handlers.Count; i++)
         {
             var (exnType, handlerBody) = stmt.Handlers[i];
@@ -820,11 +831,13 @@ public partial class IRGenerator
             Emit(new JumpIfZero(matchTemp, skipLabel));
 
             // The finally is pending while the handler body runs, so a `return`/`break`/`continue`
-            // inside the handler runs it first. Pop before the explicit finally on the handler's
-            // normal exit (and so a return inside the finally does not re-trigger it).
+            // inside the handler runs it first. The saved code is pushed so a bare `raise` re-raises
+            // the right exception. Both are popped before the explicit finally on the normal exit.
             if (pushedFinally) finallyStack.Add(stmt.Finally!);
+            handlerCodeStack.Add(exnCodeVar);
             foreach (var s in handlerBody)
                 VisitStatement(s);
+            handlerCodeStack.RemoveAt(handlerCodeStack.Count - 1);
             if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
             EmitFinallyBody(stmt);

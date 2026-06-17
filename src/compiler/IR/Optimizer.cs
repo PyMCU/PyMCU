@@ -1930,6 +1930,9 @@ private static Function CloneFunction(Function f)
             case BytearrayLoad bld:
                 register(bld.Index);
                 break;
+            case SignalError se:
+                register(se.Code);   // a bare-raise's saved code var must count as read, not be DCE'd
+                break;
         }
     }
 
