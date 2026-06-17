@@ -674,13 +674,35 @@ public partial class IRGenerator
         }
 
         // Reaching here means both operands are integers. Python 3's `/` is TRUE division and
-        // always yields a float (5 / 2 == 2.5), while `//` is floor division. PyMCU has no
-        // implicit int->float `/`, so an integer `/` would silently compute integer division
-        // (a wrong value vs Python) or, if made faithful, drag float routines into integer-only
-        // firmware. Reject it with an actionable message instead of diverging silently.
+        // always yields a float (5 / 2 == 2.5, even 4 / 2 == 2.0), while `//` is floor division.
+        // Stay faithful: promote both operands to float and emit float division. This links the
+        // floating-point routines into the firmware, so warn once per site that `//` is the
+        // cheaper integer-division operator in case that is what the user meant.
         if (expr.Op == AstBinOp.Div)
-            throw UserError("'/' is true (float) division in Python and always yields a float; "
-                + "for integer division use '//', or write float(a) / b to divide as floats");
+        {
+            int dline = expr.Line > 0 ? expr.Line : lastLine;
+            if (warningNoticed.Add($"truediv:{dline}"))
+                Console.Error.WriteLine($"[pymcuc] warning: line {dline}: '/' is floating-point "
+                    + "(true) division in Python and always yields a float; it links float "
+                    + "routines into the firmware — use '//' for integer division if that is what you meant");
+
+            Val ToFloatVal(Val x)
+            {
+                if (x is FloatConstant) return x;
+                if (x is Constant ci) return new FloatConstant(ci.Value);
+                Temporary ft = MakeTemp(DataType.FLOAT);
+                Emit(new Copy(x, ft));
+                return ft;
+            }
+
+            Val fa = ToFloatVal(v1);
+            Val fb = ToFloatVal(v2);
+            if (fa is FloatConstant fca && fb is FloatConstant fcb)
+                return new FloatConstant(fcb.Value != 0.0 ? fca.Value / fcb.Value : 0.0);
+            Temporary fdst = MakeTemp(DataType.FLOAT);
+            Emit(new Binary(BinaryOp.Div, fa, fb, fdst));
+            return fdst;
+        }
 
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);

@@ -352,16 +352,16 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void IntegerTrueDivision_RaisesClearError()
+    public void IntegerTrueDivision_YieldsFloat()
     {
-        // Python 3's `/` is true (float) division; integer `/` must be rejected pointing at `//`
-        // (so a naive `count / 10` does not silently compute integer division, diverging from
-        // Python where it would be a float).
+        // Python 3's `/` is true division and always yields a float, even for two ints. PyMCU
+        // promotes integer operands to float and emits float division (it must compile, not
+        // reject, so a naive `count / 10` is faithful to Python's 2.5 rather than C's 2).
         const string src =
-            "def main(a: uint16, b: uint16) -> uint16:\n" +
+            "def main(a: uint16, b: uint16) -> float:\n" +
             "    return a / b\n";
-        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
-        Assert.Contains("'//'", ex.Message);
+        var ir = GenerateIR(src);
+        Assert.NotNull(ir);
     }
 
     [Fact]
