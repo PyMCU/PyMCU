@@ -91,7 +91,10 @@ def _pd_byte(mask: uint8) -> uint8:
             if count == 255:
                 break
         result = result << 1
-        if count > 35:
+        # The HIGH-pulse measure loop above is ~11 cycles/iteration at 16 MHz, so a
+        # DHT11 '0' (~26 µs HIGH) yields ~37 counts and a '1' (~70 µs) yields ~101.
+        # Threshold 64 sits at the midpoint with wide margins on both sides.
+        if count > 64:
             result = result | 1
         bit = bit + 1
     return result

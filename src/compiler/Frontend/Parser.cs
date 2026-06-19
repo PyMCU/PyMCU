@@ -24,6 +24,10 @@ public class Parser
     private int pos = 0;
     private int functionDepth = 0;
 
+    // Extra modules from a comma-separated `import a, b, c`: ParseImportStatement returns
+    // the first and queues the rest here for the caller to drain.
+    private readonly Queue<ImportStmt> pendingImports = new();
+
     public Parser(IReadOnlyList<Token> tokens)
     {
         this.tokens = tokens;
@@ -40,6 +44,8 @@ public class Parser
             if (Check(TokenType.From) || Check(TokenType.Import))
             {
                 prog.Imports.Add(ParseImportStatement());
+                while (pendingImports.Count > 0)
+                    prog.Imports.Add(pendingImports.Dequeue());
             }
             else if (Check(TokenType.At) && DecoratorsLeadToClass())
             {
@@ -140,6 +146,9 @@ public class Parser
 
     private string ParseTypeAnnotation()
     {
+        if (Check(TokenType.String))
+            Error("string ('forward reference') type annotations are not supported; " +
+                  "use the bare class name (e.g. `-> Vec`, not `-> " + (char)34 + "Vec" + (char)34 + "`)");
         var t = Consume(TokenType.Identifier, "Expected type identifier");
         string typeStr = t.Value;
 
@@ -192,6 +201,18 @@ public class Parser
                 Error("Expected type name or array size inside '['");
             }
 
+            // Comma-separated subscript args, e.g. a tuple type tuple[uint8, uint16] used as a
+            // function return annotation. Accepted (and recorded textually); for an @inline
+            // function returning multiple values the annotation is documentation — the caller's
+            // unpack targets receive the values.
+            while (Match(TokenType.Comma))
+            {
+                typeStr += ",";
+                if (Check(TokenType.Identifier)) typeStr += Consume(TokenType.Identifier, "Expected type name").Value;
+                else if (Check(TokenType.Number)) typeStr += Consume(TokenType.Number, "Expected array size").Value;
+                else Error("Expected type name or size after ',' in '['");
+            }
+
             Consume(TokenType.RBracket, "Expected ']'");
             typeStr += "]";
         }
@@ -202,6 +223,7 @@ public class Parser
     private FunctionDef ParseFunction()
     {
         bool isInline = false;
+        bool isOutline = false;
         bool isInterrupt = false;
         int vector = 0;
         bool isPropertyGetter = false;
@@ -287,9 +309,20 @@ public class Parser
             {
                 // Ignored
             }
+            else if (decorator.Value == "classmethod")
+            {
+                Error("@classmethod is not supported (no runtime class object on bare metal); " +
+                      "use a module-level factory function, or a @staticmethod that calls the constructor");
+            }
             else if (decorator.Value == "naked")
             {
                 isNaked = true;
+            }
+            else if (decorator.Value == "outline")
+            {
+                // RFC 0001 Model A: compile this ZCA method once as a shared
+                // subroutine taking the instance fields as params (no force-inline).
+                isOutline = true;
             }
             else if (decorator.Value == "warning")
             {
@@ -349,7 +382,8 @@ public class Parser
             IsNaked = isNaked,
             IsExtern = isExtern,
             ExternSymbol = externSymbol,
-            WarningMessage = warningMessage
+            WarningMessage = warningMessage,
+            IsOutline = isOutline
         };
         return func;
     }
@@ -535,6 +569,20 @@ public class Parser
         if (!Check(TokenType.Newline) && !Check(TokenType.Semicolon))
         {
             value = ParseExpression();
+            // A bare comma-separated return is a tuple: `return a, b` is `return (a, b)`.
+            // Without this the parser stopped at the first element and choked on the comma,
+            // so multi-value return required explicit parentheses.
+            if (Check(TokenType.Comma))
+            {
+                var elems = new List<Expression> { value };
+                while (Match(TokenType.Comma))
+                {
+                    if (Check(TokenType.Newline) || Check(TokenType.Semicolon) || Check(TokenType.EndOfFile))
+                        break; // trailing comma
+                    elems.Add(ParseExpression());
+                }
+                value = new TupleExpr(elems) { Line = line };
+            }
         }
 
         ConsumeStatementEnd();
@@ -545,14 +593,20 @@ public class Parser
     {
         int line = Peek().Line;
         Consume(TokenType.Raise, "Expected 'raise'");
-        string errorType = Consume(TokenType.Identifier, "Expected error type after 'raise'").Value;
+        // A bare `raise` (no type) re-raises the current exception inside an except handler.
+        // ErrorType "" marks that re-raise; VisitRaise re-signals the pending code (in R22).
+        string errorType = "";
         string message = "";
-        if (Check(TokenType.LParen))
+        if (Check(TokenType.Identifier))
         {
-            Advance();
-            if (Check(TokenType.String))
-                message = Advance().Value;
-            Consume(TokenType.RParen, "Expected ')' after error message");
+            errorType = Advance().Value;
+            if (Check(TokenType.LParen))
+            {
+                Advance();
+                if (Check(TokenType.String))
+                    message = Advance().Value;
+                Consume(TokenType.RParen, "Expected ')' after error message");
+            }
         }
 
         ConsumeStatementEnd();
@@ -579,6 +633,16 @@ public class Parser
             handlers.Add((exnType, handlerBlock.Statements));
         }
 
+        // Optional `else`: runs when the try body raised no exception (Python order: except* else? finally?).
+        List<Statement>? elseBody = null;
+        if (Check(TokenType.Else))
+        {
+            Consume(TokenType.Else, "Expected 'else'");
+            Consume(TokenType.Colon, "Expected ':' after 'else'");
+            ConsumeStatementEnd();
+            elseBody = ParseBlock().Statements;
+        }
+
         List<Statement>? finallyBody = null;
         if (Check(TokenType.Finally))
         {
@@ -588,7 +652,7 @@ public class Parser
             finallyBody = ParseBlock().Statements;
         }
 
-        return new TryStmt(body, handlers, finallyBody) { Line = line };
+        return new TryStmt(body, handlers, finallyBody, elseBody) { Line = line };
     }
 
     private Statement ParseWithStatement()
@@ -645,23 +709,29 @@ public class Parser
         return new AssertStmt(cond, message) { Line = line };
     }
 
+    // Parses a single dotted module name with an optional `as` alias (the `import`
+    // keyword is already consumed). Shared by single and comma-separated imports.
+    private ImportStmt ParseModuleImportSpec()
+    {
+        string modName = Consume(TokenType.Identifier, "Expected module name").Value;
+        while (Match(TokenType.Dot))
+            modName += "." + Consume(TokenType.Identifier, "Expected part name").Value;
+
+        var stmt = new ImportStmt(modName, new List<string>(), 0);
+        if (Match(TokenType.As))
+            stmt.ModuleAlias = Consume(TokenType.Identifier, "Expected alias name after 'as'").Value;
+        return stmt;
+    }
+
     private ImportStmt ParseImportStatement()
     {
         if (Match(TokenType.Import))
         {
-            string modName = Consume(TokenType.Identifier, "Expected module name").Value;
-            while (Match(TokenType.Dot))
-            {
-                modName += "." + Consume(TokenType.Identifier, "Expected part name").Value;
-            }
-
-            var stmt = new ImportStmt(modName, new List<string>(), 0);
-            if (Match(TokenType.As))
-            {
-                stmt.ModuleAlias = Consume(TokenType.Identifier, "Expected alias name after 'as'").Value;
-            }
-
-            return stmt;
+            var first = ParseModuleImportSpec();
+            // `import a, b, c`: queue the additional modules for the caller to drain.
+            while (Match(TokenType.Comma))
+                pendingImports.Enqueue(ParseModuleImportSpec());
+            return first;
         }
 
         Consume(TokenType.From, "Expected 'from'");
@@ -870,6 +940,17 @@ public class Parser
         return new MatchStmt(target, branches);
     }
 
+    // The loop `else` clause (runs when the loop finishes without `break`) is not
+    // modelled. Reject it with a clear message instead of a confusing "Expected
+    // expression" syntax error from trying to parse `else` as a statement.
+    private void RejectLoopElse(string kind)
+    {
+        if (Check(TokenType.Else))
+            throw new SyntaxError(
+                $"'{kind} ... else' is not supported; move the else body to after the loop",
+                Peek().Line, 1);
+    }
+
     private Statement ParseWhileStatement()
     {
         int line = Peek().Line;
@@ -878,6 +959,7 @@ public class Parser
         Consume(TokenType.Colon, "Expected ':'");
         Consume(TokenType.Newline, "Expected newline");
         var body = ParseBlock();
+        RejectLoopElse("while");
         return new WhileStmt(condition, body) { Line = line };
     }
 
@@ -935,6 +1017,7 @@ public class Parser
             }
 
             var stmt = new ForStmt(varTok.Value, start, stop, step, blockBody) { Var2Name = var2Name, Line = line };
+            RejectLoopElse("for");
             return stmt;
         }
 
@@ -943,6 +1026,7 @@ public class Parser
         Consume(TokenType.Newline, "Expected newline");
         var ibody = ParseBlock();
 
+        RejectLoopElse("for");
         return new ForStmt(varTok.Value, iterable, ibody) { Var2Name = var2Name, Line = line };
     }
 
@@ -1003,6 +1087,19 @@ public class Parser
 
                 Consume(TokenType.Equal, "Expected '=' in tuple unpack assignment");
                 var valueExpr = ParseExpression();
+                // A bare comma-separated RHS is a tuple literal: `a, b = b, a`.
+                // Without this it parsed only the first element and choked on the
+                // comma, so tuple swap / multi-assign never worked.
+                if (Check(TokenType.Comma))
+                {
+                    var elems = new List<Expression> { valueExpr };
+                    while (Match(TokenType.Comma))
+                    {
+                        if (Check(TokenType.Newline) || Check(TokenType.EndOfFile)) break; // trailing comma
+                        elems.Add(ParseExpression());
+                    }
+                    valueExpr = new TupleExpr(elems) { Line = line };
+                }
                 ConsumeStatementEnd();
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
             }
@@ -1168,7 +1265,13 @@ public class Parser
 
     private Expression ParseComparison()
     {
-        var left = ParseBitwiseOr();
+        var first = ParseBitwiseOr();
+
+        // Collect a comparison chain so `a < b < c` becomes (a<b) and (b<c) — the
+        // Python semantics — instead of the left-associative (a<b)<c. operands[i]
+        // and ops[i] line up so the chain is operands[0] ops[0] operands[1] ...
+        var ops = new List<BinaryOp>();
+        var operands = new List<Expression> { first };
 
         while (Check(TokenType.EqualEqual) || Check(TokenType.BangEqual) ||
                Check(TokenType.Less) || Check(TokenType.LessEqual) ||
@@ -1217,10 +1320,21 @@ public class Parser
             }
 
             var right = ParseBitwiseOr();
-            left = new BinaryExpr(left, op, right);
+            ops.Add(op);
+            operands.Add(right);
         }
 
-        return left;
+        if (ops.Count == 0) return first;
+        if (ops.Count == 1) return new BinaryExpr(operands[0], ops[0], operands[1]);
+
+        // Chained: build ((o0 op0 o1) and (o1 op1 o2)) and ...  The shared middle
+        // operands are reused as AST nodes; with side-effect-free operands (the
+        // usual case) this matches Python's single-evaluation semantics closely.
+        Expression chain = new BinaryExpr(operands[0], ops[0], operands[1]);
+        for (int i = 1; i < ops.Count; i++)
+            chain = new BinaryExpr(chain, BinaryOp.And,
+                new BinaryExpr(operands[i], ops[i], operands[i + 1]));
+        return chain;
     }
 
     private Expression ParseBitwiseOr()
@@ -1486,7 +1600,7 @@ public class Parser
 
         if (Match(TokenType.True)) return new BooleanLiteral(true);
         if (Match(TokenType.False)) return new BooleanLiteral(false);
-        if (Match(TokenType.None)) return new IntegerLiteral(-1);
+        if (Match(TokenType.None)) return new NoneLiteral();
 
         if (Match(TokenType.Identifier))
         {
@@ -1544,12 +1658,30 @@ public class Parser
                     if (j >= raw.Length) Error("Unterminated '{' in f-string");
                     string exprSrc = raw.Substring(i + 1, j - i - 1);
 
+                    // Split off a format spec at the first ':' that is at bracket-nesting depth 0,
+                    // so slices/subscripts inside the expression (e.g. {a[1:2]}) are not mistaken
+                    // for a spec. `{value:02x}` -> expr "value", spec "02x".
+                    string fmtSpec = "";
+                    int depth = 0;
+                    for (int k = 0; k < exprSrc.Length; k++)
+                    {
+                        char ch = exprSrc[k];
+                        if (ch == '(' || ch == '[' || ch == '{') depth++;
+                        else if (ch == ')' || ch == ']' || ch == '}') depth--;
+                        else if (ch == ':' && depth == 0)
+                        {
+                            fmtSpec = exprSrc.Substring(k + 1);
+                            exprSrc = exprSrc.Substring(0, k);
+                            break;
+                        }
+                    }
+
                     var subLex = new Lexer(exprSrc.AsSpan());
                     var subTokens = subLex.Tokenize();
                     var subParser = new Parser(subTokens);
                     var innerExpr = subParser.ParseExpressionPublic();
 
-                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr });
+                    parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr, FormatSpec = fmtSpec });
                     i = j + 1;
                 }
                 else if (raw[i] == '}')

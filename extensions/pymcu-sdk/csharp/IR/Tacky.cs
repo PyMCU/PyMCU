@@ -28,6 +28,7 @@ namespace PyMCU.IR;
 [JsonDerivedType(typeof(NoneVal),       "none")]
 [JsonDerivedType(typeof(FunctionRef),   "fref")]
 [JsonDerivedType(typeof(ArrayBase),     "abase")]
+[JsonDerivedType(typeof(FlashStrAddr),  "fstr")]
 public abstract record Val;
 
 public record Constant(int Value) : Val;
@@ -48,6 +49,13 @@ public record ArrayBase(string ArrayName) : Val;
 
 // Compile-time resolved function address (for funcref() intrinsic)
 public record FunctionRef(string FunctionName) : Val;
+
+// Address-of an interned flash string (null-terminated FlashData byte table).
+// Materializes the 16-bit flash byte-address lo8/hi8(__flash_<Name>) so a
+// const[str] argument can be passed by reference to a non-@inline function,
+// which then reads it byte-by-byte with FlashLoadPtr. Name matches the FlashData
+// label (same convention as ArrayLoadFlash's "__flash_" + name).
+public record FlashStrAddr(string Name) : Val;
 
 public enum UnaryOp
 {
@@ -107,6 +115,7 @@ public enum BinaryOp
 [JsonDerivedType(typeof(DebugLine),            "dbg")]
 [JsonDerivedType(typeof(ArrayLoad),            "ald")]
 [JsonDerivedType(typeof(ArrayLoadFlash),       "alf")]
+[JsonDerivedType(typeof(FlashLoadPtr),         "flp")]
 [JsonDerivedType(typeof(FlashData),            "fdata")]
 [JsonDerivedType(typeof(ArrayStore),           "ast")]
 [JsonDerivedType(typeof(BytearrayLoad),        "bald")]
@@ -116,8 +125,6 @@ public enum BinaryOp
 [JsonDerivedType(typeof(GcAlloc),              "galloc")]
 [JsonDerivedType(typeof(GcRoot),               "groot")]
 [JsonDerivedType(typeof(GcUnroot),             "gunroot")]
-[JsonDerivedType(typeof(TryBegin),             "trybegin")]
-[JsonDerivedType(typeof(RaiseExn),             "raise")]
 [JsonDerivedType(typeof(SignalError),          "sigerr")]
 [JsonDerivedType(typeof(SignalSuccess),        "sigok")]
 [JsonDerivedType(typeof(BranchOnError),        "boe")]
@@ -197,6 +204,12 @@ public record ArrayLoad(string ArrayName, Val Index, Val Dst, DataType ElemType,
 // ArrayLoad for flash-resident (PROGMEM) byte arrays: read via LPM Z.
 public record ArrayLoadFlash(string ArrayName, Val Index, Val Dst) : Instruction;
 
+// Runtime-base flash byte load: Dst = flash[Ptr + Index] via LPM. Ptr is a 16-bit
+// flash byte-address (e.g. a FlashStrAddr passed into a non-@inline function, held
+// in a uint16 parameter). Enables one shared subroutine to walk any flash string
+// instead of inlining the loop per call site.
+public record FlashLoadPtr(Val Ptr, Val Index, Val Dst) : Instruction;
+
 // Flash-resident read-only byte array (placed in .text / PROGMEM via const[uint8[N]]).
 // Bytes holds the literal initializer values; AVR codegen emits a .db table in flash.
 public record FlashData(string Name, List<int> Bytes) : Instruction;
@@ -219,20 +232,18 @@ public record GcRoot(Val Var) : Instruction;
 // GC: deregister a GC_REF root (shadow-stack pop before Return)
 public record GcUnroot(Val Var) : Instruction;
 
-// Exception handling (SJLJ — legacy, being replaced by T-flag propagation model).
-// _setjmp(jmpbuf) == 0 → normal; != 0 → longjmp fired, jump to CatchLabel.
-// ExnCodeVar receives the exception code passed to longjmp.
-public record TryBegin(Val JmpBufVar, string CatchLabel, Val ExnCodeVar) : Instruction;
-
-// Exception handling (SJLJ — legacy). Raise via longjmp.
-public record RaiseExn(Val Code) : Instruction;
-
 // --- Error propagation (T-flag / Result model, architecture-agnostic) ---
+// (The legacy SJLJ TryBegin/RaiseExn instructions were removed: try/except now
+// lowers to SignalError/BranchOnError/SignalSuccess, the T-flag model below.)
 
-// Signal that this function is raising an error propagating to the caller.
-// Backend AVR : emits SET  (sets T flag in SREG).
-// Backend Cortex-M0 : emits MOV R1, code.
-public record SignalError(Val Code) : Instruction;
+// Signal an error.
+// When CatchLabel is null the error propagates to the caller:
+//   Backend AVR : load code into the error register, set the T flag, RET.
+// When CatchLabel is non-null the raise is caught inside the SAME function (a
+// `raise` lexically inside that function's `try` body): the error is delivered
+// directly to the local catch dispatcher without touching the T flag.
+//   Backend AVR : load code into the error register, JMP CatchLabel (no SET, no RET).
+public record SignalError(Val Code, string? CatchLabel = null) : Instruction;
 
 // Signal that this function is returning successfully (happy path).
 // Must appear immediately before every Return inside a CanFail function.
@@ -301,6 +312,14 @@ public class VtableSpec
 public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
+
+    // Names of module-level globals referenced both inside an ISR (or a function
+    // reachable from one) and in non-ISR code. These carry volatile semantics:
+    // the optimizer never caches their value across reads/writes, and backends
+    // may promote single-byte entries to fast always-volatile storage (e.g. the
+    // AVR GPIORn I/O registers). Absent in .mir files from older compilers —
+    // deserializes to empty, which simply disables the promotion.
+    public List<string> IsrSharedGlobals { get; set; } = new();
 
     // Module-level SRAM arrays (e.g. `_task_fns: Callable[4]`).
     // Stored separately because array types cannot be represented as a single DataType.

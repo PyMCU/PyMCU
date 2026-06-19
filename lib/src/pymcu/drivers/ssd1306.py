@@ -71,12 +71,20 @@ class SSD1306:
         # Flush the entire 1024-byte framebuffer to GDDRAM via I2C.
         match __CHIP__.arch:
             case "avr":
-                from pymcu.drivers._ssd1306.i2c import ssd1306_set_addr_window, ssd1306_send_data
+                from pymcu.drivers._ssd1306.i2c import ssd1306_set_addr_window
+                from pymcu.hal.avr.i2c.avr import i2c_start, i2c_write, i2c_stop
                 ssd1306_set_addr_window(self._i2c, self._addr)
+                # Single streaming transaction: one START, the 0x40 data control byte,
+                # then all 1024 bytes back-to-back, one STOP. (The previous per-byte
+                # START/STOP did 1024 separate transactions -- correct but ~1000x slower.)
+                i2c_start()
+                i2c_write((self._addr << 1) & 0xFE)
+                i2c_write(0x40)
                 i: uint16 = 0
                 while i < 1024:
-                    ssd1306_send_data(self._i2c, self._addr, _ssd1306_buf[i])
+                    i2c_write(_ssd1306_buf[i])
                     i = i + 1
+                i2c_stop()
 
     @inline
     def print_str(self, x: uint8, y: uint8, s: str):

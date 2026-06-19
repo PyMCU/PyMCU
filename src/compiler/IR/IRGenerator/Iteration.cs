@@ -38,12 +38,65 @@ public partial class IRGenerator
         return -1;
     }
 
+    // `for c in <const[str]>` unrolls at or below this length (each char a compile-time
+    // constant); longer strings emit a runtime loop over a flash table instead so a heavy
+    // body is not duplicated per character.
+    private const int StringForLoopUnrollLimit = 8;
+
+    // True if `s` has a break/continue that targets the *enclosing* loop — i.e. one not nested
+    // inside its own for/while (which owns its break/continue). A compile-time-unrolled loop
+    // must, only when this holds, bracket each iteration with a continue label and share a break
+    // label so those statements have somewhere to jump; when it does not, the plain unroll is
+    // kept so per-iteration constant folding is not split across label boundaries.
+    private static bool LoopBodyHasBreakOrContinue(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return false;
+            case BreakStmt:
+            case ContinueStmt: return true;
+            case ForStmt:
+            case WhileStmt: return false;            // nested loop owns its break/continue
+            case Block b: return b.Statements.Any(LoopBodyHasBreakOrContinue);
+            case IfStmt i:
+                return LoopBodyHasBreakOrContinue(i.ThenBranch)
+                       || i.ElifBranches.Any(e => LoopBodyHasBreakOrContinue(e.Body))
+                       || LoopBodyHasBreakOrContinue(i.ElseBranch);
+            case MatchStmt m: return m.Branches.Any(br => LoopBodyHasBreakOrContinue(br.Body));
+            case WithStmt w: return LoopBodyHasBreakOrContinue(w.Body);
+            case TryStmt t:
+                return t.Body.Any(LoopBodyHasBreakOrContinue)
+                       || t.Handlers.Any(h => h.Handler.Any(LoopBodyHasBreakOrContinue))
+                       || (t.Finally?.Any(LoopBodyHasBreakOrContinue) ?? false);
+            default: return false;
+        }
+    }
+
+    // Emits one unrolled-iteration body. When `breakLabel` is non-empty (the body uses
+    // break/continue), a fresh continue label brackets the iteration and a shared break label
+    // is active, so continue lands at the end of this iteration and break exits the loop.
+    private void EmitUnrolledIteration(Statement body, string breakLabel)
+    {
+        if (breakLabel.Length == 0) { VisitStatement(body); return; }
+        string cont = MakeLabel();
+        loopStack.Add(new LoopLabels { ContinueLabel = cont, BreakLabel = breakLabel, FinallyDepth = finallyStack.Count });
+        VisitStatement(body);
+        loopStack.RemoveAt(loopStack.Count - 1);
+        Emit(new Label(cont));
+    }
+
     private void VisitFor(ForStmt stmt)
     {
         if (stmt.Iterable != null)
         {
             var iter = stmt.Iterable;
-            string varKey = currentInlinePrefix + stmt.VarName;
+            // Qualify like the body resolves variable references (func-scoped names get the
+            // `func.` prefix when not inline-expanded), so a constant the unrolled loop binds to
+            // the loop variable is found when the body reads it. The inline-only prefix left a
+            // top-level loop variable bare while the body read "func.<name>".
+            string varKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
 
             string? GetStr(Expression e)
             {
@@ -62,11 +115,48 @@ public partial class IRGenerator
 
             if (GetStr(iter) is string strOpt)
             {
+                // Short strings unroll (each char a compile-time constant) — smallest code
+                // and preserves bodies that need a constant loop variable. Longer strings
+                // emit a RUNTIME loop that reads each byte from a flash table, so the body
+                // is generated ONCE instead of N times. This keeps idiomatic `for c in s`
+                // from exploding when the body is heavy (e.g. an I2C/SPI write per char).
+                if (strOpt.Length > StringForLoopUnrollLimit)
+                {
+                    string sFlash = InternStringAsFlash(strOpt);
+                    var sCharVar = new Variable(varKey, DataType.UINT8);
+                    var sIdxVar = new Variable(varKey + "__si", DataType.UINT8);
+
+                    constantVariables.Remove(varKey);
+                    variableTypes[varKey] = DataType.UINT8;
+
+                    Emit(new Copy(new Constant(0), sIdxVar));
+                    string sStart = MakeLabel();
+                    string sCont = MakeLabel();
+                    string sEnd = MakeLabel();
+                    // continue advances the index then re-tests (else the loop spins on one char).
+                    loopStack.Add(new LoopLabels { ContinueLabel = sCont, BreakLabel = sEnd, FinallyDepth = finallyStack.Count });
+
+                    Emit(new Label(sStart));
+                    Emit(new JumpIfGreaterOrEqual(sIdxVar, new Constant(strOpt.Length), sEnd));
+                    Emit(new ArrayLoadFlash(sFlash, sIdxVar, sCharVar));
+
+                    VisitStatement(stmt.Body);
+
+                    Emit(new Label(sCont));
+                    Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, sIdxVar, new Constant(1)));
+                    Emit(new Jump(sStart));
+                    Emit(new Label(sEnd));
+                    loopStack.RemoveAt(loopStack.Count - 1);
+                    return;
+                }
+
+                string strBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (char c in strOpt)
                 {
                     constantVariables[varKey] = (int)c;
-                    VisitStatement(stmt.Body);
+                    EmitUnrolledIteration(stmt.Body, strBrk);
                 }
+                if (strBrk.Length > 0) Emit(new Label(strBrk));
 
                 constantVariables.Remove(varKey);
                 return;
@@ -82,15 +172,17 @@ public partial class IRGenerator
 
             if (GetListParam(iter) is ListExpr boundList)
             {
+                string lpBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in boundList.Elements)
                 {
                     if (elem is IntegerLiteral il)
                     {
                         constantVariables[varKey] = il.Value;
-                        VisitStatement(stmt.Body);
+                        EmitUnrolledIteration(stmt.Body, lpBrk);
                     }
-                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
+                    else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
+                if (lpBrk.Length > 0) Emit(new Label(lpBrk));
 
                 constantVariables.Remove(varKey);
                 return;
@@ -98,15 +190,17 @@ public partial class IRGenerator
 
             if (iter is ListExpr le)
             {
+                string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
                 foreach (var elem in le.Elements)
                 {
                     if (elem is IntegerLiteral il)
                     {
                         constantVariables[varKey] = il.Value;
-                        VisitStatement(stmt.Body);
+                        EmitUnrolledIteration(stmt.Body, llBrk);
                     }
-                    else throw new Exception("for-in list iterable elements must be compile-time integer constants.");
+                    else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
+                if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
                 return;
@@ -133,7 +227,7 @@ public partial class IRGenerator
                     {
                         var sv = EvalConst(call.Args[0]);
                         if (!sv.HasValue)
-                            throw new Exception("for-in range() argument must be a compile-time constant.");
+                            throw UserError("for-in range() argument must be a compile-time constant.");
                         stop = sv.Value;
                     }
                     else if (call.Args.Count >= 2)
@@ -141,20 +235,20 @@ public partial class IRGenerator
                         var sv = EvalConst(call.Args[0]);
                         var ev = EvalConst(call.Args[1]);
                         if (!sv.HasValue || !ev.HasValue)
-                            throw new Exception("for-in range() arguments must be compile-time constants.");
+                            throw UserError("for-in range() arguments must be compile-time constants.");
                         start = sv.Value;
                         stop = ev.Value;
                         if (call.Args.Count >= 3)
                         {
                             var stv = EvalConst(call.Args[2]);
                             if (!stv.HasValue)
-                                throw new Exception("for-in range() step must be a compile-time constant.");
+                                throw UserError("for-in range() step must be a compile-time constant.");
                             step = stv.Value;
                         }
                     }
-                    else throw new Exception("for-in range() requires at least one argument.");
+                    else throw UserError("for-in range() requires at least one argument.");
 
-                    if (step == 0) throw new Exception("for-in range() step cannot be zero.");
+                    if (step == 0) throw UserError("for-in range() step cannot be zero.");
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step)
                     {
                         constantVariables[varKey] = i;
@@ -182,7 +276,7 @@ public partial class IRGenerator
                                 VisitStatement(stmt.Body);
                             }
                             else
-                                throw new Exception(
+                                throw UserError(
                                     "enumerate() list elements must be compile-time integer constants.");
                         }
 
@@ -210,7 +304,7 @@ public partial class IRGenerator
                         {
                             var sv = EvalC(rcall.Args[0]);
                             if (!sv.HasValue)
-                                throw new Exception("enumerate(range()) argument must be compile-time constant.");
+                                throw UserError("enumerate(range()) argument must be compile-time constant.");
                             rstop = sv.Value;
                         }
                         else if (rcall.Args.Count >= 2)
@@ -218,14 +312,14 @@ public partial class IRGenerator
                             var sv = EvalC(rcall.Args[0]);
                             var ev = EvalC(rcall.Args[1]);
                             if (!sv.HasValue || !ev.HasValue)
-                                throw new Exception("enumerate(range()) arguments must be compile-time constants.");
+                                throw UserError("enumerate(range()) arguments must be compile-time constants.");
                             rstart = sv.Value;
                             rstop = ev.Value;
                             if (rcall.Args.Count >= 3)
                             {
                                 var stv = EvalC(rcall.Args[2]);
                                 if (!stv.HasValue)
-                                    throw new Exception("enumerate(range()) step must be compile-time constant.");
+                                    throw UserError("enumerate(range()) step must be compile-time constant.");
                                 rstep = stv.Value;
                             }
                         }
@@ -291,8 +385,13 @@ public partial class IRGenerator
                             else qualifiedVal = stmt.Var2Name;
 
                             variableTypes[qualifiedVal] = elemDt;
+                            bool enBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                            string enBreakLabel = enBrk ? MakeLabel() : "";
                             for (int k = 0; k < arrSize; ++k)
                             {
+                                string enContLabel = enBrk ? MakeLabel() : "";
+                                if (enBrk)
+                                    loopStack.Add(new LoopLabels { ContinueLabel = enContLabel, BreakLabel = enBreakLabel, FinallyDepth = finallyStack.Count });
                                 constantVariables[idxKey] = k;
                                 if (useSram)
                                 {
@@ -328,16 +427,18 @@ public partial class IRGenerator
                                 }
 
                                 VisitStatement(stmt.Body);
+                                if (enBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(enContLabel)); }
                                 CleanCtState(qualifiedVal);
                                 constantVariables.Remove(qualifiedVal);
                             }
+                            if (enBrk) Emit(new Label(enBreakLabel));
 
                             constantVariables.Remove(idxKey);
                             return;
                         }
                     }
 
-                    throw new Exception(
+                    throw UserError(
                         "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.");
                 }
                 else if (calleeVar.Name == "zip" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 2)
@@ -346,6 +447,71 @@ public partial class IRGenerator
                     string key2 = currentInlinePrefix + stmt.Var2Name;
                     Expression arg0 = call.Args[0];
                     Expression arg1 = call.Args[1];
+
+                    // zip(a, b) over two fixed arrays whose elements may be runtime values:
+                    // iterate element-wise, binding each loop variable to the element (Copy from
+                    // arr__k, or ArrayLoad for SRAM arrays). The all-constant fast paths below
+                    // still apply to list literals / function-reference lists.
+                    (string Base, int Size, DataType Elem)? ResolveArr(Expression e)
+                    {
+                        if (e is not VariableExpr ve) return null;
+                        foreach (var k in new[]
+                        {
+                            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + ve.Name,
+                            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + ve.Name,
+                            ve.Name,
+                        })
+                        {
+                            if (k != null && arraySizes.TryGetValue(k, out int sz))
+                                return (k, sz, arrayElemTypes.TryGetValue(k, out var dt) ? dt : DataType.UINT8);
+                        }
+                        int sz2 = ResolveAliasedArraySize(ve.Name, out var b2);
+                        if (sz2 > 0) return (b2, sz2, arrayElemTypes.TryGetValue(b2, out var dt2) ? dt2 : DataType.UINT8);
+                        return null;
+                    }
+
+                    if (ResolveArr(arg0) is var ra && ra is not null
+                        && ResolveArr(arg1) is var rb && rb is not null)
+                    {
+                        string qk1 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key1 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                        string qk2 = !string.IsNullOrEmpty(currentInlinePrefix)
+                            ? key2 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name);
+                        variableTypes[qk1] = ra.Value.Elem;
+                        variableTypes[qk2] = rb.Value.Elem;
+                        bool sram0 = arraysWithVariableIndex.Contains(ra.Value.Base) || moduleSramArrays.Contains(ra.Value.Base);
+                        bool sram1 = arraysWithVariableIndex.Contains(rb.Value.Base) || moduleSramArrays.Contains(rb.Value.Base);
+                        int zlen = Math.Min(ra.Value.Size, rb.Value.Size);
+                        bool zbrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                        string zBreak = zbrk ? MakeLabel() : "";
+
+                        void Bind(string qk, (string Base, int Size, DataType Elem) arr, bool sram, int k)
+                        {
+                            string ek = arr.Base + "__" + k;
+                            if (sram)
+                            {
+                                Temporary tmp = MakeTemp(arr.Elem);
+                                Emit(new ArrayLoad(arr.Base, new Constant(k), tmp, arr.Elem, arr.Size));
+                                Emit(new Copy(tmp, new Variable(qk, arr.Elem)));
+                            }
+                            else if (constantVariables.TryGetValue(ek, out int cv)) constantVariables[qk] = cv;
+                            else Emit(new Copy(new Variable(ek, arr.Elem), new Variable(qk, arr.Elem)));
+                        }
+
+                        for (int k = 0; k < zlen; ++k)
+                        {
+                            string zCont = zbrk ? MakeLabel() : "";
+                            if (zbrk) loopStack.Add(new LoopLabels { ContinueLabel = zCont, BreakLabel = zBreak, FinallyDepth = finallyStack.Count });
+                            Bind(qk1, ra.Value, sram0, k);
+                            Bind(qk2, rb.Value, sram1, k);
+                            VisitStatement(stmt.Body);
+                            if (zbrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(zCont)); }
+                            constantVariables.Remove(qk1);
+                            constantVariables.Remove(qk2);
+                        }
+                        if (zbrk) Emit(new Label(zBreak));
+                        return;
+                    }
 
                     List<int> CollectInts(Expression e)
                     {
@@ -366,7 +532,7 @@ public partial class IRGenerator
                                     if (resolved is Constant rc)
                                         vals.Add(rc.Value);
                                     else
-                                        throw new Exception("zip() list elements must be compile-time integer constants.");
+                                        throw UserError("zip() list elements must be compile-time integer constants.");
                                 }
                             }
 
@@ -411,7 +577,7 @@ public partial class IRGenerator
                                     string elemKey = @base + "__" + k;
                                     if (constantVariables.TryGetValue(elemKey, out int cv)) vals.Add(cv);
                                     else
-                                        throw new Exception(
+                                        throw UserError(
                                             "zip() array elements must be compile-time integer constants.");
                                 }
 
@@ -419,7 +585,7 @@ public partial class IRGenerator
                             }
                         }
 
-                        throw new Exception("zip() arguments must be constant list literals or constant arrays.");
+                        throw UserError("zip() arguments must be constant list literals or constant arrays.");
                     }
 
                     // Try to interpret a list expression as a list of function references.
@@ -505,7 +671,7 @@ public partial class IRGenerator
                         {
                             if (le3.Elements[k] is IntegerLiteral il) constantVariables[valKey] = il.Value;
                             else
-                                throw new Exception("reversed() list elements must be compile-time integer constants.");
+                                throw UserError("reversed() list elements must be compile-time integer constants.");
                             VisitStatement(stmt.Body);
                         }
 
@@ -560,8 +726,13 @@ public partial class IRGenerator
                                     ? currentFunction + "." + stmt.VarName
                                     : valKey);
                             variableTypes[qValKey] = elemDt;
+                            bool rvBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                            string rvBreakLabel = rvBrk ? MakeLabel() : "";
                             for (int k = arrSize - 1; k >= 0; --k)
                             {
+                                string rvContLabel = rvBrk ? MakeLabel() : "";
+                                if (rvBrk)
+                                    loopStack.Add(new LoopLabels { ContinueLabel = rvContLabel, BreakLabel = rvBreakLabel, FinallyDepth = finallyStack.Count });
                                 string elemKey = @base + "__" + k;
                                 if (constantVariables.TryGetValue(elemKey, out int cv))
                                     constantVariables[valKey] = cv;
@@ -571,14 +742,16 @@ public partial class IRGenerator
                                 else
                                     Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
+                                if (rvBrk) { loopStack.RemoveAt(loopStack.Count - 1); Emit(new Label(rvContLabel)); }
                                 CleanCtState(qValKey);
                                 constantVariables.Remove(valKey);
                             }
+                            if (rvBrk) Emit(new Label(rvBreakLabel));
                             return;
                         }
                     }
 
-                    throw new Exception("reversed() argument must be a constant list literal or a constant array.");
+                    throw UserError("reversed() argument must be a constant list literal or a constant array.");
                 }
             }
 
@@ -614,8 +787,10 @@ public partial class IRGenerator
                     variableTypes[elemVarName] = elemDt;
 
                     string loopStart = MakeLabel();
+                    string loopCont = MakeLabel();
                     string loopEnd = MakeLabel();
-                    loopStack.Add(new LoopLabels { ContinueLabel = loopStart, BreakLabel = loopEnd });
+                    // continue advances the index then re-tests (else the loop spins on one elem).
+                    loopStack.Add(new LoopLabels { ContinueLabel = loopCont, BreakLabel = loopEnd, FinallyDepth = finallyStack.Count });
 
                     Emit(new Label(loopStart));
                     Temporary cmpTmp = MakeTemp(DataType.UINT8);
@@ -629,6 +804,7 @@ public partial class IRGenerator
 
                     VisitStatement(stmt.Body);
 
+                    Emit(new Label(loopCont));
                     Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, idxVar, new Constant(1)));
                     Emit(new Jump(loopStart));
                     Emit(new Label(loopEnd));
@@ -672,13 +848,33 @@ public partial class IRGenerator
                         : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
                     DataType elemDt2 = arrayElemTypes.TryGetValue(forBase, out var dt3) ? dt3 : DataType.UINT8;
                     variableTypes[forVarKey] = elemDt2;
+                    // An SRAM-resident array (runtime-indexed or module-level) has no per-element
+                    // arr__k vars — its elements live in memory and must be read with an indexed
+                    // load, exactly as the enumerate path does. Without this a `for v in arr` over
+                    // such an array read 0 from the missing element vars.
+                    bool forSram = arraysWithVariableIndex.Contains(forBase) || moduleSramArrays.Contains(forBase);
+
+                    // Only bracket iterations with labels when the body actually uses break/continue
+                    // (else keep the plain unroll so constant folding is not split by labels).
+                    bool forBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                    string forBreakLabel = forBrk ? MakeLabel() : "";
 
                     for (int fk = 0; fk < forSize; fk++)
                     {
+                        string forContLabel = forBrk ? MakeLabel() : "";
+                        if (forBrk)
+                            loopStack.Add(new LoopLabels { ContinueLabel = forContLabel, BreakLabel = forBreakLabel, FinallyDepth = finallyStack.Count });
+
                         string elemKey2 = forBase + "__" + fk;
                         bool isZca = instanceClasses.ContainsKey(elemKey2) ||
                                      instanceClasses.Keys.Any(x => x.StartsWith(elemKey2 + "."));
-                        if (isZca)
+                        if (forSram)
+                        {
+                            Temporary tmp = MakeTemp(elemDt2);
+                            Emit(new ArrayLoad(forBase, new Constant(fk), tmp, elemDt2, forSize));
+                            Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
+                        }
+                        else if (isZca)
                             PropagateCtState(elemKey2, forVarKey);
                         else if (constantVariables.TryGetValue(elemKey2, out int cv2))
                             constantVariables[forVarKey] = cv2;
@@ -687,34 +883,137 @@ public partial class IRGenerator
 
                         VisitStatement(stmt.Body);
 
+                        if (forBrk)
+                        {
+                            loopStack.RemoveAt(loopStack.Count - 1);
+                            Emit(new Label(forContLabel));   // continue lands here: end of this iteration
+                        }
                         CleanCtState(forVarKey);
                         constantVariables.Remove(forVarKey);
                     }
+                    if (forBrk) Emit(new Label(forBreakLabel));
                     return;
                 }
             }
 
-            throw new Exception(
-                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), or reversed(iterable). Use 'const[str]' type annotation for string parameters.");
+            // for v in arr[lo:hi:step]: — unroll over a fixed-array slice (constant bounds).
+            if (iter is IndexExpr { Target: VariableExpr sliceVar, Index: SliceExpr slc })
+            {
+                string slBase = "";
+                int slSize = -1;
+                if (!string.IsNullOrEmpty(currentInlinePrefix)
+                    && arraySizes.TryGetValue(currentInlinePrefix + sliceVar.Name, out int ss0))
+                { slSize = ss0; slBase = currentInlinePrefix + sliceVar.Name; }
+                if (slSize < 0 && !string.IsNullOrEmpty(currentFunction)
+                    && arraySizes.TryGetValue(currentFunction + "." + sliceVar.Name, out int ss1))
+                { slSize = ss1; slBase = currentFunction + "." + sliceVar.Name; }
+                if (slSize < 0 && arraySizes.TryGetValue(sliceVar.Name, out int ss2))
+                { slSize = ss2; slBase = sliceVar.Name; }
+                if (slSize < 0)
+                {
+                    int ss3 = ResolveAliasedArraySize(sliceVar.Name, out var sb3);
+                    if (ss3 > 0) { slSize = ss3; slBase = sb3; }
+                }
+
+                if (slSize > 0)
+                {
+                    int start = slc.Start != null ? EvaluateConstantExpr(slc.Start) : 0;
+                    int stop = slc.Stop != null ? EvaluateConstantExpr(slc.Stop) : slSize;
+                    int step = slc.Step != null ? EvaluateConstantExpr(slc.Step) : 1;
+                    if (step == 0) throw UserError("for-in slice step cannot be zero.");
+                    if (start < 0) start += slSize;
+                    if (stop < 0) stop += slSize;
+                    start = Math.Max(0, Math.Min(start, slSize));
+                    stop = Math.Max(0, Math.Min(stop, slSize));
+
+                    DataType slElem = arrayElemTypes.TryGetValue(slBase, out var sdt) ? sdt : DataType.UINT8;
+                    bool slSram = arraysWithVariableIndex.Contains(slBase) || moduleSramArrays.Contains(slBase);
+                    string slKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + stmt.VarName
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+                    variableTypes[slKey] = slElem;
+
+                    bool slBrk = LoopBodyHasBreakOrContinue(stmt.Body);
+                    string slBreakLabel = slBrk ? MakeLabel() : "";
+
+                    for (int i = start; step > 0 ? i < stop : i > stop; i += step)
+                    {
+                        string slContLabel = slBrk ? MakeLabel() : "";
+                        if (slBrk)
+                            loopStack.Add(new LoopLabels { ContinueLabel = slContLabel, BreakLabel = slBreakLabel, FinallyDepth = finallyStack.Count });
+
+                        string elemKey = slBase + "__" + i;
+                        if (slSram)
+                        {
+                            Temporary tmp = MakeTemp(slElem);
+                            Emit(new ArrayLoad(slBase, new Constant(i), tmp, slElem, slSize));
+                            Emit(new Copy(tmp, new Variable(slKey, slElem)));
+                        }
+                        else if (constantVariables.TryGetValue(elemKey, out int cv))
+                            constantVariables[slKey] = cv;
+                        else
+                            Emit(new Copy(new Variable(elemKey, slElem), new Variable(slKey, slElem)));
+
+                        VisitStatement(stmt.Body);
+
+                        if (slBrk)
+                        {
+                            loopStack.RemoveAt(loopStack.Count - 1);
+                            Emit(new Label(slContLabel));
+                        }
+                        constantVariables.Remove(slKey);
+                    }
+                    if (slBrk) Emit(new Label(slBreakLabel));
+
+                    return;
+                }
+            }
+
+            throw UserError(
+                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
         }
 
         Val startVal = stmt.RangeStart != null ? VisitExpression(stmt.RangeStart) : new Constant(0);
         Val stopVal = VisitExpression(stmt.RangeStop!);
         Val stepVal = stmt.RangeStep != null ? VisitExpression(stmt.RangeStep) : new Constant(1);
 
-        string varName = string.IsNullOrEmpty(currentInlinePrefix) ? stmt.VarName : currentInlinePrefix + stmt.VarName;
+        // A zero step never advances the loop variable (Python raises ValueError). The
+        // compile-time-unrolled path above already rejects this; mirror it for the runtime
+        // loop, where a literal-zero step would otherwise emit an infinite loop.
+        if (stepVal is Constant stepZero && stepZero.Value == 0)
+            throw UserError("for-in range() step cannot be zero.");
+
+        // Qualify the loop variable the same way the body resolves a variable reference:
+        // function-scoped names get the `func.` prefix when not inline-expanded. Using the
+        // inline-only prefix left a top-level loop variable bare ("i") while the body read it
+        // as "func.i", so the counter and the body's reads were different registers — using `i`
+        // in the body read 0 (e.g. `for i in range(n): acc += i` produced 0).
+        string varName = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + stmt.VarName
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
         var loopVar = new Variable(varName, DataType.UINT8);
         Emit(new Copy(startVal, loopVar));
 
         string startLabel = MakeLabel();
+        string contLabel = MakeLabel();
         string endLabel = MakeLabel();
-        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel });
+        // `continue` must run the step before re-testing, otherwise the loop variable never
+        // advances and the loop spins forever — so the continue target is the step, not the
+        // condition check at the top.
+        loopStack.Add(new LoopLabels { ContinueLabel = contLabel, BreakLabel = endLabel, FinallyDepth = finallyStack.Count });
 
         Emit(new Label(startLabel));
-        Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
+        // A negative step counts down, so the loop ends when the variable drops to or below
+        // stop (Python's range(hi, lo, -1)); a positive step ends at/above stop. The previous
+        // unconditional `>= stop` test made any negative-step runtime range exit immediately.
+        if (stepVal is Constant stepC && stepC.Value < 0)
+            Emit(new JumpIfLessOrEqual(loopVar, stopVal, endLabel));
+        else
+            Emit(new JumpIfGreaterOrEqual(loopVar, stopVal, endLabel));
 
         VisitStatement(stmt.Body);
 
+        Emit(new Label(contLabel));
         Emit(new AugAssign(PyMCU.IR.BinaryOp.Add, loopVar, stepVal));
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
@@ -759,7 +1058,7 @@ public partial class IRGenerator
             int val = EvaluateConstantExpr(stmt.Condition);
             if (val == 0)
             {
-                throw new Exception("AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message));
+                throw UserError("AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message));
             }
         }
         catch (Exception e)

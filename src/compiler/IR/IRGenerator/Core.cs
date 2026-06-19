@@ -262,6 +262,7 @@ public partial class IRGenerator
         constantVariables["IndexError"]          = 3;
         constantVariables["KeyError"]            = 4;
         constantVariables["NotImplementedError"] = 5;
+        constantVariables["ZeroDivisionError"]   = 6;
 
         foreach (var imp in mainAst.Imports)
         {
@@ -283,6 +284,9 @@ public partial class IRGenerator
             {
                 string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
                 modules[modKey] = new ModuleScope();
+                // Map the used name (alias or real) to the real module so member/method
+                // resolution mangles `t.sleep_ms` (import time as t) to time_sleep_ms.
+                importedAliases[modKey] = imp.ModuleName;
             }
 
             foreach (var sym in imp.Symbols)
@@ -505,6 +509,25 @@ public partial class IRGenerator
                     .ToList();
                 for (int i = sramInits.Count - 1; i >= 0; i--)
                     mainFuncDef.Body.Statements.Insert(0, sramInits[i]);
+
+                // Inject scalar mutable-global initializers (e.g. `_seed: uint16 = 3007`)
+                // so a non-zero startup value is actually written. Without this the global
+                // lives in BSS, is zeroed by crt0, and silently reads 0. Module-level
+                // declarations parse as VarDecl; convert to an AnnAssign so the main-body
+                // handler writes the module global. Skip arrays (handled above), folded
+                // constant globals, and zero/false inits (BSS already zeroes them).
+                var globalInits = mainAst.GlobalStatements
+                    .OfType<VarDecl>()
+                    .Where(d => d.Init != null
+                             && !moduleSramArrays.Contains(d.Name)
+                             && !globals.ContainsKey(d.Name)
+                             && mutableGlobals.ContainsKey(d.Name)
+                             && !(d.Init is IntegerLiteral z && z.Value == 0)
+                             && !(d.Init is BooleanLiteral bz && !bz.Value))
+                    .Select(d => new AnnAssign(d.Name, d.VarType, d.Init))
+                    .ToList();
+                for (int i = globalInits.Count - 1; i >= 0; i--)
+                    mainFuncDef.Body.Statements.Insert(0, globalInits[i]);
             }
         }
 
@@ -514,6 +537,11 @@ public partial class IRGenerator
             {
                 foreach (var sym in imp.Symbols)
                 {
+                    // A symbol that is already a known compile-time constant (e.g. the
+                    // builtin exception codes ValueError=1, …, predefined regardless of
+                    // import) must NOT be re-imported as a data global — doing so shadows
+                    // the constant with an undefined symbol and breaks `raise ValueError`.
+                    if (constantVariables.ContainsKey(sym)) continue;
                     if (srcScope.Globals.TryGetValue(sym, out var globalSym))
                     {
                         globals[sym] = globalSym;
@@ -556,6 +584,9 @@ public partial class IRGenerator
                         if (functionReturnTypes.TryGetValue(srcExact, out var ert)) functionReturnTypes[dstExact] = ert;
                         if (functionParamTypes.TryGetValue(srcExact, out var ept)) functionParamTypes[dstExact] = ept;
                         if (methodInstanceTypes.TryGetValue(srcExact, out var emit)) methodInstanceTypes[dstExact] = emit;
+                        // Keep the DEFINING module so inlining the re-exported function
+                        // still resolves its internal helper calls in the original module.
+                        if (functionModulePrefix.TryGetValue(srcExact, out var emp)) functionModulePrefix[dstExact] = emp;
                     }
 
                     string srcClassPrefix = srcPrefix + sym + "_";
@@ -692,6 +723,18 @@ public partial class IRGenerator
             if (mainFunc != null) mainFunc.Body.InsertRange(0, _pendingFlashData);
             _pendingFlashData.Clear();
         }
+
+        // Two functions compiled under the same name (e.g. `def f()` twice without an
+        // overload-distinguishing signature) would otherwise crash a downstream
+        // ToDictionary(f => f.Name) with a raw "An item with the same key has already been
+        // added" reported as an InternalCompilerError. Report it as a clean diagnostic.
+        var dupFn = irProgram.Functions
+            .GroupBy(f => f.Name)
+            .FirstOrDefault(g => g.Count() > 1);
+        if (dupFn != null)
+            throw new PyMCU.Common.CompilerError("CompileError",
+                $"duplicate function definition: '{dupFn.Key}' is defined more than once " +
+                "(give the overloads different parameter types, or rename one)", 1, 1);
 
         // Propagate class hierarchy so the Optimizer devirt pass and AvrCodeGen
         // can work without access to IRGenerator-internal state.
@@ -885,6 +928,43 @@ public partial class IRGenerator
             }
         }
 
+        // Closure capture: a nested @inline function may read a variable from the ENCLOSING
+        // function (e.g. `return x + base`, where base is a local of the caller). Such a free
+        // variable is not bound under this inline prefix, and the earlier enclosing-scope lookup
+        // only runs when no inline prefix is active — so without this it fell through to an
+        // unbound (zero) local, silently dropping the capture. Resolve it to the enclosing
+        // function's binding when the inline-qualified name is genuinely unknown.
+        if (!string.IsNullOrEmpty(currentInlinePrefix) && !variableTypes.ContainsKey(finalLocalName))
+        {
+            // Candidate enclosing scopes, innermost first: each enclosing inline expansion's
+            // prefix (so a capture from an enclosing @inline like `outer` resolves), then the
+            // enclosing plain function. The topmost stack entry is THIS expansion — skip it.
+            for (int si = inlineStack.Count - 2; si >= 0; --si)
+            {
+                string p = inlineStack[si].Prefix;
+                if (string.IsNullOrEmpty(p)) continue;
+                string enc = p + name;
+                if (enc == finalLocalName) continue;
+                if (constantVariables.TryGetValue(enc, out int ec)) return new Constant(ec);
+                if (constantAddressVariables.TryGetValue(enc, out int ea2))
+                    return new MemoryAddress(ea2, variableTypes.TryGetValue(enc, out var ead) ? ead : DataType.UINT16);
+                if (variableTypes.TryGetValue(enc, out var et)) return new Variable(enc, et);
+            }
+
+            if (!string.IsNullOrEmpty(currentFunction))
+            {
+                string enclosing = currentFunction + "." + name;
+                if (enclosing != finalLocalName)
+                {
+                    if (constantVariables.TryGetValue(enclosing, out int encConst)) return new Constant(encConst);
+                    if (constantAddressVariables.TryGetValue(enclosing, out int encAddr))
+                        return new MemoryAddress(encAddr,
+                            variableTypes.TryGetValue(enclosing, out var encAddrDt) ? encAddrDt : DataType.UINT16);
+                    if (variableTypes.TryGetValue(enclosing, out var encType)) return new Variable(enclosing, encType);
+                }
+            }
+        }
+
         return new Variable(finalLocalName, type);
     }
 
@@ -915,6 +995,13 @@ public partial class IRGenerator
             if (key != null && variableAliases.TryGetValue(key, out var alias)) key = alias;
             else break;
         }
+
+        // Fall back to the module-global / bare-name forms, mirroring how integer globals
+        // resolve (ResolveBinding): a qualified `localName` like "main.S" should still find a
+        // module-level string `S` registered by ScanGlobals as `currentModulePrefix + "S"`.
+        string bare = name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+        if (strConstantVariables.TryGetValue(currentModulePrefix + bare, out var mv)) return mv;
+        if (strConstantVariables.TryGetValue(bare, out var bv)) return bv;
 
         return null;
     }

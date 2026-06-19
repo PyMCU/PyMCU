@@ -440,7 +440,7 @@ public partial class IRGenerator
                 {
                     string arrName = "";
                     if (targetVal is Variable v) arrName = v.Name;
-                    else throw new Exception("match/case sequence pattern: subject must be an array variable");
+                    else throw UserError("match/case sequence pattern: subject must be an array variable");
 
                     int patSize = seq.Elements.Count;
                     if (arraySizes.TryGetValue(arrName, out int size) && size != patSize)
@@ -658,7 +658,8 @@ public partial class IRGenerator
     {
         string startLabel = MakeLabel();
         string endLabel = MakeLabel();
-        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel });
+        loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel,
+                                       FinallyDepth = finallyStack.Count });
 
         Emit(new Label(startLabel));
 
@@ -691,14 +692,18 @@ public partial class IRGenerator
 
     private void VisitBreak(BreakStmt stmt)
     {
-        if (loopStack.Count == 0) throw new Exception("Break statement outside of loop");
-        Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).BreakLabel));
+        if (loopStack.Count == 0) throw UserError("Break statement outside of loop");
+        var loop = Enumerable.Last<LoopLabels>(loopStack);
+        EmitPendingFinally(loop.FinallyDepth);   // run finallys between this break and the loop
+        Emit(new Jump(loop.BreakLabel));
     }
 
     private void VisitContinue(ContinueStmt stmt)
     {
-        if (loopStack.Count == 0) throw new Exception("Continue statement outside of loop");
-        Emit(new Jump(Enumerable.Last<LoopLabels>(loopStack).ContinueLabel));
+        if (loopStack.Count == 0) throw UserError("Continue statement outside of loop");
+        var loop = Enumerable.Last<LoopLabels>(loopStack);
+        EmitPendingFinally(loop.FinallyDepth);   // run finallys between this continue and the loop
+        Emit(new Jump(loop.ContinueLabel));
     }
 
     private void VisitRaise(RaiseStmt stmt)
@@ -726,8 +731,19 @@ public partial class IRGenerator
             return;
         }
 
-        Val code = ResolveBinding(stmt.ErrorType);
-        Emit(new SignalError(code));
+        // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from
+        // the handler's saved code variable (SignalError reloads R22 from it), so it is correct even
+        // if the handler clobbered R22. Outside a handler (no saved code) fall back to keeping R22.
+        Val code = !string.IsNullOrEmpty(stmt.ErrorType)
+            ? ResolveBinding(stmt.ErrorType)
+            : handlerCodeStack.Count > 0
+                ? new Variable(handlerCodeStack[^1], DataType.UINT8)
+                : new Constant(0);
+
+        // Inside a try body in the same function -> deliver to the local catch
+        // dispatcher (jump, no T-flag, no return). Otherwise propagate to the caller.
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        Emit(new SignalError(code, localCatch));
     }
 
     private void VisitTry(TryStmt stmt)
@@ -753,17 +769,26 @@ public partial class IRGenerator
         // for that register: the backend compiles LoadIntoReg("__exn_r22_capture", "R24")
         // as MOV R24, R22, with zero SRAM overhead.
         //
-        // This avoids the stack-overlay collision that would occur if we saved R22 to an
-        // SRAM slot that the StackAllocator might alias with a callee's local variable.
-        // The comparison chain runs before any handler body, so R22 is stable throughout.
-        Val exnCode = new Variable("__exn_r22_capture", DataType.UINT8);
+        // The code is saved to a stable per-try variable at the dispatcher (below) so it survives
+        // handler body code — which may clobber R22 — for a bare `raise` and the dispatch compares.
+        string exnCodeVar = "__exn_code_" + (exnCodeId++);
+        variableTypes[exnCodeVar] = DataType.UINT8;   // so the allocator gives it a home
+        Val exnCode = new Variable(exnCodeVar, DataType.UINT8);
 
         // Compile the try body. After each Call instruction, insert BranchOnError so
         // that any SignalError from the callee jumps to the catch dispatcher.
         int bodyStart = currentInstructions.Count;
 
+        // A `raise` lexically inside this body is caught here (delivered straight to
+        // catchDispatch) rather than propagated to the caller. Scope this to the body
+        // only: a `raise` in a handler/finally is a re-raise and must propagate.
+        // A finally is also pushed so a `return` escaping the body (or else) runs it first.
+        bool pushedFinally = hasFinally;
+        if (pushedFinally) finallyStack.Add(stmt.Finally!);
+        tryCatchStack.Add(catchDispatch);
         foreach (var s in stmt.Body)
             VisitStatement(s);
+        tryCatchStack.RemoveAt(tryCatchStack.Count - 1);
 
         // Post-process: find every Call emitted inside the try body and insert a
         // BranchOnError guard immediately after it. We iterate in reverse so that
@@ -775,12 +800,25 @@ public partial class IRGenerator
         for (int i = callIndices.Count - 1; i >= 0; i--)
             currentInstructions.Insert(callIndices[i] + 1, new BranchOnError(catchDispatch));
 
-        // Happy path: run finally block (if any), then skip catch section.
+        // Happy path: the try body raised nothing. Run the `else` block (if any) FIRST — it is
+        // emitted here, after the body's BranchOnError guards were inserted above, so a raise in
+        // `else` is NOT caught by this try (it propagates), matching Python. Then the finally.
+        if (stmt.ElseBody != null)
+            foreach (var s in stmt.ElseBody)
+                VisitStatement(s);
+        // Pop the pending finally now: the remaining exits (happy, handlers, unmatched) emit it
+        // explicitly, and a `return` inside the finally itself must not re-trigger it.
+        if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
         EmitFinallyBody(stmt);
         Emit(new Jump(afterLabel));
 
         // ── Catch dispatcher ─────────────────────────────────────────────────
         Emit(new Label(catchDispatch));
+
+        // Save the error code (still in R22) to a stable variable so a bare `raise` and the
+        // comparisons below survive handler code that clobbers R22. __exn_r22_capture is the
+        // read-only R22 alias; the copy's destination gets a normal (call-surviving) home.
+        Emit(new Copy(new Variable("__exn_r22_capture", DataType.UINT8), new Variable(exnCodeVar, DataType.UINT8)));
 
         for (int i = 0; i < stmt.Handlers.Count; i++)
         {
@@ -792,8 +830,15 @@ public partial class IRGenerator
             Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
             Emit(new JumpIfZero(matchTemp, skipLabel));
 
+            // The finally is pending while the handler body runs, so a `return`/`break`/`continue`
+            // inside the handler runs it first. The saved code is pushed so a bare `raise` re-raises
+            // the right exception. Both are popped before the explicit finally on the normal exit.
+            if (pushedFinally) finallyStack.Add(stmt.Finally!);
+            handlerCodeStack.Add(exnCodeVar);
             foreach (var s in handlerBody)
                 VisitStatement(s);
+            handlerCodeStack.RemoveAt(handlerCodeStack.Count - 1);
+            if (pushedFinally) finallyStack.RemoveAt(finallyStack.Count - 1);
 
             EmitFinallyBody(stmt);
             Emit(new Jump(afterLabel));
@@ -801,9 +846,21 @@ public partial class IRGenerator
             Emit(new Label(skipLabel));
         }
 
-        // No handler matched or finally-only: run finally then halt.
+        // No handler matched (or finally-only): the error is NOT handled here, so it must keep
+        // propagating — not halt unconditionally. Run finally, then re-deliver the still-pending
+        // error (R22 holds its code; SignalError code 0 leaves R22 untouched):
+        //   - an enclosing try in this function catches it (re-deliver to its dispatcher);
+        //   - otherwise re-raise to the caller (RET with T set) so normal uncaught propagation
+        //     carries it up — reaching main, where it halts via __pymcu_unhandled_exn;
+        //   - in main itself there is no caller, so halt directly.
         if (hasFinally) EmitFinallyBody(stmt);
-        Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
+        string? enclosingCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        if (enclosingCatch != null)
+            Emit(new SignalError(new Constant(0), enclosingCatch));
+        else if (currentFunction != "main")
+            Emit(new SignalError(new Constant(0), null));
+        else
+            Emit(new Call("__pymcu_unhandled_exn", new List<Val>(), new NoneVal()));
 
         Emit(new Label(afterLabel));
     }
@@ -813,5 +870,21 @@ public partial class IRGenerator
         if (stmt.Finally == null) return;
         foreach (var s in stmt.Finally)
             VisitStatement(s);
+    }
+
+    // Run the pending finally blocks above `floor` (innermost first) on a control-flow exit that
+    // escapes them: `return` runs all (floor 0); `break`/`continue` run only those between the
+    // statement and the loop. The run slice is removed while running so a return inside one of
+    // those finallys does not re-run it (outer finallys below `floor` stay pending).
+    private void EmitPendingFinally(int floor = 0)
+    {
+        if (finallyStack.Count <= floor) return;
+        var slice = finallyStack.GetRange(floor, finallyStack.Count - floor);
+        var saved = finallyStack;
+        finallyStack = finallyStack.GetRange(0, floor);
+        for (int k = slice.Count - 1; k >= 0; k--)
+            foreach (var s in slice[k])
+                VisitStatement(s);
+        finallyStack = saved;
     }
 }

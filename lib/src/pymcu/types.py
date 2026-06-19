@@ -67,6 +67,13 @@ def naked(f):
     return f
 
 
+def outline(f):
+    # RFC 0001 Model A: marks a ZCA method to be compiled once as a shared
+    # subroutine (instance fields passed as runtime params) instead of being
+    # inlined per call site. Zero-cost marker -- the compiler does the work.
+    return f
+
+
 def warning(message: str):
     # Parametrised diagnostic decorator: when the pymcuc compiler expands a
     # call to the decorated function it prints `message` (once per function)

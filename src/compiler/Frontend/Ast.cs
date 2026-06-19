@@ -100,6 +100,13 @@ public class BooleanLiteral : Expression
     public BooleanLiteral(bool value) => Value = value;
 }
 
+// The `None` literal as a distinct node — NOT an integer. Keeping it separate
+// from IntegerLiteral(-1) is what lets the IR generator give it real None
+// semantics (an integer is never None) instead of colliding with the value -1.
+public class NoneLiteral : Expression
+{
+}
+
 public class StringLiteral : Expression
 {
     public string Value { get; }
@@ -111,6 +118,9 @@ public class FStringPart
     public bool IsExpr { get; set; }
     public string Text { get; set; } = "";
     public Expression? Expr { get; set; }
+
+    // Format spec after a ':' in an interpolation, e.g. "02x" in {reg:02x}. Empty when none.
+    public string FormatSpec { get; set; } = "";
 }
 
 public class FStringExpr : Expression
@@ -523,11 +533,17 @@ public class TryStmt : Statement
     public List<(string ExnType, List<Statement> Handler)> Handlers { get; }
     public List<Statement>? Finally { get; }
 
-    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers, List<Statement>? finally_ = null)
+    // `else` block: runs only if the try body completed without an exception. Its own exceptions
+    // are NOT caught by this try's handlers (they propagate), matching Python.
+    public List<Statement>? ElseBody { get; }
+
+    public TryStmt(List<Statement> body, List<(string, List<Statement>)> handlers,
+                   List<Statement>? finally_ = null, List<Statement>? elseBody = null)
     {
         Body = body;
         Handlers = handlers;
         Finally = finally_;
+        ElseBody = elseBody;
     }
 }
 
@@ -575,6 +591,12 @@ public class FunctionDef : Statement
 
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
+
+    // @outline: RFC 0001 Model A. A ZCA method marked @outline is compiled ONCE
+    // as a real subroutine that receives the instance's runtime fields as leading
+    // parameters (self.<field> -> self_<field> param), instead of being force-inlined
+    // per call site. N instances => N calls to one shared body (no bloat).
+    public bool IsOutline { get; set; } = false;
 
     // @warning("..."): an informational diagnostic printed (once) when a call
     // to this function is expanded. Does not abort compilation. Empty = none.

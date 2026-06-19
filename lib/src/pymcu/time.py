@@ -275,9 +275,15 @@ def _delay_us_pic18(us: uint8):
         asm("    NOP")
         i = i + 1
 
-@inline
 def _delay_us_avr(us: uint8):
-    """Software microsecond delay loop for AVR architecture."""
+    """Software microsecond delay loop for AVR architecture.
+
+    NON-inline on purpose: the 12-NOP loop body is emitted once as a shared
+    subroutine instead of being duplicated into flash at every delay_us() call
+    site (mirrors _delay_ms_avr). A delay-heavy driver like the HD44780 LCD calls
+    delay_us dozens of times; inlining the body cost ~24 bytes of NOPs per call.
+    The fixed CALL/RET overhead (~9 cycles, <0.6 us) is within the documented
+    <0.1%-at-typical-counts accuracy budget."""
     # AVR at 16MHz: 1us = 16 cycles. Loop overhead ~4, so 12 NOPs needed.
     i: uint8 = 0
     while i < us:

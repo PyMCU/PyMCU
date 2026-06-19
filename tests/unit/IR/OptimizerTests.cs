@@ -63,6 +63,56 @@ public class OptimizerTests
         Assert.DoesNotContain(optimized.Functions[0].Body, i => i is Binary);
     }
 
+    [Fact]
+    public void RedundantArrayLoad_SameIndex_IsEliminated()
+    {
+        // Two reads of arr[i] with no intervening write collapse to a single load (CSE).
+        var prog = GenerateAndOptimize(
+            "arr: uint8[8] = [0,0,0,0,0,0,0,0]\n" +
+            "out: uint8 = 0\n" +
+            "def access(i: uint8):\n" +
+            "    global out\n" +
+            "    out = arr[i] + arr[i]\n" +
+            "def main():\n" +
+            "    access(3)\n");
+        var access = prog.Functions.First(f => f.Name.EndsWith("access"));
+        // The two arr[i] reads must collapse to one ArrayLoad.
+        Assert.Equal(1, access.Body.OfType<ArrayLoad>().Count(a => a.ArrayName == "arr"));
+    }
+
+    [Fact]
+    public void ArrayLoad_AcrossStore_IsNotEliminated()
+    {
+        // A store to the same array between two reads of arr[i] must invalidate the cache:
+        // the second read sees the new value, so both loads must survive.
+        var prog = GenerateAndOptimize(
+            "arr: uint8[8] = [0,0,0,0,0,0,0,0]\n" +
+            "total: uint16 = 0\n" +
+            "def upd(i: uint8, v: uint8):\n" +
+            "    global total\n" +
+            "    total = total - arr[i]\n" +
+            "    arr[i] = v\n" +
+            "    total = total + arr[i]\n" +
+            "def main():\n" +
+            "    upd(2, 50)\n");
+        var upd = prog.Functions.First(f => f.Name.EndsWith("upd"));
+        Assert.Equal(2, upd.Body.OfType<ArrayLoad>().Count(a => a.ArrayName == "arr"));
+    }
+
+    [Fact]
+    public void DivByConstFoldedZeroVariable_RaisesValueError()
+    {
+        // End-to-end: `z: uint8 = 0; out = 10 // z`. z is a Variable at IR-gen time (the
+        // front-end guard can't see it); constant propagation folds the divisor to 0, which
+        // the optimizer must reject rather than leave as a runtime divide-by-zero.
+        Assert.Throws<ValueError>(() => GenerateAndOptimize(
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    z: uint8 = 0\n" +
+            "    out = 10 // z\n"));
+    }
+
     // ─── Copy Propagation (via Optimize) ──────────────────────────────────
 
     [Fact]
@@ -219,14 +269,15 @@ public class OptimizerPassTests
     // ─── FoldConstants — Binary edge cases ───────────────────────────────────
 
     [Fact]
-    public void FoldConstants_DivByZero_IsNotFolded()
+    public void FoldConstants_DivByZero_RaisesValueError()
     {
-        var body = Optimize(
+        // A divisor that constant propagation proves to be zero is a guaranteed fault.
+        // Previously the optimizer left it as a runtime Binary with a const-0 divisor
+        // (silent miscompile); it now raises a clean ValueError, catching zeros that only
+        // become visible after folding (e.g. `z = 0; x // z`), not just literal `x / 0`.
+        Assert.Throws<ValueError>(() => Optimize(
             new Binary(IrBinaryOp.Div, new Constant(10), new Constant(0), new Temporary("t1")),
-            new Return(new Temporary("t1")));
-
-        body.OfType<Binary>().Should().ContainSingle(b =>
-            b.Op == IrBinaryOp.Div && b.Src2 == new Constant(0));
+            new Return(new Temporary("t1"))));
     }
 
     [Fact]

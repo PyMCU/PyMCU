@@ -70,9 +70,17 @@ public class StackAllocator
         if (_callGraph.ContainsKey("main"))
             CalculateOffsets("main", globalOffset);
 
+        // An interrupt handler can preempt main (or any function) at any instant, so its
+        // locals are live CONCURRENTLY with the interrupted function's. Allocating it at the
+        // same base as main (the old behavior) aliased the ISR's stack slots with main's
+        // locals, so an ISR with its own locals corrupted the interrupted code's SRAM
+        // variables. Give each ISR call-tree its own region ABOVE main's high-water mark
+        // (and above each other ISR's, in case nested interrupts are enabled).
+        var isrBase = _maxStackUsage;
         foreach (var func in program.Functions.Where(func => func.IsInterrupt && _callGraph.ContainsKey(func.Name)))
         {
-            CalculateOffsets(func.Name, globalOffset);
+            CalculateOffsets(func.Name, isrBase);
+            isrBase = _maxStackUsage;
         }
 
         // Allocate locals for functions whose address was taken via FunctionRef (Callable).
@@ -80,9 +88,20 @@ public class StackAllocator
         // main call-graph DFS and would otherwise have no SRAM region for their locals.
         // Each one gets its own non-overlapping region so concurrent executions don't alias.
         var funcRefTargets = new HashSet<string>();
+        void CollectFuncRef(Val? v) { if (v is FunctionRef fr) funcRefTargets.Add(fr.FunctionName); }
         foreach (var func in program.Functions)
             foreach (var instr in func.Body)
-                if (instr is Copy { Src: FunctionRef fr }) funcRefTargets.Add(fr.FunctionName);
+                switch (instr)
+                {
+                    // A function's address can be taken not only by `f = fn` but also by
+                    // passing it as an argument (e.g. add_task(task)) or storing it into a
+                    // Callable[] array — those tasks are entered via IJMP and still need
+                    // their locals allocated, or STS/LDS to them resolve to no .equ.
+                    case Copy c: CollectFuncRef(c.Src); break;
+                    case Call call: foreach (var a in call.Args) CollectFuncRef(a); break;
+                    case IndirectCall ic: foreach (var a in ic.Args) CollectFuncRef(a); break;
+                    case ArrayStore ast: CollectFuncRef(ast.Src); break;
+                }
 
         var taskBase = _maxStackUsage;
         foreach (var func in program.Functions)
@@ -217,17 +236,12 @@ public class StackAllocator
                         RegisterVar(ga.Size);
                         RegisterVar(ga.Dst);
                         break;
-                    case TryBegin tb:
-                        // jmpbuf requires 22 contiguous bytes (avr-libc jmp_buf on ATmega).
-                        if (tb.JmpBufVar is Variable jbv && !_globalNames.Contains(jbv.Name))
-                        {
-                            node.Locals.Add(jbv.Name);
-                            VariableSizes[jbv.Name] = 22;
-                        }
-                        RegisterVar(tb.ExnCodeVar);
-                        break;
-                    case RaiseExn re:
-                        RegisterVar(re.Code);
+                    case FlashLoadPtr flp:
+                        // Ptr is a 16-bit flash byte-address; register it (typically the
+                        // function's flash-string parameter) so it is sized as 2 bytes.
+                        RegisterVar(flp.Ptr);
+                        RegisterVar(flp.Index);
+                        RegisterVar(flp.Dst);
                         break;
                     case BytearrayLoad bl:
                         // bytearray pointer params are UINT16 (2-byte address); must be sized explicitly

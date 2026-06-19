@@ -24,226 +24,85 @@ public partial class IRGenerator
 {
     private void VisitAssign(AssignStmt stmt)
     {
-        if (stmt.Target is IndexExpr indexExpr)
+        // A name declared with a `const[...]` annotation is immutable; reassigning it is a
+        // user error (previously this was silently accepted, overwriting the constant).
+        if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
+            throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)");
+
+        // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
+        // the result is built as a Model-A (flattened) instance, so a later method call on c
+        // passes the fields where a self pointer is expected. Remember the target/class so that,
+        // after the construction, c is materialized into a real slot (see end of VisitAssign).
+        string slotMatName = "";    // unqualified target name
+        string slotMatCls = "";     // slot class of the result
+
+        // RFC 0001 Model B (SRAM slot): `s = MultiFieldZCA(a, b)`. Box the instance into a
+        // fixed SRAM slot and store each field at its offset. Handled as a self-contained
+        // path (early return) so it never touches the virtual-constructor machinery.
+        if (stmt.Target is VariableExpr slotTgt && stmt.Value is CallExpr slotCall
+            && slotCall.Callee is VariableExpr slotCallee
+            && slotClasses.Contains(ResolveCallee(slotCallee.Name)))
         {
-            if (indexExpr.Target is VariableExpr ve)
+            string slotCls = ResolveCallee(slotCallee.Name);
+            if (classInitCallsSuper.Contains(slotCls))
             {
-                string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
-                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
-                    qualified = ve.Name;
-
-                // When inside an inline expansion, the target may be a parameter aliased to a
-                // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
-                // array-store path fires instead of falling through to the bit-subscript path.
-                if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
-                    && !string.IsNullOrEmpty(currentInlinePrefix))
-                {
-                    string inlineQ = currentInlinePrefix + ve.Name;
-                    if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
-                        qualified = resolvedQ;
-                    else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
-                        qualified = inlineQ;
-                }
-
-                // Bytearray parameter: indirect store through pointer.
-                if (bytearrayParams.Contains(qualified))
-                {
-                    Val idxVal = VisitExpression(indexExpr.Index);
-                    Val srcVal = VisitExpression(stmt.Value);
-                    Emit(new BytearrayStore(qualified, idxVal, srcVal));
-                    return;
-                }
-
-                // list[T] index assignment: x[i] = val → store at GC heap offset 2 + i*elemSize
-                {
-                    string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
-                                 : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
-                                 : "";
-                    if (!string.IsNullOrEmpty(listQ))
-                    {
-                        DataType elemDt = listVarElemTypes[listQ];
-                        Val listPtr = new Variable(listQ, DataType.GC_REF);
-                        Val idxVal = VisitExpression(indexExpr.Index);
-                        Val srcVal = VisitExpression(stmt.Value);
-                        Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
-                        Emit(new StoreIndirect(srcVal, elemAddr));
-                        return;
-                    }
-                }
-
-                if (arraySizes.ContainsKey(qualified))
-                {
-                    if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
-                    {
-                        Val idxVal = VisitExpression(indexExpr.Index);
-                        Val srcVal = VisitExpression(stmt.Value);
-                        Emit(new ArrayStore(qualified, idxVal, srcVal, arrayElemTypes[qualified],
-                            arraySizes[qualified]));
-                    }
-                    else
-                    {
-                        // Accept either a literal subscript or a variable that folds to a
-                        // compile-time constant (e.g. the index from an unrolled
-                        // `for i, _ in enumerate(buf)` loop, where `i` is constant per
-                        // iteration). This lets inline functions write into a caller's
-                        // fixed array via constant-index stores without SRAM indexing.
-                        int elemIdx;
-                        if (indexExpr.Index is IntegerLiteral c)
-                            elemIdx = c.Value;
-                        else if (VisitExpression(indexExpr.Index) is Constant cc)
-                            elemIdx = cc.Value;
-                        else
-                            throw new Exception("Array subscript must be a compile-time constant");
-                        string elemName = qualified + "__" + elemIdx;
-                        Val srcVal = VisitExpression(stmt.Value);
-                        Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
-                    }
-
-                    return;
-                }
+                // The ctor delegates to super().__init__(): the positional slot fill can't see a
+                // base-set field (it has no param of this class). Run the real __init__ via the
+                // normal (flattened) constructor machinery -- where super expansion works -- then
+                // materialize the resulting fields into the slot (see the slotMat hook below).
+                slotMatName = slotTgt.Name;
+                slotMatCls = slotCls;
             }
-
-            // Instance-member array store: self._buf[i] = val (i runtime), where
-            // self._buf was declared as a per-instance SRAM framebuffer.
-            if (indexExpr.Target is MemberAccessExpr memStore
-                && ResolveMemberArrayName(memStore) is string flatStore)
+            else
             {
-                Val idxVal = VisitExpression(indexExpr.Index);
-                Val srcVal = VisitExpression(stmt.Value);
-                Emit(new ArrayStore(flatStore, idxVal, srcVal, arrayElemTypes[flatStore], arraySizes[flatStore]));
+                EmitSlotConstruction(slotTgt, slotCls, slotCall.Args);
                 return;
             }
+        }
 
+        // RFC 0001 Model B (sret): `s = make(args)` where make is a non-@inline factory
+        // returning a MULTI-field (slot) ZCA. The caller allocates the slot, passes its address
+        // as the hidden __self pointer, and tracks s as a slot instance. (Single-field factories
+        // return a register handle instead -- handled in the factory block below.)
+        if (stmt.Target is VariableExpr sfTgt && stmt.Value is CallExpr sfCall
+            && sfCall.Callee is VariableExpr sfCallee)
+        {
+            string sfFn = ResolveCallee(sfCallee.Name);
+            if (functionReturnTypes.TryGetValue(sfFn, out var sfRt) && sfRt != null
+                && slotClasses.Contains(sfRt) && !inlineFunctions.ContainsKey(sfFn))
             {
-                Val tgtVal = VisitExpression(indexExpr.Target);
-                string cls = GetValClass(tgtVal);
-                if (!string.IsNullOrEmpty(cls))
-                {
-                    string funcKey = cls + "_" + "__setitem__";
-                    if (inlineFunctions.ContainsKey(funcKey))
-                    {
-                        string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
-                        Val idxVal = VisitExpression(indexExpr.Index);
-                        // A tuple/list literal RHS (pixels[i] = (r, g, b)) is bound to the
-                        // color parameter as a sequence literal so __setitem__ can read it
-                        // by constant subscript; otherwise evaluate a scalar value.
-                        ListExpr? seqRhs = stmt.Value as ListExpr
-                            ?? (stmt.Value is TupleExpr tup ? new ListExpr(tup.Elements) : null);
-                        if (seqRhs != null)
-                        {
-                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, new NoneVal() },
-                                new Dictionary<int, ListExpr> { { 1, seqRhs } });
-                        }
-                        else
-                        {
-                            Val srcVal = VisitExpression(stmt.Value);
-                            EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
-                        }
-                        return;
-                    }
-                }
+                EmitSlotFactoryCall(sfTgt, sfFn, sfRt, sfCall.Args);
+                return;
             }
+        }
 
-            var target = VisitExpression(indexExpr.Target);
-            var indexVal = VisitExpression(indexExpr.Index);
-
-            target = ResolveTargetAddr(target);
-
-            var bit = 0;
-            if (indexVal is Constant c2)
+        // RFC 0001 Model B (Class[N]): `arr[i] = C(args)` constructs into element i of an
+        // instance array -- store each field at i*stride + offset. Constant index uses a flat
+        // ArrayStore; a runtime index computes the element address and stores through it.
+        if (stmt.Target is IndexExpr ciTgt && ciTgt.Target is VariableExpr ciArr
+            && stmt.Value is CallExpr ciCall && ciCall.Callee is VariableExpr ciCallee)
+        {
+            string ciQ = string.IsNullOrEmpty(currentFunction) ? ciArr.Name : currentFunction + "." + ciArr.Name;
+            if (!instanceArrayClass.ContainsKey(ciQ) && instanceArrayClass.ContainsKey(ciArr.Name)) ciQ = ciArr.Name;
+            if (instanceArrayClass.TryGetValue(ciQ, out var ciCls)
+                && ResolveCallee(ciCallee.Name) == ciCls)
             {
-                bit = c2.Value;
+                EmitInstanceArrayStore(ciQ, ciCls, ciTgt.Index, ciCall.Args);
+                return;
             }
-            else
-            {
-                bool TryConst(string name)
-                {
-                    if (!constantVariables.TryGetValue(name, out int cv)) return false;
-                    bit = cv;
-                    return true;
-                }
+        }
 
-                var resolved = indexVal switch
-                {
-                    Temporary t => TryConst(t.Name),
-                    Variable v => TryConst(v.Name),
-                    _ => false
-                };
-                if (!resolved) throw new Exception("Bit index must be constant");
-            }
-
-            var val = VisitExpression(stmt.Value);
-
-            if (val is Constant cv2)
-            {
-                if (cv2.Value != 0) Emit(new BitSet(target, bit));
-                else Emit(new BitClear(target, bit));
-            }
-            else
-            {
-                Emit(new BitWrite(target, bit, val));
-            }
-
+        // `b = a[lo:hi]` with no array annotation: infer `b` as a fixed-size array of the slice's
+        // length and copy its elements (Python needs no annotation). Without this the slice built
+        // element temps that were never bound to `b`, so a later `b[i]` silently read 0.
+        if (stmt.Target is VariableExpr sliceTgt
+            && stmt.Value is IndexExpr { Index: SliceExpr sliceIdx, Target: VariableExpr sliceSrc }
+            && TryEmitInferredSliceArray(sliceTgt, sliceSrc, sliceIdx))
             return;
 
-            Val ResolveTargetAddr(Val val)
-            {
-                string? name = val is Temporary t ? t.Name : (val is Variable vv ? vv.Name : null);
-                if (name != null && constantAddressVariables.TryGetValue(name, out int addr))
-                {
-                    DataType dt = DataType.UINT8;
-                    if (!string.IsNullOrEmpty(currentInlinePrefix) && variableTypes.TryGetValue(currentInlinePrefix + name, out var typeInline))
-                        dt = typeInline;
-                    else if (variableTypes.TryGetValue(name, out var typeGlob))
-                        dt = typeGlob;
-                    
-                    return new MemoryAddress(addr, dt);
-                }
-                return val;
-            }
-        }
+        if (stmt.Target is IndexExpr indexExpr) { EmitIndexAssign(stmt, indexExpr); return; }
 
-        if (stmt.Target is VariableExpr varExprCtor)
-        {
-            if (stmt.Value is CallExpr call)
-            {
-                string resolvedClass = "";
-                if (call.Callee is VariableExpr calleeVar)
-                {
-                    resolvedClass = ResolveCallee(calleeVar.Name);
-                }
-                else if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
-                {
-                    if (modules.ContainsKey(objVar.Name))
-                    {
-                        string mangled = objVar.Name.Replace('.', '_');
-                        resolvedClass = mangled + "_" + calleeMem.Member;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
-                                                             overloadedFunctions.Contains(resolvedClass + "___init__")))
-                {
-                    string qualifiedName = !string.IsNullOrEmpty(currentInlinePrefix)
-                        ? currentInlinePrefix + varExprCtor.Name
-                        : (!string.IsNullOrEmpty(currentFunction)
-                            ? currentFunction + "." + varExprCtor.Name
-                            : varExprCtor.Name);
-                    // When the target variable is a module-level mutable global (e.g. declared at
-                    // top level in an entrypoint-less script), use its global name so that later
-                    // method lookups on the global variable resolve the class type correctly.
-                    if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
-                    {
-                        string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
-                        if (mutableGlobals.ContainsKey(mutableGlobalKey))
-                            qualifiedName = mutableGlobalKey;
-                    }
-                    instanceClasses[qualifiedName] = resolvedClass;
-                    pendingConstructorTarget = qualifiedName;
-                    virtualInstances.Add(qualifiedName);
-                }
-            }
-        }
+        if (stmt.Target is VariableExpr varExprCtor) { EmitConstructorTargetSetup(stmt, varExprCtor); }
 
         if (!string.IsNullOrEmpty(pendingConstructorTarget))
         {
@@ -308,6 +167,10 @@ public partial class IRGenerator
                                     instanceClasses[qualifiedName] = cls;
                                     pendingConstructorTarget = qualifiedName;
                                     virtualInstances.Add(qualifiedName);
+                                    // A65: a slot class can't live as flattened Model-A fields and
+                                    // still answer method calls (which pass a self pointer).
+                                    // Materialize it into a slot after the construction.
+                                    if (slotClasses.Contains(cls)) { slotMatName = varExprBin.Name; slotMatCls = cls; }
                                 }
                             }
                         }
@@ -342,88 +205,9 @@ public partial class IRGenerator
             }
         }
 
-        if (stmt.Target is MemberAccessExpr memTarget && propertySetters.Count > 0)
-        {
-            bool isCtor = false;
-            if (stmt.Value is CallExpr call)
-            {
-                if (call.Callee is VariableExpr cv)
-                {
-                    string rc = ResolveCallee(cv.Name);
-                    if (!string.IsNullOrEmpty(rc) && (inlineFunctions.ContainsKey(rc + "___init__") ||
-                                                      overloadedFunctions.Contains(rc + "___init__")))
-                        isCtor = true;
-                }
-            }
-
-            if (!isCtor)
-            {
-                var objVal = VisitExpression(memTarget.Object);
-                var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-                while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
-                    @base = alias;
-                if (!string.IsNullOrEmpty(@base) && instanceClasses.TryGetValue(@base, out var cls))
-                {
-                    var setterKey = cls + "." + memTarget.Member;
-                    string? inlineKey;
-                    if (propertySetters.TryGetValue(setterKey, out inlineKey))
-                    {
-                        var argVal = VisitExpression(stmt.Value);
-                        if (inlineKey == null) return;
-                        var setter = inlineFunctions[inlineKey];
-                        var exitLabel = MakeLabel();
-                        var newDepth = inlineDepth + 1;
-                        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
-
-                        variableAliases[newPrefix + "self"] = @base;
-                        instanceClasses[newPrefix + "self"] = cls;
-
-                        if (setter is { Params.Count: >= 2 })
-                        {
-                            var paramName = newPrefix + setter.Params[1].Name;
-                            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
-                            variableTypes[paramName] = paramType;
-                            constantVariables.Remove(paramName);
-                            variableAliases.Remove(paramName);
-                            switch (argVal)
-                            {
-                                case Constant c:
-                                    constantVariables[paramName] = c.Value;
-                                    break;
-                                case Variable vv:
-                                    variableAliases[paramName] = vv.Name;
-                                    break;
-                                case Temporary tt:
-                                    // Materialize the runtime value into the param's own SRAM slot.
-                                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
-                                    // across the inline boundary, so the setter body would read an
-                                    // uninitialized variable (always 0) -- the root cause of
-                                    // `led.value = buf[0] & 1` collapsing to a single branch.
-                                    Emit(new Copy(tt, new Variable(paramName, paramType)));
-                                    break;
-                            }
-                        }
-
-                        inlineDepth++;
-                        var savedPrefix = currentInlinePrefix;
-                        var savedModulePrefix = currentModulePrefix;
-                        currentInlinePrefix = newPrefix;
-                        currentModulePrefix = cls + "_";
-
-                        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
-                        if (setter?.Body != null) VisitBlock(setter.Body);
-                        Emit(new Label(exitLabel));
-                        inlineStack.RemoveAt(inlineStack.Count - 1);
-
-                        inlineDepth--;
-                        currentInlinePrefix = savedPrefix;
-                        currentModulePrefix = savedModulePrefix;
-
-                        return;
-                    }
-                }
-            }
-        }
+        if (stmt.Target is MemberAccessExpr memTarget
+            && (propertySetters.Count > 0 || propertyGetters.Count > 0)
+            && EmitPropertySetterAssign(stmt, memTarget)) return;
 
         if (stmt.Value is LambdaExpr lamRhs)
         {
@@ -459,310 +243,1220 @@ public partial class IRGenerator
 
         Val value = VisitExpression(stmt.Value);
 
-        if (stmt.Target is VariableExpr varExpr)
-        {
-            Val target;
-            if (!string.IsNullOrEmpty(currentFunction))
-            {
-                if (currentFunctionGlobals.Contains(varExpr.Name))
-                {
-                    target = ResolveBinding(varExpr.Name);
-                }
-                else
-                {
-                    if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
-                    else
-                    {
-                        // Check if the variable is a module-level mutable global.
-                        // e.g. _millis_count defined at module scope should be accessed
-                        // as a global even when assigned inside a non-inline function.
-                        string moduleGlobalName = currentModulePrefix + varExpr.Name;
-                        if (mutableGlobals.ContainsKey(moduleGlobalName))
-                        {
-                            target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
-                        }
-                        else
-                        {
-                            string qualifiedName = currentFunction + "." + varExpr.Name;
-                            DataType type = DataType.UINT8;
-                            if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
-                            else
-                            {
-                                if (value is Temporary tmp) type = tmp.Type;
-                                else if (value is Variable vv) type = vv.Type;
-                                else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
-                                variableTypes[qualifiedName] = type;
-                                if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
-                                    Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
-                            }
-
-                            target = new Variable(qualifiedName, type);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                target = ResolveBinding(varExpr.Name);
-            }
-
-            if (!(value is NoneVal)) Emit(new Copy(value, target));
-
-            if (value is Variable vv2 && target is Variable tv2) variableAliases[tv2.Name] = vv2.Name;
-            else if (value is Temporary tSrc && target is Variable tDst) variableAliases[tDst.Name] = tSrc.Name;
-
-            if (string.IsNullOrEmpty(currentFunction))
-            {
-                if (value is Constant c && target is Variable tv3)
-                {
-                    if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
-                }
-            }
-            else
-            {
-                if (target is Variable tv4) constantVariables.Remove(tv4.Name);
-            }
-        }
-        else if (stmt.Target is MemberAccessExpr memExpr2)
-        {
-            if (memExpr2.Member == "value")
-            {
-                var target = VisitExpression(memExpr2.Object);
-                var varType = DataType.UINT8;
-                var originalName = memExpr2.Object is VariableExpr veObj ? veObj.Name : null;
-
-                // Resolve local ptr[T] compile-time constant address variable
-                if (target is Variable ptrVar && constantAddressVariables.TryGetValue(ptrVar.Name, out int ptrAddr))
-                {
-                    DataType elemType = DataType.UINT8;
-                    if (variableTypes.TryGetValue(ptrVar.Name, out var et)) elemType = et;
-                    target = new MemoryAddress(ptrAddr, elemType);
-                    varType = elemType;
-                }
-                else if (originalName != null && variableTypes.TryGetValue(originalName, out var typeGlob))
-                    varType = typeGlob;
-                else if (originalName != null && !string.IsNullOrEmpty(currentInlinePrefix) &&
-                         variableTypes.TryGetValue(currentInlinePrefix + originalName, out var typeInline))
-                    varType = typeInline;
-                else if (target is Variable v2 && variableTypes.TryGetValue(v2.Name, out var vt2))
-                    varType = vt2;
-                else if (target is MemoryAddress m2)
-                    varType = m2.Type;
-
-                var byteCount = varType.SizeOf();
-                switch (byteCount)
-                {
-                    case 1 when target is MemoryAddress ma:
-                        Emit(new Copy(value, new MemoryAddress(ma.Address, varType)));
-                        break;
-                    case 1 when target is Variable:
-                        Emit(new Copy(value, target));
-                        break;
-                    case 1:
-                        throw new Exception("Cannot assign to .value of this expression type");
-                    case 2 when target is MemoryAddress addr:
-                    {
-                        // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
-                        // aligned access; splitting a constant into byte stores would
-                        // both break peripheral semantics and miss the atomic register
-                        // aliases. Only split on 8-bit AVR (PointerWidth == 2).
-                        if (value is Constant constVal && DataTypeExtensions.PointerWidth < 4)
-                        {
-                            int fullValue = constVal.Value;
-                            int lowByte = fullValue & 0xFF;
-                            int highByte = (fullValue >> 8) & 0xFF;
-                            Emit(new Copy(new Constant(lowByte), new MemoryAddress(addr.Address, DataType.UINT8)));
-                            Emit(new Copy(new Constant(highByte), new MemoryAddress(addr.Address + 1, DataType.UINT8)));
-                        }
-                        else
-                        {
-                            Emit(new Copy(value, new MemoryAddress(addr.Address, DataType.UINT16)));
-                        }
-
-                        break;
-                    }
-                    case 2:
-                        throw new Exception("16-bit .value assignment requires constant address");
-                    case 4 when target is MemoryAddress addr32:
-                    {
-                        // See the 16-bit case: keep 32-bit MMIO stores atomic on
-                        // 32-bit targets; only AVR byte-splits constant words.
-                        if (value is Constant constVal32 && DataTypeExtensions.PointerWidth < 4)
-                        {
-                            Emit(new Copy(new Constant(constVal32.Value & 0xFF),         new MemoryAddress(addr32.Address,     DataType.UINT8)));
-                            Emit(new Copy(new Constant((constVal32.Value >> 8)  & 0xFF), new MemoryAddress(addr32.Address + 1, DataType.UINT8)));
-                            Emit(new Copy(new Constant((constVal32.Value >> 16) & 0xFF), new MemoryAddress(addr32.Address + 2, DataType.UINT8)));
-                            Emit(new Copy(new Constant((constVal32.Value >> 24) & 0xFF), new MemoryAddress(addr32.Address + 3, DataType.UINT8)));
-                        }
-                        else
-                        {
-                            Emit(new Copy(value, new MemoryAddress(addr32.Address, DataType.UINT32)));
-                        }
-                        break;
-                    }
-                    case 4:
-                        throw new Exception("32-bit .value assignment requires constant address");
-                    default:
-                        throw new Exception("Unsupported type size for .value assignment");
-                }
-            }
-            else
-            {
-                var objVal = VisitExpression(memExpr2.Object);
-                var baseName = objVal is Variable v3 ? v3.Name : (objVal is Temporary t3 ? t3.Name : "");
-                if (string.IsNullOrEmpty(baseName))
-                    throw new Exception("Unknown member access in assignment: " + memExpr2.Member);
-                while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
-                var flattenedName = baseName + "_" + memExpr2.Member;
-
-                if (value is Constant c)
-                {
-                    if (baseName != null && !virtualInstances.Contains(baseName))
-                    {
-                        // Only track the constant if this field has not been written
-                        // before. A field written with two different constant values
-                        // at different points is a mutable runtime field (e.g.
-                        // sensor.failed) — tracking it as a compile-time constant
-                        // would cause the compiler to DCE branches incorrectly.
-                        if (!killedConstants.Contains(flattenedName))
-                        {
-                            if (constantVariables.TryGetValue(flattenedName, out int existing) && existing != c.Value)
-                            {
-                                // Second write with a different value → mutable field.
-                                constantVariables.Remove(flattenedName);
-                                killedConstants.Add(flattenedName);
-                            }
-                            else if (!constantVariables.ContainsKey(flattenedName))
-                            {
-                                constantVariables[flattenedName] = c.Value;
-                            }
-                            // If existing == c.Value, keep the existing entry as-is.
-                        }
-                    }
-                    else if (stringIdToStr.TryGetValue(c.Value, out var value1))
-                    {
-                        constantVariables[flattenedName] = c.Value;
-                        strConstantVariables[flattenedName] = value1;
-                        return;
-                    }
-                    else
-                    {
-                        // Virtual (ZCA) instance, non-string constant (e.g. bit
-                        // index assigned in _PinRegs.__init__). Store it so that
-                        // subscript expressions like self._ddr[self._bit] can
-                        // resolve the bit index at compile time.
-                        //
-                        // Inline-prefixed temporaries (baseName starts with
-                        // "inline") are short-lived per-call-site objects.  The
-                        // same inline prefix can be reused across multiple call
-                        // sites (e.g. _PinRegs for pin 13 then pin 2 both land
-                        // in "inline2.hal_gpio_Pin_init._r").  Treating the
-                        // second write as a "different-value mutation" would
-                        // incorrectly kill the constant and break codegen.
-                        // For these temporaries always overwrite — they are
-                        // never truly mutable across call sites.
-                        //
-                        // For top-level virtual instances (sensor, data_pin._pin
-                        // etc.) apply the killedConstants guard so that genuinely
-                        // mutable fields (sensor.failed) are not folded away.
-                        bool isInlineTemp = baseName != null && baseName.StartsWith("inline");
-                        if (isInlineTemp)
-                        {
-                            constantVariables[flattenedName] = c.Value;
-                        }
-                        else if (!killedConstants.Contains(flattenedName))
-                        {
-                            if (constantVariables.TryGetValue(flattenedName, out int existingZca) && existingZca != c.Value)
-                            {
-                                constantVariables.Remove(flattenedName);
-                                killedConstants.Add(flattenedName);
-                            }
-                            else if (!constantVariables.ContainsKey(flattenedName))
-                            {
-                                constantVariables[flattenedName] = c.Value;
-                            }
-                        }
-                    }
-                }
-
-                if (value is MemoryAddress ma2)
-                {
-                    constantAddressVariables[flattenedName] = ma2.Address;
-                    return;
-                }
-
-                var folded = value switch
-                {
-                    Temporary t4 => TryTempName(t4.Name),
-                    Variable v4 => TryTempName(v4.Name),
-                    _ => false
-                };
-                if (folded) return;
-
-                // Non-constant runtime assignment: if this field was previously
-                // tracked as a compile-time constant (e.g. self.humidity = 0 in
-                // __init__), kill the stale constant so later reads use the
-                // runtime value.  Guard with "value is not Constant" to avoid
-                // incorrectly killing constants like _bit that are set once as a
-                // constant and never reassigned with a runtime value.
-                if (value is not Constant && constantVariables.ContainsKey(flattenedName))
-                {
-                    constantVariables.Remove(flattenedName);
-                    killedConstants.Add(flattenedName);
-                }
-
-                if (value is Variable vVal)
-                {
-                    var clsKey = vVal.Name;
-                    var isZcaInstance = false;
-                    for (var depth = 0; depth < 20; ++depth)
-                    {
-                        if (clsKey != null && instanceClasses.ContainsKey(clsKey))
-                        {
-                            isZcaInstance = true;
-                            instanceClasses[flattenedName] = instanceClasses[clsKey];
-                            virtualInstances.Add(flattenedName);
-                            break;
-                        }
-
-                        if (clsKey != null && variableAliases.TryGetValue(clsKey, out var ak)) clsKey = ak;
-                        else break;
-                    }
-
-                    if (isZcaInstance)
-                    {
-                        variableAliases[flattenedName] = vVal.Name;
-                        return;
-                    }
-                }
-
-                Emit(new Copy(value, new Variable(flattenedName, DataType.UINT8)));
-                return;
-
-                bool TryTempName(string tname)
-                {
-                    if (constantAddressVariables.TryGetValue(tname, out int cv))
-                    {
-                        constantAddressVariables[flattenedName] = cv;
-                        return true;
-                    }
-
-                    if (!constantVariables.TryGetValue(tname, out int cv2)) return false;
-                    constantVariables[flattenedName] = cv2;
-                    return true;
-                }
-            }
-        }
+        if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
+        else if (stmt.Target is MemberAccessExpr memExpr2) { EmitMemberAssign(stmt, memExpr2, value); }
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
             Val ptr = VisitExpression(unExpr.Operand);
             Emit(new StoreIndirect(value, ptr));
         }
-        else throw new Exception("Invalid assignment target");
+        else throw UserError("Invalid assignment target");
+
+        if (!string.IsNullOrEmpty(slotMatName))
+            MaterializeSlotFromFlattened(slotMatName, slotMatCls);
+    }
+
+    // A65: turn a slot-class instance that was built as Model-A flattened fields (the result of an
+    // operator dunder, e.g. `c = a + b`) into a real SRAM slot: read each field at its current
+    // (flattened) location, allocate the slot, store the fields, and register c as a slot instance
+    // so method calls pass the slot pointer instead of the flattened fields. Reads happen first,
+    // while the flattened alias is still in place.
+    private void MaterializeSlotFromFlattened(string name, string cls)
+    {
+        if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        if (slotInstances.ContainsKey(qn)) return;   // already a slot
+
+        // Snapshot current field values (flattened/aliased) before we repoint the instance.
+        var fieldVals = new List<(int Off, DataType Ty, Val V)>();
+        int off = 0;
+        foreach (var (field, type, _) in layout)
+        {
+            DataType dt = DataTypeExtensions.StringToDataType(type);
+            Val v = VisitExpression(new MemberAccessExpr(new VariableExpr(name), field));
+            fieldVals.Add((off, dt, v));
+            off += dt.SizeOf();
+        }
+
+        int total = off;
+        string slot = qn + "__slot";
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        // Repoint the instance to the slot BEFORE storing, so the stores (and later reads) resolve
+        // through the slot rather than the now-stale flattened alias.
+        variableAliases.Remove(qn);
+        virtualInstances.Remove(qn);
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+
+        foreach (var (foff, fty, fv) in fieldVals)
+            EmitSlotFieldStore(slot, false, foff, fty, fv, total);
+    }
+
+    // `obj.prop = v` where prop has a registered @property setter: expand the setter.
+    // Returns true when a matching setter was applied; false to fall through to the
+    // normal member/assignment handling.
+    private bool EmitPropertySetterAssign(AssignStmt stmt, MemberAccessExpr memTarget)
+    {
+        bool isCtor = false;
+        if (stmt.Value is CallExpr call)
+        {
+            if (call.Callee is VariableExpr cv)
+            {
+                string rc = ResolveCallee(cv.Name);
+                if (!string.IsNullOrEmpty(rc) && (inlineFunctions.ContainsKey(rc + "___init__") ||
+                                                  overloadedFunctions.Contains(rc + "___init__")))
+                    isCtor = true;
+            }
+        }
+
+        if (!isCtor)
+            return TryExpandPropertySetter(memTarget, () => VisitExpression(stmt.Value));
+        return false;
+    }
+
+    // Expand a `@property` setter for `obj.prop` when one is registered for the instance's
+    // class, binding `self` to the instance and the setter's value param to `getArg()`.
+    // `getArg` is invoked lazily, only once a matching setter is confirmed (so the rhs is not
+    // evaluated for a non-property member). Returns true when a setter was applied. Shared by
+    // plain assignment (`obj.prop = v`) and augmented assignment (`obj.prop OP= v`).
+    private bool TryExpandPropertySetter(MemberAccessExpr memTarget, Func<Val> getArg)
+    {
+        var objVal = VisitExpression(memTarget.Object);
+        var @base = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (!string.IsNullOrEmpty(@base) && variableAliases.TryGetValue(@base, out var alias))
+            @base = alias;
+        if (string.IsNullOrEmpty(@base) || !instanceClasses.TryGetValue(@base, out var cls))
+            return false;
+        if (!propertySetters.TryGetValue(cls + "." + memTarget.Member, out string? inlineKey))
+        {
+            // No setter. If the member IS a @property getter, the assignment targets a read-only
+            // property -- Python raises AttributeError. Reject clearly instead of silently writing
+            // a phantom field that then shadows the getter (r.value = 200 used to "stick" as 200).
+            if (propertyGetters.Contains(cls + "." + memTarget.Member))
+                throw UserError(
+                    $"cannot assign to read-only property '{memTarget.Member}': it has a @property " +
+                    $"getter but no @{memTarget.Member}.setter");
+            return false;
+        }
+
+        var argVal = getArg();
+        if (inlineKey == null) return true;
+        var setter = inlineFunctions[inlineKey];
+        var exitLabel = MakeLabel();
+        var newDepth = inlineDepth + 1;
+        var newPrefix = $"inline{newDepth}.{setter?.Name}__setter.";
+
+        variableAliases[newPrefix + "self"] = @base;
+        instanceClasses[newPrefix + "self"] = cls;
+
+        if (setter is { Params.Count: >= 2 })
+        {
+            var paramName = newPrefix + setter.Params[1].Name;
+            var paramType = DataTypeExtensions.StringToDataType(setter.Params[1].Type);
+            variableTypes[paramName] = paramType;
+            constantVariables.Remove(paramName);
+            variableAliases.Remove(paramName);
+            switch (argVal)
+            {
+                case Constant c:
+                    constantVariables[paramName] = c.Value;
+                    break;
+                case Variable vv:
+                    variableAliases[paramName] = vv.Name;
+                    break;
+                case Temporary tt:
+                    // Materialize the runtime value into the param's own SRAM slot.
+                    // A bare alias (val -> tmp_N) would resolve to a dead temporary
+                    // across the inline boundary, so the setter body would read an
+                    // uninitialized variable (always 0) -- the root cause of
+                    // `led.value = buf[0] & 1` collapsing to a single branch.
+                    Emit(new Copy(tt, new Variable(paramName, paramType)));
+                    break;
+            }
+        }
+
+        inlineDepth++;
+        var savedPrefix = currentInlinePrefix;
+        var savedModulePrefix = currentModulePrefix;
+        currentInlinePrefix = newPrefix;
+        currentModulePrefix = cls + "_";
+
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+        if (setter?.Body != null) VisitBlock(setter.Body);
+        Emit(new Label(exitLabel));
+        inlineStack.RemoveAt(inlineStack.Count - 1);
+
+        inlineDepth--;
+        currentInlinePrefix = savedPrefix;
+        currentModulePrefix = savedModulePrefix;
+
+        return true;
+    }
+
+    // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
+    // tracking and the Copy. Receives the pre-computed rhs `value`. Terminal for the
+    // chain (completes -> VisitAssign returns).
+    private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
+    {
+        Val target;
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            if (currentFunctionGlobals.Contains(varExpr.Name))
+            {
+                target = ResolveBinding(varExpr.Name);
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
+                else
+                {
+                    // Check if the variable is a module-level mutable global.
+                    // e.g. _millis_count defined at module scope should be accessed
+                    // as a global even when assigned inside a non-inline function.
+                    string moduleGlobalName = currentModulePrefix + varExpr.Name;
+                    if (mutableGlobals.ContainsKey(moduleGlobalName))
+                    {
+                        // Assigning to a module-level global inside a regular function
+                        // without a `global` declaration is the silent-divergence trap:
+                        // Python would create a local; PyMCU would write the global. Make
+                        // the user choose. `main` is exempt — it is the module's top-level
+                        // scope, where bare assignment to a global is the expected init.
+                        if (currentFunction != "main")
+                            throw new NameError(
+                                $"'{varExpr.Name}' is a module-level global; to assign it inside " +
+                                $"'{currentFunction}' add a 'global {varExpr.Name}' declaration, " +
+                                "or rename the variable if a local was intended",
+                                stmt.Line > 0 ? stmt.Line : lastLine, 1);
+
+                        target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
+                    }
+                    else
+                    {
+                        string qualifiedName = currentFunction + "." + varExpr.Name;
+                        DataType type = DataType.UINT8;
+                        if (variableTypes.TryGetValue(qualifiedName, out var t)) type = t;
+                        else
+                        {
+                            if (value is Temporary tmp) type = tmp.Type;
+                            else if (value is Variable vv) type = vv.Type;
+                            else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
+                            variableTypes[qualifiedName] = type;
+                            if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
+                                Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
+                        }
+
+                        target = new Variable(qualifiedName, type);
+                    }
+                }
+            }
+        }
+        else
+        {
+            target = ResolveBinding(varExpr.Name);
+        }
+
+        if (!(value is NoneVal)) Emit(new Copy(value, target));
+
+        if (value is Variable vv2 && target is Variable tv2) variableAliases[tv2.Name] = vv2.Name;
+        else if (value is Temporary tSrc && target is Variable tDst) variableAliases[tDst.Name] = tSrc.Name;
+
+        if (string.IsNullOrEmpty(currentFunction))
+        {
+            if (value is Constant c && target is Variable tv3)
+            {
+                if (!mutableGlobals.ContainsKey(tv3.Name)) constantVariables[tv3.Name] = c.Value;
+            }
+        }
+        else
+        {
+            if (target is Variable tv4) constantVariables.Remove(tv4.Name);
+        }
+    }
+
+    // `x = ClassName(args)` constructor target: set up the (virtual) constructor
+    // expansion state. Falls through to the inline-expansion path that follows.
+    private void EmitConstructorTargetSetup(AssignStmt stmt, VariableExpr varExprCtor)
+    {
+        if (stmt.Value is CallExpr call)
+        {
+            string resolvedClass = "";
+            if (call.Callee is VariableExpr calleeVar)
+            {
+                resolvedClass = ResolveCallee(calleeVar.Name);
+            }
+            else if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
+            {
+                if (modules.ContainsKey(objVar.Name))
+                {
+                    // Resolve a module alias (import machine as m) to the real module
+                    // name so `m.Pin(...)` resolves the machine_Pin class.
+                    string realMod = importedAliases.TryGetValue(objVar.Name, out var rm) && rm != null
+                        ? rm : objVar.Name;
+                    string mangled = realMod.Replace('.', '_');
+                    resolvedClass = mangled + "_" + calleeMem.Member;
+                }
+            }
+
+            // Factory: `a = setup()` where @inline setup returns ClassName(...). Resolve
+            // to the returned ZCA class so the tracking below treats `a` as that
+            // instance and its methods inline (otherwise `a.read()` mangles to an
+            // undefined flattened name like main.a_read and fails at link).
+            if (!string.IsNullOrEmpty(resolvedClass)
+                && !inlineFunctions.ContainsKey(resolvedClass + "___init__")
+                && !overloadedFunctions.Contains(resolvedClass + "___init__")
+                && inlineFunctions.TryGetValue(resolvedClass, out var factoryFn)
+                && factoryFn?.Body?.Statements != null)
+            {
+                foreach (var bs in factoryFn.Body.Statements)
+                    if (bs is ReturnStmt r && r.Value is CallExpr rcall && rcall.Callee is VariableExpr rcv)
+                    {
+                        var rc = ResolveCallee(rcv.Name);
+                        if (inlineFunctions.ContainsKey(rc + "___init__") || overloadedFunctions.Contains(rc + "___init__"))
+                            resolvedClass = rc;
+                    }
+            }
+
+            if (!string.IsNullOrEmpty(resolvedClass) && (inlineFunctions.ContainsKey(resolvedClass + "___init__") ||
+                                                         overloadedFunctions.Contains(resolvedClass + "___init__")))
+            {
+                string qualifiedName = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + varExprCtor.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + varExprCtor.Name
+                        : varExprCtor.Name);
+                // When the target variable is a module-level mutable global (e.g. declared at
+                // top level in an entrypoint-less script), use its global name so that later
+                // method lookups on the global variable resolve the class type correctly.
+                if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix))
+                {
+                    string mutableGlobalKey = currentModulePrefix + varExprCtor.Name;
+                    if (mutableGlobals.ContainsKey(mutableGlobalKey))
+                        qualifiedName = mutableGlobalKey;
+                }
+                instanceClasses[qualifiedName] = resolvedClass;
+                pendingConstructorTarget = qualifiedName;
+                virtualInstances.Add(qualifiedName);
+            }
+            else if (call.Callee is VariableExpr facVar
+                     && functionReturnTypes.TryGetValue(ResolveCallee(facVar.Name), out var facRt)
+                     && facRt != null && zcaFactoryClasses.ContainsKey(facRt)
+                     && !inlineFunctions.ContainsKey(ResolveCallee(facVar.Name)))
+            {
+                // RFC 0001 Model B: `x = make()` where make is a non-@inline factory
+                // returning a single-field ZCA. The call yields the packed field as a
+                // scalar; track `x` as a handle instance so x.method() (which must be
+                // @outline) passes that scalar as the field arg. Crucially we do NOT set
+                // pendingConstructorTarget or add to virtualInstances -- the assignment
+                // proceeds normally so `x` actually receives the returned handle.
+                string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + varExprCtor.Name
+                    : (!string.IsNullOrEmpty(currentFunction)
+                        ? currentFunction + "." + varExprCtor.Name
+                        : varExprCtor.Name);
+                instanceClasses[qn] = facRt;
+                factoryHandleInstances.Add(qn);
+            }
+        }
+    }
+
+    // `obj.member = v`: assign through a member-access target — ZCA field stores
+    // (slot/Model A), property-less member writes, and the related dispatch.
+    private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
+    {
+        // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
+        // to the mutable class global (via classModuleMap); mirror it here with a real store.
+        // Without this the write fell through to the ZCA-field path and was constant-folded into
+        // oblivion -- `Counter.count = Counter.count + 1` emitted nothing and the counter stayed 0.
+        if (memExpr2.Object is VariableExpr clsVar && classNames.Contains(clsVar.Name))
+        {
+            string cvPfx = classModuleMap.TryGetValue(clsVar.Name, out var p) ? p : currentModulePrefix;
+            string cvName = cvPfx + clsVar.Name + "_" + memExpr2.Member;
+            if (mutableGlobals.TryGetValue(cvName, out var cvType))
+            {
+                Emit(new Copy(value, new Variable(cvName, cvType)));
+                constantVariables.Remove(cvName);
+                return;
+            }
+        }
+
+        // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field> = v` stores back to
+        // the instance slot via the `self` pointer at the field's byte offset. The read side
+        // (VisitMemberAccess) had this but the write side did not, so a multi-field ZCA's mutating
+        // method compiled to nothing -- the mutation was silently dropped (move() left x/y intact).
+        if (memExpr2.Object is VariableExpr slotSelf && slotSelf.Name == "self"
+            && slotMethodFieldOffsets.TryGetValue(currentFunction, out var slotOffs)
+            && slotOffs.TryGetValue(memExpr2.Member, out int slotOff))
+        {
+            EmitSlotFieldStore(currentFunction + ".self", true, slotOff,
+                SlotMethodFieldType(currentFunction, memExpr2.Member), value, 0);
+            return;
+        }
+
+        // Direct field write on a slot instance outside a method (`p.x = v`): store into the
+        // instance slot, mirroring the direct read in VisitMemberAccess. Otherwise it wrote a
+        // flattened `p_x` variable disjoint from the slot the methods read.
+        if (memExpr2.Object is VariableExpr slotInst)
+        {
+            // Resolve the instance like the read side does: qualify with the inline prefix /
+            // current function FIRST (so `self` inside a force-inlined method resolves to the
+            // bound slot instance), then fall back to the bare name. Without the qualified form,
+            // `self._field = v` in a force-inlined method chased a non-existent alias for bare
+            // "self" and the slot store was silently dropped (e.g. sample()'s self._reads += 1).
+            string Chase(string s) { while (s != null && variableAliases.TryGetValue(s, out var a)) s = a; return s; }
+            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + slotInst.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + slotInst.Name : slotInst.Name);
+            string sb = Chase(qualified);
+            if (sb == null || !slotInstances.ContainsKey(sb)) sb = Chase(slotInst.Name);
+            if (sb != null && slotInstances.TryGetValue(sb, out var slotArrW)
+                && instanceClasses.TryGetValue(sb, out var slotClsW)
+                && TryGetSlotFieldOffset(slotClsW, memExpr2.Member, out int slotOffW, out var slotTyW))
+            {
+                // Direct SRAM array (not a pointer): byte-offset store, matching construction.
+                int slotTotW = arraySizes.TryGetValue(slotArrW, out var tszW) ? tszW : 0;
+                EmitSlotFieldStore(slotArrW, false, slotOffW, slotTyW, value, slotTotW);
+                return;
+            }
+        }
+
+        // RFC 0001 Model B (Class[N]): a direct field write on an instance-array element,
+        // `arr[i].x = v`. Store through the computed element field address.
+        if (memExpr2.Object is IndexExpr iaIdxW
+            && TryInstanceArrayFieldAddr(iaIdxW, memExpr2.Member, out _) is { } iaAddrW)
+        {
+            Emit(new StoreIndirect(value, iaAddrW));
+            return;
+        }
+
+        if (memExpr2.Member == "value")
+        {
+            var target = VisitExpression(memExpr2.Object);
+            var varType = DataType.UINT8;
+            var originalName = memExpr2.Object is VariableExpr veObj ? veObj.Name : null;
+
+            // Runtime pointer (from ptr(<runtime addr>), e.g. ptr(BASE + x)): the target
+            // Val holds a 16-bit address computed at runtime, so write through it with a
+            // StoreIndirect rather than to a compile-time MemoryAddress.
+            string? rptName = target switch { Variable rv => rv.Name, Temporary rt => rt.Name, _ => null };
+            if (rptName != null && runtimePtrVars.TryGetValue(rptName, out var rptElem))
+            {
+                Temporary sv = MakeTemp(rptElem);
+                Emit(new Copy(value, sv));
+                Emit(new StoreIndirect(sv, target));
+                return;
+            }
+
+            // Resolve local ptr[T] compile-time constant address variable
+            if (target is Variable ptrVar && constantAddressVariables.TryGetValue(ptrVar.Name, out int ptrAddr))
+            {
+                DataType elemType = DataType.UINT8;
+                if (variableTypes.TryGetValue(ptrVar.Name, out var et)) elemType = et;
+                target = new MemoryAddress(ptrAddr, elemType);
+                varType = elemType;
+            }
+            else if (originalName != null && variableTypes.TryGetValue(originalName, out var typeGlob))
+                varType = typeGlob;
+            else if (originalName != null && !string.IsNullOrEmpty(currentInlinePrefix) &&
+                     variableTypes.TryGetValue(currentInlinePrefix + originalName, out var typeInline))
+                varType = typeInline;
+            else if (target is Variable v2 && variableTypes.TryGetValue(v2.Name, out var vt2))
+                varType = vt2;
+            else if (target is MemoryAddress m2)
+                varType = m2.Type;
+
+            var byteCount = varType.SizeOf();
+            switch (byteCount)
+            {
+                case 1 when target is MemoryAddress ma:
+                    Emit(new Copy(value, new MemoryAddress(ma.Address, varType)));
+                    break;
+                case 1 when target is Variable:
+                    Emit(new Copy(value, target));
+                    break;
+                case 1:
+                    throw UserError("Cannot assign to .value of this expression type");
+                case 2 when target is MemoryAddress addr:
+                {
+                    // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
+                    // aligned access; splitting a constant into byte stores would
+                    // both break peripheral semantics and miss the atomic register
+                    // aliases. Only split on 8-bit AVR (PointerWidth == 2).
+                    if (value is Constant constVal && DataTypeExtensions.PointerWidth < 4)
+                    {
+                        int fullValue = constVal.Value;
+                        int lowByte = fullValue & 0xFF;
+                        int highByte = (fullValue >> 8) & 0xFF;
+                        Emit(new Copy(new Constant(lowByte), new MemoryAddress(addr.Address, DataType.UINT8)));
+                        Emit(new Copy(new Constant(highByte), new MemoryAddress(addr.Address + 1, DataType.UINT8)));
+                    }
+                    else
+                    {
+                        Emit(new Copy(value, new MemoryAddress(addr.Address, DataType.UINT16)));
+                    }
+
+                    break;
+                }
+                case 2:
+                    throw UserError("16-bit .value assignment requires constant address");
+                case 4 when target is MemoryAddress addr32:
+                {
+                    // See the 16-bit case: keep 32-bit MMIO stores atomic on
+                    // 32-bit targets; only AVR byte-splits constant words.
+                    if (value is Constant constVal32 && DataTypeExtensions.PointerWidth < 4)
+                    {
+                        Emit(new Copy(new Constant(constVal32.Value & 0xFF),         new MemoryAddress(addr32.Address,     DataType.UINT8)));
+                        Emit(new Copy(new Constant((constVal32.Value >> 8)  & 0xFF), new MemoryAddress(addr32.Address + 1, DataType.UINT8)));
+                        Emit(new Copy(new Constant((constVal32.Value >> 16) & 0xFF), new MemoryAddress(addr32.Address + 2, DataType.UINT8)));
+                        Emit(new Copy(new Constant((constVal32.Value >> 24) & 0xFF), new MemoryAddress(addr32.Address + 3, DataType.UINT8)));
+                    }
+                    else
+                    {
+                        Emit(new Copy(value, new MemoryAddress(addr32.Address, DataType.UINT32)));
+                    }
+                    break;
+                }
+                case 4:
+                    throw UserError("32-bit .value assignment requires constant address");
+                default:
+                    throw UserError("Unsupported type size for .value assignment");
+            }
+        }
+        else
+        {
+            var objVal = VisitExpression(memExpr2.Object);
+            var baseName = objVal is Variable v3 ? v3.Name : (objVal is Temporary t3 ? t3.Name : "");
+            if (string.IsNullOrEmpty(baseName))
+                throw UserError("Unknown member access in assignment: " + memExpr2.Member);
+            while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+            var flattenedName = baseName + "_" + memExpr2.Member;
+
+            // A field assigned None has no runtime value; record the flattened name so
+            // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None
+            // write clears the mark (the field now holds a real value). Without this the field
+            // read 0 and `is None` silently returned False (broke optional/sentinel fields).
+            if (value is NoneVal)
+            {
+                noneValuedNames.Add(flattenedName);
+                constantVariables.Remove(flattenedName);
+                return;
+            }
+            noneValuedNames.Remove(flattenedName);
+
+            // RFC 0001 (write-back): a field mutated by a write-back method needs a real runtime
+            // home, not a folded compile-time constant -- otherwise the write-back copy has
+            // nowhere to land and later reads (including loop iterations) would see the stale
+            // constant. Promote it here: emit a real store at construction and stop tracking it
+            // as a constant. Narrowly scoped to write-back fields, so non-mutated ZCA fields keep
+            // their exact zero-cost folding.
+            if (TryGetWriteBackFieldType(baseName, memExpr2.Member, out var wbType))
+            {
+                Emit(new Copy(value, new Variable(flattenedName, wbType)));
+                constantVariables.Remove(flattenedName);
+                killedConstants.Add(flattenedName);
+                variableTypes[flattenedName] = wbType;
+                return;
+            }
+
+            if (value is Constant c)
+            {
+                if (baseName != null && !virtualInstances.Contains(baseName))
+                {
+                    // Only track the constant if this field has not been written
+                    // before. A field written with two different constant values
+                    // at different points is a mutable runtime field (e.g.
+                    // sensor.failed) — tracking it as a compile-time constant
+                    // would cause the compiler to DCE branches incorrectly.
+                    if (!killedConstants.Contains(flattenedName))
+                    {
+                        if (constantVariables.TryGetValue(flattenedName, out int existing) && existing != c.Value)
+                        {
+                            // Second write with a different value → mutable field.
+                            constantVariables.Remove(flattenedName);
+                            killedConstants.Add(flattenedName);
+                        }
+                        else if (!constantVariables.ContainsKey(flattenedName))
+                        {
+                            constantVariables[flattenedName] = c.Value;
+                        }
+                        // If existing == c.Value, keep the existing entry as-is.
+                    }
+                }
+                else if (stringIdToStr.TryGetValue(c.Value, out var value1))
+                {
+                    constantVariables[flattenedName] = c.Value;
+                    strConstantVariables[flattenedName] = value1;
+                    return;
+                }
+                else
+                {
+                    // Virtual (ZCA) instance, non-string constant (e.g. bit
+                    // index assigned in _PinRegs.__init__). Store it so that
+                    // subscript expressions like self._ddr[self._bit] can
+                    // resolve the bit index at compile time.
+                    //
+                    // Inline-prefixed temporaries (baseName starts with
+                    // "inline") are short-lived per-call-site objects.  The
+                    // same inline prefix can be reused across multiple call
+                    // sites (e.g. _PinRegs for pin 13 then pin 2 both land
+                    // in "inline2.hal_gpio_Pin_init._r").  Treating the
+                    // second write as a "different-value mutation" would
+                    // incorrectly kill the constant and break codegen.
+                    // For these temporaries always overwrite — they are
+                    // never truly mutable across call sites.
+                    //
+                    // For top-level virtual instances (sensor, data_pin._pin
+                    // etc.) apply the killedConstants guard so that genuinely
+                    // mutable fields (sensor.failed) are not folded away.
+                    bool isInlineTemp = baseName != null && baseName.StartsWith("inline");
+                    if (isInlineTemp)
+                    {
+                        constantVariables[flattenedName] = c.Value;
+                    }
+                    else if (!killedConstants.Contains(flattenedName))
+                    {
+                        if (constantVariables.TryGetValue(flattenedName, out int existingZca) && existingZca != c.Value)
+                        {
+                            constantVariables.Remove(flattenedName);
+                            killedConstants.Add(flattenedName);
+                        }
+                        else if (!constantVariables.ContainsKey(flattenedName))
+                        {
+                            constantVariables[flattenedName] = c.Value;
+                        }
+                    }
+                }
+            }
+
+            if (value is MemoryAddress ma2)
+            {
+                constantAddressVariables[flattenedName] = ma2.Address;
+                return;
+            }
+
+            var folded = value switch
+            {
+                Temporary t4 => TryTempName(t4.Name),
+                Variable v4 => TryTempName(v4.Name),
+                _ => false
+            };
+            if (folded) return;
+
+            // Non-constant runtime assignment: if this field was previously
+            // tracked as a compile-time constant (e.g. self.humidity = 0 in
+            // __init__), kill the stale constant so later reads use the
+            // runtime value.  Guard with "value is not Constant" to avoid
+            // incorrectly killing constants like _bit that are set once as a
+            // constant and never reassigned with a runtime value.
+            if (value is not Constant && constantVariables.ContainsKey(flattenedName))
+            {
+                constantVariables.Remove(flattenedName);
+                killedConstants.Add(flattenedName);
+            }
+
+            if (value is Variable vVal)
+            {
+                var clsKey = vVal.Name;
+                var isZcaInstance = false;
+                for (var depth = 0; depth < 20; ++depth)
+                {
+                    if (clsKey != null && instanceClasses.ContainsKey(clsKey))
+                    {
+                        isZcaInstance = true;
+                        instanceClasses[flattenedName] = instanceClasses[clsKey];
+                        virtualInstances.Add(flattenedName);
+                        break;
+                    }
+
+                    if (clsKey != null && variableAliases.TryGetValue(clsKey, out var ak)) clsKey = ak;
+                    else break;
+                }
+
+                if (isZcaInstance)
+                {
+                    variableAliases[flattenedName] = vVal.Name;
+                    return;
+                }
+            }
+
+            // Store the flattened field at its declared width; hard-coding uint8 truncated a
+            // uint16/uint32 field (a no-method multi-field struct's `total` read back as total&0xFF).
+            DataType fdt = FlattenedFieldType(baseName, memExpr2.Member);
+            Emit(new Copy(value, new Variable(flattenedName, fdt)));
+            if (fdt != DataType.UINT8) variableTypes[flattenedName] = fdt;
+            return;
+
+            bool TryTempName(string tname)
+            {
+                if (constantAddressVariables.TryGetValue(tname, out int cv))
+                {
+                    constantAddressVariables[flattenedName] = cv;
+                    return true;
+                }
+
+                if (!constantVariables.TryGetValue(tname, out int cv2)) return false;
+                constantVariables[flattenedName] = cv2;
+                return true;
+            }
+        }
+    }
+
+    // RFC 0001 (write-back): true (with the field's declared type) when `<baseName>.<member>`
+    // is a field that a write-back mutator updates -- such fields must live at runtime, not as
+    // a folded constant. Follows instance aliases to find the owning class, then matches the
+    // field against zcaWriteBackFields and reads its type from the class layout.
+    private bool TryGetWriteBackFieldType(string? baseName, string member, out DataType type)
+    {
+        type = DataType.UINT8;
+        string? key = baseName;
+        for (int depth = 0; depth < 20 && key != null; ++depth)
+        {
+            if (instanceClasses.TryGetValue(key, out var cls)
+                && zcaWriteBackFields.TryGetValue(cls, out var fields)
+                && fields.Contains(member))
+            {
+                if (classFieldLayout.TryGetValue(cls, out var layout))
+                    foreach (var (f, t, _) in layout)
+                        if (f == member) { type = DataTypeExtensions.StringToDataType(t); break; }
+                return true;
+            }
+
+            if (variableAliases.TryGetValue(key, out var next)) key = next;
+            else break;
+        }
+
+        return false;
+    }
+
+    // Declared type of a flattened (non-slot) ZCA field `<inst>.<member>`, from the owning class's
+    // layout. The flattened store path otherwise hard-codes uint8, truncating a uint16/uint32 field.
+    private DataType FlattenedFieldType(string? baseName, string member)
+    {
+        string? key = baseName;
+        for (int d = 0; d < 20 && key != null; ++d)
+        {
+            if (instanceClasses.TryGetValue(key, out var cls) && classFieldLayout.TryGetValue(cls, out var layout))
+                foreach (var (f, t, _) in layout)
+                    if (f == member) return DataTypeExtensions.StringToDataType(t);
+            if (variableAliases.TryGetValue(key, out var nx)) key = nx;
+            else break;
+        }
+
+        return DataType.UINT8;
+    }
+
+    // RFC 0001 Model B (Class[N]): the runtime address of `arr[idx].<member>` for an instance
+    // array -- base + idx*stride + fieldOffset. Returns null when arr is not an instance array.
+    // Mirrors the element-address computation used for arr[i].method() calls.
+    private Val? TryInstanceArrayFieldAddr(IndexExpr idx, string member, out DataType fieldType)
+    {
+        fieldType = DataType.UINT8;
+        if (idx.Target is not VariableExpr arrVe) return null;
+        string q = !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name;
+        if (!instanceArrayClass.ContainsKey(q) && instanceArrayClass.ContainsKey(arrVe.Name)) q = arrVe.Name;
+        if (!instanceArrayClass.TryGetValue(q, out var cls)) return null;
+        if (!TryGetSlotFieldOffset(cls, member, out int fieldOff, out fieldType)) return null;
+
+        int stride = instanceArrayStride[q];
+        Val idxV = VisitExpression(idx.Index);
+        Temporary baseT = MakeTemp(DataType.UINT16);
+        Emit(new Copy(new ArrayBase(q), baseT));
+        Temporary scaled = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Mul, idxV, new Constant(stride), scaled));
+        Temporary elemAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, baseT, scaled, elemAddr));
+        if (fieldOff == 0) return elemAddr;
+        Temporary fieldAddr = MakeTemp(DataType.UINT16);
+        Emit(new Binary(BinaryOp.Add, elemAddr, new Constant(fieldOff), fieldAddr));
+        return fieldAddr;
+    }
+
+    // RFC 0001 Model B (SRAM slot): byte offset and declared type of <field> within <cls>'s slot,
+    // matching the layout order used by EmitSlotConstruction and the outlined methods. Used to
+    // resolve a direct field access on a slot instance (outside a method) to a slot load/store.
+    private bool TryGetSlotFieldOffset(string? cls, string field, out int offset, out DataType type)
+    {
+        offset = 0;
+        type = DataType.UINT8;
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return false;
+        int off = 0;
+        foreach (var (f, ty, _) in layout)
+        {
+            var dt = DataTypeExtensions.StringToDataType(ty);
+            if (f == field) { offset = off; type = dt; return true; }
+            off += dt.SizeOf();
+        }
+
+        return false;
+    }
+
+    // The declared type of an outlined slot method's field (for multi-byte slot access). The
+    // method's field layout carries the types; slotMethodFieldOffsets only carries offsets.
+    private DataType SlotMethodFieldType(string method, string field)
+    {
+        if (outlineFieldLayout.TryGetValue(method, out var layout))
+            foreach (var (f, t, _) in layout)
+                if (f == field) return DataTypeExtensions.StringToDataType(t);
+        return DataType.UINT8;
+    }
+
+    // RFC 0001 Model B (SRAM slot): load a field of `fieldTy` at BYTE offset `off`. The slot is
+    // byte-packed, so a multi-byte field is assembled from consecutive bytes (b0 | b1<<8 | ...).
+    // `isPtr`: arrName is a `self` pointer (BytearrayLoad); else it is the slot array (ArrayLoad).
+    private Val EmitSlotFieldLoad(string arrName, bool isPtr, int off, DataType fieldTy, int slotTotal)
+    {
+        Val LoadByte(int boff)
+        {
+            Temporary b = MakeTemp(DataType.UINT8);
+            if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(boff), b));
+            else Emit(new ArrayLoad(arrName, new Constant(boff), b, DataType.UINT8, slotTotal));
+            return b;
+        }
+
+        int sz = fieldTy.SizeOf();
+        if (sz <= 1)
+        {
+            Temporary b = MakeTemp(fieldTy);
+            if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(off), b));
+            else Emit(new ArrayLoad(arrName, new Constant(off), b, DataType.UINT8, slotTotal));
+            return b;
+        }
+
+        Temporary acc = MakeTemp(fieldTy);
+        Emit(new Copy(LoadByte(off), acc));            // byte 0, zero-extended to fieldTy
+        for (int i = 1; i < sz; ++i)
+        {
+            Temporary widened = MakeTemp(fieldTy);
+            Emit(new Copy(LoadByte(off + i), widened));
+            Emit(new Binary(BinaryOp.LShift, widened, new Constant(8 * i), widened));
+            Emit(new Binary(BinaryOp.BitOr, acc, widened, acc));
+        }
+
+        return acc;
+    }
+
+    // RFC 0001 Model B (SRAM slot): store a field of `fieldTy` at BYTE offset `off`, splitting a
+    // multi-byte value into consecutive bytes. Counterpart of EmitSlotFieldLoad.
+    private void EmitSlotFieldStore(string arrName, bool isPtr, int off, DataType fieldTy,
+        Val value, int slotTotal)
+    {
+        void StoreByte(int boff, Val b)
+        {
+            if (isPtr) Emit(new BytearrayStore(arrName, new Constant(boff), b));
+            else Emit(new ArrayStore(arrName, new Constant(boff), b, DataType.UINT8, slotTotal));
+        }
+
+        int sz = fieldTy.SizeOf();
+        if (sz <= 1) { StoreByte(off, value); return; }
+
+        for (int i = 0; i < sz; ++i)
+        {
+            Temporary b = MakeTemp(DataType.UINT8);
+            if (i == 0)
+            {
+                Emit(new Copy(value, b));   // low byte (truncating copy)
+            }
+            else
+            {
+                // Byte i = (value >> 8*i) & 0xFF. The truncating Copy to UINT8 keeps the low byte,
+                // which equals byte i of value regardless of the shift's sign behaviour.
+                Temporary sh = MakeTemp(fieldTy);
+                Emit(new Binary(BinaryOp.RShift, value, new Constant(8 * i), sh));
+                Emit(new Copy(sh, b));
+            }
+
+            StoreByte(off + i, b);
+        }
+    }
+
+    // `b = a[lo:hi]` without an array annotation. Infer `b` as a fixed-size array whose length is
+    // the (compile-time) slice length and copy the selected elements, mirroring the annotated
+    // `b: T[N] = a[lo:hi]` path but inferring N and the element type from the source. Returns false
+    // when the source is not a known array (the normal scalar path then handles/reports it). A
+    // target that needs SRAM (it is indexed by a runtime value elsewhere) requires the annotated
+    // form's allocation, so that case is reported clearly rather than mis-lowered.
+    private bool TryEmitInferredSliceArray(VariableExpr target, VariableExpr src, SliceExpr sl)
+    {
+        string srcQ = string.IsNullOrEmpty(currentFunction) ? src.Name : currentFunction + "." + src.Name;
+        if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(src.Name)) srcQ = src.Name;
+        if (!arraySizes.TryGetValue(srcQ, out int srcSize)) return false;
+
+        string qualified = string.IsNullOrEmpty(currentFunction) ? target.Name : currentFunction + "." + target.Name;
+
+        if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+            throw UserError($"'{target.Name}' is indexed by a runtime value, so a slice assigned to "
+                + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'");
+
+        DataType srcEdt = arrayElemTypes[srcQ];
+        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+        if (step == 0) throw UserError("Slice step cannot be zero");
+        if (start < 0) start += srcSize;
+        if (stop < 0) stop += srcSize;
+        start = Math.Max(0, Math.Min(start, srcSize));
+        stop = Math.Max(0, Math.Min(stop, srcSize));
+        int count = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step) ++count;
+
+        arraySizes[qualified] = count;
+        arrayElemTypes[qualified] = srcEdt;
+        variableTypes[qualified] = srcEdt;
+
+        bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
+        int k = 0;
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step, ++k)
+        {
+            string dstElem = qualified + "__" + k;
+            variableTypes[dstElem] = srcEdt;
+            Val srcVal;
+            if (srcSram)
+            {
+                Temporary tmp = MakeTemp(srcEdt);
+                Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
+                srcVal = tmp;
+            }
+            else srcVal = new Variable(srcQ + "__" + i, srcEdt);
+            Emit(new Copy(srcVal, new Variable(dstElem, srcEdt)));
+        }
+        return true;
+    }
+
+    // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
+    // subscript on a register, with target-address resolution. Always terminal.
+    private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
+    {
+        // Slice assignment (`arr[1:3] = [...]`) is not supported — there is no dynamic memmove
+        // on bare metal. Report it clearly instead of letting the SliceExpr reach
+        // VisitExpression as an unknown node. Assign elements individually.
+        if (indexExpr.Index is SliceExpr)
+            throw UserError(
+                "slice assignment (arr[a:b] = ...) is not supported; assign elements individually");
+
+        if (indexExpr.Target is VariableExpr ve)
+        {
+            string qualified = string.IsNullOrEmpty(currentFunction) ? ve.Name : currentFunction + "." + ve.Name;
+            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(ve.Name))
+                qualified = ve.Name;
+
+            // When inside an inline expansion, the target may be a parameter aliased to a
+            // caller-side array (e.g., `buf` → `main.line`). Resolve the alias so the
+            // array-store path fires instead of falling through to the bit-subscript path.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified)
+                && !string.IsNullOrEmpty(currentInlinePrefix))
+            {
+                string inlineQ = currentInlinePrefix + ve.Name;
+                if (variableAliases.TryGetValue(inlineQ, out string? resolvedQ) && resolvedQ != null)
+                    qualified = resolvedQ;
+                else if (arraySizes.ContainsKey(inlineQ) || bytearrayParams.Contains(inlineQ))
+                    qualified = inlineQ;
+            }
+
+            // Bytearray parameter: indirect store through pointer.
+            if (bytearrayParams.Contains(qualified))
+            {
+                Val idxVal = VisitExpression(indexExpr.Index);
+                Val srcVal = VisitExpression(stmt.Value);
+                Emit(new BytearrayStore(qualified, idxVal, srcVal));
+                return;
+            }
+
+            // list[T] index assignment: x[i] = val → store at GC heap offset 2 + i*elemSize
+            {
+                string listQ = listVarElemTypes.ContainsKey(qualified) ? qualified
+                             : listVarElemTypes.ContainsKey(ve.Name) ? ve.Name
+                             : "";
+                if (!string.IsNullOrEmpty(listQ))
+                {
+                    DataType elemDt = listVarElemTypes[listQ];
+                    Val listPtr = new Variable(listQ, DataType.GC_REF);
+                    Val idxVal = VisitExpression(indexExpr.Index);
+                    Val srcVal = VisitExpression(stmt.Value);
+                    Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
+                    Emit(new StoreIndirect(srcVal, elemAddr));
+                    return;
+                }
+            }
+
+            if (arraySizes.ContainsKey(qualified))
+            {
+                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+                {
+                    Val idxVal = VisitExpression(indexExpr.Index);
+                    Val srcVal = VisitExpression(stmt.Value);
+                    Emit(new ArrayStore(qualified, idxVal, srcVal, arrayElemTypes[qualified],
+                        arraySizes[qualified]));
+                }
+                else
+                {
+                    // Accept either a literal subscript or a variable that folds to a
+                    // compile-time constant (e.g. the index from an unrolled
+                    // `for i, _ in enumerate(buf)` loop, where `i` is constant per
+                    // iteration). This lets inline functions write into a caller's
+                    // fixed array via constant-index stores without SRAM indexing.
+                    int elemIdx;
+                    if (indexExpr.Index is IntegerLiteral c)
+                        elemIdx = c.Value;
+                    else if (VisitExpression(indexExpr.Index) is Constant cc)
+                        elemIdx = cc.Value;
+                    else
+                        throw UserError("Array subscript must be a compile-time constant");
+                    string elemName = qualified + "__" + elemIdx;
+                    Val srcVal = VisitExpression(stmt.Value);
+                    Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
+                }
+
+                return;
+            }
+        }
+
+        // Instance-member array store: self._buf[i] = val (i runtime), where
+        // self._buf was declared as a per-instance SRAM framebuffer.
+        if (indexExpr.Target is MemberAccessExpr memStore
+            && ResolveMemberArrayName(memStore) is string flatStore)
+        {
+            Val idxVal = VisitExpression(indexExpr.Index);
+            Val srcVal = VisitExpression(stmt.Value);
+            Emit(new ArrayStore(flatStore, idxVal, srcVal, arrayElemTypes[flatStore], arraySizes[flatStore]));
+            return;
+        }
+
+        {
+            Val tgtVal = VisitExpression(indexExpr.Target);
+            string cls = GetValClass(tgtVal);
+            if (!string.IsNullOrEmpty(cls))
+            {
+                string funcKey = cls + "_" + "__setitem__";
+                if (inlineFunctions.ContainsKey(funcKey))
+                {
+                    string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
+                    Val idxVal = VisitExpression(indexExpr.Index);
+                    // A tuple/list literal RHS (pixels[i] = (r, g, b)) is bound to the
+                    // color parameter as a sequence literal so __setitem__ can read it
+                    // by constant subscript; otherwise evaluate a scalar value.
+                    ListExpr? seqRhs = stmt.Value as ListExpr
+                        ?? (stmt.Value is TupleExpr tup ? new ListExpr(tup.Elements) : null);
+                    if (seqRhs != null)
+                    {
+                        EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, new NoneVal() },
+                            new Dictionary<int, ListExpr> { { 1, seqRhs } });
+                    }
+                    else
+                    {
+                        Val srcVal = VisitExpression(stmt.Value);
+                        EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal, srcVal });
+                    }
+                    return;
+                }
+            }
+        }
+
+        var target = VisitExpression(indexExpr.Target);
+        var indexVal = VisitExpression(indexExpr.Index);
+
+        target = ResolveTargetAddr(target);
+
+        var bit = 0;
+        if (indexVal is Constant c2)
+        {
+            bit = c2.Value;
+        }
+        else
+        {
+            bool TryConst(string name)
+            {
+                if (!constantVariables.TryGetValue(name, out int cv)) return false;
+                bit = cv;
+                return true;
+            }
+
+            var resolved = indexVal switch
+            {
+                Temporary t => TryConst(t.Name),
+                Variable v => TryConst(v.Name),
+                _ => false
+            };
+            if (!resolved)
+            {
+                // Runtime bit index (e.g. `PORTB[i] = 1`). SBI/CBI require a constant
+                // bit, so build a runtime mask (1 << i) and read-modify-write the
+                // register. Supported for a MemoryAddress target (a chip register —
+                // every real use). A runtime POINTER target (a ptr held in a variable,
+                // e.g. a boxed Pin's port) would need a dereferenced LD/ST and proper
+                // pointer typing; reject it clearly for now instead of miscompiling
+                // the pointer value as if it were the port data.
+                if (target is not MemoryAddress)
+                    throw new TypeError(
+                        "runtime bit index is only supported on a chip register (a constant " +
+                        "port address); indexing a bit through a runtime pointer is not yet supported",
+                        stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                Val rmwVal = VisitExpression(stmt.Value);
+                Temporary mask = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.LShift, new Constant(1), indexVal, mask));
+                Temporary cur = MakeTemp(DataType.UINT8);
+                Emit(new Copy(target, cur));
+                Temporary res = MakeTemp(DataType.UINT8);
+                if (rmwVal is Constant rc && rc.Value == 0)
+                {
+                    Temporary inv = MakeTemp(DataType.UINT8);
+                    Emit(new Unary(UnaryOp.BitNot, mask, inv));            // ~mask
+                    Emit(new Binary(BinaryOp.BitAnd, cur, inv, res));      // clear bit
+                }
+                else if (rmwVal is Constant)
+                {
+                    Emit(new Binary(BinaryOp.BitOr, cur, mask, res));      // set bit
+                }
+                else
+                {
+                    // res = (cur & ~mask) | ((val & 1) * mask)
+                    Temporary inv = MakeTemp(DataType.UINT8);
+                    Emit(new Unary(UnaryOp.BitNot, mask, inv));
+                    Temporary cleared = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(BinaryOp.BitAnd, cur, inv, cleared));
+                    Temporary vbit = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(BinaryOp.BitAnd, rmwVal, new Constant(1), vbit));
+                    Temporary vmask = MakeTemp(DataType.UINT8);
+                    Emit(new Binary(BinaryOp.Mul, vbit, mask, vmask));
+                    Emit(new Binary(BinaryOp.BitOr, cleared, vmask, res));
+                }
+                Emit(new Copy(res, target));
+                return;
+            }
+        }
+
+        var val = VisitExpression(stmt.Value);
+
+        if (val is Constant cv2)
+        {
+            if (cv2.Value != 0) Emit(new BitSet(target, bit));
+            else Emit(new BitClear(target, bit));
+        }
+        else
+        {
+            Emit(new BitWrite(target, bit, val));
+        }
+
+        return;
+
+        Val ResolveTargetAddr(Val val)
+        {
+            string? name = val is Temporary t ? t.Name : (val is Variable vv ? vv.Name : null);
+            if (name != null && constantAddressVariables.TryGetValue(name, out int addr))
+            {
+                DataType dt = DataType.UINT8;
+                if (!string.IsNullOrEmpty(currentInlinePrefix) && variableTypes.TryGetValue(currentInlinePrefix + name, out var typeInline))
+                    dt = typeInline;
+                else if (variableTypes.TryGetValue(name, out var typeGlob))
+                    dt = typeGlob;
+                
+                return new MemoryAddress(addr, dt);
+            }
+            return val;
+        }
+    }
+
+    // Folds a literal integer expression to its value for the out-of-range check. Handles direct
+    // literals (decimal/hex/bool, optionally negated) AND pure ARITHMETIC (+, -, *) of such, so an
+    // overflowing constant value like `uint8 = 50 * 20` (= 1000) is caught exactly like a bare
+    // out-of-range literal. Bitwise and shift operators are deliberately NOT folded here, so idioms
+    // that intentionally use the full width (`~0`, `0xFFFF & 0xFF`, `1 << 7`) are never false-
+    // flagged. The explicit `uint8(...)` cast is a CallExpr (not folded here), so it stays the
+    // escape hatch for intentional wraparound. long arithmetic avoids masking the true magnitude.
+    private static long? TryLiteralInt(Expression e) => e switch
+    {
+        IntegerLiteral il                                  => il.Value,
+        BooleanLiteral b                                   => b.Value ? 1 : 0,
+        UnaryExpr { Op: Frontend.UnaryOp.Negate } u when TryLiteralInt(u.Operand) is { } v => -v,
+        BinaryExpr { Op: Frontend.BinaryOp.Add } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l + r,
+        BinaryExpr { Op: Frontend.BinaryOp.Sub } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l - r,
+        BinaryExpr { Op: Frontend.BinaryOp.Mul } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l * r,
+        _                                                  => null,
+    };
+
+    // Rejects an integer literal that cannot be represented in its annotated type
+    // (e.g. `x: uint8 = 300`), which the backend would otherwise truncate silently.
+    private void CheckIntLiteralRange(Expression? init, DataType type, int line)
+    {
+        if (init == null) return;
+        if (TryLiteralInt(init) is not { } v) return;
+
+        (long Min, long Max, string Name)? range = type switch
+        {
+            DataType.UINT8  => (0L, 255L, "uint8"),
+            DataType.INT8   => (-128L, 127L, "int8"),
+            DataType.UINT16 => (0L, 65535L, "uint16"),
+            DataType.INT16  => (-32768L, 32767L, "int16"),
+            DataType.UINT32 => (0L, 4294967295L, "uint32"),
+            DataType.INT32  => (-2147483648L, 2147483647L, "int32"),
+            _               => null,
+        };
+        if (range is not { } r) return;
+
+        if (v < r.Min || v > r.Max)
+            throw new ValueError(
+                $"integer literal {v} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
+                line, 1);
     }
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `c: ClassName = ClassName(...)` — a type-annotated instance construction (a typed
+        // local parses as a VarDecl). The annotation is just the (redundant) declared type;
+        // route through the normal assignment path so the instance->class link and constructor
+        // lowering are set up exactly like the unannotated `c = ClassName(...)`. Without this,
+        // the annotated form fell through to the scalar path and never registered the instance,
+        // so a later `c.method()` mangled to an undefined `c_method` and failed at link.
+        if (stmt.Init is CallExpr vdCtor && vdCtor.Callee is VariableExpr vdCallee)
+        {
+            string vdClass = ResolveCallee(vdCallee.Name);
+            if (classNames.Contains(vdClass)
+                || inlineFunctions.ContainsKey(vdClass + "___init__")
+                || overloadedFunctions.Contains(vdClass + "___init__"))
+            {
+                VisitAssign(new AssignStmt(new VariableExpr(stmt.Name), stmt.Init) { Line = stmt.Line });
+                return;
+            }
+        }
+
+        // `x: <scalar> = None` is a type error: None is the null value, not an
+        // integer. (Reference/Callable/class-typed locals defaulting to None are
+        // handled where such optionals are bound, not here.)
+        if (stmt.Init is NoneLiteral)
+        {
+            DataType vt = DataTypeExtensions.StringToDataType(stmt.VarType);
+            if (vt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                  or DataType.UINT32 or DataType.INT32 or DataType.FLOAT)
+                throw new TypeError(
+                    $"None is not a value of type {stmt.VarType}; None is only valid for " +
+                    "comparisons (is/== None) and optional reference parameters",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+            string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
+            noneValuedNames.Add(qn);
+            return;
+        }
+
+        // A float literal assigned to an integer-typed variable is a mistake — it would
+        // otherwise be silently dropped (the store never materializes). Require an explicit
+        // cast (e.g. uint8(3.5)) to make the truncation intentional.
+        if (stmt.Init is FloatLiteral)
+        {
+            DataType ft = DataTypeExtensions.StringToDataType(stmt.VarType);
+            if (ft is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                  or DataType.UINT32 or DataType.INT32)
+                throw new TypeError(
+                    $"cannot assign a float literal to integer variable '{stmt.Name}' of type " +
+                    $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+        }
+
+        CheckIntLiteralRange(stmt.Init, DataTypeExtensions.StringToDataType(stmt.VarType), stmt.Line);
+
         if (stmt.VarType == "bytearray")
         {
             int count = 0;
@@ -787,10 +1481,7 @@ public partial class IRGenerator
                         {
                             count = le.Elements.Count;
                             foreach (var e in le.Elements)
-                            {
-                                if (e is IntegerLiteral il2) initVals.Add(il2.Value);
-                                else initVals.Add(0);
-                            }
+                                initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                         }
                     }
                     else if (callee.Name == "input")
@@ -808,7 +1499,7 @@ public partial class IRGenerator
                                 else if (kw.Key == "maxlen" && kw.Value is IntegerLiteral kil) inputMaxLen = kil.Value;
                             }
                             else
-                                throw new Exception("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
+                                throw UserError("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
                         }
                         count = inputMaxLen;
                         initVals.AddRange(Enumerable.Repeat(0, count));
@@ -816,7 +1507,7 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0) throw new Exception("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
 
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.Name
@@ -898,10 +1589,27 @@ public partial class IRGenerator
                 {
                     string fnName = ResolveCallee(fnExpr.Name);
                     Emit(new Copy(new FunctionRef(fnName), new Variable(q2, DataType.FUNCREF)));
+                    // Remember the pointee's return width so an ICALL through q2 doesn't
+                    // truncate a uint16/int16 return to the default uint8 result temp.
+                    if (functionReturnTypes.TryGetValue(fnName, out var frt) && frt != null)
+                        funcrefReturnTypes[q2] = DataTypeExtensions.StringToDataType(frt);
                     return;
                 }
             }
             Val val = VisitExpression(stmt.Init);
+
+            // A compile-time float result assigned to an integer variable (e.g.
+            // `y: uint8 = 5 // 2.0`) is the same mistake as a bare float literal, but the
+            // literal check above only sees a direct FloatLiteral — a folded FloatConstant
+            // slipped through and the Copy was silently dropped. Require an explicit cast.
+            if (val is FloatConstant
+                && dt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                      or DataType.UINT32 or DataType.INT32)
+                throw new TypeError(
+                    $"cannot assign a float value to integer variable '{stmt.Name}' of type " +
+                    $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
+                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+
             Val target = ResolveBinding(stmt.Name);
             if (target is Variable v) target = v with { Type = dt };
             Emit(new Copy(val, target));
@@ -947,11 +1655,159 @@ public partial class IRGenerator
         if (atom.Length > 0 && atom.All(char.IsDigit)) return int.Parse(atom);
         if (constantVariables.TryGetValue(currentInlinePrefix + atom, out int cv)) return cv;
         if (constantVariables.TryGetValue(atom, out int cv2)) return cv2;
-        throw new Exception("Array size '" + atom + "' is not a compile-time constant");
+        throw UserError("Array size '" + atom + "' is not a compile-time constant");
+    }
+
+    // RFC 0001 Model B (SRAM slot): box a multi-field ZCA. Allocate a fixed SRAM byte slot
+    // for the instance and store each field at its byte offset, mapping the field's source
+    // __init__ parameter to the corresponding constructor argument. Tracks the instance so
+    // its @outline (self-ptr) methods receive the slot base address as `self`.
+    private void EmitSlotConstruction(VariableExpr targetVar, string cls, List<Expression> args)
+    {
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + targetVar.Name
+            : (!string.IsNullOrEmpty(currentFunction)
+                ? currentFunction + "." + targetVar.Name
+                : targetVar.Name);
+        string slot = qn + "__slot";
+
+        var layout = classFieldLayout[cls];
+        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        functionParams.TryGetValue(cls + "___init__", out var initParams);
+        int off = 0;
+        foreach (var (field, type, srcParam) in layout)
+        {
+            int argIdx = 0;
+            if (initParams != null && !string.IsNullOrEmpty(srcParam))
+            {
+                int pIdx = initParams.IndexOf(srcParam);
+                if (pIdx >= 1) argIdx = pIdx - 1; // drop implicit self
+            }
+
+            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
+            EmitSlotFieldStore(slot, false, off, DataTypeExtensions.StringToDataType(type), v, total);
+            off += DataTypeExtensions.StringToDataType(type).SizeOf();
+        }
+
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+    }
+
+    // RFC 0001 Model B (sret): `s = make(args)` for a multi-field (slot) ZCA factory. Allocate
+    // the slot at the call site, pass its base address as the hidden __self pointer (first arg),
+    // and track s as a slot instance. The factory stores the fields through __self; we discard
+    // its returned pointer since we already hold the slot.
+    private void EmitSlotFactoryCall(VariableExpr targetVar, string facFn, string cls,
+        List<Expression> args)
+    {
+        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + targetVar.Name
+            : (!string.IsNullOrEmpty(currentFunction)
+                ? currentFunction + "." + targetVar.Name
+                : targetVar.Name);
+        string slot = qn + "__slot";
+
+        var layout = classFieldLayout[cls];
+        int total = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+        arraySizes[slot] = total;
+        arrayElemTypes[slot] = DataType.UINT8;
+        moduleSramArrays.Add(slot);
+
+        var callArgs = new List<Val> { new ArrayBase(slot) };
+        foreach (var a in args) callArgs.Add(VisitExpression(a));
+        Emit(new Call(facFn, callArgs, new NoneVal()));
+
+        instanceClasses[qn] = cls;
+        slotInstances[qn] = slot;
+    }
+
+    // RFC 0001 Model B (Class[N]): construct element `index` of an instance array in place,
+    // storing each field at index*stride + fieldOffset (flat byte offsets, since the array is a
+    // contiguous UINT8 SRAM block). Constant index folds the offset; a runtime index computes it.
+    private void EmitInstanceArrayStore(string arrQ, string cls, Expression indexExpr,
+        List<Expression> args)
+    {
+        var layout = classFieldLayout[cls];
+        int stride = instanceArrayStride[arrQ];
+        int total = arraySizes[arrQ];
+        functionParams.TryGetValue(cls + "___init__", out var init);
+
+        Val idx = VisitExpression(indexExpr);
+        var idxConst = idx as Constant;
+        int off = 0;
+        foreach (var (field, type, srcParam) in layout)
+        {
+            int argIdx = 0;
+            if (init != null && !string.IsNullOrEmpty(srcParam))
+            {
+                int p = init.IndexOf(srcParam);
+                if (p >= 1) argIdx = p - 1;
+            }
+
+            Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
+            Val byteOff;
+            if (idxConst != null)
+            {
+                byteOff = new Constant(idxConst.Value * stride + off);
+            }
+            else
+            {
+                Temporary scaled = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Mul, idx, new Constant(stride), scaled));
+                Temporary addr = MakeTemp(DataType.UINT16);
+                Emit(new Binary(BinaryOp.Add, scaled, new Constant(off), addr));
+                byteOff = addr;
+            }
+
+            // Store the field at its declared width, splitting a multi-byte value into
+            // consecutive bytes (a uint16/uint32 element field was otherwise truncated to 1 byte).
+            DataType fdt = DataTypeExtensions.StringToDataType(type);
+            int fsz = fdt.SizeOf();
+            for (int k = 0; k < fsz; ++k)
+            {
+                Temporary b = MakeTemp(DataType.UINT8);
+                if (k == 0)
+                {
+                    Emit(new Copy(v, b));
+                }
+                else
+                {
+                    Temporary sh = MakeTemp(fdt);
+                    Emit(new Binary(BinaryOp.RShift, v, new Constant(8 * k), sh));
+                    Emit(new Copy(sh, b));
+                }
+
+                Val offK = byteOff;
+                if (k > 0)
+                {
+                    if (byteOff is Constant bc) offK = new Constant(bc.Value + k);
+                    else
+                    {
+                        Temporary a = MakeTemp(DataType.UINT16);
+                        Emit(new Binary(BinaryOp.Add, byteOff, new Constant(k), a));
+                        offK = a;
+                    }
+                }
+
+                Emit(new ArrayStore(arrQ, offK, b, DataType.UINT8, total));
+            }
+
+            off += fdt.SizeOf();
+        }
     }
 
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        // A `const[...]` annotation marks the name immutable; record it so a later
+        // assignment to it is rejected (see VisitAssign's reassignment guard).
+        if (!stmt.Target.Contains('.') && IsConstType(stmt.Annotation))
+            declaredConstants.Add(stmt.Target);
+
         // Instance-member array declaration (self._buf: uint8[N]): reserve a
         // per-instance SRAM framebuffer. The parser encodes the target as a
         // dotted name ("self._buf"); resolve the instance to its flattened
@@ -966,7 +1822,7 @@ public partial class IRGenerator
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
             if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
-                throw new Exception("Instance-member annotation must be an array type, e.g. uint8[N]");
+                throw UserError("Instance-member annotation must be an array type, e.g. uint8[N]");
             string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
             int memCount = ResolveArraySizeExpr(memSz);
             DataType memElem = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, mb));
@@ -975,7 +1831,7 @@ public partial class IRGenerator
             string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             if (string.IsNullOrEmpty(baseName))
-                throw new Exception("Cannot resolve instance for member array '" + stmt.Target + "'");
+                throw UserError("Cannot resolve instance for member array '" + stmt.Target + "'");
             string flat = baseName + "_" + member;
 
             arraySizes[flat] = memCount;
@@ -988,7 +1844,7 @@ public partial class IRGenerator
             var memInit = new List<int>(Enumerable.Repeat(0, memCount));
             if (stmt.Value is ListExpr mle)
                 for (int k = 0; k < Math.Min(memCount, mle.Elements.Count); k++)
-                    if (mle.Elements[k] is IntegerLiteral mil) memInit[k] = mil.Value;
+                    if (TryEvalElemConst(mle.Elements[k], out int mv)) memInit[k] = mv;
             for (int k = 0; k < memCount; ++k)
                 Emit(new ArrayStore(flat, new Constant(k), new Constant(memInit[k]), memElem, memCount));
             return;
@@ -1024,7 +1880,7 @@ public partial class IRGenerator
                         if (stmt.Value is ListExpr le)
                         {
                             for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                if (le.Elements[k] is IntegerLiteral il) bytes[k] = il.Value;
+                                if (TryEvalElemConst(le.Elements[k], out int v)) bytes[k] = v;
                         }
                         Emit(new FlashData(qualified, bytes));
                         return;
@@ -1050,11 +1906,11 @@ public partial class IRGenerator
                 else if (arg0 is ListExpr le)
                 {
                     count = le.Elements.Count;
-                    foreach (var e in le.Elements) initVals.Add(e is IntegerLiteral il2 ? il2.Value : 0);
+                    foreach (var e in le.Elements) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
                 }
             }
 
-            if (count <= 0) throw new Exception("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
             string qualified = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;
@@ -1072,215 +1928,12 @@ public partial class IRGenerator
         }
 
         // list[T] annotation → heap-allocated GC list
-        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
-        {
-            string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
-            DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
-            int elemSize = elemDt.SizeOf();
-
-            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
-                ? currentInlinePrefix + stmt.Target
-                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
-
-            listVarElemTypes[qualified] = elemDt;
-            variableTypes[qualified] = DataType.GC_REF;
-
-            if (stmt.Value != null)
-            {
-                int capacity = 8;
-                List<Val>? initElements = null;
-
-                if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
-                    calleeV.Name == "list")
-                {
-                    if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
-                        capacity = capLit.Value;
-                }
-                else if (stmt.Value is ListExpr le)
-                {
-                    initElements = new List<Val>();
-                    foreach (var e in le.Elements)
-                        initElements.Add(VisitExpression(e));
-                    if (le.Elements.Count > capacity) capacity = le.Elements.Count;
-                }
-
-                int allocSize = 2 + capacity * elemSize;
-                Temporary tmpPtr = MakeTemp(DataType.GC_REF);
-                Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
-
-                int initCount = initElements?.Count ?? 0;
-                EmitListStore(tmpPtr, 0, new Constant(initCount));
-                EmitListStore(tmpPtr, 1, new Constant(capacity));
-
-                if (initElements != null)
-                {
-                    for (int k = 0; k < initElements.Count; k++)
-                        EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
-                }
-
-                Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
-            }
-
-            return;
-        }
+        if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]")) { EmitListAnnAssign(stmt); return; }
 
         int bracket = stmt.Annotation.IndexOf('[');
         int close = stmt.Annotation.LastIndexOf(']');
-        if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1)
-        {
-            string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
-            if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
-            {
-                int count = int.Parse(inner);
-                DataType elemDt = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, bracket));
-                string qualified = string.IsNullOrEmpty(currentFunction)
-                    ? stmt.Target
-                    : currentFunction + "." + stmt.Target;
-                // Synthesized main: fall back to the module-level name registered by ScanGlobals.
-                if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
-                    qualified = stmt.Target;
-                arraySizes[qualified] = count;
-                arrayElemTypes[qualified] = elemDt;
-                variableTypes[qualified] = elemDt;
-
-                // Callable[N]: array of function references stored in SRAM.
-                if (elemDt == DataType.FUNCREF)
-                {
-                    bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
-                    if (stmt.Value is ListExpr callableList)
-                    {
-                        for (int k = 0; k < count; ++k)
-                        {
-                            Val fnVal;
-                            if (k < callableList.Elements.Count)
-                            {
-                                var elem = callableList.Elements[k];
-                                if (elem is VariableExpr fnVe)
-                                    fnVal = new FunctionRef(fnVe.Name);
-                                else if (elem is CallExpr funcrefCall
-                                         && funcrefCall.Callee is VariableExpr funcrefCallee
-                                         && funcrefCallee.Name == "funcref"
-                                         && funcrefCall.Args.Count == 1
-                                         && funcrefCall.Args[0] is VariableExpr refVe)
-                                    fnVal = new FunctionRef(refVe.Name);
-                                else
-                                    fnVal = new Constant(0);
-                            }
-                            else
-                            {
-                                fnVal = new Constant(0);
-                            }
-
-                            if (isSramCallable)
-                                Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
-                            else
-                            {
-                                string elemName = qualified + "__" + k;
-                                variableTypes[elemName] = DataType.FUNCREF;
-                                Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                var initVals = new List<int>(Enumerable.Repeat(0, count));
-                if (stmt.Value != null)
-                {
-                    if (stmt.Value is ListCompExpr lc)
-                    {
-                        VisitListComp(lc, qualified, count, elemDt);
-                        return;
-                    }
-
-                    if (stmt.Value is IndexExpr idxRhs && idxRhs.Index is SliceExpr sl &&
-                        idxRhs.Target is VariableExpr srcVe)
-                    {
-                        string srcQ = string.IsNullOrEmpty(currentFunction)
-                            ? srcVe.Name
-                            : currentFunction + "." + srcVe.Name;
-                        if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
-                        if (arraySizes.TryGetValue(srcQ, out int srcSize))
-                        {
-                            DataType srcEdt = arrayElemTypes[srcQ];
-                            int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
-                            int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
-                            int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                            if (step == 0) throw new Exception("Slice step cannot be zero");
-                            if (start < 0) start += srcSize;
-                            if (stop < 0) stop += srcSize;
-                            start = Math.Max(0, Math.Min(start, srcSize));
-                            stop = Math.Max(0, Math.Min(stop, srcSize));
-                            bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
-                            int k = 0;
-                            for (int i = start; (step > 0 ? i < stop : i > stop) && k < count; i += step, ++k)
-                            {
-                                string dstElem = qualified + "__" + k;
-                                variableTypes[dstElem] = elemDt;
-                                Val srcVal;
-                                if (srcSram)
-                                {
-                                    Temporary tmp = MakeTemp(srcEdt);
-                                    Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
-                                    srcVal = tmp;
-                                }
-                                else srcVal = new Variable(srcQ + "__" + i, srcEdt);
-
-                                Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
-                            }
-
-                            for (; k < count; ++k)
-                            {
-                                string dstElem = qualified + "__" + k;
-                                variableTypes[dstElem] = elemDt;
-                                Emit(new Copy(new Constant(0), new Variable(dstElem, elemDt)));
-                            }
-
-                            return;
-                        }
-
-                        throw new Exception("Slice initializer target must be a named fixed-size array");
-                    }
-
-                    if (stmt.Value is ListExpr le)
-                    {
-                        for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
-                        {
-                            if (le.Elements[k] is IntegerLiteral il) initVals[k] = il.Value;
-                        }
-                    }
-
-                    if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
-                        be.Right is IntegerLiteral repeatLit && repeatLit.Value > 0)
-                    {
-                        for (int k = 0; k < count; ++k)
-                        {
-                            int srcIdx = k % leRep.Elements.Count;
-                            if (srcIdx < leRep.Elements.Count && leRep.Elements[srcIdx] is IntegerLiteral il)
-                                initVals[k] = il.Value;
-                        }
-                    }
-                }
-
-                if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
-                {
-                    for (int k = 0; k < count; ++k)
-                        Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), elemDt, count));
-                }
-                else
-                {
-                    for (int k = 0; k < count; ++k)
-                    {
-                        string elemName = qualified + "__" + k;
-                        var elemVar = new Variable(elemName, elemDt);
-                        variableTypes[elemName] = elemDt;
-                        Emit(new Copy(new Constant(initVals[k]), elemVar));
-                    }
-                }
-
-                return;
-            }
-        }
+        if (bracket != -1 && close != -1 && close == stmt.Annotation.Length - 1 && close > bracket + 1
+            && EmitFixedArrayAnnAssign(stmt, bracket, close)) return;
 
         DataType type = DataType.UINT8;
         bool isPtrAnnotation = stmt.Annotation.StartsWith("ptr[") && stmt.Annotation.EndsWith("]");
@@ -1327,6 +1980,17 @@ public partial class IRGenerator
                 return;
             }
 
+            // ptr[T] = <runtime address> (e.g. ptr(BASE + x) with a non-constant offset):
+            // the variable holds a 16-bit runtime address. Record it as a runtime pointer so
+            // a later `.value` read / write / augmented-assign lowers to Load/StoreIndirect.
+            if (isPtrAnnotation)
+            {
+                Emit(new Copy(rhs, new Variable(qualified2, DataType.UINT16)));
+                variableTypes[qualified2] = DataType.UINT16;
+                runtimePtrVars[qualified2] = ptrElemType;
+                return;
+            }
+
             if (rhs is MemoryAddress addr) rhs = addr with { Type = type };
             Emit(new Copy(rhs, new Variable(qualified2, type)));
 
@@ -1343,6 +2007,256 @@ public partial class IRGenerator
                 if (sv != null) strConstantVariables[qualified2] = sv;
             }
         }
+    }
+
+    // list[T] annotation -> a heap-allocated GC list (bounded bump allocator).
+    private void EmitListAnnAssign(AnnAssign stmt)
+    {
+        string elemTypeName = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
+        DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
+        int elemSize = elemDt.SizeOf();
+
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + stmt.Target
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
+
+        listVarElemTypes[qualified] = elemDt;
+        variableTypes[qualified] = DataType.GC_REF;
+
+        if (stmt.Value != null)
+        {
+            int capacity = 8;
+            List<Val>? initElements = null;
+
+            if (stmt.Value is CallExpr listCall && listCall.Callee is VariableExpr calleeV &&
+                calleeV.Name == "list")
+            {
+                if (listCall.Args.Count == 1 && listCall.Args[0] is IntegerLiteral capLit)
+                    capacity = capLit.Value;
+            }
+            else if (stmt.Value is ListExpr le)
+            {
+                initElements = new List<Val>();
+                foreach (var e in le.Elements)
+                    initElements.Add(VisitExpression(e));
+                if (le.Elements.Count > capacity) capacity = le.Elements.Count;
+            }
+
+            int allocSize = 2 + capacity * elemSize;
+            Temporary tmpPtr = MakeTemp(DataType.GC_REF);
+            Emit(new GcAlloc(new Constant(allocSize), tmpPtr));
+
+            int initCount = initElements?.Count ?? 0;
+            EmitListStore(tmpPtr, 0, new Constant(initCount));
+            EmitListStore(tmpPtr, 1, new Constant(capacity));
+
+            if (initElements != null)
+            {
+                for (int k = 0; k < initElements.Count; k++)
+                    EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
+            }
+
+            Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
+        }
+
+        return;
+    }
+
+    // Fixed-size array annotation `T[N]` (incl. Class[N] slot arrays and Callable[N]):
+    // register sizes/types and emit element initializers. Returns true when handled;
+    // false to fall through (e.g. a ptr[...] annotation handled by the scalar path).
+    // Evaluate a list-literal initializer element to a constant int, handling negatives
+    // (`-1` is UnaryExpr(Negate), not an IntegerLiteral) and constant expressions — not just a
+    // bare IntegerLiteral. Returns false if it is not a compile-time constant (left as 0).
+    private bool TryEvalElemConst(Expression e, out int value)
+    {
+        try { value = EvaluateConstantExpr(e); return true; }
+        catch { value = 0; return false; }
+    }
+
+    private bool EmitFixedArrayAnnAssign(AnnAssign stmt, int bracket, int close)
+    {
+        string inner = stmt.Annotation.Substring(bracket + 1, close - bracket - 1);
+
+        // RFC 0001 Model B (Class[N]): array of boxed ZCA instances. Lay out N contiguous
+        // slots (count * stride bytes) as a flat SRAM byte array; record the element class
+        // and stride so arr[i] = C(..) constructs into element i and arr[i].method() passes
+        // the element address as self.
+        string elemAnno = stmt.Annotation.Substring(0, bracket);
+        // A Class[N] of a multi-field class is an instance (slot) array. The class qualifies via
+        // slotClasses (multi-field with an outlined method) OR simply by having >= 2 fields -- a
+        // pure-data struct with no methods is never added to slotClasses, but its Class[N] array
+        // still needs the contiguous slot layout, else arr[i] falls back to a value-array and a
+        // runtime index / field access fails.
+        bool elemIsMultiField = slotClasses.Contains(elemAnno)
+            || (classFieldLayout.TryGetValue(elemAnno, out var elemLay) && elemLay.Count >= 2);
+        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit) && elemIsMultiField)
+        {
+            int n = int.Parse(inner);
+            var layout = classFieldLayout[elemAnno];
+            int stride = layout.Sum(f => DataTypeExtensions.StringToDataType(f.Type).SizeOf());
+            string arrQ = string.IsNullOrEmpty(currentFunction)
+                ? stmt.Target : currentFunction + "." + stmt.Target;
+            arraySizes[arrQ] = n * stride;
+            arrayElemTypes[arrQ] = DataType.UINT8;
+            variableTypes[arrQ] = DataType.UINT8;
+            arraysWithVariableIndex.Add(arrQ);
+            moduleSramArrays.Add(arrQ);
+            instanceArrayClass[arrQ] = elemAnno;
+            instanceArrayStride[arrQ] = stride;
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(inner) && inner.All(char.IsDigit))
+        {
+            int count = int.Parse(inner);
+            DataType elemDt = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, bracket));
+            string qualified = string.IsNullOrEmpty(currentFunction)
+                ? stmt.Target
+                : currentFunction + "." + stmt.Target;
+            // Synthesized main: fall back to the module-level name registered by ScanGlobals.
+            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+                qualified = stmt.Target;
+            arraySizes[qualified] = count;
+            arrayElemTypes[qualified] = elemDt;
+            variableTypes[qualified] = elemDt;
+
+            // Callable[N]: array of function references stored in SRAM.
+            if (elemDt == DataType.FUNCREF)
+            {
+                bool isSramCallable = arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified);
+                if (stmt.Value is ListExpr callableList)
+                {
+                    for (int k = 0; k < count; ++k)
+                    {
+                        Val fnVal;
+                        if (k < callableList.Elements.Count)
+                        {
+                            var elem = callableList.Elements[k];
+                            if (elem is VariableExpr fnVe)
+                                fnVal = new FunctionRef(fnVe.Name);
+                            else if (elem is CallExpr funcrefCall
+                                     && funcrefCall.Callee is VariableExpr funcrefCallee
+                                     && funcrefCallee.Name == "funcref"
+                                     && funcrefCall.Args.Count == 1
+                                     && funcrefCall.Args[0] is VariableExpr refVe)
+                                fnVal = new FunctionRef(refVe.Name);
+                            else
+                                fnVal = new Constant(0);
+                        }
+                        else
+                        {
+                            fnVal = new Constant(0);
+                        }
+
+                        if (isSramCallable)
+                            Emit(new ArrayStore(qualified, new Constant(k), fnVal, DataType.FUNCREF, count));
+                        else
+                        {
+                            string elemName = qualified + "__" + k;
+                            variableTypes[elemName] = DataType.FUNCREF;
+                            Emit(new Copy(fnVal, new Variable(elemName, DataType.FUNCREF)));
+                        }
+                    }
+                }
+                return true;
+            }
+
+            var initVals = new List<int>(Enumerable.Repeat(0, count));
+            if (stmt.Value != null)
+            {
+                if (stmt.Value is ListCompExpr lc)
+                {
+                    VisitListComp(lc, qualified, count, elemDt);
+                    return true;
+                }
+
+                if (stmt.Value is IndexExpr idxRhs && idxRhs.Index is SliceExpr sl &&
+                    idxRhs.Target is VariableExpr srcVe)
+                {
+                    string srcQ = string.IsNullOrEmpty(currentFunction)
+                        ? srcVe.Name
+                        : currentFunction + "." + srcVe.Name;
+                    if (!arraySizes.ContainsKey(srcQ) && arraySizes.ContainsKey(srcVe.Name)) srcQ = srcVe.Name;
+                    if (arraySizes.TryGetValue(srcQ, out int srcSize))
+                    {
+                        DataType srcEdt = arrayElemTypes[srcQ];
+                        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+                        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
+                        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+                        if (step == 0) throw UserError("Slice step cannot be zero");
+                        if (start < 0) start += srcSize;
+                        if (stop < 0) stop += srcSize;
+                        start = Math.Max(0, Math.Min(start, srcSize));
+                        stop = Math.Max(0, Math.Min(stop, srcSize));
+                        bool srcSram = arraysWithVariableIndex.Contains(srcQ) || moduleSramArrays.Contains(srcQ);
+                        int k = 0;
+                        for (int i = start; (step > 0 ? i < stop : i > stop) && k < count; i += step, ++k)
+                        {
+                            string dstElem = qualified + "__" + k;
+                            variableTypes[dstElem] = elemDt;
+                            Val srcVal;
+                            if (srcSram)
+                            {
+                                Temporary tmp = MakeTemp(srcEdt);
+                                Emit(new ArrayLoad(srcQ, new Constant(i), tmp, srcEdt, srcSize));
+                                srcVal = tmp;
+                            }
+                            else srcVal = new Variable(srcQ + "__" + i, srcEdt);
+
+                            Emit(new Copy(srcVal, new Variable(dstElem, elemDt)));
+                        }
+
+                        for (; k < count; ++k)
+                        {
+                            string dstElem = qualified + "__" + k;
+                            variableTypes[dstElem] = elemDt;
+                            Emit(new Copy(new Constant(0), new Variable(dstElem, elemDt)));
+                        }
+
+                        return true;
+                    }
+
+                    throw UserError("Slice initializer target must be a named fixed-size array");
+                }
+
+                if (stmt.Value is ListExpr le)
+                {
+                    for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
+                        if (TryEvalElemConst(le.Elements[k], out int v)) initVals[k] = v;
+                }
+
+                if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
+                    be.Right is IntegerLiteral repeatLit && repeatLit.Value > 0)
+                {
+                    for (int k = 0; k < count; ++k)
+                    {
+                        int srcIdx = k % leRep.Elements.Count;
+                        if (srcIdx < leRep.Elements.Count && TryEvalElemConst(leRep.Elements[srcIdx], out int v))
+                            initVals[k] = v;
+                    }
+                }
+            }
+
+            if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
+            {
+                for (int k = 0; k < count; ++k)
+                    Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), elemDt, count));
+            }
+            else
+            {
+                for (int k = 0; k < count; ++k)
+                {
+                    string elemName = qualified + "__" + k;
+                    var elemVar = new Variable(elemName, elemDt);
+                    variableTypes[elemName] = elemDt;
+                    Emit(new Copy(new Constant(initVals[k]), elemVar));
+                }
+            }
+
+            return true;
+        }
+        return false;
     }
 
     private void VisitListComp(ListCompExpr lc, string qualifiedName, int count, DataType elemDt)
@@ -1408,14 +2322,14 @@ public partial class IRGenerator
                 if (call.Args.Count == 1)
                 {
                     var sv = EvalConst(call.Args[0]);
-                    if (sv == null) throw new Exception("List comprehension const err");
+                    if (sv == null) throw UserError("List comprehension const err");
                     stop = sv.Value;
                 }
                 else if (call.Args.Count >= 2)
                 {
                     var sv = EvalConst(call.Args[0]);
                     var ev = EvalConst(call.Args[1]);
-                    if (sv == null || ev == null) throw new Exception("List comprehension const err");
+                    if (sv == null || ev == null) throw UserError("List comprehension const err");
                     start = sv.Value;
                     stop = ev.Value;
                 }
@@ -1427,7 +2341,7 @@ public partial class IRGenerator
                 foreach (var e in le.Elements)
                 {
                     var v = EvalConst(e);
-                    if (v == null) throw new Exception("List comprehension const err");
+                    if (v == null) throw UserError("List comprehension const err");
                     vals.Add(v.Value);
                 }
             }
@@ -1453,7 +2367,7 @@ public partial class IRGenerator
                     if (lc.Filter != null)
                     {
                         var fv = EvalConst(lc.Filter);
-                        if (fv == null) throw new Exception("filter error");
+                        if (fv == null) throw UserError("filter error");
                         if (fv == 0) continue;
                     }
 
@@ -1467,7 +2381,7 @@ public partial class IRGenerator
                 if (lc.Filter != null)
                 {
                     var fv = EvalConst(lc.Filter);
-                    if (fv == null) throw new Exception("filter error");
+                    if (fv == null) throw UserError("filter error");
                     if (fv == 0) continue;
                 }
 
@@ -1478,7 +2392,7 @@ public partial class IRGenerator
         constantVariables.Remove(outerKey);
 
         if (entries.Count != count)
-            throw new Exception($"List comprehension generated {entries.Count} but array is {count}");
+            throw UserError($"List comprehension generated {entries.Count} but array is {count}");
         bool useSram = arraysWithVariableIndex.Contains(qualifiedName) || moduleSramArrays.Contains(qualifiedName);
 
         for (int k = 0; k < count; ++k)
@@ -1626,6 +2540,11 @@ public partial class IRGenerator
 
     private void VisitAugAssign(AugAssignStmt stmt)
     {
+        // A const-declared name is immutable; an augmented assignment (`K += 1`) mutates it
+        // just like a plain assignment, so reject it with the same located error.
+        if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
+            throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)");
+
         Val operand = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr ve)
@@ -1663,7 +2582,7 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        if (!(ie.Index is IntegerLiteral il)) throw new Exception("Array subscript must be const");
+                        if (!(ie.Index is IntegerLiteral il)) throw UserError("Array subscript must be const");
                         string elemName = qualified + "__" + il.Value;
                         Emit(new Copy(result, new Variable(elemName, arrayElemTypes[qualified])));
                     }
@@ -1708,10 +2627,65 @@ public partial class IRGenerator
                 bool resolved = false;
                 if (idxVal2 is Temporary t) resolved = TryConst(t.Name);
                 else if (idxVal2 is Variable v) resolved = TryConst(v.Name);
-                if (!resolved) throw new Exception("Bit index must be constant for augmented assignment");
+                if (!resolved) throw UserError("Bit index must be constant for augmented assignment");
             }
 
             Emit(new BitWrite(tgtVal, bit, result));
+        }
+        else if (stmt.Target is MemberAccessExpr mae && mae.Member == "value")
+        {
+            // `<ptr>.value OP= operand`: read-modify-write through the pointer. Without this
+            // case a member-target augmented assignment was silently dropped.
+            Val ptrObj = VisitExpression(mae.Object);
+            string? pn = ptrObj switch { Variable pv => pv.Name, Temporary pt => pt.Name, _ => null };
+
+            if (pn != null && runtimePtrVars.TryGetValue(pn, out var rElem))
+            {
+                // Runtime pointer (ptr(<runtime addr>)): LoadIndirect -> op -> StoreIndirect.
+                Temporary cur = MakeTemp(rElem);
+                Emit(new LoadIndirect(ptrObj, cur));
+                Temporary res = MakeTemp(rElem);
+                Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
+                Emit(new StoreIndirect(res, ptrObj));
+                return;
+            }
+
+            // Compile-time address: a ptr[T] const-address variable or a register MemoryAddress.
+            DataType elem = DataType.UINT8;
+            if (pn != null && constantAddressVariables.TryGetValue(pn, out int caddr))
+            {
+                if (variableTypes.TryGetValue(pn, out var pet)) elem = pet;
+                ptrObj = new MemoryAddress(caddr, elem);
+            }
+            else if (ptrObj is MemoryAddress mma) elem = mma.Type;
+
+            if (ptrObj is MemoryAddress maddr)
+            {
+                // Reading a MemoryAddress operand dereferences it (IN/LDS); writing back
+                // via Copy stores it (OUT/STS).
+                Temporary res = MakeTemp(elem);
+                Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), maddr, operand, res));
+                Emit(new Copy(res, new MemoryAddress(maddr.Address, elem)));
+                return;
+            }
+
+            throw UserError("augmented assignment to .value requires a pointer or register target");
+        }
+        else if (stmt.Target is MemberAccessExpr mfield)
+        {
+            // `obj.field OP= v` for a ZCA field (slot, scalar, or flattened): read-modify-write.
+            // Only `.value` had a case, so an augmented assignment to any other member was
+            // silently dropped (e.g. `box.x += 3` left box.x unchanged). Reuse the field read and
+            // write paths so the slot-aware load/store is applied for multi-field instances.
+            Val cur = VisitMemberAccess(mfield);   // a @property read goes through the getter (A67)
+            DataType dt = GetValType(cur);
+            if (dt == DataType.UNKNOWN) dt = DataType.UINT8;
+            Temporary res = MakeTemp(dt);
+            Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
+            // A @property must write back through its setter, not a phantom data field. The
+            // getter read above already produced `cur`; route the new value through the setter.
+            if (TryExpandPropertySetter(mfield, () => res)) return;
+            EmitMemberAssign(new AssignStmt(mfield, mfield) { Line = stmt.Line }, mfield, res);
         }
     }
 
@@ -1786,20 +2760,43 @@ public partial class IRGenerator
 
             if (stmt.StarredIndex < 0)
             {
-                if (nTup != nTgt) throw new Exception($"Tuple size mismatch");
+                if (nTup != nTgt) throw UserError($"Tuple size mismatch");
+                // Python evaluates the whole RHS tuple before assigning, so snapshot
+                // each runtime value first. Otherwise `a, b = b, a` would assign a = b and
+                // then read the already-overwritten a. The snapshot must be a named Variable,
+                // not a Temporary: the linear copy-propagation forwards a temp aliasing a
+                // variable past that variable's reassignment (it would turn `b = snap` back
+                // into `b = a` after `a = ...`), whereas a variable-to-variable copy is left to
+                // the CFG-aware pass, whose dataflow correctly kills the alias when the source
+                // is redefined. The name is globally unique (tempCounter), so it never collides.
+                var snapshots = new List<Val>(nTup);
+                foreach (var el in tup.Elements)
+                {
+                    Val v = VisitExpression(el);
+                    if (v is Variable or Temporary)
+                    {
+                        DataType st = GetValType(v);
+                        var snap = new Variable($"__unpack{tempCounter++}", st);
+                        variableTypes[snap.Name] = st;
+                        Emit(new Copy(v, snap));
+                        snapshots.Add(snap);
+                    }
+                    else snapshots.Add(v);
+                }
                 for (int k = 0; k < nTgt; ++k)
                 {
-                    Val v = VisitExpression(tup.Elements[k]);
                     string qualified = QualifyTarget(stmt.Targets[k]);
-                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : DataType.UINT8;
-                    Emit(new Copy(v, new Variable(qualified, dt)));
-                    if (v is Constant c) constantVariables[qualified] = c.Value;
+                    DataType dt = variableTypes.TryGetValue(qualified, out var t) ? t : GetValType(snapshots[k]);
+                    variableTypes[qualified] = dt;
+                    Emit(new Copy(snapshots[k], new Variable(qualified, dt)));
+                    if (snapshots[k] is Constant c) constantVariables[qualified] = c.Value;
+                    else constantVariables.Remove(qualified);
                 }
             }
             else
             {
                 int nFixed = nTgt - 1;
-                if (nTup < nFixed) throw new Exception("Not enough values to unpack");
+                if (nTup < nFixed) throw UserError("Not enough values to unpack");
                 int starIdx = stmt.StarredIndex;
                 int starCount = nTup - nFixed;
 
@@ -1841,13 +2838,13 @@ public partial class IRGenerator
         {
             pendingTupleCount = stmt.Targets.Count;
             if (stmt.StarredIndex >= 0)
-                throw new Exception("Starred expressions not supported with inline multi-return.");
+                throw UserError("Starred expressions not supported with inline multi-return.");
 
             Val ignored = VisitExpression(call);
             pendingTupleCount = 0;
 
             if (lastTupleResults.Count != stmt.Targets.Count)
-                throw new Exception($"Expected {stmt.Targets.Count} tuple results, got {lastTupleResults.Count}");
+                throw UserError($"Expected {stmt.Targets.Count} tuple results, got {lastTupleResults.Count}");
 
             for (int k = 0; k < stmt.Targets.Count; ++k)
             {
@@ -1859,7 +2856,7 @@ public partial class IRGenerator
             }
         }
         else
-            throw new Exception(
+            throw UserError(
                 "Tuple unpacking RHS must be a tuple literal or an inline function call returning a tuple.");
     }
 

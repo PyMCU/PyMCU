@@ -22,6 +22,12 @@ public partial class IRGenerator
 {
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
+        // Collect every member name used as an assignment target anywhere in this module
+        // (recursing into class methods and nested blocks). This forms the superset of all
+        // class fields used to flag a read of an undefined instance attribute.
+        foreach (var stmt in ast.GlobalStatements)
+            CollectAssignedMemberNames(stmt);
+
         foreach (var stmt in ast.GlobalStatements)
         {
             string name = "";
@@ -64,6 +70,20 @@ public partial class IRGenerator
                 type = annAssign.Annotation;
                 initializer = annAssign.Value;
 
+                // A `const[...]` annotation marks the name immutable; record it so a later
+                // assignment to it is rejected (see VisitAssign's reassignment guard).
+                if (type.StartsWith("const[") && type.EndsWith("]"))
+                    declaredConstants.Add(name);
+
+                // A module-level string constant (`str` or `const[str]`). Register its
+                // compile-time value under the module-global key so ResolveStrConstant resolves
+                // it for subscripting (S[i]), len(S) and iteration — previously these silently
+                // dropped because ScanGlobals (which owns module globals) never recorded it.
+                // (Done before the const[...] dispatch below, which would otherwise consume
+                // const[str] as a malformed flash array.)
+                if ((type == "str" || type == "const[str]") && initializer is StringLiteral strLit)
+                    strConstantVariables[currentModulePrefix + name] = strLit.Value;
+
                 // Detect const[uint8[N]] flash array annotation.
                 if (type.StartsWith("const[") && type.EndsWith("]"))
                 {
@@ -89,8 +109,8 @@ public partial class IRGenerator
                                 if (initializer is ListExpr le)
                                 {
                                     for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
-                                        if (le.Elements[k] is IntegerLiteral il)
-                                            bytes[k] = il.Value;
+                                        if (TryEvalElemConst(le.Elements[k], out int v))
+                                            bytes[k] = v;
                                 }
                                 pendingFlashData.Add(new FlashData(name, bytes));
                             }
@@ -298,12 +318,24 @@ public partial class IRGenerator
             var paramTypes = new List<DataType>();
             foreach (var p in func.Params)
             {
+                // A fixed-array parameter type (`uint8[4]`) is not a real subroutine ABI: it has
+                // no scalar register form and was silently misread as a ZCA handler param, so the
+                // body was never compiled and the call failed only at link time. Reject it with a
+                // pointer to the supported idiom (an array argument is passed by reference as a
+                // `bytearray`), instead of emitting a dangling `undefined reference`.
+                if (IsFixedArrayParamType(p.Type))
+                    throw UserError(
+                        $"parameter '{p.Name}' of '{func.Name}' has a fixed-array type '{p.Type}'; " +
+                        "pass an array to a function as a 'bytearray' (by reference), " +
+                        $"e.g. `def {func.Name}({p.Name}: bytearray, ...)`");
                 @params.Add(p.Name);
                 paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
             }
 
             functionParams[fullName] = @params;
             functionParamTypes[fullName] = paramTypes;
+            functionParamDefaults[fullName] = func.Params.Select(p => p.DefaultValue).ToList();
+            functionModulePrefix[fullName] = currentModulePrefix ?? "";
 
             if (scope != null)
             {
@@ -317,7 +349,11 @@ public partial class IRGenerator
             }
             else if (func.IsInline)
             {
-                if (inlineFunctions.ContainsKey(fullName))
+                // `|| overloadedFunctions.Contains` so that once a name is overloaded (its
+                // bare key removed below), a later same-named overload registers under its
+                // suffixed key instead of re-occupying the vacated bare key, where it would
+                // be invisible to suffix-based overload resolution.
+                if (inlineFunctions.ContainsKey(fullName) || overloadedFunctions.Contains(fullName))
                 {
                     if (!overloadedFunctions.Contains(fullName))
                     {
@@ -346,7 +382,8 @@ public partial class IRGenerator
                 bool hasZcaFirstParam = func.Params.Count > 0 &&
                     DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
                     func.Params[0].Type != "bytearray" &&
-                    !func.Params[0].Type.StartsWith("ptr");
+                    !func.Params[0].Type.StartsWith("ptr") &&
+                    func.Params[0].Type != "const[str]" && func.Params[0].Type != "str";
                 if (hasZcaFirstParam)
                 {
                     zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");
@@ -368,6 +405,17 @@ public partial class IRGenerator
 
                 if (classDef.Body != null)
                 {
+                    // Multiple inheritance is not supported (the ZCA model assumes a single base
+                    // for layout + dispatch). Reject it clearly instead of later failing with an
+                    // opaque "undefined function 'C_foo'" when a second base's method is called.
+                    var realBases = classDef.Bases
+                        .Where(b => b is not ("Enum" or "IntEnum" or "object")).ToList();
+                    if (realBases.Count > 1)
+                        throw UserError(
+                            $"class '{classDef.Name}' uses multiple inheritance " +
+                            $"({string.Join(", ", realBases)}), which PyMCU does not support; " +
+                            "use composition (hold an instance as a field) or a single base class");
+
                     classNames.Add(classDef.Name);
                     if (classDef.IsValue) valueClasses.Add(classDef.Name);
                     var oldPrefix = currentModulePrefix;
@@ -381,6 +429,82 @@ public partial class IRGenerator
 
                     if (classDef.Body is Block block)
                     {
+                        // RFC 0001: derive the field layout once per class. A class with a
+                        // single primitive field is eligible to be returned by value from a
+                        // non-@inline factory (Model B register-packed handle).
+                        var clsLayout = DeriveFieldLayout(block);
+                        // A subclass with no __init__ of its own inherits the base's fields, so an
+                        // OVERRIDDEN method can resolve them (`self.a` otherwise errors "not a
+                        // member"). Inherit the layout ONLY when the base is a slot class: that is
+                        // the case where the override would be outlined and needs the field layout.
+                        // Plain virtual/@inline HAL classes (base NOT in slotClasses) keep an empty
+                        // layout so their construction model is unchanged (inheriting it there
+                        // wrongly promotes the subclass to a slot and crashes codegen).
+                        if (clsLayout.Count == 0 && !InitCallsSuperInit(block))
+                            foreach (var baseName in classDef.Bases)
+                            {
+                                if (baseName is "Enum" or "IntEnum") continue;
+                                // Inherit the base's field layout so an inherited/overridden method
+                                // can resolve `self.<field>`. Allow it for a real ZCA data class --
+                                // a slot (>= 2 fields) OR a single-field data class (zcaFactoryClasses)
+                                // -- but NOT for a virtual/@inline HAL class (neither), whose multi-
+                                // field layout would wrongly promote the subclass to a slot (A66).
+                                bool IsDataClass(string k) =>
+                                    slotClasses.Contains(k) || zcaFactoryClasses.ContainsKey(k);
+                                string bk = oldPrefix + baseName;
+                                if (classFieldLayout.TryGetValue(bk, out var bl) && bl.Count > 0
+                                    && IsDataClass(bk))
+                                {
+                                    clsLayout = bl;
+                                    break;
+                                }
+
+                                if (classFieldLayout.TryGetValue(baseName, out var bl2) && bl2.Count > 0
+                                    && IsDataClass(baseName))
+                                {
+                                    clsLayout = bl2;
+                                    break;
+                                }
+                            }
+
+                        // A subclass __init__ that calls super().__init__() also owns the base's
+                        // fields (the base ctor sets them on the same self). Merge the base layout
+                        // AHEAD of the subclass's own fields (base ctor runs first), so an outlined
+                        // method on the subclass receives every field and `self.<inherited>` resolves
+                        // instead of erroring "not a member". Runs even when the subclass adds no own
+                        // field (a super-only __init__, common at intermediate/leaf levels of a deep
+                        // chain) -- merged becomes the full base layout, which keeps the chain
+                        // propagating through any number of levels (L0->L1->...->Ln).
+                        if (InitCallsSuperInit(block))
+                            foreach (var baseName in classDef.Bases)
+                            {
+                                if (baseName is "Enum" or "IntEnum") continue;
+                                List<(string Field, string Type, string SourceParam)>? baseLayout = null;
+                                if (classFieldLayout.TryGetValue(oldPrefix + baseName, out var blm) && blm.Count > 0)
+                                    baseLayout = blm;
+                                else if (classFieldLayout.TryGetValue(baseName, out var blm2) && blm2.Count > 0)
+                                    baseLayout = blm2;
+                                if (baseLayout == null) continue;
+
+                                var ownFields = new HashSet<string>(clsLayout.Select(f => f.Field));
+                                var merged = new List<(string Field, string Type, string SourceParam)>();
+                                foreach (var bf in baseLayout)
+                                    if (!ownFields.Contains(bf.Field)) merged.Add(bf);
+                                merged.AddRange(clsLayout);
+                                clsLayout = merged;
+                                break;
+                            }
+
+                        classFieldLayout[classKey] = clsLayout;
+                        if (InitCallsSuperInit(block)) classInitCallsSuper.Add(classKey);
+                        // Note: slotClasses (>= 2 fields) is marked only when an @outline method
+                        // is actually present (below), so plain @inline HAL classes with multiple
+                        // fields keep their normal virtual-construction path. zcaFactoryClasses is
+                        // safe to mark eagerly: it is only consulted in factory-return contexts,
+                        // never in direct construction.
+                        if (clsLayout.Count == 1)
+                            zcaFactoryClasses[classKey] = clsLayout[0].Type;
+
                         foreach (var inner in block.Statements)
                         {
                             if (inner is FunctionDef func)
@@ -402,6 +526,15 @@ public partial class IRGenerator
                                 functionParams[fullName] = @params;
                                 functionParamTypes[fullName] = paramTypes;
 
+                                if (func.IsPropertyGetter)
+                                {
+                                    // Record the getter so a bare `obj.<prop>` read is desugared
+                                    // into a getter call. @property forces IsInline, so the inline
+                                    // registration in the branch below still runs.
+                                    string getterClass = classPrefix.Substring(0, classPrefix.Length - 1);
+                                    propertyGetters.Add(getterClass + "." + func.Name);
+                                }
+
                                 if (func.IsPropertySetter)
                                 {
                                     string setterKey = fullName + "___setter";
@@ -409,41 +542,87 @@ public partial class IRGenerator
                                     string className = classPrefix.Substring(0, classPrefix.Length - 1);
                                     propertySetters[className + "." + func.PropertyName] = setterKey;
                                 }
+                                else if (func.IsOutline)
+                                {
+                                    // RFC 0001: explicit @outline -- compile this method ONCE as a
+                                    // shared subroutine (Model A field-params, or Model B SRAM slot
+                                    // for >= 2 fields). After F4 this is redundant with the default
+                                    // for outline-safe methods; kept as an explicit request.
+                                    RegisterOutlinedMethod(func, classKey, clsLayout, fullName);
+                                }
                                 else if (func.IsInline)
                                 {
-                                    if (!inlineFunctions.TryAdd(fullName, func))
+                                    // Once a name is overloaded its bare key is vacated, so a later
+                                    // same-named overload must register under its suffixed key — never
+                                    // re-occupy the bare key (a TryAdd there would succeed and hide the
+                                    // overload from suffix-based resolution; e.g. Pin's 3rd const[str]
+                                    // __init__ landing on the bare key and never being found).
+                                    if (overloadedFunctions.Contains(fullName))
                                     {
-                                        if (!overloadedFunctions.Contains(fullName))
+                                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
+                                    }
+                                    else if (!inlineFunctions.TryAdd(fullName, func))
+                                    {
+                                        var existing = inlineFunctions[fullName];
+                                        if (existing?.Params != null)
                                         {
-                                            var existing = inlineFunctions[fullName];
-                                            if (existing?.Params != null)
-                                            {
-                                                var existingSfx = BuildOverloadSuffix(existing.Params);
-                                                inlineFunctions[fullName + "___" + existingSfx] = existing;
-                                            }
-
-                                            inlineFunctions.Remove(fullName);
-                                            overloadedFunctions.Add(fullName);
+                                            var existingSfx = BuildOverloadSuffix(existing.Params);
+                                            inlineFunctions[fullName + "___" + existingSfx] = existing;
                                         }
 
-                                        string newSfx = BuildOverloadSuffix(func.Params);
-                                        inlineFunctions[fullName + "___" + newSfx] = func;
+                                        inlineFunctions.Remove(fullName);
+                                        overloadedFunctions.Add(fullName);
+                                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
                                     }
                                 }
                                 else
                                 {
-                                    functionsToCompile.Add(new FunctionEntry
-                                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
-                                    // Keep the AST so Call.cs can force-inline this method when
-                                    // it is called on a ZCA instance with a known concrete type.
-                                    // ZCA field aliasing requires inline expansion of self accesses.
-                                    instanceMethodDefs[fullName] = func;
+                                    // RFC 0001 F4: an undecorated method is OUTLINED BY DEFAULT when
+                                    // it is outline-safe (touches self only as self.<field>). This is
+                                    // why @inline now means something: without it, a representable
+                                    // method is shared, not silently force-inlined per instance.
+                                    var defLayout = clsLayout;
+                                    if (IsOutlineSafe(func, defLayout))
+                                    {
+                                        // A single-field mutator that ALSO has explicit returns
+                                        // cannot use write-back-via-return (one return slot can't
+                                        // carry both a value and the field). Force-inline it so
+                                        // self.field aliasing persists the mutation. Registered in
+                                        // inlineFunctions ONLY (never functionsToCompile) so it is
+                                        // expanded per call site, not compiled standalone (which
+                                        // would treat self as numeric and fail).
+                                        if (defLayout.Count == 1
+                                            && MethodMutatesField(func, defLayout[0].Field)
+                                            && MethodHasReturnStmt(func))
+                                        {
+                                            inlineFunctions[fullName] = func;
+                                            instanceMethodDefs[fullName] = func;
+                                        }
+                                        else
+                                        {
+                                            RegisterOutlinedMethod(func, classKey, defLayout, fullName);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // Not representable as a shared body (uses self.method(),
+                                        // passes self, non-derivable field, or an unhandled construct):
+                                        // force-inline is the only way to give it a runtime form.
+                                        functionsToCompile.Add(new FunctionEntry
+                                            { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                                        instanceMethodDefs[fullName] = func;
+                                    }
                                 }
 
                                 if (!func.IsPropertySetter)
                                 {
                                     methodInstanceTypes[fullName] =
                                         currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
+                                    // Keep every instance method's AST reachable by symbol so a
+                                    // super().<method>() can inline-expand the base body even when
+                                    // the base method is outlined (not in inlineFunctions).
+                                    methodAstByName[fullName] = func;
+                                    if (MethodCallsSelfMethod(func)) methodsWithSelfCall.Add(fullName);
                                 }
                             }
                             else if (inner is ClassDef nestedClass)
@@ -525,6 +704,392 @@ public partial class IRGenerator
         }
     }
 
+    // RFC 0001 Model A: derives the ordered runtime-field layout of a ZCA class
+    // from its __init__ body. Each `self.<field> = <expr>` becomes a (field, type)
+    // entry; the type is taken from the matching __init__ parameter when the RHS is
+    // that parameter, else defaults to uint8. Used to synthesize the leading params
+    // of an @outline method.
+    // Recursively walk a statement (into class bodies, methods and nested blocks) and record
+    // every member name used as an assignment target. Defensive about statement types so it
+    // never UNDER-collects (a missed write would risk a false "no attribute" error).
+    private void CollectAssignedMemberNames(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) CollectAssignedMemberNames(st); return;
+            case ClassDef cd: CollectAssignedMemberNames(cd.Body); return;
+            case FunctionDef fd: CollectAssignedMemberNames(fd.Body); return;
+            case IfStmt iff:
+                CollectAssignedMemberNames(iff.ThenBranch);
+                foreach (var br in iff.ElifBranches) CollectAssignedMemberNames(br.Body);
+                CollectAssignedMemberNames(iff.ElseBranch);
+                return;
+            case WhileStmt w: CollectAssignedMemberNames(w.Body); return;
+            case ForStmt f:
+                // `for self.x in ...` (a member loop target) also writes the member.
+                if (f.VarName.Contains('.')) assignedMemberNames.Add(f.VarName[(f.VarName.LastIndexOf('.') + 1)..]);
+                CollectAssignedMemberNames(f.Body);
+                return;
+            case WithStmt wi: CollectAssignedMemberNames(wi.Body); return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectAssignedMemberNames(br.Body); return;
+            case TryStmt t:
+                foreach (var st in t.Body) CollectAssignedMemberNames(st);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectAssignedMemberNames(st);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectAssignedMemberNames(st);
+                return;
+            case AssignStmt a: RecordMemberAssignTarget(a.Target); return;
+            case AugAssignStmt ag: RecordMemberAssignTarget(ag.Target); return;
+            case AnnAssign an:
+                // AnnAssign.Target is a (possibly dotted) name string, e.g. "self._buf".
+                int dot = an.Target.LastIndexOf('.');
+                if (dot >= 0) assignedMemberNames.Add(an.Target[(dot + 1)..]);
+                return;
+        }
+    }
+
+    private void RecordMemberAssignTarget(Expression target)
+    {
+        switch (target)
+        {
+            case MemberAccessExpr ma: assignedMemberNames.Add(ma.Member); break;
+            case IndexExpr { Target: MemberAccessExpr ma2 }: assignedMemberNames.Add(ma2.Member); break;
+            case TupleExpr tup: foreach (var e in tup.Elements) RecordMemberAssignTarget(e); break;
+        }
+    }
+
+    // True when the method body calls a sibling method on self (self.<m>(...)). Such a method,
+    // if outlined, binds the self-call statically to its defining class; called on a subclass
+    // instance it must be force-inlined instead so the call dispatches to the concrete override.
+    private static bool MethodCallsSelfMethod(FunctionDef method)
+    {
+        bool found = false;
+        void E(Expression? e)
+        {
+            if (found || e == null) return;
+            switch (e)
+            {
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } }:
+                    found = true; return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case MemberAccessExpr ma: E(ma.Object); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+            }
+        }
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
+                case VarDecl vd: E(vd.Init); return;
+                case AnnAssign a: E(a.Value); return;
+                case AssignStmt asg: E(asg.Value); return;
+                case AugAssignStmt aug: E(aug.Value); return;
+                case ReturnStmt r: E(r.Value); return;
+                case ExprStmt ex: E(ex.Expr); return;
+                case IfStmt iff:
+                    E(iff.Condition); S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                    S(iff.ElseBranch); return;
+                case WhileStmt wh: E(wh.Condition); S(wh.Body); return;
+                case ForStmt fr: S(fr.Body); return;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
+    }
+
+    // True when the class's own __init__ delegates to its base via super().__init__(...).
+    // Such a subclass gains the base's fields (set by the base ctor) in addition to its own,
+    // so its slot layout must merge the base fields ahead of its own.
+    private static bool InitCallsSuperInit(Block classBody)
+    {
+        FunctionDef? init = null;
+        foreach (var s in classBody.Statements)
+            if (s is FunctionDef f && f.Name == "__init__") { init = f; break; }
+        if (init == null) return false;
+        foreach (var st in init.Body.Statements)
+        {
+            if (st is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr {
+                    Member: "__init__", Object: CallExpr { Callee: VariableExpr { Name: "super" } } } } })
+                return true;
+        }
+        return false;
+    }
+
+    private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)
+    {
+        var layout = new List<(string, string, string)>();
+        var seen = new HashSet<string>();
+
+        FunctionDef? init = null;
+        foreach (var s in classBody.Statements)
+            if (s is FunctionDef f && f.Name == "__init__") { init = f; break; }
+        if (init == null) return layout;
+
+        var paramTypes = new Dictionary<string, string>();
+        foreach (var p in init.Params) paramTypes[p.Name] = p.Type;
+
+        foreach (var s in init.Body.Statements)
+        {
+            string? field = null;
+            Expression? rhs = null;
+            if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
+                && ma.Object is VariableExpr sv && sv.Name == "self")
+            {
+                field = ma.Member;
+                rhs = asg.Value;
+            }
+
+            if (field == null || !seen.Add(field)) continue;
+
+            // SourceParam: the __init__ param that directly initializes the field
+            // (RHS is a bare parameter), else "" -- needed for factory return lowering.
+            string type = "uint8";
+            string srcParam = "";
+            if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
+            {
+                srcParam = rv.Name;
+                type = pt.StartsWith("const[") && pt.EndsWith("]")
+                    ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
+                    : pt;
+            }
+            layout.Add((field, type, srcParam));
+        }
+
+        return layout;
+    }
+
+    // RFC 0001 F1-F3: register a method as an outlined shared subroutine. >= 2 fields ->
+    // Model B SRAM slot (self pointer + BytearrayLoad offsets); else Model A (one param per
+    // field). Used by both the explicit @outline branch and the F4 default (an outline-safe
+    // undecorated method).
+    private void RegisterOutlinedMethod(FunctionDef func, string classKey,
+        List<(string Field, string Type, string SourceParam)> layout, string fullName)
+    {
+        var synthParams = new List<Param>();
+        if (layout.Count >= 2) slotClasses.Add(classKey);
+        if (slotClasses.Contains(classKey))
+        {
+            synthParams.Add(new Param("self", "bytearray"));
+            var offsets = new Dictionary<string, int>();
+            int off = 0;
+            foreach (var (fld, ty, _) in layout)
+            {
+                offsets[fld] = off;
+                off += DataTypeExtensions.StringToDataType(ty).SizeOf();
+            }
+            slotMethods.Add(fullName);
+            slotMethodFieldOffsets[fullName] = offsets;
+        }
+        else
+        {
+            foreach (var (fld, ty, _) in layout)
+                synthParams.Add(new Param("self_" + fld, ty));
+        }
+        for (int pi = 1; pi < func.Params.Count; ++pi)
+            synthParams.Add(func.Params[pi]);
+
+        // RFC 0001 (write-back): a single-field (Model A) method that mutates its field but
+        // never returns a value loses the mutation, because the field is passed BY VALUE.
+        // Rewrite the shared body to RETURN the (updated) field and record the field so the
+        // call site copies it back to the instance. The caller routes mutators that have
+        // explicit returns to force-inline instead, so here the body always falls through:
+        // appending a single `return self.<field>` is sufficient.
+        Block body = func.Body;
+        string returnType = func.ReturnType;
+        if (!slotClasses.Contains(classKey) && layout.Count == 1
+            && MethodMutatesField(func, layout[0].Field) && !MethodHasReturnStmt(func))
+        {
+            var (field, ftype, _) = layout[0];
+            body = new Block();
+            body.Statements.AddRange(func.Body.Statements);
+            body.Statements.Add(new ReturnStmt(new MemberAccessExpr(new VariableExpr("self"), field)));
+            returnType = ftype;
+            outlineWriteBack[fullName] = (field, DataTypeExtensions.StringToDataType(ftype));
+            if (!zcaWriteBackFields.TryGetValue(classKey, out var wf))
+                zcaWriteBackFields[classKey] = wf = new HashSet<string>();
+            wf.Add(field);
+        }
+
+        var synth = new FunctionDef(func.Name, synthParams, returnType, body, isInline: false);
+        functionsToCompile.Add(new FunctionEntry
+            { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile });
+
+        outlinedMethods.Add(fullName);
+        outlineFieldLayout[fullName] = layout;
+        functionReturnTypes[fullName] = returnType;
+        functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
+        functionParamTypes[fullName] = synthParams.Select(p => DataTypeExtensions.StringToDataType(p.Type)).ToList();
+    }
+
+    // RFC 0001 F4: is a method safe to outline (compile once, share) instead of force-inline?
+    // Safe iff its body touches `self` only as `self.<field>` where <field> is a derivable data
+    // field -- never `self.<method>()` and never bare `self` (passed as a value). Any unrecognized
+    // node makes it UNSAFE: outlining must be provably correct, otherwise we keep the existing
+    // force-inline behavior (zero regression). Methods with user params besides self stay safe
+    // (those params become trailing params of the shared body).
+    private bool IsOutlineSafe(FunctionDef method,
+        List<(string Field, string Type, string SourceParam)> layout)
+    {
+        if (layout.Count == 0) return false;
+
+        // A field whose type is not a scalar is another ZCA instance (e.g. a Pin
+        // stored as `self.pin`). An outlined body shares one copy across instances
+        // by passing each field as a runtime parameter, but a ZCA field is
+        // compile-time per-instance (a Pin is just its const pin name, no runtime
+        // value) — it cannot be passed as a parameter. Such methods must stay
+        // force-inlined so `self.pin.<method>()` resolves at each call site.
+        var scalarTypes = new HashSet<string>
+            { "uint8", "int8", "uint16", "int16", "uint32", "int32", "float", "bool" };
+        if (layout.Any(f => !scalarTypes.Contains(f.Type))) return false;
+
+        var fields = new HashSet<string>(layout.Select(f => f.Field));
+        bool safe = true;
+
+        void E(Expression? e)
+        {
+            if (!safe || e == null) return;
+            switch (e)
+            {
+                case MemberAccessExpr ma when ma.Object is VariableExpr sv && sv.Name == "self":
+                    if (!fields.Contains(ma.Member)) safe = false; // self.method() or non-field
+                    return; // do NOT descend into the `self` leaf -- it is a field access
+                case MemberAccessExpr ma2: E(ma2.Object); return;
+                case VariableExpr ve: if (ve.Name == "self") safe = false; return; // bare self
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                // self.method(args): a sibling-method call. Allowed in an outlined body —
+                // it lowers to a call that forwards this method's own self (field params
+                // or slot pointer). Validate only the args, not the self.<method> callee.
+                // LIMITATION: the outlined body is compiled once with `self` bound to the
+                // DEFINING class, so this self-call binds statically to that class's version.
+                // If the sibling is overridden in a subclass, virtual dispatch does NOT happen
+                // (Shape.total() calling self.unit() always runs Shape.unit). See the codegen
+                // backlog (virtual-dispatch-via-outlined-self-call) -- fixing it needs a
+                // post-scan, override-aware force-inline of just the virtual cases, preserving
+                // shared outlining for non-overridden sibling calls.
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } } selfCall:
+                    foreach (var a in selfCall.Args) E(a);
+                    return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+                case IntegerLiteral: case FloatLiteral: case BooleanLiteral:
+                case StringLiteral: return;
+                default: safe = false; return; // conservative: unknown node -> not outline-safe
+            }
+        }
+
+        void S(Statement? s)
+        {
+            if (!safe || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
+                case VarDecl vd: E(vd.Init); return; // typed local decl: `x: T = expr`
+                case AnnAssign a: E(a.Value); return;
+                case AssignStmt asg: E(asg.Target); E(asg.Value); return;
+                case AugAssignStmt aug: E(aug.Target); E(aug.Value); return;
+                case ReturnStmt r: E(r.Value); return;
+                case ExprStmt ex: E(ex.Expr); return;
+                case IfStmt iff:
+                    E(iff.Condition); S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                    S(iff.ElseBranch);
+                    return;
+                case WhileStmt wh: E(wh.Condition); S(wh.Body); return;
+                case BreakStmt: case ContinueStmt: case PassStmt: return;
+                default: safe = false; return; // conservative
+            }
+        }
+
+        foreach (var st in method.Body.Statements) S(st);
+        return safe;
+    }
+
+    // True if the method assigns `self.<field>` anywhere (a plain or augmented assignment).
+    // Such a method mutates instance state; if its single field is passed by value it loses
+    // the mutation unless we write it back (see RegisterOutlinedMethod).
+    // A fixed-array parameter type like `uint8[4]` / `int16[10]`: a scalar element type followed
+    // by a bracketed size. `const[...]`, `ptr[...]`, `list[...]`, `bytearray` and class names are
+    // NOT this shape. Such a type is valid for a local/field but not for a by-value parameter.
+    private static bool IsFixedArrayParamType(string? type)
+    {
+        if (string.IsNullOrEmpty(type)) return false;
+        int lb = type.IndexOf('[');
+        if (lb <= 0 || !type.EndsWith("]")) return false;
+        string elem = type.Substring(0, lb);
+        if (elem is not ("uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32"
+                         or "float" or "bool")) return false;
+        string inner = type.Substring(lb + 1, type.Length - lb - 2);
+        return inner.Length > 0 && inner.All(char.IsDigit);
+    }
+
+    private static bool MethodMutatesField(FunctionDef method, string field)
+    {
+        static bool IsSelfField(Expression e, string fld) =>
+            e is MemberAccessExpr ma && ma.Member == fld
+            && ma.Object is VariableExpr sv && sv.Name == "self";
+
+        bool found = false;
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                case AssignStmt asg when IsSelfField(asg.Target, field): found = true; break;
+                case AugAssignStmt aug when IsSelfField(aug.Target, field): found = true; break;
+                case IfStmt iff:
+                    S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) S(br.Body);
+                    S(iff.ElseBranch);
+                    break;
+                case WhileStmt wh: S(wh.Body); break;
+                case ForStmt fr: S(fr.Body); break;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
+    }
+
+    // True if the method contains any return statement (value-returning or bare). Write-back
+    // via return is applied only to fall-through void mutators; a mutator with explicit
+    // returns can't carry both a value and the field in one return slot, so it is force-inlined.
+    private static bool MethodHasReturnStmt(FunctionDef method)
+    {
+        bool found = false;
+        void S(Statement? s)
+        {
+            if (found || s == null) return;
+            switch (s)
+            {
+                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                case ReturnStmt: found = true; break;
+                case IfStmt iff:
+                    S(iff.ThenBranch);
+                    foreach (var br in iff.ElifBranches) S(br.Body);
+                    S(iff.ElseBranch);
+                    break;
+                case WhileStmt wh: S(wh.Body); break;
+                case ForStmt fr: S(fr.Body); break;
+            }
+        }
+        foreach (var st in method.Body.Statements) S(st);
+        return found;
+    }
+
     // Registers a nested class (a class defined in the body of another class) so it
     // can be constructed with zero-cost ZCA inlining just like a top-level class.
     // Mirrors the per-method registration done for top-level classes, prefixing
@@ -573,23 +1138,24 @@ public partial class IRGenerator
                 }
                 else if (func.IsInline)
                 {
-                    if (!inlineFunctions.TryAdd(fullName, func))
+                    // See the top-level class path: once overloaded, register under the
+                    // suffixed key rather than re-occupying the vacated bare key.
+                    if (overloadedFunctions.Contains(fullName))
                     {
-                        if (!overloadedFunctions.Contains(fullName))
+                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
+                    }
+                    else if (!inlineFunctions.TryAdd(fullName, func))
+                    {
+                        var existing = inlineFunctions[fullName];
+                        if (existing?.Params != null)
                         {
-                            var existing = inlineFunctions[fullName];
-                            if (existing?.Params != null)
-                            {
-                                var existingSfx = BuildOverloadSuffix(existing.Params);
-                                inlineFunctions[fullName + "___" + existingSfx] = existing;
-                            }
-
-                            inlineFunctions.Remove(fullName);
-                            overloadedFunctions.Add(fullName);
+                            var existingSfx = BuildOverloadSuffix(existing.Params);
+                            inlineFunctions[fullName + "___" + existingSfx] = existing;
                         }
 
-                        string newSfx = BuildOverloadSuffix(func.Params);
-                        inlineFunctions[fullName + "___" + newSfx] = func;
+                        inlineFunctions.Remove(fullName);
+                        overloadedFunctions.Add(fullName);
+                        inlineFunctions[fullName + "___" + BuildOverloadSuffix(func.Params)] = func;
                     }
                 }
                 else
@@ -993,6 +1559,19 @@ public partial class IRGenerator
             {
                 ScanExpr(aug.Target);
                 ScanExpr(aug.Value);
+            }
+            else if (stmt is VarDecl vd)
+            {
+                // `v: T = arr[idx]` declares v with a runtime-indexed read in its initializer.
+                // Without scanning it, arr is never marked variable-indexed and the read demands
+                // a constant subscript -- yet `v: T = 0; v = arr[idx]` works. Scan the init.
+                ScanExpr(vd.Init);
+            }
+            else if (stmt is ForStmt fr)
+            {
+                ScanExpr(fr.RangeStart); ScanExpr(fr.RangeStop); ScanExpr(fr.RangeStep);
+                ScanExpr(fr.Iterable);
+                ScanStmt(fr.Body);
             }
         }
 

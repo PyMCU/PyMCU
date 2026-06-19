@@ -33,13 +33,36 @@ public partial class IRGenerator
     private Dictionary<string, string?> functionReturnTypes = new();
     private Dictionary<string, List<string>> functionParams = new();
     private Dictionary<string, List<DataType>> functionParamTypes = new();
+    // Per-function default value expressions (null where a param has no default).
+    // Lets a non-inline call site fill in omitted trailing arguments, so defaults
+    // work for real subroutines and not just @inline functions.
+    private Dictionary<string, List<Frontend.Expression?>> functionParamDefaults = new();
+    // Functions currently being inline/force-inline expanded up the call chain.
+    // If a callee is already here, expanding it again is recursion through inlined
+    // calls — which would loop forever and segfault the compiler. Detected here so
+    // a recursive @inline/ZCA method gets a clear error instead of a crash.
+    private HashSet<string> activeInlineExpansions = new();
+    // Module prefix where each function was DEFINED, preserved across re-export so
+    // inlining resolves the body's internal calls (e.g. a private @inline helper) in
+    // the right module rather than the facade that re-exported the function.
+    private Dictionary<string, string> functionModulePrefix = new();
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
+    // Names currently bound to None (the real null, not the integer -1). Used to
+    // resolve `x is None` / `x is not None` at compile time: a name here IS None,
+    // an integer or a concrete instance is NOT. This is what keeps None from
+    // colliding with a real value like 255 / 0xFFFF / -1.
+    private HashSet<string> noneValuedNames = new();
     private string currentFunction = "";
     private HashSet<string> currentFunctionGlobals = new();
     private int inlineDepth = 0;
     private int ctorAnonId = 0; // Counter for synthetic ZCA constructor-as-arg targets
     private string currentInlinePrefix = "";
     private string? currentModulePrefix = "";
+    // Set by an explicit numeric cast wrapping an arithmetic expression (e.g. `uint8(a + b)`):
+    // the wrapped binary op is computed AT this width instead of promoting, giving fixed-width
+    // wraparound (and the matching 8/16-bit ADD/SUB flags). The escape hatch from default
+    // arithmetic promotion. Consumed (cleared) by the immediate binary op so nested ops promote.
+    private DataType? castWidthHint = null;
 
     private Dictionary<string, ModuleScope> modules = new();
 
@@ -50,6 +73,11 @@ public partial class IRGenerator
     // Populated by scan_functions when a @name.setter method is encountered.
     // Used by visitAssign to desugar "obj.attr = val" into an inline setter call.
     private Dictionary<string, string?> propertySetters = new();
+
+    // Set of "ClassName.property_name" for every @property getter. Populated by
+    // scan_functions; used by VisitMemberAccess to desugar a bare `obj.prop` read
+    // into an inline getter call instead of reading a non-existent data field.
+    private HashSet<string> propertyGetters = new();
 
     // Function overloading: tracks qualified function names that have multiple
     // @inline overloads distinguished by parameter types.
@@ -65,6 +93,21 @@ public partial class IRGenerator
     // on a ZCA instance with a known concrete type (field aliasing requires inlining).
     private Dictionary<string, FunctionDef> instanceMethodDefs = new();
 
+    // Mangled symbols of methods whose body calls a sibling method on self (self.<m>()). When
+    // such a method is reached on a subclass instance (concrete type != defining class), it must
+    // be force-inlined so the inner self-call dispatches to the concrete override (virtual call).
+    private HashSet<string> methodsWithSelfCall = new();
+
+    // Every instance method's AST keyed by mangled symbol (e.g. "Base_score"), regardless of
+    // inline/outline/force-inline. Lets super().<method>() inline-expand the base body even when
+    // the base method is outlined (and thus absent from inlineFunctions).
+    private Dictionary<string, FunctionDef> methodAstByName = new();
+
+    // Class keys whose own __init__ delegates to the base via super().__init__(). Their slot
+    // construction can't use the positional fast-path (a base-set field has no constructor
+    // param of this class); run the real __init__ (flattened) and materialize into the slot.
+    private HashSet<string> classInitCallsSuper = new();
+
     // Class hierarchy graph (both populated by ScanFunctions).
     // Keys use the unqualified class name WITHOUT trailing underscore (e.g. "dht_DHT11").
     // classChildren:      parent → set of direct subclass names.
@@ -72,12 +115,27 @@ public partial class IRGenerator
     //                     (excludes methods inherited via the toInherit copy loop).
     private Dictionary<string, HashSet<string>> classChildren      = new();
     private Dictionary<string, HashSet<string>> classDirectMethods = new();
+    // Every member name that appears anywhere as an assignment target (`obj.X = ...`,
+    // `obj.X[i] = ...`, `obj.X: T = ...`, `obj.X += ...`), collected program-wide before IR
+    // generation. A real instance field is always assigned somewhere (in __init__ or a
+    // method), so this set is a superset of every class's fields — used to detect a read of
+    // an undefined instance attribute (a typo) without per-class layout completeness, which
+    // is unreliable. Unioned with method/property names at the check site.
+    private HashSet<string> assignedMemberNames = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+    // Tracks names declared with a `const[...]` annotation (scalar or array). These are
+    // immutable by definition, so any later assignment to one is a user error. Distinct
+    // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).
+    private HashSet<string> declaredConstants = new();
     // Tracks loop variables that are function references (from zip() over function lists).
     // Key = loop variable name (e.g. "fn"), Value = resolved mangled function name (e.g. "blink_task").
     private Dictionary<string, string> loopFunctionAliases = new();
+    // Return type of the function each FUNCREF-typed variable points to (qualified var key ->
+    // return DataType). Lets an indirect call (ICALL) type its result temp to the callee's
+    // return width instead of a default uint8, which would truncate a uint16/int16 return.
+    private Dictionary<string, DataType> funcrefReturnTypes = new();
     // Tracks instance fields that have been written with different constant values
     // (i.e., mutable at runtime). Once a field is killed it is never re-admitted
     // to constantVariables, preventing incorrect DCE of branches like
@@ -93,8 +151,73 @@ public partial class IRGenerator
     // Zero-Cost Abstraction: Virtual Instance Registry
     private HashSet<string> virtualInstances = new();
 
+    // RFC 0001 Model A (@outline): methods compiled once as shared subroutines.
+    // Key = mangled method symbol (e.g. "Counter_stepped"). The layout is the
+    // ordered list of instance fields (from __init__) that become leading params.
+    // SourceParam = the __init__ parameter whose value initializes the field (when the
+    // RHS is a bare parameter), used by Model B factory lowering to map ctor args.
+    private HashSet<string> outlinedMethods = new();
+    private Dictionary<string, List<(string Field, string Type, string SourceParam)>> outlineFieldLayout = new();
+
+    // Same layout keyed by class symbol (e.g. "Counter"), for factory return lowering.
+    private Dictionary<string, List<(string Field, string Type, string SourceParam)>> classFieldLayout = new();
+
+    // RFC 0001 Model B (register-packed handle): a non-@inline factory returning a ZCA
+    // returns the instance's single packed field as a scalar. Instances bound from such
+    // a factory are "handle instances": their field value IS the variable itself, so an
+    // @outline method call passes the variable (not a per-field constant) as the field arg.
+    private HashSet<string> factoryHandleInstances = new();
+    // Class symbol -> the field type its register-packed handle carries (single-field only).
+    private Dictionary<string, string> zcaFactoryClasses = new();
+
+    // RFC 0001 Model B (SRAM slot): a ZCA with >= 2 fields is "boxed" -- its fields live in
+    // a fixed SRAM slot and its @outline methods take a `self` pointer (bytearray), reading
+    // fields via BytearrayLoad at byte offsets. This is the multi-field analogue of the
+    // register handle (which only fits one small field in the return register).
+    private HashSet<string> slotClasses = new();
+    // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
+    private Dictionary<string, string> slotInstances = new();
+    // @outline method symbol -> field -> byte offset within the slot (for self.field loads).
+    private Dictionary<string, Dictionary<string, int>> slotMethodFieldOffsets = new();
+    // @outline method symbols compiled with the slot (self-ptr) ABI.
+    private HashSet<string> slotMethods = new();
+
+    // RFC 0001 (write-back): a single-field (Model A) void method that mutates its field
+    // (e.g. `def inc(self, by): self.count += by`). The field is passed BY VALUE, so the
+    // outlined body mutates only its local copy. To persist the mutation we make the body
+    // RETURN the (updated) field and copy it back to the instance field at the call site.
+    // Key = method symbol -> (field name, field type).
+    private Dictionary<string, (string Field, DataType Type)> outlineWriteBack = new();
+    // Class symbol -> the set of fields that a write-back method mutates. Such fields must
+    // have a real runtime home (not a folded compile-time constant) so the write-back copy
+    // has somewhere to write and later reads pick up the runtime value -- including across
+    // loop iterations. Construction promotes these fields from constant to runtime storage.
+    private Dictionary<string, HashSet<string>> zcaWriteBackFields = new();
+
+    // RFC 0001 Model B (Class[N]): an array of boxed ZCA instances laid out contiguously in
+    // SRAM. arr[i] is the slot at base + i*stride; arr[i].method() passes that element address
+    // as the self pointer. Maps the array's qualified name to its element class and byte stride.
+    private Dictionary<string, string> instanceArrayClass = new();
+    private Dictionary<string, int> instanceArrayStride = new();
+
     private List<LoopLabels> loopStack = new();
     private List<InlineContext> inlineStack = new();
+
+    // Catch-dispatch labels of the `try` blocks whose BODY is currently being
+    // lowered (innermost last). A `raise` lexically inside a try body is delivered
+    // to the top label instead of propagating to the caller. Pushed/popped by
+    // VisitTry around the body only — not around handler/finally blocks, where a
+    // `raise` is a re-raise that must propagate.
+    private List<string> tryCatchStack = new();
+
+    // Pending `finally` blocks of the enclosing try statements (innermost last). A `return` that
+    // escapes a try-with-finally must run these before returning (Python semantics).
+    private List<List<Statement>> finallyStack = new();
+
+    // Per-handler saved exception-code variable (innermost last): a bare `raise` re-raises this,
+    // so the code survives handler body code that clobbers the error register (R22).
+    private List<string> handlerCodeStack = new();
+    private int exnCodeId = 0;
 
     // Debugging
     private List<string> sourceLines = new();
@@ -102,6 +225,14 @@ public partial class IRGenerator
     private string currentSourceFile = "";
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
+
+    // Builds a located user-facing compile error from inside IR generation. Using this
+    // instead of `throw new Exception(...)` means the message is reported as a clean
+    // `file:line: error: CompileError: ...` diagnostic (with the current source line and
+    // a caret) rather than a location-less "InternalCompilerError" that looks like a
+    // compiler bug. For genuine compiler-invariant violations keep `throw new Exception`.
+    private PyMCU.Common.CompilerError UserError(string message) =>
+        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1), 1);
 
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
@@ -139,6 +270,12 @@ public partial class IRGenerator
     // Tracks temporaries/variables that hold MemoryAddress values from inline returns.
     private Dictionary<string, int> constantAddressVariables = new();
 
+    // Tracks Vals that hold a RUNTIME pointer address (from ptr(<runtime expr>), e.g.
+    // ptr(BASE + x) with a non-constant offset). Maps the Val name to the pointed-at
+    // element type. Reading/writing `.value` on such a Val lowers to Load/StoreIndirect
+    // through the held address, rather than a direct store to a compile-time MemoryAddress.
+    private Dictionary<string, DataType> runtimePtrVars = new();
+
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
@@ -167,6 +304,12 @@ public partial class IRGenerator
     // Function parameters declared as bytearray (passed as pointer, no length).
     // The parameter name is stored as qualified_name (funcname_paramname).
     private HashSet<string> bytearrayParams = new();
+
+    // const[str] parameters of NON-@inline functions: received as a runtime 16-bit flash
+    // byte-pointer (the caller passes a FlashStrAddr). Subscripting one (s[i]) emits a
+    // FlashLoadPtr so a single shared subroutine can walk any flash string instead of the
+    // loop being inlined per call site.
+    private HashSet<string> flashStrPtrVars = new();
 
     // Arrays that are subscripted with at least one non-constant index anywhere in the current function.
     private HashSet<string> arraysWithVariableIndex = new();

@@ -43,7 +43,7 @@ Each commit must leave `dotnet test tests/integration/PyMCU.IntegrationTests.csp
 2. Make a plan — identify all files to change (Parser, IRGenerator, AVRCodeGen, HAL, tests).
 3. Implement in small commits (one logical change each).
 4. After each compiler change: `dotnet publish src/compiler/PyMCU.csproj -c Release -o build/bin --nologo`.
-5. After each stdlib change: `rsync lib/src/pymcu/ .venv/lib/python3.X/site-packages/pymcu/`.
+5. Install the stdlib editable once: `just sync-stdlib` (`uv pip install --no-deps -e lib/`). After that, `lib/src/pymcu/` edits are picked up live — no per-change copy. Do NOT rsync a copy of `lib/src/pymcu/` into `site-packages/pymcu/`: a physical copy there shadows the editable `.pth` and your edits silently stop taking effect.
 6. Run integration tests: `dotnet test tests/integration/PyMCU.IntegrationTests.csproj`.
 7. Update `LANGUAGE_ROADMAP.md`, `docs/docs/roadmap.md`, and `docs/docs/limitations.md`.
 

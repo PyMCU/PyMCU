@@ -17,6 +17,7 @@ _millis_count: uint32 = 0
 def _millis_ovf_isr():
     # Non-inline: compiled once, placed at Timer0 OVF vector by millis_init().
     # Increment the global overflow counter; main reads it via millis().
+    global _millis_count
     _millis_count = _millis_count + 1
 
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----

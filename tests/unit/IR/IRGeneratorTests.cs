@@ -292,15 +292,490 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void RuntimeBitIndex_Throws()
+    public void RuntimeBitIndex_ThroughPointer_Rejected()
     {
-        // Using a runtime variable as bit index on a non-array must fail at
-        // compile time -- bit indices must be compile-time constants.
+        // A runtime bit index on a chip register (PORTB[bit]=1, a MemoryAddress) is
+        // supported — it lowers to a runtime mask (1 << bit) + read-modify-write
+        // (exercised by the AVR examples). Through a RUNTIME POINTER it is rejected
+        // with a clear error rather than miscompiling the pointer value as the port.
         const string src =
             "def f(port: ptr[uint8], bit: uint8):\n" +
             "    port[bit] = 1\n";
 
         Assert.ThrowsAny<Exception>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ConstDivisionByZero_RaisesValueError()
+    {
+        // `5 // 0` must fold to a clean ValueError diagnostic, not leak a C#
+        // DivideByZeroException that the pipeline reports as an InternalCompilerError.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 5 // 0\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ConstModuloByZero_RaisesValueError()
+    {
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 7 % 0\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void UndefinedFunctionCall_RaisesCompileError()
+    {
+        // A call to a function that resolves to nothing must be reported at compile time
+        // (typo / missing import) instead of emitting a Call to an undefined symbol that
+        // only fails at link. Gated to real chip targets, so pass an AVR config.
+        const string src =
+            "def main():\n" +
+            "    nonexistent_func(1)\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+    }
+
+    [Fact]
+    public void SliceAssignment_RaisesClearError()
+    {
+        // `arr[1:3] = [...]` is unsupported; it must report clearly, not surface the cryptic
+        // "Unknown Expression type: SliceExpr" from evaluating the slice node.
+        const string src =
+            "arr: uint8[5] = [1, 2, 3, 4, 5]\n" +
+            "def main():\n" +
+            "    arr[1:3] = [9, 9]\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("slice assignment", ex.Message);
+    }
+
+    [Fact]
+    public void IntegerTrueDivision_YieldsFloat()
+    {
+        // Python 3's `/` is true division and always yields a float, even for two ints. PyMCU
+        // promotes integer operands to float and emits float division (it must compile, not
+        // reject, so a naive `count / 10` is faithful to Python's 2.5 rather than C's 2).
+        const string src =
+            "def main(a: uint16, b: uint16) -> float:\n" +
+            "    return a / b\n";
+        var ir = GenerateIR(src);
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FloorDivision_StillCompiles()
+    {
+        // `//` is the integer-division operator and must keep working.
+        var ir = GenerateIR(
+            "def main(a: uint16, b: uint16) -> uint16:\n" +
+            "    return a // b\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FoldedArithmeticConstant_OutOfRange_RaisesError()
+    {
+        // 50 * 20 = 1000 folds at compile time and overflows uint8: caught like a bare literal.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 50 * 20\n";
+        var ex = Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+        Assert.Contains("out of range", ex.Message);
+    }
+
+    [Fact]
+    public void FoldedBitwiseConstant_FullWidth_StillCompiles()
+    {
+        // Bitwise/shift idioms that use the full width must NOT be range-flagged.
+        var ir = GenerateIR(
+            "def main():\n" +
+            "    a: uint8 = 0xFFFF & 0xFF\n" +
+            "    b: uint8 = 1 << 7\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FoldedArithmeticConstant_ExplicitCast_Wraps()
+    {
+        // The uint8(...) cast is the escape hatch for intentional wraparound; it must compile.
+        var ir = GenerateIR(
+            "def main():\n" +
+            "    x: uint8 = uint8(50 * 20)\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FStringWithRuntimeValue_InPrint_Compiles()
+    {
+        // print(f"...") lowers each part to a direct stream write, so a runtime interpolation
+        // is allowed in a stream context (no buffer, no string built at runtime).
+        var ir = GenerateIR(
+            "def main(x: uint16):\n" +
+            "    print(f\"v={x}\")\n");
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void FStringWithRuntimeValue_AsValue_RaisesClearError()
+    {
+        // Outside a stream context there is still no runtime string builder; assigning a runtime
+        // f-string to a name must report clearly rather than silently producing garbage.
+        const string src =
+            "def main(x: uint16):\n" +
+            "    name = f\"v={x}\"\n";
+        var ex = Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+        Assert.Contains("runtime", ex.Message);
+    }
+
+    [Fact]
+    public void NegativeArrayInitializers_AreStored()
+    {
+        // `arr: int8[3] = [-1, -2, -3]` — negative literals parse as UnaryExpr(Negate), not
+        // IntegerLiteral, and were silently dropped (every element initialized to 0). The
+        // initializer must evaluate constant expressions, so the stores carry -1, -2, -3.
+        const string src =
+            "arr: int8[3] = [-1, -2, -3]\n" +
+            "def main():\n" +
+            "    pass\n";
+        var prog = GenerateIR(src);
+        var stores = prog.Functions
+            .SelectMany(f => f.Body)
+            .OfType<ArrayStore>()
+            .Where(a => a.ArrayName == "arr")
+            .ToList();
+        Assert.Contains(stores, a => a.Src is Constant { Value: -1 });
+        Assert.Contains(stores, a => a.Src is Constant { Value: -2 });
+        Assert.Contains(stores, a => a.Src is Constant { Value: -3 });
+    }
+
+    [Fact]
+    public void ConstructClassWithoutInit_RaisesClearError()
+    {
+        // Constructing a class that has no __init__ is reported specifically (PyMCU does not
+        // synthesize a default constructor), not as a generic 'undefined function'.
+        const string src =
+            "class Math:\n" +
+            "    def double(self, x: uint8) -> uint8:\n" +
+            "        return x * 2\n" +
+            "def main():\n" +
+            "    m = Math()\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("__init__", ex.Message);
+    }
+
+    [Fact]
+    public void CallNonCallableVariable_RaisesClearError()
+    {
+        // Calling a value (`x(3)` where x is uint8) reports 'not callable', not 'undefined
+        // function' (x is defined, just not a function).
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 5\n" +
+            "    y: uint8 = x(3)\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("not callable", ex.Message);
+    }
+
+    [Fact]
+    public void InOperator_AcceptsTupleLiteral()
+    {
+        // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the
+        // same as `x in [1, 2, 3]` — previously only a list literal was accepted.
+        const string src =
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    x: uint8 = 3\n" +
+            "    if x in (1, 2, 3):\n" +
+            "        out = 1\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
+    public void BareTupleReturn_ParsesAndLowersInInlineFunction()
+    {
+        // `return a, b` (a bare comma-separated tuple, no parens) must parse and, from an
+        // @inline function, lower into the caller's unpack targets — previously the parser
+        // rejected the bare form and required explicit parentheses.
+        const string src =
+            "ra: uint8 = 0\n" +
+            "rb: uint8 = 0\n" +
+            "@inline\n" +
+            "def swap(a: uint8, b: uint8):\n" +
+            "    return b, a\n" +
+            "def main():\n" +
+            "    global ra, rb\n" +
+            "    ra, rb = swap(3, 7)\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
+    public void TupleReturnFromRegularFunction_RaisesClearError()
+    {
+        // Returning multiple values from a non-@inline subroutine is unsupported; it must be
+        // a clear error, not the cryptic "Unknown Expression type: TupleExpr".
+        const string src =
+            "def minmax(a: uint8, b: uint8):\n" +
+            "    return a, b\n" +
+            "def main():\n" +
+            "    x: uint8 = 0\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("multiple values", ex.Message);
+    }
+
+    [Fact]
+    public void TypeAnnotatedLocalInstance_ResolvesMethodCall()
+    {
+        // `c: Counter = Counter(5)` (a type-annotated local instance) must register the
+        // instance->class link exactly like the unannotated `c = Counter(5)`, so `c.get()`
+        // resolves to the class method `Counter_get` — not a fabricated, undefined `c_get`
+        // that fails at link.
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Counter:\n" +
+            "    def __init__(self, start: uint8):\n" +
+            "        self.n = start\n" +
+            "    def get(self) -> uint8:\n" +
+            "        return self.n\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    c: Counter = Counter(5)\n" +
+            "    out = c.get()\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Call { FunctionName: "Counter_get" });
+        Assert.DoesNotContain(body, i => i is Call { FunctionName: "c_get" });
+    }
+
+    [Fact]
+    public void UndefinedInstanceAttribute_RaisesCompileError()
+    {
+        // Reading an attribute that is assigned nowhere in the program (a typo) must be a
+        // compile error instead of fabricating an undefined member read as 0. Gated to real
+        // chip targets (like the undefined-function check).
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Sensor:\n" +
+            "    def __init__(self):\n" +
+            "        self.a = 1\n" +
+            "        self.b = 2\n" +
+            "    def read(self):\n" +
+            "        return self.a\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    s: Sensor = Sensor()\n" +
+            "    out = s.nonexistent\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+    }
+
+    [Fact]
+    public void DefinedInstanceAttribute_DoesNotError()
+    {
+        // The flip side: reading a field that IS assigned (even in a non-__init__ method)
+        // must still compile — assignedMemberNames is collected across all methods.
+        const string src =
+            "out: uint8 = 0\n" +
+            "class Sensor:\n" +
+            "    def __init__(self):\n" +
+            "        self.a = 1\n" +
+            "    def configure(self):\n" +
+            "        self.cfg = 5\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    s: Sensor = Sensor()\n" +
+            "    out = s.cfg\n";
+        // Should not throw (cfg is assigned in configure()).
+        GenerateIR(src, new DeviceConfig { Arch = "avr" });
+    }
+
+    [Fact]
+    public void ModuleConstStr_Subscript_FoldsToCharCode()
+    {
+        // A module-level `const[str]` is owned by ScanGlobals, which previously never
+        // recorded its value, so `S[i]` / len(S) silently dropped. It now resolves: S[1]
+        // of "abc" folds to the char code 'b' (98).
+        const string src =
+            "S: const[str] = \"abc\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = S[1]\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 98 } });
+    }
+
+    [Fact]
+    public void ModuleConstStr_SubscriptOutOfRange_RaisesCompileError()
+    {
+        const string src =
+            "S: const[str] = \"abc\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = S[10]\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void LenOfStringConstant_FoldsToLength()
+    {
+        // len() of a compile-time string (literal or a str/const[str] variable) is its length.
+        const string src =
+            "S: const[str] = \"abcd\"\n" +
+            "out: uint8 = 0\n" +
+            "def main():\n" +
+            "    global out\n" +
+            "    out = len(S)\n";
+        var body = GenerateIR(src).Functions.First(f => f.Name == "main").Body;
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 4 } });
+    }
+
+    [Fact]
+    public void RuntimeRangeZeroStep_RaisesCompileError()
+    {
+        // range(start, stop, 0) never advances the loop variable (Python raises ValueError).
+        // The compile-time-unrolled path rejected this; the runtime-loop path (range over a
+        // non-constant bound) emitted an infinite loop. A literal-zero step must be rejected.
+        const string src =
+            "def f(n: uint8):\n" +
+            "    x: uint8 = 0\n" +
+            "    for i in range(0, n, 0):\n" +
+            "        x += 1\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ComputedFloatToIntVariable_RaisesTypeError()
+    {
+        // `y: uint8 = 5 // 2.0` folds to a FloatConstant; the bare-float-literal check only
+        // sees a direct FloatLiteral, so the folded float slipped through and the Copy was
+        // silently dropped. A compile-time float result into an int var must require a cast.
+        const string src =
+            "def main():\n" +
+            "    y: uint8 = 5 // 2.0\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ChrArgumentOutOfByteRange_RaisesValueError()
+    {
+        // chr(300) passed the value through as a Constant(300); since it is a folded constant
+        // (not an IntegerLiteral) the literal-range check never fired, so it was silently
+        // truncated into the uint8. chr() must be limited to a single byte (0..255).
+        const string src =
+            "def main():\n" +
+            "    c: uint8 = chr(300)\n";
+        Assert.Throws<PyMCU.Common.ValueError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void NumericCastOfString_RaisesCompileError()
+    {
+        // uint8("hello") folded the string to its flash id and used it as an integer, then
+        // dropped the assignment. A string argument to a numeric cast must be rejected.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = uint8(\"hello\")\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void AbsOfString_RaisesCompileError()
+    {
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = abs(\"foo\")\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void FloatBitwiseNot_RaisesTypeError()
+    {
+        // Unary bitwise NOT (`~`) on a float is undefined (Python raises TypeError); it
+        // previously fell through to a Unary BitNot over a FloatConstant (silent miscompile).
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = ~1.5\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void FloatBitwiseOperand_RaisesTypeError()
+    {
+        // A bitwise/shift operator on a float operand is undefined (Python raises TypeError).
+        // It was silently folded to 0.0 and the whole assignment was dropped.
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 1.5 & 2\n";
+        Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void FlashArrayConstIndexOutOfRange_RaisesIndexError()
+    {
+        // A compile-time out-of-bounds index into a const[uint8[N]] flash array emitted an
+        // out-of-bounds flash load with no diagnostic (the fixed-SRAM path checked bounds,
+        // the flash path did not). It must now raise IndexError like any other array.
+        const string src =
+            "A: const[uint8[3]] = [1, 2, 3]\n" +
+            "def main():\n" +
+            "    y: uint8 = A[5]\n";
+        Assert.Throws<PyMCU.Common.IndexError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ConstAugmentedAssignment_RaisesCompileError()
+    {
+        // `K += 1` mutates a const-declared name just like `K = ...`; both must be rejected.
+        const string src =
+            "K: const[uint8] = 5\n" +
+            "def main():\n" +
+            "    K += 1\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void RegularFunctionKeywordArg_BindsByName()
+    {
+        // A keyword argument to a regular (non-@inline) subroutine must bind by parameter
+        // name (Python-style), not surface the cryptic "Unknown Expression type" from
+        // evaluating the KeywordArgExpr node as an expression.
+        const string src =
+            "def f(a: uint8, b: uint8, c: uint8):\n" +
+            "    return a + b + c\n" +
+            "def main():\n" +
+            "    y: uint8 = f(1, c=3, b=2)\n";
+        // Should not throw.
+        GenerateIR(src);
+    }
+
+    [Fact]
+    public void RegularFunctionUnknownKeywordArg_RaisesCompileError()
+    {
+        const string src =
+            "def f(x: uint8):\n" +
+            "    return x\n" +
+            "def main():\n" +
+            "    y: uint8 = f(zzz=3)\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+    }
+
+    [Fact]
+    public void ConstReassignment_RaisesCompileError()
+    {
+        // A name declared with a `const[...]` annotation is immutable; reassigning it
+        // must be a clean compile error, not a silent overwrite of the constant.
+        const string src =
+            "K: const[uint8] = 5\n" +
+            "def main():\n" +
+            "    K = 7\n";
+        Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
     }
 
     [Fact]

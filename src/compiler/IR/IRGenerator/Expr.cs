@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common;
 using PyMCU.Frontend;
 using PyMCU.IR;
 using AstBinOp = PyMCU.Frontend.BinaryOp;
@@ -37,6 +38,8 @@ public partial class IRGenerator
 
         if (expr is BooleanLiteral boolean) return new Constant(boolean.Value ? 1 : 0);
 
+        if (expr is NoneLiteral) return new NoneVal();
+
         if (expr is StringLiteral str)
         {
             if (str.Value.Length == 1) return new Constant((int)str.Value[0]);
@@ -56,12 +59,16 @@ public partial class IRGenerator
         if (expr is WalrusExpr walrus)
         {
             Val rhs = VisitExpression(walrus.Value);
-            string key = string.IsNullOrEmpty(currentInlinePrefix)
-                ? walrus.VarName
-                : currentInlinePrefix + walrus.VarName;
+            // Qualify like a normal variable reference the body resolves: a function-scoped
+            // name gets the `func.` prefix when not inline-expanded. Using the bare name stored
+            // the walrus target under "w" while later reads resolved "func.w" -> read 0.
+            string key = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + walrus.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + walrus.VarName : walrus.VarName);
             DataType dt = DataType.UINT8;
             if (variableTypes.TryGetValue(key, out var t)) dt = t;
             var vr = new Variable(key, dt);
+            variableTypes[key] = dt;
             Emit(new Copy(rhs, vr));
             return vr;
         }
@@ -71,7 +78,7 @@ public partial class IRGenerator
         if (expr is FloatLiteral floatLit)
             return new FloatConstant(floatLit.Value);
 
-        throw new Exception($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
+        throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 
     private Val VisitLambdaExpr(LambdaExpr expr)
@@ -129,6 +136,12 @@ public partial class IRGenerator
                 continue;
             }
             listLiteralParams.Remove(paramKey);
+            // Clear any binding left from a PRIOR call to this same dunder at the same inline
+            // depth (the prefix, hence paramKey, is reused). Without this, a stale alias from a
+            // previous call (e.g. b[0]=s aliased v->s) survived and shadowed a fresh Copy on the
+            // next call (b[1]=s+10), so the body read the old value -- the +10 silently vanished.
+            constantVariables.Remove(paramKey);
+            variableAliases.Remove(paramKey);
             if (extraArgs[extraIdx] is Constant c)
             {
                 constantVariables[paramKey] = c.Value;
@@ -202,7 +215,13 @@ public partial class IRGenerator
                     if (stringIdToStr.TryGetValue(c.Value, out var s)) result += s;
                     else result += c.Value.ToString();
                 }
-                else throw new Exception("f-string interpolation requires a compile-time constant expression");
+                else throw new TypeError(
+                    "f-string interpolates a runtime value, which PyMCU does not support: " +
+                    "building a string at runtime needs a dynamic formatter/buffer that is " +
+                    "not generated on bare-metal targets. Use uart.write_str(\"...\") and " +
+                    "uart.write(value) / uart.write_hex(value) separately, or keep all " +
+                    "interpolated values compile-time constant.",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
             }
         }
 
@@ -219,6 +238,18 @@ public partial class IRGenerator
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
 
     private Val VisitVariable(VariableExpr expr) => ResolveBinding(expr.Name);
+
+    private static string BinaryOpSymbol(AstBinOp op) => op switch
+    {
+        AstBinOp.Add => "+", AstBinOp.Sub => "-", AstBinOp.Mul => "*",
+        AstBinOp.Div => "/", AstBinOp.FloorDiv => "//", AstBinOp.Mod => "%",
+        AstBinOp.BitAnd => "&", AstBinOp.BitOr => "|", AstBinOp.BitXor => "^",
+        AstBinOp.LShift => "<<", AstBinOp.RShift => ">>",
+        AstBinOp.Equal => "==", AstBinOp.NotEqual => "!=",
+        AstBinOp.Less => "<", AstBinOp.LessEq => "<=",
+        AstBinOp.Greater => ">", AstBinOp.GreaterEq => ">=",
+        _ => op.ToString(),
+    };
 
     private string? BinaryOpDunder(AstBinOp op)
     {
@@ -245,8 +276,66 @@ public partial class IRGenerator
         };
     }
 
+    // True when an expression is None: the None literal, or a name currently bound
+    // to None (a param defaulted to None, a variable assigned None). An integer or
+    // a concrete instance is never None.
+    private bool IsNoneValued(Expression e)
+    {
+        if (e is NoneLiteral) return true;
+
+        // `obj.field is None`: a field assigned None is tracked under its flattened name
+        // (<base>_<field>) by EmitMemberAssign. Resolve the same name without emitting code.
+        if (e is MemberAccessExpr ma && ma.Object is VariableExpr mo)
+        {
+            string b = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + mo.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + mo.Name : mo.Name);
+            for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var a); d++) b = a;
+            return noneValuedNames.Contains(b + "_" + ma.Member);
+        }
+
+        if (e is not VariableExpr ve) return false;
+
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        if (noneValuedNames.Contains(q)) return true;
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(q, out var a); d++)
+        {
+            q = a;
+            if (noneValuedNames.Contains(q)) return true;
+        }
+        return noneValuedNames.Contains(ve.Name);
+    }
+
     private Val VisitBinary(BinaryExpr expr)
     {
+        // Capture and CLEAR any explicit-cast width hint up front: it applies to THIS op only,
+        // so operands (visited below) and nested ops promote normally. `uint8(a + b)` then makes
+        // the `+` an 8-bit op (wrap + 8-bit flags), the escape hatch from default promotion.
+        DataType? widthHint = castWidthHint;
+        castWidthHint = null;
+
+        // None comparisons resolve at compile time with real null semantics: an
+        // integer or a concrete instance is never None; only a name bound to None
+        // (or the None literal itself) is. This replaces the old None==-1 model,
+        // which made `x == None` collide with a real value of -1 / 255 / 0xFFFF.
+        bool leftNone = expr.Left is NoneLiteral;
+        bool rightNone = expr.Right is NoneLiteral;
+        if (leftNone || rightNone)
+        {
+            if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Is or AstBinOp.IsNot)
+            {
+                bool isEq = expr.Op is AstBinOp.Equal or AstBinOp.Is;
+                bool otherIsNone = leftNone && rightNone
+                    || IsNoneValued(leftNone ? expr.Right : expr.Left);
+                return new Constant(otherIsNone == isEq ? 1 : 0);
+            }
+            throw new TypeError(
+                "None supports only ==, !=, is and is not comparisons",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
+        }
+
         string? dunder = BinaryOpDunder(expr.Op);
         if (dunder != null && expr.Left is VariableExpr lv)
         {
@@ -293,15 +382,21 @@ public partial class IRGenerator
                 }
             }
 
-            if (!(expr.Right is ListExpr rlist))
-                throw new Exception("'in' / 'not in' requires a list literal on the right-hand side");
-            if (rlist.Elements.Count == 0) return new Constant(negate ? 1 : 0);
+            // The RHS may be a list `[...]` or a tuple `(...)` literal — both are valid in
+            // Python (`x in (1, 2, 3)`). Normalize to the element list.
+            List<Frontend.Expression> rhsElems = expr.Right switch
+            {
+                ListExpr rl => rl.Elements,
+                Frontend.TupleExpr rt => rt.Elements,
+                _ => throw UserError("'in' / 'not in' requires a list or tuple literal on the right-hand side")
+            };
+            if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
 
             var elems = new List<Val>();
             bool allConst = true;
             if (lhs is Constant lc)
             {
-                foreach (var e in rlist.Elements)
+                foreach (var e in rhsElems)
                 {
                     Val ev = VisitExpression(e);
                     if (ev is Constant ec)
@@ -317,7 +412,7 @@ public partial class IRGenerator
             }
             else
             {
-                foreach (var e in rlist.Elements) elems.Add(VisitExpression(e));
+                foreach (var e in rhsElems) elems.Add(VisitExpression(e));
             }
 
             Temporary result = MakeTemp(DataType.UINT8);
@@ -379,52 +474,36 @@ public partial class IRGenerator
 
         if (expr.Op == AstBinOp.And)
         {
+            // Python `a and b` evaluates to the OPERAND, not a bool: falsy a -> a,
+            // otherwise b. Short-circuits b. (`if a and b:` is unaffected since it
+            // only tests truthiness; the difference shows in `x = a and b`.)
             Val v1a = VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-            {
-                if (c1a.Value == 0) return new Constant(0);
-                Val v2a = VisitExpression(expr.Right);
-                if (v2a is Constant c2a) return new Constant(c2a.Value != 0 ? 1 : 0);
-                Temporary r = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2a, new Constant(0), r));
-                return r;
-            }
+                return c1a.Value == 0 ? c1a : VisitExpression(expr.Right);
 
-            string falseLabel = MakeLabel();
+            Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
-            Temporary result = MakeTemp(DataType.UINT8);
-            Emit(new JumpIfZero(v1a, falseLabel));
+            Emit(new Copy(v1a, result));                 // tentatively a
+            Emit(new JumpIfZero(result, endLabel));      // a falsy -> keep a
             Val v2b = VisitExpression(expr.Right);
-            Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2b, new Constant(0), result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(falseLabel));
-            Emit(new Copy(new Constant(0), result));
+            Emit(new Copy(v2b, result));                 // a truthy -> b
             Emit(new Label(endLabel));
             return result;
         }
 
         if (expr.Op == AstBinOp.Or)
         {
+            // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b.
             Val v1a = VisitExpression(expr.Left);
             if (v1a is Constant c1a)
-            {
-                if (c1a.Value != 0) return new Constant(1);
-                Val v2a = VisitExpression(expr.Right);
-                if (v2a is Constant c2a) return new Constant(c2a.Value != 0 ? 1 : 0);
-                Temporary r = MakeTemp(DataType.UINT8);
-                Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2a, new Constant(0), r));
-                return r;
-            }
+                return c1a.Value != 0 ? c1a : VisitExpression(expr.Right);
 
-            string trueLabel = MakeLabel();
+            Temporary result = MakeTemp(GetValType(v1a));
             string endLabel = MakeLabel();
-            Temporary result = MakeTemp(DataType.UINT8);
-            Emit(new JumpIfNotZero(v1a, trueLabel));
+            Emit(new Copy(v1a, result));                 // tentatively a
+            Emit(new JumpIfNotZero(result, endLabel));   // a truthy -> keep a
             Val v2b = VisitExpression(expr.Right);
-            Emit(new Binary(PyMCU.IR.BinaryOp.NotEqual, v2b, new Constant(0), result));
-            Emit(new Jump(endLabel));
-            Emit(new Label(trueLabel));
-            Emit(new Copy(new Constant(1), result));
+            Emit(new Copy(v2b, result));                 // a falsy -> b
             Emit(new Label(endLabel));
             return result;
         }
@@ -433,18 +512,101 @@ public partial class IRGenerator
         {
             Val bv = VisitExpression(expr.Left);
             Val ev = VisitExpression(expr.Right);
-            if (!(bv is Constant cb) || !(ev is Constant ce))
-                throw new Exception("** operator requires compile-time constant operands");
-            int @base = cb.Value;
+            if (ev is not Constant ce)
+                throw UserError("** operator: the exponent must be a compile-time constant integer");
             int exp = ce.Value;
-            if (exp < 0) throw new Exception("** operator: negative exponent not supported");
-            int res = 1;
-            for (int k = 0; k < exp; ++k) res *= @base;
-            return new Constant(res);
+            if (exp < 0)
+                throw UserError("** operator: negative exponent not supported (Python would return a float)");
+
+            // Both operands constant: fold the whole power at compile time (table sizes, masks...).
+            if (bv is Constant cb)
+            {
+                int res = 1;
+                for (int k = 0; k < exp; ++k) res *= cb.Value;
+                return new Constant(res);
+            }
+
+            // Runtime base with a constant exponent: lower to repeated multiplication so the common
+            // idiom (s ** 2, x ** 3) works. Python-faithful — the base is evaluated exactly once and
+            // each multiply promotes to the next wider type, so the result never silently overflows
+            // the base's width. Large exponents are rejected rather than emitting a huge unrolled
+            // chain (use an explicit loop); the realistic faithful cases are small.
+            if (exp == 0) return new Constant(1);
+            if (exp == 1) return bv;
+            if (exp > 16)
+                throw UserError("** operator: exponent too large to unroll (max 16 for a runtime base); use a loop");
+
+            static DataType BumpTier(DataType t) => t switch
+            {
+                DataType.UINT8 => DataType.UINT16,
+                DataType.INT8 => DataType.INT16,
+                DataType.UINT16 => DataType.UINT32,
+                DataType.INT16 => DataType.INT32,
+                _ => t,
+            };
+
+            Val acc = bv;
+            for (int k = 1; k < exp; ++k)
+            {
+                DataType mt = DataTypeExtensions.GetPromotedType(GetValType(acc), GetValType(bv));
+                if (mt is not DataType.FLOAT) mt = BumpTier(mt);
+                Temporary md = MakeTemp(mt);
+                Emit(new Binary(MapBinaryOp(AstBinOp.Mul), acc, bv, md));
+                acc = md;
+            }
+            return acc;
         }
 
         Val v1 = VisitExpression(expr.Left);
         Val v2 = VisitExpression(expr.Right);
+
+        // String literals are interned as integer IDs (>= 256); see VisitExpression.
+        // Plain arithmetic on those IDs is meaningless — '+' would add the IDs and
+        // silently emit garbage. We only treat an operand as a string when there is
+        // a real string literal in the source expression: an interned ID can collide
+        // with an ordinary integer (e.g. `x * 256`), so the value alone is not enough.
+        // This still covers the real cases ("a" + "b", s + "x", name == "PB5").
+        bool HasStringLiteral = (expr.Left is StringLiteral sll && sll.Value.Length != 1)
+                             || (expr.Right is StringLiteral srl && srl.Value.Length != 1);
+        bool IsStringId(Val v) => v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
+        if (HasStringLiteral && (IsStringId(v1) || IsStringId(v2)))
+        {
+            bool bothStr = IsStringId(v1) && IsStringId(v2);
+
+            // Equality folds at compile time: interning gives identical strings the
+            // same ID, and a string is never equal to a non-string. This keeps the
+            // `if pin_name == "PB5"` / `__CHIP__ == "..."` dispatch idiom working.
+            if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual)
+            {
+                bool equal = bothStr && ((Constant)v1).Value == ((Constant)v2).Value;
+                bool isEq = expr.Op == AstBinOp.Equal;
+                return new Constant(equal == isEq ? 1 : 0);
+            }
+
+            // Compile-time concatenation of two string literals.
+            if (expr.Op == AstBinOp.Add && bothStr)
+            {
+                string joined = stringIdToStr[((Constant)v1).Value] + stringIdToStr[((Constant)v2).Value];
+                if (!stringLiteralIds.TryGetValue(joined, out int joinedId))
+                {
+                    joinedId = nextStringId++;
+                    stringLiteralIds[joined] = joinedId;
+                    stringIdToStr[joinedId] = joined;
+                }
+                return new Constant(joinedId);
+            }
+
+            int errLine = expr.Line > 0 ? expr.Line : lastLine;
+            if (expr.Op == AstBinOp.Add)
+                throw new TypeError(
+                    "cannot concatenate a string with a non-string value; both operands of '+' " +
+                    "must be compile-time string literals (runtime string building is not supported)",
+                    errLine, 1);
+
+            throw new TypeError(
+                $"operator '{BinaryOpSymbol(expr.Op)}' is not supported on string values",
+                errLine, 1);
+        }
 
         double? AsFloatCt(Val v)
         {
@@ -462,6 +624,15 @@ public partial class IRGenerator
             || GetValType(v1) == DataType.FLOAT || GetValType(v2) == DataType.FLOAT;
         if (eitherFloat)
         {
+            // Bitwise and shift operators are undefined on floats (Python raises TypeError).
+            // Without this guard the constant fold below hit its `_ => 0.0` default, silently
+            // folding e.g. `1.5 & 2` to 0.0 and then dropping the whole assignment.
+            if (expr.Op is AstBinOp.BitAnd or AstBinOp.BitOr or AstBinOp.BitXor
+                or AstBinOp.LShift or AstBinOp.RShift)
+                throw new TypeError(
+                    $"unsupported operand type for {BinaryOpSymbol(expr.Op)}: 'float'",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
             if (f1.HasValue && f2.HasValue)
@@ -502,13 +673,90 @@ public partial class IRGenerator
             return floatDst;
         }
 
+        // Reaching here means both operands are integers. Python 3's `/` is TRUE division and
+        // always yields a float (5 / 2 == 2.5, even 4 / 2 == 2.0), while `//` is floor division.
+        // Stay faithful: promote both operands to float and emit float division. This links the
+        // floating-point routines into the firmware, so warn once per site that `//` is the
+        // cheaper integer-division operator in case that is what the user meant.
+        if (expr.Op == AstBinOp.Div)
+        {
+            int dline = expr.Line > 0 ? expr.Line : lastLine;
+            if (warningNoticed.Add($"truediv:{dline}"))
+                Console.Error.WriteLine($"[pymcuc] warning: line {dline}: '/' is floating-point "
+                    + "(true) division in Python and always yields a float; it links float "
+                    + "routines into the firmware — use '//' for integer division if that is what you meant");
+
+            Val ToFloatVal(Val x)
+            {
+                if (x is FloatConstant) return x;
+                if (x is Constant ci) return new FloatConstant(ci.Value);
+                Temporary ft = MakeTemp(DataType.FLOAT);
+                Emit(new Copy(x, ft));
+                return ft;
+            }
+
+            Val fa = ToFloatVal(v1);
+            Val fb = ToFloatVal(v2);
+            if (fa is FloatConstant fca && fb is FloatConstant fcb)
+                return new FloatConstant(fcb.Value != 0.0 ? fca.Value / fcb.Value : 0.0);
+            Temporary fdst = MakeTemp(DataType.FLOAT);
+            Emit(new Binary(BinaryOp.Div, fa, fb, fdst));
+            return fdst;
+        }
+
         DataType t1 = GetValType(v1);
         DataType t2 = GetValType(v2);
-        DataType resType = t1.SizeOf() >= t2.SizeOf() ? t1 : t2;
+        // A literal operand is type-agnostic (it defaults to uint8), so on a same-size op it
+        // would wrongly win and drop the other operand's signedness: `int8(0) - int8(x)` became
+        // uint8, making a later `< 0` test unsigned (abs() then returned the value unchanged).
+        // Take the non-constant operand's type when exactly one side is a constant.
+        bool lConst = v1 is Constant or FloatConstant;
+        bool rConst = v2 is Constant or FloatConstant;
+        DataType resType;
+        if (t1.SizeOf() != t2.SizeOf())
+            resType = t1.SizeOf() > t2.SizeOf() ? t1 : t2;   // the wider operand wins (e.g. 256 * u8 -> u16)
+        else if (lConst && !rConst) resType = t2;            // same size: a literal is type-agnostic,
+        else if (rConst && !lConst) resType = t1;            // so take the typed operand (keeps its sign)
+        else resType = t1;                                   // both/neither constant: keep left (prior behaviour)
+
+        // Python-fidelity: integer add/sub/mul/shift PROMOTES the result to the next wider type so
+        // a same-width op never silently overflows (uint8+uint8 -> uint16 = 300, not 44; uint16*
+        // uint16 -> uint32). The declared type is a STORAGE width; narrowing happens only at an
+        // explicit store or cast. Capped at 32-bit (64-bit is impractical on AVR, wraps there).
+        // Bitwise/compare/div/mod cannot overflow their width and are not promoted. The backend
+        // widens narrower operands into the result width when loading them.
+        if (resType is not DataType.FLOAT
+            && expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift)
+            resType = resType switch
+            {
+                DataType.UINT8 => DataType.UINT16,
+                DataType.INT8 => DataType.INT16,
+                DataType.UINT16 => DataType.UINT32,
+                DataType.INT16 => DataType.INT32,
+                _ => resType,
+            };
+
+        // An explicit cast around this op (`uint8(a + b)`) forces fixed-width: compute at the
+        // cast's width, overriding promotion. Gives wraparound + the matching 8/16-bit flags.
+        if (widthHint is DataType hint && hint is not DataType.FLOAT) resType = hint;
 
         Temporary dst = MakeTemp(resType);
         if (v1 is Constant cA && v2 is Constant cB)
         {
+            // Division/modulo by a constant zero is a compile-time error (Python raises
+            // ZeroDivisionError). Guard before folding so we report a clean diagnostic
+            // instead of leaking a C# DivideByZeroException as an InternalCompilerError.
+            if (cB.Value == 0 && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
+                throw new ValueError("integer division or modulo by zero",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
+            // A shift count outside 0..31 has no meaning for PyMCU's fixed-width ints and
+            // would otherwise fold to a wrong value (C# masks the count to 5 bits, so
+            // `1 << 99` silently becomes `1 << 3`).
+            if (expr.Op is AstBinOp.LShift or AstBinOp.RShift && (cB.Value < 0 || cB.Value >= 32))
+                throw new ValueError($"shift count {cB.Value} out of range (expected 0..31)",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             switch (expr.Op)
             {
                 case AstBinOp.Add: return new Constant(cA.Value + cB.Value);
@@ -521,7 +769,12 @@ public partial class IRGenerator
                     int q = cA.Value / cB.Value;
                     if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
                     return new Constant(q);
-                case AstBinOp.Mod: return new Constant(cA.Value % cB.Value);
+                case AstBinOp.Mod:
+                    // Python's % follows the sign of the divisor (floored), unlike C#'s
+                    // truncated %. e.g. -7 % 3 == 2, not -1. Match Python at fold time.
+                    int rem = cA.Value % cB.Value;
+                    if (rem != 0 && ((rem ^ cB.Value) < 0)) rem += cB.Value;
+                    return new Constant(rem);
                 case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
                 case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);
@@ -551,6 +804,19 @@ public partial class IRGenerator
             }
         }
 
+        // Runtime divide/modulo by zero raises ZeroDivisionError, matching Python (a constant
+        // zero divisor is already a compile-time error above). The check guards only a runtime
+        // divisor — a non-zero constant divisor pays nothing. SignalError delivers to the local
+        // catch dispatcher inside a try, else propagates to the caller via the T-flag.
+        if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod && v2 is not Constant)
+        {
+            string divOk = MakeLabel();
+            Emit(new JumpIfNotZero(v2, divOk));
+            string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+            Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatch));
+            Emit(new Label(divOk));
+        }
+
         Emit(new Binary(MapBinaryOp(expr.Op), v1, v2, dst));
         return dst;
     }
@@ -567,15 +833,24 @@ public partial class IRGenerator
         string falseLabel = MakeLabel();
         string endLabel = MakeLabel();
 
+        // The result temp must be as wide as the WIDER of the two branches, not just the
+        // true branch: `7 if c else wide` (true=uint8, false=uint16) typed the temp uint8
+        // and truncated the 16-bit false value (500 -> 244). Visit both branches to learn
+        // their real types, promote, then splice the true-branch copy into the true block
+        // (the false branch is emitted between the true tail and the join).
         Emit(new JumpIfZero(cond, falseLabel));
         Val trueVal = VisitExpression(expr.TrueVal);
-        Temporary result = MakeTemp(GetValType(trueVal));
-        Emit(new Copy(trueVal, result));
-        Emit(new Jump(endLabel));
+        int trueTail = currentInstructions.Count;   // where the true copy + jump belong
         Emit(new Label(falseLabel));
         Val falseVal = VisitExpression(expr.FalseVal);
+        Temporary result = MakeTemp(
+            DataTypeExtensions.GetPromotedType(GetValType(trueVal), GetValType(falseVal)));
         Emit(new Copy(falseVal, result));
         Emit(new Label(endLabel));
+        // Splice [Copy trueVal->result; Jump end] just after the true-branch body, ahead of
+        // the false label. Insert in reverse so the first index stays valid.
+        currentInstructions.Insert(trueTail, new Jump(endLabel));
+        currentInstructions.Insert(trueTail, new Copy(trueVal, result));
         return result;
     }
 
@@ -597,6 +872,15 @@ public partial class IRGenerator
                 }
             }
         }
+
+        // Bitwise NOT is undefined on a float (Python raises TypeError). Without this guard
+        // `~1.5` fell through to a Unary BitNot over a FloatConstant — a silent miscompile.
+        if (expr.Op == AstUnOp.BitNot
+            && (operand is FloatConstant
+                || (operand is Variable fv && floatConstantVariables.ContainsKey(fv.Name))
+                || GetValType(operand) == DataType.FLOAT))
+            throw new TypeError("unsupported operand type for ~: 'float'",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
 
         if (operand is Constant c)
         {
@@ -622,7 +906,7 @@ public partial class IRGenerator
 
     private Val VisitYield(YieldExpr expr)
     {
-        throw new Exception("Yield not yet implemented");
+        throw UserError("Yield not yet implemented");
     }
 
     // Resolves a variable name to the bytes/list/tuple literal bound to it as an
@@ -643,6 +927,11 @@ public partial class IRGenerator
 
     private Val VisitIndex(IndexExpr expr)
     {
+        // A string subscript is a mistake — a single-char string would otherwise fold to
+        // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
+        if (expr.Index is StringLiteral)
+            throw UserError("array index must be an integer, not a string");
+
         if (expr.Index is SliceExpr sl)
         {
             if (expr.Target is VariableExpr srcVe)
@@ -655,7 +944,7 @@ public partial class IRGenerator
                     int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
                     int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
                     int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                    if (step == 0) throw new Exception("Slice step cannot be zero");
+                    if (step == 0) throw UserError("Slice step cannot be zero");
                     if (start < 0) start += srcSize;
                     if (stop < 0) stop += srcSize;
                     start = Math.Max(0, Math.Min(start, srcSize));
@@ -691,7 +980,7 @@ public partial class IRGenerator
                 }
             }
 
-            throw new Exception("Slice indexing is only supported on named fixed-size arrays");
+            throw UserError("Slice indexing is only supported on named fixed-size arrays");
         }
 
         if (expr.Target is VariableExpr ve)
@@ -705,10 +994,10 @@ public partial class IRGenerator
                 int li;
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
-                else throw new Exception("Tuple/list parameter subscript must be a compile-time constant");
+                else throw UserError("Tuple/list parameter subscript must be a compile-time constant");
                 if (li < 0) li += litArg.Elements.Count;
                 if (li < 0 || li >= litArg.Elements.Count)
-                    throw new Exception("Tuple/list parameter subscript index out of range");
+                    throw UserError("Tuple/list parameter subscript index out of range");
                 return VisitExpression(litArg.Elements[li]);
             }
 
@@ -754,9 +1043,30 @@ public partial class IRGenerator
 
             if (arraySizes.TryGetValue(qualified, out int sz))
             {
+                // Evaluate the index once and normalize a negative compile-time index
+                // (Python a[-1] -> a[len-1]) before any load path sees it; a runtime
+                // index is left as-is (negative runtime indexing is not supported).
+                Val idxVal = VisitExpression(expr.Index);
+                if (idxVal is Constant negc && negc.Value < 0)
+                {
+                    int adj = negc.Value + sz;
+                    if (adj < 0)
+                        throw new IndexError(
+                            $"array index {negc.Value} out of range for size {sz}",
+                            expr.Line > 0 ? expr.Line : lastLine, 1);
+                    idxVal = new Constant(adj);
+                }
+
+                // Bounds-check a compile-time positive index for every array kind. The
+                // fixed-array path below already does this, but the flash and SRAM paths
+                // emitted an out-of-bounds load with no diagnostic (reading past the array).
+                if (idxVal is Constant cidx && (cidx.Value < 0 || cidx.Value >= sz))
+                    throw new IndexError(
+                        $"array index {cidx.Value} out of range for size {sz}",
+                        expr.Line > 0 ? expr.Line : lastLine, 1);
+
                 if (flashArrays.Contains(qualified))
                 {
-                    Val idxVal = VisitExpression(expr.Index);
                     Temporary tmp = MakeTemp(DataType.UINT8);
                     Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
                     return tmp;
@@ -764,22 +1074,19 @@ public partial class IRGenerator
 
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
                 {
-                    Val idxVal = VisitExpression(expr.Index);
                     Temporary tmp = MakeTemp(arrayElemTypes[qualified]);
                     Emit(new ArrayLoad(qualified, idxVal, tmp, arrayElemTypes[qualified], sz));
                     return tmp;
                 }
                 else
                 {
-                    // Accept a literal subscript or a variable that folds to a compile-time
-                    // constant (e.g. the index of an unrolled enumerate() loop).
-                    int elemIdx;
-                    if (expr.Index is IntegerLiteral c2)
-                        elemIdx = c2.Value;
-                    else if (VisitExpression(expr.Index) is Constant cc2)
-                        elemIdx = cc2.Value;
-                    else
-                        throw new Exception("Array subscript must be a compile-time constant");
+                    if (idxVal is not Constant cc2)
+                        throw UserError("Array subscript must be a compile-time constant");
+                    int elemIdx = cc2.Value;
+                    if (elemIdx < 0 || elemIdx >= sz)
+                        throw new IndexError(
+                            $"array index {elemIdx} out of range for size {sz}",
+                            expr.Line > 0 ? expr.Line : lastLine, 1);
                     string elemName = qualified + "__" + elemIdx;
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }
@@ -817,13 +1124,25 @@ public partial class IRGenerator
             string localName = string.IsNullOrEmpty(currentInlinePrefix)
                 ? (string.IsNullOrEmpty(currentFunction) ? ve2.Name : currentFunction + "." + ve2.Name)
                 : currentInlinePrefix + ve2.Name;
+
+            // Runtime flash-string pointer parameter (const[str] on a non-@inline function):
+            // s[i] reads one byte from flash at (s + i) via LPM. Works for both literal and
+            // runtime indices since the base is only known at runtime.
+            if (flashStrPtrVars.Contains(localName))
+            {
+                Val idxVal = VisitExpression(expr.Index);
+                Temporary tmp = MakeTemp(DataType.UINT8);
+                Emit(new FlashLoadPtr(new Variable(localName, DataType.UINT16), idxVal, tmp));
+                return tmp;
+            }
+
             string? strVal = ResolveStrConstant(localName);
             if (strVal != null)
             {
                 if (expr.Index is IntegerLiteral ic)
                 {
                     if (ic.Value < 0 || ic.Value >= strVal.Length)
-                        throw new Exception("String subscript index out of range");
+                        throw UserError("String subscript index out of range");
                     return new Constant((int)strVal[ic.Value]);
                 }
 
@@ -868,7 +1187,7 @@ public partial class IRGenerator
             bool resolved = false;
             if (indexVal2 is Temporary t) resolved = TryConst(t.Name);
             else if (indexVal2 is Variable v) resolved = TryConst(v.Name);
-            if (!resolved) throw new Exception("Bit index must be constant for reading");
+            if (!resolved) throw UserError("Bit index must be constant for reading");
         }
 
         Temporary dst = MakeTemp();
@@ -878,9 +1197,35 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
+        // instance slot via the `self` pointer at the field's byte offset.
+        if (expr.Object is VariableExpr selfVe && selfVe.Name == "self"
+            && slotMethodFieldOffsets.TryGetValue(currentFunction, out var fieldOffs)
+            && fieldOffs.TryGetValue(expr.Member, out int fieldOff))
+        {
+            return EmitSlotFieldLoad(currentFunction + ".self", true, fieldOff,
+                SlotMethodFieldType(currentFunction, expr.Member), 0);
+        }
+
+        // RFC 0001 Model B (Class[N]): a direct field read on an instance-array element,
+        // `arr[i].x`. Compute the element field address and load through it. Without this the
+        // member access fell through to a flattened name and read 0.
+        if (expr.Object is IndexExpr iaIdxRead
+            && TryInstanceArrayFieldAddr(iaIdxRead, expr.Member, out var iaFieldTy) is { } iaAddr)
+        {
+            Temporary iaLoaded = MakeTemp(iaFieldTy);
+            Emit(new LoadIndirect(iaAddr, iaLoaded));
+            return iaLoaded;
+        }
+
         if (expr.Object is VariableExpr varExpr)
         {
-            string mangledName = varExpr.Name + "_" + expr.Member;
+            // Resolve a module alias (import machine as m) to the real module name so
+            // `m.Pin` / `m.Pin.OUT` mangle to machine_Pin..., not the unknown m_Pin.
+            string moduleBase = modules.ContainsKey(varExpr.Name)
+                && importedAliases.TryGetValue(varExpr.Name, out var realModName) && realModName != null
+                ? realModName : varExpr.Name;
+            string mangledName = moduleBase + "_" + expr.Member;
 
             if (globals.TryGetValue(mangledName, out var sym))
             {
@@ -906,7 +1251,7 @@ public partial class IRGenerator
                     if (key.StartsWith(classPrefix)) return new Variable(mangledName, DataType.UINT8);
                 }
 
-                throw new Exception("Unknown module member: " + mangledName);
+                throw UserError("Unknown module member: " + mangledName);
             }
 
             if (functionParams.ContainsKey(mangledName) || functionReturnTypes.ContainsKey(mangledName))
@@ -954,6 +1299,17 @@ public partial class IRGenerator
         if (expr.Member == "value")
         {
             Val obj = VisitExpression(expr.Object);
+
+            // Runtime pointer (ptr(<runtime addr>), e.g. ptr(BASE + x)): read the value at
+            // the held address with a LoadIndirect rather than via a compile-time address.
+            string? rpn = obj switch { Variable rpv => rpv.Name, Temporary rpt => rpt.Name, _ => null };
+            if (rpn != null && runtimePtrVars.TryGetValue(rpn, out var rpElem))
+            {
+                Temporary ld = MakeTemp(rpElem);
+                Emit(new LoadIndirect(obj, ld));
+                return ld;
+            }
+
             DataType varType = DataType.UINT8;
             if (obj is Variable v)
             {
@@ -982,11 +1338,37 @@ public partial class IRGenerator
             return strConst;
         }
 
-        if (string.IsNullOrEmpty(baseName)) throw new Exception("Unknown member access: " + expr.Member);
+        if (string.IsNullOrEmpty(baseName)) throw UserError("Unknown member access: " + expr.Member);
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {
             if (next != null && next.StartsWith("tmp_")) break;
             baseName = next;
+        }
+
+        // @property getter: a bare `obj.prop` read where `prop` is a registered getter on the
+        // instance's class is desugared into a call to the getter method. Without this it would
+        // fall through to a non-existent flattened `<base>_<prop>` data field and read 0.
+        if (baseName != null && propertyGetters.Count > 0
+            && instanceClasses.TryGetValue(baseName, out var getterCls)
+            && propertyGetters.Contains(getterCls + "." + expr.Member))
+        {
+            return VisitCall(new CallExpr(expr, new List<Expression>()));
+        }
+
+        // RFC 0001 Model B (SRAM slot): a direct field read on a slot instance OUTSIDE a method
+        // (`p.x` where p is a multi-field ZCA) must load from the instance slot. Without this it
+        // fell through to a flattened `p_x` variable that no store ever wrote -- a 0 read, or an
+        // undefined-symbol link error once the dead var was DCE'd.
+        if (baseName != null && slotInstances.TryGetValue(baseName, out var slotArrR)
+            && instanceClasses.TryGetValue(baseName, out var slotClsR)
+            && TryGetSlotFieldOffset(slotClsR, expr.Member, out int slotOffR, out DataType slotTyR))
+        {
+            // The slot is a direct SRAM array here (not a pointer as inside a method), so use a
+            // byte-offset ArrayLoad -- matching EmitSlotConstruction's ArrayStore. (A BytearrayLoad
+            // would dereference main.p__slot as a pointer and read 0.) Multi-byte fields assemble
+            // from consecutive bytes.
+            int slotTotR = arraySizes.TryGetValue(slotArrR, out var tszR) ? tszR : 0;
+            return EmitSlotFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTotR);
         }
 
         var flattenedName = baseName + "_" + expr.Member;
@@ -994,9 +1376,54 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);
         if (constantAddressVariables.TryGetValue(flattenedName, out int ca))
             return new MemoryAddress(ca, DataType.UINT16);
-        if (!globals.TryGetValue(flattenedName, out var sym5)) return new Variable(flattenedName, DataType.UINT8);
+
+        // Member access on a plain numeric scalar (e.g. `x.foo` where x: uint8) is invalid:
+        // .value/.name are handled above, ZCA instance fields resolve through instanceClasses,
+        // pointers through constantAddressVariables/runtimePtrVars — so a numeric-typed base
+        // here means the member would fabricate an undefined `<base>_<member>` that reads as 0.
+        if (!globals.ContainsKey(flattenedName)
+            && variableTypes.TryGetValue(baseName, out var baseTy)
+            && baseTy is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                      or DataType.UINT32 or DataType.INT32
+            && !instanceClasses.ContainsKey(baseName)
+            && !constantAddressVariables.ContainsKey(baseName)
+            && !runtimePtrVars.ContainsKey(baseName))
+            throw UserError($"'{expr.Member}' is not a member of a numeric value");
+
+        if (!globals.TryGetValue(flattenedName, out var sym5))
+        {
+            // Undefined attribute (a typo). This fallback is the last resort: every legitimate
+            // resolution (module member, .value/.name, ZCA fields, pointers, numeric-scalar
+            // guard) has already returned or thrown above, so reaching here fabricates an
+            // undefined `<base>_<member>` Variable read as 0. It is a genuine typo when the
+            // member is assigned NOWHERE in the program (assignedMemberNames is the superset of
+            // every class's fields — a real field is always written in some __init__/method)
+            // and is not a method or property getter. Gated to real chip targets (skip PIO and
+            // the empty-config unit compiles), like the undefined-function check.
+            if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
+                && !assignedMemberNames.Contains(expr.Member)
+                && !IsKnownMethodName(expr.Member))
+                throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)");
+
+            // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
+            // its declared width in variableTypes; read it at that width so a uint16/uint32
+            // field isn't truncated to a byte.
+            if (variableTypes.TryGetValue(flattenedName, out var ft))
+                return new Variable(flattenedName, ft);
+
+            return new Variable(flattenedName, DataType.UINT8);
+        }
         if (sym5.IsMemoryAddress) return new MemoryAddress(sym5.Value, sym5.Type);
         return new Constant(sym5.Value);
 
+    }
+
+    // True if any class defines a method with this name (used to exclude method references
+    // from the undefined-attribute check, e.g. a bare `obj.method` used as a value).
+    private bool IsKnownMethodName(string member)
+    {
+        foreach (var methods in classDirectMethods.Values)
+            if (methods.Contains(member)) return true;
+        return false;
     }
 }

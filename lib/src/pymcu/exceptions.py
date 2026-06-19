@@ -1,14 +1,13 @@
-# Exception type codes -- builtins, no import required.
-# These are pre-defined by the compiler identically to True/False/None.
-# Kept here only for IDEs and explicit imports from library code.
-ValueError: const = 1
-TypeError: const = 2
-IndexError: const = 3
-KeyError: const = 4
-NotImplementedError: const = 5
-
-# Compile-time only -- intercepted by IRGenerator, never emits RaiseExn.
-# raise CompileError("msg") aborts compilation with a diagnostic.
-# Cannot be caught by try/except in user code.
+# PyMCU compile-time exception.
+#
+# The runtime exception types (ValueError, TypeError, IndexError, KeyError,
+# NotImplementedError, ZeroDivisionError) are real Python builtins — they are
+# recognised by the compiler directly (see IRGenerator) and need no import,
+# exactly as in CPython. They are deliberately NOT redeclared here; doing so
+# would shadow the builtins and make the dialect look less like Python.
+#
+# CompileError is the one PyMCU-specific exception: `raise CompileError("msg")`
+# aborts compilation with a diagnostic and can never be caught at runtime. It is
+# the bare-metal way for a HAL to say "this feature is not available on this chip".
 class CompileError(Exception):
     pass

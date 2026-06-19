@@ -30,7 +30,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
-from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
+from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
 
 # Ring buffer for interrupt-driven UART receive (16 bytes, power-of-two)
 # _rx_buf: circular storage; _rx_head: write index (ISR advances);
@@ -129,40 +129,21 @@ def uart_write_decimal_u8(value: uint8):
 
 def uart_write_decimal_u16(value: uint16):
     # Print uint16 value as decimal digits (0-65535).
-    if value >= 10000:
-        ten_k: uint8 = uint8(value // 10000)
-        uart_write(ten_k + 48)
-        thousands: uint8 = uint8((value // 1000) % 10)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 1000:
-        thousands: uint8 = uint8(value // 1000)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 100:
-        hundreds: uint8 = uint8(value // 100)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 10:
-        tens: uint8 = uint8(value // 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    else:
-        uart_write(uint8(value) + 48)
+    # Standard digit-extraction: peel least-significant digits into a buffer,
+    # then emit them in reverse. One division per digit (vs the unrolled
+    # divide-by-powers-of-ten form, which costs several divisions per call).
+    if value == 0:
+        uart_write(48)  # '0'
+        return
+    buf: uint8[5] = [0, 0, 0, 0, 0]
+    n: uint8 = 0
+    while value > 0:
+        buf[n] = uint8(value % 10) + 48
+        value = value // 10
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
 
 
 def uart_write_decimal_i16(value: int16):
@@ -176,25 +157,34 @@ def uart_write_decimal_i16(value: int16):
 
 
 def uart_write_decimal_u32(value: uint32):
-    # Print uint32 value as decimal digits (0-4294967295).
-    # Split into high group (value // 100000, printed without leading zeros)
-    # and zero-padded low group (value % 100000, always 5 digits).
-    if value < 100000:
-        uart_write_decimal_u16(uint16(value))
+    # Print uint32 value as decimal digits (0-4294967295). Peel least-significant digits into a
+    # buffer, then emit them in reverse (same shape as uart_write_decimal_u16). The accumulator
+    # stays uint32 throughout: a uint16 intermediate would truncate any value whose low group is
+    # 65536..99999 (e.g. 83647 -> 18111), corrupting large values.
+    if value == 0:
+        uart_write(48)  # '0'
+        return
+    buf: uint8[10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    n: uint8 = 0
+    while value > 0:
+        buf[n] = uint8(value % 10) + 48
+        value = value // 10
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
+
+
+def uart_write_decimal_i32(value: int32):
+    # Print int32 value as decimal digits with optional minus sign (-2147483648 to 2147483647).
+    # value == INT32_MIN: 0 - value wraps to 0x80000000, whose uint32 reading (2147483648) is the
+    # correct magnitude, so "-2147483648" still prints correctly.
+    if value < 0:
+        uart_write(45)  # '-'
+        abs_val: uint32 = uint32(0 - value)
+        uart_write_decimal_u32(abs_val)
     else:
-        high: uint16 = uint16(value // 100000)
-        low5: uint16 = uint16(value % 100000)
-        uart_write_decimal_u16(high)
-        d: uint8 = uint8(low5 // 10000)
-        uart_write(d + 48)
-        d = uint8((low5 // 1000) % 10)
-        uart_write(d + 48)
-        d = uint8((low5 // 100) % 10)
-        uart_write(d + 48)
-        d = uint8((low5 // 10) % 10)
-        uart_write(d + 48)
-        d = uint8(low5 % 10)
-        uart_write(d + 48)
+        uart_write_decimal_u32(uint32(value))
 
 
 def uart_write_float(value: float):
@@ -227,16 +217,68 @@ def uart_write_float(value: float):
     uart_write(frac + 48)
 
 
-@inline
 def uart_write_str(s: const[str]):
-    # s is a compile-time string constant. The compiler interns it as FlashData
-    # and iterates byte-by-byte via ArrayLoadFlash.
+    # Non-@inline on purpose: as a real subroutine, the compiler passes the string
+    # by reference (its flash address) and this single loop is emitted once and
+    # shared by every print() call site, instead of the whole loop being inlined
+    # per call. s[i] reads from flash at (s + i) via LPM (FlashLoadPtr).
     i: uint8 = 0
     b: uint8 = s[0]
     while b != 0:
         uart_write(b)
         i = i + 1
         b = s[i]
+
+
+def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
+    # Generic integer formatter backing f-string format specs ({x:02x}, {x:b}, {x:04d}, {x:5d}...).
+    # Emits `value` in `base` (2/8/10/16) right-justified to at least `width` chars. `flags` packs
+    # the options into one byte (fewer call args = robust AVR argument passing):
+    #   bit 0 = upper-case hex digits, bit 1 = signed (emit '-' for negatives), bit 2 = zero-pad.
+    # Minimal digits when width <= 1. Only linked when a format spec is actually used. A non-signed
+    # call reinterprets the bits as unsigned, so hex/bin print the raw bit pattern.
+    zero_pad: uint8 = flags & 0x04
+    pad: uint8 = 32          # ' '
+    if zero_pad != 0:
+        pad = 48             # '0'
+    neg: uint8 = 0
+    mag: uint32 = 0
+    if (flags & 0x02) and value < 0:
+        neg = 1
+        mag = uint32(0 - value)
+    else:
+        mag = uint32(value)
+    # Zero-padded negatives put the sign first, then zeros fill the field ('-' + '008').
+    if neg != 0 and zero_pad != 0:
+        uart_write(45)       # '-'
+        if width > 0:
+            width = width - 1
+    buf: uint8[32] = [0] * 32
+    n: uint8 = 0
+    if mag == 0:
+        buf[0] = 48  # '0'
+        n = 1
+    else:
+        while mag > 0:
+            d: uint8 = uint8(mag % base)
+            if d < 10:
+                buf[n] = d + 48        # '0'..'9'
+            elif flags & 0x01:
+                buf[n] = d - 10 + 65   # 'A'..'F'
+            else:
+                buf[n] = d - 10 + 97   # 'a'..'f'
+            mag = mag // base
+            n = n + 1
+    # Space-padded negatives keep the sign next to the digits, inside the padded field ('   -8').
+    if neg != 0 and zero_pad == 0:
+        buf[n] = 45          # '-'
+        n = n + 1
+    while n < width and n < 32:
+        buf[n] = pad
+        n = n + 1
+    while n > 0:
+        n = n - 1
+        uart_write(buf[n])
 
 
 @inline
