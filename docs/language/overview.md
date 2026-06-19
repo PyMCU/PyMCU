@@ -39,7 +39,12 @@ code and cannot be caught by `try / except`.
 Arithmetic (`+ - * / % //`), comparison, bitwise, logical (`and`/`or`/`not`),
 ternary, augmented assignment, type casts (`uint8(x)`), `abs`, `min`, `max`, `len`,
 walrus (`:=`), tuple literals and unpacking, member access, array indexing, list
-comprehensions (compile-time constant bounds only).
+comprehensions (compile-time constant bounds only), and **streamed f-strings**
+(`print(f"x={v:02x}")`, `uart.write_str(f"...")`).
+
+Arithmetic operators **promote** to a wider type so same-width math does not silently
+overflow, and `/` always yields a `float` (Python 3 semantics) while `//` is integer
+division — see {ref}`language-type-system`.
 
 ### MCU-specific extensions
 

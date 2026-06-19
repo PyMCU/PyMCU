@@ -40,15 +40,32 @@ Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index acce
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `f"prefix {value}"` at runtime | Requires a heap format buffer | `uart.write_str("prefix"); uart.write(value)` |
+| `f"..."` assigned to a string **variable** | No runtime string object to hold the result | Stream it directly: `print(f"...")` / `uart.write_str(f"...")` |
 | `str.split()`, `str.join()`, `str.format()` | Heap strings | Not available |
 | `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
 | `str[i]` on a runtime string | No runtime string object | Use `const[str]` parameters |
 
 **Supported:** String literals in flash, raw strings `r"\n"`, `uart.println("literal")`,
-`for ch in "ABC":` (compile-time unroll), `f"text={const}"` where all interpolations are
-compile-time constants, `const[str]` runtime subscript (reads byte from flash).
+`for ch in "ABC":` (compile-time unroll), `const[str]` runtime subscript (reads byte from
+flash), and **runtime f-strings streamed directly to a sink** — see below.
+
+### f-strings (streamed)
+
+`f"..."` with **runtime interpolations** is supported as long as the result goes straight to
+a stream rather than into a string variable. The compiler lowers each piece to a direct
+write — no heap, no format buffer:
+
+```python
+print(f"adc={raw} v={mv:04d}")
+uart.write_str(f"t={temp:5d}")
+uart.println(f"err 0x{code:02X}")
+lcd.print_str(f"{hours:02d}:{mins:02d}")
+```
+
+**Format specs** supported in interpolations: `{x:02x}`, `{x:X}`, `{x:08b}`, `{x:o}`,
+`{x:5d}`, `{x:04d}` (width, zero-pad, and `x`/`X`/`b`/`o`/`d` bases). Compile-time constant
+interpolations (`f"text={const}"`) are folded into the flash string as before.
 
 ---
 
@@ -78,8 +95,27 @@ finally:
     cleanup()
 ```
 
-`ValueError`, `TypeError`, `IndexError`, `KeyError`, and `NotImplementedError` are builtins
-— no import required, exactly like CPython.
+`ValueError`, `TypeError`, `IndexError`, `KeyError`, `NotImplementedError` and
+`ZeroDivisionError` are builtins — no import required, exactly like CPython.
+`ZeroDivisionError` is raised automatically on a runtime `//` or `%` by zero.
+
+The full statement is supported: `try` / `except` / **`else`** / **`finally`**, plus a bare
+`raise` to re-raise the active exception. `finally` runs on **every** exit path — normal
+completion, a caught exception, propagation to an outer scope, and `return` / `break` /
+`continue` out of the `try` (including a `break` or `return` inside `finally` that discards
+the in-flight exception):
+
+```python
+try:
+    v: uint8 = read_sensor(adc.read())
+except ValueError:
+    handle_error()
+    raise                # bare re-raise — propagates to the caller
+else:
+    handle(v)            # runs only if no exception
+finally:
+    cleanup()            # always runs
+```
 
 **How it works / limits:**
 
@@ -87,10 +123,11 @@ finally:
 |---|---|
 | Zero SRAM, zero happy-path cost | No `jmp_buf`; each guarded call is followed by one `BRTS`, skipped when no error was raised |
 | Propagates across calls | A `raise` inside a called function is caught at the call site in the caller's `try` — cross-function propagation **is** the model; there is no same-function restriction |
+| Propagates to any depth | An unmatched exception re-propagates to the **enclosing** `try`, then the caller, and so on — there is no single-nesting-level limit |
 | Caught at call sites | An exception is detected after a **function call** inside the `try`. Raise from a helper and catch it where you call it (rather than `raise`-ing directly in the `try` body) |
 | AVR only | PIC and other backends: use return codes or sentinel values instead |
 | Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime; handlers match by integer code |
-| Unmatched exception | Falls through to a runtime last-resort handler (`__pymcu_unhandled_exn`), not a silent continue |
+| Unmatched at top level | An exception that reaches `main` with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue |
 
 :::{admonition} Return codes are still often clearer for firmware
 :class: note

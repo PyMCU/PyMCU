@@ -14,7 +14,9 @@ bare-metal microcontroller machine code — no runtime, no heap, no interpreter.
 :::{important} This is not standard Python
 PyMCU accepts Python *syntax* but enforces a strict compile-time type system. It is a
 **compiler**, not an interpreter. Code runs at native MCU speed with zero runtime overhead.
-Heap allocation, exceptions, closures, and dynamic features do not exist.
+Dynamic heap containers (`dict`, `set`), runtime reflection and the interpreter-only
+features do not exist. (`try / except / finally` and `raise` *are* supported on AVR via a
+zero-cost T-flag model.)
 :::
 
 ```bash

@@ -26,7 +26,11 @@ This page tracks which language and HAL features have been implemented, and what
 | `with obj:` / `with a as x, b as y:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
 | `global` / `nonlocal` | Cross-function variable access; `nonlocal` in `@inline` |
-| `try / except / raise / finally` | AVR only; zero-cost T-flag propagation (`SET`/`CLT`/`BRTS`, no `setjmp`/`longjmp`); errors propagate across calls and are caught at the call site; single nesting level per function; unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
+| `try / except / else / finally`, `raise`, bare `raise` | AVR only; zero-cost T-flag propagation (`SET`/`CLT`/`BRTS`, no `setjmp`/`longjmp`); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
+| Integer arithmetic promotion | `+`/`-`/`*`/`<<` promote to the next wider type (`uint8 255 + 45 == 300`); the annotation is a storage width; `uint8(a + b)` is the fixed-width escape hatch; out-of-range literals / folded constants are `CompileError` |
+| True division `/` vs `//` | `/` yields `float` (soft-float, warns on integer operands); `//` / `%` are integer floor div / mod; runtime divide-by-zero raises `ZeroDivisionError` |
+| f-strings (streamed) | `print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")` with runtime interpolations and format specs (`{x:02x}`, `{x:08b}`, `{x:04d}`, …); lowered to direct writes, no heap |
+| Functions with > 5 arguments | Overflow arguments passed via a fixed SRAM spill region |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain |
 | `is` / `is not` | Maps to `==` / `!=` |
 | `divmod(a, b)` | Returns `(quotient, remainder)` |
@@ -167,7 +171,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 | `dict` / `set` | Dynamic hash tables require heap; no runtime |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `async` / `await` | Use `@interrupt` + polling loop |
-| `f"..."` runtime interpolation | Use `uart.write_str()` / `uart.print_byte()` |
+| `f"..."` into a string **variable** | Streamed f-strings (`print(f"...")` etc.) are supported; only assigning the result to a string object needs a heap |
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |

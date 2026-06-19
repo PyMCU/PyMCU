@@ -424,29 +424,36 @@ buf = bytearray(8)                     # CircuitPython
 buf: uint8[8] = [0,0,0,0,0,0,0,0]    # PyMCU
 ```
 
-### Replace `try / except` with error sentinels
+### `try / except` works — error sentinels are an alternative
+
+`try / except / else / finally` and `raise` are supported on AVR (zero-cost T-flag model),
+so CircuitPython error handling carries over. An explicit error sentinel is still a clean,
+backend-portable bare-metal idiom when you prefer it:
 
 ```python
-# CircuitPython
+# CircuitPython style — supported on PyMCU/AVR
 try:
     val = sensor.read()
 except RuntimeError:
     val = -1
 
-# PyMCU — check driver error sentinel
+# Sentinel style — also fine, zero overhead on every backend
 val: int = sensor.read()
 if val == -32768:    # driver-specific error sentinel
     val = -1
 ```
 
-### Replace lambda callbacks with named functions
+### Lambda callbacks — named functions for `Timer`
+
+`lambda x: expr` (without variable capture) is inlined at the call site. For a
+`Timer` callback, use a named function so the ISR has a real entry point:
 
 ```python
 # CircuitPython — lambdas work here
 from machine import Timer
 t = Timer(period=100, mode=Timer.PERIODIC, callback=lambda t: None)
 
-# PyMCU — named function required
+# PyMCU — named function for the ISR callback
 def on_tick():
     led.value = not led.value
 ```
@@ -462,10 +469,10 @@ These are the **actual gaps** — anything not listed here behaves identically.
 | Execution model | Bytecode interpreter | **Native compiled — zero runtime overhead** |
 | `time.sleep(s)` | Float seconds | Integer only — use `sleep_ms()` |
 | `float` arithmetic | Full support | Soft-float (~200–400 cycles/op) |
-| `f"..."` format strings | Runtime evaluation | Compile-time constants only |
-| `try / except` | Supported | ❌ Not available — use error sentinels |
+| `f"..."` format strings | Runtime evaluation | ✅ Runtime interpolation when **streamed** (`print(f"...")`, `uart.write_str(f"...")`) with format specs; assigning the result to a string variable still needs a heap |
+| `try / except` | Supported | ✅ Supported on AVR (zero-cost T-flag model) — error sentinels remain a valid bare-metal idiom |
 | `bytearray` | Dynamic heap | Fixed-size `uint8[N]` only |
-| Lambda expressions | Supported | ❌ Not available — use named functions |
+| Lambda expressions | Supported | ✅ `lambda x: expr` (no capture) — inlined at the call site |
 | `AnalogOut` | Supported (SAMD DAC) | ❌ No DAC on ATmega328P |
 | `busio.I2C.scan()` | Returns list of addresses | Returns first address (no heap) |
 | `neopixel.brightness` | Applies scaling | Accepted but not applied (ZCA constraint) |

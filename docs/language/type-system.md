@@ -131,6 +131,55 @@ result: uint16 = uint16(raw)  # zero-extend to 16 bits
 
 ---
 
+(integer-promotion-and-overflow)=
+## Integer promotion and overflow
+
+PyMCU follows a **promote-and-truncate** model. A type annotation declares a value's
+*storage width*, not the width its arithmetic is evaluated in. The binary operators `+`,
+`-`, `*` and `<<` **promote** their operands to the next wider type so same-width math
+never silently wraps:
+
+```python
+a: uint8 = 255
+b: uint8 = 45
+c: uint16 = a + b      # 300 — the add promotes uint8 -> uint16, no wrap
+```
+
+Narrowing happens **only** at an explicit store into a narrower variable, or an explicit
+cast. The fixed-width (wrapping) behaviour is still one keystroke away:
+
+```python
+wrapped: uint8 = uint8(a + b)   # 300 & 0xFF == 44 — explicit fixed-width add
+```
+
+Out-of-range integer **literals** and **folded constant arithmetic** are rejected at
+compile time rather than wrapping silently:
+
+```python
+x: uint8 = 300          # CompileError: 300 does not fit in uint8
+y: uint8 = 200 + 100    # CompileError: folded constant 300 overflows uint8
+```
+
+## Division — `/` vs `//`
+
+PyMCU matches Python 3 division semantics:
+
+| Operator | Result | Notes |
+|---|---|---|
+| `/` | `float` (always) | Links the soft-float runtime; a warning is emitted when both operands are integers |
+| `//` | integer (floored) | Signed floor-division runtime; raises `ZeroDivisionError` on a runtime divide-by-zero |
+| `%` | integer (floored) | Signed mod runtime; raises `ZeroDivisionError` on a runtime divide-by-zero |
+
+```python
+half: float = count / 2      # float result (soft-float)
+ticks: uint16 = total // 2   # integer floor division
+```
+
+Because `/` always pulls in soft-float, prefer `//` when you want an integer result on a
+hot path.
+
+---
+
 ## `@inline` classes — Zero-Cost Abstractions
 
 PyMCU's HAL is built on `@inline` classes (ZCA — Zero-Cost Abstractions). An `@inline` class
@@ -164,6 +213,8 @@ class Sensor:
 | `int` is arbitrary precision | `int` is 16-bit (`int16`) |
 | `float` has hardware support (most CPUs) | `float` is soft-float, ~200-400 cycles/op |
 | Types are optional hints | Types are **required** annotations |
-| `None` is a runtime object | `None` folds to `Constant{-1}` |
+| `None` is a runtime object | `None` is a real null literal (not the integer `-1`); `is None` / `== None` work on reference / optional-typed values |
 | `bool` is a subclass of `int` | `bool` aliases `uint8` |
 | `list` is dynamic | Arrays are fixed-size at compile time |
+| `int` arithmetic never overflows | Arithmetic **promotes** to a wider type; the annotation is a fixed *storage* width (see [Integer promotion](#integer-promotion-and-overflow)) |
+| `/` returns `float`, `//` floors | Same — `/` yields `float` (soft-float), `//` is integer division |
