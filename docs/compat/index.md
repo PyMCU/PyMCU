@@ -71,8 +71,9 @@ import utime
 
 :::{important} These are shims, not full implementations
 Features that fundamentally require a runtime interpreter — dynamic allocation, `float`
-sleep arguments, exception handling, `__repr__`, REPL interaction — are not available.
-See each page for the full differences table.
+sleep arguments, `__repr__`, REPL interaction — are not available. (`try / except / finally`
+and `raise` **are** supported on AVR via the zero-cost T-flag model.) See each page for the
+full differences table.
 :::
 
 ```{toctree}

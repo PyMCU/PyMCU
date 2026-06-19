@@ -940,7 +940,7 @@ PORTB.value = 0xFF
 # MicroPython — lambdas work here
 tim = Timer(period=100, mode=Timer.PERIODIC, callback=lambda t: led.toggle())
 
-# PyMCU — named function required (no lambda support)
+# PyMCU — named function for the Timer ISR callback
 def on_tick():
     led.toggle()
 
@@ -948,7 +948,8 @@ tim = Timer(1, period=100, callback=on_tick)   # identical API otherwise
 ```
 
 :::{note}
-Lambda expressions are not supported in PyMCU. Use a named function instead.
+`lambda x: expr` (without variable capture) is supported elsewhere and inlined at the call
+site, but a `Timer` callback needs a named function so the ISR has a real entry point.
 The `Timer(period=ms, callback=fn)` syntax is otherwise identical to MicroPython.
 :::
 
@@ -964,7 +965,7 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | Execution model | Bytecode interpreter | **Native compiled — zero runtime overhead** |
 | RAM overhead | ~10–40 KB for the VM | ~0 bytes (static dispatch, no GC) |
 | `float` arithmetic | Full hardware/soft-float | Soft-float (~200–400 cycles per op) |
-| `f"..."` format strings | Runtime evaluation | Compile-time constants only |
+| `f"..."` format strings | Runtime evaluation | ✅ Runtime interpolation when **streamed** (`print(f"...")`, `uart.write_str(f"...")`) with format specs; assigning the result to a string variable still needs a heap |
 | `try / except / raise` | Supported (heap-based) | ✅ Supported — zero-cost T-flag error ABI, no heap |
 | `bytearray` | Dynamic heap allocation | Fixed-size `uint8[N]` only |
 | `UART.any()` | Number of bytes available | Returns `1` (non-zero) or `0` — not an exact count |
@@ -981,6 +982,6 @@ unavailable. Anything not listed here behaves identically to standard MicroPytho
 | `Timer.init(freq=...)` | Hz-based config | ✅ Supported — auto-selects prescaler for 1 Hz – MHz range |
 | `Pin(id, mode, pull)` | `pull` parameter | ✅ Supported — `Pin.PULL_UP` enables AVR pull-up resistor |
 | `Pin("PB5", mode)` | String pin name | ✅ Supported — bypasses Arduino integer mapping |
-| Lambda expressions | Supported | ❌ Not available — use named functions |
+| Lambda expressions | Supported | ✅ `lambda x: expr` (no capture) — inlined; use a named function for `Timer` callbacks |
 | Target hardware | STM32, RP2040, ESP32, … | ATmega328P (Arduino Uno / Nano) |
 
