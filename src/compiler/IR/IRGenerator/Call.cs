@@ -2716,9 +2716,10 @@ public partial class IRGenerator
         Temporary newAllocSize = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Add, newCapScaled, new Constant(2), newAllocSize));
 
-        // Save old pointer, allocate new buffer
-        Temporary oldPtr = MakeTemp(DataType.GC_REF);
-        Emit(new Copy(listVar, oldPtr));
+        // Allocate the new buffer. CAUTION: GcAlloc may trigger a collection that compacts the
+        // heap and RELOCATES the existing list, updating listVar (a tracked GC root) to its new
+        // address. A pointer to the old buffer captured BEFORE this alloc would dangle, so the
+        // copy source is re-derived from listVar AFTER the alloc.
         Temporary newPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(newAllocSize, newPtr));
 
@@ -2726,9 +2727,9 @@ public partial class IRGenerator
         EmitListStore(newPtr, 0, tmpLen);
         EmitListStore(newPtr, 1, newCap);
 
-        // Copy existing elements byte-by-byte
+        // Copy existing elements byte-by-byte from the (possibly relocated) old buffer at listVar.
         // Compute base pointers outside the loop
-        Val oldPtrU16 = oldPtr with { Type = DataType.UINT16 };
+        Val oldPtrU16 = listVar with { Type = DataType.UINT16 };
         Val newPtrU16 = newPtr with { Type = DataType.UINT16 };
         Temporary totalBytes = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Mul, tmpLen, new Constant(elemSize), totalBytes));
