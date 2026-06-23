@@ -2757,8 +2757,11 @@ public partial class IRGenerator
         Emit(new Jump(copyLoopLabel));
         Emit(new Label(copyLoopEnd));
 
-        // Update listVar → newPtr; shadow stack slot already tracks SRAM addr of listVar
-        Emit(new Copy(newPtr, listVar));
+        // Repoint EVERY alias at the new buffer, not just listVar: a relocation must update all
+        // GC_REF variables that hold the old address (Python list aliasing semantics). gc_list_fixup
+        // walks the shadow stack rewriting old->new; passing listVar captures the old address in
+        // registers before the routine overwrites listVar's own slot.
+        Emit(new Call("gc_list_fixup", new List<Val> { listVar, newPtr }, new NoneVal()));
 
         // === FAST PATH: write element at offset 2 + len * elemSize ===
         Emit(new Label(fastLabel));
