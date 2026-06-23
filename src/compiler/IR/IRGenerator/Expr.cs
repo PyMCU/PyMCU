@@ -643,7 +643,9 @@ public partial class IRGenerator
                     AstBinOp.Add => f1.Value + f2.Value,
                     AstBinOp.Sub => f1.Value - f2.Value,
                     AstBinOp.Mul => f1.Value * f2.Value,
-                    AstBinOp.Div or AstBinOp.FloorDiv => f2.Value != 0.0 ? f1.Value / f2.Value : 0.0,
+                    AstBinOp.Div => f2.Value != 0.0 ? f1.Value / f2.Value : 0.0,
+                    // Python float `//` floors the quotient toward -inf (7.0 // 2.0 == 3.0).
+                    AstBinOp.FloorDiv => f2.Value != 0.0 ? Math.Floor(f1.Value / f2.Value) : 0.0,
                     AstBinOp.Mod => f1.Value % f2.Value,
                     _ => 0.0
                 };
@@ -656,7 +658,9 @@ public partial class IRGenerator
                 AstBinOp.Add => BinaryOp.Add,
                 AstBinOp.Sub => BinaryOp.Sub,
                 AstBinOp.Mul => BinaryOp.Mul,
-                AstBinOp.Div or AstBinOp.FloorDiv => BinaryOp.Div,
+                AstBinOp.Div => BinaryOp.Div,
+                // Keep FloorDiv distinct so the backend can floor the quotient (float `//`).
+                AstBinOp.FloorDiv => BinaryOp.FloorDiv,
                 AstBinOp.Mod => BinaryOp.Mod,
                 AstBinOp.Equal => BinaryOp.Equal,
                 AstBinOp.NotEqual => BinaryOp.NotEqual,
