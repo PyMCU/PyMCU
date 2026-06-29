@@ -1204,7 +1204,7 @@ public class Parser
             {
                 if (init == null)
                     Error("An annotated instance member needs an initial value, e.g. `self.x: int = 0`");
-                return new AssignStmt(expr, init!) { Line = line };
+                return new AssignStmt(expr, init!) { Line = line, AnnotatedType = type };
             }
 
             return new VarDecl(name, type, init) { Line = line };

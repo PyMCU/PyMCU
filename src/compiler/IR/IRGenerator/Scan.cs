@@ -859,11 +859,13 @@ public partial class IRGenerator
         {
             string? field = null;
             Expression? rhs = null;
+            string? annotatedType = null;
             if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
                 && ma.Object is VariableExpr sv && sv.Name == "self")
             {
                 field = ma.Member;
                 rhs = asg.Value;
+                annotatedType = asg.AnnotatedType;
             }
 
             if (field == null || !seen.Add(field)) continue;
@@ -872,12 +874,22 @@ public partial class IRGenerator
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
             string type = "uint8";
             string srcParam = "";
+            // An explicit `self.x: T = ...` annotation wins -- the field gets its
+            // declared width (otherwise a uint32 field would default to uint8 and
+            // truncate, e.g. a timer deadline or a 1<<24 bit mask).
+            if (annotatedType != null)
+            {
+                type = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
+                    ? annotatedType.Substring(6, annotatedType.Length - 7)
+                    : annotatedType;
+            }
             if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
             {
                 srcParam = rv.Name;
-                type = pt.StartsWith("const[") && pt.EndsWith("]")
-                    ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
-                    : pt;
+                if (annotatedType == null)
+                    type = pt.StartsWith("const[") && pt.EndsWith("]")
+                        ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
+                        : pt;
             }
             layout.Add((field, type, srcParam));
         }

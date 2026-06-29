@@ -294,6 +294,11 @@ public class AssignStmt : Statement
     public Expression Target { get; }
     public Expression Value { get; }
 
+    // Optional declared type from `self.x: T = v`. Codegen ignores it (the value's
+    // type drives lowering), but the ZCA field-layout pass uses it so an instance
+    // field gets its declared width instead of defaulting to uint8.
+    public string? AnnotatedType { get; set; }
+
     public AssignStmt(Expression target, Expression value)
     {
         Target = target;
