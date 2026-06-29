@@ -331,6 +331,20 @@ public partial class IRGenerator
                             aliasToOriginal[key] = sym;
                     }
                 }
+
+                // `import x as y` inside an imported module (no symbols). The entry loop
+                // above registers these only for the entry file; a module imported
+                // transitively (main imports B, B does `import A as a`) also needs its
+                // alias mapped so `a.func()` mangles to A_func, not a_func.
+                if (imp.Symbols.Count == 0)
+                {
+                    string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
+                    if (!importedAliases.ContainsKey(modKey))
+                        importedAliases[modKey] = imp.ModuleName;
+                    if (!modules.ContainsKey(modKey))
+                        modules[modKey] = modules.TryGetValue(imp.ModuleName, out var realScope)
+                            ? realScope : new ModuleScope();
+                }
             }
         }
 

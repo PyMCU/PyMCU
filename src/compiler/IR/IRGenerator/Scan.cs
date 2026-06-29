@@ -313,6 +313,24 @@ public partial class IRGenerator
         foreach (var func in ast.Functions)
         {
             string fullName = currentModulePrefix + func.Name;
+
+            // @asm_pio / @rp2.asm_pio: the body is PIO assembly, not CPU code.
+            // Assemble it now and register it; never lower it as a function.
+            if (func.IsPioProgram)
+            {
+                try
+                {
+                    pioPrograms[fullName] = PyMCU.Frontend.Pio.PioAssembler.Assemble(func);
+                    if (currentModulePrefix == "" || currentModulePrefix == null)
+                        pioPrograms[func.Name] = pioPrograms[fullName];
+                }
+                catch (PyMCU.Frontend.Pio.PioAsmException ex)
+                {
+                    throw UserError($"in PIO program '{func.Name}': {ex.Message}");
+                }
+                continue;
+            }
+
             functionReturnTypes[fullName] = func.ReturnType;
             var @params = new List<string>();
             var paramTypes = new List<DataType>();

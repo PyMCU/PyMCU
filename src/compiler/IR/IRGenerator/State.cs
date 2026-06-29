@@ -255,6 +255,11 @@ public partial class IRGenerator
     // ZCA ISR synthesis: synthesized Function objects collected during VisitCall, added to irProgram in Generate().
     private List<Function> pendingZcaSynthFunctions = new();
 
+    // @asm_pio / @rp2.asm_pio programs: fullName -> assembled 16-bit PIO machine
+    // code + state-machine config. Populated in ScanFunctions; these functions are
+    // NEVER lowered as CPU code. Consumed by the rp2.StateMachine construction.
+    private Dictionary<string, PyMCU.Frontend.Pio.AssembledPioProgram> pioPrograms = new();
+
     // @extern("symbol") registrations: PyMCU function name -> C symbol name.
     private Dictionary<string, string?> externFunctionMap = new();
 

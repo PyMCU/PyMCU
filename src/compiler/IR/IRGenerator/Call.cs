@@ -22,8 +22,130 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // Intercepts `rp2.StateMachine(sm_id, prog, freq=..., set_base=..., ...)` where
+    // `prog` names an @asm_pio program. MVP: PIO0 + state-machine 0 only (sm_id 0).
+    // The whole setup is emitted as constant MMIO stores (Copy -> MemoryAddress):
+    // the PIO block registers (INSTR_MEM + SM config) are chip-independent
+    // (PIO0 @ 0x50200000 on both RP2040 and RP2350); only the RESETS-ungate and the
+    // pin FUNCSEL are chip-specific. The state machine then runs autonomously.
+    private Val? TryEmitPioStateMachine(CallExpr expr)
+    {
+        // Callee must be `StateMachine` (bare or `<mod>.StateMachine`).
+        string? name = expr.Callee switch
+        {
+            VariableExpr v => v.Name,
+            MemberAccessExpr m => m.Member,
+            _ => null,
+        };
+        if (name != "StateMachine") return null;
+
+        // Positional: (sm_id, prog). prog must be a known @asm_pio program.
+        var pos = expr.Args.Where(a => a is not KeywordArgExpr).ToList();
+        if (pos.Count < 2 || pos[1] is not VariableExpr progVar) return null;
+        if (!(pioPrograms.TryGetValue(progVar.Name, out var prog)
+              || pioPrograms.TryGetValue(currentModulePrefix + progVar.Name, out prog)))
+            return null;
+
+        int smId = TryConstInt(pos[0]) ?? 0;
+        if (smId != 0)
+            throw UserError("PIO StateMachine MVP supports state machine 0 only (sm_id=0)");
+
+        // Keyword config (all compile-time constants).
+        int Kw(string key, int dflt)
+        {
+            foreach (var a in expr.Args)
+                if (a is KeywordArgExpr kw && kw.Key == key)
+                    return TryConstInt(kw.Value) ?? dflt;
+            return dflt;
+        }
+        int freq      = Kw("freq", 0);
+        int setBase   = Kw("set_base", -1);
+        int outBase   = Kw("out_base", -1);
+        int sideBase  = Kw("sideset_base", -1);
+        int inBase    = Kw("in_base", -1);
+
+        var c = prog.Config;
+
+        // ── Chip-specific: RESETS ungate PIO0 + per-pin FUNCSEL = PIO0 (=6) ──
+        bool rp2350 = (deviceConfig.TargetChip ?? "").ToLowerInvariant() == "rp2350";
+        int resetsClr = rp2350 ? 0x40023000 : 0x4000F000;     // RESETS_RESET atomic-clear alias
+        int resetPio0 = rp2350 ? 11 : 10;
+        int ioBank0   = rp2350 ? 0x40028000 : 0x40014000;
+        int padsBank0 = rp2350 ? 0x40038000 : 0x4001C000;
+        const int funcselPio0 = 6;
+
+        void Store(int addr, int value) =>
+            Emit(new Copy(new Constant(value), new MemoryAddress(addr, DataType.UINT32)));
+
+        // Ungate PIO0.
+        Store(resetsClr, 1 << resetPio0);
+
+        // Route the consumed pins to PIO0 (and de-isolate the pad on RP2350).
+        void RoutePins(int @base, int count)
+        {
+            if (@base < 0) return;
+            for (int k = 0; k < count; k++)
+            {
+                if (rp2350) Store(padsBank0 + 4 + 4 * (@base + k), 1 << 6);   // IE on, ISO off
+                Store(ioBank0 + 8 * (@base + k) + 4, funcselPio0);
+            }
+        }
+        RoutePins(setBase, c.SetInitCount > 0 ? c.SetInitCount : 1);
+        RoutePins(outBase, c.OutInitCount);
+        RoutePins(sideBase, c.SideSetInitCount);
+
+        // ── Chip-independent PIO0 block (base 0x50200000) ──
+        const int pio0 = 0x50200000;
+        const int instrMem = pio0 + 0x048;
+        const int sm0 = pio0 + 0x0C8;
+
+        // Load the assembled program into instruction memory.
+        for (int i = 0; i < prog.Words.Length; i++)
+            Store(instrMem + 4 * i, prog.Words[i]);
+
+        // SM0 CLKDIV (INT[31:16], FRAC[15:8]); default to /1 when freq is 0.
+        int sysclk = deviceConfig.Frequency > 0 ? (int)deviceConfig.Frequency : 125_000_000;
+        int divInt = (freq > 0) ? sysclk / freq : 1;
+        if (divInt < 1) divInt = 1;
+        if (divInt > 0xFFFF) divInt = 0xFFFF;
+        Store(sm0 + 0x00, divInt << 16);
+
+        // SM0 EXECCTRL: WRAP_BOTTOM[11:7], WRAP_TOP[16:12], SIDE_PINDIR[29], SIDE_EN[30].
+        int execctrl = (prog.Wrap << 12) | (prog.WrapTarget << 7)
+                     | (c.SideSetPinDir ? 1 << 29 : 0) | (c.SideSetOpt ? 1 << 30 : 0);
+        Store(sm0 + 0x04, execctrl);
+
+        // SM0 SHIFTCTRL: AUTOPUSH[16], AUTOPULL[17], IN/OUT_SHIFTDIR[18/19], thresholds.
+        int pushT = c.PushThreshold >= 32 ? 0 : c.PushThreshold;
+        int pullT = c.PullThreshold >= 32 ? 0 : c.PullThreshold;
+        int shiftctrl = (c.AutoPush ? 1 << 16 : 0) | (c.AutoPull ? 1 << 17 : 0)
+                      | ((int)c.InShiftDir << 18) | ((int)c.OutShiftDir << 19)
+                      | (pushT << 20) | (pullT << 25);
+        Store(sm0 + 0x08, shiftctrl);
+
+        // SM0 PINCTRL: bases + counts.
+        int setCount = c.SetInitCount > 0 ? c.SetInitCount : (setBase >= 0 ? 1 : 0);
+        int pinctrl = ((setBase < 0 ? 0 : setBase) << 5) | (setCount << 26)
+                    | (outBase < 0 ? 0 : outBase) | (c.OutInitCount << 20)
+                    | ((sideBase < 0 ? 0 : sideBase) << 10) | (c.SideSetInitCount << 29)
+                    | ((inBase < 0 ? 0 : inBase) << 15);
+        Store(sm0 + 0x14, pinctrl);
+
+        // Enable state machine 0 (CTRL.SM_ENABLE bit 0). The SM now runs.
+        Store(pio0 + 0x000, 1);
+
+        return new Constant(0);
+    }
+
+    private int? TryConstInt(Expression e)
+    {
+        try { return EvaluateConstantExpr(e); }
+        catch { return null; }
+    }
+
     private Val VisitCall(CallExpr expr)
     {
+        if (TryEmitPioStateMachine(expr) is { } pioResult) return pioResult;
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
 
         // uart.write_str(f"...") / uart.println(f"...") with a runtime f-string: lower it to direct
@@ -324,10 +446,12 @@ public partial class IRGenerator
                 throw UserError("ptr() argument must be a numeric address, not a string");
 
             // Runtime address, e.g. ptr(BASE + x) with a non-constant offset. Materialize
-            // the 16-bit address into a temp and mark it a runtime pointer; a subsequent
-            // `.value` read/write lowers to Load/StoreIndirect through the held address.
+            // the address (at the chip's native pointer width -- 32-bit on Cortex-M /
+            // RISC-V, 16-bit on AVR) into a temp and mark it a runtime pointer; a
+            // subsequent `.value` read/write lowers to Load/StoreIndirect.
             Val addrVal = VisitExpression(expr.Args[0]);
-            Temporary ptrTmp = MakeTemp(DataType.UINT16);
+            DataType ptrTmpType = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+            Temporary ptrTmp = MakeTemp(ptrTmpType);
             Emit(new Copy(addrVal, ptrTmp));
             runtimePtrVars[ptrTmp.Name] = DataType.UINT8;
             return ptrTmp;
@@ -1529,11 +1653,16 @@ public partial class IRGenerator
     {
         if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument");
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
+        if (expr.Args[0] is TupleExpr te2) return new Constant(te2.Elements.Count);
         // A compile-time string constant (literal or a str / const[str] variable) has a
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
         if (expr.Args[0] is VariableExpr vLen)
         {
+            // An @inline parameter bound to a list/tuple literal argument has a
+            // statically known length (e.g. len(prog) inside a HAL helper).
+            if (ResolveListLiteralParam(vLen.Name) is ListExpr boundLen)
+                return new Constant(boundLen.Elements.Count);
             if (!string.IsNullOrEmpty(currentInlinePrefix) &&
                 arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1)) return new Constant(s1);
             if (!string.IsNullOrEmpty(currentFunction) &&
@@ -2623,15 +2752,50 @@ public partial class IRGenerator
         {
             case IntegerLiteral il:
                 return il.Value;
-            case BinaryExpr be when be.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub:
+            case BinaryExpr be:
             {
-                if (TryEvalConstAddress(be.Left) is not int l) return null;
-                if (TryEvalConstAddress(be.Right) is not int r) return null;
-                return be.Op == PyMCU.Frontend.BinaryOp.Add ? l + r : l - r;
+                // Full constant arithmetic on address expressions, so an unrolled
+                // address like `BASE + 4 * i` (i a loop/inline constant) folds to a
+                // single constant MemoryAddress instead of degrading to a runtime
+                // (truncated) pointer. Add/Sub recurse to preserve register-symbol
+                // resolution on either side; the rest fold both operands.
+                if (be.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub)
+                {
+                    if (TryEvalConstAddress(be.Left) is not int l) return null;
+                    if (TryEvalConstAddress(be.Right) is not int r) return null;
+                    return be.Op == PyMCU.Frontend.BinaryOp.Add ? l + r : l - r;
+                }
+                if (TryEvalConstAddress(be.Left) is not int lh) return null;
+                if (TryEvalConstAddress(be.Right) is not int rh) return null;
+                return be.Op switch
+                {
+                    PyMCU.Frontend.BinaryOp.Mul      => lh * rh,
+                    PyMCU.Frontend.BinaryOp.Div      => rh != 0 ? lh / rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.FloorDiv => rh != 0 ? lh / rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.Mod      => rh != 0 ? lh % rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.BitAnd   => lh & rh,
+                    PyMCU.Frontend.BinaryOp.BitOr    => lh | rh,
+                    PyMCU.Frontend.BinaryOp.BitXor   => lh ^ rh,
+                    PyMCU.Frontend.BinaryOp.LShift   => lh << rh,
+                    PyMCU.Frontend.BinaryOp.RShift   => lh >> rh,
+                    _ => null,
+                };
             }
-            case VariableExpr:
-                // A const folds to a Constant; a register/MMIO symbol resolves to a
-                // MemoryAddress. Name resolution is side-effect free (no IR emitted).
+            case UnaryExpr ue when ue.Op is PyMCU.Frontend.UnaryOp.Negate or PyMCU.Frontend.UnaryOp.BitNot:
+            {
+                if (TryEvalConstAddress(ue.Operand) is not int v) return null;
+                return ue.Op == PyMCU.Frontend.UnaryOp.Negate ? -v : ~v;
+            }
+            case VariableExpr ve:
+                // Loop-unroll / inline compile-time constants first (same keys as
+                // EvaluateConstantExpr): an unrolled `i` must resolve so `BASE + 4*i`
+                // folds to a constant address.
+                if (constantVariables.TryGetValue(currentInlinePrefix + ve.Name, out int cvip)) return cvip;
+                if (!string.IsNullOrEmpty(currentFunction) &&
+                    constantVariables.TryGetValue(currentFunction + "." + ve.Name, out int cvf)) return cvf;
+                if (constantVariables.TryGetValue(ve.Name, out int cvb)) return cvb;
+                // Otherwise a const folds to a Constant; a register/MMIO symbol resolves
+                // to a MemoryAddress. Name resolution is side-effect free (no IR emitted).
                 return VisitExpression(e) switch
                 {
                     Constant c => c.Value,

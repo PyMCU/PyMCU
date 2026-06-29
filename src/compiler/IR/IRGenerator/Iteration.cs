@@ -75,6 +75,19 @@ public partial class IRGenerator
     // Emits one unrolled-iteration body. When `breakLabel` is non-empty (the body uses
     // break/continue), a fresh continue label brackets the iteration and a shared break label
     // is active, so continue lands at the end of this iteration and break exits the loop.
+    // Evaluate a list/tuple element to a compile-time integer constant. Accepts
+    // integer / boolean literals and a unary-minus on an integer literal.
+    private static bool TryEvalConstElement(Expression e, out int value)
+    {
+        switch (e)
+        {
+            case IntegerLiteral il: value = il.Value; return true;
+            case BooleanLiteral bl: value = bl.Value ? 1 : 0; return true;
+            case UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }: value = -n.Value; return true;
+            default: value = 0; return false;
+        }
+    }
+
     private void EmitUnrolledIteration(Statement body, string breakLabel)
     {
         if (breakLabel.Length == 0) { VisitStatement(body); return; }
@@ -188,17 +201,18 @@ public partial class IRGenerator
                 return;
             }
 
-            if (iter is ListExpr le)
+            if (iter is ListExpr or TupleExpr)
             {
+                var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
                 string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
-                foreach (var elem in le.Elements)
+                foreach (var elem in elems)
                 {
-                    if (elem is IntegerLiteral il)
+                    if (TryEvalConstElement(elem, out int ev))
                     {
-                        constantVariables[varKey] = il.Value;
+                        constantVariables[varKey] = ev;
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
-                    else throw UserError("for-in list iterable elements must be compile-time integer constants.");
+                    else throw UserError("for-in list/tuple iterable elements must be compile-time integer constants.");
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
@@ -265,19 +279,30 @@ public partial class IRGenerator
                     Expression inner = call.Args[0];
                     int idx = 0;
 
-                    if (inner is ListExpr lExpr)
+                    // enumerate() over a list [..] / tuple (..) literal, or an inline
+                    // parameter bound to such a literal, of compile-time constants.
+                    Expression enumInner = inner;
+                    if (enumInner is VariableExpr epv && ResolveListLiteralParam(epv.Name) is ListExpr eBound)
+                        enumInner = eBound;
+                    var seqElems = enumInner switch
                     {
-                        foreach (var elem in lExpr.Elements)
+                        ListExpr le  => le.Elements,
+                        TupleExpr te => te.Elements,
+                        _ => null,
+                    };
+                    if (seqElems != null)
+                    {
+                        foreach (var elem in seqElems)
                         {
-                            if (elem is IntegerLiteral il)
+                            if (TryEvalConstElement(elem, out int ev))
                             {
                                 constantVariables[idxKey] = idx++;
-                                constantVariables[valKey] = il.Value;
+                                constantVariables[valKey] = ev;
                                 VisitStatement(stmt.Body);
                             }
                             else
                                 throw UserError(
-                                    "enumerate() list elements must be compile-time integer constants.");
+                                    "enumerate() list/tuple elements must be compile-time integer constants.");
                         }
 
                         constantVariables.Remove(idxKey);

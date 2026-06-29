@@ -643,11 +643,29 @@ public partial class IRGenerator
             // Val holds a 16-bit address computed at runtime, so write through it with a
             // StoreIndirect rather than to a compile-time MemoryAddress.
             string? rptName = target switch { Variable rv => rv.Name, Temporary rt => rt.Name, _ => null };
-            if (rptName != null && runtimePtrVars.TryGetValue(rptName, out var rptElem))
+            // The target is a runtime pointer if either the resolved Val or the source
+            // variable name is registered as one. Prefer the annotated variable's
+            // element width (`p: ptr[uint32]`) over a bare ptr() temp's UINT8 default,
+            // so the store uses the declared width instead of a truncated byte.
+            DataType? rptElem = null;
+            if (rptName != null && runtimePtrVars.TryGetValue(rptName, out var e1)) rptElem = e1;
+            if (originalName != null)
             {
-                Temporary sv = MakeTemp(rptElem);
+                foreach (var k in new[]
+                {
+                    string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + originalName,
+                    string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + originalName,
+                    originalName,
+                })
+                {
+                    if (k != null && runtimePtrVars.TryGetValue(k, out var e2)) { rptElem = e2; break; }
+                }
+            }
+            if (rptElem != null)
+            {
+                Temporary sv = MakeTemp(rptElem.Value);
                 Emit(new Copy(value, sv));
-                Emit(new StoreIndirect(sv, target));
+                Emit(new StoreIndirect(sv, target, rptElem.Value));
                 return;
             }
 
@@ -1455,7 +1473,24 @@ public partial class IRGenerator
                     stmt.Line > 0 ? stmt.Line : lastLine, 1);
         }
 
-        CheckIntLiteralRange(stmt.Init, DataTypeExtensions.StringToDataType(stmt.VarType), stmt.Line);
+        // A bare `const` (no explicit width) infers its scalar width from the
+        // value's magnitude, so a 16/32-bit compile-time constant (e.g. a PWM TOP
+        // = clk/freq) is neither rejected by the range check nor truncated to uint8.
+        DataType declType = DataTypeExtensions.StringToDataType(stmt.VarType);
+        if (stmt.VarType == "const" && stmt.Init != null)
+        {
+            try
+            {
+                int cv = EvaluateConstantExpr(stmt.Init);
+                if (cv < 0) declType = cv < short.MinValue ? DataType.INT32 : DataType.INT16;
+                else if (cv > 0xFFFF) declType = DataType.UINT32;
+                else if (cv > 0xFF) declType = DataType.UINT16;
+                else declType = DataType.UINT8;
+            }
+            catch { /* non-constant initializer: keep the default */ }
+        }
+
+        CheckIntLiteralRange(stmt.Init, declType, stmt.Line);
 
         if (stmt.VarType == "bytearray")
         {
@@ -1565,7 +1600,7 @@ public partial class IRGenerator
             return;
         }
 
-        DataType dt = DataTypeExtensions.StringToDataType(stmt.VarType);
+        DataType dt = declType;
         string q2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Name
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
@@ -1950,6 +1985,21 @@ public partial class IRGenerator
         else if (stmt.Annotation.Contains("uint32")) type = DataType.UINT32;
         else if (stmt.Annotation == "Callable") type = DataType.FUNCREF;
 
+        // A bare `const` (no explicit width) infers its width from the value's
+        // magnitude, so a 16/32-bit compile-time constant (e.g. a PWM TOP =
+        // clk/freq) is not silently truncated to uint8.
+        if (stmt.Annotation == "const" && stmt.Value != null)
+        {
+            try
+            {
+                int cv = EvaluateConstantExpr(stmt.Value);
+                if (cv < 0) type = cv < short.MinValue ? DataType.INT32 : DataType.INT16;
+                else if (cv > 0xFFFF) type = DataType.UINT32;
+                else if (cv > 0xFF) type = DataType.UINT16;
+            }
+            catch { /* non-constant initializer: keep the uint8 default */ }
+        }
+
         string qualified2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
@@ -1981,12 +2031,16 @@ public partial class IRGenerator
             }
 
             // ptr[T] = <runtime address> (e.g. ptr(BASE + x) with a non-constant offset):
-            // the variable holds a 16-bit runtime address. Record it as a runtime pointer so
-            // a later `.value` read / write / augmented-assign lowers to Load/StoreIndirect.
+            // the variable holds a runtime address whose width is the chip's native
+            // pointer size (16-bit on AVR, 32-bit on Cortex-M / RISC-V). Using UINT16
+            // unconditionally truncated 32-bit MMIO addresses on RP2040/RP2350. Record
+            // it as a runtime pointer so a later `.value` read/write/aug-assign lowers
+            // to Load/StoreIndirect.
             if (isPtrAnnotation)
             {
-                Emit(new Copy(rhs, new Variable(qualified2, DataType.UINT16)));
-                variableTypes[qualified2] = DataType.UINT16;
+                DataType ptrAddrType = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+                Emit(new Copy(rhs, new Variable(qualified2, ptrAddrType)));
+                variableTypes[qualified2] = ptrAddrType;
                 runtimePtrVars[qualified2] = ptrElemType;
                 return;
             }

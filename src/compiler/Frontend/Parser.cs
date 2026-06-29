@@ -230,9 +230,12 @@ public class Parser
         bool isPropertySetter = false;
         string propSetterOf = "";
         bool isNaked = false;
+        bool isExportC = false;
         bool isExtern = false;
         string externSymbol = "";
         string warningMessage = "";
+        bool isPioProgram = false;
+        var pioParams = new Dictionary<string, Expression>();
 
         while (Check(TokenType.At))
         {
@@ -255,6 +258,24 @@ public class Parser
             {
                 isPropertyGetter = true;
                 isInline = true;
+            }
+            else if (decorator.Value == "asm_pio")
+            {
+                // @asm_pio(...) -- MicroPython-style PIO program. The body is PIO
+                // assembly handled by the PIO assembler, not the CPU codegen.
+                isPioProgram = true;
+                ParsePioDecoratorArgs(pioParams);
+            }
+            else if (decorator.Value == "rp2" && Check(TokenType.Dot))
+            {
+                // @rp2.asm_pio(...) -- the dotted MicroPython form. Must be checked
+                // before the generic dotted (property setter/getter) branch below.
+                Advance();
+                var sub = Consume(TokenType.Identifier, "Expected 'asm_pio' after '@rp2.'");
+                if (sub.Value != "asm_pio")
+                    Error("Unknown decorator '@rp2." + sub.Value + "'");
+                isPioProgram = true;
+                ParsePioDecoratorArgs(pioParams);
             }
             else if (Check(TokenType.Dot))
             {
@@ -318,6 +339,12 @@ public class Parser
             {
                 isNaked = true;
             }
+            else if (decorator.Value == "used" || decorator.Value == "export_c")
+            {
+                // Keep the function alive with external linkage even with no Python
+                // caller, so inline asm (e.g. an RTOS context switch) can `bl` it.
+                isExportC = true;
+            }
             else if (decorator.Value == "outline")
             {
                 // RFC 0001 Model A: compile this ZCA method once as a shared
@@ -380,12 +407,39 @@ public class Parser
             IsPropertySetter = isPropertySetter,
             PropertyName = propSetterOf,
             IsNaked = isNaked,
+            IsExportC = isExportC,
             IsExtern = isExtern,
             ExternSymbol = externSymbol,
             WarningMessage = warningMessage,
-            IsOutline = isOutline
+            IsOutline = isOutline,
+            IsPioProgram = isPioProgram,
+            PioParams = pioParams
         };
         return func;
+    }
+
+    // Parses the optional keyword-argument list of an @asm_pio / @rp2.asm_pio
+    // decorator into raw expressions (evaluated later by the PIO assembler):
+    //   @asm_pio(out_init=(PIO.OUT_LOW,), sideset_init=PIO.OUT_LOW, autopull=True)
+    // Only keyword arguments are accepted (the decorator takes no positional args).
+    private void ParsePioDecoratorArgs(Dictionary<string, Expression> into)
+    {
+        if (!Check(TokenType.LParen)) return;   // bare @asm_pio with no parentheses
+        Advance(); // (
+        while (Check(TokenType.Newline)) Advance();
+        if (!Check(TokenType.RParen))
+        {
+            do
+            {
+                while (Check(TokenType.Newline)) Advance();
+                if (Check(TokenType.RParen)) break;
+                var key = Consume(TokenType.Identifier, "Expected keyword argument name in @asm_pio(...)").Value;
+                Consume(TokenType.Equal, "Expected '=' after '" + key + "' in @asm_pio(...)");
+                into[key] = ParseExpression();
+            } while (Match(TokenType.Comma));
+            while (Check(TokenType.Newline)) Advance();
+        }
+        Consume(TokenType.RParen, "Expected ')' to close @asm_pio(...)");
     }
 
     private ClassDef ParseClassDefinitionWithDecorators()
@@ -1141,8 +1195,17 @@ public class Parser
                 return new AnnAssign(name, type, init) { Line = line };
             }
 
+            // `self.field: T = value` -- a scalar type annotation on an instance
+            // member. The member's type is inferred from the assigned value (same as
+            // a bare `self.field = value`), so accept the annotation and lower to a
+            // plain member assignment. (Users naturally write the annotation; don't
+            // make them delete it.)
             if (name.Contains('.'))
-                Error("Only array-typed annotations are supported on instance members");
+            {
+                if (init == null)
+                    Error("An annotated instance member needs an initial value, e.g. `self.x: int = 0`");
+                return new AssignStmt(expr, init!) { Line = line };
+            }
 
             return new VarDecl(name, type, init) { Line = line };
         }

@@ -41,6 +41,7 @@ public class DeviceConfig
     public int PointerWidth => Arch switch
     {
         "arm" or "rp2040" or "cortex-m" => 4,
+        "rp2350" or "cortex-m33" or "cortex-m33f" => 4,
         "riscv32" => 4,
         _ => 2,
     };

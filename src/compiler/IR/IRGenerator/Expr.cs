@@ -1309,8 +1309,27 @@ public partial class IRGenerator
             string? rpn = obj switch { Variable rpv => rpv.Name, Temporary rpt => rpt.Name, _ => null };
             if (rpn != null && runtimePtrVars.TryGetValue(rpn, out var rpElem))
             {
+                // Prefer the annotated variable's element width over the bare ptr()
+                // temp's UINT8 default (mirrors the .value write path in Assign.cs).
+                string? declName = expr.Object is VariableExpr dvo ? dvo.Name : null;
+                if (declName != null)
+                {
+                    foreach (var k in new[]
+                    {
+                        string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + declName,
+                        string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + declName,
+                        declName,
+                    })
+                    {
+                        if (k != null && runtimePtrVars.TryGetValue(k, out var declElem))
+                        {
+                            rpElem = declElem;
+                            break;
+                        }
+                    }
+                }
                 Temporary ld = MakeTemp(rpElem);
-                Emit(new LoadIndirect(obj, ld));
+                Emit(new LoadIndirect(obj, ld, rpElem));
                 return ld;
             }
 

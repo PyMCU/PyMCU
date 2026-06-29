@@ -141,10 +141,13 @@ public record Binary(BinaryOp Op, Val Src1, Val Src2, Val Dst) : Instruction;
 public record Copy(Val Src, Val Dst) : Instruction;
 public record Bitcast(Val Src, Val Dst) : Instruction;
 
-// Indirect Memory Access (Pointer Dereference)
-public record LoadIndirect(Val SrcPtr, Val Dst) : Instruction;
+// Indirect Memory Access (Pointer Dereference). `Elem` is the access width
+// (the pointed-to element type); it defaults to UINT8 for backward compatibility
+// but the frontend sets it from the runtime pointer's declared element type so a
+// 16/32-bit MMIO access through a computed address is not narrowed by later passes.
+public record LoadIndirect(Val SrcPtr, Val Dst, DataType Elem = DataType.UINT8) : Instruction;
 
-public record StoreIndirect(Val Src, Val DstPtr) : Instruction;
+public record StoreIndirect(Val Src, Val DstPtr, DataType Elem = DataType.UINT8) : Instruction;
 
 public record Jump(string Target) : Instruction;
 
