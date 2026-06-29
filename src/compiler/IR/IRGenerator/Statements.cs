@@ -121,6 +121,13 @@ public partial class IRGenerator
 
     private Function VisitFunction(FunctionDef funcNode)
     {
+        if (funcNode.IsAsync)
+            throw UserError(
+                $"async def '{funcNode.Name}': the coroutine-to-state-machine lowering is not " +
+                "implemented yet (the syntax parses; the transform is the next step). For now, " +
+                "write the future as a small class with a poll() method and drive it from a " +
+                "cooperative loop -- the zero-cost pattern async lowers to (see the RTOS example).");
+
         var irFunc = new Function();
         string fullName = currentModulePrefix + funcNode.Name;
         irFunc.Name = fullName;

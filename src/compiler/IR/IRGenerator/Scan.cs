@@ -314,6 +314,13 @@ public partial class IRGenerator
         {
             string fullName = currentModulePrefix + func.Name;
 
+            if (func.IsAsync)
+                throw UserError(
+                    $"async def '{func.Name}': the coroutine-to-state-machine lowering is not " +
+                    "implemented yet. The syntax parses (this is the foundation); the transform " +
+                    "is the next step. For now write the future as a small class with a poll() " +
+                    "method driven from a cooperative loop -- the zero-cost pattern async lowers to.");
+
             // @asm_pio / @rp2.asm_pio: the body is PIO assembly, not CPU code.
             // Assemble it now and register it; never lower it as a function.
             if (func.IsPioProgram)

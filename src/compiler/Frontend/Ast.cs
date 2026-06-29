@@ -256,6 +256,18 @@ public class UnaryExpr : Expression
     }
 }
 
+// `await <expr>` -- a suspension point inside an `async def`. The coroutine lowering
+// turns each AwaitExpr into a poll of the awaited future, yielding until it is ready.
+public class AwaitExpr : Expression
+{
+    public Expression Operand { get; }
+
+    public AwaitExpr(Expression operand)
+    {
+        Operand = operand;
+    }
+}
+
 public class Block : Statement
 {
     public List<Statement> Statements { get; } = new();
@@ -619,6 +631,10 @@ public class FunctionDef : Statement
     // generator must NOT lower this function as a normal CPU function.
     public bool IsPioProgram { get; set; } = false;
     public Dictionary<string, Expression> PioParams { get; set; } = new();
+
+    // `async def`. The function is a coroutine; its body uses `await` and lowers to a
+    // resumable state machine (a ZCA poll() object), not a plain CPU function.
+    public bool IsAsync { get; set; } = false;
 
     public FunctionDef(string name, List<Param> parameters, string returnType,
         Block body, bool isInline = false, bool isInterrupt = false,

@@ -38,6 +38,11 @@ public partial class IRGenerator
 
         if (expr is BooleanLiteral boolean) return new Constant(boolean.Value ? 1 : 0);
 
+        if (expr is AwaitExpr)
+            throw UserError(
+                "`await` is only valid inside an `async def`, and the coroutine lowering is not " +
+                "implemented yet. Drive a future's poll() from a cooperative loop for now.");
+
         if (expr is NoneLiteral) return new NoneVal();
 
         if (expr is StringLiteral str)

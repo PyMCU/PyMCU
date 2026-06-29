@@ -51,6 +51,13 @@ public class Parser
             {
                 prog.GlobalStatements.Add(ParseClassDefinitionWithDecorators());
             }
+            else if (Check(TokenType.Identifier) && Peek().Value == "async" && PeekNext().Type == TokenType.Def)
+            {
+                Advance(); // consume `async`
+                var asyncFn = ParseFunction();
+                asyncFn.IsAsync = true;
+                prog.Functions.Add(asyncFn);
+            }
             else if (Check(TokenType.Def) || Check(TokenType.At))
             {
                 prog.Functions.Add(ParseFunction());
@@ -563,6 +570,18 @@ public class Parser
 
     private Statement ParseStatement()
     {
+        // `async def ...` -- a coroutine. `async` is a soft keyword (an identifier),
+        // so detect it before the `def` dispatch and flag the parsed function.
+        if (Check(TokenType.Identifier) && Peek().Value == "async" && PeekNext().Type == TokenType.Def)
+        {
+            Advance(); // consume `async`
+            if (functionDepth > 0)
+                Error("Nested function definitions require the @inline decorator");
+            var asyncFn = ParseFunction();
+            asyncFn.IsAsync = true;
+            return asyncFn;
+        }
+
         if (Check(TokenType.If)) return ParseIfStatement();
         if (Check(TokenType.Match)) return ParseMatchStatement();
         if (Check(TokenType.While)) return ParseWhileStatement();
@@ -1498,6 +1517,14 @@ public class Parser
 
     private Expression ParseUnary()
     {
+        // `await <expr>` -- suspension point in a coroutine (`await` is a soft keyword).
+        if (Check(TokenType.Identifier) && Peek().Value == "await" && PeekNext().Type != TokenType.Equal
+            && PeekNext().Type != TokenType.Dot && PeekNext().Type != TokenType.LParen)
+        {
+            Advance(); // consume `await`
+            return new AwaitExpr(ParseUnary());
+        }
+
         if (Check(TokenType.Minus))
         {
             Advance();
