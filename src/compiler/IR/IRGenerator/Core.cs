@@ -257,6 +257,12 @@ public partial class IRGenerator
             constantVariables["__FREQUENCY__"] = (int)config.Frequency;
         }
 
+        // Desugar `async def` coroutines into ZCA state-machine classes before any
+        // scanning, so the rest of the pipeline sees ordinary classes.
+        PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
+        foreach (var m in importedModules.Values)
+            PyMCU.Frontend.AsyncTransform.TransformProgram(m);
+
         constantVariables["ValueError"]          = 1;
         constantVariables["TypeError"]           = 2;
         constantVariables["IndexError"]          = 3;
