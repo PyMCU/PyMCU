@@ -55,8 +55,21 @@ public partial class IRGenerator
             }
             else
             {
-                EmitSlotConstruction(slotTgt, slotCls, slotCall.Args);
-                return;
+                // The positional EmitSlotConstruction shortcut only fills fields that
+                // are initialised directly from a constructor parameter (self.x = p).
+                // If any field is a constant or a computed expression (self.y = 100000,
+                // self.z = a + b), run the REAL __init__ via the flattened machinery and
+                // materialize the fields into the slot, so they get their actual values.
+                bool allFromParam = classFieldLayout.TryGetValue(slotCls, out var slotLay)
+                    && slotLay.Count > 0
+                    && slotLay.All(f => !string.IsNullOrEmpty(f.SourceParam));
+                if (allFromParam)
+                {
+                    EmitSlotConstruction(slotTgt, slotCls, slotCall.Args);
+                    return;
+                }
+                slotMatName = slotTgt.Name;
+                slotMatCls = slotCls;
             }
         }
 
