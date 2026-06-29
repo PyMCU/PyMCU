@@ -10,5 +10,9 @@ from pymcu.exceptions import CompileError
 
 if __CHIP__.arch == "avr":
     from pymcu.hal.avr.spi import SPI
+elif __CHIP__.name == "rp2040":
+    from pymcu.hal.rp2040.spi import SPI
+elif __CHIP__.name == "rp2350":
+    from pymcu.hal.rp2350.spi import SPI
 else:
     raise CompileError("SPI not supported on this architecture")

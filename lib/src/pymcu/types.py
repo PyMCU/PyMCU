@@ -67,6 +67,17 @@ def naked(f):
     return f
 
 
+def used(f):
+    # Keep this function alive with external linkage even when no Python code calls
+    # it, so it can be invoked from inline asm (e.g. an RTOS `asm("bl scheduler")`).
+    # Zero-cost marker -- the compiler anchors it in @llvm.used.
+    return f
+
+
+# Alias for those who want C-interop semantics explicitly.
+export_c = used
+
+
 def outline(f):
     # RFC 0001 Model A: marks a ZCA method to be compiled once as a shared
     # subroutine (instance fields passed as runtime params) instead of being

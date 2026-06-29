@@ -327,7 +327,7 @@ def new(
     _chip_lower = chip.lower()
     if _chip_lower.startswith("at"):
         compiler_extra = "[avr]"
-    elif _chip_lower == "rp2040":
+    elif _chip_lower in ("rp2040", "rp2350"):
         compiler_extra = "[arm]"
     else:
         compiler_extra = ""

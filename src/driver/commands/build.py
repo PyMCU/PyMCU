@@ -87,6 +87,7 @@ FLASH_SIZES: dict[str, int] = {
     "attiny13": 1024,  "attiny13a": 1024,
     "attiny2313": 2048, "attiny4313": 4096,
     "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
+    "rp2350": 4194304,   # 4 MB external QSPI flash (Raspberry Pi Pico 2 default)
 }
 
 
@@ -917,7 +918,7 @@ def build(
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)
                     for inter in ["firmware.elf", "firmware.o", "boot2.o",
-                                  "crt0.o", "firmware.opt.ll"]:
+                                  "crt0.o", "picobin.o", "firmware.opt.ll"]:
                         p = output_dir / inter
                         if p.exists():
                             shutil.move(str(p), str(debug_dir / p.name))

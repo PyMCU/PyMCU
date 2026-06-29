@@ -7,5 +7,9 @@ elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.adc import AnalogPin
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.adc import AnalogPin
+elif __CHIP__.name == "rp2040":
+    from pymcu.hal.rp2040.adc import AnalogPin
+elif __CHIP__.name == "rp2350":
+    from pymcu.hal.rp2350.adc import AnalogPin
 else:
     raise CompileError("ADC not supported on this architecture")
