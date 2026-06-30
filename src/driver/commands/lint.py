@@ -115,16 +115,23 @@ class _Linter(ast.NodeVisitor):
         self.generic_visit(node)
 
     # ── reflection / dynamism ────────────────────────────────────────────────
+    # True reflection -- a hard blocker (no runtime attribute/name machinery).
     _REFLECTION = {"getattr", "setattr", "hasattr", "delattr", "vars", "dir",
-                   "eval", "exec", "globals", "locals", "type", "isinstance"}
+                   "eval", "exec", "globals", "locals"}
+    # Runtime type checks -- common and mechanically replaceable, so a WARN, not an error.
+    _TYPECHECK = {"isinstance", "type", "issubclass"}
 
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Name):
             name = node.func.id
             if name in self._REFLECTION:
                 self._add(node, ERROR, "reflection",
-                          f"`{name}(...)`: runtime reflection / dynamic typing is not supported.",
+                          f"`{name}(...)`: runtime reflection is not supported.",
                           "Use a static ZCA class and match on an explicit type-tag field.")
+            elif name in self._TYPECHECK:
+                self._add(node, WARN, "type-check",
+                          f"`{name}(...)`: runtime type checks need a static replacement.",
+                          "Give objects an explicit type-tag field and `match` on it.")
             elif name in ("dict", "set"):
                 self._add(node, ERROR, f"{name}-call", f"`{name}()`: no general {name} type.",
                           "Use a fixed-capacity container or a const array.")
