@@ -208,6 +208,17 @@ def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
     return False
 
 
+def _sources_contain(sources_dir: Path, token: str) -> bool:
+    """Return True if any .py file under sources_dir mentions *token* (substring match)."""
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            if token in py_file.read_text(encoding="utf-8", errors="ignore"):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 _MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
 
 
@@ -323,6 +334,28 @@ def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[P
         comment="# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n",
         import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
         call_line="_pymcu_millis_init()",
+    )
+
+
+def _inject_clock_init_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Return a synthetic entry file that calls clock_init() first thing in main().
+
+    The RP2350 bootrom leaves clk_sys on the low boot clock and the system TIMER tick
+    sourced from the imprecise ROSC, so a bare-metal program runs ~12x slow on the CPU
+    and ~2x slow on every delay_ms/asyncio timer. The pico-sdk fixes this in its runtime
+    (runtime_init_clocks, before main); PyMCU mirrors that by auto-injecting clock_init()
+    -- which starts XOSC, locks PLL_SYS at 150 MHz and gives the timer an exact 1 MHz tick
+    -- so user code stays clean (no manual clock setup, just like the SDK / MicroPython).
+
+    Injected last so clock_init() lands ahead of any stdout/ticks preamble, which need the
+    final clk_sys / clk_peri to be in effect before they configure their peripherals.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: RP2350 clocks brought up to 150 MHz / 1 MHz tick\n",
+        import_line="from pymcu.hal.rp2350.clocks import clock_init as _pymcu_clock_init\n",
+        call_line="_pymcu_clock_init()",
     )
 
 
@@ -635,6 +668,19 @@ def build(
                     "[debug] ticks_ms() detected — millis_init() preamble injected",
                     style="dim",
                 )
+
+        # Auto-inject clock_init() for the RP2350 so clk_sys is 150 MHz and the system
+        # timer ticks at an exact 1 MHz -- mirrors the pico-sdk runtime (runtime_init_clocks)
+        # which does the same before main(). Injected LAST so clock_init() runs first, ahead
+        # of any stdout/ticks preamble that depends on the final clk_sys / clk_peri. Skipped
+        # if the user already calls clock_init() (idempotent, but avoids a redundant pass).
+        if target == "rp2350" and not _sources_contain(sources_dir, "clock_init"):
+            entry_point, _n = _inject_clock_init_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("rp2350 target — injecting clock_init() (150 MHz + 1 MHz timer tick)",
+                      verbose=is_verbose)
 
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
