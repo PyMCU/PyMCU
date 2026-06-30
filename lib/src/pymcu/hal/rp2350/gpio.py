@@ -35,8 +35,12 @@ class Pin:
     PULL_UP   = 1
     PULL_DOWN = 2
 
-    def __init__(self, pin: const[uint8], mode: const[uint8] = 0,
+    def __init__(self, pin: uint8, mode: const[uint8] = 0,
                  pull: const = -1, value: const = -1):
+        # `pin` may be a runtime value (e.g. Pin(n) where n is a variable). When it
+        # IS a compile-time constant the address math below const-folds as before, so
+        # the constant case stays zero-cost; a runtime pin just keeps 4*pin / 8*pin /
+        # 1<<pin as real instructions.
         self._pin = pin
 
         # Bring IO_BANK0 and PADS_BANK0 out of reset and wait until ready.

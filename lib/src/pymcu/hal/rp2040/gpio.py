@@ -33,8 +33,12 @@ class Pin:
     PULL_UP   = 1
     PULL_DOWN = 2
 
-    def __init__(self, pin: const[uint8], mode: const[uint8] = 0,
+    def __init__(self, pin: uint8, mode: const[uint8] = 0,
                  pull: const = -1, value: const = -1):
+        # `pin` may be a runtime value (Pin(n) where n is a variable). A constant pin
+        # still const-folds the address math below (verified: Pin(25).toggle() lowers
+        # to a single `store i32 33554432` -- zero-cost), so only a genuinely runtime
+        # pin pays for the 4*pin / 8*pin / 1<<pin instructions.
         self._pin = pin
 
         # Bring IO_BANK0 and PADS_BANK0 out of reset and wait until ready.
