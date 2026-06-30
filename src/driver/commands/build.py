@@ -290,6 +290,22 @@ def _inject_print_preamble(
     )
 
 
+def _inject_print_imports_only(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Inject only the console streaming functions, with NO stdout/UART init.
+
+    Used when the user manages their own UART (so we must not double-initialize it)
+    but also calls print(): importing console.print_str loads the streaming value/
+    string writers the print() lowering resolves by name.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: console functions for print() (user-managed UART)\n",
+        import_line="from pymcu.hal.console import print_str\n",
+        call_line="pass",
+    )
+
+
 def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
     """Return a synthetic entry file with a millis_init() preamble prepended.
 
@@ -592,6 +608,15 @@ def build(
                     f"({_stdout_device} at {_stdout_baud} baud)",
                     style="dim",
                 )
+        elif _has_print and _has_uart:
+            # User drives their own UART but also calls print(): load the console
+            # streaming functions (no init -- the user's UART() owns the hardware).
+            entry_point, _n = _inject_print_imports_only(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("print() + user UART() — injecting console functions (no init)",
+                      verbose=is_verbose)
 
         # Auto-inject millis_init() preamble when ticks_ms() is used.
         # millis_init() must run before any ticks_ms() call; injecting it here
