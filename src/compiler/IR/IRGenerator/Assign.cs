@@ -24,6 +24,10 @@ public partial class IRGenerator
 {
     private void VisitAssign(AssignStmt stmt)
     {
+        // `n = format_into(buf, f"...")`: expand the f-string into buffer writes.
+        if (stmt.Target is VariableExpr fiTgt && TryExpandFormatInto(fiTgt.Name, stmt.Value))
+            return;
+
         // A name declared with a `const[...]` annotation is immutable; reassigning it is a
         // user error (previously this was silently accepted, overwriting the constant).
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
@@ -1433,8 +1437,70 @@ public partial class IRGenerator
                 line, 1);
     }
 
+    // `target = format_into(buf, f"...")` -- format an f-string into a fixed buffer, with
+    // `target` doubling as the running write position (returned length). Literal chunks are
+    // inlined as compile-time byte stores; runtime interpolations call pymcu.fmt (u32, or
+    // hex8 for a `:..x` spec), threading the position. Returns false when `value` is not a
+    // format_into(...) call so the normal assignment path handles it.
+    private bool TryExpandFormatInto(string target, Expression value)
+    {
+        if (value is not CallExpr call || call.Callee is not VariableExpr fn || fn.Name != "format_into")
+            return false;
+        if (call.Args.Count != 2 || call.Args[1] is not FStringExpr fs)
+            throw UserError("format_into(buf, f\"...\") takes a buffer and an f-string literal.");
+
+        // The local name bound to pymcu.fmt (for fmt.u32 / fmt.hex8).
+        string fmtMod = "fmt";
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.fmt") { fmtMod = kv.Key; break; }
+
+        Expression buf = call.Args[0];
+        var tgt = new VariableExpr(target);
+        Expression FmtCall(string m, List<Expression> args) =>
+            new CallExpr(new MemberAccessExpr(new VariableExpr(fmtMod), m), args);
+
+        // target = 0
+        VisitStatement(new AssignStmt(new VariableExpr(target), new IntegerLiteral(0)));
+
+        foreach (var part in fs.Parts)
+        {
+            if (!part.IsExpr)
+            {
+                // Literal chunk: buf[target] = ch; target = target + 1  (per char).
+                foreach (char ch in part.Text)
+                {
+                    VisitStatement(new AssignStmt(
+                        new IndexExpr(buf, new VariableExpr(target)), new IntegerLiteral(ch)));
+                    VisitStatement(new AssignStmt(new VariableExpr(target),
+                        new BinaryExpr(new VariableExpr(target), PyMCU.Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+                }
+                continue;
+            }
+            // Interpolation: target = fmt.u32(buf, target, value)  (or hex8 for a `:..x` spec).
+            string spec = part.FormatSpec;
+            if (spec.EndsWith("x") || spec.EndsWith("X"))
+            {
+                int width = 2;
+                string digits = new string(spec.TakeWhile(char.IsDigit).ToArray());
+                if (digits.Length > 0) width = int.Parse(digits);
+                VisitStatement(new AssignStmt(new VariableExpr(target),
+                    FmtCall("hex8", new List<Expression> { buf, tgt, part.Expr!, new IntegerLiteral(width) })));
+            }
+            else
+            {
+                VisitStatement(new AssignStmt(new VariableExpr(target),
+                    FmtCall("u32", new List<Expression> { buf, tgt, part.Expr! })));
+            }
+        }
+        return true;
+    }
+
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `n: uint32 = format_into(buf, f"...")`: expand the f-string into buffer writes.
+        if (stmt.Init != null && TryExpandFormatInto(stmt.Name, stmt.Init))
+            return;
+
         // `c: ClassName = ClassName(...)` — a type-annotated instance construction (a typed
         // local parses as a VarDecl). The annotation is just the (redundant) declared type;
         // route through the normal assignment path so the instance->class link and constructor
