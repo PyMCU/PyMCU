@@ -116,3 +116,26 @@ class Pin:
             SIO_GPIO_OUT_CLR.value = 1 << self._pin
         else:
             SIO_GPIO_OUT_SET.value = 1 << self._pin
+
+    @inline
+    def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
+        # Wait for the pin to reach `state`, then measure how long it holds it, in
+        # microseconds (the bit-bang primitive behind machine.time_pulse_us, used by
+        # the DHT driver). Returns 0 on timeout. Rides the 1 MHz system timer
+        # (TIMER0 TIMERAWL @ 0x400B0028) -- which clock_init() makes an exact 1 MHz.
+        mask: uint32 = 1 << self._pin
+        timer: ptr[uint32] = ptr(0x400B0028)
+        want: uint32 = 0
+        if state != 0:
+            want = mask
+        # 1. wait for the level to appear
+        t0: uint32 = timer.value
+        while (SIO_GPIO_IN.value & mask) != want:
+            if (timer.value - t0) > timeout_us:
+                return 0
+        # 2. measure how long it stays
+        start: uint32 = timer.value
+        while (SIO_GPIO_IN.value & mask) == want:
+            if (timer.value - start) > timeout_us:
+                return 0
+        return timer.value - start
