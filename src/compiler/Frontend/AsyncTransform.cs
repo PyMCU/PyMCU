@@ -28,11 +28,37 @@ public static class AsyncTransform
     public static void TransformProgram(ProgramNode prog)
     {
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
+        if (asyncFns.Count == 0) return;
+
+        // Using `async def` requires `import asyncio` (as in CPython, where the
+        // keywords pair with the asyncio runtime). The local name bound to the module
+        // is how `await asyncio.sleep(...)` and the generated ticks() are spelled.
+        string? alias = FindAsyncioAlias(prog);
+        if (alias == null)
+            throw new SyntaxError(
+                "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
+                "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.", 0, 0);
+
         foreach (var fn in asyncFns)
         {
             prog.Functions.Remove(fn);
-            prog.GlobalStatements.Add(TransformFunction(fn));
+            prog.GlobalStatements.Add(TransformFunction(fn, alias));
         }
+    }
+
+    // The local name a module bound to the asyncio module, or null if not imported.
+    private static string? FindAsyncioAlias(ProgramNode prog)
+    {
+        foreach (var imp in prog.Imports)
+        {
+            // `import asyncio` / `import asyncio as aio` / `import pymcu.asyncio as aio`
+            if (imp.ModuleName == "asyncio" || imp.ModuleName == "pymcu.asyncio")
+                return string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName.Split('.')[^1] : imp.ModuleAlias;
+            // `from pymcu import asyncio` / `from pymcu import asyncio as aio`
+            if ((imp.ModuleName == "pymcu" || imp.ModuleName == "") && imp.Symbols.Contains("asyncio"))
+                return imp.Aliases.TryGetValue("asyncio", out var a) ? a : "asyncio";
+        }
+        return null;
     }
 
     private sealed class State
@@ -41,7 +67,7 @@ public static class AsyncTransform
         public Block Block = new();
     }
 
-    public static ClassDef TransformFunction(FunctionDef fn)
+    public static ClassDef TransformFunction(FunctionDef fn, string asyncioAlias)
     {
         var paramNames = fn.Params.Select(p => p.Name).ToList();
 
@@ -53,7 +79,7 @@ public static class AsyncTransform
         var fields = new HashSet<string>(paramNames);
         foreach (var l in localNames) fields.Add(l);
 
-        var b = new Builder(fields);
+        var b = new Builder(fields, asyncioAlias);
         b.Build(fn.Body, fn.Name);
 
         // __init__(self, <params>): _state=0, params, locals, await start-timestamps.
@@ -91,12 +117,17 @@ public static class AsyncTransform
     private sealed class Builder
     {
         private readonly HashSet<string> _fields;
+        private readonly string _aio;
         public readonly List<State> States = new();
         public readonly List<string> StartFields = new();
         private int _nextId;
         private int _awaitCounter;
 
-        public Builder(HashSet<string> fields) => _fields = fields;
+        public Builder(HashSet<string> fields, string asyncioAlias)
+        {
+            _fields = fields;
+            _aio = asyncioAlias;
+        }
 
         private int NewId() => _nextId++;
 
@@ -137,26 +168,26 @@ public static class AsyncTransform
         {
             foreach (var s in stmts)
             {
-                if (TryGetAwaitSleep(s, out var durExpr))
+                if (TryGetAwaitSleep(s, _aio, out var durUsExpr))
                 {
                     string sf = "_start" + _awaitCounter++;
                     StartFields.Add(sf);
 
-                    // Arm: record the start timestamp, then suspend.
-                    cur.Add(SelfAssign(sf, Call("ticks")));
+                    // Arm: record the start timestamp (asyncio.ticks(), microseconds), suspend.
+                    cur.Add(SelfAssign(sf, AioCall("ticks")));
                     int waitId = NewId();
                     cur.Add(SetState(waitId));
                     Finish(curId, cur, done: false);
 
-                    // Wait state: stay PENDING until `ticks() - start >= duration`.
+                    // Wait state: stay PENDING until `asyncio.ticks() - start >= duration_us`.
                     int afterId = NewId();
                     var waitStmts = new List<Statement>
                     {
                         new IfStmt(
                             new BinaryExpr(
-                                new BinaryExpr(Call("ticks"), BinaryOp.Sub, SelfRef(sf)),
+                                new BinaryExpr(AioCall("ticks"), BinaryOp.Sub, SelfRef(sf)),
                                 BinaryOp.Less,
-                                Rewrite(durExpr)),
+                                Rewrite(durUsExpr)),
                             ReturnBlock(1)),
                         SetState(afterId),
                     };
@@ -182,6 +213,10 @@ public static class AsyncTransform
         }
 
         private Statement SetState(int id) => SelfAssign("_state", Int(id));
+
+        // `<asyncio>.<method>()` -- a dotted call on the imported asyncio module.
+        private Expression AioCall(string method) =>
+            new CallExpr(new MemberAccessExpr(new VariableExpr(_aio), method), new List<Expression>());
 
         // ── local -> self.field rewriting ────────────────────────────────────
         private Statement RewriteStmt(Statement s, string fnName)
@@ -251,23 +286,30 @@ public static class AsyncTransform
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
-    private static bool TryGetAwaitSleep(Statement s, out Expression durExpr)
+    // Recognize `await asyncio.sleep(n)` / `asyncio.sleep_ms(n)` and return the delay
+    // converted to MICROSECONDS (asyncio.ticks() units): sleep(n)=n*1_000_000,
+    // sleep_ms(n)=n*1000.
+    private static bool TryGetAwaitSleep(Statement s, string aio, out Expression durUsExpr)
     {
-        durExpr = null!;
+        durUsExpr = null!;
         Expression? val = s switch
         {
             ExprStmt es => es.Expr,
-            AssignStmt asg => asg.Value, // `x = await sleep(n)` -- ignore the (None) result
+            AssignStmt asg => asg.Value, // `x = await asyncio.sleep(n)` -- the result is None
             _ => null,
         };
         if (val is not AwaitExpr aw) return false;
-        if (aw.Operand is CallExpr c && c.Callee is VariableExpr fn
-            && (fn.Name == "sleep" || fn.Name == "sleep_ms") && c.Args.Count == 1)
+
+        if (aw.Operand is CallExpr c && c.Args.Count == 1
+            && c.Callee is MemberAccessExpr m && m.Object is VariableExpr mod && mod.Name == aio
+            && (m.Member == "sleep" || m.Member == "sleep_ms"))
         {
-            durExpr = c.Args[0];
+            int scale = m.Member == "sleep" ? 1_000_000 : 1000;
+            durUsExpr = new BinaryExpr(c.Args[0], BinaryOp.Mul, new IntegerLiteral(scale));
             return true;
         }
-        throw new SyntaxError("v1 async only supports `await sleep(n)` / `await sleep_ms(n)`.", 0, 0);
+        throw new SyntaxError(
+            $"async: only `await {aio}.sleep(n)` / `await {aio}.sleep_ms(n)` are supported.", 0, 0);
     }
 
     private static bool ContainsAwait(Statement s)
