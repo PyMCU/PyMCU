@@ -21,6 +21,21 @@ def clock_init():
     while (xosc_status.value & 0x80000000) == 0:     # wait for STABLE
         pass
 
+    # ── clk_ref -> XOSC + TICKS timer0 = 1 MHz ───────────────────────────────
+    # The RP2350 system TIMER (delay_ms, asyncio.ticks) counts a 1 us tick made by
+    # the TICKS block dividing clk_ref. At boot clk_ref is the imprecise ROSC, so the
+    # tick (and all timer-based timing) runs ~2x slow. Point clk_ref at the 12 MHz
+    # XOSC and set the timer0 divider to 12 -> an exact 1 MHz / 1 us tick.
+    clk_ref_ctrl: ptr[uint32] = ptr(0x40010030)      # CLK_REF_CTRL (SRC: 2 = XOSC)
+    clk_ref_ctrl.value = 2
+    t0_ctrl: ptr[uint32] = ptr(0x40108018)           # TICKS TIMER0_CTRL  ([0]=EN,[1]=RUNNING)
+    t0_cycles: ptr[uint32] = ptr(0x4010801C)         # TICKS TIMER0_CYCLES (clk_ref cycles per tick)
+    t0_ctrl.value = 0                                # stop, reconfigure, restart
+    t0_cycles.value = 12                            # 12 MHz / 12 = 1 MHz
+    t0_ctrl.value = 1
+    while (t0_ctrl.value & 2) == 0:                  # wait until RUNNING
+        pass
+
     # ── un-reset PLL_SYS (RESETS bit 14) ─────────────────────────────────────
     resets_clr: ptr[uint32] = ptr(0x40023000)        # RESETS_RESET, atomic CLR alias
     resets_done: ptr[uint32] = ptr(0x40020008)       # RESETS_RESET_DONE
