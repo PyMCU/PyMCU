@@ -1204,16 +1204,56 @@ public partial class IRGenerator
         return dst;
     }
 
+    // A just-loaded slot field whose declared type is itself a class: re-tag the loaded value
+    // with that (concrete) class so a following `.field`/`.method()` resolves after the ZCA
+    // collapse (the field stores only the scalar). Only class-typed fields (fieldClasses) ->
+    // narrow, no effect on the scalar fields that make up the vast majority.
+    private Val TagSlotFieldClass(Val loaded, string? cls, string member)
+    {
+        if (loaded is Temporary t && cls != null
+            && fieldClasses.TryGetValue(cls + "|" + member, out var fc)
+            && ResolveConcreteClass(fc) is { } cc)
+        {
+            instanceClasses[t.Name] = cc;
+            if (classFieldLayout.TryGetValue(cc, out var l) && l.Count == 1)
+                factoryHandleInstances.Add(t.Name);
+        }
+        return loaded;
+    }
+
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
         // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
-        // instance slot via the `self` pointer at the field's byte offset.
-        if (expr.Object is VariableExpr selfVe && selfVe.Name == "self"
+        // instance slot via the `self` pointer at the field's byte offset. Guard with an empty
+        // inline prefix: when ANOTHER method is inlined into this outlined slot method (e.g.
+        // machine.Pin.mode inside a user slot method), its `self` is a DIFFERENT instance, not
+        // currentFunction's slot self -- using currentFunction's offsets here would read the
+        // wrong field's class and (for a same-named method) recurse forever.
+        // The method whose `self` is in scope is the INNERMOST inline frame (its CalleeName),
+        // falling back to the outlined function being compiled -- NOT currentFunction, which is the
+        // outer outline when another method is inlined into it. This is what makes self.<field>
+        // resolution frame-aware: `self` inside an inlined machine.Pin.mode is machine.Pin's self,
+        // not the user slot method's, so it reads machine.Pin's _pin (hal.Pin), not the user
+        // field -- without it, a same-named method (mode->mode) recurses forever.
+        string frameMethod = inlineStack.Count > 0 && !string.IsNullOrEmpty(inlineStack[^1].CalleeName)
+            ? inlineStack[^1].CalleeName : currentFunction;
+        // The slot read uses currentFunction (unchanged), with ONE narrow exception: when a NON-slot
+        // method like machine.Pin.mode is inlined into an outlined slot method, its `self` shadows
+        // the outline's, so reading the outline's same-named field here would be wrong (and for a
+        // same-named method, recurse forever). Detect exactly that case -- the innermost inline frame
+        // is a different method that is itself NOT a slot method -- and skip, letting self.<field>
+        // fall to the frame-aware Model-A recovery. Every existing path (outline body, inlined slot
+        // method) is untouched.
+        bool innerNonSlotShadow = frameMethod != currentFunction
+            && !slotMethodFieldOffsets.ContainsKey(frameMethod);
+        if (expr.Object is VariableExpr selfVe && selfVe.Name == "self" && !innerNonSlotShadow
             && slotMethodFieldOffsets.TryGetValue(currentFunction, out var fieldOffs)
             && fieldOffs.TryGetValue(expr.Member, out int fieldOff))
         {
-            return EmitSlotFieldLoad(currentFunction + ".self", true, fieldOff,
-                SlotMethodFieldType(currentFunction, expr.Member), 0);
+            return TagSlotFieldClass(
+                EmitSlotFieldLoad(currentFunction + ".self", true, fieldOff,
+                    SlotMethodFieldType(currentFunction, expr.Member), 0),
+                methodInstanceTypes.GetValueOrDefault(currentFunction), expr.Member);
         }
 
         // RFC 0001 Model B (Class[N]): a direct field read on an instance-array element,
@@ -1366,7 +1406,37 @@ public partial class IRGenerator
             return strConst;
         }
 
-        if (string.IsNullOrEmpty(baseName)) throw UserError("Unknown member access: " + expr.Member);
+        if (string.IsNullOrEmpty(baseName))
+        {
+            // Inline single-field method: `self.<field>` where self folded to its scalar value
+            // (e.g. a constant pin) so the evaluated value has no name. If self's class -- set by
+            // the force-inline binding -- is a single-field class whose only field is this member,
+            // then self.<field> IS self: yield self's value, re-tagged with the field's class when
+            // the field is itself a class, else returned as the bare scalar.
+            if (expr.Object is VariableExpr selfVe2)
+            {
+                string selfKey = currentInlinePrefix + selfVe2.Name;
+                while (variableAliases.TryGetValue(selfKey, out var a2)
+                       && !(a2 != null && a2.StartsWith("tmp_"))) selfKey = a2!;
+                if (instanceClasses.TryGetValue(selfKey, out var selfCls2) && selfCls2 != null
+                    && classFieldLayout.TryGetValue(selfCls2, out var lay2) && lay2.Count == 1
+                    && lay2[0].Field == expr.Member)
+                {
+                    if (fieldClasses.TryGetValue(selfCls2 + "|" + expr.Member, out var fc2)
+                        && ResolveConcreteClass(fc2) is { } cc2)
+                    {
+                        var t2 = new Temporary($"tmp_{tempCounter++}", DataType.UINT8);
+                        Emit(new Copy(objVal, t2));
+                        instanceClasses[t2.Name] = cc2;
+                        if (classFieldLayout.TryGetValue(cc2, out var l3) && l3.Count == 1)
+                            factoryHandleInstances.Add(t2.Name);
+                        return t2;
+                    }
+                    return objVal;   // scalar single field: self IS the value
+                }
+            }
+            throw UserError("Unknown member access: " + expr.Member);
+        }
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {
             if (next != null && next.StartsWith("tmp_")) break;
@@ -1396,7 +1466,9 @@ public partial class IRGenerator
             // would dereference main.p__slot as a pointer and read 0.) Multi-byte fields assemble
             // from consecutive bytes.
             int slotTotR = arraySizes.TryGetValue(slotArrR, out var tszR) ? tszR : 0;
-            return EmitSlotFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTotR);
+            return TagSlotFieldClass(
+                EmitSlotFieldLoad(slotArrR, false, slotOffR, slotTyR, slotTotR),
+                slotClsR, expr.Member);
         }
 
         var flattenedName = baseName + "_" + expr.Member;
@@ -1404,6 +1476,33 @@ public partial class IRGenerator
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);
         if (constantAddressVariables.TryGetValue(flattenedName, out int ca))
             return new MemoryAddress(ca, DataType.UINT16);
+
+        // Nested single-field ZCA field access: `obj.theOnlyField` where obj is a known single-
+        // field class whose only field is itself a class (machine.Pin._pin -> hal.Pin). The
+        // instance collapsed to a scalar so `obj.field` IS obj; re-tag it with the nested class.
+        // Guarded tightly: only a single-field class with a CLASS-typed field, and only when the
+        // flattened var carries no class and is no real global -- i.e. only when the normal path
+        // would otherwise fail (so the construction-time `X__pin` case is left untouched).
+        if (baseName != null
+            && instanceClasses.TryGetValue(baseName, out var sfCls) && sfCls != null
+            && classFieldLayout.TryGetValue(sfCls, out var sfLay) && sfLay.Count == 1
+            && sfLay[0].Field == expr.Member
+            && fieldClasses.TryGetValue(sfCls + "|" + expr.Member, out var sfNestedRaw)
+            && ResolveConcreteClass(sfNestedRaw) is { } sfNested
+            && !instanceClasses.ContainsKey(flattenedName)
+            && !globals.ContainsKey(flattenedName))
+        {
+            var sfTy = objVal switch { Variable sv => sv.Type, Temporary st => st.Type, _ => DataType.UINT8 };
+            var sfTmp = new Temporary($"tmp_{tempCounter++}", sfTy);
+            Emit(new Copy(objVal, sfTmp));
+            instanceClasses[sfTmp.Name] = sfNested;
+            // The nested class is itself single-field (its instance IS this scalar), so mark the
+            // temp a handle instance: a Model-A method call on it (pulse_in) then passes the value
+            // directly as the field arg instead of re-visiting (temp)._field, which has no home.
+            if (classFieldLayout.TryGetValue(sfNested, out var nestLay) && nestLay.Count == 1)
+                factoryHandleInstances.Add(sfTmp.Name);
+            return sfTmp;
+        }
 
         // Member access on a plain numeric scalar (e.g. `x.foo` where x: uint8) is invalid:
         // .value/.name are handled above, ZCA instance fields resolve through instanceClasses,
@@ -1416,7 +1515,43 @@ public partial class IRGenerator
             && !instanceClasses.ContainsKey(baseName)
             && !constantAddressVariables.ContainsKey(baseName)
             && !runtimePtrVars.ContainsKey(baseName))
+        {
+            // Model-A single-field method recovery: when a method touches only one field of self,
+            // self is outlined as that field's scalar. The source `self.<field>` here IS self, so
+            // re-tag it with the field's (nested) class -- ONLY in this otherwise-error path, so a
+            // class-typed field (the DHT's machine.Pin _pin) survives without disturbing any
+            // working resolution. currentFunction is "<class>__<method>".
+            // self.<field> where <field> is a real field of frameMethod's class, but self has
+            // collapsed to a scalar (a Model-A method passes only the field(s) it uses). frameMethod
+            // -- not currentFunction -- gives the class whose self is in scope, so this stays correct
+            // for a method inlined into another method (the recursion / wrong-class bug).
+            if (expr.Object is VariableExpr svF && svF.Name == "self"
+                && methodInstanceTypes.TryGetValue(frameMethod, out var ownerCls)
+                && classFieldLayout.TryGetValue(ownerCls, out var ownerLay)
+                && ownerLay.Any(f => f.Field == expr.Member))
+            {
+                // Class-typed field: re-tag self with the (concrete) field class so the following
+                // .method()/.field resolves -- the nested-ZCA dispatch (machine.Pin._pin -> hal.Pin).
+                if (fieldClasses.TryGetValue(ownerCls + "|" + expr.Member, out var ofcRaw)
+                    && ResolveConcreteClass(ofcRaw) is { } ofc)
+                {
+                    var oTy = objVal switch { Variable ov => ov.Type, Temporary ot => ot.Type, _ => DataType.UINT8 };
+                    var oTmp = new Temporary($"tmp_{tempCounter++}", oTy);
+                    Emit(new Copy(objVal, oTmp));
+                    instanceClasses[oTmp.Name] = ofc;
+                    if (classFieldLayout.TryGetValue(ofc, out var ol) && ol.Count == 1)
+                        factoryHandleInstances.Add(oTmp.Name);
+                    return oTmp;
+                }
+                // A bare scalar field IS self only when the class has exactly one field (the collapsed
+                // handle, e.g. hal.Pin._pin -- the pin number). For a multi-field class the field lives
+                // at an offset and `self` alone is not it -- fall through to the error rather than
+                // returning the wrong scalar (this is what keeps the inheritance chains correct).
+                if (ownerLay.Count == 1 && ownerLay[0].Field == expr.Member)
+                    return objVal;
+            }
             throw UserError($"'{expr.Member}' is not a member of a numeric value");
+        }
 
         if (!globals.TryGetValue(flattenedName, out var sym5))
         {

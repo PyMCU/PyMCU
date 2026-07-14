@@ -296,13 +296,24 @@ public partial class IRGenerator
                 // that subscript and method dispatch via GetValClass works when these
                 // singletons are imported by user code.
                 if (initializer is CallExpr ctorCallInst
-                    && ctorCallInst.Callee is VariableExpr ctorVarInst
-                    && classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod)
-                    && classMod != null)
+                    && ctorCallInst.Callee is VariableExpr ctorVarInst)
                 {
                     string fullKey = currentModulePrefix + name;
-                    string fullClassName = classMod + ctorVarInst.Name;
-                    instanceClasses[fullKey] = fullClassName;
+                    if (classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod) && classMod != null)
+                    {
+                        instanceClasses[fullKey] = classMod + ctorVarInst.Name;
+                    }
+                    else
+                    {
+                        // The class was imported through a facade re-export (e.g. wifi.py does
+                        // `from pymcu.hal.wifi import CYW43`, itself re-exported from the concrete
+                        // module). Its concrete module isn't in classModuleMap yet (scan order),
+                        // so record the import-resolved name; the dispatch maps it to the concrete
+                        // class via ResolveConcreteClass once every class is scanned.
+                        string rc = ResolveCallee(ctorVarInst.Name);
+                        if (rc.Contains('_') && rc != ctorVarInst.Name && !intrinsicNames.Contains(ctorVarInst.Name))
+                            instanceClasses[fullKey] = rc;
+                    }
                 }
             }
         }
@@ -521,6 +532,27 @@ public partial class IRGenerator
                             }
 
                         classFieldLayout[classKey] = clsLayout;
+                        // Record any field whose type is itself a class, so a member read can
+                        // recover the nested class identity a single-field ZCA loses on collapse.
+                        // (1) param-typed fields (`self.x = pin` where pin: SomeClass): the layout
+                        //     already carries the class name as the field type.
+                        foreach (var (fld, ty, _) in clsLayout)
+                        {
+                            if (string.IsNullOrEmpty(ty) || IsScalarTypeName(ty)) continue;
+                            fieldClasses[classKey + "|" + fld] = ResolveCallee(ty);
+                        }
+                        // (2) constructor-assigned fields (`self.x = SomeClass(...)`): the layout
+                        //     records these as a scalar (the class collapses), so recover the class
+                        //     from the __init__ RHS. Resolved here in the defining module's scope.
+                        foreach (var s0 in block.Statements)
+                            if (s0 is FunctionDef fdI && fdI.Name == "__init__")
+                                foreach (var st in fdI.Body.Statements)
+                                    if (st is AssignStmt asg2 && asg2.Target is MemberAccessExpr m2
+                                        && m2.Object is VariableExpr sv2 && sv2.Name == "self"
+                                        && asg2.Value is CallExpr ce2 && ce2.Callee is VariableExpr cv2
+                                        && !IsScalarTypeName(cv2.Name)
+                                        && !fieldClasses.ContainsKey(classKey + "|" + m2.Member))
+                                        fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv2.Name);
                         if (InitCallsSuperInit(block)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
@@ -847,6 +879,22 @@ public partial class IRGenerator
                 return true;
         }
         return false;
+    }
+
+    private static readonly HashSet<string> ScalarTypeNames = new()
+    {
+        "uint8", "int8", "uint16", "int16", "uint32", "int32", "uint64", "int64",
+        "int", "bool", "float", "void", "None", "str", "bytes", "bytearray",
+        "const", "Callable", "gc_ref", "char",
+    };
+
+    // True for primitive/built-in type names (and any bracketed form like const[..]/ptr[..]/T[N]).
+    // A field type that is NOT one of these is a class name -- tracked in fieldClasses.
+    private static bool IsScalarTypeName(string ty)
+    {
+        if (string.IsNullOrEmpty(ty)) return true;
+        if (ty.Contains('[')) return true;
+        return ScalarTypeNames.Contains(ty);
     }
 
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)

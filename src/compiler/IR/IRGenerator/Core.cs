@@ -1048,6 +1048,43 @@ public partial class IRGenerator
         return name;
     }
 
+    // A field's recorded class may be a HAL dispatch facade key (e.g. "pymcu_hal_gpio_Pin")
+    // that re-exports the concrete chip class ("pymcu_hal_<chip>_gpio_Pin"). Return the concrete
+    // classFieldLayout key: the facade itself if it has a layout, else the UNIQUE layout key that
+    // matches the facade with a chip segment inserted (same "pymcu_hal_" prefix + same tail).
+    // Null when unknown or ambiguous, so the caller leaves resolution untouched.
+    private string? ResolveConcreteClass(string cls)
+    {
+        if (string.IsNullOrEmpty(cls)) return null;
+        if (classFieldLayout.ContainsKey(cls)) return cls;
+        const string halPfx = "pymcu_hal_";
+        if (cls.StartsWith(halPfx))
+        {
+            // HAL facade "..._gpio_Pin" -> the unique concrete "..._<chip>_gpio_Pin".
+            string tail = "_" + cls.Substring(halPfx.Length);
+            string? f = UniqueClassEndingWith(cls, tail, halPfx);
+            if (f != null) return f;
+        }
+        // Generic facade re-export (e.g. `from facade import Foo` where facade re-exported
+        // it from concrete): the class isn't itself defined, so resolve to the UNIQUE
+        // concrete class sharing its final symbol (the part after the last '_').
+        int us = cls.LastIndexOf('_');
+        if (us <= 0) return null;
+        return UniqueClassEndingWith(cls, cls.Substring(us), null);
+    }
+
+    private string? UniqueClassEndingWith(string exclude, string suffix, string? requirePrefix)
+    {
+        string? found = null;
+        foreach (var k in classFieldLayout.Keys)
+            if (k != exclude && k.EndsWith(suffix) && (requirePrefix == null || k.StartsWith(requirePrefix)))
+            {
+                if (found != null) return null;   // ambiguous -> give up
+                found = k;
+            }
+        return found;
+    }
+
     private string ResolveCallee(string name)
     {
         int dotPos = name.IndexOf('.');

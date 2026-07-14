@@ -162,6 +162,13 @@ public partial class IRGenerator
     // Same layout keyed by class symbol (e.g. "Counter"), for factory return lowering.
     private Dictionary<string, List<(string Field, string Type, string SourceParam)>> classFieldLayout = new();
 
+    // A field whose declared type is itself a ZCA class. Keyed "classKey|fieldName" -> the
+    // field's class key. Resolved at scan time (in the defining module's import scope). Lets a
+    // member access recover the nested class identity that a single-field ZCA loses when it
+    // collapses to a bare scalar (machine.Pin -> hal.Pin -> pin number), so the universal
+    // time_pulse_us's pin._pin.pulse_in() resolves on the single-field Pin chains (arm) too.
+    private Dictionary<string, string> fieldClasses = new();
+
     // RFC 0001 Model B (register-packed handle): a non-@inline factory returning a ZCA
     // returns the instance's single packed field as a scalar. Instances bound from such
     // a factory are "handle instances": their field value IS the variable itself, so an

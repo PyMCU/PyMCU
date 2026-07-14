@@ -195,6 +195,12 @@ public partial class IRGenerator
             if (!resolvedAsModule)
             {
                 Val objVal = VisitExpression(memC.Object);
+                // A nested member access (obj.field.method()) yields a Temporary. If it carries a
+                // class -- a ZCA field re-tagged with its nested class, like the DHT's
+                // machine.Pin._pin -- dispatch the method on it exactly like a named instance by
+                // treating the temp as a Variable. Without a class it falls through unchanged.
+                if (objVal is Temporary tObj && instanceClasses.ContainsKey(tObj.Name))
+                    objVal = new Variable(tObj.Name, tObj.Type);
                 if (objVal is Variable vObj)
                 {
                     // list[T] method dispatch
@@ -209,8 +215,46 @@ public partial class IRGenerator
                         }
                     }
 
-                    if (instanceClasses.TryGetValue(vObj.Name, out string clsC))
+                    // A nested ZCA field instance reached as a flattened global (e.g. a module-level
+                    // `sensor._pin`, resolved to the name "sensor__pin") carries no class of its own.
+                    // Recover it from the parent instance's class + the field's declared class so the
+                    // method dispatches to <FieldClass>_<method>, not the nonexistent <name>_<method>.
+                    if (!instanceClasses.TryGetValue(vObj.Name, out string clsC))
                     {
+                        for (int si = 1; si < vObj.Name.Length - 1 && clsC == null; si++)
+                        {
+                            if (vObj.Name[si] != '_') continue;
+                            string parent = vObj.Name.Substring(0, si);
+                            string field = vObj.Name.Substring(si + 1);
+                            if (!instanceClasses.TryGetValue(parent, out var pcls) || pcls == null)
+                                continue;
+                            // The field may be declared in a base class (e.g. DHTBase._pin reached
+                            // on a DHT11 instance), so walk the MRO for its declared class.
+                            for (string? anc = pcls; anc != null && clsC == null; )
+                            {
+                                if (fieldClasses.TryGetValue(anc + "|" + field, out var nfc)
+                                    && ResolveConcreteClass(nfc) is { } ncc)
+                                    clsC = ncc;
+                                else if (classBasePrefixes.TryGetValue(anc, out var pp) && !string.IsNullOrEmpty(pp))
+                                    anc = pp!.EndsWith("_") ? pp[..^1] : pp;
+                                else break;
+                            }
+                        }
+                        // Record it so the later self-binding (which re-resolves the receiver) also
+                        // sees the class and binds self -- otherwise the @inline expansion drops the
+                        // real first argument ("missing required argument").
+                        if (clsC != null) instanceClasses[vObj.Name] = clsC;
+                    }
+                    if (clsC != null)
+                    {
+                        // A module-level singleton imported through a facade re-export carries the
+                        // facade class name (e.g. "pymcu_hal_wifi_CYW43", which isn't itself defined);
+                        // map it to the concrete class so the method resolves.
+                        if (!classFieldLayout.ContainsKey(clsC) && ResolveConcreteClass(clsC) is { } concreteC)
+                        {
+                            clsC = concreteC;
+                            instanceClasses[vObj.Name] = clsC;
+                        }
                         // Walk MRO: find the class that actually defines the method so that
                         // inherited non-inline methods (e.g. DHTBase._read_byte called on a
                         // DHT11 instance) resolve to the correct label instead of the
@@ -332,8 +376,7 @@ public partial class IRGenerator
                                 $"'.{memC.Member}()' requires a typed list; an untyped '[]' has no " +
                                 "runtime list. Declare it like `x: list[uint8] = []`, or use a " +
                                 "fixed-size array `x: uint8[N]`.",
-                                expr.Line > 0 ? expr.Line : lastLine, 1);
-                        callee = vObj.Name + "_" + memC.Member;
+                                expr.Line > 0 ? expr.Line : lastLine, 1);                        callee = vObj.Name + "_" + memC.Member;
                     }
                 }
                 else if (objVal is MemoryAddress addr)
@@ -791,11 +834,17 @@ public partial class IRGenerator
             if (expr.Callee is MemberAccessExpr mem2)
             {
                 Val objVal = VisitExpression(mem2.Object);
-                if (objVal is Variable v2 && instanceClasses.ContainsKey(v2.Name))
+                // The receiver may be a Temporary, not just a Variable -- e.g. a nested ZCA field
+                // re-tagged with its class (machine.Pin._pin). Bind self off either, so a method
+                // call on such a value still gets self (otherwise the @inline expansion reports
+                // "missing required argument 'self'").
+                string? recvName = objVal is Variable v2 ? v2.Name
+                                 : (objVal is Temporary t2 ? t2.Name : null);
+                if (recvName != null && instanceClasses.ContainsKey(recvName))
                 {
                     string selfName = newPrefix + "self";
-                    variableAliases[selfName] = v2.Name;
-                    instanceClasses[selfName] = instanceClasses[v2.Name];
+                    variableAliases[selfName] = recvName;
+                    instanceClasses[selfName] = instanceClasses[recvName]!;
                     paramOffset = 1;
                 }
             }
@@ -1029,6 +1078,13 @@ public partial class IRGenerator
                     variableAliases.Remove(paramName);
                     continue;
                 }
+                // A Temporary that is a tagged class instance (e.g. a single-field ZCA field
+                // re-tagged with its nested class) must carry that class onto the @inline param,
+                // so the callee's `param.field`/`param.method()` resolves -- the param is bound by
+                // a runtime Copy below (its own var), and alias-following stops at tmp_ names, so
+                // the class would otherwise be lost.
+                if (instanceClasses.TryGetValue(tArg.Name, out var tCls) && tCls != null)
+                    instanceClasses[paramName] = tCls;
                 // Non-constant Temporary: fall through to runtime Copy
             }
 
