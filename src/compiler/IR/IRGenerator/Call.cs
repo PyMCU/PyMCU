@@ -732,7 +732,7 @@ public partial class IRGenerator
 
                 // A flash-string-by-reference argument is a 16-bit flash address, regardless
                 // of how the const[str] param's nominal type folds.
-                if (argVal is FlashStrAddr) ptype = DataType.UINT16;
+                if (argVal is FlashStrAddr) ptype = FlashPtrType;
 
                 // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
                 // (which resolves as a UINT8 Variable rather than a FunctionRef), create the
@@ -752,6 +752,23 @@ public partial class IRGenerator
                         // leave R25 (the hi byte of the word address) undefined.
                         argValuesL[i] = argVal;
                     }
+                }
+
+                // Coerce a scalar argument to the callee's DECLARED param width. The Call
+                // instruction marshals by each arg Val's own type, so a wider temp (e.g. a
+                // `pos + 1` inferred u32 passed to a uint16 param) shifts every later argument
+                // out of its register slot on AVR -- the callee then reads garbage (this
+                // silently dropped the buf pointer in strfmt._fs_i32 -> _fs_u32). Narrow (or
+                // widen, with sign-correct Copy) into a temp of the param's type first.
+                if (i < paramTypes.Count
+                    && IsScalarIntType(ptype) && argVal is Variable or Temporary
+                    && IsScalarIntType(GetValType(argVal))
+                    && GetValType(argVal).SizeOf() != ptype.SizeOf())
+                {
+                    var coerced = MakeTemp(ptype);
+                    Emit(new Copy(argVal, coerced));
+                    argValuesL[i] = coerced;
+                    argVal = coerced;
                 }
 
                 Emit(new Copy(argVal, new Variable(paramVarName, ptype)));
@@ -1715,6 +1732,11 @@ public partial class IRGenerator
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
         if (expr.Args[0] is VariableExpr vLen)
         {
+            // A runtime string (f-string-as-value buffer): its length is the tracked write
+            // position, not the buffer capacity that arraySizes would report below.
+            if (TryGetRuntimeStr(vLen.Name, out var rsLen))
+                return VisitExpression(new VariableExpr(rsLen.LenVar));
+
             // An @inline parameter bound to a list/tuple literal argument has a
             // statically known length (e.g. len(prog) inside a HAL helper).
             if (ResolveListLiteralParam(vLen.Name) is ListExpr boundLen)
@@ -2514,13 +2536,22 @@ public partial class IRGenerator
     }
 
     // uart.write_str(f"...") / uart.println(f"..."): lower the f-string straight to stream writes
-    // (println appends a newline). Returns null when this is not a stream method on a UART instance
-    // with an f-string argument, so the normal const[str] method path handles those calls.
+    // (println appends a newline). Also accepts a runtime-string variable (an f-string-as-value
+    // buffer), streamed up to its tracked length. Returns null when this is not a stream method
+    // on a UART instance with such an argument, so the normal const[str] method path handles it.
     private Val? TryEmitStreamMethodFString(CallExpr expr)
     {
         if (expr.Callee is not MemberAccessExpr sm) return null;
         if (sm.Member is not ("write_str" or "println")) return null;
-        if (expr.Args.Count != 1 || expr.Args[0] is not FStringExpr sfs) return null;
+        if (expr.Args.Count != 1) return null;
+        FStringExpr? sfs = expr.Args[0] as FStringExpr;
+        (string Name, string LenVar)? runtimeStr = null;
+        if (sfs == null)
+        {
+            if (expr.Args[0] is VariableExpr rv && TryGetRuntimeStr(rv.Name, out var ri))
+                runtimeStr = (rv.Name, ri.LenVar);
+            else return null;
+        }
         if (sm.Object is not VariableExpr) return null;
 
         Val sObj = VisitExpression(sm.Object);
@@ -2528,10 +2559,60 @@ public partial class IRGenerator
         if (!instanceClasses.TryGetValue(svObj.Name, out var sCls) || !sCls.EndsWith("UART")) return null;
 
         string wfn = ResolveWriteStrFn();
-        string ffn = ResolveFloatWriteFn();
-        EmitStreamFString(wfn, ffn, sfs);
+        if (sfs != null)
+        {
+            string ffn = ResolveFloatWriteFn();
+            EmitStreamFString(wfn, ffn, sfs);
+        }
+        else EmitRuntimeStrStream(runtimeStr!.Value.Name, runtimeStr.Value.LenVar);
         if (sm.Member == "println") EmitStreamStr(wfn, "\n");
         return new NoneVal();
+    }
+
+    private static bool IsScalarIntType(DataType t) => t is DataType.UINT8 or DataType.INT8
+        or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
+
+    // A name bound by TryExpandFStringValue (an f-string-as-value buffer), looked up with the
+    // same qualification order the expansion used to register it.
+    private bool TryGetRuntimeStr(string name, out (string LenVar, int Capacity) info)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && runtimeStrVars.TryGetValue(currentInlinePrefix + name, out info)) return true;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && runtimeStrVars.TryGetValue(currentFunction + "." + name, out info)) return true;
+        return runtimeStrVars.TryGetValue(name, out info);
+    }
+
+    // The per-byte UART writer (free `uart_write(b)` in every arch HAL), resolved like the
+    // other streaming helpers: direct name, then suffix match over known functions.
+    private string ResolveByteWriteFn()
+    {
+        string fn = ResolveCallee("uart_write");
+        if (fn == "uart_write")
+        {
+            foreach (var k in functionReturnTypes.Keys)
+                if (k.EndsWith("uart_write", StringComparison.Ordinal)) { fn = k; break; }
+            if (fn == "uart_write")
+                foreach (var k in inlineFunctions.Keys)
+                    if (k.EndsWith("uart_write", StringComparison.Ordinal)) { fn = k; break; }
+        }
+        return fn;
+    }
+
+    // Stream a runtime string's bytes: `i = 0; while i < len: uart_write(buf[i]); i += 1`,
+    // synthesized as AST so the normal call machinery handles the byte loads and the write.
+    private void EmitRuntimeStrStream(string bufName, string lenVar)
+    {
+        string wfn = ResolveByteWriteFn();
+        string idx = $"__fsp_{tempCounter++}";
+        VisitStatement(new VarDecl(idx, "uint16", new IntegerLiteral(0)));
+        var body = new Block();
+        body.Statements.Add(new ExprStmt(new CallExpr(new VariableExpr(wfn),
+            new List<Expression> { new IndexExpr(new VariableExpr(bufName), new VariableExpr(idx)) })));
+        body.Statements.Add(new AssignStmt(new VariableExpr(idx),
+            new BinaryExpr(new VariableExpr(idx), Frontend.BinaryOp.Add, new IntegerLiteral(1))));
+        VisitStatement(new WhileStmt(
+            new BinaryExpr(new VariableExpr(idx), Frontend.BinaryOp.Less, new VariableExpr(lenVar)), body));
     }
 
     // lcd.print_str(f"...") on an LCD-like instance: lower the f-string to method calls on the
@@ -2623,6 +2704,14 @@ public partial class IRGenerator
             if (staticStr != null)
             {
                 EmitStreamStr(writeStrFn, staticStr);
+                return;
+            }
+
+            // A runtime string (f-string-as-value buffer): stream its bytes up to the
+            // tracked length.
+            if (arg is VariableExpr rsv && TryGetRuntimeStr(rsv.Name, out var rsInfo))
+            {
+                EmitRuntimeStrStream(rsv.Name, rsInfo.LenVar);
                 return;
             }
 

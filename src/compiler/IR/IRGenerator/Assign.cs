@@ -29,6 +29,10 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
             throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)");
 
+        // `s = f"..."` with runtime interpolations: expand into a fixed buffer + strfmt calls.
+        if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
+            return;
+
         // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
         // the result is built as a Model-A (flattened) instance, so a later method call on c
         // passes the fields where a self pointer is expected. Remember the target/class so that,
@@ -1433,8 +1437,175 @@ public partial class IRGenerator
                 line, 1);
     }
 
+    // `s = f"..."` with runtime interpolations -- the f-string as a VALUE. Expands to a
+    // compiler-managed fixed bytearray (named `s`, sized by the f-string's static bound) plus
+    // chained pymcu.strfmt calls threading a length variable, then a NUL terminator:
+    //     s: bytearray = bytearray(N)
+    //     __fslen_s = _fs_text(s, 0, "t=");  __fslen_s = _fs_u32(s, __fslen_s, t);  ...
+    //     s[__fslen_s] = 0
+    // The surface stays pure CPython (no new syntax/builtins); the buffer size needs no
+    // annotation because every part has a static width bound (literal length; 11 chars covers
+    // any 32-bit decimal; a format spec bounds by max(width, natural-width-for-base)).
+    // Returns false for fully-constant f-strings so the existing const-string path keeps
+    // producing an interned string.
+    private bool TryExpandFStringValue(string target, Expression value)
+    {
+        if (value is not FStringExpr topFs) return false;
+
+        // Flatten nested unspecced f-string parts into one part list.
+        var parts = new List<FStringPart>();
+        void Flatten(FStringExpr f)
+        {
+            foreach (var p in f.Parts)
+            {
+                if (p.IsExpr && p.Expr is FStringExpr nf && string.IsNullOrEmpty(p.FormatSpec)) Flatten(nf);
+                else parts.Add(p);
+            }
+        }
+        Flatten(topFs);
+
+        // Fully constant (literals / static strings / declared consts): keep the const path.
+        bool IsConstPart(FStringPart p) =>
+            !p.IsExpr
+            || StaticStringOf(p.Expr!) != null
+            || p.Expr is IntegerLiteral
+            || (p.Expr is VariableExpr cv &&
+                (declaredConstants.Contains(cv.Name)
+                 || constantVariables.ContainsKey(currentInlinePrefix + cv.Name)
+                 || constantVariables.ContainsKey(cv.Name)));
+        if (parts.All(IsConstPart)) return false;
+
+        // The strfmt helpers must be loaded (pymcu build injects the import on detection).
+        string? strfmtMod = null;
+        foreach (var kv in importedAliases)
+            if (kv.Value == "pymcu.strfmt") { strfmtMod = kv.Key; break; }
+        if (strfmtMod == null)
+            throw UserError(
+                "assigning an f-string with runtime values needs the pymcu.strfmt helpers; " +
+                "`pymcu build` injects them automatically -- if invoking the compiler by hand, " +
+                "add `import pymcu.strfmt as _pymcu_strfmt` to the entry file.");
+
+        // Static size bound (type-free, conservative): a plain interpolation is at most 11
+        // chars (sign + 10 decimal digits of a 32-bit value); a spec part is bounded by
+        // max(width, natural digits for its base) + a possible sign.
+        int bound = 1;   // NUL terminator
+        foreach (var p in parts)
+        {
+            if (!p.IsExpr) { bound += p.Text.Length; continue; }
+            string? st = StaticStringOf(p.Expr!);
+            if (st != null) { bound += st.Length; continue; }
+            if (p.Expr is IntegerLiteral pil) { bound += pil.Value.ToString().Length; continue; }
+            if (!string.IsNullOrEmpty(p.FormatSpec))
+            {
+                var (w, radix, _, _) = ParseFormatSpec(p.FormatSpec);
+                int natural = radix switch { 2 => 32, 8 => 11, 16 => 8, _ => 11 };
+                bound += Math.Max(w, natural) + 1;
+            }
+            else bound += 11;
+        }
+
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + target
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+        string lenVar = "__fslen_" + target;
+
+        if (runtimeStrVars.TryGetValue(qualified, out var existing))
+        {
+            // Re-assignment: reuse the buffer when it fits; a bigger later f-string would
+            // need a retroactively larger buffer, which a single pass cannot provide.
+            if (bound > existing.Capacity)
+                throw UserError(
+                    $"'{target}' is re-assigned an f-string needing {bound} bytes but its " +
+                    $"buffer was sized {existing.Capacity} by an earlier assignment; assign " +
+                    "the longest f-string first (buffer size is fixed at the first assignment).");
+            lenVar = existing.LenVar;
+            VisitStatement(new AssignStmt(new VariableExpr(lenVar), new IntegerLiteral(0)));
+        }
+        else
+        {
+            VisitStatement(new VarDecl(target, "bytearray",
+                new CallExpr(new VariableExpr("bytearray"),
+                             new List<Expression> { new IntegerLiteral(bound) })));
+            VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+            runtimeStrVars[qualified] = (lenVar, bound);
+        }
+
+        var buf = new VariableExpr(target);
+        var pos = new VariableExpr(lenVar);
+        void EmitFsCall(string fn, List<Expression> args) =>
+            VisitStatement(new AssignStmt(new VariableExpr(lenVar),
+                new CallExpr(new MemberAccessExpr(new VariableExpr(strfmtMod), fn), args)));
+
+        string pending = "";
+        void FlushLit()
+        {
+            if (pending.Length == 0) return;
+            EmitFsCall("_fs_text", new List<Expression> { buf, pos, new StringLiteral(pending) });
+            pending = "";
+        }
+
+        foreach (var p in parts)
+        {
+            if (!p.IsExpr) { pending += p.Text; continue; }
+            string? st = StaticStringOf(p.Expr!);
+            if (st != null) { pending += st; continue; }
+            if (p.Expr is IntegerLiteral il2 && string.IsNullOrEmpty(p.FormatSpec))
+            { pending += il2.Value.ToString(); continue; }
+            FlushLit();
+            if (!string.IsNullOrEmpty(p.FormatSpec))
+            {
+                var (w, radix, padc, upper) = ParseFormatSpec(p.FormatSpec);
+                int flags = (upper ? 0x01 : 0)
+                          | (LooksSigned(p.Expr!) ? 0x02 : 0)
+                          | (padc == '0' ? 0x04 : 0);
+                EmitFsCall("_fs_fmt", new List<Expression>
+                {
+                    buf, pos, p.Expr!,
+                    new IntegerLiteral(radix), new IntegerLiteral(w), new IntegerLiteral(flags),
+                });
+            }
+            else
+            {
+                EmitFsCall(LooksSigned(p.Expr!) ? "_fs_i32" : "_fs_u32",
+                           new List<Expression> { buf, pos, p.Expr! });
+            }
+        }
+        FlushLit();
+
+        // NUL terminator (the bound reserves its byte).
+        VisitStatement(new AssignStmt(new IndexExpr(buf, pos), new IntegerLiteral(0)));
+        return true;
+    }
+
+    // Syntactic signedness of an interpolated expression: a declared-signed variable, a
+    // negative literal or a unary minus anywhere in it. Conservative -- unsigned by default
+    // (u32 keeps values >= 2^31 correct; a signed-typed variable routes through _fs_i32).
+    private bool LooksSigned(Expression e) => e switch
+    {
+        IntegerLiteral il => il.Value < 0,
+        UnaryExpr { Op: Frontend.UnaryOp.Negate } => true,
+        UnaryExpr u => LooksSigned(u.Operand),
+        BinaryExpr b => LooksSigned(b.Left) || LooksSigned(b.Right),
+        VariableExpr v => LookupDeclaredType(v.Name) is DataType.INT8 or DataType.INT16 or DataType.INT32,
+        _ => false,
+    };
+
+    private DataType? LookupDeclaredType(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && variableTypes.TryGetValue(currentInlinePrefix + name, out var ti)) return ti;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && variableTypes.TryGetValue(currentFunction + "." + name, out var tf)) return tf;
+        return variableTypes.TryGetValue(name, out var t) ? t : null;
+    }
+
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `s: bytearray = f"..."` (or any annotation) with runtime interpolations: expand
+        // into a fixed buffer + strfmt calls, same as the unannotated assignment form.
+        if (stmt.Init != null && TryExpandFStringValue(stmt.Name, stmt.Init))
+            return;
+
         // `c: ClassName = ClassName(...)` — a type-annotated instance construction (a typed
         // local parses as a VarDecl). The annotation is just the (redundant) declared type;
         // route through the normal assignment path so the instance->class link and constructor

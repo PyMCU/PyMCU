@@ -125,6 +125,11 @@ public partial class IRGenerator
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
+
+    // f-string-as-value targets: qualified buffer name (== the target variable, which IS the
+    // bytearray) -> (unqualified length-variable name, buffer capacity incl. NUL). len(s) reads
+    // the length variable; print(s)/write_str(s) stream the buffer up to it.
+    private Dictionary<string, (string LenVar, int Capacity)> runtimeStrVars = new();
     // Tracks names declared with a `const[...]` annotation (scalar or array). These are
     // immutable by definition, so any later assignment to one is a user error. Distinct
     // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).
@@ -344,4 +349,10 @@ public partial class IRGenerator
     private string pendingLambdaKey = "";
 
     private DeviceConfig deviceConfig = null!;
+
+    // Flash byte-pointers (const[str] by-reference params / FlashStrAddr values) carry the
+    // TARGET's pointer width: 16-bit on AVR/PIC, 32-bit on ARM/RISC-V. Typing them UINT16
+    // everywhere truncated the 0x1000xxxx flash addresses on ARM.
+    private DataType FlashPtrType =>
+        deviceConfig != null && deviceConfig.PointerWidth == 4 ? DataType.UINT32 : DataType.UINT16;
 }

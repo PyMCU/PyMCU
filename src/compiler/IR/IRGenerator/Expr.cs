@@ -221,11 +221,11 @@ public partial class IRGenerator
                     else result += c.Value.ToString();
                 }
                 else throw new TypeError(
-                    "f-string interpolates a runtime value, which PyMCU does not support: " +
-                    "building a string at runtime needs a dynamic formatter/buffer that is " +
-                    "not generated on bare-metal targets. Use uart.write_str(\"...\") and " +
-                    "uart.write(value) / uart.write_hex(value) separately, or keep all " +
-                    "interpolated values compile-time constant.",
+                    "f-string interpolates a runtime value in a position PyMCU does not " +
+                    "support. Supported: streaming (print(f\"...\"), uart.write_str/println" +
+                    "(f\"...\")) and assignment to a variable (s = f\"...\" builds the string " +
+                    "into a fixed buffer). Assign the f-string to a name first, then use " +
+                    "that name here.",
                     expr.Line > 0 ? expr.Line : lastLine, 1);
             }
         }
@@ -1144,7 +1144,7 @@ public partial class IRGenerator
             {
                 Val idxVal = VisitExpression(expr.Index);
                 Temporary tmp = MakeTemp(DataType.UINT8);
-                Emit(new FlashLoadPtr(new Variable(localName, DataType.UINT16), idxVal, tmp));
+                Emit(new FlashLoadPtr(new Variable(localName, FlashPtrType), idxVal, tmp));
                 return tmp;
             }
 

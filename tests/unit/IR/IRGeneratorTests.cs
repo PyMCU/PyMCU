@@ -418,15 +418,16 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void FStringWithRuntimeValue_AsValue_RaisesClearError()
+    public void FStringWithRuntimeValue_AsValue_NeedsStrfmtHelpers()
     {
-        // Outside a stream context there is still no runtime string builder; assigning a runtime
-        // f-string to a name must report clearly rather than silently producing garbage.
+        // `s = f"..."` with a runtime interpolation lowers to pymcu.strfmt calls into a fixed
+        // buffer; compiling without that module loaded (the build driver injects it) must
+        // report clearly rather than silently producing garbage.
         const string src =
             "def main(x: uint16):\n" +
             "    name = f\"v={x}\"\n";
-        var ex = Assert.Throws<PyMCU.Common.TypeError>(() => GenerateIR(src));
-        Assert.Contains("runtime", ex.Message);
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("pymcu.strfmt", ex.Message);
     }
 
     [Fact]

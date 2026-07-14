@@ -175,7 +175,7 @@ public partial class IRGenerator
             // time via strConstantVariables, so this only applies to real subroutines.)
             if (param.Type == "const[str]" && !funcNode.IsInline)
             {
-                paramDt = DataType.UINT16;
+                paramDt = FlashPtrType;   // 16-bit on AVR/PIC, 32-bit on ARM/RISC-V
                 flashStrPtrVars.Add(qualifiedParam);
             }
             variableTypes[qualifiedParam] = paramDt;
