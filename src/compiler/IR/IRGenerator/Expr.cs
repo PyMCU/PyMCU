@@ -915,7 +915,10 @@ public partial class IRGenerator
 
     private Val VisitYield(YieldExpr expr)
     {
-        throw UserError("Yield not yet implemented");
+        throw UserError(
+            "generators ('yield') are not supported yet. Rewrite the function to fill a " +
+            "fixed-size array, or restructure the consumer as a loop; for cooperative " +
+            "multitasking use 'async def' with 'await asyncio.sleep_ms(...)' instead.");
     }
 
     // Resolves a variable name to the bytes/list/tuple literal bound to it as an
