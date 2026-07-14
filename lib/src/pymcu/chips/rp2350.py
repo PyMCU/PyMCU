@@ -211,3 +211,61 @@ DMA_CH0_READ_ADDR   : ptr[uint32] = ptr(DMA_BASE + 0x00)
 DMA_CH0_WRITE_ADDR  : ptr[uint32] = ptr(DMA_BASE + 0x04)
 DMA_CH0_TRANS_COUNT : ptr[uint32] = ptr(DMA_BASE + 0x08)
 DMA_CH0_CTRL_TRIG   : ptr[uint32] = ptr(DMA_BASE + 0x0C)
+
+
+# -----------------------------------------------------------------------------
+#  CYW43439 wireless (Pico 2 W) -- gSPI transport over GPIO
+# -----------------------------------------------------------------------------
+# The CYW43439 WiFi/BT chip hangs off four RP2350 GPIOs as a half-duplex "gSPI"
+# slave (single shared data line). On real silicon a PIO state machine clocks it;
+# the emulator (RP2350Sharp) samples the pad edges directly, so a plain SIO
+# bit-bang drives it too. Pins per pico2_w.h.
+WL_REG_ON = 23    # power/reset gate (active high)
+WL_DATA   = 24    # shared data out/in (also WL_HOST_WAKE when idle)
+WL_CS     = 25    # chip select (active low)
+WL_CLK    = 29    # clock
+
+# gSPI F0 (bus) control registers
+SPI_BUS_CONTROL        = 0x00   # write WORD_LENGTH_32 -> switch 16b-swapped -> 32b-LE
+SPI_RESPONSE_DELAY     = 0x01
+SPI_STATUS_ENABLE      = 0x02
+SPI_INTERRUPT_REGISTER = 0x04
+SPI_STATUS_REGISTER    = 0x08
+SPI_READ_TEST_REGISTER = 0x14   # reads back 0xFEEDBEAD ("chip alive")
+SPI_TEST_PATTERN       = 0xFEEDBEAD
+
+# SPI_BUS_CONTROL bits: 32-bit word length + big-endian
+SPI_WORD_LENGTH_32 = 0x01
+SPI_ENDIAN_BIG     = 0x10
+
+# gSPI functions
+GSPI_F0_BUS       = 0   # bus control regs
+GSPI_F1_BACKPLANE = 1   # windowed chip memory + SDIO control regs
+GSPI_F2_WLAN      = 2   # SDPCM data plane
+
+# F1 backplane SDIO control registers (offset >= 0x10000)
+SDIO_BACKPLANE_ADDR_LOW  = 0x1000A
+SDIO_BACKPLANE_ADDR_MID  = 0x1000B
+SDIO_BACKPLANE_ADDR_HIGH = 0x1000C
+SDIO_CHIP_CLOCK_CSR      = 0x1000E
+SDIO_SLEEP_CSR           = 0x1001F
+
+# CHIP_CLOCK_CSR bits
+SBSDIO_ALP_AVAIL_REQ = 0x08
+SBSDIO_HT_AVAIL_REQ  = 0x10
+SBSDIO_FORCE_HT      = 0x02
+SBSDIO_ALP_AVAIL     = 0x40
+SBSDIO_HT_AVAIL      = 0x80
+
+# Backplane chip addresses
+BP_CHIPCOMMON      = 0x18000000
+BP_SDIO_INT_STATUS = 0x18002020
+BP_WLAN_ARMCORE    = 0x18103800   # WLAN ARM core wrapper; +0x800 = AI_RESETCTRL
+AI_RESETCTRL_OFFSET = 0x800
+AIRC_RESET          = 0x01
+
+# gSPI F0 SPI_STATUS_REGISTER bits (composed by the chip on read)
+STATUS_F2_RX_READY       = 0x00000020   # WLAN core up, F2 ready
+STATUS_F2_PKT_AVAILABLE  = 0x00000100   # an SDPCM packet is queued for the host
+STATUS_F2_PKT_LEN_SHIFT  = 9            # packet length lives at bits [20:9]
+STATUS_F2_PKT_LEN_MASK   = 0x0FFF
