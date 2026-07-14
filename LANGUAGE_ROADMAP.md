@@ -59,7 +59,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
-| F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap. As a *value* (`s = f"..."`) still compile-time constants only |
+| F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap. As a *value* (`s = f"..."`) since v0.14: built into a compiler-managed fixed buffer |
 
 ### MCU-Specific Extensions
 
@@ -359,6 +359,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | Feature | Notes |
 |---------|-------|
 | `async def` / `await` (v1 subset) | Lowered at compile time to a zero-cost state-machine class with `poll()` — no heap, no interpreter. Requires `import asyncio`; awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`; `await` as a statement, at the top level of the body or inside a single `while True:` loop. `await` inside `if`/nested loops, arbitrary awaitables and `await` as an expression are the planned v2 |
+| f-string as a **value** (`s = f"t={t} C"`) | Builds the string into a compiler-managed fixed `bytearray` (no heap): the size is statically bounded per part, formatting lowers to `pymcu.strfmt` calls (auto-injected). Consumers: `print(s)`, `uart.write_str/println(s)`, `len(s)` (formatted length), `s[i]`, re-assignment in a loop (buffer reuse), passing as a `bytearray` param. Not yet: f-string inline in other expression positions, float interpolations in the value form, `s == "lit"` |
 | Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |
 | Nested class-typed ZCA fields | Method calls / field reads on a class-typed field (`machine.Pin` wrapping the HAL `Pin`) dispatch correctly, including through facade re-exports and single-level inheritance |
 
@@ -449,7 +450,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 | `dict` / `set` | Hash tables require heap; no runtime |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `complex` / `Decimal` | Not available |
-| `f"..."` as a runtime string **value** | Streamed f-strings (`print(f"...")` etc.) are supported (v0.1.0a2); only assigning the formatted result to a variable still requires compile-time constants |
+| `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."`, fixed buffer) are supported; an f-string used inline in any other expression position has no lowering — assign it to a name first |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |

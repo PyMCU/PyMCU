@@ -52,9 +52,15 @@ flash), and **runtime f-strings streamed directly to a sink** — see below.
 
 ### f-strings (streamed)
 
-`f"..."` with **runtime interpolations** is supported as long as the result goes straight to
-a stream rather than into a string variable. The compiler lowers each piece to a direct
-write — no heap, no format buffer:
+`f"..."` with **runtime interpolations** is supported streamed to a sink — the compiler
+lowers each piece to a direct write (no heap, no format buffer) — **and as a value**:
+`s = f"t={t} C"` builds the string into a compiler-managed fixed `bytearray` whose size is
+statically bounded per part (`pymcu.strfmt` lowering, auto-injected by the build). On the
+value form, `len(s)` is the formatted length, `s[i]` indexes bytes, `print(s)` /
+`uart.write_str(s)` stream it, and re-assigning `s` in a loop reuses the buffer (assign the
+longest f-string first — the buffer is sized at the first assignment). Not yet supported in
+the value form: float interpolations, `s == "lit"` comparison, and f-strings inline in
+other expression positions (assign to a name first). Streamed examples:
 
 ```python
 print(f"adc={raw} v={mv:04d}")
