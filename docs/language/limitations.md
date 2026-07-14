@@ -71,11 +71,12 @@ interpolations (`f"text={const}"`) are folded into the flash string as before.
 
 ## Exception handling
 
-`try / except / raise / finally` are **supported** on AVR targets via a zero-cost
-**T-flag error-propagation** model (the `SET` / `CLT` / `BRTS` ABI) — *not* `setjmp` /
-`longjmp`. A function that raises sets the AVR T flag and returns normally; every call site
-inside a `try` tests the flag and branches to the matching `except`. There is no `jmp_buf`
-and no stack unwinding, so the happy path costs a single skipped branch per guarded call.
+`try / except / raise / finally` are **supported** on AVR and ARM (RP2040/RP2350) targets
+via a zero-cost **T-flag error-propagation** model — *not* `setjmp` / `longjmp`. A function
+that raises marks the error (AVR: the SREG T flag via `SET`/`CLT`/`BRTS`; ARM: an internal
+flag + code global pair) and returns normally; every call site inside a `try` tests the
+flag and branches to the matching `except`. There is no `jmp_buf` and no stack unwinding,
+so the happy path costs a single skipped branch per guarded call.
 
 Because propagation rides on the function return, raise from a helper and catch it where you
 call that helper:
