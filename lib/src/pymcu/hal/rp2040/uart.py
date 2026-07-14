@@ -93,6 +93,18 @@ class UART:
             self.write(lo - 10 + 65)
 
     @inline
+    def print_byte(self, value: uint8):
+        # Write `value` as decimal ASCII followed by a newline. Mirrors the AVR HAL
+        # (uart_write_decimal_u8 + write(10)) so the MicroPython flavor's
+        # uart.print_byte() is portable across arches with no per-arch code in the flavor.
+        if value >= 100:
+            self.write(48 + value // 100)
+        if value >= 10:
+            self.write(48 + (value // 10) % 10)
+        self.write(48 + value % 10)
+        self.write(10)
+
+    @inline
     def available(self) -> uint8:
         # Returns 1 when the RX FIFO holds at least one byte (RXFE = 0).
         if (UART0_FR.value >> UART_FR_RXFE) & 1:
