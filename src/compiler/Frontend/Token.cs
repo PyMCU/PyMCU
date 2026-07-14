@@ -72,6 +72,8 @@ public enum TokenType
     RParen,
     LBracket,
     RBracket,
+    LBrace,
+    RBrace,
 
     // Operators
     Plus,

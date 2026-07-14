@@ -1900,6 +1900,38 @@ public class Parser
             return first;
         }
 
+        if (Match(TokenType.LBrace))
+        {
+            // `{}` is an empty dict (Python); `{k: v, ...}` a dict; `{a, b, ...}` a set.
+            if (Check(TokenType.RBrace))
+            {
+                Advance();
+                return new DictExpr(new List<(Expression, Expression)>());
+            }
+            var firstItem = ParseExpression();
+            if (Match(TokenType.Colon))
+            {
+                var entries = new List<(Expression, Expression)> { (firstItem, ParseExpression()) };
+                while (Match(TokenType.Comma))
+                {
+                    if (Check(TokenType.RBrace)) break;   // trailing comma
+                    var k = ParseExpression();
+                    Consume(TokenType.Colon, "Expected ':' in dict literal");
+                    entries.Add((k, ParseExpression()));
+                }
+                Consume(TokenType.RBrace, "Expected '}' after dict literal");
+                return new DictExpr(entries);
+            }
+            var selems = new List<Expression> { firstItem };
+            while (Match(TokenType.Comma))
+            {
+                if (Check(TokenType.RBrace)) break;       // trailing comma
+                selems.Add(ParseExpression());
+            }
+            Consume(TokenType.RBrace, "Expected '}' after set literal");
+            return new SetExpr(selems);
+        }
+
         if (Match(TokenType.LBracket))
         {
             if (Check(TokenType.RBracket))

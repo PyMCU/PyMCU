@@ -499,6 +499,12 @@ public ref struct Lexer
             case ']':
                 if (parenDepth > 0) parenDepth--;
                 return new Token(TokenType.RBracket, "]", line, startCol, column - startCol);
+            case '{':
+                parenDepth++;
+                return new Token(TokenType.LBrace, "{", line, startCol, column - startCol);
+            case '}':
+                if (parenDepth > 0) parenDepth--;
+                return new Token(TokenType.RBrace, "}", line, startCol, column - startCol);
             case ':':
                 if (Match('=')) return new Token(TokenType.Walrus, ":=", line, startCol, column - startCol);
                 return new Token(TokenType.Colon, ":", line, startCol, column - startCol);

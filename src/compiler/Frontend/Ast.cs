@@ -113,6 +113,21 @@ public class StringLiteral : Expression
     public StringLiteral(string value) => Value = value;
 }
 
+// `{k1: v1, k2: v2}` -- a dict literal. Supported as a compile-time CLOSED lookup table
+// (constant keys/values, read-only); there is no general runtime dict.
+public class DictExpr : Expression
+{
+    public List<(Expression Key, Expression Value)> Entries { get; }
+    public DictExpr(List<(Expression Key, Expression Value)> entries) => Entries = entries;
+}
+
+// `{a, b, c}` -- a set literal. Supported for compile-time membership tests (`x in {...}`).
+public class SetExpr : Expression
+{
+    public List<Expression> Elements { get; }
+    public SetExpr(List<Expression> elements) => Elements = elements;
+}
+
 public class FStringPart
 {
     public bool IsExpr { get; set; }
