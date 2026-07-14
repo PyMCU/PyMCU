@@ -41,12 +41,16 @@ BOARD_CHIPS: dict[str, str] = {
     "raspberry_pi_pico": "rp2040",
     "pico":              "rp2040",
     "rp2040":            "rp2040",
+    # RP2350 (ARM Cortex-M33) boards
+    "raspberry_pi_pico2": "rp2350",
+    "pico2":              "rp2350",
+    "rp2350":             "rp2350",
 }
 
 
 BOARD_GROUPS: dict[str, list[str]] = {
     "Arduino": ["arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro"],
-    "Raspberry Pi": ["raspberry_pi_pico"],
+    "Raspberry Pi": ["raspberry_pi_pico", "raspberry_pi_pico2"],
     "Adafruit": ["adafruit_trinket"],
     "Digispark": ["digispark"],
     "ATtiny 8-pin (bare chip)":  ["attiny85",  "attiny45",  "attiny25",  "attiny13", "attiny13a"],
@@ -60,7 +64,7 @@ def default_toolchain(chip: str) -> str:
     chip_lower = chip.lower()
     if chip_lower.startswith("at"):
         return "avr"
-    if chip_lower == "rp2040":
+    if chip_lower in ("rp2040", "rp2350"):
         return "rp2040"
     if chip_lower.startswith("pic"):
         return "gputils"
@@ -72,6 +76,6 @@ def default_programmer(chip: str) -> str:
     chip_lower = chip.lower()
     if chip_lower.startswith("at"):
         return "avrdude"
-    if chip_lower == "rp2040":
+    if chip_lower in ("rp2040", "rp2350"):
         return "rp2040"
     return "pk2cmd"

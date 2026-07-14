@@ -22,8 +22,130 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // Intercepts `rp2.StateMachine(sm_id, prog, freq=..., set_base=..., ...)` where
+    // `prog` names an @asm_pio program. MVP: PIO0 + state-machine 0 only (sm_id 0).
+    // The whole setup is emitted as constant MMIO stores (Copy -> MemoryAddress):
+    // the PIO block registers (INSTR_MEM + SM config) are chip-independent
+    // (PIO0 @ 0x50200000 on both RP2040 and RP2350); only the RESETS-ungate and the
+    // pin FUNCSEL are chip-specific. The state machine then runs autonomously.
+    private Val? TryEmitPioStateMachine(CallExpr expr)
+    {
+        // Callee must be `StateMachine` (bare or `<mod>.StateMachine`).
+        string? name = expr.Callee switch
+        {
+            VariableExpr v => v.Name,
+            MemberAccessExpr m => m.Member,
+            _ => null,
+        };
+        if (name != "StateMachine") return null;
+
+        // Positional: (sm_id, prog). prog must be a known @asm_pio program.
+        var pos = expr.Args.Where(a => a is not KeywordArgExpr).ToList();
+        if (pos.Count < 2 || pos[1] is not VariableExpr progVar) return null;
+        if (!(pioPrograms.TryGetValue(progVar.Name, out var prog)
+              || pioPrograms.TryGetValue(currentModulePrefix + progVar.Name, out prog)))
+            return null;
+
+        int smId = TryConstInt(pos[0]) ?? 0;
+        if (smId != 0)
+            throw UserError("PIO StateMachine MVP supports state machine 0 only (sm_id=0)");
+
+        // Keyword config (all compile-time constants).
+        int Kw(string key, int dflt)
+        {
+            foreach (var a in expr.Args)
+                if (a is KeywordArgExpr kw && kw.Key == key)
+                    return TryConstInt(kw.Value) ?? dflt;
+            return dflt;
+        }
+        int freq      = Kw("freq", 0);
+        int setBase   = Kw("set_base", -1);
+        int outBase   = Kw("out_base", -1);
+        int sideBase  = Kw("sideset_base", -1);
+        int inBase    = Kw("in_base", -1);
+
+        var c = prog.Config;
+
+        // ── Chip-specific: RESETS ungate PIO0 + per-pin FUNCSEL = PIO0 (=6) ──
+        bool rp2350 = (deviceConfig.TargetChip ?? "").ToLowerInvariant() == "rp2350";
+        int resetsClr = rp2350 ? 0x40023000 : 0x4000F000;     // RESETS_RESET atomic-clear alias
+        int resetPio0 = rp2350 ? 11 : 10;
+        int ioBank0   = rp2350 ? 0x40028000 : 0x40014000;
+        int padsBank0 = rp2350 ? 0x40038000 : 0x4001C000;
+        const int funcselPio0 = 6;
+
+        void Store(int addr, int value) =>
+            Emit(new Copy(new Constant(value), new MemoryAddress(addr, DataType.UINT32)));
+
+        // Ungate PIO0.
+        Store(resetsClr, 1 << resetPio0);
+
+        // Route the consumed pins to PIO0 (and de-isolate the pad on RP2350).
+        void RoutePins(int @base, int count)
+        {
+            if (@base < 0) return;
+            for (int k = 0; k < count; k++)
+            {
+                if (rp2350) Store(padsBank0 + 4 + 4 * (@base + k), 1 << 6);   // IE on, ISO off
+                Store(ioBank0 + 8 * (@base + k) + 4, funcselPio0);
+            }
+        }
+        RoutePins(setBase, c.SetInitCount > 0 ? c.SetInitCount : 1);
+        RoutePins(outBase, c.OutInitCount);
+        RoutePins(sideBase, c.SideSetInitCount);
+
+        // ── Chip-independent PIO0 block (base 0x50200000) ──
+        const int pio0 = 0x50200000;
+        const int instrMem = pio0 + 0x048;
+        const int sm0 = pio0 + 0x0C8;
+
+        // Load the assembled program into instruction memory.
+        for (int i = 0; i < prog.Words.Length; i++)
+            Store(instrMem + 4 * i, prog.Words[i]);
+
+        // SM0 CLKDIV (INT[31:16], FRAC[15:8]); default to /1 when freq is 0.
+        int sysclk = deviceConfig.Frequency > 0 ? (int)deviceConfig.Frequency : 125_000_000;
+        int divInt = (freq > 0) ? sysclk / freq : 1;
+        if (divInt < 1) divInt = 1;
+        if (divInt > 0xFFFF) divInt = 0xFFFF;
+        Store(sm0 + 0x00, divInt << 16);
+
+        // SM0 EXECCTRL: WRAP_BOTTOM[11:7], WRAP_TOP[16:12], SIDE_PINDIR[29], SIDE_EN[30].
+        int execctrl = (prog.Wrap << 12) | (prog.WrapTarget << 7)
+                     | (c.SideSetPinDir ? 1 << 29 : 0) | (c.SideSetOpt ? 1 << 30 : 0);
+        Store(sm0 + 0x04, execctrl);
+
+        // SM0 SHIFTCTRL: AUTOPUSH[16], AUTOPULL[17], IN/OUT_SHIFTDIR[18/19], thresholds.
+        int pushT = c.PushThreshold >= 32 ? 0 : c.PushThreshold;
+        int pullT = c.PullThreshold >= 32 ? 0 : c.PullThreshold;
+        int shiftctrl = (c.AutoPush ? 1 << 16 : 0) | (c.AutoPull ? 1 << 17 : 0)
+                      | ((int)c.InShiftDir << 18) | ((int)c.OutShiftDir << 19)
+                      | (pushT << 20) | (pullT << 25);
+        Store(sm0 + 0x08, shiftctrl);
+
+        // SM0 PINCTRL: bases + counts.
+        int setCount = c.SetInitCount > 0 ? c.SetInitCount : (setBase >= 0 ? 1 : 0);
+        int pinctrl = ((setBase < 0 ? 0 : setBase) << 5) | (setCount << 26)
+                    | (outBase < 0 ? 0 : outBase) | (c.OutInitCount << 20)
+                    | ((sideBase < 0 ? 0 : sideBase) << 10) | (c.SideSetInitCount << 29)
+                    | ((inBase < 0 ? 0 : inBase) << 15);
+        Store(sm0 + 0x14, pinctrl);
+
+        // Enable state machine 0 (CTRL.SM_ENABLE bit 0). The SM now runs.
+        Store(pio0 + 0x000, 1);
+
+        return new Constant(0);
+    }
+
+    private int? TryConstInt(Expression e)
+    {
+        try { return EvaluateConstantExpr(e); }
+        catch { return null; }
+    }
+
     private Val VisitCall(CallExpr expr)
     {
+        if (TryEmitPioStateMachine(expr) is { } pioResult) return pioResult;
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
 
         // uart.write_str(f"...") / uart.println(f"...") with a runtime f-string: lower it to direct
@@ -73,6 +195,12 @@ public partial class IRGenerator
             if (!resolvedAsModule)
             {
                 Val objVal = VisitExpression(memC.Object);
+                // A nested member access (obj.field.method()) yields a Temporary. If it carries a
+                // class -- a ZCA field re-tagged with its nested class, like the DHT's
+                // machine.Pin._pin -- dispatch the method on it exactly like a named instance by
+                // treating the temp as a Variable. Without a class it falls through unchanged.
+                if (objVal is Temporary tObj && instanceClasses.ContainsKey(tObj.Name))
+                    objVal = new Variable(tObj.Name, tObj.Type);
                 if (objVal is Variable vObj)
                 {
                     // list[T] method dispatch
@@ -87,8 +215,46 @@ public partial class IRGenerator
                         }
                     }
 
-                    if (instanceClasses.TryGetValue(vObj.Name, out string clsC))
+                    // A nested ZCA field instance reached as a flattened global (e.g. a module-level
+                    // `sensor._pin`, resolved to the name "sensor__pin") carries no class of its own.
+                    // Recover it from the parent instance's class + the field's declared class so the
+                    // method dispatches to <FieldClass>_<method>, not the nonexistent <name>_<method>.
+                    if (!instanceClasses.TryGetValue(vObj.Name, out string clsC))
                     {
+                        for (int si = 1; si < vObj.Name.Length - 1 && clsC == null; si++)
+                        {
+                            if (vObj.Name[si] != '_') continue;
+                            string parent = vObj.Name.Substring(0, si);
+                            string field = vObj.Name.Substring(si + 1);
+                            if (!instanceClasses.TryGetValue(parent, out var pcls) || pcls == null)
+                                continue;
+                            // The field may be declared in a base class (e.g. DHTBase._pin reached
+                            // on a DHT11 instance), so walk the MRO for its declared class.
+                            for (string? anc = pcls; anc != null && clsC == null; )
+                            {
+                                if (fieldClasses.TryGetValue(anc + "|" + field, out var nfc)
+                                    && ResolveConcreteClass(nfc) is { } ncc)
+                                    clsC = ncc;
+                                else if (classBasePrefixes.TryGetValue(anc, out var pp) && !string.IsNullOrEmpty(pp))
+                                    anc = pp!.EndsWith("_") ? pp[..^1] : pp;
+                                else break;
+                            }
+                        }
+                        // Record it so the later self-binding (which re-resolves the receiver) also
+                        // sees the class and binds self -- otherwise the @inline expansion drops the
+                        // real first argument ("missing required argument").
+                        if (clsC != null) instanceClasses[vObj.Name] = clsC;
+                    }
+                    if (clsC != null)
+                    {
+                        // A module-level singleton imported through a facade re-export carries the
+                        // facade class name (e.g. "pymcu_hal_wifi_CYW43", which isn't itself defined);
+                        // map it to the concrete class so the method resolves.
+                        if (!classFieldLayout.ContainsKey(clsC) && ResolveConcreteClass(clsC) is { } concreteC)
+                        {
+                            clsC = concreteC;
+                            instanceClasses[vObj.Name] = clsC;
+                        }
                         // Walk MRO: find the class that actually defines the method so that
                         // inherited non-inline methods (e.g. DHTBase._read_byte called on a
                         // DHT11 instance) resolve to the correct label instead of the
@@ -210,8 +376,7 @@ public partial class IRGenerator
                                 $"'.{memC.Member}()' requires a typed list; an untyped '[]' has no " +
                                 "runtime list. Declare it like `x: list[uint8] = []`, or use a " +
                                 "fixed-size array `x: uint8[N]`.",
-                                expr.Line > 0 ? expr.Line : lastLine, 1);
-                        callee = vObj.Name + "_" + memC.Member;
+                                expr.Line > 0 ? expr.Line : lastLine, 1);                        callee = vObj.Name + "_" + memC.Member;
                     }
                 }
                 else if (objVal is MemoryAddress addr)
@@ -324,10 +489,12 @@ public partial class IRGenerator
                 throw UserError("ptr() argument must be a numeric address, not a string");
 
             // Runtime address, e.g. ptr(BASE + x) with a non-constant offset. Materialize
-            // the 16-bit address into a temp and mark it a runtime pointer; a subsequent
-            // `.value` read/write lowers to Load/StoreIndirect through the held address.
+            // the address (at the chip's native pointer width -- 32-bit on Cortex-M /
+            // RISC-V, 16-bit on AVR) into a temp and mark it a runtime pointer; a
+            // subsequent `.value` read/write lowers to Load/StoreIndirect.
             Val addrVal = VisitExpression(expr.Args[0]);
-            Temporary ptrTmp = MakeTemp(DataType.UINT16);
+            DataType ptrTmpType = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+            Temporary ptrTmp = MakeTemp(ptrTmpType);
             Emit(new Copy(addrVal, ptrTmp));
             runtimePtrVars[ptrTmp.Name] = DataType.UINT8;
             return ptrTmp;
@@ -667,11 +834,17 @@ public partial class IRGenerator
             if (expr.Callee is MemberAccessExpr mem2)
             {
                 Val objVal = VisitExpression(mem2.Object);
-                if (objVal is Variable v2 && instanceClasses.ContainsKey(v2.Name))
+                // The receiver may be a Temporary, not just a Variable -- e.g. a nested ZCA field
+                // re-tagged with its class (machine.Pin._pin). Bind self off either, so a method
+                // call on such a value still gets self (otherwise the @inline expansion reports
+                // "missing required argument 'self'").
+                string? recvName = objVal is Variable v2 ? v2.Name
+                                 : (objVal is Temporary t2 ? t2.Name : null);
+                if (recvName != null && instanceClasses.ContainsKey(recvName))
                 {
                     string selfName = newPrefix + "self";
-                    variableAliases[selfName] = v2.Name;
-                    instanceClasses[selfName] = instanceClasses[v2.Name];
+                    variableAliases[selfName] = recvName;
+                    instanceClasses[selfName] = instanceClasses[recvName]!;
                     paramOffset = 1;
                 }
             }
@@ -905,6 +1078,13 @@ public partial class IRGenerator
                     variableAliases.Remove(paramName);
                     continue;
                 }
+                // A Temporary that is a tagged class instance (e.g. a single-field ZCA field
+                // re-tagged with its nested class) must carry that class onto the @inline param,
+                // so the callee's `param.field`/`param.method()` resolves -- the param is bound by
+                // a runtime Copy below (its own var), and alias-following stops at tmp_ names, so
+                // the class would otherwise be lost.
+                if (instanceClasses.TryGetValue(tArg.Name, out var tCls) && tCls != null)
+                    instanceClasses[paramName] = tCls;
                 // Non-constant Temporary: fall through to runtime Copy
             }
 
@@ -1529,11 +1709,16 @@ public partial class IRGenerator
     {
         if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument");
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
+        if (expr.Args[0] is TupleExpr te2) return new Constant(te2.Elements.Count);
         // A compile-time string constant (literal or a str / const[str] variable) has a
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
         if (expr.Args[0] is VariableExpr vLen)
         {
+            // An @inline parameter bound to a list/tuple literal argument has a
+            // statically known length (e.g. len(prog) inside a HAL helper).
+            if (ResolveListLiteralParam(vLen.Name) is ListExpr boundLen)
+                return new Constant(boundLen.Elements.Count);
             if (!string.IsNullOrEmpty(currentInlinePrefix) &&
                 arraySizes.TryGetValue(currentInlinePrefix + vLen.Name, out int s1)) return new Constant(s1);
             if (!string.IsNullOrEmpty(currentFunction) &&
@@ -2623,15 +2808,50 @@ public partial class IRGenerator
         {
             case IntegerLiteral il:
                 return il.Value;
-            case BinaryExpr be when be.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub:
+            case BinaryExpr be:
             {
-                if (TryEvalConstAddress(be.Left) is not int l) return null;
-                if (TryEvalConstAddress(be.Right) is not int r) return null;
-                return be.Op == PyMCU.Frontend.BinaryOp.Add ? l + r : l - r;
+                // Full constant arithmetic on address expressions, so an unrolled
+                // address like `BASE + 4 * i` (i a loop/inline constant) folds to a
+                // single constant MemoryAddress instead of degrading to a runtime
+                // (truncated) pointer. Add/Sub recurse to preserve register-symbol
+                // resolution on either side; the rest fold both operands.
+                if (be.Op is PyMCU.Frontend.BinaryOp.Add or PyMCU.Frontend.BinaryOp.Sub)
+                {
+                    if (TryEvalConstAddress(be.Left) is not int l) return null;
+                    if (TryEvalConstAddress(be.Right) is not int r) return null;
+                    return be.Op == PyMCU.Frontend.BinaryOp.Add ? l + r : l - r;
+                }
+                if (TryEvalConstAddress(be.Left) is not int lh) return null;
+                if (TryEvalConstAddress(be.Right) is not int rh) return null;
+                return be.Op switch
+                {
+                    PyMCU.Frontend.BinaryOp.Mul      => lh * rh,
+                    PyMCU.Frontend.BinaryOp.Div      => rh != 0 ? lh / rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.FloorDiv => rh != 0 ? lh / rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.Mod      => rh != 0 ? lh % rh : (int?)null,
+                    PyMCU.Frontend.BinaryOp.BitAnd   => lh & rh,
+                    PyMCU.Frontend.BinaryOp.BitOr    => lh | rh,
+                    PyMCU.Frontend.BinaryOp.BitXor   => lh ^ rh,
+                    PyMCU.Frontend.BinaryOp.LShift   => lh << rh,
+                    PyMCU.Frontend.BinaryOp.RShift   => lh >> rh,
+                    _ => null,
+                };
             }
-            case VariableExpr:
-                // A const folds to a Constant; a register/MMIO symbol resolves to a
-                // MemoryAddress. Name resolution is side-effect free (no IR emitted).
+            case UnaryExpr ue when ue.Op is PyMCU.Frontend.UnaryOp.Negate or PyMCU.Frontend.UnaryOp.BitNot:
+            {
+                if (TryEvalConstAddress(ue.Operand) is not int v) return null;
+                return ue.Op == PyMCU.Frontend.UnaryOp.Negate ? -v : ~v;
+            }
+            case VariableExpr ve:
+                // Loop-unroll / inline compile-time constants first (same keys as
+                // EvaluateConstantExpr): an unrolled `i` must resolve so `BASE + 4*i`
+                // folds to a constant address.
+                if (constantVariables.TryGetValue(currentInlinePrefix + ve.Name, out int cvip)) return cvip;
+                if (!string.IsNullOrEmpty(currentFunction) &&
+                    constantVariables.TryGetValue(currentFunction + "." + ve.Name, out int cvf)) return cvf;
+                if (constantVariables.TryGetValue(ve.Name, out int cvb)) return cvb;
+                // Otherwise a const folds to a Constant; a register/MMIO symbol resolves
+                // to a MemoryAddress. Name resolution is side-effect free (no IR emitted).
                 return VisitExpression(e) switch
                 {
                     Constant c => c.Value,
@@ -2716,9 +2936,10 @@ public partial class IRGenerator
         Temporary newAllocSize = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Add, newCapScaled, new Constant(2), newAllocSize));
 
-        // Save old pointer, allocate new buffer
-        Temporary oldPtr = MakeTemp(DataType.GC_REF);
-        Emit(new Copy(listVar, oldPtr));
+        // Allocate the new buffer. CAUTION: GcAlloc may trigger a collection that compacts the
+        // heap and RELOCATES the existing list, updating listVar (a tracked GC root) to its new
+        // address. A pointer to the old buffer captured BEFORE this alloc would dangle, so the
+        // copy source is re-derived from listVar AFTER the alloc.
         Temporary newPtr = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(newAllocSize, newPtr));
 
@@ -2726,9 +2947,9 @@ public partial class IRGenerator
         EmitListStore(newPtr, 0, tmpLen);
         EmitListStore(newPtr, 1, newCap);
 
-        // Copy existing elements byte-by-byte
+        // Copy existing elements byte-by-byte from the (possibly relocated) old buffer at listVar.
         // Compute base pointers outside the loop
-        Val oldPtrU16 = oldPtr with { Type = DataType.UINT16 };
+        Val oldPtrU16 = listVar with { Type = DataType.UINT16 };
         Val newPtrU16 = newPtr with { Type = DataType.UINT16 };
         Temporary totalBytes = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Mul, tmpLen, new Constant(elemSize), totalBytes));
@@ -2756,8 +2977,11 @@ public partial class IRGenerator
         Emit(new Jump(copyLoopLabel));
         Emit(new Label(copyLoopEnd));
 
-        // Update listVar → newPtr; shadow stack slot already tracks SRAM addr of listVar
-        Emit(new Copy(newPtr, listVar));
+        // Repoint EVERY alias at the new buffer, not just listVar: a relocation must update all
+        // GC_REF variables that hold the old address (Python list aliasing semantics). gc_list_fixup
+        // walks the shadow stack rewriting old->new; passing listVar captures the old address in
+        // registers before the routine overwrites listVar's own slot.
+        Emit(new Call("gc_list_fixup", new List<Val> { listVar, newPtr }, new NoneVal()));
 
         // === FAST PATH: write element at offset 2 + len * elemSize ===
         Emit(new Label(fastLabel));

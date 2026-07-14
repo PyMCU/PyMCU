@@ -32,8 +32,8 @@ def delay_ms(ms: uint16):
             _delay_ms_riscv(ms)
         case "pic12":
             _delay_ms_pic12(ms)
-        case "rp2040":
-            _delay_ms_rp2040(ms)
+        case "arm":
+            _delay_ms_arm(ms)
 
 @inline
 def _delay_ms_pic14(ms: uint8):
@@ -218,6 +218,16 @@ def _delay_ms_pic12(ms: uint8):
         i = i + 1
 
 @inline
+@inline
+def _delay_ms_arm(ms: uint16):
+    # ARM Cortex-M family: dispatch to the per-chip timer-poll delay. The
+    # non-matching branch is dead-code-eliminated (compile-time __CHIP__.name).
+    if __CHIP__.name == "rp2040":
+        _delay_ms_rp2040(ms)
+    elif __CHIP__.name == "rp2350":
+        _delay_ms_rp2350(ms)
+
+
 def _delay_ms_rp2040(ms: uint16):
     # Poll the hardware microsecond timer instead of a calibrated busy-loop.
     # 1 ms = 1000 us; the timer runs at 1 MHz, so the delay is exact on real
@@ -243,8 +253,8 @@ def delay_us(us: uint8):
             _delay_us_riscv(us)
         case "pic12":
             _delay_us_pic12(us)
-        case "rp2040":
-            _delay_us_rp2040(us)
+        case "arm":
+            _delay_us_arm(us)
 
 @inline
 def _delay_us_pic14(us: uint8):
@@ -321,6 +331,15 @@ def _delay_us_pic12(us: uint8):
         i = i + 1
 
 @inline
+def _delay_us_arm(us: uint32):
+    # ARM Cortex-M family: dispatch to the per-chip timer-poll delay.
+    if __CHIP__.name == "rp2040":
+        _delay_us_rp2040(us)
+    elif __CHIP__.name == "rp2350":
+        _delay_us_rp2350(us)
+
+
+@inline
 def _delay_us_rp2040(us: uint32):
     """Microsecond delay for RP2040, driven by the hardware TIMER (1 MHz)."""
     # TIMER.TIMERAWL (0x40054028) is the raw low 32 bits of the free-running
@@ -330,6 +349,24 @@ def _delay_us_rp2040(us: uint32):
     # wraps modulo 2**32, so delays up to ~71 minutes are correct across the
     # counter roll-over.
     timer: ptr[uint32] = ptr(0x40054028)
+    start: uint32 = timer.value
+    while (timer.value - start) < us:
+        pass
+
+
+def _delay_ms_rp2350(ms: uint16):
+    # See _delay_ms_rp2040; the RP2350 microsecond TIMER0 lives at a different base.
+    _delay_us_rp2350(ms * 1000)
+
+
+@inline
+def _delay_us_rp2350(us: uint32):
+    """Microsecond delay for RP2350, driven by the hardware TIMER0 (1 MHz)."""
+    # TIMER0.TIMERAWL (0x400B0028) is the raw low 32 bits of the free-running
+    # microsecond counter (RP2350 moved TIMER to base 0x400B0000). The volatile
+    # MMIO load in the loop condition is a real side effect, so opt -O2 cannot
+    # delete the wait; uint32 subtraction wraps modulo 2**32.
+    timer: ptr[uint32] = ptr(0x400B0028)
     start: uint32 = timer.value
     while (timer.value - start) < us:
         pass

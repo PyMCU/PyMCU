@@ -5,14 +5,5 @@
 # SPDX-License-Identifier: MIT
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
-from pymcu.chips import __CHIP__
-from pymcu.exceptions import CompileError
-
-if __CHIP__.arch == "avr":
-    from pymcu.hal.avr.i2c import I2C
-elif __CHIP__.name == "rp2040":
-    from pymcu.hal.rp2040.i2c import I2C
-elif __CHIP__.name == "rp2350":
-    from pymcu.hal.rp2350.i2c import I2C
-else:
-    raise CompileError("I2C not supported on this architecture")
+#
+# RP2350 (ARM Cortex-M33) HAL package.

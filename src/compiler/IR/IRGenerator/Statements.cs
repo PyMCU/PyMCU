@@ -55,6 +55,15 @@ public partial class IRGenerator
 
         if (expr is VariableExpr varE)
         {
+            // Compile-time constants from loop unrolling / inline expansion (e.g. `i`
+            // in `for i in range(n)` or an enumerate index). This lets address
+            // expressions like `ptr(BASE + 4 * i)` fold to a constant MemoryAddress
+            // inside an unrolled loop, instead of degrading to a runtime pointer.
+            if (constantVariables.TryGetValue(currentInlinePrefix + varE.Name, out int cvip)) return cvip;
+            if (!string.IsNullOrEmpty(currentFunction) &&
+                constantVariables.TryGetValue(currentFunction + "." + varE.Name, out int cvf)) return cvf;
+            if (constantVariables.TryGetValue(varE.Name, out int cvb)) return cvb;
+
             string lookup = currentModulePrefix + varE.Name;
             if (globals.TryGetValue(lookup, out var globalSym))
             {
@@ -112,6 +121,13 @@ public partial class IRGenerator
 
     private Function VisitFunction(FunctionDef funcNode)
     {
+        if (funcNode.IsAsync)
+            throw UserError(
+                $"async def '{funcNode.Name}': the coroutine-to-state-machine lowering is not " +
+                "implemented yet (the syntax parses; the transform is the next step). For now, " +
+                "write the future as a small class with a poll() method and drive it from a " +
+                "cooperative loop -- the zero-cost pattern async lowers to (see the RTOS example).");
+
         var irFunc = new Function();
         string fullName = currentModulePrefix + funcNode.Name;
         irFunc.Name = fullName;
@@ -121,6 +137,7 @@ public partial class IRGenerator
         irFunc.IsInline = funcNode.IsInline;
         irFunc.IsInterrupt = funcNode.IsInterrupt;
         irFunc.IsNaked = funcNode.IsNaked;
+        irFunc.IsExportC = funcNode.IsExportC;
         irFunc.InterruptVector = funcNode.InterruptVector;
         irFunc.ReturnType = DataTypeExtensions.StringToDataType(funcNode.ReturnType);
         // RFC 0001 Model B: a factory declared `-> C` (single-field ZCA) actually returns

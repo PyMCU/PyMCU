@@ -87,6 +87,7 @@ FLASH_SIZES: dict[str, int] = {
     "attiny13": 1024,  "attiny13a": 1024,
     "attiny2313": 2048, "attiny4313": 4096,
     "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
+    "rp2350": 4194304,   # 4 MB external QSPI flash (Raspberry Pi Pico 2 default)
 }
 
 
@@ -207,6 +208,17 @@ def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
     return False
 
 
+def _sources_contain(sources_dir: Path, token: str) -> bool:
+    """Return True if any .py file under sources_dir mentions *token* (substring match)."""
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            if token in py_file.read_text(encoding="utf-8", errors="ignore"):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 _MAIN_DEF_RE = re.compile(r"^(def main\s*\(\s*\)\s*:)", re.MULTILINE)
 
 
@@ -289,6 +301,22 @@ def _inject_print_preamble(
     )
 
 
+def _inject_print_imports_only(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Inject only the console streaming functions, with NO stdout/UART init.
+
+    Used when the user manages their own UART (so we must not double-initialize it)
+    but also calls print(): importing console.print_str loads the streaming value/
+    string writers the print() lowering resolves by name.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: console functions for print() (user-managed UART)\n",
+        import_line="from pymcu.hal.console import print_str\n",
+        call_line="pass",
+    )
+
+
 def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
     """Return a synthetic entry file with a millis_init() preamble prepended.
 
@@ -306,6 +334,28 @@ def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[P
         comment="# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n",
         import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
         call_line="_pymcu_millis_init()",
+    )
+
+
+def _inject_clock_init_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Return a synthetic entry file that calls clock_init() first thing in main().
+
+    The RP2350 bootrom leaves clk_sys on the low boot clock and the system TIMER tick
+    sourced from the imprecise ROSC, so a bare-metal program runs ~12x slow on the CPU
+    and ~2x slow on every delay_ms/asyncio timer. The pico-sdk fixes this in its runtime
+    (runtime_init_clocks, before main); PyMCU mirrors that by auto-injecting clock_init()
+    -- which starts XOSC, locks PLL_SYS at 150 MHz and gives the timer an exact 1 MHz tick
+    -- so user code stays clean (no manual clock setup, just like the SDK / MicroPython).
+
+    Injected last so clock_init() lands ahead of any stdout/ticks preamble, which need the
+    final clk_sys / clk_peri to be in effect before they configure their peripherals.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: RP2350 clocks brought up to 150 MHz / 1 MHz tick\n",
+        import_line="from pymcu.hal.rp2350.clocks import clock_init as _pymcu_clock_init\n",
+        call_line="_pymcu_clock_init()",
     )
 
 
@@ -591,6 +641,15 @@ def build(
                     f"({_stdout_device} at {_stdout_baud} baud)",
                     style="dim",
                 )
+        elif _has_print and _has_uart:
+            # User drives their own UART but also calls print(): load the console
+            # streaming functions (no init -- the user's UART() owns the hardware).
+            entry_point, _n = _inject_print_imports_only(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("print() + user UART() — injecting console functions (no init)",
+                      verbose=is_verbose)
 
         # Auto-inject millis_init() preamble when ticks_ms() is used.
         # millis_init() must run before any ticks_ms() call; injecting it here
@@ -609,6 +668,19 @@ def build(
                     "[debug] ticks_ms() detected — millis_init() preamble injected",
                     style="dim",
                 )
+
+        # Auto-inject clock_init() for the RP2350 so clk_sys is 150 MHz and the system
+        # timer ticks at an exact 1 MHz -- mirrors the pico-sdk runtime (runtime_init_clocks)
+        # which does the same before main(). Injected LAST so clock_init() runs first, ahead
+        # of any stdout/ticks preamble that depends on the final clk_sys / clk_peri. Skipped
+        # if the user already calls clock_init() (idempotent, but avoids a redundant pass).
+        if target == "rp2350" and not _sources_contain(sources_dir, "clock_init"):
+            entry_point, _n = _inject_clock_init_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("rp2350 target — injecting clock_init() (150 MHz + 1 MHz timer tick)",
+                      verbose=is_verbose)
 
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
@@ -917,7 +989,7 @@ def build(
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)
                     for inter in ["firmware.elf", "firmware.o", "boot2.o",
-                                  "crt0.o", "firmware.opt.ll"]:
+                                  "crt0.o", "picobin.o", "firmware.opt.ll"]:
                         p = output_dir / inter
                         if p.exists():
                             shutil.move(str(p), str(debug_dir / p.name))

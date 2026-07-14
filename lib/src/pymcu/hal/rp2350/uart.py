@@ -6,24 +6,27 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# RP2040 UART HAL -- pymcu.hal.rp2040.uart (UART0, ARM PL011)
+# RP2350 UART HAL -- pymcu.hal.rp2350.uart (UART0, ARM PL011)
 #
-# Zero-cost: every method is @inline and lowers to volatile MMIO accesses. The
-# baud divisors are folded at compile time from the (const) baud argument. The
-# default GPIO pins are GP0 (TX) / GP1 (RX), routed to the UART function.
+# Structurally identical to the RP2040 UART HAL; only the register addresses
+# (imported from pymcu.chips.rp2350) and the peripheral clock differ. Two
+# RP2350-specific details vs RP2040:
+#   * clk_peri defaults to 150 MHz (Pico 2 default) so the baud divisors match.
+#   * RP2350 pads power up isolated (ISO=1); the TX/RX pads are written with
+#     IE=1 / ISO=0 so the lines actually drive on real silicon.
 
-from pymcu.chips.rp2040 import (
+from pymcu.chips.rp2350 import (
     UART0_DR, UART0_FR, UART0_IBRD, UART0_FBRD, UART0_LCR_H, UART0_CR,
     RESETS_RESET_CLR, RESETS_RESET_DONE,
     RESET_UART0, RESET_IO_BANK0, RESET_PADS_BANK0,
-    IO_BANK0_BASE, GPIO_FUNC_UART,
+    IO_BANK0_BASE, PADS_BANK0_BASE, GPIO_FUNC_UART,
     UART_FR_TXFF, UART_FR_RXFE,
 )
 from pymcu.types import ptr, uint8, uint32, const, inline
 
-# Peripheral clock assumed at the pico-sdk default of 125 MHz. (A future clocks
-# HAL will make this configurable; for now clk_peri == clk_sys == 125 MHz.)
-_CLK_PERI = 125000000
+# Peripheral clock assumed at the Pico 2 default of 150 MHz. (A future clocks
+# HAL will make this configurable; for now clk_peri == clk_sys == 150 MHz.)
+_CLK_PERI = 150000000
 
 
 class UART:
@@ -44,6 +47,12 @@ class UART:
         UART0_LCR_H.value = (3 << 5) | (1 << 4)
         # Enable UART (bit0), TX (bit8) and RX (bit9).
         UART0_CR.value = (1 << 0) | (1 << 8) | (1 << 9)
+
+        # De-isolate the TX/RX pads (IE=1, ISO=0) -- required on RP2350.
+        tx_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * tx)
+        tx_pad.value = 1 << 6
+        rx_pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * rx)
+        rx_pad.value = 1 << 6
 
         # Route the TX/RX pins to the UART function.
         tx_ctrl: ptr[uint32] = ptr(IO_BANK0_BASE + 8 * tx + 4)

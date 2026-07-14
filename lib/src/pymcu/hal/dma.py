@@ -8,11 +8,9 @@
 from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
 
-if __CHIP__.arch == "avr":
-    from pymcu.hal.avr.i2c import I2C
-elif __CHIP__.name == "rp2040":
-    from pymcu.hal.rp2040.i2c import I2C
+if __CHIP__.name == "rp2040":
+    from pymcu.hal.rp2040.dma import DMA
 elif __CHIP__.name == "rp2350":
-    from pymcu.hal.rp2350.i2c import I2C
+    from pymcu.hal.rp2350.dma import DMA
 else:
-    raise CompileError("I2C not supported on this architecture")
+    raise CompileError("DMA not supported on this architecture")

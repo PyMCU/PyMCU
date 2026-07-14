@@ -6,15 +6,17 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 #
-# RP2040 GPIO HAL -- pymcu.hal.rp2040.gpio
+# RP2350 GPIO HAL -- pymcu.hal.rp2350.gpio
 #
-# All 30 GPIOs share one set of single-cycle-IO (SIO) registers; the pin number
-# IS the bit index, so there is no per-pin register selection (unlike AVR). The
-# pin number is a compile-time constant, so `1 << pin` and the per-pin IO_BANK0 /
-# PADS_BANK0 register addresses fold to constants -- the whole Pin abstraction is
-# zero-cost (every method is @inline and lowers to a single volatile MMIO store).
+# Identical in structure to the RP2040 GPIO HAL: all GPIOs share one set of
+# single-cycle-IO (SIO) registers, the pin number IS the bit index, and every
+# method is @inline and folds to a single volatile MMIO store. Only the register
+# addresses differ (imported from pymcu.chips.rp2350): the SIO atomic-alias
+# offsets moved and the peripheral bases changed. Writing the whole pad register
+# (rather than RMW) also clears the RP2350 ISO bit as a side effect, so the pad
+# leaves isolation when configured.
 
-from pymcu.chips.rp2040 import (
+from pymcu.chips.rp2350 import (
     IO_BANK0_BASE, PADS_BANK0_BASE,
     RESETS_RESET_CLR, RESETS_RESET_DONE,
     SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR,
@@ -35,10 +37,10 @@ class Pin:
 
     def __init__(self, pin: uint8, mode: const[uint8] = 0,
                  pull: const = -1, value: const = -1):
-        # `pin` may be a runtime value (Pin(n) where n is a variable). A constant pin
-        # still const-folds the address math below (verified: Pin(25).toggle() lowers
-        # to a single `store i32 33554432` -- zero-cost), so only a genuinely runtime
-        # pin pays for the 4*pin / 8*pin / 1<<pin instructions.
+        # `pin` may be a runtime value (e.g. Pin(n) where n is a variable). When it
+        # IS a compile-time constant the address math below const-folds as before, so
+        # the constant case stays zero-cost; a runtime pin just keeps 4*pin / 8*pin /
+        # 1<<pin as real instructions.
         self._pin = pin
 
         # Bring IO_BANK0 and PADS_BANK0 out of reset and wait until ready.
@@ -46,7 +48,7 @@ class Pin:
         while (RESETS_RESET_DONE.value & ((1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0))) != ((1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)):
             pass
 
-        # Pad: input-enable on, output-disable off (bit6 = IE).
+        # Pad: input-enable on, output-disable off, ISO cleared (bit6 = IE).
         pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * pin)
         pad.value = 1 << 6
 
@@ -96,7 +98,7 @@ class Pin:
 
     @inline
     def pull(self, p: const[uint8]):
-        # Rewrite pad IE + pull bits only; preserves drive strength.
+        # Rewrite pad IE + pull bits only; preserves drive strength, clears ISO.
         # PADS layout: bit6=IE, bit3=PUE, bit2=PDE.
         pad: ptr[uint32] = ptr(PADS_BANK0_BASE + 4 + 4 * self._pin)
         if p == 1:       # PULL_UP
@@ -119,10 +121,10 @@ class Pin:
     def pulse_in(self, state: uint8, timeout_us: uint16 = 1000) -> uint16:
         # Wait for the pin to reach `state`, then measure how long it holds it, in
         # microseconds (the bit-bang primitive behind machine.time_pulse_us, used by
-        # the DHT driver). Returns 0 on timeout. Rides the chip-wide 1 MHz timer
-        # (TIMERAWL @ TIMER_BASE + 0x28), so the same flavor code runs on RP2040 too.
+        # the DHT driver). Returns 0 on timeout. Rides the 1 MHz system timer
+        # (TIMER0 TIMERAWL @ 0x400B0028) -- which clock_init() makes an exact 1 MHz.
         mask: uint32 = 1 << self._pin
-        timer: ptr[uint32] = ptr(0x40054028)
+        timer: ptr[uint32] = ptr(0x400B0028)
         want: uint32 = 0
         if state != 0:
             want = mask

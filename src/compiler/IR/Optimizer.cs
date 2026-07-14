@@ -96,6 +96,12 @@ public static class Optimizer
         {
             Enqueue(func.Name);
         }
+        // @export_c functions are roots: they may have no Python caller (reached only
+        // from inline asm, e.g. an RTOS `asm("bl scheduler")`), but must survive DFE.
+        foreach (var func in optimized.Functions.Where(func => func.IsExportC))
+        {
+            Enqueue(func.Name);
+        }
 
         while (worklist.Count > 0)
         {

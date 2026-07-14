@@ -296,13 +296,24 @@ public partial class IRGenerator
                 // that subscript and method dispatch via GetValClass works when these
                 // singletons are imported by user code.
                 if (initializer is CallExpr ctorCallInst
-                    && ctorCallInst.Callee is VariableExpr ctorVarInst
-                    && classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod)
-                    && classMod != null)
+                    && ctorCallInst.Callee is VariableExpr ctorVarInst)
                 {
                     string fullKey = currentModulePrefix + name;
-                    string fullClassName = classMod + ctorVarInst.Name;
-                    instanceClasses[fullKey] = fullClassName;
+                    if (classModuleMap.TryGetValue(ctorVarInst.Name, out var classMod) && classMod != null)
+                    {
+                        instanceClasses[fullKey] = classMod + ctorVarInst.Name;
+                    }
+                    else
+                    {
+                        // The class was imported through a facade re-export (e.g. wifi.py does
+                        // `from pymcu.hal.wifi import CYW43`, itself re-exported from the concrete
+                        // module). Its concrete module isn't in classModuleMap yet (scan order),
+                        // so record the import-resolved name; the dispatch maps it to the concrete
+                        // class via ResolveConcreteClass once every class is scanned.
+                        string rc = ResolveCallee(ctorVarInst.Name);
+                        if (rc.Contains('_') && rc != ctorVarInst.Name && !intrinsicNames.Contains(ctorVarInst.Name))
+                            instanceClasses[fullKey] = rc;
+                    }
                 }
             }
         }
@@ -313,6 +324,31 @@ public partial class IRGenerator
         foreach (var func in ast.Functions)
         {
             string fullName = currentModulePrefix + func.Name;
+
+            if (func.IsAsync)
+                throw UserError(
+                    $"async def '{func.Name}': the coroutine-to-state-machine lowering is not " +
+                    "implemented yet. The syntax parses (this is the foundation); the transform " +
+                    "is the next step. For now write the future as a small class with a poll() " +
+                    "method driven from a cooperative loop -- the zero-cost pattern async lowers to.");
+
+            // @asm_pio / @rp2.asm_pio: the body is PIO assembly, not CPU code.
+            // Assemble it now and register it; never lower it as a function.
+            if (func.IsPioProgram)
+            {
+                try
+                {
+                    pioPrograms[fullName] = PyMCU.Frontend.Pio.PioAssembler.Assemble(func);
+                    if (currentModulePrefix == "" || currentModulePrefix == null)
+                        pioPrograms[func.Name] = pioPrograms[fullName];
+                }
+                catch (PyMCU.Frontend.Pio.PioAsmException ex)
+                {
+                    throw UserError($"in PIO program '{func.Name}': {ex.Message}");
+                }
+                continue;
+            }
+
             functionReturnTypes[fullName] = func.ReturnType;
             var @params = new List<string>();
             var paramTypes = new List<DataType>();
@@ -496,6 +532,27 @@ public partial class IRGenerator
                             }
 
                         classFieldLayout[classKey] = clsLayout;
+                        // Record any field whose type is itself a class, so a member read can
+                        // recover the nested class identity a single-field ZCA loses on collapse.
+                        // (1) param-typed fields (`self.x = pin` where pin: SomeClass): the layout
+                        //     already carries the class name as the field type.
+                        foreach (var (fld, ty, _) in clsLayout)
+                        {
+                            if (string.IsNullOrEmpty(ty) || IsScalarTypeName(ty)) continue;
+                            fieldClasses[classKey + "|" + fld] = ResolveCallee(ty);
+                        }
+                        // (2) constructor-assigned fields (`self.x = SomeClass(...)`): the layout
+                        //     records these as a scalar (the class collapses), so recover the class
+                        //     from the __init__ RHS. Resolved here in the defining module's scope.
+                        foreach (var s0 in block.Statements)
+                            if (s0 is FunctionDef fdI && fdI.Name == "__init__")
+                                foreach (var st in fdI.Body.Statements)
+                                    if (st is AssignStmt asg2 && asg2.Target is MemberAccessExpr m2
+                                        && m2.Object is VariableExpr sv2 && sv2.Name == "self"
+                                        && asg2.Value is CallExpr ce2 && ce2.Callee is VariableExpr cv2
+                                        && !IsScalarTypeName(cv2.Name)
+                                        && !fieldClasses.ContainsKey(classKey + "|" + m2.Member))
+                                        fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv2.Name);
                         if (InitCallsSuperInit(block)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
@@ -824,6 +881,22 @@ public partial class IRGenerator
         return false;
     }
 
+    private static readonly HashSet<string> ScalarTypeNames = new()
+    {
+        "uint8", "int8", "uint16", "int16", "uint32", "int32", "uint64", "int64",
+        "int", "bool", "float", "void", "None", "str", "bytes", "bytearray",
+        "const", "Callable", "gc_ref", "char",
+    };
+
+    // True for primitive/built-in type names (and any bracketed form like const[..]/ptr[..]/T[N]).
+    // A field type that is NOT one of these is a class name -- tracked in fieldClasses.
+    private static bool IsScalarTypeName(string ty)
+    {
+        if (string.IsNullOrEmpty(ty)) return true;
+        if (ty.Contains('[')) return true;
+        return ScalarTypeNames.Contains(ty);
+    }
+
     private List<(string Field, string Type, string SourceParam)> DeriveFieldLayout(Block classBody)
     {
         var layout = new List<(string, string, string)>();
@@ -841,11 +914,13 @@ public partial class IRGenerator
         {
             string? field = null;
             Expression? rhs = null;
+            string? annotatedType = null;
             if (s is AssignStmt asg && asg.Target is MemberAccessExpr ma
                 && ma.Object is VariableExpr sv && sv.Name == "self")
             {
                 field = ma.Member;
                 rhs = asg.Value;
+                annotatedType = asg.AnnotatedType;
             }
 
             if (field == null || !seen.Add(field)) continue;
@@ -854,12 +929,22 @@ public partial class IRGenerator
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
             string type = "uint8";
             string srcParam = "";
+            // An explicit `self.x: T = ...` annotation wins -- the field gets its
+            // declared width (otherwise a uint32 field would default to uint8 and
+            // truncate, e.g. a timer deadline or a 1<<24 bit mask).
+            if (annotatedType != null)
+            {
+                type = annotatedType.StartsWith("const[") && annotatedType.EndsWith("]")
+                    ? annotatedType.Substring(6, annotatedType.Length - 7)
+                    : annotatedType;
+            }
             if (rhs is VariableExpr rv && paramTypes.TryGetValue(rv.Name, out var pt))
             {
                 srcParam = rv.Name;
-                type = pt.StartsWith("const[") && pt.EndsWith("]")
-                    ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
-                    : pt;
+                if (annotatedType == null)
+                    type = pt.StartsWith("const[") && pt.EndsWith("]")
+                        ? pt.Substring(6, pt.Length - 7) // const[uint8] -> uint8
+                        : pt;
             }
             layout.Add((field, type, srcParam));
         }

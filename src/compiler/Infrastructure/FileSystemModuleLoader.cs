@@ -75,7 +75,11 @@ public class FileSystemModuleLoader : IModuleLoader
 
     private static string ResolveModulePath(string moduleName, List<string> includePaths, string currentFilePath, int relativeLevel)
     {
-        var pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
+        // Builtin module aliases: bare `import asyncio` resolves to the pymcu stdlib file.
+        // The module still registers under the bare name (its symbols mangle as asyncio_*),
+        // only the FILE lookup is redirected.
+        string pathName = moduleName == "asyncio" ? "pymcu.asyncio" : moduleName;
+        var pathRel = pathName.Replace('.', Path.DirectorySeparatorChar);
 
         if (relativeLevel > 0)
         {

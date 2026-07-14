@@ -58,7 +58,8 @@ public static class ArchFamilyResolver
         // Note: this must precede the "pio" branch so the bare "rp2040" arch
         // resolves to the CPU family rather than the PIO co-processor.
         if (s == "arm" || s == "cortex-m" || s == "cortex-m0"
-            || s == "cortex-m0plus" || s == "cortex-m0+" || s == "rp2040")
+            || s == "cortex-m0plus" || s == "cortex-m0+" || s == "rp2040"
+            || s == "rp2350" || s == "cortex-m33" || s == "cortex-m33f")
             return "arm";
 
         if (s == "pio" || s == "rp2040-pio")

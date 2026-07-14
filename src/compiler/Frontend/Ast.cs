@@ -256,6 +256,18 @@ public class UnaryExpr : Expression
     }
 }
 
+// `await <expr>` -- a suspension point inside an `async def`. The coroutine lowering
+// turns each AwaitExpr into a poll of the awaited future, yielding until it is ready.
+public class AwaitExpr : Expression
+{
+    public Expression Operand { get; }
+
+    public AwaitExpr(Expression operand)
+    {
+        Operand = operand;
+    }
+}
+
 public class Block : Statement
 {
     public List<Statement> Statements { get; } = new();
@@ -293,6 +305,11 @@ public class AssignStmt : Statement
 {
     public Expression Target { get; }
     public Expression Value { get; }
+
+    // Optional declared type from `self.x: T = v`. Codegen ignores it (the value's
+    // type drives lowering), but the ZCA field-layout pass uses it so an instance
+    // field gets its declared width instead of defaulting to uint8.
+    public string? AnnotatedType { get; set; }
 
     public AssignStmt(Expression target, Expression value)
     {
@@ -592,6 +609,12 @@ public class FunctionDef : Statement
     public bool IsExtern { get; set; } = false;
     public string ExternSymbol { get; set; } = "";
 
+    // @export_c: this function is DEFINED in PyMCU but must keep external linkage and
+    // survive dead-code elimination even with no visible IR caller -- so it can be
+    // called from inline asm (e.g. `asm("bl my_scheduler")`) or by external C. The
+    // backend keeps it as a root and adds it to @llvm.used.
+    public bool IsExportC { get; set; } = false;
+
     // @outline: RFC 0001 Model A. A ZCA method marked @outline is compiled ONCE
     // as a real subroutine that receives the instance's runtime fields as leading
     // parameters (self.<field> -> self_<field> param), instead of being force-inlined
@@ -601,6 +624,17 @@ public class FunctionDef : Statement
     // @warning("..."): an informational diagnostic printed (once) when a call
     // to this function is expanded. Does not abort compilation. Empty = none.
     public string WarningMessage { get; set; } = "";
+
+    // @asm_pio / @rp2.asm_pio: this function's body is RP2040/RP2350 PIO assembly
+    // (a DSL), NOT CPU code. The PIO assembler (Frontend/Pio) consumes the body
+    // and the decorator keyword arguments (PioParams) at compile time; the IR
+    // generator must NOT lower this function as a normal CPU function.
+    public bool IsPioProgram { get; set; } = false;
+    public Dictionary<string, Expression> PioParams { get; set; } = new();
+
+    // `async def`. The function is a coroutine; its body uses `await` and lowers to a
+    // resumable state machine (a ZCA poll() object), not a plain CPU function.
+    public bool IsAsync { get; set; } = false;
 
     public FunctionDef(string name, List<Param> parameters, string returnType,
         Block body, bool isInline = false, bool isInterrupt = false,

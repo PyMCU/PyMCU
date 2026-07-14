@@ -257,6 +257,12 @@ public partial class IRGenerator
             constantVariables["__FREQUENCY__"] = (int)config.Frequency;
         }
 
+        // Desugar `async def` coroutines into ZCA state-machine classes before any
+        // scanning, so the rest of the pipeline sees ordinary classes.
+        PyMCU.Frontend.AsyncTransform.TransformProgram(mainAst);
+        foreach (var m in importedModules.Values)
+            PyMCU.Frontend.AsyncTransform.TransformProgram(m);
+
         constantVariables["ValueError"]          = 1;
         constantVariables["TypeError"]           = 2;
         constantVariables["IndexError"]          = 3;
@@ -330,6 +336,20 @@ public partial class IRGenerator
                         if (imp.Aliases.ContainsKey(sym))
                             aliasToOriginal[key] = sym;
                     }
+                }
+
+                // `import x as y` inside an imported module (no symbols). The entry loop
+                // above registers these only for the entry file; a module imported
+                // transitively (main imports B, B does `import A as a`) also needs its
+                // alias mapped so `a.func()` mangles to A_func, not a_func.
+                if (imp.Symbols.Count == 0)
+                {
+                    string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
+                    if (!importedAliases.ContainsKey(modKey))
+                        importedAliases[modKey] = imp.ModuleName;
+                    if (!modules.ContainsKey(modKey))
+                        modules[modKey] = modules.TryGetValue(imp.ModuleName, out var realScope)
+                            ? realScope : new ModuleScope();
                 }
             }
         }
@@ -483,51 +503,45 @@ public partial class IRGenerator
         }
         else
         {
-            // Explicit `def main()` exists.  Truly executable top-level statements
-            // (control flow, function calls) are not allowed alongside it — they
-            // would silently be ignored, confusing users.  Pure variable declarations
-            // (`x: uint16 = 0`) are fine and are used for module-level globals.
-            var conflicting = mainAst.GlobalStatements
-                .Where(IsTopLevelRuntimeStatement)
-                .ToList();
-            if (conflicting.Count > 0)
-                throw new Exception(
-                    "Top-level executable statements cannot coexist with an explicit def main(): function. " +
-                    "Either remove def main() and use top-level code, or move all logic inside def main().");
-
-            // Inject module-level SRAM array initializations at the start of main().
-            // These are AnnAssign declarations (e.g. `_tasks: Callable[2] = [f1, f2]`)
-            // that need runtime initialization but are not compile-time constants.
-            // They are not injected in the synthesized-main path (handled there as
-            // executable top-level statements), only for the explicit def main() path.
+            // Explicit `def main()`. Module-level executable statements run at STARTUP,
+            // before main()'s body -- mirroring Python, where the module body executes
+            // before the entry point. (Previously they were rejected or silently dropped,
+            // so a Pin/UART/sensor constructed at module scope never configured its
+            // hardware -- only one constructed *inside* main did.)
             var mainFuncDef = mainAst.Functions.FirstOrDefault(f => f.Name == "main");
             if (mainFuncDef != null)
             {
-                var sramInits = mainAst.GlobalStatements
-                    .OfType<AnnAssign>()
-                    .Where(a => moduleSramArrays.Contains(a.Target) && !globals.ContainsKey(a.Target))
-                    .ToList();
-                for (int i = sramInits.Count - 1; i >= 0; i--)
-                    mainFuncDef.Body.Statements.Insert(0, sramInits[i]);
+                // Collect module-level statements with a runtime effect, in source order.
+                // Pure declarations (imports, class defs, const/already-folded globals) are
+                // skipped. A VarDecl initializer for a mutable global becomes an AnnAssign so
+                // the global is actually written (BSS only zeroes it); a zero/false init needs
+                // nothing. Everything else -- AnnAssign SRAM arrays, plain constructions like
+                // `led = Pin(...)`, bare calls, control flow -- runs as written.
+                var moduleInit = new List<Statement>();
+                foreach (var s in mainAst.GlobalStatements)
+                {
+                    if (IsTopLevelPureDeclaration(s)) continue;
+                    if (s is VarDecl d)
+                    {
+                        if (d.Init != null
+                            && mutableGlobals.ContainsKey(d.Name)
+                            && !globals.ContainsKey(d.Name)
+                            && !(d.Init is IntegerLiteral z && z.Value == 0)
+                            && !(d.Init is BooleanLiteral bz && !bz.Value))
+                            moduleInit.Add(new AnnAssign(d.Name, d.VarType, d.Init));
+                        continue;
+                    }
+                    moduleInit.Add(s);
+                }
 
-                // Inject scalar mutable-global initializers (e.g. `_seed: uint16 = 3007`)
-                // so a non-zero startup value is actually written. Without this the global
-                // lives in BSS, is zeroed by crt0, and silently reads 0. Module-level
-                // declarations parse as VarDecl; convert to an AnnAssign so the main-body
-                // handler writes the module global. Skip arrays (handled above), folded
-                // constant globals, and zero/false inits (BSS already zeroes them).
-                var globalInits = mainAst.GlobalStatements
-                    .OfType<VarDecl>()
-                    .Where(d => d.Init != null
-                             && !moduleSramArrays.Contains(d.Name)
-                             && !globals.ContainsKey(d.Name)
-                             && mutableGlobals.ContainsKey(d.Name)
-                             && !(d.Init is IntegerLiteral z && z.Value == 0)
-                             && !(d.Init is BooleanLiteral bz && !bz.Value))
-                    .Select(d => new AnnAssign(d.Name, d.VarType, d.Init))
-                    .ToList();
-                for (int i = globalInits.Count - 1; i >= 0; i--)
-                    mainFuncDef.Body.Statements.Insert(0, globalInits[i]);
+                // Insert AFTER the build's auto-injected `_pymcu_*` preamble (clock_init,
+                // millis_init, stdout) so module-level peripheral setup sees the final clocks
+                // and stdout, but BEFORE the user's own main body.
+                var body = mainFuncDef.Body.Statements;
+                int at = 0;
+                while (at < body.Count && IsInjectedPreamble(body[at])) at++;
+                for (int i = moduleInit.Count - 1; i >= 0; i--)
+                    body.Insert(at, moduleInit[i]);
             }
         }
 
@@ -1034,6 +1048,43 @@ public partial class IRGenerator
         return name;
     }
 
+    // A field's recorded class may be a HAL dispatch facade key (e.g. "pymcu_hal_gpio_Pin")
+    // that re-exports the concrete chip class ("pymcu_hal_<chip>_gpio_Pin"). Return the concrete
+    // classFieldLayout key: the facade itself if it has a layout, else the UNIQUE layout key that
+    // matches the facade with a chip segment inserted (same "pymcu_hal_" prefix + same tail).
+    // Null when unknown or ambiguous, so the caller leaves resolution untouched.
+    private string? ResolveConcreteClass(string cls)
+    {
+        if (string.IsNullOrEmpty(cls)) return null;
+        if (classFieldLayout.ContainsKey(cls)) return cls;
+        const string halPfx = "pymcu_hal_";
+        if (cls.StartsWith(halPfx))
+        {
+            // HAL facade "..._gpio_Pin" -> the unique concrete "..._<chip>_gpio_Pin".
+            string tail = "_" + cls.Substring(halPfx.Length);
+            string? f = UniqueClassEndingWith(cls, tail, halPfx);
+            if (f != null) return f;
+        }
+        // Generic facade re-export (e.g. `from facade import Foo` where facade re-exported
+        // it from concrete): the class isn't itself defined, so resolve to the UNIQUE
+        // concrete class sharing its final symbol (the part after the last '_').
+        int us = cls.LastIndexOf('_');
+        if (us <= 0) return null;
+        return UniqueClassEndingWith(cls, cls.Substring(us), null);
+    }
+
+    private string? UniqueClassEndingWith(string exclude, string suffix, string? requirePrefix)
+    {
+        string? found = null;
+        foreach (var k in classFieldLayout.Keys)
+            if (k != exclude && k.EndsWith(suffix) && (requirePrefix == null || k.StartsWith(requirePrefix)))
+            {
+                if (found != null) return null;   // ambiguous -> give up
+                found = k;
+            }
+        return found;
+    }
+
     private string ResolveCallee(string name)
     {
         int dotPos = name.IndexOf('.');
@@ -1106,11 +1157,12 @@ public partial class IRGenerator
         return false;
     }
 
-    // Returns true for statements that are clearly runtime control-flow or expressions
-    // (while, for, if, function calls, etc.).  Used to detect conflicting top-level
-    // code when an explicit `def main():` is present — such code would be silently
-    // dropped, which is always a mistake.
-    private static bool IsTopLevelRuntimeStatement(Statement s) =>
-        s is WhileStmt or ForStmt or IfStmt or MatchStmt or ExprStmt or
-        WithStmt or AugAssignStmt or TupleUnpackStmt;
+    // Returns true for the build's auto-injected startup preamble statements -- the
+    // `_pymcu_*` calls (clock_init / millis_init / stdout) and the print_str `pass`.
+    // Module-level init is inserted AFTER this run so peripheral setup at module scope
+    // sees the final clocks and stdout, but before the user's own main body.
+    private static bool IsInjectedPreamble(Statement s) =>
+        s is PassStmt
+        || (s is ExprStmt es && es.Expr is CallExpr ce
+            && ce.Callee is VariableExpr ve && ve.Name.StartsWith("_pymcu_"));
 }
