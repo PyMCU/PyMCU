@@ -360,6 +360,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 |---------|-------|
 | `async def` / `await` (v1 subset) | Lowered at compile time to a zero-cost state-machine class with `poll()` — no heap, no interpreter. Requires `import asyncio`; awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`; `await` as a statement, at the top level of the body or inside a single `while True:` loop. `await` inside `if`/nested loops, arbitrary awaitables and `await` as an expression are the planned v2 |
 | f-string as a **value** (`s = f"t={t} C"`) | Builds the string into a compiler-managed fixed `bytearray` (no heap): the size is statically bounded per part, formatting lowers to `pymcu.strfmt` calls (auto-injected). Consumers: `print(s)`, `uart.write_str/println(s)`, `len(s)` (formatted length), `s[i]`, re-assignment in a loop (buffer reuse), passing as a `bytearray` param. Not yet: f-string inline in other expression positions, float interpolations in the value form, `s == "lit"` |
+| Closed dict/set literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables (no storage): `d[const]` folds, `d[runtime]` lowers to a compare chain raising `KeyError` (catchable), `x in d` / `x in {...}` membership chains, `len(d)` folds. String keys fold on constant lookups. Read-only — mutation needs the planned `FixedDict` |
 | Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |
 | Nested class-typed ZCA fields | Method calls / field reads on a class-typed field (`machine.Pin` wrapping the HAL `Pin`) dispatch correctly, including through facade re-exports and single-level inheritance |
 
@@ -447,7 +448,7 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 
 | Feature | Reason |
 |---------|--------|
-| `dict` / `set` | Hash tables require heap; no runtime |
+| General mutable `dict` / `set` | Hash tables require heap. **Closed literals ARE supported** (v0.14): `d = {...}` binds a compile-time lookup table — `d[k]` folds or compare-chains (missing key raises `KeyError`), `x in {...}` tests membership, `len(d)` folds. Mutation is not supported |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
 | `complex` / `Decimal` | Not available |
 | `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."`, fixed buffer) are supported; an f-string used inline in any other expression position has no lowering — assign it to a name first |

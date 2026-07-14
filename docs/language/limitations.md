@@ -24,12 +24,16 @@ suggests the idiomatic PyMCU alternative where one exists.
 | Feature | Why it fails | Alternative |
 |---|---|---|
 | `list.append(x)` on a **fixed-size** array | Fixed arrays have no append | `list[uint8]` heap-bounded list, or `uint8[N]` fixed-size array |
-| `dict` | Hash table requires heap | `match / case` key dispatch |
-| `set` | Hash set requires heap | `uint8` bitmask |
+| **Mutable** `dict` (`d[k] = v`) | Hash table requires heap | Closed dict literal (below), or `match / case` key dispatch |
+| **Mutable** `set` (`.add()`) | Hash set requires heap | Closed set literal (below), or a `uint8` bitmask |
 
 **Supported:** `list[T]` (`x: list[uint8] = list()`) compiles to a bounded bump-allocator
 with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`.
 `bytearray(N)` and `bytearray(b"...")` compile to SRAM `uint8[N]` arrays.
+**Closed dict/set literals** (`d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}`) bind compile-time
+lookup tables with no storage: `d[const]` folds to its value, `d[runtime_key]` lowers to a
+compare chain that raises `KeyError` (catchable with `try/except`) on no match, `x in d` /
+`x in {...}` test membership, and `len(d)` folds. They are read-only.
 Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index access.
 
 **Rule of thumb:** if the size is not known at compile time, it cannot be compiled.
