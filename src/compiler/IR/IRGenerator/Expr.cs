@@ -43,6 +43,12 @@ public partial class IRGenerator
                 "`await` is only valid inside an `async def`, and the coroutine lowering is not " +
                 "implemented yet. Drive a future's poll() from a cooperative loop for now.");
 
+        if (expr is Frontend.DictExpr or Frontend.SetExpr)
+            throw UserError(
+                "dict/set literals are compile-time lookup tables: bind one to a name " +
+                "(`d = {...}`) and use `d[k]` / `x in d` / `len(d)`; they have no runtime " +
+                "value in other positions (no heap on bare metal).");
+
         if (expr is NoneLiteral) return new NoneVal();
 
         if (expr is StringLiteral str)
@@ -387,13 +393,21 @@ public partial class IRGenerator
                 }
             }
 
-            // The RHS may be a list `[...]` or a tuple `(...)` literal — both are valid in
-            // Python (`x in (1, 2, 3)`). Normalize to the element list.
+            // The RHS may be a list `[...]`, tuple `(...)`, set `{...}` or dict literal
+            // (membership tests the KEYS, as in Python), directly or bound to a name.
+            // Normalize to the element list.
             List<Frontend.Expression> rhsElems = expr.Right switch
             {
                 ListExpr rl => rl.Elements,
                 Frontend.TupleExpr rt => rt.Elements,
-                _ => throw UserError("'in' / 'not in' requires a list or tuple literal on the right-hand side")
+                Frontend.SetExpr rs => rs.Elements,
+                Frontend.DictExpr rd => rd.Entries.Select(en => en.Key).ToList(),
+                VariableExpr rsv when TryGetSetBinding(rsv.Name, out var sb) => sb.Elements,
+                VariableExpr rdv when TryGetDictBinding(rdv.Name, out var db)
+                    => db.Entries.Select(en => en.Key).ToList(),
+                _ => throw UserError(
+                    "'in' / 'not in' requires a list, tuple, set or dict literal (or a name " +
+                    "bound to one) on the right-hand side")
             };
             if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
 
@@ -937,8 +951,95 @@ public partial class IRGenerator
         return null;
     }
 
+    // Dict/set literal bindings, looked up with the standard qualification order.
+    private bool TryGetDictBinding(string name, out Frontend.DictExpr dict)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && dictLiteralBindings.TryGetValue(currentInlinePrefix + name, out dict!)) return true;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && dictLiteralBindings.TryGetValue(currentFunction + "." + name, out dict!)) return true;
+        return dictLiteralBindings.TryGetValue(name, out dict!);
+    }
+
+    private bool TryGetSetBinding(string name, out Frontend.SetExpr set)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)
+            && setLiteralBindings.TryGetValue(currentInlinePrefix + name, out set!)) return true;
+        if (!string.IsNullOrEmpty(currentFunction)
+            && setLiteralBindings.TryGetValue(currentFunction + "." + name, out set!)) return true;
+        return setLiteralBindings.TryGetValue(name, out set!);
+    }
+
+    // Lower `d[k]` on a dict literal. Every entry must fold to constants (string keys and
+    // values fold to their interned ids). A constant key folds the whole lookup; a runtime
+    // key becomes a compare chain over the keys, raising KeyError on no match -- exactly
+    // Python's semantics, riding the existing exception model.
+    private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr)
+    {
+        var entries = new List<(int Key, int Value, bool StrKey)>();
+        foreach (var (kE, vE) in d.Entries)
+        {
+            Val kV = VisitExpression(kE);
+            Val vV = VisitExpression(vE);
+            if (kV is not Constant kc || vV is not Constant vc)
+                throw UserError("dict literals are compile-time lookup tables: every key and " +
+                                "value must be a compile-time constant");
+            entries.Add((kc.Value, vc.Value, kE is StringLiteral));
+        }
+
+        Val keyVal = VisitExpression(keyExpr);
+        if (keyVal is Constant keyC)
+        {
+            foreach (var e in entries)
+                if (e.Key == keyC.Value) return new Constant(e.Value);
+            throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC.Value)} is not a key of " +
+                            "this dict literal (checked at compile time)");
+        }
+
+        if (entries.Any(e => e.StrKey))
+            throw UserError("a dict with string keys needs a compile-time constant key; " +
+                            "runtime keys can only match integer keys");
+        if (entries.Count == 0)
+            throw UserError("KeyError: lookup on an empty dict literal");
+
+        // Result width from the value range.
+        int min = entries.Min(e => e.Value), max = entries.Max(e => e.Value);
+        DataType rt = min < 0
+            ? (min >= short.MinValue && max <= short.MaxValue ? DataType.INT16 : DataType.INT32)
+            : (max <= 0xFF ? DataType.UINT8 : max <= 0xFFFF ? DataType.UINT16 : DataType.UINT32);
+
+        Temporary result = MakeTemp(rt);
+        string endL = MakeLabel();
+        foreach (var e in entries)
+        {
+            string next = MakeLabel();
+            Emit(new JumpIfNotEqual(keyVal, new Constant(e.Key), next));
+            Emit(new Copy(new Constant(e.Value), result));
+            Emit(new Jump(endL));
+            Emit(new Label(next));
+        }
+        // No key matched: raise KeyError (caught by an enclosing try, else propagates).
+        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+        Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+        Emit(new Label(endL));
+        return result;
+    }
+
+    private string DescribeDictKey(Expression keyExpr, int folded) => keyExpr switch
+    {
+        StringLiteral s => $"\"{s.Value}\"",
+        _ => folded.ToString(),
+    };
+
     private Val VisitIndex(IndexExpr expr)
     {
+        // d[k] on a dict-literal binding: a compile-time CLOSED lookup table. A constant
+        // key folds to its value; a runtime key lowers to a compare chain that raises
+        // KeyError when nothing matches. Must run before the string-subscript rejection
+        // below (string keys are legal on dicts).
+        if (expr.Target is VariableExpr dictVe && TryGetDictBinding(dictVe.Name, out var dictLit))
+            return EmitDictLookup(dictLit, expr.Index);
+
         // A string subscript is a mistake — a single-char string would otherwise fold to
         // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
         if (expr.Index is StringLiteral)

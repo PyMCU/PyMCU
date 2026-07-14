@@ -208,6 +208,20 @@ public partial class IRGenerator
 
             if (!string.IsNullOrEmpty(name) && initializer != null)
             {
+                // Dict/set literals bind their AST as a compile-time lookup table -- no
+                // storage, no constant fold (EvaluateConstantExpr would throw and the
+                // fallback would mis-register them as 1-byte mutable globals).
+                if (initializer is DictExpr dictInit)
+                {
+                    dictLiteralBindings[currentModulePrefix + name] = dictInit;
+                    continue;
+                }
+                if (initializer is SetExpr setInit)
+                {
+                    setLiteralBindings[currentModulePrefix + name] = setInit;
+                    continue;
+                }
+
                 try
                 {
                     if (initializer is VariableExpr varExprInit)

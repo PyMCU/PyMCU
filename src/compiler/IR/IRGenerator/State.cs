@@ -130,6 +130,12 @@ public partial class IRGenerator
     // bytearray) -> (unqualified length-variable name, buffer capacity incl. NUL). len(s) reads
     // the length variable; print(s)/write_str(s) stream the buffer up to it.
     private Dictionary<string, (string LenVar, int Capacity)> runtimeStrVars = new();
+
+    // Dict/set literals bound to a name: compile-time CLOSED lookup tables (no storage, no
+    // GC). d[k] folds for a constant key or lowers to a compare chain for a runtime key
+    // (missing key raises KeyError); `x in s` lowers like a constant list membership.
+    private Dictionary<string, Frontend.DictExpr> dictLiteralBindings = new();
+    private Dictionary<string, Frontend.SetExpr> setLiteralBindings = new();
     // Tracks names declared with a `const[...]` annotation (scalar or array). These are
     // immutable by definition, so any later assignment to one is a user error. Distinct
     // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).

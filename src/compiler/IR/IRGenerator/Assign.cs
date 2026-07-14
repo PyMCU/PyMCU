@@ -33,6 +33,21 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
             return;
 
+        // `d = {...}` binds a compile-time lookup table (dict) or membership set: register
+        // the literal AST against the name; nothing runs at runtime.
+        if (stmt.Target is VariableExpr dsTgt && stmt.Value is DictExpr or SetExpr)
+        {
+            RegisterDictSetBinding(dsTgt.Name, stmt.Value);
+            return;
+        }
+
+        // Mutating a dict-literal binding (`d[k] = v`) has no runtime structure to write to.
+        if (stmt.Target is IndexExpr { Target: VariableExpr mutVe }
+            && TryGetDictBinding(mutVe.Name, out _))
+            throw UserError(
+                $"'{mutVe.Name}' is a compile-time dict literal (read-only lookup table); " +
+                "mutation is not supported -- restructure as match/if chains or fixed arrays.");
+
         // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
         // the result is built as a Model-A (flattened) instance, so a later method call on c
         // passes the fields where a self pointer is expected. Remember the target/class so that,
@@ -1599,8 +1614,25 @@ public partial class IRGenerator
         return variableTypes.TryGetValue(name, out var t) ? t : null;
     }
 
+    // Register `name = {...}` (dict or set literal) with the standard qualification.
+    private void RegisterDictSetBinding(string name, Expression literal)
+    {
+        string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        if (literal is DictExpr de) dictLiteralBindings[qualified] = de;
+        else if (literal is SetExpr se) setLiteralBindings[qualified] = se;
+    }
+
     private void VisitVarDecl(VarDecl stmt)
     {
+        // `d: ... = {...}`: dict/set literal binding, same as the unannotated form.
+        if (stmt.Init is DictExpr or SetExpr)
+        {
+            RegisterDictSetBinding(stmt.Name, stmt.Init);
+            return;
+        }
+
         // `s: bytearray = f"..."` (or any annotation) with runtime interpolations: expand
         // into a fixed buffer + strfmt calls, same as the unannotated assignment form.
         if (stmt.Init != null && TryExpandFStringValue(stmt.Name, stmt.Init))

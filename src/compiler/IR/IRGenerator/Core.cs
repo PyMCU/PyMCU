@@ -1136,6 +1136,11 @@ public partial class IRGenerator
         // runtime representation in a function body.
         if (s is ImportStmt || s is ClassDef) return true;
 
+        // Dict/set literal bindings are compile-time lookup tables (registered during
+        // the scan) -- no runtime initialization exists.
+        if (s is AssignStmt { Value: DictExpr or SetExpr, Target: VariableExpr }) return true;
+        if (s is VarDecl { Init: DictExpr or SetExpr }) return true;
+
         if (s is AnnAssign ann)
         {
             // const[T[N]] flash arrays are already injected via pendingFlashData —

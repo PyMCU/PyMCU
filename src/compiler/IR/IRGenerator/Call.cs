@@ -1727,6 +1727,8 @@ public partial class IRGenerator
         if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument");
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
         if (expr.Args[0] is TupleExpr te2) return new Constant(te2.Elements.Count);
+        if (expr.Args[0] is Frontend.DictExpr de2) return new Constant(de2.Entries.Count);
+        if (expr.Args[0] is Frontend.SetExpr se2) return new Constant(se2.Elements.Count);
         // A compile-time string constant (literal or a str / const[str] variable) has a
         // statically known length.
         if (expr.Args[0] is StringLiteral slLen) return new Constant(slLen.Value.Length);
@@ -1736,6 +1738,10 @@ public partial class IRGenerator
             // position, not the buffer capacity that arraySizes would report below.
             if (TryGetRuntimeStr(vLen.Name, out var rsLen))
                 return VisitExpression(new VariableExpr(rsLen.LenVar));
+
+            // Dict/set literal bindings have a compile-time size.
+            if (TryGetDictBinding(vLen.Name, out var dLen)) return new Constant(dLen.Entries.Count);
+            if (TryGetSetBinding(vLen.Name, out var sLen)) return new Constant(sLen.Elements.Count);
 
             // An @inline parameter bound to a list/tuple literal argument has a
             // statically known length (e.g. len(prog) inside a HAL helper).
