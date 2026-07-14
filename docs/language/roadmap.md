@@ -170,7 +170,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 |---|---|
 | `dict` / `set` | Dynamic hash tables require heap; no runtime |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
-| `async` / `await` | Use `@interrupt` + polling loop |
+| `async` / `await` beyond the v1 subset | v1 (compile-time state machine over `asyncio.sleep/sleep_ms`) is implemented; `await` in `if`/nested loops, arbitrary awaitables and `await`-as-expression are the planned v2 |
 | `f"..."` into a string **variable** | Streamed f-strings (`print(f"...")` etc.) are supported; only assigning the result to a string object needs a heap |
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |

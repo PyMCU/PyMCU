@@ -59,7 +59,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
-| F-strings `f"text={var}"` | Compile-time constant only; all `{expr}` must resolve to string or integer constants |
+| F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap. As a *value* (`s = f"..."`) still compile-time constants only |
 
 ### MCU-Specific Extensions
 
@@ -352,6 +352,27 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 ---
 
+## v0.14 — Implemented
+
+### Language
+
+| Feature | Notes |
+|---------|-------|
+| `async def` / `await` (v1 subset) | Lowered at compile time to a zero-cost state-machine class with `poll()` — no heap, no interpreter. Requires `import asyncio`; awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`; `await` as a statement, at the top level of the body or inside a single `while True:` loop. `await` inside `if`/nested loops, arbitrary awaitables and `await` as an expression are the planned v2 |
+| Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |
+| Nested class-typed ZCA fields | Method calls / field reads on a class-typed field (`machine.Pin` wrapping the HAL `Pin`) dispatch correctly, including through facade re-exports and single-level inheritance |
+
+### Tooling / Targets
+
+| Feature | Notes |
+|---------|-------|
+| `pymcu lint` | MicroPython/CircuitPython porting assistant: flags dict/set, runtime f-strings, reflection, unbounded `append`, `*args`/`**kwargs`, untyped params, `yield`, … with severity + suggestion per finding |
+| RP2350 (Pico 2) target | Cortex-M33: `crt0_m33` + picobin image block + linker script; full peripheral HAL (GPIO/UART/I2C/SPI/PWM/ADC/DMA) on RP2040 and RP2350 |
+| CYW43439 WiFi HAL (Pico W / Pico 2 W) | gSPI bring-up, WLAN join, TCP and MQTT publish via `pymcu.hal.wifi`; validated against the RP2350.Wireless chip model |
+| Flash-resident const data on ARM | Interned strings and `const[uint8[N]]` tables emit as `.rodata`; `const[str]` runtime subscript works on RP2040/RP2350 |
+
+---
+
 ## v0.12 — Implemented
 
 ### Language
@@ -427,9 +448,8 @@ These Python features are architecturally incompatible with bare-metal, no-heap 
 |---------|--------|
 | `dict` / `set` | Hash tables require heap; no runtime |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
-| `async` / `await` | Use `@interrupt` + polling loop |
 | `complex` / `Decimal` | Not available |
-| `f"..."` runtime interpolation | Compile-time only (constants only) |
+| `f"..."` as a runtime string **value** | Streamed f-strings (`print(f"...")` etc.) are supported (v0.1.0a2); only assigning the formatted result to a variable still requires compile-time constants |
 | Closures capturing mutable vars | Captured variables require heap; `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |
 | Multiple inheritance | Complexity vs. benefit for ZCA model |

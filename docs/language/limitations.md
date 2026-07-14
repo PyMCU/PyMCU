@@ -314,12 +314,14 @@ nested list comprehensions, `if`-filtered list comprehensions,
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `async def` / `await` | Async runtime / event loop required | `@interrupt` ISRs + polling loop |
-| `asyncio` | Not available | Not available |
+| `await` inside `if` / nested loops, `await` as an expression, arbitrary awaitables | v1 of the coroutine lowering splits only straight-line bodies / one `while True:` | Restructure around a single top-level loop, or poll explicitly |
 | `threading` / `multiprocessing` | OS required | `@interrupt` ISRs |
 
-**Supported:** `@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for
-external pin interrupts, atomic flag patterns via `GPIOR0`.
+**Supported:** `async def` / `await` (v1 subset — compiled to a zero-cost state machine;
+requires `import asyncio`, awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`, `await`
+as a statement at the top level of the body or inside a single `while True:` loop),
+`@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for external pin
+interrupts, atomic flag patterns via `GPIOR0`.
 
 :::{admonition} Timer0 and millis / ticks_ms
 :class: warning
