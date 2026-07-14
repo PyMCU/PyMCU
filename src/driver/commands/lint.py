@@ -107,12 +107,30 @@ class _Linter(ast.NodeVisitor):
 
     # ── runtime f-strings / allocating string ops ────────────────────────────
     def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
-        if any(isinstance(v, ast.FormattedValue) for v in node.values):
-            self._add(node, WARN, "fstring",
-                      "runtime f-string: building a string at runtime needs the heap.",
-                      "Format into a fixed bytearray buffer (itoa-style helpers), or print "
-                      "parts separately.")
+        # Runtime f-strings are SUPPORTED when streamed (print(f"..."), uart.write_str)
+        # or assigned to a name (`s = f"..."` builds into a fixed buffer). What has no
+        # lowering yet is an f-string used inline in any other expression position.
+        if any(isinstance(v, ast.FormattedValue) for v in node.values) \
+                and not self._fstring_supported_position(node):
+            self._add(node, INFO, "fstring",
+                      "runtime f-string outside a supported position (stream call or "
+                      "assignment).",
+                      "Assign it to a name first (s = f\"...\"), then use the name.")
         self.generic_visit(node)
+
+    def _fstring_supported_position(self, node: ast.AST) -> bool:
+        parent = getattr(node, "_pymcu_parent", None)
+        if parent is None:
+            return False
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+            return True
+        if isinstance(parent, ast.Call):
+            # Direct argument of a call: print(f"...") / uart.write_str(f"...") stream.
+            fn = parent.func
+            name = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else "")
+            return name in {"print", "write_str", "println", "print_str"}
+        return False
 
     # ── reflection / dynamism ────────────────────────────────────────────────
     # True reflection -- a hard blocker (no runtime attribute/name machinery).
@@ -215,6 +233,10 @@ def _lint_source(src: str, filename: str) -> tuple[list[Finding], Optional[str]]
     except SyntaxError as e:
         return ([Finding(e.lineno or 0, (e.offset or 0), ERROR, "syntax",
                          f"Python syntax error: {e.msg}", "Fix the syntax before porting.")], None)
+    # Annotate parent links (used to classify f-string positions).
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            child._pymcu_parent = parent  # type: ignore[attr-defined]
     lint = _Linter()
     lint.visit(tree)
     lint.findings.sort(key=lambda f: (f.line, f.col))

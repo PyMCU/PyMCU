@@ -196,6 +196,43 @@ def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
     return has_print, has_uart, has_input
 
 
+_FSTRING_VALUE_RE = re.compile(r'''=\s*f["']''')
+
+
+def _detect_fstring_value_usage(sources_dir: Path) -> bool:
+    """Return True if any .py file assigns an f-string to a name (`s = f"..."`).
+
+    Over-inclusive on purpose (a fully-constant f-string assignment also matches):
+    the injected pymcu.strfmt helpers are plain module functions, so anything
+    unused is dropped by DCE.
+    """
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if _FSTRING_VALUE_RE.search(code):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+    """Inject the pymcu.strfmt import that f-string-as-value lowering resolves.
+
+    `s = f"..."` with runtime interpolations expands (in the IR generator) to
+    chained pymcu.strfmt calls into a fixed buffer; the module must be loaded
+    for those synthetic calls to resolve.
+    """
+    return _inject_preamble(
+        entry_point,
+        generated_dir,
+        comment="# Auto-injected by pymcu build: strfmt helpers for f-string values\n",
+        import_line="import pymcu.strfmt as _pymcu_strfmt\n",
+        call_line="pass",
+    )
+
+
 def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
     """Return True if any .py file in sources_dir calls ticks_ms()."""
     for py_file in sources_dir.rglob("*.py"):
@@ -649,6 +686,16 @@ def build(
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
             _diag_log("print() + user UART() — injecting console functions (no init)",
+                      verbose=is_verbose)
+
+        # Auto-inject the strfmt helpers when an f-string is assigned to a variable
+        # (f-string-as-value lowering resolves pymcu.strfmt by import alias).
+        if _detect_fstring_value_usage(sources_dir):
+            entry_point, _n = _inject_strfmt_preamble(entry_point, generated_dir)
+            _linemap_preamble_offset += _n
+            if str(generated_dir) not in extra_includes:
+                extra_includes.insert(0, str(generated_dir))
+            _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
                       verbose=is_verbose)
 
         # Auto-inject millis_init() preamble when ticks_ms() is used.
