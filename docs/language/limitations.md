@@ -24,7 +24,7 @@ suggests the idiomatic PyMCU alternative where one exists.
 | Feature | Why it fails | Alternative |
 |---|---|---|
 | `list.append(x)` on a **fixed-size** array | Fixed arrays have no append | `list[uint8]` heap-bounded list, or `uint8[N]` fixed-size array |
-| **Mutable** `dict` (`d[k] = v`) | Hash table requires heap | Closed dict literal (below), or `match / case` key dispatch |
+| **Growing** `dict` (unbounded) | Hash table requires heap | `pymcu.collections.FixedDict(capacity)` (mutable, fixed footprint), a closed dict literal (below), or `match / case` key dispatch |
 | **Mutable** `set` (`.add()`) | Hash set requires heap | Closed set literal (below), or a `uint8` bitmask |
 
 **Supported:** `list[T]` (`x: list[uint8] = list()`) compiles to a bounded bump-allocator
@@ -34,6 +34,11 @@ with GC; supports `append()`, `len()`, `x[i]`, `for v in x:`.
 lookup tables with no storage: `d[const]` folds to its value, `d[runtime_key]` lowers to a
 compare chain that raises `KeyError` (catchable with `try/except`) on no match, `x in d` /
 `x in {...}` test membership, and `len(d)` folds. They are read-only.
+**`pymcu.collections.FixedDict(capacity)`** is the mutable counterpart: a fixed-capacity
+integer dict (open addressing over per-instance fixed arrays — no heap, no GC) with Python
+semantics where they fit a fixed footprint: `d[k]` / `d[k] = v`, `KeyError` on a missing
+key, `ValueError` when inserting into a full dict, `k in d`, `len(d)`, `get(k, default)`,
+`pop(k)`, `clear()`. The capacity is a compile-time constant.
 Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index access.
 
 **Rule of thumb:** if the size is not known at compile time, it cannot be compiled.
