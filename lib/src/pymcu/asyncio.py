@@ -34,3 +34,27 @@ def sleep_ms(ms: uint32):
     """`await asyncio.sleep_ms(ms)` -- suspend the coroutine for `ms` milliseconds.
     Marker only; the async transform emits the non-blocking wait."""
     pass
+
+
+@inline
+def run(coro):
+    """Drive one coroutine to completion (blocking poll loop)."""
+    while coro.poll() == 1:
+        pass
+
+
+@inline
+def gather(a, b):
+    """Drive two coroutines concurrently until both complete.
+
+    The arity is fixed at compile time (coroutine state machines have no runtime
+    representation to put in an array); nest gathers or add explicit poll loops
+    for more tasks.
+    """
+    ra: uint32 = 1
+    rb: uint32 = 1
+    while (ra == 1) or (rb == 1):
+        if ra == 1:
+            ra = a.poll()
+        if rb == 1:
+            rb = b.poll()
