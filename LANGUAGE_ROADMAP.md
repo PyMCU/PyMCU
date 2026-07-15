@@ -65,7 +65,7 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Feature | Notes |
 |---------|-------|
-| `uint8 / int8 / uint16 / int16 / uint32 / int32` | Required annotation for all variables |
+| `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` | Memory-mapped I/O pointer |
 | `const[T]` | Compile-time constant enforcement |
@@ -362,6 +362,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | f-string as a **value** (`s = f"t={t} C"`) | Builds the string into a compiler-managed fixed `bytearray` (no heap): the size is statically bounded per part, formatting lowers to `pymcu.strfmt` calls (auto-injected). Consumers: `print(s)`, `uart.write_str/println(s)`, `len(s)` (formatted length), `s[i]`, re-assignment in a loop (buffer reuse), passing as a `bytearray` param. Not yet: f-string inline in other expression positions, float interpolations in the value form, `s == "lit"` |
 | Closed dict/set literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables (no storage): `d[const]` folds, `d[runtime]` lowers to a compare chain raising `KeyError` (catchable), `x in d` / `x in {...}` membership chains, `len(d)` folds. String keys fold on constant lookups. Read-only — for mutation use `FixedDict` |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict (open addressing over per-instance fixed arrays — no heap, no GC): `d[k]`/`d[k]=v` (`KeyError` on missing, `ValueError` when full), `k in d`, `len(d)`, `get(k, default)`, `pop(k)` (tombstones), `clear()`. Capacity is a compile-time constant |
+| Type inference for unannotated `def` params/returns | Outlined functions infer missing param/return annotations from call-site evidence + defaults + return expressions (safe integer-widening join). Fixes the silent uint8-default truncation (`scale(300, 2)` used to print 88). `@inline` functions keep their compile-time polymorphism; overloaded names are untouched |
 | Module-level statements with explicit `def main()` | Module-scope executable statements (peripheral constructions, calls) run at startup before `main()`'s body, mirroring Python — previously rejected |
 | Nested class-typed ZCA fields | Method calls / field reads on a class-typed field (`machine.Pin` wrapping the HAL `Pin`) dispatch correctly, including through facade re-exports and single-level inheritance |
 

@@ -59,7 +59,7 @@ This page tracks which language and HAL features have been implemented, and what
 
 | Feature | Notes |
 |---|---|
-| `uint8 / int8 / uint16 / int16 / uint32 / int32` | Required annotation for all variables |
+| `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` / `ptr(addr)` | Memory-mapped I/O |
 | `const[T]` / `const[uint8[N]]` | Compile-time constants; flash-resident arrays via `LPM Z` |
