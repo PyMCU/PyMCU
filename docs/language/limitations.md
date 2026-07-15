@@ -49,7 +49,7 @@ Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index acce
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `f"..."` assigned to a string **variable** | No runtime string object to hold the result | Stream it directly: `print(f"...")` / `uart.write_str(f"...")` |
+| `f"..."` inline in arbitrary expressions | No general runtime string objects | Assign it to a name first (`s = f"..."` builds a fixed buffer), or stream it: `print(f"...")` |
 | `str.split()`, `str.join()`, `str.format()` | Heap strings | Not available |
 | `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
@@ -141,7 +141,7 @@ finally:
 | Propagates across calls | A `raise` inside a called function is caught at the call site in the caller's `try` — cross-function propagation **is** the model; there is no same-function restriction |
 | Propagates to any depth | An unmatched exception re-propagates to the **enclosing** `try`, then the caller, and so on — there is no single-nesting-level limit |
 | Caught at call sites | An exception is detected after a **function call** inside the `try`. Raise from a helper and catch it where you call it (rather than `raise`-ing directly in the `try` body) |
-| AVR only | PIC and other backends: use return codes or sentinel values instead |
+| AVR + ARM (RP2040/RP2350) | PIC and other backends: use return codes or sentinel values instead |
 | Exception types are integer codes | Builtins (`ValueError` etc.); no message strings at runtime; handlers match by integer code |
 | Unmatched at top level | An exception that reaches `main` with no handler hits `__pymcu_unhandled_exn` — `E:<TypeName>` to UART0 then a halt, never a silent continue |
 
@@ -330,12 +330,13 @@ nested list comprehensions, `if`-filtered list comprehensions,
 
 | Feature | Why it fails | Alternative |
 |---|---|---|
-| `await` inside `if` / nested loops, `await` as an expression, arbitrary awaitables | v1 of the coroutine lowering splits only straight-line bodies / one `while True:` | Restructure around a single top-level loop, or poll explicitly |
+| Awaiting another coroutine/future, `await` as an expression | Sub-future fields need ZCA construction outside `__init__` (not supported yet) | Call the coroutine and poll it, or restructure with asyncio.gather |
 | `threading` / `multiprocessing` | OS required | `@interrupt` ISRs |
 
-**Supported:** `async def` / `await` (v1 subset — compiled to a zero-cost state machine;
-requires `import asyncio`, awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`, `await`
-as a statement at the top level of the body or inside a single `while True:` loop),
+**Supported:** `async def` / `await` (compiled to a zero-cost state machine; requires
+`import asyncio`; `await asyncio.sleep/sleep_ms` anywhere — if/elif/else, `while <cond>`,
+`for i in range(...)`, break/continue, `return expr` via `._value`; executors
+`asyncio.run` / `asyncio.gather`),
 `@interrupt` decorator for hardware ISRs, `Pin.irq(trigger, handler)` for external pin
 interrupts, atomic flag patterns via `GPIOR0`.
 
