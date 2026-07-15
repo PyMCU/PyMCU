@@ -128,16 +128,23 @@ public class StackAllocator
 
             void RegisterVar(Val val)
             {
+                // Width registrations MAX: instructions may reference the same variable at
+                // different widths (e.g. a uint32 result later read through a uint8-typed
+                // view). Last-write-wins shrank a 4-byte local to 1 byte, so the next slot
+                // (and overlaid callee frames) sat inside it -- the callee's stores then
+                // corrupted the variable's high bytes.
                 if (val is Variable v && !_globalNames.Contains(v.Name))
                 {
                     node.Locals.Add(v.Name);
-                    VariableSizes[v.Name] = v.Type.SizeOf();
+                    VariableSizes[v.Name] = Math.Max(
+                        VariableSizes.TryGetValue(v.Name, out var pv) ? pv : 0, v.Type.SizeOf());
                 }
 
                 if (val is Temporary t)
                 {
                     node.Locals.Add(t.Name);
-                    VariableSizes[t.Name] = t.Type.SizeOf();
+                    VariableSizes[t.Name] = Math.Max(
+                        VariableSizes.TryGetValue(t.Name, out var pt) ? pt : 0, t.Type.SizeOf());
                 }
             }
 
@@ -174,16 +181,11 @@ public class StackAllocator
                         break;
                     case Call cl:
                         node.Callees.Add(cl.FunctionName);
-                        switch (cl.Dst)
-                        {
-                            case Variable cv:
-                                node.Locals.Add(cv.Name);
-                                break;
-                            case Temporary ct:
-                                node.Locals.Add(ct.Name);
-                                break;
-                        }
-
+                        // Register dst AND args with their declared widths (Locals.Add alone
+                        // recorded no size, leaving a call-result-only variable at a stale
+                        // or default width).
+                        RegisterVar(cl.Dst);
+                        foreach (var ca in cl.Args) RegisterVar(ca);
                         break;
                     case Return r: RegisterVar(r.Value); break;
                     case JumpIfZero jz: RegisterVar(jz.Condition); break;
