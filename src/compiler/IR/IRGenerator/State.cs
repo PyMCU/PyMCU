@@ -153,6 +153,14 @@ public partial class IRGenerator
     // "if sensor.failed:".
     private HashSet<string> killedConstants = new();
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
+
+    // variableAliases keys that are WRITE-THROUGH (nonlocal: the alias IS the variable's
+    // storage) rather than value tracking -- exempt from invalidation on writes.
+    private HashSet<string> writeThroughAliases = new();
+
+    // variableAliases keys created by plain scalar `a = b` value tracking: flow-sensitive,
+    // cleared at every Label (control-flow join) and on writes to either side.
+    private HashSet<string> valueTrackingAliases = new();
     private string pendingConstructorTarget = ""; // Target variable for constructor inlining
 
     // Tuple-unpack multi-return support.

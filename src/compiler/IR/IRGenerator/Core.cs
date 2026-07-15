@@ -150,6 +150,16 @@ public partial class IRGenerator
 
     private void Emit(Instruction inst)
     {
+        // Value-tracking aliases (a = b for plain scalars) are only valid straight-line:
+        // at a control-flow join the aliased copy may not have executed on every path, so
+        // following it would read (or index by!) the wrong variable. Clear them at labels,
+        // exactly like PropagateCopies clears var-consts. Structural aliases (self, params,
+        // nonlocal) are not value-tracking and survive.
+        if (inst is Label && valueTrackingAliases.Count > 0)
+        {
+            foreach (var k in valueTrackingAliases) variableAliases.Remove(k);
+            valueTrackingAliases.Clear();
+        }
         currentInstructions.Add(inst);
     }
 

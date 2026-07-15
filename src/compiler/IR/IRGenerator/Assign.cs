@@ -45,8 +45,9 @@ public partial class IRGenerator
         if (stmt.Target is IndexExpr { Target: VariableExpr mutVe }
             && TryGetDictBinding(mutVe.Name, out _))
             throw UserError(
-                $"'{mutVe.Name}' is a compile-time dict literal (read-only lookup table); " +
-                "mutation is not supported -- restructure as match/if chains or fixed arrays.");
+                $"'{mutVe.Name}' is a compile-time dict literal (read-only lookup table). " +
+                "For a mutable dict use pymcu.collections.FixedDict(capacity) -- fixed " +
+                "footprint, no heap.");
 
         // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
         // the result is built as a Model-A (flattened) instance, so a later method call on c
@@ -435,6 +436,14 @@ public partial class IRGenerator
     // chain (completes -> VisitAssign returns).
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
+        // A write creates a NEW binding: kill the target's value-tracking alias BEFORE
+        // resolving it (else the store itself is redirected through a stale alias), and
+        // every alias that resolves TO it (their recorded value is about to change).
+        // Without this, `free = i` inside an @inline loop left free -> i standing while i
+        // kept changing, and the sibling expansion's `free = 255` even WROTE into i (the
+        // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
+        InvalidateAliasesForWrite(varExpr.Name);
+
         Val target;
         if (!string.IsNullOrEmpty(currentFunction))
         {
@@ -494,8 +503,16 @@ public partial class IRGenerator
 
         if (!(value is NoneVal)) Emit(new Copy(value, target));
 
-        if (value is Variable vv2 && target is Variable tv2) variableAliases[tv2.Name] = vv2.Name;
-        else if (value is Temporary tSrc && target is Variable tDst) variableAliases[tDst.Name] = tSrc.Name;
+        if (value is Variable vv2 && target is Variable tv2)
+        {
+            variableAliases[tv2.Name] = vv2.Name;
+            valueTrackingAliases.Add(tv2.Name);
+        }
+        else if (value is Temporary tSrc && target is Variable tDst)
+        {
+            variableAliases[tDst.Name] = tSrc.Name;
+            valueTrackingAliases.Add(tDst.Name);
+        }
 
         if (string.IsNullOrEmpty(currentFunction))
         {
@@ -1614,6 +1631,39 @@ public partial class IRGenerator
         return variableTypes.TryGetValue(name, out var t) ? t : null;
     }
 
+    // Invalidate the alias entries a WRITE to `name` (in the current scope) kills.
+    // Two parts, deliberately asymmetric:
+    //   - The name's OWN value-tracking alias is removed under every qualification it may
+    //     have been recorded with (a write creates a new binding; the name always has real
+    //     storage to fall back to). Nonlocal write-through aliases are exempt -- there the
+    //     alias IS the storage.
+    //   - The REVERSE invalidation (aliases whose recorded source is the written name)
+    //     applies ONLY to the name this write actually targets in the current scope.
+    //     Sweeping all qualifications here destroyed zero-cost @inline param bindings: a
+    //     write to the expansion-local `inline1.write_hex.hi` must not kill the caller's
+    //     `byte -> main.hi` param alias.
+    private void InvalidateAliasesForWrite(string name)
+    {
+        foreach (var k in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+            name,
+        })
+            if (k != null && !writeThroughAliases.Contains(k))
+                variableAliases.Remove(k);
+
+        string written = !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name
+                       : !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name
+                       : name;
+        List<string>? stale = null;
+        foreach (var kv in variableAliases)
+            if (kv.Value == written && !writeThroughAliases.Contains(kv.Key))
+                (stale ??= new List<string>()).Add(kv.Key);
+        if (stale != null)
+            foreach (var k in stale) variableAliases.Remove(k);
+    }
+
     // Register `name = {...}` (dict or set literal) with the standard qualification.
     private void RegisterDictSetBinding(string name, Expression literal)
     {
@@ -1861,6 +1911,9 @@ public partial class IRGenerator
                     $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
                     stmt.Line > 0 ? stmt.Line : lastLine, 1);
 
+            // Declarations bind the name itself -- never a stale value-tracking alias
+            // (same invalidation-before-resolve as EmitScalarVarAssign).
+            InvalidateAliasesForWrite(stmt.Name);
             Val target = ResolveBinding(stmt.Name);
             if (target is Variable v) target = v with { Type = dt };
             Emit(new Copy(val, target));
@@ -3011,6 +3064,9 @@ public partial class IRGenerator
             string innerKey = currentInlinePrefix + n;
             string outerName = currentFunction + "." + n;
             variableAliases[innerKey] = outerName;
+            // A nonlocal alias is WRITE-THROUGH storage sharing (the inner name IS the outer
+            // variable); it must survive writes, unlike the value-tracking aliases.
+            writeThroughAliases.Add(innerKey);
         }
     }
 
