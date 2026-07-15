@@ -14,12 +14,9 @@
  * -----------------------------------------------------------------------------
  */
 
-using PyMCU.Backend.Targets.PIC12;
-using PyMCU.Backend.Targets.PIC14;
 using PyMCU.Backend.Targets.PIO;
 using PyMCU.Backend.Targets.RiscV;
 using PyMCU.Common;
-using PyMCU.Backend.Targets.PIC18;
 using PyMCU.Common.Models;
 
 namespace PyMCU.Backend;
@@ -30,10 +27,24 @@ public static class CodeGenFactory
     private static readonly string[] AvrPrefixes =
         ["avr", "avr8", "atmega", "attiny", "at90", "atxmega"];
 
+    // Chip/arch prefixes that are handled by the external pymcuc-pic backend.
+    private static readonly string[] PicPrefixes =
+        ["pic12", "baseline", "pic10f", "pic12f",
+         "pic14", "pic14e", "midrange", "pic16f",
+         "pic18", "advanced", "pic18f"];
+
     private static bool IsAvrArch(string arch)
     {
         var a = arch.ToLowerInvariant();
         foreach (var prefix in AvrPrefixes)
+            if (a == prefix || a.StartsWith(prefix)) return true;
+        return false;
+    }
+
+    private static bool IsPicArch(string arch)
+    {
+        var a = arch.ToLowerInvariant();
+        foreach (var prefix in PicPrefixes)
             if (a == prefix || a.StartsWith(prefix)) return true;
         return false;
     }
@@ -53,21 +64,16 @@ public static class CodeGenFactory
                 "  Or use 'pymcu build' which handles this automatically.");
         }
 
-        if (arch == "pic12" || arch == "baseline" || arch.StartsWith("pic10f") || arch.StartsWith("pic12f"))
+        // PIC has moved to an external backend binary (pymcuc-pic, pymcu-pic repo).
+        if (IsPicArch(arch))
         {
-            return new PIC12CodeGen(config);
+            throw new NotSupportedException(
+                $"PIC codegen ({arch}) is not available in pymcuc directly.\n" +
+                "  Use '--emit-ir output.mir' to produce IR and run:\n" +
+                "    pymcuc-pic output.mir -o firmware.asm --target <chip>\n" +
+                "  Or use 'pymcu build' which handles this automatically.");
         }
-        
-        if (arch == "pic14" || arch == "pic14e" || arch == "midrange" || arch.StartsWith("pic16f"))
-        {
-            return new PIC14CodeGen(config);
-        }
-        
-        if (arch == "pic18" || arch == "advanced" || arch.StartsWith("pic18f"))
-        {
-            return new PIC18CodeGen(config);
-        }
-        
+
         if (arch == "riscv" || arch == "rv32ec" || arch.StartsWith("ch32v"))
         {
             return new RiscvCodeGen(config);
