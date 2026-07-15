@@ -9,10 +9,6 @@
     <Project Path="extensions/pymcu-avr/src/csharp/lib/PyMCU.Backend.AVR.csproj" />
     <Project Path="extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" />
   </Folder>
-  <Folder Name="/extensions/pymcu-backend-pic/">
-    <Project Path="extensions/pymcu-backend-pic/src/csharp/lib/PyMCU.Backend.PIC.csproj" />
-    <Project Path="extensions/pymcu-backend-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" />
-  </Folder>
   <Folder Name="/extensions/pymcu-backend-riscv/">
     <Project Path="extensions/pymcu-backend-riscv/src/csharp/lib/PyMCU.Backend.RiscV.csproj" />
     <Project Path="extensions/pymcu-backend-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" />

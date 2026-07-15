@@ -25,13 +25,12 @@ dependencies = [
 [project.optional-dependencies]
 avr = ["pymcu-avr>=0.1.0a1"]
 arm = ["pymcu-arm>=0.1.0a1.post0"]
-pic = ["pymcu-toolchain-pic>=0.1.0a1"]
+pic = ["pymcu-pic>=0.1.0a1"]
 all = ["pymcu-avr>=0.1.0a1", "pymcu-arm>=0.1.0a1.post0"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
 pymcu-sdk = {path = "extensions/pymcu-sdk", editable = true}
-pymcu-toolchain-pic = {path = "extensions/pymcu-toolchain-pic", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"
@@ -58,6 +57,5 @@ dev = ["pytest>=8.0"]
 pythonpath = [
     ".",
     "extensions/pymcu-sdk/src",
-    "extensions/pymcu-toolchain-pic/src",
 ]
 addopts = ["--import-mode=importlib"]

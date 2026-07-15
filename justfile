@@ -29,10 +29,6 @@ build-backend-avr:
     dotnet publish "{{repo_root}}/extensions/pymcu-avr/src/csharp/cli/PyMCU.Backend.AVR.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
 
-build-backend-pic:
-    dotnet publish "{{repo_root}}/extensions/pymcu-backend-pic/src/csharp/cli/PyMCU.Backend.PIC.Cli.csproj" \
-        -c Release -o "{{compiler_out}}" --nologo
-
 build-backend-riscv:
     dotnet publish "{{repo_root}}/extensions/pymcu-backend-riscv/src/csharp/cli/PyMCU.Backend.RiscV.Cli.csproj" \
         -c Release -o "{{compiler_out}}" --nologo
@@ -45,7 +41,6 @@ build-backend-pio:
 # Compile the compiler and all registered backend plugin binaries.
 build-all: build
     just build-backend-avr
-    just build-backend-pic
     just build-backend-riscv
     just build-backend-pio
 
