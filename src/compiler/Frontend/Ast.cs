@@ -582,7 +582,7 @@ public class TryStmt : Statement
 public class Param
 {
     public string Name { get; }
-    public string Type { get; }
+    public string Type { get; set; }   // settable: TypeInference fills empty annotations in
     public Expression? DefaultValue { get; }
 
     public Param(string name, string type, Expression? defaultValue = null)
@@ -609,7 +609,7 @@ public class FunctionDef : Statement
 {
     public string Name { get; }
     public List<Param> Params { get; }
-    public string ReturnType { get; }
+    public string ReturnType { get; set; }   // settable: TypeInference fills empty returns in
     public Block Body { get; }
     public bool IsInline { get; set; }
     public bool IsInterrupt { get; }

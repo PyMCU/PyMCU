@@ -273,6 +273,11 @@ public partial class IRGenerator
         foreach (var m in importedModules.Values)
             PyMCU.Frontend.AsyncTransform.TransformProgram(m);
 
+        // Fill unannotated params/returns of outlined functions from call-site evidence
+        // (safe integer-widening join) BEFORE scanning, so an unannotated helper no longer
+        // silently defaults to uint8 and truncates wider arguments.
+        PyMCU.Frontend.TypeInference.InferProgram(mainAst, importedModules.Values);
+
         constantVariables["ValueError"]          = 1;
         constantVariables["TypeError"]           = 2;
         constantVariables["IndexError"]          = 3;
