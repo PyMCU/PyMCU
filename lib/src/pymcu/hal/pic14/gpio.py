@@ -197,24 +197,34 @@ class Pin:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_pull_up, pin_pull_off
-                    if pull == 1: pin_pull_up(self.name)
-                    elif pull == 0: pin_pull_off(self.name)
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_pull_up, pin_pull_off
-                    if pull == 1: pin_pull_up(self.name)
-                    elif pull == 0: pin_pull_off(self.name)
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
                 case "pic16f84a":
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_pull_up, pin_pull_off
-                    if pull == 1: pin_pull_up(self.name)
-                    elif pull == 0: pin_pull_off(self.name)
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
                 case "pic10f200":
                     from pymcu.hal.pic14.pic10f200_gpio import pin_pull_up, pin_pull_off
-                    if pull == 1: pin_pull_up(self.name)
-                    elif pull == 0: pin_pull_off(self.name)
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
                 case "pic18f45k50":
                     from pymcu.hal.pic14.pic18f45k50_gpio import pin_pull_up, pin_pull_off
-                    if pull == 1: pin_pull_up(self.name)
-                    elif pull == 0: pin_pull_off(self.name)
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
         if value != -1:
             match __CHIP__.name:
                 case "pic16f18877":
@@ -238,24 +248,34 @@ class Pin:
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_pull_up, pin_pull_off
-                if pull_mode == 1: pin_pull_up(self.name)
-                elif pull_mode == 0: pin_pull_off(self.name)
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_pull_up, pin_pull_off
-                if pull_mode == 1: pin_pull_up(self.name)
-                elif pull_mode == 0: pin_pull_off(self.name)
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
             case "pic16f84a":
                 from pymcu.hal.pic14.pic16f84a_gpio import pin_pull_up, pin_pull_off
-                if pull_mode == 1: pin_pull_up(self.name)
-                elif pull_mode == 0: pin_pull_off(self.name)
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
             case "pic10f200":
                 from pymcu.hal.pic14.pic10f200_gpio import pin_pull_up, pin_pull_off
-                if pull_mode == 1: pin_pull_up(self.name)
-                elif pull_mode == 0: pin_pull_off(self.name)
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
             case "pic18f45k50":
                 from pymcu.hal.pic14.pic18f45k50_gpio import pin_pull_up, pin_pull_off
-                if pull_mode == 1: pin_pull_up(self.name)
-                elif pull_mode == 0: pin_pull_off(self.name)
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
 
     @inline
     def drive(self, strength: uint8):
