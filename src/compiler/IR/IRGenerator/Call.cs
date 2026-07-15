@@ -770,6 +770,18 @@ public partial class IRGenerator
                     argValuesL[i] = coerced;
                     argVal = coerced;
                 }
+                // Same for CONSTANT args wider params: a Constant's natural width is its
+                // magnitude (65535 -> UINT16), so the backend would marshal fewer bytes
+                // than the callee reads -- the high bytes arrive as register garbage
+                // (surfaced by a uint32 param receiving a 16-bit-looking literal).
+                else if (i < paramTypes.Count && IsScalarIntType(ptype) && argVal is Constant argC
+                         && GetValType(argVal).SizeOf() < ptype.SizeOf())
+                {
+                    var coerced = MakeTemp(ptype);
+                    Emit(new Copy(argC, coerced));
+                    argValuesL[i] = coerced;
+                    argVal = coerced;
+                }
 
                 Emit(new Copy(argVal, new Variable(paramVarName, ptype)));
             }

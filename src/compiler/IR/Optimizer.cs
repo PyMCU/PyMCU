@@ -1942,6 +1942,16 @@ private static Function CloneFunction(Function f)
         }
     }
 
+    // Bytes needed to represent a constant by magnitude (the width backends marshal it at).
+    private static int NaturalWidth(int v) => v switch
+    {
+        >= 0 and <= 255 => 1,
+        >= -128 and <= 127 => 1,
+        >= 0 and <= 65535 => 2,
+        >= -32768 and <= 32767 => 2,
+        _ => 4,
+    };
+
     private static Instruction ReplaceUses(Instruction instr, Func<Val, Val> replace)
     {
         return instr switch
@@ -1953,7 +1963,22 @@ private static Function CloneFunction(Function f)
             Bitcast bc => bc with { Src = replace(bc.Src) },
             JumpIfZero j => j with { Condition = replace(j.Condition) },
             JumpIfNotZero j => j with { Condition = replace(j.Condition) },
-            Call cl => cl with { Args = cl.Args.Select(replace).ToList() },
+            // Call args marshal by each Val's own width in the backends, and a Constant's
+            // width is its MAGNITUDE (65535 -> 2 bytes). Folding a wider variable into a
+            // narrower-looking constant argument under-marshals it -- the callee's high
+            // bytes arrive as register garbage (a uint32 param receiving const 65535 read
+            // only 2 valid bytes). Keep the variable when the constant would narrow it.
+            Call cl => cl with
+            {
+                Args = cl.Args.Select(a =>
+                {
+                    var r = replace(a);
+                    if (a is Variable av && r is Constant rc
+                        && NaturalWidth(rc.Value) < av.Type.SizeOf())
+                        return a;
+                    return r;
+                }).ToList()
+            },
             BitCheck bc => bc with { Source = replace(bc.Source) },
             BitWrite bw => bw with { Target = replace(bw.Target), Src = replace(bw.Src) },
             BitSet bs => bs with { Target = replace(bs.Target) },
