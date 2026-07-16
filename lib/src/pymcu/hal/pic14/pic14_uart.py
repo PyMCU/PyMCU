@@ -1,17 +1,24 @@
-from pymcu.types import uint8, uint16, inline, const, ptr
+# -----------------------------------------------------------------------------
+# PyMCU Standard Library & HAL Definitions
+# Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+#
+# SPDX-License-Identifier: MIT
+# Licensed under the MIT License. See LICENSE for details.
+# -----------------------------------------------------------------------------
+#
+# PIC14 UART dispatcher -- selects the chip implementation at compile time via
+# module-level conditional imports (same pattern as the AVR uart facade).
+# -----------------------------------------------------------------------------
+from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
-# Placeholder for PIC14 UART implementation
-# Requires chip-specific register definitions (TXSTA, RCSTA, SPBRG, TXREG, RCREG)
-# which vary by chip. For now, this is a stub.
-
-@inline
-def uart_init(baud: const[uint16]):
-    pass
-
-@inline
-def uart_write(data: uint8):
-    pass
-
-@inline
-def uart_read() -> uint8:
-    return 0
+if __CHIP__.name == "pic16f877a":
+    from pymcu.hal.pic14.pic16f877a_uart import (
+        uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
+    )
+elif __CHIP__.name == "pic16f18877":
+    from pymcu.hal.pic14.pic16f18877_uart import (
+        uart_init, uart_write, uart_write_byte,
+    )
+else:
+    raise CompileError("UART is not implemented for this PIC14 chip")
