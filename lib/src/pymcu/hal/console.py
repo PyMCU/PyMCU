@@ -26,17 +26,21 @@ elif __CHIP__.name == "rp2350":
         uart_write_decimal_u8, uart_write_decimal_u16, uart_write_decimal_i16,
         uart_write_decimal_u32, uart_write_decimal_i32, uart_write_fmt,
     )
+elif __CHIP__.arch == "pic14":
+    from pymcu.hal.pic14.pic14_uart import uart_write_str
 
 
 @inline
 def print_str(s: const[str]):
-    # Only the targets that import uart_write_str (avr, rp2040, rp2350) write the
-    # literal; other arches drop it (no-op) rather than failing to link.
+    # Only the targets that import uart_write_str (avr, rp2040, rp2350, pic14)
+    # write the literal; other arches drop it (no-op) rather than failing to link.
     if __CHIP__.arch == "avr":
         uart_write_str(s)
     elif __CHIP__.name == "rp2040":
         uart_write_str(s)
     elif __CHIP__.name == "rp2350":
+        uart_write_str(s)
+    elif __CHIP__.arch == "pic14":
         uart_write_str(s)
 
 
