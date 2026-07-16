@@ -1644,6 +1644,17 @@ private static Function CloneFunction(Function f)
         blocks.RemoveAll(b => b.Instructions.Count == 0);
         cfg.Blocks = blocks;
 
+        // The synthetic "entry" block is EMPTY when the body's first instruction is a
+        // Label -- e.g. a while loop as the first statement of a GENERATED function
+        // (no DebugLines pad the front; parsed functions survive by accident). The
+        // RemoveAll above drops it, leaving cfg.Entry dangling with no edges, so the
+        // reachability sweep saw every real block as unreachable and deleted the whole
+        // body (an async poll() with a while-True dispatch compiled to an empty stub).
+        // Re-anchor the entry at the first real block, which is where an empty entry
+        // falls through to anyway.
+        if (cfg.Entry != null && cfg.Entry.Instructions.Count == 0)
+            cfg.Entry = blocks.FirstOrDefault();
+
         for (int i = 0; i < blocks.Count; i++)
         {
             var block = blocks[i];
