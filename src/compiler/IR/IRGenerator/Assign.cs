@@ -1193,16 +1193,133 @@ public partial class IRGenerator
         return true;
     }
 
+    // Resolve a slice's [start, stop, step) over a known array size (Python semantics:
+    // negatives from the end, clamped). Returns the ordered index list.
+    private List<int> SliceIndices(SliceExpr sl, int size)
+    {
+        int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
+        int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : size;
+        int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
+        if (step == 0) throw UserError("Slice step cannot be zero");
+        if (start < 0) start += size;
+        if (stop < 0) stop += size;
+        start = Math.Max(0, Math.Min(start, size));
+        stop = Math.Max(0, Math.Min(stop, size));
+        var idx = new List<int>();
+        for (int i = start; step > 0 ? i < stop : i > stop; i += step) idx.Add(i);
+        return idx;
+    }
+
+    // Qualified array name + size for a variable, or null when it is not a known array.
+    private (string Name, int Size)? ResolveArrayVar(string name)
+    {
+        foreach (var k in new[]
+        {
+            string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + name,
+            string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + name,
+            name,
+        })
+            if (k != null && arraySizes.TryGetValue(k, out int sz)) return (k, sz);
+        return null;
+    }
+
+    // `arr[a:b] = <same-length source>` — element-wise copy. Compile-time indices only.
+    // When source and destination are the SAME array (possibly overlapping ranges), the
+    // source elements are snapshotted into temporaries first, Python-style.
+    private bool TryEmitSliceAssign(AssignStmt stmt, IndexExpr tgt, SliceExpr sl)
+    {
+        if (tgt.Target is not VariableExpr arrVe) return false;
+        var dst = ResolveArrayVar(arrVe.Name);
+        if (dst == null) return false;
+
+        List<int> dstIdx;
+        try { dstIdx = SliceIndices(sl, dst.Value.Size); }
+        catch (Exception) { return false; }   // runtime indices -> generic message
+
+        // Source: list literal | whole array | array slice.
+        switch (stmt.Value)
+        {
+            case ListExpr le:
+                if (le.Elements.Count != dstIdx.Count)
+                    throw UserError(
+                        $"slice assignment length mismatch: target selects {dstIdx.Count} " +
+                        $"element(s), source list has {le.Elements.Count}");
+                for (int k = 0; k < dstIdx.Count; k++)
+                    VisitStatement(new AssignStmt(
+                        new IndexExpr(tgt.Target, new IntegerLiteral(dstIdx[k])), le.Elements[k]));
+                return true;
+
+            case VariableExpr srcVe when ResolveArrayVar(srcVe.Name) is { } srcWhole:
+            {
+                var srcIdx = Enumerable.Range(0, srcWhole.Size).ToList();
+                return EmitSliceCopy(tgt.Target, dstIdx, srcVe, srcIdx,
+                    sameArray: srcWhole.Name == dst.Value.Name);
+            }
+
+            case IndexExpr { Index: SliceExpr srcSl, Target: VariableExpr srcVe2 }
+                when ResolveArrayVar(srcVe2.Name) is { } srcArr:
+            {
+                List<int> srcIdx;
+                try { srcIdx = SliceIndices(srcSl, srcArr.Size); }
+                catch (Exception) { return false; }
+                return EmitSliceCopy(tgt.Target, dstIdx, srcVe2, srcIdx,
+                    sameArray: srcArr.Name == dst.Value.Name);
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    private bool EmitSliceCopy(Expression dstArr, List<int> dstIdx,
+        VariableExpr srcArr, List<int> srcIdx, bool sameArray)
+    {
+        if (srcIdx.Count != dstIdx.Count)
+            throw UserError(
+                $"slice assignment length mismatch: target selects {dstIdx.Count} " +
+                $"element(s), source selects {srcIdx.Count}");
+
+        if (!sameArray)
+        {
+            for (int k = 0; k < dstIdx.Count; k++)
+                VisitStatement(new AssignStmt(
+                    new IndexExpr(dstArr, new IntegerLiteral(dstIdx[k])),
+                    new IndexExpr(srcArr, new IntegerLiteral(srcIdx[k]))));
+            return true;
+        }
+
+        // Same array: snapshot the source first so overlapping ranges copy Python-style.
+        var temps = new List<Val>();
+        foreach (int j in srcIdx)
+        {
+            Val v = VisitExpression(new IndexExpr(srcArr, new IntegerLiteral(j)));
+            var t = MakeTemp(GetValType(v));
+            Emit(new Copy(v, t));
+            temps.Add(t);
+        }
+        var arr = ResolveArrayVar(srcArr.Name)!.Value;
+        var elemType = arrayElemTypes.TryGetValue(arr.Name, out var et) ? et : DataType.UINT8;
+        for (int k = 0; k < dstIdx.Count; k++)
+            Emit(new ArrayStore(arr.Name, new Constant(dstIdx[k]), temps[k], elemType, arr.Size));
+        return true;
+    }
+
     // `arr[i] = v` / `port[bit] = v`: array/bytearray store, runtime/constant bit
     // subscript on a register, with target-address resolution. Always terminal.
     private void EmitIndexAssign(AssignStmt stmt, IndexExpr indexExpr)
     {
-        // Slice assignment (`arr[1:3] = [...]`) is not supported — there is no dynamic memmove
-        // on bare metal. Report it clearly instead of letting the SliceExpr reach
-        // VisitExpression as an unknown node. Assign elements individually.
-        if (indexExpr.Index is SliceExpr)
+        // Slice assignment: supported for compile-time indices and a MATCHING-length
+        // source (list literal, whole array, or array slice) — an element-wise copy loop.
+        // Differing lengths would need a memmove/realloc (insert/delete), which has no
+        // bare-metal representation; that case still reports clearly.
+        if (indexExpr.Index is SliceExpr slA)
+        {
+            if (TryEmitSliceAssign(stmt, indexExpr, slA)) return;
             throw UserError(
-                "slice assignment (arr[a:b] = ...) is not supported; assign elements individually");
+                "slice assignment needs compile-time indices and a source of the SAME length " +
+                "(list literal, array, or array slice); inserting/deleting via slices is not " +
+                "supported — restructure with explicit element assignments");
+        }
 
         if (indexExpr.Target is VariableExpr ve)
         {

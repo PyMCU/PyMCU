@@ -339,16 +339,26 @@ public class IRGeneratorTests
     }
 
     [Fact]
-    public void SliceAssignment_RaisesClearError()
+    public void SliceAssignment_EqualLength_Compiles()
     {
-        // `arr[1:3] = [...]` is unsupported; it must report clearly, not surface the cryptic
-        // "Unknown Expression type: SliceExpr" from evaluating the slice node.
+        // `arr[1:3] = [9, 9]` — equal-length slice assignment lowers to element copies.
         const string src =
             "arr: uint8[5] = [1, 2, 3, 4, 5]\n" +
             "def main():\n" +
             "    arr[1:3] = [9, 9]\n";
+        Assert.NotNull(GenerateIR(src));
+    }
+
+    [Fact]
+    public void SliceAssignment_LengthMismatch_RaisesClearError()
+    {
+        // Differing lengths (insert/delete) have no bare-metal representation.
+        const string src =
+            "arr: uint8[5] = [1, 2, 3, 4, 5]\n" +
+            "def main():\n" +
+            "    arr[1:3] = [9, 9, 9]\n";
         var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
-        Assert.Contains("slice assignment", ex.Message);
+        Assert.Contains("length mismatch", ex.Message);
     }
 
     [Fact]
