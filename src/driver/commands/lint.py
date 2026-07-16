@@ -84,20 +84,23 @@ class _Linter(ast.NodeVisitor):
 
     # ── dynamic containers (no general heap / GC) ────────────────────────────
     def visit_Dict(self, node: ast.Dict) -> None:
-        self._add(node, ERROR, "dict",
-                  "dict literal: PyMCU has no general hash map.",
-                  "Use match/case on a tag, a const lookup array, or a fixed-capacity "
-                  "FixedDict[K,V,N].")
+        # Closed dict literals (read-only lookup tables) are supported natively;
+        # mutation needs the fixed-capacity pymcu.collections.FixedDict.
+        self._add(node, INFO, "dict",
+                  "dict literal: supported as a closed (read-only) lookup table.",
+                  "d[k] / `k in d` / len(d) work as-is; for mutation use "
+                  "pymcu.collections.FixedDict(capacity).")
         self.generic_visit(node)
 
     def visit_Set(self, node: ast.Set) -> None:
-        self._add(node, ERROR, "set", "set literal: no general set type.",
-                  "Use a const array + membership match, or a bitmask of flags.")
+        self._add(node, INFO, "set",
+                  "set literal: supported for closed membership tests (`x in {...}`).",
+                  "Mutation (.add/.remove) is not supported -- use a bitmask of flags.")
         self.generic_visit(node)
 
     def visit_DictComp(self, node: ast.DictComp) -> None:
         self._add(node, ERROR, "dict-comp", "dict comprehension: no general hash map.",
-                  "Precompute a const array, or fill a FixedDict[K,V,N] in a loop.")
+                  "Precompute a const array, or fill a pymcu.collections.FixedDict in a loop.")
         self.generic_visit(node)
 
     def visit_SetComp(self, node: ast.SetComp) -> None:
@@ -173,9 +176,18 @@ class _Linter(ast.NodeVisitor):
         skip = {"self", "cls"}
         for arg in a.args + a.posonlyargs + a.kwonlyargs:
             if arg.arg not in skip and arg.annotation is None:
-                self._add(arg, WARN, "untyped-param",
-                          f"parameter `{arg.arg}` of `{node.name}` has no type annotation.",
-                          "Annotate it (e.g. `{}: uint32`) -- PyMCU is statically typed.".format(arg.arg))
+                in_class = isinstance(getattr(node, "_pymcu_parent", None), ast.ClassDef)
+                if in_class:
+                    # Methods are outside the inference pass -- annotations still needed.
+                    self._add(arg, WARN, "untyped-param",
+                              f"parameter `{arg.arg}` of method `{node.name}` has no type annotation.",
+                              "Annotate it (e.g. `{}: uint32`) -- method params are not inferred.".format(arg.arg))
+                else:
+                    self._add(arg, INFO, "untyped-param",
+                              f"parameter `{arg.arg}` of `{node.name}` has no annotation "
+                              "(will be inferred from call sites).",
+                              "Add an annotation to pin the width explicitly if inference "
+                              "picks a wider type than intended.")
         if node.returns is None and not _is_void_like(node):
             self._add(node, INFO, "untyped-return",
                       f"`{node.name}` has no return annotation.",
@@ -191,20 +203,36 @@ class _Linter(ast.NodeVisitor):
 
     # ── exceptions / generators / multiple inheritance ───────────────────────
     def visit_Try(self, node: ast.Try) -> None:
-        self._add(node, WARN, "try-except",
-                  "try/except: exception handling support is limited.",
-                  "Prefer explicit error-return values / status codes on the hot path.")
+        self._add(node, INFO, "try-except",
+                  "try/except: supported (zero-cost T-flag model on AVR, ARM and PIC14).",
+                  "Handlers match builtin exception types by integer code; else/finally "
+                  "run on every exit path.")
         self.generic_visit(node)
 
     def visit_Raise(self, node: ast.Raise) -> None:
-        self._add(node, WARN, "raise", "raise: exceptions are limited.",
-                  "Return an error/status value instead where possible.")
+        # `raise ValueError` is native; message strings have no runtime representation.
+        has_msg = isinstance(node.exc, ast.Call) and len(getattr(node.exc, "args", [])) > 0
+        if has_msg:
+            self._add(node, INFO, "raise",
+                      "raise with a message: supported, but the message string is dropped "
+                      "(exceptions are integer codes at runtime).",
+                      "Keep `raise ValueError(...)` for CPython compatibility; the type "
+                      "still propagates and matches handlers.")
         self.generic_visit(node)
 
     def visit_Yield(self, node: ast.Yield) -> None:
-        self._add(node, ERROR, "generator",
-                  "yield: generator functions are not supported.",
-                  "Use an `async def` coroutine, or an explicit state-machine class.")
+        # Statement-position `yield v` in a top-level function is supported (lowered to
+        # a state-machine class; `for x in gen()` iterates it). yield as an EXPRESSION
+        # (x = yield / send()) has no lowering.
+        parent = getattr(node, "_pymcu_parent", None)
+        if isinstance(parent, ast.Expr):
+            self._add(node, INFO, "generator",
+                      "yield: supported (generator lowers to a native state machine).",
+                      "Must be a top-level plain function (not @inline / a method).")
+        else:
+            self._add(node, ERROR, "generator",
+                      "yield as an expression (x = yield / .send()) is not supported.",
+                      "Restructure as a statement-yield generator or a state-machine class.")
         self.generic_visit(node)
 
     visit_YieldFrom = visit_Yield  # type: ignore[assignment]
