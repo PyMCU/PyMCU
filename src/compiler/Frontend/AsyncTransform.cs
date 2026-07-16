@@ -32,21 +32,131 @@ public static class AsyncTransform
     public static void TransformProgram(ProgramNode prog)
     {
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
-        if (asyncFns.Count == 0) return;
+        // A plain function containing `yield` is a GENERATOR: same state-machine
+        // lowering, with `yield v` as the suspension point (sets self._value, returns
+        // PENDING). Generators need no asyncio (no time source involved).
+        var genFns = prog.Functions
+            .Where(f => !f.IsAsync && !f.IsInline && ContainsYield(f.Body)).ToList();
+        if (asyncFns.Count == 0 && genFns.Count == 0) return;
 
-        // Using `async def` requires `import asyncio` (as in CPython, where the
-        // keywords pair with the asyncio runtime). The local name bound to the module
-        // is how `await asyncio.sleep(...)` and the generated ticks() are spelled.
-        string? alias = FindAsyncioAlias(prog);
-        if (alias == null)
-            throw new SyntaxError(
-                "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
-                "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.", 0, 0);
+        string? alias = null;
+        if (asyncFns.Count > 0)
+        {
+            // Using `async def` requires `import asyncio` (as in CPython, where the
+            // keywords pair with the asyncio runtime). The local name bound to the module
+            // is how `await asyncio.sleep(...)` and the generated ticks() are spelled.
+            alias = FindAsyncioAlias(prog);
+            if (alias == null)
+                throw new SyntaxError(
+                    "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
+                    "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.", 0, 0);
+        }
 
         foreach (var fn in asyncFns)
         {
             prog.Functions.Remove(fn);
-            prog.GlobalStatements.Add(TransformFunction(fn, alias));
+            prog.GlobalStatements.Add(TransformFunction(fn, alias!));
+        }
+        var genNames = new HashSet<string>();
+        foreach (var fn in genFns)
+        {
+            prog.Functions.Remove(fn);
+            prog.GlobalStatements.Add(TransformFunction(fn, asyncioAlias: null));
+            genNames.Add(fn.Name);
+        }
+
+        // `for x in gen(args):` iterates a generator: desugar to an explicit poll loop
+        //     __gen = gen(args)
+        //     while __gen.poll() == 1:
+        //         x = __gen._value
+        //         <body>
+        if (genNames.Count > 0)
+        {
+            int counter = 0;
+            foreach (var f in prog.Functions)
+                RewriteGenFors(f.Body.Statements, genNames, ref counter);
+            RewriteGenFors(prog.GlobalStatements, genNames, ref counter);
+        }
+    }
+
+    private static void RewriteGenFors(List<Statement> stmts, HashSet<string> genNames, ref int counter)
+    {
+        for (int i = 0; i < stmts.Count; i++)
+        {
+            var s = stmts[i];
+            if (s is ForStmt f && f.Iterable is CallExpr call
+                && call.Callee is VariableExpr fnName && genNames.Contains(fnName.Name))
+            {
+                string g = "__gen" + counter;
+                string r = "__gr" + counter;
+                counter++;
+
+                // while True:
+                //     __gr = __gen.poll()
+                //     if __gr == 0: break          (done)
+                //     if __gr != 2: continue       (internal transition, no value)
+                //     x = __gen._value
+                //     <body>
+                // The user's own break/continue inside <body> target this while, which
+                // matches Python semantics (break abandons the generator; continue
+                // advances to the next yielded value).
+                var loop = new Block();
+                loop.Statements.Add(new AssignStmt(new VariableExpr(r),
+                    new CallExpr(new MemberAccessExpr(new VariableExpr(g), "poll"),
+                                 new List<Expression>())));
+                var brk = new Block(); brk.Statements.Add(new BreakStmt());
+                loop.Statements.Add(new IfStmt(
+                    new BinaryExpr(new VariableExpr(r), BinaryOp.Equal, new IntegerLiteral(0)), brk));
+                var cont = new Block(); cont.Statements.Add(new ContinueStmt());
+                loop.Statements.Add(new IfStmt(
+                    new BinaryExpr(new VariableExpr(r), BinaryOp.NotEqual, new IntegerLiteral(2)), cont));
+                loop.Statements.Add(new AssignStmt(new VariableExpr(f.VarName),
+                    new MemberAccessExpr(new VariableExpr(g), "_value")));
+                if (f.Body is Block fb) loop.Statements.AddRange(fb.Statements);
+                else loop.Statements.Add(f.Body);
+                RewriteGenFors(loop.Statements, genNames, ref counter);
+
+                var repl = new Block();
+                repl.Statements.Add(new AssignStmt(new VariableExpr(g), call));
+                repl.Statements.Add(new WhileStmt(new BooleanLiteral(true), loop));
+                stmts[i] = repl;
+                continue;
+            }
+            // Recurse into nested statements.
+            switch (s)
+            {
+                case Block b: RewriteGenFors(b.Statements, genNames, ref counter); break;
+                case IfStmt iff:
+                    RewriteGenForsIn(iff.ThenBranch, genNames, ref counter);
+                    foreach (var (_, eb) in iff.ElifBranches) RewriteGenForsIn(eb, genNames, ref counter);
+                    if (iff.ElseBranch != null) RewriteGenForsIn(iff.ElseBranch, genNames, ref counter);
+                    break;
+                case WhileStmt w: RewriteGenForsIn(w.Body, genNames, ref counter); break;
+                case ForStmt f2: RewriteGenForsIn(f2.Body, genNames, ref counter); break;
+            }
+        }
+    }
+
+    private static void RewriteGenForsIn(Statement s, HashSet<string> genNames, ref int counter)
+    {
+        if (s is Block b) RewriteGenFors(b.Statements, genNames, ref counter);
+    }
+
+    internal static bool ContainsYieldStatic(Statement s) => ContainsYield(s);
+
+    private static bool ContainsYield(Statement s)
+    {
+        switch (s)
+        {
+            case ExprStmt es: return es.Expr is YieldExpr;
+            case Block b: return b.Statements.Any(ContainsYield);
+            case IfStmt iff:
+                return ContainsYield(iff.ThenBranch)
+                    || (iff.ElseBranch != null && ContainsYield(iff.ElseBranch))
+                    || iff.ElifBranches.Any(e => ContainsYield(e.Item2));
+            case WhileStmt w: return ContainsYield(w.Body);
+            case ForStmt f: return ContainsYield(f.Body);
+            default: return false;
         }
     }
 
@@ -71,7 +181,7 @@ public static class AsyncTransform
         public List<Statement> Raw = new();   // statements with locals still unrewritten
     }
 
-    public static ClassDef TransformFunction(FunctionDef fn, string asyncioAlias)
+    public static ClassDef TransformFunction(FunctionDef fn, string? asyncioAlias)
     {
         var paramNames = fn.Params.Select(p => p.Name).ToList();
 
@@ -151,7 +261,7 @@ public static class AsyncTransform
     // ── Phase A: CFG-of-AST state splitting ─────────────────────────────────────
     private sealed class Builder
     {
-        private readonly string _aio;
+        private readonly string? _aio;
         private readonly string _fnName;
         public readonly List<State> States = new();
         public readonly List<string> StartFields = new();
@@ -163,7 +273,7 @@ public static class AsyncTransform
         private readonly Stack<(int Head, int After)> _loops = new();
         private const int Terminal = 0x7FFF;   // never emitted as a state -> poll returns 0
 
-        public Builder(string asyncioAlias, string fnName)
+        public Builder(string? asyncioAlias, string fnName)
         {
             _aio = asyncioAlias;
             _fnName = fnName;
@@ -217,7 +327,21 @@ public static class AsyncTransform
                 return;
             }
 
-            if (!ContainsAwait(s))
+            // `yield [v]` -- a generator suspension: publish the value and return 2
+            // ("yielded"). Internal state transitions return 1 ("working"), so the
+            // for-in consumer can tell a fresh value from machine bookkeeping.
+            if (s is ExprStmt { Expr: YieldExpr y })
+            {
+                NeedsValue = true;
+                _cur.Raw.Add(SelfAssign("_value", y.Value ?? Int(0)));
+                int afterY = NewState();
+                _cur.Raw.Add(SelfAssign("_state", Int(afterY)));
+                _cur.Raw.Add(new ReturnStmt(Int(2)));
+                SwitchTo(afterY);
+                return;
+            }
+
+            if (!ContainsAwait(s) && !ContainsYieldStatic(s))
             {
                 // Await-free statement: keep it whole (nested ifs/loops compile normally
                 // inside the state), but break/continue that target a FLATTENED loop must
@@ -228,7 +352,7 @@ public static class AsyncTransform
 
             switch (s)
             {
-                case ExprStmt or AssignStmt when TryGetAwaitSleep(s, _aio, out var durUs):
+                case ExprStmt or AssignStmt when _aio != null && TryGetAwaitSleep(s, _aio, out var durUs):
                     EmitAwaitSleep(durUs);
                     return;
 

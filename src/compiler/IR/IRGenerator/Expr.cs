@@ -930,9 +930,9 @@ public partial class IRGenerator
     private Val VisitYield(YieldExpr expr)
     {
         throw UserError(
-            "generators ('yield') are not supported yet. Rewrite the function to fill a " +
-            "fixed-size array, or restructure the consumer as a loop; for cooperative " +
-            "multitasking use 'async def' with 'await asyncio.sleep_ms(...)' instead.");
+            "'yield' is only supported in top-level plain functions (lowered to a " +
+            "state-machine class) -- not inside @inline functions or class methods. " +
+            "Move the generator to module level, or fill a fixed-size array instead.");
     }
 
     // Resolves a variable name to the bytes/list/tuple literal bound to it as an
