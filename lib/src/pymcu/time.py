@@ -38,16 +38,61 @@ def delay_ms(ms: uint16):
 @inline
 def _delay_ms_pic14(ms: uint8):
     """Software millisecond delay loop for PIC14 architecture."""
-    # PIC14: Tcy = 4 clocks. DECFSZ+GOTO = 3 Tcy/iter.
-    # 255 iters x 3 = 765 Tcy ~ 0.765ms at 4MHz (Tcy=1us)
-    # Outer while loop adds ~7 Tcy overhead per ms iteration.
+    # PIC14: Tcy = Fosc/4. Nested loop costs outer*(3*inner + 4) + 2 Tcy;
+    # with inner=165 each outer turn is ~499 Tcy, so outer = Tcy_per_ms/500.
+    # match __FREQ__ is dead-code-eliminated at compile time -- only the
+    # matching branch survives in the assembled output.
     i: uint8 = 0
     while i < ms:
-        asm("    MOVLW 0xFF")
-        asm("    MOVWF __dly_c1")
-        asm("_dly_inner:")
-        asm("    DECFSZ __dly_c1, F")
-        asm("    GOTO _dly_inner")
+        match __FREQ__:
+            case 4_000_000:
+                # 2 * 499 = 998 Tcy ~ 1 ms
+                asm("    MOVLW 0x02")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o4m:")
+                asm("    MOVLW 0xA5")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i4m:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i4m")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o4m")
+            case 8_000_000:
+                # 4 * 499 = 1996 Tcy ~ 1 ms
+                asm("    MOVLW 0x04")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o8m:")
+                asm("    MOVLW 0xA5")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i8m:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i8m")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o8m")
+            case 20_000_000:
+                # 10 * 499 = 4990 Tcy ~ 1 ms
+                asm("    MOVLW 0x0A")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o20m:")
+                asm("    MOVLW 0xA5")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i20m:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i20m")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o20m")
+            case _:
+                # 16 MHz table (also the fallback): 8 * 499 = 3992 Tcy ~ 1 ms
+                asm("    MOVLW 0x08")
+                asm("    MOVWF __dly_c2")
+                asm("_dly_o16m:")
+                asm("    MOVLW 0xA5")
+                asm("    MOVWF __dly_c1")
+                asm("_dly_i16m:")
+                asm("    DECFSZ __dly_c1, F")
+                asm("    GOTO _dly_i16m")
+                asm("    DECFSZ __dly_c2, F")
+                asm("    GOTO _dly_o16m")
         i = i + 1
 
 @inline
