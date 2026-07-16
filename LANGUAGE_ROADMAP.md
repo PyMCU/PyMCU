@@ -405,7 +405,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| ~~Soft float~~ / `fixed16` | ✅ Soft-float IEEE 754 implemented — AVR (`__fp_*`) and RP2040 (bootrom fast-float via `__aeabi_f*`, v0.14); RP2350 pending. `fixed16` deferred. |
+| ~~Soft float~~ / `fixed16` | ✅ IEEE 754 single precision implemented on all ARM targets — AVR (`__fp_*`), RP2040 (bootrom fast-float via `__aeabi_f*`, v0.14) and RP2350 (Cortex-M33 FPU, FPv5-SP in softfp mode). `fixed16` deferred. |
 | `const uint8[N]` (PROGMEM arrays) | ✅ Implemented in v0.9 |
 | `uint16 >> n → uint8` widening shift | ✅ Compiler correctly loads wider source type for shift/bitwise ops narrowing to uint8 |
 
