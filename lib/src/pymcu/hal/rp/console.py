@@ -1,7 +1,15 @@
-# PyMCU RP2040 console -- free-function UART value writers for f-string streaming.
+# PyMCU RP-family console -- free-function UART value writers for f-string streaming.
+# Shared by RP2040 and RP2350: both chips expose the same PL011 register names
+# (UART0_DR / UART0_FR / UART_FR_TXFF); only the base address differs, and that
+# lives in the per-chip register map.
 # SPDX-License-Identifier: MIT
-from pymcu.chips.rp2040 import UART0_DR, UART0_FR, UART_FR_TXFF
+from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, int16, uint32, int32, const, inline
+
+if __CHIP__.name == "rp2350":
+    from pymcu.chips.rp2350 import UART0_DR, UART0_FR, UART_FR_TXFF
+else:
+    from pymcu.chips.rp2040 import UART0_DR, UART0_FR, UART_FR_TXFF
 
 
 def uart_write(data: uint8):
@@ -109,7 +117,8 @@ def uart_write_float(value: float):
     # Print a float with one decimal place (e.g. 23.5, -5.0) over UART0.
     # Same one-decimal contract as the AVR HAL's uart_write_float, so print(float)
     # behaves identically across architectures. Float math lowers to the bootrom
-    # fast-float library; the integer digits use the SIO divider.
+    # fast-float library on RP2040 and to the M33 FPU on RP2350; the integer
+    # digits use the SIO divider (M0+) or native UDIV (M33).
     if value < 0.0:
         uart_write(45)
         value = 0.0 - value
