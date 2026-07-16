@@ -72,7 +72,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `__CHIP__` | Conditional compilation by chip name / architecture |
 | `__FREQ__` | Compile-time clock frequency in Hz |
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
-| `float` (soft-float) | IEEE 754 single-precision; AVR only; uses `__fp_add/sub/mul/div/cmp` intrinsics; annotation `x: float = 3.14` supported |
+| `float` (soft-float) | IEEE 754 single-precision; AVR (`__fp_*` intrinsics) and RP2040 (bootrom fast-float library via `__aeabi_f*` shims); annotation `x: float = 3.14`; float↔int conversions truncate toward zero. RP2350 pending (M33 FPU) |
 | `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
 | `@staticmethod` | Silently ignored — all class methods in PyMCU are effectively static |
 | `CompileError` intrinsic | `raise CompileError("msg")` aborts compilation with a `CompileError:` diagnostic; never generates `RaiseExn` IR; used in all HAL modules for unsupported arch/chip guards; cannot be caught by `try/except` |
