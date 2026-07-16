@@ -269,30 +269,43 @@ private static void DetectRecursion(ProgramIR program)
         callees[f.Name] = list;
     }
 
-    // DFS three-coloring: 0 = unvisited, 1 = on the current path, 2 = done.
+    // DFS three-coloring: 0 = unvisited, 1 = on the current path, 2 = done. The
+    // active path is kept so the diagnostic can show the whole cycle (f -> g -> f),
+    // which is what makes INDIRECT recursion findable from the message alone.
     var color = new Dictionary<string, int>();
     foreach (var f in program.Functions) color[f.Name] = 0;
+    var path = new List<string>();
 
     void Visit(string u)
     {
         color[u] = 1;
+        path.Add(u);
         foreach (var v in callees[u])
         {
             if (color[v] == 1) ReportRecursion(v);   // back edge into the active path
             if (color[v] == 0) Visit(v);
         }
+        path.RemoveAt(path.Count - 1);
         color[u] = 2;
     }
 
     void ReportRecursion(string fn)
     {
         var f = byName[fn];
-        string name = !string.IsNullOrEmpty(f.OriginalName) ? f.OriginalName! : fn;
+        string Display(string n) =>
+            byName.TryGetValue(n, out var df) && !string.IsNullOrEmpty(df.OriginalName)
+                ? df.OriginalName! : n;
+        string name = Display(fn);
         int line = 0;
         foreach (var instr in f.Body)
             if (instr is DebugLine dl) { line = dl.Line; break; }
+        // Show the cycle: the active path from the first occurrence of fn, closed on fn.
+        int start = path.IndexOf(fn);
+        string cycle = start >= 0
+            ? string.Join(" -> ", path.Skip(start).Select(Display)) + " -> " + name
+            : name;
         throw new RecursionError(
-            $"function '{name}' is recursive; PyMCU uses a static stack layout " +
+            $"recursive call cycle: {cycle}. PyMCU uses a static stack layout " +
             "(no per-call frames), so recursion is not supported — rewrite it as a loop",
             line, 1);
     }
