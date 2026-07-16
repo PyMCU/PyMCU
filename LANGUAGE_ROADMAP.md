@@ -246,7 +246,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Multi-item `with a as x, b as y:` | Desugared to nested `with` at parse time (PEP 343) |
 | Extended unpacking `first, *rest = tup` | Starred target captures middle slice; compile-time tuples only (PEP 3132) |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function; no closure capture (PEP 3) |
-| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices only; produces fixed-size array (PEP 197) |
+| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices only; produces fixed-size array. Equal-length slice ASSIGNMENT (`arr[a:b] = src`, v0.14) with list/array/slice sources incl. overlapping same-array copies |
 | `nonlocal` in nested `@inline` | Mutates enclosing scope variable via SRAM alias (PEP 3104) |
 | Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__floordiv__`, `__mod__`, `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`, `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__neg__`, `__invert__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__` |
 

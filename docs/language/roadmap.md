@@ -47,7 +47,7 @@ This page tracks which language and HAL features have been implemented, and what
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
 | Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported |
-| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices |
+| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices; equal-length slice ASSIGNMENT (`arr[a:b] = src`) with list/array/slice sources, incl. overlapping same-array copies (snapshot semantics) |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function |
 | Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, comparisons, bitwise |
 | `@extern("symbol")` | External C/C++ symbol interop with AVR ABI |
