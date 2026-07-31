@@ -68,7 +68,6 @@ jobs:
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer questionary
           pip install ./extensions/pymcu-sdk
-          pip install ./extensions/pymcu-toolchain-pic
 
       - name: Run driver tests
         run: pytest tests/driver/ -v --tb=short
