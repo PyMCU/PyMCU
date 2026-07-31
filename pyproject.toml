@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pymcu-compiler"
-version = "0.1.0a1.post3"
+version = "0.1.0a3"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
@@ -18,15 +18,15 @@ dependencies = [
     "rich>=13.0.0",
     "questionary>=2.0",
     "packaging>=23.0",
-    "pymcu-stdlib>=0.1.0a1",
-    "pymcu-sdk>=0.1.0a1",
+    "pymcu-stdlib>=0.1.0a3",
+    "pymcu-sdk>=0.1.0a3",
 ]
 
 [project.optional-dependencies]
-avr = ["pymcu-avr>=0.1.0a1"]
-arm = ["pymcu-arm>=0.1.0a1.post0"]
-pic = ["pymcu-pic>=0.1.0a1"]
-all = ["pymcu-avr>=0.1.0a1", "pymcu-arm>=0.1.0a1.post0"]
+avr = ["pymcu-avr>=0.1.0a3"]
+arm = ["pymcu-arm>=0.1.0a3"]
+pic = ["pymcu-pic>=0.1.0a3"]
+all = ["pymcu-avr>=0.1.0a3", "pymcu-arm>=0.1.0a3", "pymcu-pic>=0.1.0a3"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
