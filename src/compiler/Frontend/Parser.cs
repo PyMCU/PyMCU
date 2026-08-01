@@ -1942,6 +1942,9 @@ public class Parser
             if (Match(TokenType.Colon))
             {
                 var entries = new List<(Expression, Expression)> { (firstItem, ParseExpression()) };
+                if (Check(TokenType.For))
+                    Error("dict comprehensions are not supported (a general hash map needs a heap); " +
+                          "precompute a closed dict literal, or fill a pymcu.collections.FixedDict in a loop");
                 while (Match(TokenType.Comma))
                 {
                     if (Check(TokenType.RBrace)) break;   // trailing comma
@@ -1952,6 +1955,9 @@ public class Parser
                 Consume(TokenType.RBrace, "Expected '}' after dict literal");
                 return new DictExpr(entries);
             }
+            if (Check(TokenType.For))
+                Error("set comprehensions are not supported (a general hash set needs a heap); " +
+                      "precompute a closed set literal, or use a fixed array");
             var selems = new List<Expression> { firstItem };
             while (Match(TokenType.Comma))
             {

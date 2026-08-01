@@ -612,6 +612,21 @@ public class ParserImportTests
     }
 
     [Fact]
+    public void DictComprehension_NamesTheLimitAndTheAlternative()
+    {
+        var ex = Assert.Throws<SyntaxError>(() => Parse("def f():\n    d = {k: k * 2 for k in range(4)}\n"));
+        Assert.Contains("dict comprehensions are not supported", ex.Message);
+        Assert.Contains("FixedDict", ex.Message);
+    }
+
+    [Fact]
+    public void SetComprehension_NamesTheLimit()
+    {
+        var ex = Assert.Throws<SyntaxError>(() => Parse("def f():\n    s = {k for k in range(4)}\n"));
+        Assert.Contains("set comprehensions are not supported", ex.Message);
+    }
+
+    [Fact]
     public void UnclosedTupleReturnAnnotation_ThrowsSyntaxError()
     {
         Assert.Throws<SyntaxError>(() => Parse("def f() -> (uint8, uint8:\n    pass\n"));
