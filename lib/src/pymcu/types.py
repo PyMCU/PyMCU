@@ -14,10 +14,42 @@ T = TypeVar("T")
 
 # noinspection PyPep8Naming
 class ptr(Generic[T]):
+    '''A typed compile-time memory address (memory-mapped I/O register).
+
+    Declare a register once, with its width, and every access compiles to a
+    direct load/store of that address -- no object exists at runtime:
+
+        PORTB: ptr[uint8] = ptr(0x25)
+
+        PORTB.value = 0xFF     # write the whole register (OUT / STS)
+        x: uint8 = PORTB.value # read the whole register  (IN / LDS)
+        PORTB[5] = 1           # set one bit (SBI in the I/O range)
+        if PORTB[5]:           # test one bit (SBIS / SBIC)
+            pass
+
+    Every .value and [bit] access is VOLATILE in the compiled output: reads
+    are never cached, writes are never elided or reordered by the optimizer
+    (on ARM they lower to volatile LLVM loads/stores).
+
+    The two access forms above are the only ones. A bare assignment such as
+    `PORTB = 0xFF` would rebind the Python name instead of writing the
+    register, so the compiler rejects it with an error naming both forms.
+
+    The address expression may use constant arithmetic (`ptr(BASE + 0x40)`)
+    or runtime operands (`ptr(BASE + 4 * n).value`); pointer advance (p + 1
+    on an existing ptr), pointer difference and element indexing are not
+    supported -- see the language limitations page.
+
+    In plain CPython (running the file on your computer) every access raises
+    RuntimeError: registers only exist on the microcontroller.
+    '''
+
     def __init__(self, address: int):
         self.address = address
 
-    def __add__(self, other):
+    def __add__(self, other: int) -> "ptr[T]":
+        # Address arithmetic used while DECLARING a register (ptr(BASE) + off
+        # is folded at compile time). Not runtime pointer advance.
         return ptr(self.address + other)
 
     def __set__(self, instance, value):
@@ -28,13 +60,23 @@ class ptr(Generic[T]):
         )
 
     def __getitem__(self, bit: int) -> bool:
+        '''Read one bit of the register (compiles to SBIS/SBIC or LDS+mask).'''
         raise RuntimeError("Bit checking only works in compiled code")
 
     def __setitem__(self, bit: int, value: int):
+        '''Write one bit of the register (compiles to SBI/CBI or a masked store).'''
         raise RuntimeError("Bit manipulation only works in compiled code")
 
     @property
     def value(self) -> T:
+        '''The whole register, read or written atomically at its declared width.
+
+        Reading and writing .value is the canonical full-register access:
+
+            UDR0.value = byte          # store
+            byte = UDR0.value          # load
+            TCCR1B.value = TCCR1B.value | 0x08   # read-modify-write
+        '''
         raise RuntimeError("Reading from a register only works in compiled code")
 
     @value.setter
