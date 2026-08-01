@@ -148,7 +148,9 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Publish to PyPI
-        run: uv publish dist/*
+        # --check-url makes retries idempotent: files already on PyPI from a
+        # partially-successful earlier attempt are skipped, not re-uploaded.
+        run: uv publish --check-url https://pypi.org/simple/ dist/*
 
   # Manual smoke-test channel: a workflow_dispatch run (no tag) publishes to
   # TestPyPI. Pre-release tags now go to real PyPI via publish-pypi, so this no
@@ -173,4 +175,4 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Publish to TestPyPI
-        run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*
+        run: uv publish --publish-url https://test.pypi.org/legacy/ --check-url https://test.pypi.org/simple/ dist/*
