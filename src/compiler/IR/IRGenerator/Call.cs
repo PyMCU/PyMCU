@@ -640,6 +640,12 @@ public partial class IRGenerator
                     throw UserError($"'{shown}' is not callable (it is a value, not a function)");
             }
 
+            // Reflection builtins: name the real reason instead of "undefined function".
+            if (shown is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec" or "vars" or "dir" or "globals" or "locals")
+                throw UserError($"'{shown}' is runtime reflection, which PyMCU does not support " +
+                                "(attributes are resolved at compile time); access the attribute directly, " +
+                                "or dispatch on an explicit type-tag field");
+
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
         }
 

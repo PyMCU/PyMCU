@@ -1345,6 +1345,29 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void Getattr_NamesReflectionAsTheReason()
+    {
+        const string src =
+            "def main():\n" +
+            "    x: uint8 = 1\n" +
+            "    y = getattr(x, \"value\")\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("runtime reflection", ex.Message);
+    }
+
+    [Fact]
+    public void Eval_NamesReflectionAsTheReason()
+    {
+        const string src =
+            "def main():\n" +
+            "    y = eval(\"1 + 1\")\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("runtime reflection", ex.Message);
+    }
+
+    [Fact]
     public void TupleReturnAnnotation_UnpackArityMismatch_RaisesClearError()
     {
         const string src =
