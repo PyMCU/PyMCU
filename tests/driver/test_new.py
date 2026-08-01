@@ -430,3 +430,66 @@ class TestTargetKey:
         toml = (tmp_path / "proj" / "pyproject.toml").read_text()
         assert 'target = "atmega328p"' in toml
         assert 'chip = ' not in toml
+
+
+# ---------------------------------------------------------------------------
+# [tool.pymcu.flash] — the section `pymcu flash` actually reads
+# ---------------------------------------------------------------------------
+
+class TestFlashSection:
+    def _scaffold(self, tmp_path, monkeypatch, *args: str) -> dict:
+        import tomlkit
+        monkeypatch.chdir(tmp_path)
+        result = _invoke_new(
+            "proj", *args, "--pkg-manager", "pip", "--no-git", input_text="n\n",
+        )
+        assert result.exit_code == 0
+        doc = tomlkit.loads((tmp_path / "proj" / "pyproject.toml").read_text())
+        return doc["tool"]["pymcu"]
+
+    def test_programmer_goes_under_the_flash_table(self, tmp_path, monkeypatch):
+        cfg = self._scaffold(
+            tmp_path, monkeypatch, "--board", "arduino_uno", "--stdlib", "micropython",
+        )
+        assert cfg["flash"]["programmer"] == "avrdude"
+        # The pre-0.15 [tool.pymcu.programmer] table is no longer scaffolded.
+        assert "programmer" not in cfg
+
+    def test_rp_board_scaffolds_the_rp2040_programmer(self, tmp_path, monkeypatch):
+        cfg = self._scaffold(
+            tmp_path, monkeypatch,
+            "--board", "raspberry_pi_pico", "--stdlib", "micropython",
+        )
+        assert cfg["flash"]["programmer"] == "rp2040"
+
+
+# ---------------------------------------------------------------------------
+# Scaffolded frequency per board (ARM boards must not inherit the AVR default)
+# ---------------------------------------------------------------------------
+
+class TestBoardFrequencies:
+    @pytest.mark.parametrize(
+        "board,expected",
+        [
+            ("arduino_uno", 16_000_000),
+            ("raspberry_pi_pico", 125_000_000),
+            ("raspberry_pi_pico2", 150_000_000),
+            ("attiny85", 8_000_000),
+        ],
+    )
+    def test_frequency_matches_the_board_clock(
+        self, tmp_path, monkeypatch, board, expected
+    ):
+        import tomlkit
+        monkeypatch.chdir(tmp_path)
+        result = _invoke_new(
+            "proj",
+            "--board", board,
+            "--stdlib", "micropython",
+            "--pkg-manager", "pip",
+            "--no-git",
+            input_text="n\n",
+        )
+        assert result.exit_code == 0
+        doc = tomlkit.loads((tmp_path / "proj" / "pyproject.toml").read_text())
+        assert doc["tool"]["pymcu"]["frequency"] == expected

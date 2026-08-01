@@ -24,22 +24,16 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer, default_toolchain
+from ..core.boards import (
+    BOARD_CHIPS,
+    BOARD_GROUPS,
+    board_frequency,
+    default_frequency,
+    default_programmer,
+    default_toolchain,
+)
 
 console = Console()
-
-# Default CPU frequencies by board name.  ATtinys not listed here default to
-# 8 MHz (internal RC oscillator).  The digispark/trinket ship a 16.5 MHz
-# crystal used by V-USB, so they get their own entry.
-BOARD_FREQUENCIES: dict[str, int] = {
-    "arduino_uno":      16_000_000,
-    "arduino_nano":     16_000_000,
-    "arduino_mega":     16_000_000,
-    "arduino_micro":    16_000_000,
-    "digispark":        16_500_000,
-    "adafruit_trinket": 16_500_000,
-}
-_DEFAULT_FREQ = 8_000_000
 
 _COMPAT_FLAVORS = ("micropython", "circuitpython")
 
@@ -224,7 +218,7 @@ def new(
             board_keys = BOARD_GROUPS[mfr]
             board_choices = [
                 questionary.Choice(
-                    title=f"{k:<22}  ({BOARD_CHIPS[k]}, {BOARD_FREQUENCIES.get(k, _DEFAULT_FREQ) // 1_000_000} MHz)",
+                    title=f"{k:<22}  ({BOARD_CHIPS[k]}, {board_frequency(k) // 1_000_000} MHz)",
                     value=k,
                 )
                 for k in board_keys
@@ -238,13 +232,15 @@ def new(
                 "Use --chip to specify a custom target.[/red]"
             )
             raise typer.Exit(code=1)
-        freq = BOARD_FREQUENCIES.get(board, _DEFAULT_FREQ)
+        freq = board_frequency(board)
 
     else:
         # ── Advanced chip mode (hidden --chip flag) ───────────────────
 
         if freq is None:
-            raw = Prompt.ask("Target frequency (Hz)", default="4000000")
+            raw = Prompt.ask(
+                "Target frequency (Hz)", default=str(default_frequency(chip))
+            )
             try:
                 freq = int(raw.replace("_", "").replace(",", ""))
                 if freq <= 0:
@@ -387,9 +383,10 @@ def new(
         pymcu_toolchain.add("name", toolchain_name)
         pymcu_tool.add("toolchain", pymcu_toolchain)
 
-        pymcu_programmer = tomlkit.table()
-        pymcu_programmer.add("name", programmer_name)
-        pymcu_tool.add("programmer", pymcu_programmer)
+        # [tool.pymcu.flash] is what `pymcu flash` reads (programmer/port/baud).
+        pymcu_flash = tomlkit.table()
+        pymcu_flash.add("programmer", programmer_name)
+        pymcu_tool.add("flash", pymcu_flash)
 
         if "tool" not in doc:
             doc.add("tool", tomlkit.table())

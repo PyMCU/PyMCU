@@ -24,10 +24,8 @@ The generated `pyproject.toml` for Arduino Uno:
 chip      = "atmega328p"
 frequency = 16000000
 
-[tool.pymcu.programmer]
-name     = "avrdude"
-protocol = "arduino"
-baudrate = 115200
+[tool.pymcu.flash]
+programmer = "avrdude"
 ```
 
 ## 2. Write your program
