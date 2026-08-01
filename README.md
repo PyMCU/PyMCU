@@ -1,8 +1,8 @@
 <!-- PROJECT LOGO -->
 <br />
 <p align="center">
-  <a href="https://github.com/begeistert/PyMCU">
-    <img src="docs/_static/images/logo-icon.png" alt="PyMCU" width="200" height="200">
+  <a href="https://github.com/PyMCU/PyMCU">
+    <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/logo-icon.png" alt="PyMCU" width="200" height="200">
   </a>
 
   <h3 align="center">PyMCU</h3>
@@ -10,12 +10,12 @@
   <p align="center">
     Python to bare-metal firmware — no runtime, no interpreter, no VM.
     <br />
-    <a href="https://github.com/begeistert/PyMCU"><strong>Explore the project »</strong></a>
+    <a href="https://github.com/PyMCU/PyMCU"><strong>Explore the project »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/begeistert/PyMCU/issues">Report a bug</a>
+    <a href="https://github.com/PyMCU/PyMCU/issues">Report a bug</a>
     ·
-    <a href="https://github.com/begeistert/PyMCU/issues">Request a feature</a>
+    <a href="https://github.com/PyMCU/PyMCU/issues">Request a feature</a>
     ·
     <a href="https://github.com/sponsors/begeistert">Sponsor</a>
   </p>
@@ -27,14 +27,14 @@
     <a href="https://pypi.org/project/pymcu-compiler/">
       <img src="https://img.shields.io/pypi/pyversions/pymcu-compiler" alt="Python versions">
     </a>
-    <a href="https://github.com/begeistert/PyMCU/blob/main/LICENSE">
-      <img src="https://img.shields.io/github/license/begeistert/PyMCU" alt="License">
+    <a href="https://github.com/PyMCU/PyMCU/blob/main/LICENSE">
+      <img src="https://img.shields.io/github/license/PyMCU/PyMCU" alt="License">
     </a>
-    <a href="https://github.com/begeistert/PyMCU/commits/main">
-      <img src="https://img.shields.io/github/last-commit/begeistert/PyMCU" alt="Last commit">
+    <a href="https://github.com/PyMCU/PyMCU/commits/main">
+      <img src="https://img.shields.io/github/last-commit/PyMCU/PyMCU" alt="Last commit">
     </a>
-    <a href="https://github.com/begeistert/PyMCU/issues">
-      <img src="https://img.shields.io/github/issues/begeistert/PyMCU" alt="Open issues">
+    <a href="https://github.com/PyMCU/PyMCU/issues">
+      <img src="https://img.shields.io/github/issues/PyMCU/PyMCU" alt="Open issues">
     </a>
     <a href="https://github.com/sponsors/begeistert">
       <img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors" alt="Sponsor">
@@ -45,17 +45,21 @@
 ---
 
 > [!IMPORTANT]
-> **Alpha — v0.1 — under active development.**
-> Core AVR compilation is stable and test-covered, but rough edges remain in error messages
-> and tooling. Stability is expected for the supported feature set — if you hit a bug,
-> [please open an issue](https://github.com/begeistert/PyMCU/issues), it helps a lot.
+> **Alpha 3 is out — [v0.1.0a3 release notes](https://github.com/PyMCU/PyMCU/releases/tag/v0.1.0a3).**
+> The language grows **generators**, **async/await**, **dict/set literals**, f-strings as
+> values and type inference; the ARM targets (**RP2040 / RP2350**) reach feature parity
+> with AVR — exceptions, floats, WiFi; and a brand-new **PIC backend** joins the family.
+> Core compilation is stable and test-covered, but rough edges remain in error messages
+> and tooling — if you hit a bug, [please open an issue](https://github.com/PyMCU/PyMCU/issues),
+> it helps a lot.
 >
 > **Avoid `pymcu.hal.*`** during the alpha — the native HAL API may change between releases.
 > Use the **MicroPython** or **CircuitPython** compat API instead; those are stable and
 > community-specified.
 
-PyMCU compiles a **statically-typed subset of Python** into bare-metal AVR firmware —
-no runtime, no interpreter, no virtual machine. The same binary you would write in C.
+PyMCU compiles a **statically-typed subset of Python** into bare-metal firmware for
+**AVR, ARM (RP2040 / RP2350) and PIC** — no runtime, no interpreter, no virtual machine.
+The same binary you would write in C.
 
 ---
 
@@ -142,10 +146,14 @@ pymcu flash   # → avrdude upload to Arduino Uno
 ### 1. Install
 
 ```bash
-pipx install "pymcu-compiler[avr]"
+pipx install --pip-args=--pre "pymcu-compiler[avr]"    # AVR (ATmega / ATtiny)
+pipx install --pip-args=--pre "pymcu-compiler[arm]"    # RP2040 / RP2350 (Pico / Pico 2)
+pipx install --pip-args=--pre "pymcu-compiler[pic]"    # PIC16
+pipx install --pip-args=--pre "pymcu-compiler[all]"    # everything
 ```
 
-Requires Python 3.11+ and `pipx`. The `[avr]` extra includes the AVR toolchain.
+Requires Python 3.11+ and `pipx`. Each extra bundles its full toolchain
+(compiler backend + assembler/linker binaries) — no system packages needed.
 
 > **Package name:** PyMCU is published as `pymcu-compiler` on PyPI while a
 > [PEP 541 request](https://github.com/pypa/pypi-support) to reclaim the `pymcu`
@@ -166,7 +174,7 @@ cd blink
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["pymcu-compiler", "pymcu-circuitpython"]
+dependencies = ["pymcu-compiler[avr]", "pymcu-circuitpython"]
 
 [tool.pymcu]
 board     = "arduino_uno"
@@ -194,7 +202,7 @@ while True:
 ```toml
 # pyproject.toml
 [project]
-dependencies = ["pymcu-compiler", "pymcu-micropython"]
+dependencies = ["pymcu-compiler[avr]", "pymcu-micropython"]
 
 [tool.pymcu]
 board     = "arduino_uno"
@@ -249,6 +257,8 @@ direct register access not yet covered by the compat layers.
 |---|---|
 | **AVR** (ATmega) | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
 | **AVR** (ATtiny) | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
+| **ARM** (Cortex-M0+ / M33) | RP2040 (Pico / Pico W), RP2350 (Pico 2 / Pico 2 W) — incl. PIO and CYW43 WiFi |
+| **PIC** (mid-range) | PIC16F84A, PIC16F877A — new in alpha 3 |
 
 ---
 
@@ -276,19 +286,23 @@ Drivers: DHT11, DS18B20, LM35, HD44780 LCD, SSD1306 OLED, MAX7219, BMP280, WS281
 PyMCU accepts Python syntax but enforces a strict compile-time type system.
 
 **Supported:**
-- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float`
-- Fixed arrays `buf: uint8[16]` and heap-bounded lists `x: list[uint8] = list()`
+- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float` — with
+  type inference for unannotated `def` parameters and returns
+- Fixed arrays `buf: uint8[16]`, heap-bounded lists `x: list[uint8] = list()`,
+  equal-length slice assignment
 - `for`, `while`, `if`, `match / case`, `with`, `class`, `@inline`, `lambda`
-- `@interrupt` ISR handlers, `asm("...")` inline assembly
-- `try / except / raise / finally` (AVR only; `raise` and `except` in same function)
-- CircuitPython and MicroPython compat packages
+- **Generators** (`yield`), **`async` / `await`** with `asyncio.run` / `gather`
+- **`dict` / `set` literals** as closed compile-time lookup tables, plus
+  `pymcu.collections.FixedDict` for mutable fixed-capacity maps — still no heap
+- **f-strings** with runtime interpolations and format specs, as stream writes or values
+- `try / except / raise / finally` with cross-function propagation (AVR **and** ARM)
+- `@interrupt` ISR handlers, `asm("...")` inline assembly (with operands on ARM)
+- CircuitPython and MicroPython compat packages, plus `pymcu lint` to vet a port
 
 **Not supported:**
-- `dict` / `set` (hash tables require heap)
-- Runtime `f"value={x}"` with non-constant expressions (compile-time constants only)
-- `async` / `await` — use `@interrupt` + polling loop instead
+- Open-ended `dict` / `set` mutation beyond `FixedDict`'s fixed capacity (no heap hash tables)
 - Closures capturing mutable variables — use explicit parameters
-- `*args` / `**kwargs`
+- `*args` / `**kwargs`, reflection (`getattr` / `setattr` / `eval`)
 
 The compiler rejects unsupported features with a clear error at compile time.
 See the [Language Limitations](docs/language/limitations.md) page for the full list.
