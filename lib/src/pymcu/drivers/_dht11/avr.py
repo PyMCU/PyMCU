@@ -76,7 +76,6 @@ def _pd_wait(mask: uint8, level: uint8) -> uint8:
     return 0
 
 
-@inline
 def _pd_byte(mask: uint8) -> uint8:
     result: uint8 = 0
     bit: uint8 = 0
