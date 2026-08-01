@@ -102,6 +102,22 @@ public class FileSystemModuleLoader : IModuleLoader
             if (File.Exists(fullPath)) return fullPath;
         }
 
+        // Compat-flavor modules: point at the fix instead of a bare not-found.
+        var flavorHint = moduleName switch
+        {
+            "machine" or "utime" or "micropython" or "network" or "rp2"
+                => "micropython",
+            "board" or "digitalio" or "analogio" or "busio" or "pwmio" or "neopixel"
+             or "microcontroller" or "supervisor" or "wifi" or "socketpool" or "alarm"
+                => "circuitpython",
+            _ => null,
+        };
+        if (flavorHint is not null)
+            throw new Exception(
+                $"Module not found: {moduleName} -- this module comes from the {flavorHint} " +
+                $"compat package; add stdlib = [\"{flavorHint}\"] under [tool.pymcu] in " +
+                $"pyproject.toml (and pymcu-{flavorHint} to the project dependencies)");
+
         throw new Exception($"Module not found: {moduleName}");
     }
 }
