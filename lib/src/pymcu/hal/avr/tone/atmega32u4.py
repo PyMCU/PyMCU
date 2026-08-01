@@ -34,9 +34,9 @@ def tone_start(freq_hz: uint16):
     TCCR3A.value = 0x40
     ocr: uint16 = _tone_ocr16(freq_hz, 64)
     hi: uint8 = uint8(ocr >> 8)
-    OCR3AH = hi
+    OCR3AH.value = hi
     lo: uint8 = uint8(ocr)
-    OCR3AL = lo
+    OCR3AL.value = lo
     TCCR3B.value = 0x0B   # WGM32=1, prescaler 64
 
 

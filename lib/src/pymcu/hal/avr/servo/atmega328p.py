@@ -30,7 +30,7 @@ from pymcu.chips.atmega328p import TCCR1A, TCCR1B, ICR1L, ICR1H, ICR1
 from pymcu.chips.atmega328p import OCR1AL, OCR1AH, OCR1A
 from pymcu.chips.atmega328p import OCR1BL, OCR1BH, OCR1B
 from pymcu.chips.atmega328p import DDRB, PORTB
-from pymcu.types import uint8, uint16, inline
+from pymcu.types import uint8, uint16, inline, ptr
 
 # 50 Hz @ 16 MHz, prescaler 8: TOP = (16_000_000 / (8 * 50)) - 1 = 39999
 # But 39999 > 65535? No: 39999 fits in 16 bits fine.
@@ -44,12 +44,12 @@ _PULSE_MAX:  uint16 = 3999    # 2000 us = 180 degrees
 
 
 @inline
-def _write16(hi_reg, lo_reg, val: uint16):
+def _write16(hi_reg: ptr[uint8], lo_reg: ptr[uint8], val: uint16):
     # AVR 16-bit write: HIGH byte first (into TEMP), then LOW byte triggers update.
     hi: uint8 = uint8(val >> 8)
-    hi_reg = hi
+    hi_reg.value = hi
     lo: uint8 = uint8(val)
-    lo_reg = lo
+    lo_reg.value = lo
 
 
 @inline

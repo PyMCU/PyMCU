@@ -123,9 +123,9 @@ def timer1_set_compare(value: uint16):
     # Writing OCR1AL (0x88) triggers the atomic 16-bit update using _highByteTemp.
     # The high byte was placed into TEMP by writing OCR1AH (0x89).
     hi: uint8 = uint8(value >> 8)
-    OCR1AH = hi
+    OCR1AH.value = hi
     lo: uint8 = uint8(value)
-    OCR1AL = lo
+    OCR1AL.value = lo
     TCCR1B.value = TCCR1B.value | 0x08   # WGM12 = 1 (CTC mode)
     TIMSK1[1] = 1                          # OCIE1A
 
