@@ -18,13 +18,29 @@ import tomlkit
 import typer
 from rich.console import Console
 from ..programmers import get_programmer
-from ..core.boards import BOARD_CHIPS, default_programmer
+from ..core.boards import BOARD_CHIPS, default_programmer, firmware_artifacts
 
 console = Console()
 
 
 def _default_programmer(chip: str) -> str:
     return default_programmer(chip)
+
+
+def _artifact_candidates(programmer, chip: str) -> tuple[str, ...]:
+    """Return the dist/ filenames to look for, most preferred first.
+
+    A programmer plugin may declare its own by exposing a ``firmware_artifacts``
+    attribute (a sequence of filenames, or a callable taking the chip id).
+    Otherwise the target family decides: HEX for AVR/PIC, .uf2/.bin for the RP
+    targets.
+    """
+    declared = getattr(programmer, "firmware_artifacts", None)
+    if callable(declared):
+        declared = declared(chip)
+    if declared:
+        return tuple(declared)
+    return firmware_artifacts(chip)
 
 
 def flash(
@@ -67,7 +83,21 @@ def flash(
             raise typer.Exit(code=1)
 
         flash_config = pymcu_config.get("flash", {})
-        programmer_name = flash_config.get("programmer") or _default_programmer(chip)
+        # [tool.pymcu.programmer] name = "..." is the pre-0.15 spelling that
+        # `pymcu new` used to scaffold; honour it so those projects keep working.
+        legacy_config = pymcu_config.get("programmer", {})
+        legacy_name = legacy_config.get("name") if legacy_config else None
+        if legacy_name and not flash_config.get("programmer"):
+            # Square brackets are rich markup: escape the TOML headers.
+            console.print(
+                "[yellow]Deprecated:[/yellow] \\[tool.pymcu.programmer] is read only as "
+                "a fallback. Move it to:\n"
+                f"  [dim]\\[tool.pymcu.flash]\n  programmer = \"{legacy_name}\"[/dim]"
+            )
+
+        programmer_name = (
+            flash_config.get("programmer") or legacy_name or _default_programmer(chip)
+        )
         cfg_port = flash_config.get("port")
         cfg_baud = flash_config.get("baud")
 
@@ -75,18 +105,23 @@ def flash(
         resolved_port: str | None = port or cfg_port or None
         resolved_baud: int | None = int(cfg_baud) if cfg_baud else None
 
-        # 2. Check for firmware artifact
-        hex_file = Path("dist") / "firmware.hex"
-        if not hex_file.exists():
-            console.print("[red]Firmware file 'dist/firmware.hex' not found.[/red]")
-            console.print("Please run [bold]pymcu build[/bold] first.")
-            raise typer.Exit(code=1)
-
-        # 3. Get programmer
+        # 2. Get programmer (entry-point plugins first, then built-ins)
         programmer = get_programmer(programmer_name, console)
         if programmer is None:
             console.print(f"[red]Unknown programmer: {programmer_name!r}[/red]")
             console.print("Supported programmers: avrdude, pk2cmd")
+            raise typer.Exit(code=1)
+
+        # 3. Locate the firmware artifact this target/programmer flashes from
+        dist_dir = Path("dist")
+        candidates = _artifact_candidates(programmer, chip)
+        artifact = next(
+            (dist_dir / n for n in candidates if (dist_dir / n).exists()), None
+        )
+        if artifact is None:
+            expected = " or ".join(f"'dist/{n}'" for n in candidates)
+            console.print(f"[red]Firmware file {expected} not found.[/red]")
+            console.print("Please run [bold]pymcu build[/bold] first.")
             raise typer.Exit(code=1)
 
         # 4. Install if needed
@@ -99,8 +134,8 @@ def flash(
 
         # 5. Flash
         try:
-            programmer.flash(hex_file, chip, port=resolved_port, baud=resolved_baud)
-        except RuntimeError as e:
+            programmer.flash(artifact, chip, port=resolved_port, baud=resolved_baud)
+        except (RuntimeError, OSError) as e:
             console.print(f"[red]Flash failed:[/red] {e}")
             raise typer.Exit(code=1)
 

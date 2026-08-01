@@ -48,6 +48,20 @@ BOARD_CHIPS: dict[str, str] = {
 }
 
 
+# Default CPU frequencies by board name.  Boards not listed here fall back to
+# default_frequency(chip) -- 8 MHz for the ATtinys running off their internal RC
+# oscillator, 125/150 MHz for the RP2040/RP2350.  The digispark/trinket ship a
+# 16.5 MHz crystal used by V-USB, so they get their own entry.
+BOARD_FREQUENCIES: dict[str, int] = {
+    "arduino_uno":      16_000_000,
+    "arduino_nano":     16_000_000,
+    "arduino_mega":     16_000_000,
+    "arduino_micro":    16_000_000,
+    "digispark":        16_500_000,
+    "adafruit_trinket": 16_500_000,
+}
+
+
 BOARD_GROUPS: dict[str, list[str]] = {
     "Arduino": ["arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro"],
     "Raspberry Pi": ["raspberry_pi_pico", "raspberry_pi_pico2"],
@@ -79,3 +93,39 @@ def default_programmer(chip: str) -> str:
     if chip_lower in ("rp2040", "rp2350"):
         return "rp2040"
     return "pk2cmd"
+
+
+def default_frequency(chip: str) -> int:
+    """Return the clock a chip runs at by default, in Hz.
+
+    Used to scaffold [tool.pymcu].frequency for boards without an explicit
+    BOARD_FREQUENCIES entry.  The RP values match the clk_sys the RP HAL
+    assumes (see lib/src/pymcu/hal/rp2040/pwm.py and rp2350/clocks.py).
+    """
+    chip_lower = chip.lower()
+    if chip_lower == "rp2040":
+        return 125_000_000
+    if chip_lower == "rp2350":
+        return 150_000_000
+    if chip_lower.startswith("pic"):
+        return 4_000_000
+    return 8_000_000
+
+
+def board_frequency(board: str) -> int:
+    """Return the scaffold frequency for a board name, in Hz."""
+    if board in BOARD_FREQUENCIES:
+        return BOARD_FREQUENCIES[board]
+    return default_frequency(BOARD_CHIPS.get(board, ""))
+
+
+def firmware_artifacts(chip: str) -> tuple[str, ...]:
+    """Return the dist/ firmware filenames a chip can be flashed from.
+
+    Most preferred first.  AVR and PIC ship Intel HEX; the RP targets ship a
+    flat flash image (and a .uf2 when the toolchain produced one).
+    """
+    chip_lower = chip.lower()
+    if chip_lower in ("rp2040", "rp2350"):
+        return ("firmware.uf2", "firmware.bin")
+    return ("firmware.hex",)

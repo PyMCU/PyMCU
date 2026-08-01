@@ -33,10 +33,8 @@ pymcu new my_project
 chip      = "atmega328p"
 frequency = 16000000
 
-[tool.pymcu.programmer]
-name     = "avrdude"
-protocol = "arduino"
-baudrate = 115200
+[tool.pymcu.flash]
+programmer = "avrdude"
 ```
 
 ### PIC pyproject.toml
@@ -49,8 +47,8 @@ frequency = 4000000
 [tool.pymcu.toolchain]
 name = "gputils"
 
-[tool.pymcu.programmer]
-name = "pickit2"
+[tool.pymcu.flash]
+programmer = "pk2cmd"
 ```
 
 ---
@@ -101,7 +99,7 @@ src/main.py:12:9: error: TypeError: cannot assign float to uint8
 
 ## `pymcu flash`
 
-Uploads `dist/firmware.hex` to the connected device.
+Uploads the firmware built by `pymcu build` to the connected device.
 
 ```bash
 pymcu flash
@@ -110,23 +108,48 @@ pymcu flash --port /dev/ttyACM0         # Linux
 pymcu flash --port COM3                 # Windows
 ```
 
+### Firmware artifact
+
+The file uploaded depends on the target, and must exist before flashing:
+
+| Target | Artifact |
+|---|---|
+| AVR, PIC | `dist/firmware.hex` |
+| RP2040, RP2350 | `dist/firmware.uf2` (packed by the build), falling back to `dist/firmware.bin` |
+
 ### Supported programmers
+
+The programmer defaults to the one for the target family (`avrdude` for AVR,
+`pk2cmd` for PIC, `rp2040` for the RP boards) and can be overridden:
 
 **AVR (Arduino Uno):**
 
 ```toml
-[tool.pymcu.programmer]
-name     = "avrdude"
-protocol = "arduino"
-baudrate = 115200
+[tool.pymcu.flash]
+programmer = "avrdude"
+port       = "/dev/cu.usbmodem14101"   # optional; --port overrides it
+baud       = 115200                    # optional
 ```
 
-**PIC (PICKit 2):**
+**PIC (PICkit 2):**
 
 ```toml
-[tool.pymcu.programmer]
-name = "pickit2"    # pk2cmd is auto-downloaded on first use
+[tool.pymcu.flash]
+programmer = "pk2cmd"    # auto-downloaded on first use
 ```
+
+**Raspberry Pi Pico / Pico 2:**
+
+```toml
+[tool.pymcu.flash]
+programmer = "rp2040"    # picotool, or UF2 drag-and-drop to the RPI-RP2 volume
+```
+
+:::{note}
+`[tool.pymcu.programmer]` with a `name` key is the pre-0.15 spelling. It is still
+honoured as a fallback, with a deprecation warning — move it to
+`[tool.pymcu.flash]`.
+:::
 
 ---
 
