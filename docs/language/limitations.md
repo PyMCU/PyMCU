@@ -343,9 +343,15 @@ interrupts, atomic flag patterns via `GPIOR0`.
 :::{admonition} Timer0 and millis / ticks_ms
 :class: warning
 
-`millis_init()` (auto-injected when `ticks_ms()` is detected) configures **Timer0** in
-normal overflow mode.  Do **not** use Timer0 for PWM, CTC, or other purposes when
-`ticks_ms()` / `millis()` is active in the same program.
+`millis_init()` (auto-injected when `ticks_ms()` — or, on ATmega, an `async def` — is
+detected) configures **Timer0** in normal overflow mode.  Do **not** use Timer0 for
+PWM, CTC, or other purposes when `ticks_ms()` / `millis()` / `async`-`await` is active
+in the same program.
+
+On AVR the clock `await asyncio.sleep_ms(...)` waits against is that same Timer0
+counter, so its resolution is **4 µs at 16 MHz** (1 µs on RP2040/RP2350, which have a
+hardware microsecond timer).  On architectures with no time base — PIC, RISC-V —
+`asyncio.ticks()` is 0 and an `await` never completes.
 
 `delay_ms()` and `delay_us()` are unaffected — they use a software busy-loop with no
 hardware timer dependency.

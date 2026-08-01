@@ -12,8 +12,11 @@ Analog-to-digital conversion. Wraps the AVR ADC peripheral.
 
 ### `AnalogPin(channel: str)`
 
-Initializes the ADC for the given channel. On ATmega328P, `channel` is an Arduino analog pin
-name (`"A0"` through `"A5"`) which maps to ADC channels 0–5 on PORTC.
+Initializes the ADC for the given channel. On ATmega328P, `channel` is a port-pin name:
+`"PC0"` through `"PC5"` (ADC channels 0–5 on PORTC), plus `"TEMP"` / `"ADC8"` for the
+internal temperature sensor and `"VBG"` for the 1.1 V bandgap reference. The Arduino
+`A0`–`A5` names are the pin constants exported by `pymcu.boards.arduino_uno`, which
+resolve to these same strings (`A0 == "PC0"`).
 
 ### Methods
 
@@ -24,7 +27,7 @@ name (`"A0"` through `"A5"`) which maps to ADC channels 0–5 on PORTC.
 | `read_u16() -> uint16` | `uint16` | 16-bit scaled result (0–65535) |
 | `start_conversion()` | — | Start ADC with interrupt enabled |
 | `read_result() -> uint16` | `uint16` | Read ADCL/ADCH result registers directly |
-| `value() -> uint16` | `uint16` | Same as `read_result()` |
+| `irq(handler)` | — | Register an ISR at the ADC Complete vector and enable ADIE + global interrupts |
 
 ---
 
@@ -39,7 +42,7 @@ from pymcu.types import ptr, uint8, uint16
 ADCSRA: ptr[uint8] = ptr(0x7A)
 
 def main():
-    adc = AnalogPin("A0")
+    adc = AnalogPin("PC0")      # or: from pymcu.boards.arduino_uno import A0
     while True:
         adc.start()
         while ADCSRA[6]:    # wait for ADSC to clear
@@ -54,7 +57,7 @@ def main():
 from pymcu.hal.adc import AnalogPin
 from pymcu.types import uint16
 
-adc = AnalogPin("A0")
+adc = AnalogPin("PC0")
 adc.start()
 # ... wait for conversion ...
 val: uint16 = adc.read_u16()    # 0-65535 (10-bit × 64)
@@ -66,7 +69,7 @@ val: uint16 = adc.read_u16()    # 0-65535 (10-bit × 64)
 from pymcu.hal.adc import AnalogPin
 from pymcu.types import uint16
 
-sensor = AnalogPin("A0")
+sensor = AnalogPin("PC0")
 result: uint16 = 0
 
 @interrupt(0x002A)    # ADC Complete vector (ATmega328P)
@@ -88,18 +91,19 @@ The ATmega328P has a built-in temperature sensor connected to ADC channel 8. No 
 components are required.
 
 ```python
-from pymcu.hal.adc import adc_read_temp_raw
+from pymcu.hal.adc import AnalogPin
 from pymcu.types import uint16
 
 def main():
-    raw: uint16 = adc_read_temp_raw()
+    temp = AnalogPin("TEMP")
+    raw: uint16 = temp.read()
     # Factory calibration: ~314 counts at 25 °C, ~1 count per degree
     # No EEPROM calibration data — accuracy is ±10 °C typical
 ```
 
 | Item | Detail |
 |---|---|
-| Import | `from pymcu.hal.adc import adc_read_temp_raw` |
+| Channel | `AnalogPin("TEMP")` (`"ADC8"` is an alias) |
 | Return type | `uint16` — raw ADC count (channel 8, internal 1.1 V reference) |
 | Typical value | ~314 at 25 °C |
 | Scale | ~1 count / °C (uncalibrated) |

@@ -42,7 +42,7 @@ translated directly to a PyMCU HAL call during compilation:
 ```
 machine.Pin(13, Pin.OUT)  →  pymcu.hal.gpio.Pin("PB5", Pin.OUT)
 utime.sleep_ms(500)       →  pymcu.time.delay_ms(500)
-machine.ADC(0)            →  pymcu.hal.adc.AnalogPin("A0")
+machine.ADC(Pin(14))      →  pymcu.hal.adc.AnalogPin("PC0")
 ```
 
 The compiled firmware is identical to one written with the native PyMCU HAL — the compat

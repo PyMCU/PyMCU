@@ -24,7 +24,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Single-level class inheritance | ZCA base + derived; `super()` calls |
 | `with obj:` | `__enter__` / `__exit__`; zero-cost for `@inline` methods |
 | `assert condition, msg` | Compile-time only; statically false → CompileError |
-| `return` | With/without value; tuple multi-return |
+| `return` | With/without value; tuple multi-return from `@inline` functions, optionally annotated `-> (T1, T2)` or `-> tuple[T1, T2]` (the element types set the result widths) |
 | `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
 | `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
@@ -38,7 +38,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `True` / `False` | Folded to `Constant{1/0}` |
 | `None` | Real null literal (not the integer `-1`). `x is None` / `== None` / `!= None` compile to a null check; assigning `None` to a scalar (`int` / `uintN`) is a `TypeError` — `None` is for reference / optional-typed values |
 | String literals | Single- and double-quoted; mapped to stable compile-time IDs |
-| Arithmetic `+ - * / % //` | Full constant folding. `%` and `//` follow Python's floored sign (`-7 % 3 == 2`, `-7 // 2 == -4`). **`/` on two integers is integer (floor) division, not Python's float division** — there is no implicit float result; use a float operand if you need one. |
+| Arithmetic `+ - * / % //` | Full constant folding. `%` and `//` follow Python's floored sign (`-7 % 3 == 2`, `-7 // 2 == -4`). **`/` is Python 3 true division and always yields a `float`** (`4 / 2 == 2.0`), even on two integers — the compiler warns once per site because it links the soft-float routines into the firmware; use `//` when you want integer division. |
 | Comparison `== != < <= > >=` | Chained comparisons (`lo < x < hi`) evaluate as `(lo < x) and (x < hi)`, Python semantics |
 | Bitwise `& | ^ ~ << >>` | |
 | Logical `and` / `or` / `not` | Short-circuit; `and`/`or` evaluate to the **operand**, not a bool (`a or default`, `x and x.field` work as in Python) |
@@ -54,7 +54,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Bit indexing `port[n]` | `n` must be compile-time constant |
 | Array indexing `arr[i]` | Constant-index: zero overhead; variable-index: SRAM. Negative constant index `arr[-1]` is the last element (Python); out-of-range constant index is a compile error |
 | List comprehension `[x*2 for x in range(n)]` | Compile-time unroll; constant iterable only |
-| Tuple literal `(a, b)` / unpacking `a, b = f()` / `a, b = b, a` | Stack-allocated; multi-return; bare-tuple RHS supported, so swap evaluates the RHS before assigning |
+| Tuple literal `(a, b)` / unpacking `a, b = f()` / `a, b = b, a` | Stack-allocated; multi-return (`f` must be `@inline` — a real subroutine has one return register); bare-tuple RHS supported, so swap evaluates the RHS before assigning |
 | Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
 | `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
@@ -92,12 +92,12 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
 | `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `enable/disable/feed`; timeout is compile-time const |
-| `pymcu.hal.power` | `sleep_*` | ATmega328P | `idle / adc_noise / power_down / power_save / standby` |
+| `pymcu.hal.power` | `sleep_*` | ATmega328P | `sleep_idle / sleep_adc_noise / sleep_power_down / sleep_power_save / sleep_standby / sleep_extended_standby` |
 | `pymcu.drivers.dht11` | `DHT11` | All | Portable driver; reads humidity + temperature |
 | `pymcu.time` | `delay_ms`, `delay_us` | All | Blocking delays |
 | `pymcu.boards.arduino_uno` | `D0`-`D13`, `A0`-`A5` | ATmega328P | Pin name constants |
 | `pymcu.boards.arduino_mega` | `D0`-`D53`, `A0`-`A15` | ATmega2560 | Pin name constants |
-| `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants |
+| `pymcu.boards.arduino_leonardo` | `D0`-`D13`, `A0`-`A5` | ATmega32U4 | Pin name constants (the CLI board key for the 32U4 is `arduino_micro`) |
 
 > **RP2040 (alpha):** the RP2040 backend currently implements only `pymcu.hal.gpio`
 > (`Pin`), `pymcu.hal.uart` (`UART0`) and `pymcu.time` (`delay_ms` / `delay_us`).
@@ -226,9 +226,9 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Driver | Notes |
 |--------|-------|
-| `HD44780` LCD | `LCD(rs, en, d4-d7)` — 4-bit parallel; `init/clear/home/print_str/set_cursor/write_char` |
+| `HD44780` LCD (`pymcu.drivers.lcd`) | `LCD(rs, en, d4-d7)` — 4-bit parallel; `init/clear/home/print_str/set_cursor/write_char/print_fmt` |
 | `SSD1306` OLED | 128x64 OLED over I2C; `init/clear/draw_pixel/draw_line/print_str` |
-| `MAX7219` 8-digit display | SPI 7-segment driver; `set_digit/set_raw/clear/set_brightness` |
+| `MAX7219` 8x8 LED matrix | SPI matrix driver; `init/clear/set_row/set_brightness` |
 | `BMP280` barometer | I2C barometric pressure + temperature sensor; `read_pressure/read_temp` |
 
 ---
@@ -358,7 +358,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| `async def` / `await` (v2) | Lowered at compile time to a zero-cost state-machine class with `poll()` — no heap, no interpreter. Requires `import asyncio`; awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`, now anywhere in the body: inside `if/elif/else`, `while <cond>` and `for i in range(...)` at any nesting, with `break`/`continue`, and `return expr` exposing the result via `._value`. Locals become fields only when they survive a suspension. Executors: `asyncio.run(coro)` / `asyncio.gather(a, b)`. Not yet: awaiting another coroutine/future, `await` as an expression |
+| `async def` / `await` (v2) | Lowered at compile time to a zero-cost state-machine class with `poll()` — no heap, no interpreter. Requires `import asyncio`; awaitable is `asyncio.sleep(n)` / `asyncio.sleep_ms(n)`, now anywhere in the body: inside `if/elif/else`, `while <cond>` and `for i in range(...)` at any nesting, with `break`/`continue`, and `return expr` exposing the result via `._value`. Locals become fields only when they survive a suspension. Executors: `asyncio.run(coro)` / `asyncio.gather(a, b)`. Time base: hardware microsecond TIMER on RP2040/RP2350, Timer0 millis/micros on ATmega (4 us resolution; `millis_init()` auto-injected by `pymcu build`). Not yet: awaiting another coroutine/future, `await` as an expression, a time base on PIC/RISC-V (awaits there never complete) |
 | f-string as a **value** (`s = f"t={t} C"`) | Builds the string into a compiler-managed fixed `bytearray` (no heap): the size is statically bounded per part, formatting lowers to `pymcu.strfmt` calls (auto-injected). Consumers: `print(s)`, `uart.write_str/println(s)`, `len(s)` (formatted length), `s[i]`, re-assignment in a loop (buffer reuse), passing as a `bytearray` param. Not yet: f-string inline in other expression positions, float interpolations in the value form, `s == "lit"` |
 | Closed dict/set literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables (no storage): `d[const]` folds, `d[runtime]` lowers to a compare chain raising `KeyError` (catchable), `x in d` / `x in {...}` membership chains, `len(d)` folds. String keys fold on constant lookups. Read-only — for mutation use `FixedDict` |
 | `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict (open addressing over per-instance fixed arrays — no heap, no GC): `d[k]`/`d[k]=v` (`KeyError` on missing, `ValueError` when full), `k in d`, `len(d)`, `get(k, default)`, `pop(k)` (tombstones), `clear()`. Capacity is a compile-time constant |
@@ -417,7 +417,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 | `I2C.write_to(addr, buf, n)` multi-byte | ✅ Implemented in v0.9 as `I2C.write_bytes` |
 | `UART.read_line(buf, max_len)` | ✅ Implemented — reads until `\n` or max_len into fixed-size `uint8[N]` buffer |
 | Timer `millis()` / `micros()` | ✅ Implemented in v0.9 |
-| Internal temperature sensor | ✅ Implemented — ATmega328P ADC channel 8; `adc_read_temp_raw()` in `pymcu.hal.adc` |
+| Internal temperature sensor | ✅ Implemented — ATmega328P ADC channel 8; `AnalogPin("TEMP")` from `pymcu.hal.adc` |
 | `DS18B20` 1-Wire driver | ✅ Implemented — `pymcu.drivers.ds18b20`; `DS18B20(pin)` / `read_temp_raw()` / `read_temp_celsius()` |
 
 ### Compat

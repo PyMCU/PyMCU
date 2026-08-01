@@ -24,6 +24,7 @@ handler is registered; otherwise call `asm("sei")` explicitly.
 | `sleep_power_down()` | ~0.1 µA | External INT0/INT1, TWI address match, WDT |
 | `sleep_power_save()` | ~0.1 µA | Same as power-down + Timer2 async |
 | `sleep_standby()` | ~0.1 µA | Same as power-down (faster oscillator startup) |
+| `sleep_extended_standby()` | ~0.1 µA | Same as power-save (faster oscillator startup) |
 
 ---
 
@@ -60,12 +61,12 @@ from pymcu.hal.adc import AnalogPin
 from pymcu.hal.power import sleep_adc_noise
 from pymcu.types import uint16
 
-sensor = AnalogPin("A0")
+sensor = AnalogPin("PC0")
 
 def read_quiet() -> uint16:
     sensor.start()
     sleep_adc_noise()    # CPU sleeps; ADC completes, ADC ISR wakes CPU
-    return sensor.value()
+    return sensor.read_result()
 ```
 
 ### Watchdog-based periodic wake (~0.1 µA between wakes)

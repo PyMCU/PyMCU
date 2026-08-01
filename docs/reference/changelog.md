@@ -145,23 +145,22 @@ fixes across the compiler and the AVR backend.
 
 - `pymcu.hal.gpio` — `Pin`: high/low/toggle/value/irq/pulse_in
 - `pymcu.hal.uart` — `UART`: write/read/read_line/write_str/println/print_byte/available + RX interrupt
-- `pymcu.hal.adc` — `AnalogPin`: poll + interrupt; `adc_read_temp_raw()` internal sensor
+- `pymcu.hal.adc` — `AnalogPin`: poll + interrupt; channels `"PC0"`–`"PC5"`, `"TEMP"` (internal sensor), `"VBG"`, `"ADC8"`
 - `pymcu.hal.timer` — `Timer(n, prescaler)`, Timer0/1/2, CTC mode
 - `pymcu.hal.pwm` — `PWM`: start/stop/set_duty/set_freq
 - `pymcu.hal.spi` — `SPI` + `SoftSPI`
-- `pymcu.hal.i2c` — `I2C` + `SoftI2C`, `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem_into`
+- `pymcu.hal.i2c` — `I2C` + `SoftI2C`, `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem`
 - `pymcu.hal.eeprom` — `EEPROM`: write/read
 - `pymcu.hal.watchdog` — `Watchdog`: enable/disable/feed
-- `pymcu.hal.power` — sleep_idle / adc_noise / power_down / power_save / standby
+- `pymcu.hal.power` — `sleep_idle` / `sleep_adc_noise` / `sleep_power_down` / `sleep_power_save` / `sleep_standby` / `sleep_extended_standby`
 
 ### Drivers
 
 - `pymcu.drivers.dht11` — DHT11 temperature + humidity
 - `pymcu.drivers.ds18b20` — DS18B20 1-Wire precision temperature (12-bit)
-- `pymcu.drivers.lm35` — LM35 analog temperature (ADC)
-- `pymcu.drivers.hd44780` — HD44780 LCD (4-bit parallel)
+- `pymcu.drivers.lcd` — HD44780 LCD (4-bit parallel), class `LCD`
 - `pymcu.drivers.ssd1306` — SSD1306 OLED (I2C, 128×64)
-- `pymcu.drivers.max7219` — MAX7219 7-segment display (SPI)
+- `pymcu.drivers.max7219` — MAX7219 8×8 LED matrix (SPI)
 - `pymcu.drivers.bmp280` — BMP280 barometer (I2C)
 - `pymcu.drivers.neopixel` — WS2812 NeoPixel
 
@@ -174,7 +173,7 @@ fixes across the compiler and the AVR backend.
 
 - `pymcu.boards.arduino_uno` — D0–D13, A0–A5, LED_BUILTIN
 - `pymcu.boards.arduino_mega` — D0–D53, A0–A15, LED_BUILTIN
-- `pymcu.boards.arduino_leonardo` — D0–D13, A0–A5, LED_BUILTIN
+- `pymcu.boards.arduino_leonardo` — D0–D13, A0–A5, LED_BUILTIN (CLI board key for the 32U4 is `arduino_micro`)
 
 ### Toolchain
 

@@ -106,16 +106,16 @@ Pick the API that fits your background. Both compile to the same bare-metal firm
 # The exact same code that runs on a Pico under CircuitPython
 import board
 import digitalio
-from time import sleep_ms
+import time
 
 led = digitalio.DigitalInOut(board.LED)
 led.direction = digitalio.Direction.OUTPUT
 
 while True:
     led.value = True
-    sleep_ms(500)
+    time.sleep(0.5)
     led.value = False
-    sleep_ms(500)
+    time.sleep(0.5)
 ```
 
 ### MicroPython
@@ -185,16 +185,16 @@ frequency = 16000000
 # src/main.py
 import board
 import digitalio
-from time import sleep_ms
+import time
 
 led = digitalio.DigitalInOut(board.LED)
 led.direction = digitalio.Direction.OUTPUT
 
 while True:
     led.value = True
-    sleep_ms(500)
+    time.sleep(0.5)
     led.value = False
-    sleep_ms(500)
+    time.sleep(0.5)
 ```
 
 **MicroPython style** — add `pymcu-micropython` to dependencies:
@@ -275,9 +275,9 @@ direct register access not yet covered by the compat layers.
 | `pymcu.hal.i2c` | `I2C` + `SoftI2C` |
 | `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
 | `pymcu.hal.watchdog` | `Watchdog` — `enable` / `disable` / `feed` |
-| `pymcu.hal.power` | `sleep_idle` / `power_down` / `standby` |
+| `pymcu.hal.power` | `sleep_idle` / `sleep_adc_noise` / `sleep_power_down` / `sleep_power_save` / `sleep_standby` / `sleep_extended_standby` |
 
-Drivers: DHT11, DS18B20, LM35, HD44780 LCD, SSD1306 OLED, MAX7219, BMP280, WS2812 NeoPixel.
+Drivers: DHT11, DS18B20, HD44780 LCD, SSD1306 OLED, MAX7219 8x8 matrix, BMP280, WS2812 NeoPixel.
 
 ---
 
