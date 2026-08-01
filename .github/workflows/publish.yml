@@ -96,12 +96,41 @@ jobs:
           path: dist/*.whl
           retention-days: 15
 
+  # Pure-Python wheels for the packages that live in this repo alongside the
+  # compiler: pymcu-stdlib (lib/) and pymcu-sdk (extensions/pymcu-sdk/). One
+  # build on one platform covers everything (py3-none-any).
+  build-pure-wheels:
+    name: Build pure wheels (stdlib + sdk)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build pymcu-stdlib wheel
+        run: uv build --wheel --project lib -o dist
+
+      - name: Build pymcu-sdk wheel
+        run: uv build --wheel --project extensions/pymcu-sdk -o dist
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-pure
+          path: dist/*.whl
+          retention-days: 15
+
   # Runs on any release — stable (vX.Y.Z) or pre-release (e.g. v0.1.0a1).
   # The public alpha ships on real PyPI so `pip install --pre pymcu-compiler[avr]`
   # resolves the whole set; TestPyPI is reserved for manual dispatch smoke tests.
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-wheels]
+    needs: [check-tag, build-wheels, build-pure-wheels]
     if: needs.check-tag.outputs.is_stable == 'true' || needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: release
@@ -126,7 +155,7 @@ jobs:
   # longer fires on tags.
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-wheels]
+    needs: [check-tag, build-wheels, build-pure-wheels]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prerelease

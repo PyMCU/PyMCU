@@ -68,7 +68,9 @@ jobs:
           pip install --upgrade pip
           pip install pytest pytest-mock tomlkit rich typer questionary
           pip install ./extensions/pymcu-sdk
-          pip install ./extensions/pymcu-toolchain-pic
+          # External PIC backend: provides pymcu.toolchain.pic for the driver
+          # toolchain tests. --no-deps so the in-tree SDK above is not shadowed.
+          pip install --pre --no-deps pymcu-pic
 
       - name: Run driver tests
         run: pytest tests/driver/ -v --tb=short

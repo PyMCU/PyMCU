@@ -15,6 +15,12 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from rich.console import Console
+
+# The PIC toolchain now lives in the external pymcu-pic backend; these tests
+# exercise the driver's plugin machinery against it when it is installed.
+pymcu_toolchain_pic = pytest.importorskip(
+    "pymcu.toolchain.pic", reason="pymcu-pic (external backend) not installed"
+)
 from pymcu.toolchain.pic.gputils import GputilsToolchain
 from pymcu.toolchain.pic import PicToolchainPlugin
 from src.driver.toolchains import get_toolchain_for_chip, discover_plugins
