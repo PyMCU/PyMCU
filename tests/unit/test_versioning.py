@@ -76,10 +76,18 @@ class TestVersioningLogic(unittest.TestCase):
         args = mock_execv.call_args[0]
         self.assertEqual(args[0], "/fake/cwd/.venv/bin/pymcu")
 
-    @patch("sys.prefix", "/path/to/venv")
+    # sys.prefix is the project's own .venv, so _ensure_venv() must find nothing
+    # to switch to. Path.cwd/exists/is_dir are patched so the check runs against
+    # this fake project instead of whatever directory pytest was started from.
+    @patch("sys.prefix", "/path/to/project/.venv")
     @patch("sys.base_prefix", "/usr")
+    @patch("pathlib.Path.is_dir", return_value=True)
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("pathlib.Path.cwd", return_value=Path("/path/to/project"))
     @patch("os.execv")
-    def test_venv_switch_skipped_if_already_in_venv(self, mock_execv):
+    def test_venv_switch_skipped_if_already_in_venv(
+        self, mock_execv, mock_cwd, mock_exists, mock_is_dir
+    ):
         # Execute
         _ensure_venv()
 
@@ -94,7 +102,7 @@ class TestVersioningLogic(unittest.TestCase):
     def test_new_command_pins_version(self, mock_console, mock_prompt, mock_path, mock_open, mock_version):
         # Setup
         mock_version.return_value = "1.2.3"
-        mock_prompt.ask.side_effect = ["uv"]  # pkg_manager only (mcu passed as arg)
+        mock_prompt.ask.side_effect = ["uv"]  # unused: chip/freq/stdlib passed as args
 
         mock_proj_dir = MagicMock()
         mock_path.return_value = mock_proj_dir
@@ -105,8 +113,17 @@ class TestVersioningLogic(unittest.TestCase):
         mock_open.return_value.__enter__.return_value = mock_file_handle
 
         # Execute
+        # --chip selects advanced mode; freq/stdlib/pkg_manager are supplied so the
+        # scaffold runs straight through without any interactive prompt.
         try:
-            new("myproj", mcu="pic16f84a")
+            new(
+                "myproj",
+                chip="pic16f84a",
+                freq=4_000_000,
+                stdlib=[],
+                pkg_manager="uv",
+                no_git=True,
+            )
         except:
             pass
 
