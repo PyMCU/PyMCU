@@ -13,6 +13,7 @@
 #
 # Architecture mapping:
 #   avr      -- SEI / CLI  (I-flag in SREG bit 7)
+#   arm      -- CPSIE I / CPSID I  (PRIMASK on Cortex-M0+/M33)
 #   pic14    -- BSF/BCF INTCON, GIE  (INTCON = 0x0B, bit 7)
 #   pic14e   -- same as pic14
 #   pic18    -- BSF/BCF INTCON, GIE  (INTCON = 0xFF2, bit 7)
@@ -40,6 +41,7 @@ def enable_interrupts():
     """Enable the global interrupt flag for the current architecture.
 
     avr:    SEI  -- sets I-flag in SREG
+    arm:    CPSIE I -- clears PRIMASK on Cortex-M
     pic14/e: BSF INTCON, GIE  (INTCON bit 7)
     pic18:  BSF INTCON, GIE   (INTCON bit 7)
     riscv:  csrsi mstatus, 8  (sets MIE)
@@ -48,6 +50,10 @@ def enable_interrupts():
     match __CHIP__.arch:
         case "avr":
             asm("SEI")
+        case "arm":
+            # Cortex-M: CPSIE I clears PRIMASK, unmasking every configurable
+            # exception. Paired with the CPSID I in disable_interrupts().
+            asm("cpsie i")
         case "pic14" | "pic14e":
             intcon: ptr[uint8] = ptr(0x0B)
             intcon[7] = 1
@@ -65,6 +71,7 @@ def disable_interrupts():
     """Disable the global interrupt flag for the current architecture.
 
     avr:    CLI  -- clears I-flag in SREG
+    arm:    CPSID I -- sets PRIMASK on Cortex-M
     pic14/e: BCF INTCON, GIE  (INTCON bit 7)
     pic18:  BCF INTCON, GIE   (INTCON bit 7)
     riscv:  csrci mstatus, 8  (clears MIE)
@@ -73,6 +80,10 @@ def disable_interrupts():
     match __CHIP__.arch:
         case "avr":
             asm("CLI")
+        case "arm":
+            # Cortex-M: CPSID I sets PRIMASK, masking every configurable
+            # exception (NMI and HardFault stay enabled by design).
+            asm("cpsid i")
         case "pic14" | "pic14e":
             intcon: ptr[uint8] = ptr(0x0B)
             intcon[7] = 0
