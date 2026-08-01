@@ -10,6 +10,7 @@
 # they are only ever awaited, and the transform supplies the real wait code.
 from pymcu.types import uint32, ptr, inline
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 
 
 @inline
@@ -25,9 +26,10 @@ def ticks() -> uint32:
       ISR -- `pymcu build` injects that call when the sources contain an
       `async def`.  Timer0 is therefore reserved: do not also drive PWM from
       Timer0 in an async program.
-    Everything else (ATtiny, PIC, RISC-V): 0.  With a frozen counter the wait
-      condition `ticks() - start < duration` never clears, so an `await` on
-      those targets blocks forever.  They need a hardware time base first.
+    Everything else (ATtiny, PIC, RISC-V) has no time base at all.  A frozen
+      counter would leave the wait condition `ticks() - start < duration`
+      permanently unmet, so every await would block forever -- those targets
+      raise CompileError here instead of producing firmware that hangs.
     """
     if __CHIP__.name == "rp2040":
         t: ptr[uint32] = ptr(0x40054028)        # TIMER.TIMERAWL
@@ -36,11 +38,14 @@ def ticks() -> uint32:
         t2: ptr[uint32] = ptr(0x400B0028)       # TIMER0.TIMERAWL
         return t2.value
     elif __CHIP__.arch == "avr":
-        # Via hal.timer so the ATtiny variant (no millis hardware) resolves to
-        # its 0 stub instead of pulling in the ATmega Timer0 registers.
-        from pymcu.hal.timer import micros as _micros_avr
-        return _micros_avr()
-    return 0
+        if __CHIP__.name.startswith("attiny"):
+            raise CompileError("async needs a timebase; not available on attiny yet: millis/micros are ATmega-only, so every await would block forever. Use pymcu.time.delay_ms() instead.")
+        else:
+            # Via hal.timer, the same counter pymcu.time.micros() reads.
+            from pymcu.hal.timer import micros as _micros_avr
+            return _micros_avr()
+    else:
+        raise CompileError("async needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so every await would block forever. Use pymcu.time.delay_ms() instead.")
 
 
 def sleep(seconds: uint32):
