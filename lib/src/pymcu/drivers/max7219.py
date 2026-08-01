@@ -33,11 +33,15 @@ class MAX7219:
     @inline
     def _write_reg(self, reg: uint8, val: uint8):
         # Send one MAX7219 register write: CS low, addr byte, data byte, CS high.
-        # Routes to a real subroutine so the many register writes share one copy.
+        # The two transfers route to a real subroutine so the many register writes
+        # share one copy; CS is toggled here because only the SPI instance knows
+        # which pin it is (SPI(cs="PB0") vs the default SS on PB2).
         match __CHIP__.arch:
             case "avr":
                 from pymcu.drivers._max7219.spi import max7219_write_reg
+                self._spi.select()
                 max7219_write_reg(reg, val)
+                self._spi.deselect()
 
     @inline
     def init(self):
