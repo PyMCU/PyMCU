@@ -34,8 +34,8 @@ n:     int    = 0   # int16, no import needed
 
 ## Pointer type — `ptr[T]`
 
-`ptr[T]` maps a memory address to a typed register. Use it for memory-mapped I/O on AVR
-and PIC.
+`ptr[T]` maps a memory address to a typed register. Use it for memory-mapped I/O on
+every architecture (AVR, PIC, and the 32-bit MMIO blocks on RP2040 / RP2350).
 
 ```python
 from pymcu.types import ptr, uint8
@@ -43,12 +43,26 @@ from pymcu.types import ptr, uint8
 PORTB: ptr[uint8] = ptr(0x25)   # ATmega328P PORTB DATA register
 
 PORTB.value = 0xFF   # write whole register (OUT 0x05, r16 or STS)
+x: uint8 = PORTB.value          # read whole register (IN / LDS)
 PORTB[5] = 1         # set bit 5   (SBI 0x05, 5 in I/O range)
 bit: uint8 = PORTB[5]# read bit 5  (SBIS / IN)
 ```
 
+`.value` and `[bit]` are the **only two access forms**. A bare assignment
+(`PORTB = 0xFF`) would rebind the Python name instead of writing the register, so the
+compiler rejects it with an error that names both correct forms.
+
+Every `.value` / `[bit]` access is **volatile** in the compiled output: reads are never
+cached, writes are never elided or reordered by the optimizer. On ARM they lower to
+volatile LLVM loads and stores; on AVR and PIC each access is a discrete instruction.
+
 Bit-index access compiles to `SBI`/`CBI` in the I/O range (0x20–0x3F) or `LDS`/`STS` +
 mask outside it — no manual bit manipulation needed.
+
+The address may use constant arithmetic (`ptr(BASE + 0x40)`) or runtime operands
+(`ptr(BASE + 4 * n).value` — lowered to indirect loads/stores). Registers can be passed
+to functions (`def f(reg: ptr[uint8])`) and returned from compile-time selectors
+(`-> ptr[uint8]`); a bare register name in those positions contributes its **address**.
 
 ---
 

@@ -273,9 +273,18 @@ This means the following operations are **not supported**:
 | Operation | Example | Why it fails |
 |---|---|---|
 | Pointer advance | `p = p + 1` | `ptr` has no runtime address value |
-| Variable-index dereference | `p[i]` where `i` is a runtime variable | `ptr` address is baked in at compile time |
-| Pointer as function parameter | `def f(p: ptr[uint8])` | No `ptr` variable type in ABI |
+| Runtime **bit** index through a ptr variable | `p[i]` where `i` is a runtime variable | rejected with a clear error (constant-index bits and chip registers are fine) |
 | Pointer difference | `p - q` | Not in IR |
+| Bare assignment | `PORTB = 0xFF` | rebinds the name, never writes — the compiler rejects it; use `PORTB.value = 0xFF` |
+
+The following, previously listed here as unsupported, **do work**:
+
+- **`ptr` as a function parameter and return type** — `def f(reg: ptr[uint8])` and
+  compile-time selectors returning `-> ptr[uint8]` are used throughout the HAL; a bare
+  register name in those positions contributes its address.
+- **Runtime-offset dereference** — `ptr(BASE + off).value` with a runtime `off`
+  compiles to indirect loads/stores (register-base + runtime offset remains
+  unsupported).
 
 **Idiomatic alternative — fixed arrays with variable index:**
 
