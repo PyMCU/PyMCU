@@ -88,10 +88,11 @@ class SSD1306:
 
     @inline
     def print_str(self, x: uint8, y: uint8, s: str):
-        # Write ASCII text at pixel position (x, y) to the framebuffer.
-        # Writes the raw character codes into the buffer at the given page row.
-        # Page row = y / 8. Each character occupies one byte in the page row.
-        # For proper 5x7 font rendering, use write_char() after setting cursor.
+        # Write the raw character codes of `s` into the framebuffer starting at
+        # (x, y): one byte per character, at column x+i of page row y / 8.
+        # This is NOT text rendering -- each byte lands in GDDRAM as an 8-pixel
+        # column pattern, so what shows up is the bit pattern of the ASCII code,
+        # not a glyph. There is no font table in this driver yet.
         # for-in over const[str] is compile-time unrolled by the IR generator.
         page: uint8 = y >> 3
         col: uint8 = x

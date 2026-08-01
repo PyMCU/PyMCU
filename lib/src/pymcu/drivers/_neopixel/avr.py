@@ -14,6 +14,7 @@
 #
 # Port/bit dispatch (_ws2812_port_b / _ws2812_port_d) are @inline so
 # the compiler folds away all non-matching branches at compile time.
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline, ptr
 from pymcu.chips.atmega328p import PORTB, PORTD, DDRB, DDRD
 from pymcu.time import delay_us
@@ -60,7 +61,7 @@ def ws2812_init(pin: str):
             DDRD[7] = 1
             PORTD[7] = 0
         case _:
-            pass
+            raise CompileError("NeoPixel: unsupported data pin -- use PB0-PB5 or PD2-PD7")
 
 
 # Non-inline helper: send one byte (8 bits MSB-first) to PORTB bit `bit`.
@@ -209,7 +210,7 @@ def ws2812_write_byte(pin: str, val: uint8):
         case "PD7":
             _ws2812_d(7, val)
         case _:
-            pass
+            raise CompileError("NeoPixel: unsupported data pin -- use PB0-PB5 or PD2-PD7")
 
 
 # Non-inline function: sends one byte MSB-first to PORTB at the given bit index.
@@ -367,5 +368,5 @@ def ws2812_reset(pin: str):
         case "PD7":
             PORTD[7] = 0
         case _:
-            pass
+            raise CompileError("NeoPixel: unsupported data pin -- use PB0-PB5 or PD2-PD7")
     delay_us(55)

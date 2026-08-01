@@ -15,6 +15,7 @@
 # Full compensation requires fixed-point math not yet available.
 # I2C address: 0x76 (SDO=GND) or 0x77 (SDO=VCC).
 from pymcu.chips import __CHIP__
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline
 
 
@@ -31,6 +32,8 @@ class BMP280:
             case "avr":
                 from pymcu.drivers._bmp280.i2c import bmp280_init
                 bmp280_init(self._i2c, self._addr)
+            case _:
+                raise CompileError("BMP280 driver is AVR-only for now")
 
     @inline
     def read_temp_raw(self) -> uint16:
@@ -39,7 +42,7 @@ class BMP280:
                 from pymcu.drivers._bmp280.i2c import bmp280_read_temp_raw
                 return bmp280_read_temp_raw(self._i2c, self._addr)
             case _:
-                return 0
+                raise CompileError("BMP280 driver is AVR-only for now")
 
     @inline
     def read_press_raw(self) -> uint16:
@@ -48,4 +51,4 @@ class BMP280:
                 from pymcu.drivers._bmp280.i2c import bmp280_read_press_raw
                 return bmp280_read_press_raw(self._i2c, self._addr)
             case _:
-                return 0
+                raise CompileError("BMP280 driver is AVR-only for now")
