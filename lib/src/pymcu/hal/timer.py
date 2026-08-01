@@ -22,9 +22,9 @@ from pymcu.exceptions import CompileError
 if __CHIP__.arch == "avr":
     from pymcu.hal.avr.timer import Timer
     if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
-        from pymcu.hal.avr.timer.attiny85 import millis_init, millis
+        from pymcu.hal.avr.timer.attiny85 import millis_init, millis, micros
     else:
-        from pymcu.hal.avr.timer.atmega328p import millis_init, millis
+        from pymcu.hal.avr.timer.atmega328p import millis_init, millis, micros
 elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.timer import Timer
 elif __CHIP__.arch == "pic18":

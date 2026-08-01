@@ -14,13 +14,32 @@ from pymcu.chips import __CHIP__
 
 @inline
 def ticks() -> uint32:
-    """Free-running monotonic microsecond counter (hardware TIMER, 1 MHz)."""
+    """Free-running monotonic microsecond counter backing every await.
+
+    rp2040/rp2350: hardware TIMER (1 MHz), exact 1 us resolution.
+    avr (ATmega): Timer0 overflow counter combined with TCNT0 -- the same
+      counter pymcu.time.micros() reads.  Resolution is 4 us at 16 MHz /
+      prescaler 64 (each Timer0 tick is 4 us, each overflow 1024 us); the
+      counter wraps every ~71 minutes, which uint32 subtraction handles
+      correctly.  It only advances once millis_init() has armed the overflow
+      ISR -- `pymcu build` injects that call when the sources contain an
+      `async def`.  Timer0 is therefore reserved: do not also drive PWM from
+      Timer0 in an async program.
+    Everything else (ATtiny, PIC, RISC-V): 0.  With a frozen counter the wait
+      condition `ticks() - start < duration` never clears, so an `await` on
+      those targets blocks forever.  They need a hardware time base first.
+    """
     if __CHIP__.name == "rp2040":
         t: ptr[uint32] = ptr(0x40054028)        # TIMER.TIMERAWL
         return t.value
     elif __CHIP__.name == "rp2350":
         t2: ptr[uint32] = ptr(0x400B0028)       # TIMER0.TIMERAWL
         return t2.value
+    elif __CHIP__.arch == "avr":
+        # Via hal.timer so the ATtiny variant (no millis hardware) resolves to
+        # its 0 stub instead of pulling in the ATmega Timer0 registers.
+        from pymcu.hal.timer import micros as _micros_avr
+        return _micros_avr()
     return 0
 
 

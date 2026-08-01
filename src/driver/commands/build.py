@@ -164,6 +164,7 @@ _PRINT_RE    = re.compile(r'\bprint\s*\(')
 _UART_RE     = re.compile(r'\bUART\s*\(')
 _TICKS_MS_RE = re.compile(r'\bticks_ms\s*\(')
 _INPUT_RE    = re.compile(r'\binput\s*\(')
+_ASYNC_DEF_RE = re.compile(r'^\s*async\s+def\s', re.MULTILINE)
 
 
 def _detect_print_usage(sources_dir: Path) -> tuple[bool, bool, bool]:
@@ -239,6 +240,24 @@ def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
         try:
             text = py_file.read_text(encoding="utf-8", errors="ignore")
             if _TICKS_MS_RE.search(text):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _detect_async_def_usage(sources_dir: Path) -> bool:
+    """Return True if any .py file in sources_dir defines an `async def`.
+
+    On AVR the await machinery reads asyncio.ticks(), which is the Timer0
+    millis/micros counter -- it only advances once millis_init() has armed the
+    overflow ISR, so an async program needs the same preamble as ticks_ms().
+    """
+    for py_file in sources_dir.rglob("*.py"):
+        try:
+            lines = py_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+            code = "\n".join(line.split("#")[0] for line in lines)
+            if _ASYNC_DEF_RE.search(code):
                 return True
         except OSError:
             pass
@@ -354,21 +373,23 @@ def _inject_print_imports_only(entry_point: Path, generated_dir: Path) -> tuple[
     )
 
 
-def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path) -> tuple[Path, int]:
+def _inject_ticks_ms_preamble(entry_point: Path, generated_dir: Path,
+                              reason: str = "ticks_ms()") -> tuple[Path, int]:
     """Return a synthetic entry file with a millis_init() preamble prepended.
 
-    Called when ticks_ms() is detected in user sources and no explicit
-    millis_init() call is present.  Mirrors the print() / UART preamble
-    injection pattern: the build driver owns the setup, user code stays clean.
+    Called when ticks_ms() -- or, on AVR, an `async def` -- is detected in user
+    sources and no explicit millis_init() call is present.  Mirrors the print()
+    / UART preamble injection pattern: the build driver owns the setup, user
+    code stays clean.
 
     Note: millis_init() configures Timer0 in normal overflow mode at prescaler
     64 (~1 ms resolution at 16 MHz).  Do not use Timer0 for PWM or CTC in the
-    same project when ticks_ms() is active.
+    same project when the millis counter is active.
     """
     return _inject_preamble(
         entry_point,
         generated_dir,
-        comment="# Auto-injected by pymcu build: millis timer initialized for ticks_ms()\n",
+        comment=f"# Auto-injected by pymcu build: millis timer initialized for {reason}\n",
         import_line="from pymcu.hal.timer import millis_init as _pymcu_millis_init\n",
         call_line="_pymcu_millis_init()",
     )
@@ -698,21 +719,30 @@ def build(
             _diag_log("f-string value assignment detected — injecting pymcu.strfmt import",
                       verbose=is_verbose)
 
-        # Auto-inject millis_init() preamble when ticks_ms() is used.
-        # millis_init() must run before any ticks_ms() call; injecting it here
-        # mirrors how UART is set up for print().
+        # Auto-inject millis_init() preamble when ticks_ms() is used, or when an
+        # ATmega program uses async/await (asyncio.ticks() is the same Timer0
+        # micros counter and reads a frozen 0 until the overflow ISR is armed).
+        # millis_init() must run before the first read; injecting it here mirrors
+        # how UART is set up for print().  Skipped when the sources already call
+        # millis_init() themselves -- registering the OVF vector twice is an error.
+        _millis_reason = ""
         if _detect_ticks_ms_usage(sources_dir):
-            entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir)
+            _millis_reason = "ticks_ms()"
+        elif target.lower().startswith("atmega") and _detect_async_def_usage(sources_dir):
+            _millis_reason = "async def (asyncio.ticks)"
+        if _millis_reason and not _sources_contain(sources_dir, "millis_init"):
+            entry_point, _n = _inject_ticks_ms_preamble(entry_point, generated_dir, _millis_reason)
             _linemap_preamble_offset += _n
             if str(generated_dir) not in extra_includes:
                 extra_includes.insert(0, str(generated_dir))
             _diag_log(
-                "ticks_ms() detected — injecting millis_init() preamble (Timer0 OVF @ prescaler 64)",
+                f"{_millis_reason} detected — injecting millis_init() preamble "
+                "(Timer0 OVF @ prescaler 64)",
                 verbose=is_verbose,
             )
             if is_verbose:
                 console.print(
-                    "[debug] ticks_ms() detected — millis_init() preamble injected",
+                    f"[debug] {_millis_reason} detected — millis_init() preamble injected",
                     style="dim",
                 )
 

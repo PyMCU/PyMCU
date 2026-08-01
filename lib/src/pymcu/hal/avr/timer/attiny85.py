@@ -167,9 +167,19 @@ def timer1_irq_compa_setup(handler: Callable):
     SREG[7] = 1     # SEI
     compile_isr(handler, 0x0006)   # Timer1 COMPA: word 0x0003, byte 0x0006
 
-# millis not supported on ATtiny85 -- no-op stubs so avr/timer.py can export them
+# millis not supported on ATtiny85 -- no-op stubs so avr/timer.py can export them.
+# micros() backs asyncio.ticks(); 0 means "no time base", so an await never
+# completes on this part (see pymcu/asyncio.py).
 @inline
-def millis_init(): pass
+def millis_init():
+    pass
+
 
 @inline
-def millis() -> uint32: return 0
+def millis() -> uint32:
+    return 0
+
+
+@inline
+def micros() -> uint32:
+    return 0
