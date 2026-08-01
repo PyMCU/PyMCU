@@ -70,45 +70,7 @@ public static class Optimizer
 
         // Dead Function Elimination (DFE): remove functions that are never reachable
         // from main or any ISR.
-        var callGraph = new Dictionary<string, HashSet<string>>();
-        foreach (var func in optimized.Functions)
-        {
-            var callees = new HashSet<string>();
-            foreach (var instr in func.Body)
-            {
-                if (instr is Call call) callees.Add(call.FunctionName);
-                // Also treat FunctionRef values as call-graph edges so that
-                // functions captured as Callable pointers survive DFE.
-                RegisterUses(instr, val =>
-                {
-                    if (val is FunctionRef fref) callees.Add(fref.FunctionName);
-                });
-            }
-
-            callGraph[func.Name] = callees;
-        }
-
-        var reachable = new HashSet<string>();
-        var worklist = new Queue<string>();
-
-        Enqueue("main");
-        foreach (var func in optimized.Functions.Where(func => func.IsInterrupt))
-        {
-            Enqueue(func.Name);
-        }
-        // @export_c functions are roots: they may have no Python caller (reached only
-        // from inline asm, e.g. an RTOS `asm("bl scheduler")`), but must survive DFE.
-        foreach (var func in optimized.Functions.Where(func => func.IsExportC))
-        {
-            Enqueue(func.Name);
-        }
-
-        while (worklist.Count > 0)
-        {
-            var cur = worklist.Dequeue();
-            if (!callGraph.TryGetValue(cur, out var callees)) continue;
-            foreach (var callee in callees) Enqueue(callee);
-        }
+        var reachable = ComputeReachableFunctions(optimized);
 
         // Prune functions unreachable from main / any ISR. Only do this when a "main"
         // root exists, so passes that optimize a function in isolation (no entry point)
@@ -242,12 +204,45 @@ public static class Optimizer
         optimized.IsrSharedGlobals = isrShared.Where(survivingGlobals.Contains).OrderBy(n => n, StringComparer.Ordinal).ToList();
 
         return optimized;
+    }
 
+    // Functions reachable from main, any ISR, or any @export_c entry point.
+    // Edges come from Call and from FunctionRef uses, so a function captured as a
+    // Callable pointer counts as reached.
+    private static HashSet<string> ComputeReachableFunctions(ProgramIR program)
+    {
+        var callGraph = new Dictionary<string, HashSet<string>>();
+        foreach (var func in program.Functions)
+        {
+            var callees = new HashSet<string>();
+            foreach (var instr in func.Body)
+            {
+                if (instr is Call call) callees.Add(call.FunctionName);
+                RegisterUses(instr, val =>
+                {
+                    if (val is FunctionRef fref) callees.Add(fref.FunctionName);
+                });
+            }
+            callGraph[func.Name] = callees;
+        }
 
+        var reachable = new HashSet<string>();
+        var worklist = new Queue<string>();
         void Enqueue(string name)
         {
             if (reachable.Add(name)) worklist.Enqueue(name);
         }
+
+        Enqueue("main");
+        foreach (var func in program.Functions.Where(f => f.IsInterrupt || f.IsExportC))
+            Enqueue(func.Name);
+
+        while (worklist.Count > 0)
+        {
+            if (!callGraph.TryGetValue(worklist.Dequeue(), out var callees)) continue;
+            foreach (var callee in callees) Enqueue(callee);
+        }
+        return reachable;
     }
 
 // Detects a synchronous-call cycle (direct or mutual recursion) in the call graph.
@@ -2266,20 +2261,39 @@ private static Function CloneFunction(Function f)
     //
     //  The frontend brackets each @inline expansion with a marker whose FuncName
     //  carries InlineMarkerTag.  For each *innermost* tagged region this pass:
-    //    1. canonicalises it (drops debug/labels, runs region-local dead-store
-    //       elimination, alpha-renames region-internal variables) so two
-    //       expansions of the same method become byte-identical modulo constants;
+    //    1. canonicalises it (drops debug lines and unreferenced labels, runs
+    //       region-local dead-store elimination, alpha-renames region-internal
+    //       variables and labels) so two expansions of the same method become
+    //       byte-identical modulo constants;
     //    2. groups structurally-identical regions and turns the constants that
     //       vary across the group into parameters (invariant ones stay baked);
     //    3. synthesises a void subroutine and rewrites each region to a Call.
     //  It iterates to a fixpoint so that collapsing an inner expansion can expose
     //  an outer one, then strips every remaining tagged marker.
     //
+    //  Region-internal control flow is allowed as long as the region is
+    //  single-entry / single-exit: every jump inside it targets a label inside it,
+    //  and no label inside it is targeted from outside.  Liveness is then computed
+    //  over the region's CFG (not textually), so a value defined on one branch and
+    //  read on another is classified correctly.
+    //
     //  Contracts:
-    //   * Conservative — anything it cannot prove safe (control flow, InlineAsm
-    //     timing, memory-aliasing loads/stores, GC, exceptions, non-global live-in,
+    //   * Conservative — anything it cannot prove safe (control flow that leaves or
+    //     re-enters the region, non-empty loop bodies, InlineAsm timing,
+    //     memory-aliasing loads/stores, GC, error signalling, non-global live-in,
     //     any live-out, >4 varying constants, or a net size increase) is left
     //     exactly as the inliner produced it.
+    //   * Cycle-preserving — the region's instruction sequence is moved verbatim,
+    //     so a loop kept inside a subroutine still costs the same per iteration.
+    //     Only loops with an *empty* body (hardware-ready polling) are accepted:
+    //     a loop that does work per iteration is calibrated timing (bit-banged
+    //     protocols, pulse counting) and the fixed CALL/RET added around it is not
+    //     provably harmless, so such regions are rejected.
+    //   * Error-model-safe — a region that can signal an error (SignalError, or a
+    //     BranchOnError left by a call into a CanFail function) is rejected: the
+    //     T-flag protocol aborts the *enclosing function*, and moving the raise
+    //     into a subroutine would only abort the subroutine and then resume the
+    //     caller's happy path.
     //   * Idempotent — afterwards no tagged markers remain, so re-running is a
     //     no-op.
     //   * Target-independent — emits only standard Function/Call IR; no backend
@@ -2291,9 +2305,12 @@ private static Function CloneFunction(Function f)
         i is InlineExpansionMarker m &&
         m.FuncName.StartsWith(InlineMarkerTag, StringComparison.Ordinal);
 
-    // Only side-effect-free arithmetic plus Call may be moved into a subroutine.
+    // Side-effect-free arithmetic, Call, and region-internal control flow may be
+    // moved into a subroutine. Everything else (asm, GC, error signalling,
+    // pointer/array indirection, Return) disqualifies the region.
     private static bool IsOutlineable(Instruction i) =>
-        i is Copy or Binary or Unary or Bitcast or Call;
+        i is Copy or Binary or Unary or Bitcast or Call ||
+        i is Label || JumpTargetOf(i) != null;
 
     private static string? NameOf(Val? v) => v switch
     {
@@ -2326,6 +2343,7 @@ private static Function CloneFunction(Function f)
         public required string Callee;
         public required List<Instruction> Core;          // post-DCE region body
         public required Dictionary<string, int> Rename;  // local name -> canonical id
+        public required Dictionary<string, int> LabelRename;  // label name -> canonical id
         public required HashSet<string> Inputs;          // names that are live-in locals
         public required List<Val> InputVals;             // live-in vals, canonical order
         public required string Signature;                // constants blanked
@@ -2336,6 +2354,13 @@ private static Function CloneFunction(Function f)
     private static void OutlineInlineExpansions(ProgramIR program, HashSet<string> globalNames)
     {
         int counter = 0;
+        // Sites inside functions that DFE is about to drop must not be counted:
+        // a group that looks shared across eight dead call sites and one live one
+        // would pay for a subroutine nobody but that single site calls. The live
+        // set does not change here (the synthesised subroutines carry no markers).
+        var live = program.Functions.Any(f => f.Name == "main")
+            ? ComputeReachableFunctions(program)
+            : null;
         // Fixpoint. Each step either outlines a viable group (rewriting its sites
         // to Calls) or, when no group is viable, "promotes" the current innermost
         // regions by dropping their boundary markers — which de-nests them and
@@ -2345,7 +2370,7 @@ private static Function CloneFunction(Function f)
         int budget = 100000;
         while (budget-- > 0)
         {
-            if (OutlineOneRound(program, globalNames, ref counter)) continue;
+            if (OutlineOneRound(program, globalNames, live, ref counter)) continue;
             if (PromoteInnermostRegions(program)) continue;
             break;
         }
@@ -2357,28 +2382,34 @@ private static Function CloneFunction(Function f)
             func.Body.RemoveAll(IsInlineTag);
     }
 
-    private static bool OutlineOneRound(ProgramIR program, HashSet<string> globalNames, ref int counter)
+    private static bool OutlineOneRound(
+        ProgramIR program, HashSet<string> globalNames, HashSet<string>? live, ref int counter)
     {
-        // Every jump target in the program, so a region-internal label that some
-        // jump relies on is never dropped.
-        var jumpTargets = new HashSet<string>();
+        // How often each label is jumped to program-wide, so a region can tell its
+        // own internal edges from an edge that crosses its boundary.
+        var jumpTargetCounts = new Dictionary<string, int>();
         foreach (var func in program.Functions)
             foreach (var instr in func.Body)
-                if (JumpTargetOf(instr) is string t) jumpTargets.Add(t);
+                if (JumpTargetOf(instr) is string t)
+                    jumpTargetCounts[t] = jumpTargetCounts.GetValueOrDefault(t) + 1;
 
         var paramTypeMemo = new Dictionary<string, List<DataType>>();
+        var livenessMemo = new Dictionary<Function, List<HashSet<string>>?>();
         var groups = new Dictionary<string, List<RegionCanon>>();
         foreach (var func in program.Functions)
+        {
+            if (live != null && !live.Contains(func.Name)) continue;
             foreach (var (start, end, callee) in FindInnermostTaggedRegions(func))
             {
                 var canon = TryCanonicalizeRegion(program, func, start, end, callee,
-                    globalNames, jumpTargets, paramTypeMemo);
+                    globalNames, jumpTargetCounts, paramTypeMemo, livenessMemo);
                 if (canon == null) continue;
                 string key = callee + "" + canon.Signature;
                 if (!groups.TryGetValue(key, out var list))
                     groups[key] = list = new List<RegionCanon>();
                 list.Add(canon);
             }
+        }
 
         foreach (var kv in groups)
             if (kv.Value.Count >= 2 && TryOutlineGroup(program, kv.Value, ref counter))
@@ -2439,56 +2470,72 @@ private static Function CloneFunction(Function f)
 
     private static RegionCanon? TryCanonicalizeRegion(
         ProgramIR program, Function func, int start, int end, string callee,
-        HashSet<string> globalNames, HashSet<string> jumpTargets,
-        Dictionary<string, List<DataType>> paramTypeMemo)
+        HashSet<string> globalNames, Dictionary<string, int> jumpTargetCounts,
+        Dictionary<string, List<DataType>> paramTypeMemo,
+        Dictionary<Function, List<HashSet<string>>?> livenessMemo)
     {
         var body = func.Body;
         var raw = new List<Instruction>();
-        var droppedLabels = new List<string>();
         for (int i = start + 1; i < end; i++)
         {
             switch (body[i])
             {
                 case DebugLine: continue;
-                case Label lab: droppedLabels.Add(lab.Name); continue;
                 case InlineExpansionMarker: return null;
                 default:
                     if (!IsOutlineable(body[i])) return null;
                     if (RegionHasUnsupportedVal(body[i])) return null;
+                    // The T-flag error model aborts the *enclosing function*: a
+                    // raise reached from inside a subroutine would unwind only the
+                    // subroutine and resume the caller's happy path.
+                    if (body[i] is Call c && CanFail(program, c.FunctionName)) return null;
                     raw.Add(body[i]);
                     break;
             }
         }
         if (raw.Count == 0) return null;
-        foreach (var l in droppedLabels)
-            if (jumpTargets.Contains(l)) return null;
 
-        // Live-in / closed-region classification (on the pre-DCE body).
-        // A local read before it is defined in the region is a *live-in input*:
-        // it becomes a parameter and is passed by value at each call site. A
-        // local defined in the region whose value is read after the region is a
-        // live-out — the region is not closed, so we bail.
+        // Single entry, single exit. Every jump in the region must land on a label
+        // in the region, and no jump outside it may land on one of those labels —
+        // otherwise moving the code into a subroutine would break a control-flow
+        // edge that crosses the boundary.
+        var labelsInside = new HashSet<string>();
+        foreach (var ins in raw)
+            if (ins is Label lab && !labelsInside.Add(lab.Name)) return null;   // duplicate
+        var targetedInside = new Dictionary<string, int>();
+        foreach (var ins in raw)
+            if (JumpTargetOf(ins) is string t)
+            {
+                if (!labelsInside.Contains(t)) return null;                     // jump leaves
+                targetedInside[t] = targetedInside.GetValueOrDefault(t) + 1;
+            }
+        foreach (var l in labelsInside)
+            if (jumpTargetCounts.GetValueOrDefault(l) > targetedInside.GetValueOrDefault(l))
+                return null;
+        // Labels nothing jumps to carry no meaning; dropping them keeps the
+        // canonical form of a straight-line region what it was before.
+        raw.RemoveAll(ins => ins is Label l && !targetedInside.ContainsKey(l.Name));
+        if (raw.Count == 0) return null;
+
+        if (!LoopBodiesAreEmpty(raw)) return null;
+
+        // Live-in / closed-region classification over the region's CFG.
+        // A local live on entry is an *input*: it becomes a parameter passed by
+        // value at each call site. A local defined in the region whose value is
+        // read after the region is a live-out — the region is not closed, so we
+        // bail. Globals flow in and out by name and are referenced directly.
         var defined = new HashSet<string>();
-        var liveIn = new HashSet<string>();
+        foreach (var ins in raw)
+            if (NameOf(GetDst(ins)) is string d) defined.Add(d);
         var liveInVal = new Dictionary<string, Val>();
         foreach (var ins in raw)
-        {
-            RegisterUses(ins, v =>
-            {
-                if (NameOf(v) is string n && !defined.Contains(n) && !liveIn.Contains(n))
-                {
-                    liveIn.Add(n);
-                    liveInVal[n] = v;
-                }
-            });
-            if (NameOf(GetDst(ins)) is string d) defined.Add(d);
-        }
-        // Globals flow in/out by name; only *locals* may be inputs or escape.
+            RegisterUses(ins, v => { if (NameOf(v) is string n) liveInVal.TryAdd(n, v); });
+
         var inputs = new HashSet<string>();
-        foreach (var n in liveIn)
+        foreach (var n in Liveness(raw)[0])
         {
             if (globalNames.Contains(n)) continue;     // read-only global, referenced directly
-            if (defined.Contains(n)) return null;  // mixed role
+            if (defined.Contains(n)) return null;      // mixed role
             inputs.Add(n);
         }
         // A region def escapes only if some path after the region reads it before
@@ -2496,10 +2543,12 @@ private static Function CloneFunction(Function f)
         // sibling expansions, so a plain "read anywhere outside" test gives false
         // positives — the next expansion rewrites the name before reading it. Walk
         // forward from the region end and decide per name.
+        var after = FunctionLiveness(func, livenessMemo);
         foreach (var d in defined)
         {
             if (globalNames.Contains(d)) return null;
-            if (IsLiveAfter(body, end, d)) return null;
+            bool escapes = after != null ? after[end + 1].Contains(d) : IsLiveAfter(body, end, d);
+            if (escapes) return null;
         }
 
         // Region-local dead-store elimination (removes folded-but-unused copies
@@ -2508,18 +2557,19 @@ private static Function CloneFunction(Function f)
         for (bool removed = true; removed;)
         {
             removed = false;
-            var readsAfter = new HashSet<string>();
-            for (int i = core.Count - 1; i >= 0; i--)
+            var live = Liveness(core);
+            var labelAt = LabelIndex(core);
+            for (int i = 0; i < core.Count; i++)
             {
-                var ins = core[i];
-                bool pure = ins is Copy or Binary or Unary or Bitcast;
-                if (pure && NameOf(GetDst(ins)) is string dn && !readsAfter.Contains(dn))
-                {
-                    core.RemoveAt(i);
-                    removed = true;
-                    break;
-                }
-                RegisterUses(ins, v => { if (NameOf(v) is string n) readsAfter.Add(n); });
+                if (core[i] is not (Copy or Binary or Unary or Bitcast)) continue;
+                if (NameOf(GetDst(core[i])) is not string dn) continue;
+                bool liveOut = false;
+                foreach (int s in Successors(core, labelAt, i))
+                    if (live[s].Contains(dn)) { liveOut = true; break; }
+                if (liveOut) continue;
+                core.RemoveAt(i);
+                removed = true;
+                break;
             }
         }
         if (core.Count == 0) return null;
@@ -2539,6 +2589,14 @@ private static Function CloneFunction(Function f)
             RegisterUses(ins, See);
             See(GetDst(ins));
         }
+        // Same for labels, so two copies of the same expansion — whose labels the
+        // inliner numbered differently — canonicalise to the same signature.
+        var labelRename = new Dictionary<string, int>();
+        foreach (var ins in core)
+        {
+            string? l = ins is Label lb ? lb.Name : JumpTargetOf(ins);
+            if (l != null && !labelRename.ContainsKey(l)) labelRename[l] = labelRename.Count;
+        }
 
         // An input whose only uses were dead-store-eliminated no longer appears;
         // keep only inputs that survive in the canonical body.
@@ -2551,14 +2609,110 @@ private static Function CloneFunction(Function f)
         var holeVals = new List<long>();
         var holeTypes = new List<DataType>();
         foreach (var ins in core)
-            EmitCanon(program, ins, rename, inputs, sig, holeVals, holeTypes, paramTypeMemo);
+            EmitCanon(program, ins, rename, labelRename, inputs, sig, holeVals, holeTypes, paramTypeMemo);
 
         return new RegionCanon
         {
             Func = func, Start = start, End = end, Callee = callee,
-            Core = core, Rename = rename, Inputs = inputs, InputVals = inputVals,
+            Core = core, Rename = rename, LabelRename = labelRename,
+            Inputs = inputs, InputVals = inputVals,
             Signature = sig.ToString(), HoleValues = holeVals, HoleTypes = holeTypes,
         };
+    }
+
+    private static bool CanFail(ProgramIR program, string funcName) =>
+        program.Functions.FirstOrDefault(f => f.Name == funcName)?.CanFail ?? false;
+
+    private static Dictionary<string, int> LabelIndex(List<Instruction> code)
+    {
+        var map = new Dictionary<string, int>();
+        for (int i = 0; i < code.Count; i++)
+            if (code[i] is Label l) map[l.Name] = i;
+        return map;
+    }
+
+    // CFG successors of instruction i, as indices into `code`. An index equal to
+    // code.Count is the fall-through exit. Error-model edges (a local catch label,
+    // a BranchOnError handler) are added *on top of* the fall-through rather than
+    // replacing it, so the liveness built on this is never an underestimate.
+    private static IEnumerable<int> Successors(
+        List<Instruction> code, Dictionary<string, int> labelAt, int i)
+    {
+        switch (code[i])
+        {
+            case Return: yield break;
+            case Jump j: yield return labelAt[j.Target]; yield break;
+            case SignalError { CatchLabel: string cl } when labelAt.ContainsKey(cl):
+                yield return labelAt[cl];
+                break;
+            case BranchOnError b when labelAt.ContainsKey(b.ErrorLabel):
+                yield return labelAt[b.ErrorLabel];
+                break;
+            default:
+                if (JumpTargetOf(code[i]) is string t) yield return labelAt[t];
+                break;
+        }
+        yield return i + 1;
+    }
+
+    // Backward liveness over a CFG. Entry [i] holds the set of names live *before*
+    // instruction i; index code.Count is the exit, where nothing is live. Computed
+    // to a fixpoint so back-edges are handled.
+    private static List<HashSet<string>> Liveness(List<Instruction> code)
+    {
+        var labelAt = LabelIndex(code);
+        int n = code.Count;
+        var live = new List<HashSet<string>>(n + 1);
+        for (int i = 0; i <= n; i++) live.Add(new HashSet<string>());
+        for (bool changed = true; changed;)
+        {
+            changed = false;
+            for (int i = n - 1; i >= 0; i--)
+            {
+                var set = new HashSet<string>();
+                foreach (int s in Successors(code, labelAt, i)) set.UnionWith(live[s]);
+                if (NameOf(GetDst(code[i])) is string d) set.Remove(d);
+                RegisterUses(code[i], v => { if (NameOf(v) is string u) set.Add(u); });
+                if (set.SetEquals(live[i])) continue;
+                live[i] = set;
+                changed = true;
+            }
+        }
+        return live;
+    }
+
+    // In this codebase @inline also means "do not change my cycle count": a loop
+    // that does work per iteration is calibrated timing (bit-banged protocols,
+    // pulse counting). Outlining preserves the per-iteration cost but adds a fixed
+    // CALL/RET, which is not provably harmless there, so only loops whose body is
+    // empty — a bare "wait until the hardware is ready" poll — are accepted.
+    private static bool LoopBodiesAreEmpty(List<Instruction> code)
+    {
+        var labelAt = LabelIndex(code);
+        for (int i = 0; i < code.Count; i++)
+        {
+            if (JumpTargetOf(code[i]) is not string t) continue;
+            int back = labelAt[t];
+            if (back >= i) continue;                       // forward jump: not a loop
+            for (int k = back; k <= i; k++)
+                if (code[k] is not Label && JumpTargetOf(code[k]) == null) return false;
+        }
+        return true;
+    }
+
+    // Liveness for a whole function body, or null when its CFG cannot be resolved
+    // (a jump to a label defined elsewhere) and callers must fall back to the
+    // textual walk. Cached per outlining round: a round inspects every region
+    // before it rewrites anything, so the bodies do not move underneath it.
+    private static List<HashSet<string>>? FunctionLiveness(
+        Function func, Dictionary<Function, List<HashSet<string>>?> memo)
+    {
+        if (memo.TryGetValue(func, out var cached)) return cached;
+        var labelAt = LabelIndex(func.Body);
+        foreach (var ins in func.Body)
+            if (JumpTargetOf(ins) is string t && !labelAt.ContainsKey(t))
+                return memo[func] = null;
+        return memo[func] = Liveness(func.Body);
     }
 
     // True if `name` may be read after `endIdx` before being redefined. A straight
@@ -2594,7 +2748,8 @@ private static Function CloneFunction(Function f)
     // Serialise one instruction with constants blanked to '#'.  EmitCanon and
     // RebuildOutlined MUST visit constant-bearing slots in the SAME order.
     private static void EmitCanon(
-        ProgramIR program, Instruction ins, Dictionary<string, int> rename, HashSet<string> inputs,
+        ProgramIR program, Instruction ins, Dictionary<string, int> rename,
+        Dictionary<string, int> labelRename, HashSet<string> inputs,
         StringBuilder sig, List<long> holeVals, List<DataType> holeTypes,
         Dictionary<string, List<DataType>> paramTypeMemo)
     {
@@ -2602,6 +2757,32 @@ private static Function CloneFunction(Function f)
         {
             if (v is Constant c) { sig.Append('#'); holeVals.Add(c.Value); holeTypes.Add(ctx); }
             else sig.Append(CanonTok(v, rename, inputs));
+        }
+
+        // Control flow is matched structurally, never parameterised: a jump
+        // operand stays a literal in the signature, so two regions only group
+        // when they branch on the same constants.
+        if (ins is Label or Jump || JumpTargetOf(ins) != null)
+        {
+            void Cmp(Val v) =>
+                sig.Append(v is Constant k ? "k" + k.Value : CanonTok(v, rename, inputs)).Append(',');
+            switch (ins)
+            {
+                case Label l: sig.Append("L").Append(labelRename[l.Name]).Append(":;"); return;
+                case Jump: break;
+                case JumpIfZero j: sig.Append("jz,"); Cmp(j.Condition); break;
+                case JumpIfNotZero j: sig.Append("jnz,"); Cmp(j.Condition); break;
+                case JumpIfEqual j: sig.Append("jeq,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfNotEqual j: sig.Append("jne,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfLessThan j: sig.Append("jlt,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfLessOrEqual j: sig.Append("jle,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfGreaterThan j: sig.Append("jgt,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfGreaterOrEqual j: sig.Append("jge,"); Cmp(j.Src1); Cmp(j.Src2); break;
+                case JumpIfBitSet j: sig.Append("jbs,"); Cmp(j.Source); sig.Append(j.Bit).Append(','); break;
+                case JumpIfBitClear j: sig.Append("jbc,"); Cmp(j.Source); sig.Append(j.Bit).Append(','); break;
+            }
+            sig.Append("->L").Append(labelRename[JumpTargetOf(ins)!]).Append(';');
+            return;
         }
 
         sig.Append(CanonTok(GetDst(ins), rename, inputs)).Append('=');
@@ -2665,12 +2846,19 @@ private static Function CloneFunction(Function f)
         return idx < types.Count ? types[idx] : DataType.UNKNOWN;
     }
 
-    // Target-agnostic word-cost proxy for the size guard.
-    private static int InstrCost(Instruction i) => i switch
+    // Target-agnostic word-cost proxy for the size guard. A call is a long
+    // (2-word) instruction plus one setup instruction per argument, and every
+    // absolute-address memory operand costs an extra word (LDS/STS on AVR, a
+    // literal address elsewhere) — without that the guard badly underestimates
+    // MMIO-heavy driver code and refuses profitable groups.
+    private static int InstrCost(Instruction i)
     {
-        Call c => 1 + c.Args.Count,
-        _ => 1,
-    };
+        if (i is Label) return 0;
+        int words = i is Call c ? 2 + c.Args.Count : 1;
+        if (GetDst(i) is MemoryAddress) words++;
+        RegisterUses(i, v => { if (v is MemoryAddress) words++; });
+        return words;
+    }
 
     private static bool TryOutlineGroup(ProgramIR program, List<RegionCanon> regions, ref int counter)
     {
@@ -2690,17 +2878,19 @@ private static Function CloneFunction(Function f)
         var inputNames = r0.InputVals.Select(NameOf).ToList();
         int nInputs = inputNames.Count;
         int nParams = nInputs + variant.Count;
-        if (nParams is 0 or > 4) return false;                // nothing to share / arg limit
+        // nParams == 0 is the ideal case (byte-identical copies), not a failure.
+        if (nParams > 4) return false;                        // argument limit
 
         int nSites = regions.Count;
         if (r0.Core.Count < 2) return false;
         // Net size proof.  Cost is a target-agnostic word proxy: a Call costs
-        // 1 + argc (load each argument, then the call), every other instruction 1.
+        // 2 + argc (load each argument, then a long call), every other
+        // instruction 1, a Label 0.
         //   inline  = nSites * bodyCost
-        //   outline = bodyCost + 1 (ret) + nSites * (nParams + 1 call)
+        //   outline = bodyCost + 1 (ret) + nParams (prologue) + nSites * call
         long bodyCost = r0.Core.Sum(InstrCost);
         long inlineTotal = (long)nSites * bodyCost;
-        long outlineTotal = bodyCost + 1 + (long)nSites * (nParams + 1);
+        long outlineTotal = bodyCost + 1 + nParams + (long)nSites * (nParams + 2);
         if (outlineTotal >= inlineTotal) return false;
 
         // Parameter types.  Inputs take their val's type; varying constants take
@@ -2734,7 +2924,8 @@ private static Function CloneFunction(Function f)
         var variantSet = new HashSet<int>(variant);
         int ctr = 0;
         foreach (var ins in r0.Core)
-            g.Body.Add(RebuildOutlined(ins, gName, r0.Rename, inputParamIndex, nInputs,
+            g.Body.Add(RebuildOutlined(ins, gName, r0.Rename, r0.LabelRename,
+                inputParamIndex, nInputs,
                 variantSet, variantParamIndexOf, finalHoleTypes, ref ctr));
         g.Body.Add(new Return(new NoneVal()));
         program.Functions.Add(g);
@@ -2759,10 +2950,30 @@ private static Function CloneFunction(Function f)
     // slots in EmitCanon order.
     private static Instruction RebuildOutlined(
         Instruction ins, string gName, Dictionary<string, int> rename,
+        Dictionary<string, int> labelRename,
         Dictionary<string, int> inputParamIndex, int nInputs,
         HashSet<int> variantSet, Dictionary<int, int> variantParamIndexOf,
         DataType[] holeTypes, ref int ctr)
     {
+        // Region-internal labels are renamed per subroutine: the sites they came
+        // from are gone, and every group member contributed its own numbering.
+        string L(string name) => gName + ".L" + labelRename[name];
+        switch (ins)
+        {
+            case Label l: return new Label(L(l.Name));
+            case Jump j: return new Jump(L(j.Target));
+            case JumpIfZero j: return new JumpIfZero(MapName(j.Condition), L(j.Target));
+            case JumpIfNotZero j: return new JumpIfNotZero(MapName(j.Condition), L(j.Target));
+            case JumpIfEqual j: return new JumpIfEqual(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfNotEqual j: return new JumpIfNotEqual(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfLessThan j: return new JumpIfLessThan(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfLessOrEqual j: return new JumpIfLessOrEqual(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfGreaterThan j: return new JumpIfGreaterThan(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfGreaterOrEqual j: return new JumpIfGreaterOrEqual(MapName(j.Src1), MapName(j.Src2), L(j.Target));
+            case JumpIfBitSet j: return new JumpIfBitSet(MapName(j.Source), j.Bit, L(j.Target));
+            case JumpIfBitClear j: return new JumpIfBitClear(MapName(j.Source), j.Bit, L(j.Target));
+        }
+
         Val MapName(Val v)
         {
             string? n = NameOf(v);

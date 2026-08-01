@@ -541,5 +541,129 @@ public class OptimizerPassTests
 
         Assert.Contains(body, i => i is Copy { Dst: MemoryAddress { Address: 0x25 } });
     }
+
+    // ─── Outlining of @inline expansions ─────────────────────────────────────
+
+    private const string Tag = Optimizer.InlineMarkerTag + "hexify";
+
+    // Four copies of one expansion, each reading a fresh value out of a port and
+    // running `body` over it. `body` receives the site's input variable and the
+    // label suffix it must use, so every copy is structurally identical but has
+    // its own label names — exactly what the inliner produces.
+    private static ProgramIR FourSites(Func<Variable, string, Instruction[]> body)
+    {
+        var instrs = new List<Instruction>();
+        for (int s = 0; s < 4; s++)
+        {
+            var input = new Variable($"main.v{s}", DataType.UINT8);
+            instrs.Add(new Copy(new MemoryAddress(0xC0), input));   // not const-foldable
+            instrs.Add(new InlineExpansionMarker(Tag, false));
+            instrs.AddRange(body(input, $"_s{s}"));
+            instrs.Add(new InlineExpansionMarker(Tag, true));
+        }
+        instrs.Add(new Return(new NoneVal()));
+        return MakeProgram(instrs.ToArray());
+    }
+
+    private static List<Function> OutlinedFunctions(ProgramIR prog) =>
+        Optimizer.Optimize(prog).Functions
+            .Where(f => f.Name.StartsWith("__pymcu_outline_")).ToList();
+
+    [Fact]
+    public void Outline_RegionWithInternalBranch_IsShared()
+    {
+        // if v < 10: PORT = 48 else: PORT = 65 — an if/else wholly inside the region.
+        var prog = FourSites((v, sfx) =>
+        [
+            new JumpIfLessThan(v, new Constant(10), "low" + sfx),
+            new Copy(new Constant(65), new MemoryAddress(0x100)),
+            new Jump("done" + sfx),
+            new Label("low" + sfx),
+            new Copy(new Constant(48), new MemoryAddress(0x100)),
+            new Label("done" + sfx),
+        ]);
+
+        var outlined = OutlinedFunctions(prog);
+        outlined.Should().ContainSingle("the four identical branchy copies collapse into one body");
+        outlined[0].Body.Should().Contain(i => i is Label,
+            "the branch targets move into the subroutine with it");
+        outlined[0].Params.Should().ContainSingle("the value being tested is the only live-in");
+    }
+
+    [Fact]
+    public void Outline_RejectsJumpThatLeavesTheRegion()
+    {
+        // Same shape, but the "done" label sits after the region end: outlining
+        // would cut a control-flow edge in half.
+        var instrs = new List<Instruction>();
+        for (int s = 0; s < 4; s++)
+        {
+            var v = new Variable($"main.v{s}", DataType.UINT8);
+            instrs.Add(new Copy(new MemoryAddress(0xC0), v));
+            instrs.Add(new InlineExpansionMarker(Tag, false));
+            instrs.Add(new JumpIfLessThan(v, new Constant(10), $"out_s{s}"));
+            instrs.Add(new Copy(new Constant(65), new MemoryAddress(0x100)));
+            instrs.Add(new InlineExpansionMarker(Tag, true));
+            instrs.Add(new Label($"out_s{s}"));
+        }
+        instrs.Add(new Return(new NoneVal()));
+
+        OutlinedFunctions(MakeProgram(instrs.ToArray())).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Outline_RejectsLoopThatDoesWorkPerIteration()
+    {
+        // A loop that counts while polling is calibrated timing (bit-banged
+        // protocols, pulse widths); only an empty "wait for the hardware" spin
+        // may be moved behind a CALL.
+        var prog = FourSites((v, sfx) =>
+        {
+            var n = new Variable("main.n" + sfx, DataType.UINT8);
+            return
+            [
+                new Copy(new Constant(0), n),
+                new Label("spin" + sfx),
+                new Binary(IrBinaryOp.Add, n, new Constant(1), n),
+                new JumpIfBitClear(new MemoryAddress(0xC0), 5, "spin" + sfx),
+                new Copy(v, new MemoryAddress(0x100)),
+            ];
+        });
+
+        OutlinedFunctions(prog).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Outline_AcceptsEmptyPollingLoop()
+    {
+        // The same region with nothing in the loop body: waiting for a hardware
+        // flag costs whatever the hardware costs, so the added CALL is harmless.
+        var prog = FourSites((v, sfx) =>
+        [
+            new Label("spin" + sfx),
+            new JumpIfBitClear(new MemoryAddress(0xC0), 5, "spin" + sfx),
+            new Copy(v, new MemoryAddress(0x100)),
+            new Copy(v, new MemoryAddress(0x101)),
+        ]);
+
+        OutlinedFunctions(prog).Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Outline_RejectsRegionThatSignalsError()
+    {
+        // The T-flag model aborts the enclosing function; a raise reached inside a
+        // subroutine would unwind only the subroutine.
+        var prog = FourSites((v, sfx) =>
+        [
+            new JumpIfLessThan(v, new Constant(10), "ok" + sfx),
+            new SignalError(new Constant(6)),
+            new Label("ok" + sfx),
+            new Copy(v, new MemoryAddress(0x100)),
+            new Copy(v, new MemoryAddress(0x101)),
+        ]);
+
+        OutlinedFunctions(prog).Should().BeEmpty();
+    }
 }
 
