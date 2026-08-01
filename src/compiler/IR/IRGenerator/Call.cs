@@ -840,12 +840,37 @@ public partial class IRGenerator
         Temporary? result = null;
         var tupleResultNames = new List<string>();
 
+        // `-> (T1, T2)` / `-> tuple[T1, T2]`: the arity is part of the signature, so a call
+        // that unpacks a different number of targets is a mismatch worth naming here -- the
+        // generic "Expected N tuple results, got M" fires far from the declaration.
+        var declaredTupleElems = TupleType.ElementTypes(func?.ReturnType);
+        if (declaredTupleElems.Count > 0)
+        {
+            string declared = TupleType.Describe(func!.ReturnType);
+            if (pendingTupleCount == 0)
+                throw UserError(
+                    $"'{func.Name}' returns {declaredTupleElems.Count} values {declared}; " +
+                    $"unpack them into {declaredTupleElems.Count} targets");
+            if (pendingTupleCount != declaredTupleElems.Count)
+                throw UserError(
+                    $"'{func.Name}' is declared to return {declaredTupleElems.Count} values " +
+                    $"{declared}, but {pendingTupleCount} unpack target(s) were given");
+        }
+
         if (pendingTupleCount > 0)
         {
             string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
             for (int k = 0; k < pendingTupleCount; ++k)
             {
-                tupleResultNames.Add($"{bBase}.iret_{newDepth}_{k}");
+                string slot = $"{bBase}.iret_{newDepth}_{k}";
+                tupleResultNames.Add(slot);
+                // The annotated element type widens the result slot; without an annotation the
+                // slot stays uint8, as it has always been. Slot names repeat across expansions
+                // at the same depth, so an unannotated callee must clear a widened predecessor.
+                if (k < declaredTupleElems.Count)
+                    variableTypes[slot] = DataTypeExtensions.StringToDataType(declaredTupleElems[k]);
+                else
+                    variableTypes.Remove(slot);
             }
         }
         else if (func.ReturnType != "void" && func.ReturnType != "None")

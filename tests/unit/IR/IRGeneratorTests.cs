@@ -1308,4 +1308,126 @@ public class IRGeneratorTests
             i is Copy { Src: Constant { Value: 500 }, Dst: Variable v }
             && v.Type == DataType.UINT16);
     }
+
+    [Fact]
+    public void TupleReturnAnnotation_OnInline_Compiles()
+    {
+        // `-> (uint8, uint8)` on an @inline function: the caller's unpack targets receive
+        // the values, exactly as for the same function with no annotation.
+        const string src =
+            "@inline\n" +
+            "def divmod8(a: uint8, b: uint8) -> (uint8, uint8):\n" +
+            "    q: uint8 = a // b\n" +
+            "    return (q, a - q * b)\n" +
+            "def main(n: uint8):\n" +
+            "    q, r = divmod8(n, 3)\n" +
+            "    return q + r\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_OnNonInline_RaisesClearError()
+    {
+        // A real subroutine has one return register, so the annotation cannot be honoured.
+        // The error must land on the definition, not on some later return statement.
+        const string src =
+            "def divmod8(a: uint8, b: uint8) -> (uint8, uint8):\n" +
+            "    return (a, b)\n" +
+            "def main():\n" +
+            "    q, r = divmod8(10, 3)\n";
+
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("@inline", ex.Message);
+        Assert.Equal(1, ex.Line);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_UnpackArityMismatch_RaisesClearError()
+    {
+        const string src =
+            "@inline\n" +
+            "def f(a: uint8) -> (uint8, uint8, uint8):\n" +
+            "    return (a, a, a)\n" +
+            "def main(n: uint8):\n" +
+            "    x, y = f(n)\n" +
+            "    return x + y\n";
+
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("3 values", ex.Message);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_ReturnArityMismatch_RaisesClearError()
+    {
+        // The annotation says two values; the body returns three.
+        const string src =
+            "@inline\n" +
+            "def f(a: uint8) -> (uint8, uint8):\n" +
+            "    return (a, a, a)\n" +
+            "def main(n: uint8):\n" +
+            "    x, y = f(n)\n" +
+            "    return x + y\n";
+
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("this return has 3", ex.Message);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_SingleValueReturn_RaisesClearError()
+    {
+        const string src =
+            "@inline\n" +
+            "def f(a: uint8) -> (uint8, uint8):\n" +
+            "    return a\n" +
+            "def main(n: uint8):\n" +
+            "    x, y = f(n)\n" +
+            "    return x + y\n";
+
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("single value", ex.Message);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_CalledWithoutUnpacking_RaisesClearError()
+    {
+        const string src =
+            "@inline\n" +
+            "def f(a: uint8) -> (uint8, uint8):\n" +
+            "    return (a, a)\n" +
+            "def main(n: uint8):\n" +
+            "    x: uint8 = f(n)\n" +
+            "    return x\n";
+
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("unpack", ex.Message);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_WidensResultSlot()
+    {
+        // Without the annotation both result slots default to uint8 and `n * 300` would be
+        // truncated. The declared uint16 element must reach the slot the caller reads.
+        const string src =
+            "@inline\n" +
+            "def scale(a: uint8) -> (uint8, uint16):\n" +
+            "    return (a, a * 300)\n" +
+            "def main(n: uint8):\n" +
+            "    lo, hi = scale(n)\n" +
+            "    return hi\n";
+
+        var body = GenerateIR(src, new DeviceConfig { Arch = "avr" })
+            .Functions.First(f => f.Name == "main").Body;
+
+        Assert.Contains(body, i =>
+            i is Copy { Dst: Variable v } && v.Name.EndsWith("iret_1_1") && v.Type == DataType.UINT16);
+        Assert.Contains(body, i =>
+            i is Copy { Dst: Variable v } && v.Name.EndsWith("iret_1_0") && v.Type == DataType.UINT8);
+    }
 }

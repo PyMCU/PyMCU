@@ -14,6 +14,7 @@
  * -----------------------------------------------------------------------------
  */
 
+using PyMCU.Common;
 using PyMCU.Frontend;
 
 namespace PyMCU.IR.IRGenerator;
@@ -127,6 +128,20 @@ public partial class IRGenerator
                 "implemented yet (the syntax parses; the transform is the next step). For now, " +
                 "write the future as a small class with a poll() method and drive it from a " +
                 "cooperative loop -- the zero-cost pattern async lowers to (see the RTOS example).");
+
+        // A multi-value return is lowered only through the @inline expansion path, where the
+        // caller's unpack targets become the result slots. A real subroutine has one return
+        // register, so the annotation cannot be honoured -- reject it at the definition rather
+        // than at whichever `return (a, b)` happens to be reached first.
+        if (TupleType.IsTupleType(funcNode.ReturnType))
+        {
+            currentStmtLine = funcNode.Line;
+            throw UserError(
+                $"'{funcNode.Name}' is declared to return {TupleType.Describe(funcNode.ReturnType)}: " +
+                "returning multiple values is only supported from an @inline function " +
+                "(the caller's unpack targets receive them); mark the function @inline or " +
+                "return a single value");
+        }
 
         var irFunc = new Function();
         string fullName = currentModulePrefix + funcNode.Name;
@@ -465,6 +480,14 @@ public partial class IRGenerator
             if (stmt.Value is TupleExpr tup)
             {
                 var ctx = inlineStack.Last();
+                var declared = functionReturnTypes.TryGetValue(ctx.CalleeName, out var ctxRt)
+                    ? TupleType.ElementTypes(ctxRt) : new List<string>();
+
+                if (declared.Count > 0 && tup.Elements.Count != declared.Count)
+                    throw UserError(
+                        $"'{ctx.CalleeName}' is declared to return {declared.Count} values " +
+                        $"{TupleType.Describe(ctxRt!)}, but this return has {tup.Elements.Count}");
+
                 if (tup.Elements.Count != ctx.ResultVars.Count)
                 {
                     throw UserError($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements");
@@ -473,7 +496,10 @@ public partial class IRGenerator
                 for (int k = 0; k < tup.Elements.Count; ++k)
                 {
                     Val elemVal = VisitExpression(tup.Elements[k]);
-                    DataType dt = DataType.UINT8;
+                    // The result slots carry the annotated element widths when the callee
+                    // declared them (see EmitInlineFunctionCall); uint8 otherwise.
+                    DataType dt = variableTypes.TryGetValue(ctx.ResultVars[k], out var slotDt)
+                        ? slotDt : DataType.UINT8;
                     Emit(new Copy(elemVal, new Variable(ctx.ResultVars[k], dt)));
                     if (elemVal is Constant c)
                         constantVariables[ctx.ResultVars[k]] = c.Value;
@@ -482,6 +508,14 @@ public partial class IRGenerator
                 Emit(new Jump(ctx.ExitLabel));
                 return;
             }
+
+            // Declared multi-value but returning a single expression: the caller has N unpack
+            // targets and only one value would reach them.
+            if (functionReturnTypes.TryGetValue(inlineStack.Last().CalleeName, out var singleRt)
+                && TupleType.IsTupleType(singleRt))
+                throw UserError(
+                    $"'{inlineStack.Last().CalleeName}' is declared to return " +
+                    $"{TupleType.Describe(singleRt!)}, but this return has a single value");
         }
 
         // A multi-value (tuple) return is only lowered through the @inline expansion path

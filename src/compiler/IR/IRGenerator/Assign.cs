@@ -3293,7 +3293,10 @@ public partial class IRGenerator
             {
                 string srcName = lastTupleResults[k];
                 string dstName = QualifyTarget(stmt.Targets[k]);
-                DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t : DataType.UINT8;
+                // An undeclared target inherits the result slot's width, so a callee annotated
+                // `-> (uint8, uint16)` does not get its second value truncated to 8 bits.
+                DataType dt = variableTypes.TryGetValue(dstName, out var t) ? t
+                    : variableTypes.TryGetValue(srcName, out var st) ? st : DataType.UINT8;
                 Emit(new Copy(new Variable(srcName, dt), new Variable(dstName, dt)));
                 if (constantVariables.TryGetValue(srcName, out int cVal)) constantVariables[dstName] = cVal;
             }
