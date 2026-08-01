@@ -35,6 +35,7 @@ from pymcu.chips.rp2350 import (
     STATUS_F2_PKT_AVAILABLE, STATUS_F2_PKT_LEN_SHIFT, STATUS_F2_PKT_LEN_MASK,
 )
 from pymcu.types import ptr, uint32, uint8, inline
+from pymcu.exceptions import CompileError
 
 
 class CYW43:
@@ -546,6 +547,11 @@ class CYW43:
     @inline
     def connect(self, ssid: const[str], key: const[str] = ""):
         # Convenience: bring up the radio, join the AP, and settle (drain post-join RX).
+        # `key` exists only so the signature matches MicroPython's WLAN.connect();
+        # the join path is join_open(), which sends no WPA/PSK material at all, so a
+        # key would be silently dropped. Reject it at compile time instead.
+        if key != "":
+            raise CompileError("WiFi: WPA is not supported yet; connect() can only join open networks -- leave key empty")
         self.init()
         self.join_open(ssid)
         self.settle()
