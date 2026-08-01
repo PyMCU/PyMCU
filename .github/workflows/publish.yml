@@ -144,13 +144,15 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
       - name: Publish to PyPI
-        # --check-url makes retries idempotent: files already on PyPI from a
-        # partially-successful earlier attempt are skipped, not re-uploaded.
-        run: uv publish --check-url https://pypi.org/simple/ dist/*
+        # skip-existing makes retries idempotent by FILENAME: files already on
+        # PyPI from a partially-successful earlier attempt are skipped. (An
+        # uv publish --check-url retry would fail instead: the AOT rebuild is
+        # not bit-for-bit reproducible, so the hashes never match.)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
 
   # Manual smoke-test channel: a workflow_dispatch run (no tag) publishes to
   # TestPyPI. Pre-release tags now go to real PyPI via publish-pypi, so this no
@@ -171,8 +173,9 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
       - name: Publish to TestPyPI
-        run: uv publish --publish-url https://test.pypi.org/legacy/ --check-url https://test.pypi.org/simple/ dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+          skip-existing: true
