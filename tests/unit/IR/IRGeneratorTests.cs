@@ -1345,6 +1345,23 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void BareAssignToPtrRegister_IsALocatedError_NotASilentNoOp()
+    {
+        // `OCR1AH = hi` used to compile to nothing (name rebind + DCE), which
+        // silently broke Timer.set_compare in the stdlib.
+        const string src =
+            "from pymcu.types import uint8, ptr\n" +
+            "def main():\n" +
+            "    OCR1AH: ptr[uint8] = ptr(0x89)\n" +
+            "    hi: uint8 = 0x12\n" +
+            "    OCR1AH = hi\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("never writes the register", ex.Message);
+        Assert.Contains(".value", ex.Message);
+    }
+
+    [Fact]
     public void Getattr_NamesReflectionAsTheReason()
     {
         const string src =

@@ -436,6 +436,20 @@ public partial class IRGenerator
     // chain (completes -> VisitAssign returns).
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
+        // Assigning to a name that is a ptr[T] register alias NEVER writes the register:
+        // it rebinds the Python name and the store is silently dead-code-eliminated.
+        // This broke Timer.set_compare (OCR1AH = hi) in the stdlib itself, so make it
+        // a located error instead of a silent no-op.
+        {
+            string q = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varExpr.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + varExpr.Name : varExpr.Name);
+            if (constantAddressVariables.ContainsKey(varExpr.Name) || constantAddressVariables.ContainsKey(q))
+                throw UserError(
+                    $"assigning to '{varExpr.Name}' rebinds the name and never writes the register; " +
+                    $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit");
+        }
+
         // A write creates a NEW binding: kill the target's value-tracking alias BEFORE
         // resolving it (else the store itself is redirected through a stale alias), and
         // every alias that resolves TO it (their recorded value is about to change).
