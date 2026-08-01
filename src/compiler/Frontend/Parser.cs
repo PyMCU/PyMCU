@@ -227,6 +227,35 @@ public class Parser
         return typeStr;
     }
 
+    // Return position also accepts the parenthesized multi-value form
+    //   def divmod8(a: uint8, b: uint8) -> (uint8, uint8):
+    // which is normalized to the textual "tuple[uint8,uint8]" so it and the explicit
+    // tuple[...] spelling share one validation path in the IR generator.
+    // As in Python, `(T)` is just a parenthesized T; only a comma makes it a tuple.
+    private string ParseReturnTypeAnnotation()
+    {
+        if (!Check(TokenType.LParen)) return ParseTypeAnnotation();
+
+        Advance(); // (
+        if (Check(TokenType.RParen))
+            Error("Empty return annotation '()'; use '-> None' for a function that returns nothing");
+
+        var elements = new List<string>();
+        bool sawComma = false;
+        while (true)
+        {
+            if (Check(TokenType.RParen)) break;   // trailing comma, e.g. -> (uint8,)
+            elements.Add(ParseTypeAnnotation());
+            if (!Match(TokenType.Comma)) break;
+            sawComma = true;
+        }
+
+        Consume(TokenType.RParen, "Expected ')' to close the return type annotation");
+
+        if (elements.Count == 1 && !sawComma) return elements[0];
+        return "tuple[" + string.Join(",", elements) + "]";
+    }
+
     private FunctionDef ParseFunction()
     {
         bool isInline = false;
@@ -398,7 +427,7 @@ public class Parser
         string returnType = "void";
         if (Match(TokenType.Arrow))
         {
-            returnType = ParseTypeAnnotation();
+            returnType = ParseReturnTypeAnnotation();
         }
 
         Consume(TokenType.Colon, "Expected ':' before function body");
@@ -420,7 +449,8 @@ public class Parser
             WarningMessage = warningMessage,
             IsOutline = isOutline,
             IsPioProgram = isPioProgram,
-            PioParams = pioParams
+            PioParams = pioParams,
+            Line = nameToken.Line
         };
         return func;
     }

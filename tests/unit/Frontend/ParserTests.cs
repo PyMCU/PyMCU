@@ -558,4 +558,70 @@ public class ParserImportTests
         var src = "from mod import (\n    A,\n    B\n";
         Assert.ThrowsAny<Exception>(() => Parse(src));
     }
+
+    [Fact]
+    public void TupleReturnAnnotation_Parenthesised_NormalisedToTupleType()
+    {
+        // `-> (uint8, uint16)` is the multi-return spelling; it records the same textual
+        // type as the explicit tuple[...] form so both share one validation path.
+        var prog = Parse("def divmod8(a: uint8, b: uint8) -> (uint8, uint16):\n    return (a, b)\n");
+        Assert.Equal("tuple[uint8,uint16]", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_Subscripted_KeepsTupleType()
+    {
+        var prog = Parse("def f() -> tuple[uint8, uint16]:\n    return (1, 2)\n");
+        Assert.Equal("tuple[uint8,uint16]", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_ThreeElements_Parsed()
+    {
+        var prog = Parse("def f() -> (uint8, uint8, int16):\n    return (1, 2, 3)\n");
+        Assert.Equal("tuple[uint8,uint8,int16]", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_TrailingComma_IsOneElementTuple()
+    {
+        var prog = Parse("def f() -> (uint8,):\n    return (1,)\n");
+        Assert.Equal("tuple[uint8]", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void ParenthesisedSingleType_IsNotATuple()
+    {
+        // As in Python, `(T)` is just a parenthesized T — only a comma makes a tuple.
+        var prog = Parse("def f() -> (uint16):\n    return 1\n");
+        Assert.Equal("uint16", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void TupleReturnAnnotation_NestedSubscript_Preserved()
+    {
+        var prog = Parse("def f() -> (const[uint8], uint16):\n    return (1, 2)\n");
+        Assert.Equal("tuple[const[uint8],uint16]", prog.Functions[0].ReturnType);
+    }
+
+    [Fact]
+    public void EmptyTupleReturnAnnotation_ThrowsSyntaxError()
+    {
+        var ex = Assert.Throws<SyntaxError>(() => Parse("def f() -> ():\n    pass\n"));
+        Assert.Contains("-> None", ex.Message);
+    }
+
+    [Fact]
+    public void UnclosedTupleReturnAnnotation_ThrowsSyntaxError()
+    {
+        Assert.Throws<SyntaxError>(() => Parse("def f() -> (uint8, uint8:\n    pass\n"));
+    }
+
+    [Fact]
+    public void FunctionDef_RecordsItsSourceLine()
+    {
+        // The definition line is what locates the "multi-value return needs @inline" error.
+        var prog = Parse("x: uint8 = 0\n\ndef f() -> uint8:\n    return 1\n");
+        Assert.Equal(3, prog.Functions[0].Line);
+    }
 }
