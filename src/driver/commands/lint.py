@@ -15,8 +15,9 @@
 # -----------------------------------------------------------------------------
 
 import ast
+import json
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -277,16 +278,22 @@ def lint(
         None, "--flavor", help="Override detected flavor: micropython | circuitpython."),
     errors_only: bool = typer.Option(
         False, "--errors-only", help="Show only hard ERROR findings."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit findings as JSON on stdout (for IDE integrations)."),
 ) -> None:
     """Porting assistant: flag MicroPython/CircuitPython idioms that need a rewrite for PyMCU."""
     root = Path(path)
     files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
     if not files or (len(files) == 1 and not files[0].exists()):
-        console.print(f"[bold red]No Python sources found at {path}[/]")
+        if json_output:
+            print(json.dumps({"error": f"No Python sources found at {path}"}))
+        else:
+            console.print(f"[bold red]No Python sources found at {path}[/]")
         raise typer.Exit(1)
 
     totals = {ERROR: 0, WARN: 0, INFO: 0}
     detected_flavor = flavor
+    json_files: list[dict] = []
 
     for f in files:
         findings, fl = _lint_source(f.read_text(encoding="utf-8", errors="replace"), str(f))
@@ -294,14 +301,27 @@ def lint(
         shown = [x for x in findings if not (errors_only and x.severity != ERROR)]
         if not shown:
             continue
-        console.print(f"\n[bold]{f}[/]")
         for x in shown:
             totals[x.severity] += 1
+        if json_output:
+            json_files.append({"path": str(f), "findings": [asdict(x) for x in shown]})
+            continue
+        console.print(f"\n[bold]{f}[/]")
+        for x in shown:
             tag = x.severity.upper()
             console.print(
                 f"  [{_STYLE[x.severity]}]{tag:5}[/] [dim]{f.name}:{x.line}:{x.col}[/] "
                 f"[{_STYLE[x.severity]}]{x.code}[/]  {x.message}")
             console.print(f"        [green]→ {x.suggestion}[/]")
+
+    if json_output:
+        print(json.dumps({
+            "flavor": detected_flavor,
+            "files": json_files,
+            "summary": {"errors": totals[ERROR], "warnings": totals[WARN],
+                        "info": totals[INFO], "file_count": len(files)},
+        }))
+        raise typer.Exit(1 if totals[ERROR] else 0)
 
     console.print()
     if detected_flavor:
