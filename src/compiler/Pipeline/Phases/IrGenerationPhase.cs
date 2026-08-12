@@ -39,7 +39,11 @@ public class IrGenerationPhase : CompilerPhaseBase
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
             context.SourceLines, context.ModuleSourceLines);
 
-        var optimized = Optimizer.Optimize(ir);
+        // PYMCU_NO_OPT=1 skips the optimizer: lets a miscompile be bisected to the
+        // IR generator (raw IR wrong) vs an optimizer pass (raw IR right).
+        var optimized = Environment.GetEnvironmentVariable("PYMCU_NO_OPT") == "1"
+            ? ir
+            : Optimizer.Optimize(ir);
 
         // CanFail analysis runs after optimization so that dead-code-eliminated
         // functions and cloned bodies are the final IR seen by the backend.

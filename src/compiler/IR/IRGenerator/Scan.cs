@@ -43,8 +43,81 @@ public partial class IRGenerator
         moduleSramArrays.Add(name);
     }
 
+    // Module-level names that are WRITTEN beyond their initializer: a second top-level
+    // assignment, any assignment nested in a loop/branch/try, an augmented assignment,
+    // or a function that declares them `global`. Such a name is a mutable variable whose
+    // initializer merely happens to be constant -- NOT a constant alias. Folding it as a
+    // constant silently deleted every later write and folded every read (a state machine
+    // with named states, `state: uint8 = IDLE`, never left state 0).
+    private static HashSet<string> CollectModuleReassignedNames(ProgramNode ast)
+    {
+        var counts = new Dictionary<string, int>();
+        void Bump(string n, int by = 1) =>
+            counts[n] = (counts.TryGetValue(n, out var c) ? c : 0) + by;
+
+        void Walk(Statement? s)
+        {
+            switch (s)
+            {
+                case null: return;
+                case AssignStmt { Target: VariableExpr v }: Bump(v.Name); return;
+                case AnnAssign aa: Bump(aa.Target); return;
+                case VarDecl vd: Bump(vd.Name); return;
+                // aug-assign presupposes an existing binding: always a REassignment.
+                case AugAssignStmt { Target: VariableExpr av }: Bump(av.Name, 2); return;
+                case Block b: foreach (var st in b.Statements) Walk(st); return;
+                case IfStmt f:
+                    Walk(f.ThenBranch);
+                    Walk(f.ElseBranch);
+                    foreach (var e in f.ElifBranches) Walk(e.Item2);
+                    return;
+                case WhileStmt w: Walk(w.Body); return;
+                case ForStmt fo: Walk(fo.Body); return;
+                case MatchStmt m: foreach (var br in m.Branches) Walk(br.Body); return;
+                case TryStmt t:
+                    foreach (var st in t.Body) Walk(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Walk(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) Walk(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Walk(st);
+                    return;
+            }
+        }
+
+        foreach (var s in ast.GlobalStatements) Walk(s);
+        var result = new HashSet<string>(
+            counts.Where(kv => kv.Value > 1).Select(kv => kv.Key));
+
+        // `global x` inside a function marks x as mutated from function scope.
+        void WalkGlobals(Statement? s)
+        {
+            switch (s)
+            {
+                case null: return;
+                case GlobalStmt g: foreach (var n in g.Names) result.Add(n); return;
+                case Block b: foreach (var st in b.Statements) WalkGlobals(st); return;
+                case IfStmt f:
+                    WalkGlobals(f.ThenBranch);
+                    WalkGlobals(f.ElseBranch);
+                    foreach (var e in f.ElifBranches) WalkGlobals(e.Item2);
+                    return;
+                case WhileStmt w: WalkGlobals(w.Body); return;
+                case ForStmt fo: WalkGlobals(fo.Body); return;
+                case TryStmt t:
+                    foreach (var st in t.Body) WalkGlobals(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) WalkGlobals(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) WalkGlobals(st);
+                    return;
+            }
+        }
+        foreach (var fn in ast.Functions) WalkGlobals(fn.Body);
+
+        return result;
+    }
+
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
+        var reassigned = CollectModuleReassignedNames(ast);
+
         // Collect every member name used as an assignment target anywhere in this module
         // (recursing into class methods and nested blocks). This forms the superset of all
         // class fields used to flag a read of an undefined instance attribute.
@@ -253,7 +326,11 @@ public partial class IRGenerator
 
                 try
                 {
-                    if (initializer is VariableExpr varExprInit)
+                    // `x = SOME_CONST` registers x as a constant ALIAS -- but only when x
+                    // is never written again: a mutable variable whose INITIALIZER is a
+                    // named constant (state: uint8 = IDLE, then state = HEAT in the loop)
+                    // must stay a runtime global, or every later write silently vanishes.
+                    if (initializer is VariableExpr varExprInit && !reassigned.Contains(name))
                     {
                         SymbolInfo? sourceInfo = null;
                         string lookupLocal = currentModulePrefix + varExprInit.Name;

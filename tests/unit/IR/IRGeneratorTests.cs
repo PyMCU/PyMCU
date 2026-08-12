@@ -645,6 +645,32 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void NamedConstInit_ReassignedGlobal_StaysMutable()
+    {
+        // `state: uint8 = IDLE` (initializer is a NAMED constant) must not register
+        // `state` as a constant alias when the module writes it again -- the alias
+        // folded every read to the initial value and every write vanished, so a state
+        // machine with named states never left state 0. The alias shortcut only
+        // applies to names that are never reassigned.
+        const string src =
+            "IDLE = 0\n" +
+            "HEAT = 1\n" +
+            "state: uint8 = IDLE\n" +
+            "n: uint8 = 0\n" +
+            "while n < 10:\n" +
+            "    if n > 5:\n" +
+            "        state = HEAT\n" +
+            "    n += 1\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var main = ir.Functions.Single(f => f.Name == "main");
+        // The write inside the loop must land on the runtime global, not vanish.
+        Assert.Contains(main.Body, i =>
+            i is Copy { Src: Constant { Value: 1 }, Dst: Variable v } && v.Name.EndsWith("state"));
+        // And no write may have been redirected into a constant destination.
+        Assert.DoesNotContain(main.Body, i => i is Copy { Dst: Constant });
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the
