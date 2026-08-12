@@ -245,6 +245,13 @@ public partial class IRGenerator
     private List<string> handlerCodeStack = new();
     private int exnCodeId = 0;
 
+    // Module-level `raise CompileError(...)` guards that survived compile-time if/match
+    // folding in an IMPORTED module (e.g. the arch guard in hal/wifi.py once DCE picks the
+    // else branch). Imported modules' top-level code never executes, so the guard is
+    // recorded per module prefix; resolving a symbol from that module then reports the
+    // guard's message instead of a misleading "call to undefined function".
+    private readonly Dictionary<string, (string Msg, string File, int Line)> moduleGuardErrors = new();
+
     // Debugging
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();

@@ -34,6 +34,21 @@ public partial class IRGenerator
             string type = "";
             Expression? initializer = null;
 
+            // A bare module-level `raise CompileError(...)` in an imported module is an
+            // arch/chip guard whose enclosing if/match was folded away. Record it so a use
+            // of any symbol from this module reports the guard's message (see
+            // EmitRegularFunctionCall); aborting here would be too eager — the module may
+            // be pulled in transitively (hal/__init__.py) without its symbols being used.
+            if (stmt is RaiseStmt guard && guard.ErrorType == "CompileError"
+                && !string.IsNullOrEmpty(currentModulePrefix)
+                && !moduleGuardErrors.ContainsKey(currentModulePrefix))
+            {
+                moduleGuardErrors[currentModulePrefix] = (
+                    guard.Message.Length > 0 ? guard.Message : "module not supported on this target",
+                    currentSourceFile, guard.Line);
+                continue;
+            }
+
             if (stmt is VarDecl varDecl)
             {
                 name = varDecl.Name;

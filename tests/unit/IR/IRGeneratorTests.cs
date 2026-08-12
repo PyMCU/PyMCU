@@ -492,6 +492,44 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ModuleGuard_UsingSymbol_ReportsGuardMessage()
+    {
+        // An imported module whose module-level `raise CompileError(...)` survived
+        // compile-time folding (an arch guard, e.g. hal/wifi.py on AVR) never imports its
+        // symbols. Using one must surface the guard's message, not "undefined function".
+        var modTokens = new Lexer("raise CompileError(\"WiFi is only supported on rp2350\")\n").Tokenize();
+        var modAst = new Parser(modTokens).ParseProgram();
+        var mainTokens = new Lexer(
+            "from pymcu.hal.wifi import CYW43\n" +
+            "def main():\n" +
+            "    w = CYW43()\n").Tokenize();
+        var mainAst = new Parser(mainTokens).ParseProgram();
+        var modules = new Dictionary<string, ProgramNode> { ["pymcu.hal.wifi"] = modAst };
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => new IRGenerator().Generate(mainAst, modules, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("WiFi is only supported on rp2350", ex.Message);
+        Assert.DoesNotContain("undefined function", ex.Message);
+    }
+
+    [Fact]
+    public void ModuleGuard_UnusedImport_StillCompiles()
+    {
+        // The guard must stay lazy: a module with a surviving module-level CompileError can
+        // be pulled in transitively (hal/__init__.py imports every HAL) — as long as none
+        // of its symbols are used, the build proceeds.
+        var modTokens = new Lexer("raise CompileError(\"WiFi is only supported on rp2350\")\n").Tokenize();
+        var modAst = new Parser(modTokens).ParseProgram();
+        var mainTokens = new Lexer(
+            "from pymcu.hal.wifi import CYW43\n" +
+            "def main():\n" +
+            "    x: uint8 = 1\n").Tokenize();
+        var mainAst = new Parser(mainTokens).ParseProgram();
+        var modules = new Dictionary<string, ProgramNode> { ["pymcu.hal.wifi"] = modAst };
+        var ir = new IRGenerator().Generate(mainAst, modules, new DeviceConfig { Arch = "avr" });
+        Assert.Contains(ir.Functions, f => f.Name == "main");
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the

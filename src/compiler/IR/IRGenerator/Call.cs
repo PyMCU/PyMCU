@@ -622,6 +622,14 @@ public partial class IRGenerator
         {
             string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
 
+            // The name failed to resolve because its defining module refused this target:
+            // its module-level `raise CompileError(...)` guard survived if/match folding,
+            // so none of its symbols were imported. Report the module author's message at
+            // this use site instead of a misleading "undefined function".
+            foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
+                if (callee.StartsWith(g.Key, StringComparison.Ordinal))
+                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})");
+
             // A known class invoked but with no __init__ to construct it — Python would use a
             // default constructor, which PyMCU does not synthesize. Be specific.
             if (classNames.Contains(callee) || classNames.Contains(shown))
