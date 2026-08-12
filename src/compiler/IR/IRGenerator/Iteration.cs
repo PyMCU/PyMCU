@@ -824,7 +824,7 @@ public partial class IRGenerator
 
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVar, elemDt.SizeOf());
                     Temporary elemTmp = MakeTemp(elemDt);
-                    Emit(new LoadIndirect(elemAddr, elemTmp));
+                    Emit(new LoadIndirect(elemAddr, elemTmp, elemDt));
                     Emit(new Copy(elemTmp, elemVar));
 
                     VisitStatement(stmt.Body);

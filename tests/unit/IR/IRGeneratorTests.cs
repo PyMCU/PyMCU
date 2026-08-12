@@ -530,6 +530,24 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void RuntimePtr_AugAssign_CarriesElemWidth()
+    {
+        // `p.value += n` through a runtime ptr[uint16] lowers to LoadIndirect + Binary +
+        // StoreIndirect. Elem must ride on BOTH indirect instructions: the optimizer may
+        // collapse the typed temporaries into raw constants, and a Constant's type is its
+        // magnitude — without Elem the backend would narrow the access to one byte.
+        const string src =
+            "from pymcu.types import ptr, uint16\n" +
+            "def f(off: uint16):\n" +
+            "    p: ptr[uint16] = ptr(0x0200 + off)\n" +
+            "    p.value += 1\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var body = ir.Functions.Single(f => f.Name == "f").Body;
+        Assert.Contains(body, i => i is LoadIndirect { Elem: DataType.UINT16 });
+        Assert.Contains(body, i => i is StoreIndirect { Elem: DataType.UINT16 });
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the

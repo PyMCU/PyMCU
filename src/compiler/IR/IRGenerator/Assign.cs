@@ -281,7 +281,7 @@ public partial class IRGenerator
         else if (stmt.Target is UnaryExpr unExpr && unExpr.Op == Frontend.UnaryOp.Deref)
         {
             Val ptr = VisitExpression(unExpr.Operand);
-            Emit(new StoreIndirect(value, ptr));
+            Emit(new StoreIndirect(value, ptr, RuntimePtrElem(ptr)));
         }
         else throw UserError("Invalid assignment target");
 
@@ -1375,7 +1375,7 @@ public partial class IRGenerator
                     Val idxVal = VisitExpression(indexExpr.Index);
                     Val srcVal = VisitExpression(stmt.Value);
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
-                    Emit(new StoreIndirect(srcVal, elemAddr));
+                    Emit(new StoreIndirect(srcVal, elemAddr, elemDt));
                     return;
                 }
             }
@@ -2507,7 +2507,7 @@ public partial class IRGenerator
             if (initElements != null)
             {
                 for (int k = 0; k < initElements.Count; k++)
-                    EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k]);
+                    EmitListStore(tmpPtr, 2 + k * elemSize, initElements[k], elemDt);
             }
 
             Emit(new Copy(tmpPtr, new Variable(qualified, DataType.GC_REF)));
@@ -3096,11 +3096,13 @@ public partial class IRGenerator
             if (pn != null && runtimePtrVars.TryGetValue(pn, out var rElem))
             {
                 // Runtime pointer (ptr(<runtime addr>)): LoadIndirect -> op -> StoreIndirect.
+                // Elem rides on the instructions themselves: the optimizer may collapse the
+                // typed temporaries into constants, and the access width must survive that.
                 Temporary cur = MakeTemp(rElem);
-                Emit(new LoadIndirect(ptrObj, cur));
+                Emit(new LoadIndirect(ptrObj, cur, rElem));
                 Temporary res = MakeTemp(rElem);
                 Emit(new Binary(IRGenerator.MapAugOp(stmt.Op), cur, operand, res));
-                Emit(new StoreIndirect(res, ptrObj));
+                Emit(new StoreIndirect(res, ptrObj, rElem));
                 return;
             }
 
@@ -3145,11 +3147,11 @@ public partial class IRGenerator
 
     // Stores `value` at `basePtr + offset`. For offset 0, stores directly via basePtr.
     // For offset > 0, emits a Binary ADD to compute the address then StoreIndirect.
-    internal void EmitListStore(Val basePtr, int offset, Val value)
+    internal void EmitListStore(Val basePtr, int offset, Val value, DataType elemType = DataType.UINT8)
     {
         if (offset == 0)
         {
-            Emit(new StoreIndirect(value, basePtr));
+            Emit(new StoreIndirect(value, basePtr, elemType));
             return;
         }
 
@@ -3158,7 +3160,7 @@ public partial class IRGenerator
                        : basePtr;
         Temporary addrTmp = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
-        Emit(new StoreIndirect(value, addrTmp));
+        Emit(new StoreIndirect(value, addrTmp, elemType));
     }
 
     // Loads a UINT8 value from `basePtr + offset` into a new Temporary.
@@ -3167,7 +3169,7 @@ public partial class IRGenerator
         Temporary dst = MakeTemp(elemType);
         if (offset == 0)
         {
-            Emit(new LoadIndirect(basePtr, dst));
+            Emit(new LoadIndirect(basePtr, dst, elemType));
             return dst;
         }
 
@@ -3176,7 +3178,7 @@ public partial class IRGenerator
                        : basePtr;
         Temporary addrTmp = MakeTemp(DataType.UINT16);
         Emit(new Binary(BinaryOp.Add, ptrUint16, new Constant(offset), addrTmp));
-        Emit(new LoadIndirect(addrTmp, dst));
+        Emit(new LoadIndirect(addrTmp, dst, elemType));
         return dst;
     }
 

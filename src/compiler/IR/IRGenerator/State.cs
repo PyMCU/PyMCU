@@ -259,6 +259,16 @@ public partial class IRGenerator
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
 
+    // The declared element type of a runtime ptr[T] value, or UINT8 when untyped/unknown.
+    // Passed as the Elem of Load/StoreIndirect so the access width survives the optimizer
+    // collapsing typed temporaries into raw constants.
+    private DataType RuntimePtrElem(Val ptr) => ptr switch
+    {
+        Variable pv when runtimePtrVars.TryGetValue(pv.Name, out var e) => e,
+        Temporary pt when runtimePtrVars.TryGetValue(pt.Name, out var e) => e,
+        _ => DataType.UINT8
+    };
+
     // Builds a located user-facing compile error from inside IR generation. Using this
     // instead of `throw new Exception(...)` means the message is reported as a clean
     // `file:line: error: CompileError: ...` diagnostic (with the current source line and

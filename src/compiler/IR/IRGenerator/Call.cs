@@ -3134,7 +3134,7 @@ public partial class IRGenerator
 
         Val elemVal = VisitExpression(valExpr);
         Temporary appendAddr = EmitElemAddr(listVar, tmpLen, elemSize);
-        Emit(new StoreIndirect(elemVal, appendAddr));
+        Emit(new StoreIndirect(elemVal, appendAddr, elemDt));
 
         // length += 1
         Temporary newLen = MakeTemp(DataType.UINT8);

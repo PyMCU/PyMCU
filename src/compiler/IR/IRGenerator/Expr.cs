@@ -917,8 +917,9 @@ public partial class IRGenerator
 
         if (expr.Op == AstUnOp.Deref)
         {
-            Temporary res2 = MakeTemp(DataType.UINT8);
-            Emit(new LoadIndirect(operand, res2));
+            DataType derefElem = RuntimePtrElem(operand);
+            Temporary res2 = MakeTemp(derefElem);
+            Emit(new LoadIndirect(operand, res2, derefElem));
             return res2;
         }
 
@@ -1149,7 +1150,7 @@ public partial class IRGenerator
                     Val idxVal = VisitExpression(expr.Index);
                     Temporary elemAddr = EmitElemAddr(listPtr, idxVal, elemDt.SizeOf());
                     Temporary result = MakeTemp(elemDt);
-                    Emit(new LoadIndirect(elemAddr, result));
+                    Emit(new LoadIndirect(elemAddr, result, elemDt));
                     return result;
                 }
             }
