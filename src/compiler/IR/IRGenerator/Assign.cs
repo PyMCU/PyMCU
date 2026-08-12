@@ -335,7 +335,7 @@ public partial class IRGenerator
         slotInstances[qn] = slot;
 
         foreach (var (foff, fty, fv) in fieldVals)
-            EmitSlotFieldStore(slot, false, foff, fty, fv, total);
+            EmitSlotFieldStore(slot, false, foff, fty, fv, total, byteWise: true);
     }
 
     // `obj.prop = v` where prop has a registered @property setter: expand the setter.
@@ -1096,16 +1096,20 @@ public partial class IRGenerator
     // RFC 0001 Model B (SRAM slot): load a field of `fieldTy` at BYTE offset `off`. The slot is
     // byte-packed, so a multi-byte field is assembled from consecutive bytes (b0 | b1<<8 | ...).
     // `isPtr`: arrName is a `self` pointer (BytearrayLoad); else it is the slot array (ArrayLoad).
+    // The address of BYTE offset `off` inside a slot: the self pointer variable (outlined
+    // slot methods) or the slot array's base, plus the constant offset. Pointer-width typed
+    // so ARM's 32-bit addresses survive.
+    private Val SlotFieldAddr(string arrName, bool isPtr, int off)
+    {
+        Val basePtr = isPtr ? new Variable(arrName, FlashPtrType) : new ArrayBase(arrName);
+        if (off == 0 && isPtr) return basePtr;
+        Temporary addr = MakeTemp(FlashPtrType);
+        Emit(new Binary(BinaryOp.Add, basePtr, new Constant(off), addr));
+        return addr;
+    }
+
     private Val EmitSlotFieldLoad(string arrName, bool isPtr, int off, DataType fieldTy, int slotTotal)
     {
-        Val LoadByte(int boff)
-        {
-            Temporary b = MakeTemp(DataType.UINT8);
-            if (isPtr) Emit(new BytearrayLoad(arrName, new Constant(boff), b));
-            else Emit(new ArrayLoad(arrName, new Constant(boff), b, DataType.UINT8, slotTotal));
-            return b;
-        }
-
         int sz = fieldTy.SizeOf();
         if (sz <= 1)
         {
@@ -1115,23 +1119,22 @@ public partial class IRGenerator
             return b;
         }
 
-        Temporary acc = MakeTemp(fieldTy);
-        Emit(new Copy(LoadByte(off), acc));            // byte 0, zero-extended to fieldTy
-        for (int i = 1; i < sz; ++i)
-        {
-            Temporary widened = MakeTemp(fieldTy);
-            Emit(new Copy(LoadByte(off + i), widened));
-            Emit(new Binary(BinaryOp.LShift, widened, new Constant(8 * i), widened));
-            Emit(new Binary(BinaryOp.BitOr, acc, widened, acc));
-        }
-
-        return acc;
+        // Multi-byte field: ONE typed indirect load through the field's address. The
+        // slot bytes are contiguous little-endian, exactly what LoadIndirect(Elem)
+        // reads -- the old per-byte load + widen + shift + OR chain cost ~50
+        // instructions per uint32 access on AVR.
+        Temporary dst = MakeTemp(fieldTy);
+        Emit(new LoadIndirect(SlotFieldAddr(arrName, isPtr, off), dst, fieldTy));
+        return dst;
     }
 
-    // RFC 0001 Model B (SRAM slot): store a field of `fieldTy` at BYTE offset `off`, splitting a
-    // multi-byte value into consecutive bytes. Counterpart of EmitSlotFieldLoad.
+    // RFC 0001 Model B (SRAM slot): store a field of `fieldTy` at BYTE offset `off`.
+    // Multi-byte fields go through ONE typed StoreIndirect. `byteWise: true` keeps the
+    // legacy per-byte ArrayStore split -- construction sites use it because those
+    // ArrayStores carry the slot's Count and are the size/declaration channel the
+    // backends' allocators and the ARM array-declaration scan read.
     private void EmitSlotFieldStore(string arrName, bool isPtr, int off, DataType fieldTy,
-        Val value, int slotTotal)
+        Val value, int slotTotal, bool byteWise = false)
     {
         void StoreByte(int boff, Val b)
         {
@@ -1141,6 +1144,12 @@ public partial class IRGenerator
 
         int sz = fieldTy.SizeOf();
         if (sz <= 1) { StoreByte(off, value); return; }
+
+        if (!byteWise)
+        {
+            Emit(new StoreIndirect(value, SlotFieldAddr(arrName, isPtr, off), fieldTy));
+            return;
+        }
 
         for (int i = 0; i < sz; ++i)
         {
@@ -2150,7 +2159,8 @@ public partial class IRGenerator
             }
 
             Val v = argIdx < args.Count ? VisitExpression(args[argIdx]) : new Constant(0);
-            EmitSlotFieldStore(slot, false, off, DataTypeExtensions.StringToDataType(type), v, total);
+            EmitSlotFieldStore(slot, false, off, DataTypeExtensions.StringToDataType(type), v, total,
+                byteWise: true);
             off += DataTypeExtensions.StringToDataType(type).SizeOf();
         }
 
