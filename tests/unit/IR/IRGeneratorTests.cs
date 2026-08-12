@@ -671,6 +671,40 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void FloorDivMod_PowerOfTwo_StrengthReduces()
+    {
+        // `x // 4` and `x % 8` with power-of-two constants lower to shift/mask --
+        // floored semantics make ASR/AND exact for signed operands too -- so a
+        // firmware that only divides by powers of two never links the division
+        // runtime.
+        const string src =
+            "def f(x: int16) -> int16:\n" +
+            "    return (x // 4) + (x % 8)\n";
+        // Strength reduction lives in the optimizer, which GenerateIR does not run.
+        var ir = Optimizer.Optimize(GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        var body = ir.Functions.Single(fn => fn.Name == "f").Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.RShift, Src2: Constant { Value: 2 } });
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.BitAnd, Src2: Constant { Value: 7 } });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.FloorDiv } or Binary { Op: IrBinaryOp.Mod });
+    }
+
+    [Fact]
+    public void Uint32Literal_AboveInt32Max_Accepted()
+    {
+        // 4000000000 is a valid uint32 but exceeds int32; the literal arrives as its
+        // wrapped 32-bit bit pattern and must pass the range check for uint32.
+        const string src =
+            "def main():\n" +
+            "    g: uint32 = 4000000000\n" +
+            "    h: uint32 = 4294967295\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var consts = ir.Functions.Single(f => f.Name == "main").Body
+            .OfType<Copy>().Select(c => c.Src).OfType<Constant>().ToList();
+        Assert.Contains(consts, c => unchecked((uint)c.Value) == 4000000000u);
+        Assert.Contains(consts, c => unchecked((uint)c.Value) == 4294967295u);
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the

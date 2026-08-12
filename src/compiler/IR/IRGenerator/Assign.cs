@@ -1611,9 +1611,14 @@ public partial class IRGenerator
         };
         if (range is not { } r) return;
 
-        if (v < r.Min || v > r.Max)
+        // A uint32 literal above 2^31-1 (e.g. 4000000000) arrives as its wrapped 32-bit
+        // bit pattern (IntegerLiteral carries int); its UNSIGNED reading is the value
+        // the user wrote, and every 32-bit pattern is representable in uint32.
+        long shown = type == DataType.UINT32 && v < 0 ? (long)(uint)v : v;
+
+        if (shown < r.Min || shown > r.Max)
             throw new ValueError(
-                $"integer literal {v} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
+                $"integer literal {shown} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
                 line, 1);
     }
 

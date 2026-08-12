@@ -1889,8 +1889,15 @@ public class Parser
                     return new FloatLiteral(valD);
                 }
 
-                int val = Convert.ToInt32(text.Substring(offset), b);
-                return new IntegerLiteral(val);
+                long val64 = Convert.ToInt64(text.Substring(offset), b);
+                if (val64 > uint.MaxValue)
+                    Error("Integer literal is too large: '" + t.Value + "'");
+                // 2^31..2^32-1 is a valid uint32 literal (e.g. 4000000000). The AST/IR
+                // carry int, so store the 32-bit BIT PATTERN: backends emit constants
+                // byte-wise, and the magnitude-based width sees 4 bytes either way.
+                // (Compile-time folding of arithmetic ON such literals would see the
+                // signed reading; runtime uint32 arithmetic is unaffected.)
+                return new IntegerLiteral(unchecked((int)(uint)val64));
             }
             catch (OverflowException)
             {
