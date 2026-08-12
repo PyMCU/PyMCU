@@ -473,6 +473,57 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
 
     return total
 
+def _print_explain(output_dir) -> None:
+    """--explain: everything the build did on the user's behalf, as one summary.
+
+    Two sources, both already produced by a normal build:
+      - the "# Auto-injected by pymcu build: ..." comments in the synthetic entry
+        (dist/_generated/main.py) document each preamble injection at the moment
+        it happens;
+      - dist/firmware.mir carries the compiled facts (ISR registrations with their
+        vectors, ISR-shared globals given volatile semantics).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    lines: list[str] = []
+
+    entry = _Path(output_dir) / "_generated" / "main.py"
+    if entry.exists():
+        for raw in entry.read_text().splitlines():
+            if raw.startswith("# Auto-injected by pymcu build:"):
+                lines.append(raw.removeprefix("# Auto-injected by pymcu build:").strip())
+
+    mir = _Path(output_dir) / "firmware.mir"
+    if mir.exists():
+        try:
+            prog = _json.loads(mir.read_text())
+        except Exception:
+            prog = {}
+        for fn in prog.get("functions", []):
+            if fn.get("isInterrupt"):
+                lines.append(
+                    f"'{fn.get('originalName', fn['name'])}' compiled as an ISR "
+                    f"(interrupt vector {fn.get('interruptVector')}, word address); "
+                    "keep it short and don't block"
+                )
+        shared = prog.get("isrSharedGlobals", [])
+        if shared:
+            lines.append(
+                "shared between ISR and main, made volatile (GPIOR-promoted when "
+                "possible): " + ", ".join(shared)
+            )
+
+    if not lines:
+        console.print("\n[bold]Implicit in this build:[/bold] nothing -- everything "
+                      "your firmware does is written in your source.")
+        return
+
+    console.print("\n[bold]Implicit in this build:[/bold]")
+    for entry_line in lines:
+        console.print(f"  [cyan]-[/cyan] {entry_line}")
+
+
 def build(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging"),
     stdlib_override: Optional[List[str]] = typer.Option(
@@ -481,6 +532,12 @@ def build(
              "Can be specified multiple times.",
     ),
     debug: bool = typer.Option(False, "--debug", help="Emit debug symbols and line map for the emulator debugger"),
+    explain: bool = typer.Option(
+        False, "--explain",
+        help="After the build, list everything that happened implicitly: injected "
+             "setup (stdout UART, millis timer, clocks), ISR registrations with their "
+             "vectors, and ISR-shared globals. Turns the build's magic into a lesson.",
+    ),
 ):
     is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
     _diag_log("=== BUILD COMMAND STARTED ===", verbose=is_verbose)
@@ -1147,6 +1204,8 @@ def build(
                 _diag_log(f"firmware.hex size: {hex_file.stat().st_size} bytes", verbose=is_verbose)
 
         console.print(f"[bold green]Build successful![/bold green] Artifacts in: [blue]{output_dir}[/blue]")
+        if explain:
+            _print_explain(output_dir)
         _show_update_hint()
 
     except typer.Exit:
