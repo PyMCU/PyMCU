@@ -41,6 +41,16 @@ public partial class IRGenerator
             return;
         }
 
+        // Unannotated `name = bytearray(N)` / `= bytearray([...])`: MicroPython declares
+        // buffers without an annotation. Route through the VarDecl path so the fixed
+        // buffer is laid out instead of evaluating bytearray() as a runtime call.
+        if (stmt.Target is VariableExpr baTgt
+            && stmt.Value is CallExpr { Callee: VariableExpr { Name: "bytearray" } })
+        {
+            VisitVarDecl(new VarDecl(baTgt.Name, "bytearray", stmt.Value) { Line = stmt.Line });
+            return;
+        }
+
         // Mutating a dict-literal binding (`d[k] = v`) has no runtime structure to write to.
         if (stmt.Target is IndexExpr { Target: VariableExpr mutVe }
             && TryGetDictBinding(mutVe.Name, out _))
@@ -1904,16 +1914,17 @@ public partial class IRGenerator
                     if (callee.Name == "bytearray" && call.Args.Count > 0)
                     {
                         Expression arg0 = call.Args[0];
-                        if (arg0 is IntegerLiteral il)
-                        {
-                            count = il.Value;
-                            initVals.AddRange(Enumerable.Repeat(0, count));
-                        }
-                        else if (arg0 is ListExpr le)
+                        if (arg0 is ListExpr le)
                         {
                             count = le.Elements.Count;
                             foreach (var e in le.Elements)
                                 initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
+                        }
+                        // Integer literal or any compile-time constant (bytearray(WINDOW)).
+                        else if (TryEvalElemConst(arg0, out int constN))
+                        {
+                            count = constN;
+                            initVals.AddRange(Enumerable.Repeat(0, count));
                         }
                     }
                     else if (callee.Name == "input")
@@ -2333,15 +2344,16 @@ public partial class IRGenerator
                 callee.Name == "bytearray" && call.Args.Count > 0)
             {
                 var arg0 = call.Args[0];
-                if (arg0 is IntegerLiteral il)
-                {
-                    count = il.Value;
-                    initVals.AddRange(Enumerable.Repeat(0, count));
-                }
-                else if (arg0 is ListExpr le)
+                if (arg0 is ListExpr le)
                 {
                     count = le.Elements.Count;
                     foreach (var e in le.Elements) initVals.Add(TryEvalElemConst(e, out int v) ? v : 0);
+                }
+                // Integer literal or any compile-time constant (bytearray(WINDOW)).
+                else if (TryEvalElemConst(arg0, out int constN))
+                {
+                    count = constN;
+                    initVals.AddRange(Enumerable.Repeat(0, count));
                 }
             }
 

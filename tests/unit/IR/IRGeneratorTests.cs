@@ -548,6 +548,25 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ModuleBytearray_UnannotatedConstSize_Registers()
+    {
+        // MicroPython declares buffers without annotation and sizes them with module
+        // constants: `samples = bytearray(WINDOW)`. Both the missing annotation and the
+        // non-literal size used to fall through to a runtime call to an undefined
+        // 'bytearray' function.
+        const string src =
+            "WINDOW = 8\n" +
+            "buf = bytearray(WINDOW)\n" +
+            "def main():\n" +
+            "    i: uint8 = 3\n" +
+            "    buf[i] = 7\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var stores = ir.Functions.SelectMany(f => f.Body).OfType<ArrayStore>()
+            .Where(a => a.ArrayName.EndsWith("buf")).ToList();
+        Assert.NotEmpty(stores);
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the

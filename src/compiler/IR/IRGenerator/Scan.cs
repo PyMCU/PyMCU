@@ -20,6 +20,29 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // Registers a module-level fixed buffer for `name = bytearray(N)` or
+    // `bytearray([...])`. N may be an integer literal or any compile-time constant
+    // expression already registered by this scan (e.g. `WINDOW = 8` earlier in the
+    // module). Silently ignores anything that is not a bytearray(...) call — the
+    // caller passes every candidate initializer through here.
+    private void TryRegisterModuleBytearray(string name, Expression? initializer)
+    {
+        if (initializer is not CallExpr call || call.Callee is not VariableExpr callee
+            || callee.Name != "bytearray" || call.Args.Count == 0) return;
+
+        int count = call.Args[0] switch
+        {
+            ListExpr le => le.Elements.Count,
+            var e when TryEvalElemConst(e, out int n) => n,
+            _ => 0,
+        };
+        if (count <= 0) return;
+
+        arraySizes[name] = count;
+        arrayElemTypes[name] = DataType.UINT8;
+        moduleSramArrays.Add(name);
+    }
+
     private void ScanGlobals(ProgramNode ast, ModuleScope? scope = null)
     {
         // Collect every member name used as an assignment target anywhere in this module
@@ -56,20 +79,7 @@ public partial class IRGenerator
                 initializer = varDecl.Init;
 
                 if (type == "bytearray" && initializer != null)
-                {
-                    if (initializer is CallExpr call && call.Callee is VariableExpr callee &&
-                        callee.Name == "bytearray" && call.Args.Count > 0)
-                    {
-                        int count = 0;
-                        if (call.Args[0] is IntegerLiteral il) count = il.Value;
-                        if (count > 0)
-                        {
-                            arraySizes[name] = count;
-                            arrayElemTypes[name] = DataType.UINT8;
-                            moduleSramArrays.Add(name);
-                        }
-                    }
-                }
+                    TryRegisterModuleBytearray(name, initializer);
             }
             else if (stmt is AssignStmt assign)
             {
@@ -77,6 +87,10 @@ public partial class IRGenerator
                 {
                     name = varExpr.Name;
                     initializer = assign.Value;
+
+                    // Unannotated module-level `name = bytearray(...)` (MicroPython idiom):
+                    // register the fixed buffer just like the annotated form.
+                    TryRegisterModuleBytearray(name, initializer);
                 }
             }
             else if (stmt is AnnAssign annAssign)
