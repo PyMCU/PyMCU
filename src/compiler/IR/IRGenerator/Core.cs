@@ -313,7 +313,11 @@ public partial class IRGenerator
             foreach (var sym in imp.Symbols)
             {
                 string key = imp.Aliases.ContainsKey(sym) ? imp.Aliases[sym] : sym;
-                importedAliases[key] = imp.ModuleName;
+                // Re-export chase: `from pymcu.hal import Pin` where hal/__init__ itself
+                // does `from pymcu.hal.gpio import Pin` must bind Pin to the DEFINING
+                // module -- mangling against the facade produced an undefined
+                // pymcu_hal_Pin. A module that defines the symbol itself ends the chase.
+                importedAliases[key] = ResolveReExport(importedModules, imp.ModuleName, sym);
                 if (imp.Aliases.ContainsKey(sym))
                     aliasToOriginal[key] = sym;
             }
@@ -1153,6 +1157,33 @@ public partial class IRGenerator
     //
     // Used by the synthesized-main logic to decide which GlobalStatements to include
     // in the generated `main` body.
+    // Follows a re-export chain to the module that actually DEFINES `symbol`. A module
+    // defines it when it contains a class, function or module-level assignment of that
+    // name; otherwise, if the module re-imports the symbol, the chase continues there.
+    // Bounded to keep import cycles from looping.
+    private static string ResolveReExport(Dictionary<string, ProgramNode> importedModules,
+        string moduleName, string symbol, int depth = 0)
+    {
+        if (depth > 8 || !importedModules.TryGetValue(moduleName, out var mAst))
+            return moduleName;
+
+        bool definedHere =
+            mAst.Functions.Any(f => f.Name == symbol)
+            || mAst.GlobalStatements.Any(s =>
+                s is ClassDef cd && cd.Name == symbol
+                || s is AssignStmt { Target: VariableExpr tv } && tv.Name == symbol
+                || s is AnnAssign aa && aa.Target == symbol
+                || s is VarDecl vd && vd.Name == symbol);
+        if (definedHere) return moduleName;
+
+        // `from Y import S` re-exports S; `from Y import S as T` re-exports T, not S.
+        foreach (var mi in mAst.Imports)
+            if (mi.Symbols.Contains(symbol) && !mi.Aliases.ContainsKey(symbol))
+                return ResolveReExport(importedModules, mi.ModuleName, symbol, depth + 1);
+
+        return moduleName;
+    }
+
     private bool IsTopLevelPureDeclaration(Statement s)
     {
         // Imports and class definitions are scanned before IR generation and have no
