@@ -3011,6 +3011,68 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
             throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)");
 
+        // `obj OP= v` where obj is a ZCA instance: Python first tries the in-place dunder
+        // (__iadd__ & co.), then falls back to the binary one via `obj = obj OP v`. Without
+        // this routing the statement compiled as a scalar RMW on the instance handle --
+        // silently mutating nothing.
+        if (stmt.Target is VariableExpr zve)
+        {
+            string zq = string.IsNullOrEmpty(currentInlinePrefix)
+                ? (string.IsNullOrEmpty(currentFunction) ? zve.Name : currentFunction + "." + zve.Name)
+                : currentInlinePrefix + zve.Name;
+            if (instanceClasses.TryGetValue(zq, out var zcls) && !string.IsNullOrEmpty(zcls))
+            {
+                string idunder = stmt.Op switch
+                {
+                    AugOp.Add => "__iadd__",
+                    AugOp.Sub => "__isub__",
+                    AugOp.Mul => "__imul__",
+                    AugOp.FloorDiv => "__ifloordiv__",
+                    AugOp.Mod => "__imod__",
+                    AugOp.BitAnd => "__iand__",
+                    AugOp.BitOr => "__ior__",
+                    AugOp.BitXor => "__ixor__",
+                    AugOp.LShift => "__ilshift__",
+                    AugOp.RShift => "__irshift__",
+                    _ => "",
+                };
+                if (idunder.Length > 0 && inlineFunctions.ContainsKey(zcls + "_" + idunder))
+                {
+                    // Route through the regular method-call machinery (identical to a
+                    // hand-written stats.add(v)): it binds self correctly for flattened
+                    // AND slot instances. ZCA mutation is in place, so the Python rebind
+                    // of the returned self is an identity and is dropped.
+                    VisitExpression(new CallExpr(
+                        new MemberAccessExpr(new VariableExpr(zve.Name), idunder),
+                        new List<Expression> { stmt.Value }) { Line = stmt.Line });
+                    return;
+                }
+                string bdunder = idunder.Length > 0 ? "__" + idunder.Substring(3) : "";
+                if (bdunder.Length > 0 && inlineFunctions.ContainsKey(zcls + "_" + bdunder))
+                {
+                    Frontend.BinaryOp bop = stmt.Op switch
+                    {
+                        AugOp.Add => Frontend.BinaryOp.Add,
+                        AugOp.Sub => Frontend.BinaryOp.Sub,
+                        AugOp.Mul => Frontend.BinaryOp.Mul,
+                        AugOp.FloorDiv => Frontend.BinaryOp.FloorDiv,
+                        AugOp.Mod => Frontend.BinaryOp.Mod,
+                        AugOp.BitAnd => Frontend.BinaryOp.BitAnd,
+                        AugOp.BitOr => Frontend.BinaryOp.BitOr,
+                        AugOp.BitXor => Frontend.BinaryOp.BitXor,
+                        AugOp.LShift => Frontend.BinaryOp.LShift,
+                        AugOp.RShift => Frontend.BinaryOp.RShift,
+                        _ => throw UserError($"augmented operator {stmt.Op} has no dunder mapping"),
+                    };
+                    VisitAssign(new AssignStmt(zve, new BinaryExpr(zve, bop, stmt.Value)) { Line = stmt.Line });
+                    return;
+                }
+                throw UserError(
+                    $"'{zve.Name}' is a {zcls} instance: augmented assignment needs " +
+                    $"{zcls}.{(idunder.Length > 0 ? idunder : "an in-place dunder")} (or the matching binary dunder) defined");
+            }
+        }
+
         Val operand = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr ve)

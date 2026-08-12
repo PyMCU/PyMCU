@@ -567,6 +567,57 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ZcaAugAssign_RoutesToInPlaceDunder()
+    {
+        // `obj += v` on a ZCA instance must invoke __iadd__ through the regular
+        // method-call machinery (mutating the instance), not compile as a scalar
+        // read-modify-write on the instance handle.
+        const string src =
+            "class Acc:\n" +
+            "    def __init__(self):\n" +
+            "        self.total: uint16 = 0\n" +
+            "        self.count: uint8 = 0\n" +
+            "    def __iadd__(self, v: uint8):\n" +
+            "        self.total += v\n" +
+            "        self.count += 1\n" +
+            "        return self\n" +
+            "def main(x: uint8):\n" +
+            "    a = Acc()\n" +
+            "    a += x\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var main = ir.Functions.Single(f => f.Name == "main");
+        // The dunder body mutates the instance fields -- boxed (slot array stores) or
+        // flattened (writes to the *_total/*_count field variables), depending on the
+        // representation the ZCA machinery picked.
+        static bool WritesField(Instruction i) => i switch
+        {
+            ArrayStore st => st.ArrayName.Contains("__slot"),
+            Copy { Dst: Variable v } => v.Name.Contains("total") || v.Name.Contains("count"),
+            AugAssign { Target: Variable v } => v.Name.Contains("total") || v.Name.Contains("count"),
+            _ => false,
+        };
+        Assert.Contains(main.Body, WritesField);
+    }
+
+    [Fact]
+    public void ZcaAugAssign_WithoutDunder_RaisesClearError()
+    {
+        // Without __iadd__ (or __add__) the augmented assignment has no meaning on a
+        // ZCA instance; it must be a located error, not a silent scalar RMW.
+        const string src =
+            "class Box:\n" +
+            "    def __init__(self):\n" +
+            "        self.a: uint8 = 0\n" +
+            "        self.b: uint8 = 0\n" +
+            "def main(x: uint8):\n" +
+            "    bx = Box()\n" +
+            "    bx += x\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("__iadd__", ex.Message);
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the
