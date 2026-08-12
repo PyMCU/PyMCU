@@ -2323,6 +2323,15 @@ private static Function CloneFunction(Function f)
     // pointer/array indirection, Return) disqualifies the region.
     private static bool IsOutlineable(Instruction i) =>
         i is Copy or Binary or Unary or Bitcast or Call ||
+        // MMIO bit ops on ABSOLUTE addresses move safely into a subroutine: the
+        // region is relocated verbatim (order preserved) and a MemoryAddress means
+        // the same register from any function. This is what peripheral expansions
+        // are made of -- an ADC read starts with BitSet(ADCSRA, ADSC), and its
+        // exclusion kept every such region inline (4 unrolled sensor reads = 4
+        // copies, ~320 B). Variable-targeted bit ops stay inline: their def/use
+        // is not modeled by GetDst/RegisterUses, so liveness could misclassify.
+        i is BitSet { Target: MemoryAddress } or BitClear { Target: MemoryAddress }
+          or BitCheck { Source: MemoryAddress } ||
         i is Label || JumpTargetOf(i) != null;
 
     private static string? NameOf(Val? v) => v switch
@@ -2362,6 +2371,7 @@ private static Function CloneFunction(Function f)
         public required string Signature;                // constants blanked
         public required List<long> HoleValues;           // one per blanked constant
         public required List<DataType> HoleTypes;        // inferred slot type
+        public Val? LiveOutSite;                         // this site's produced value, if any
     }
 
     private static void OutlineInlineExpansions(ProgramIR program, HashSet<string> globalNames)
@@ -2557,12 +2567,28 @@ private static Function CloneFunction(Function f)
         // positives — the next expansion rewrites the name before reading it. Walk
         // forward from the region end and decide per name.
         var after = FunctionLiveness(func, livenessMemo);
+        var escaping = new List<string>();
         foreach (var d in defined)
         {
             if (globalNames.Contains(d)) return null;
             bool escapes = after != null ? after[end + 1].Contains(d) : IsLiveAfter(body, end, d);
-            if (escapes) return null;
+            if (escapes) escaping.Add(d);
         }
+        // Exactly ONE escaping def: the region PRODUCES a value (a sensor read, a
+        // computed checksum) -- outline it as a returning subroutine. The Return
+        // appended here anchors the def through the region DCE, the canonical
+        // rename and the signature; TryOutlineGroup keeps it as the subroutine's
+        // return and each call site receives the value in its Call dst.
+        Val? liveOutSite = null;
+        if (escaping.Count == 1)
+        {
+            string lo = escaping[0];
+            for (int i = raw.Count - 1; i >= 0 && liveOutSite == null; i--)
+                if (NameOf(GetDst(raw[i])) == lo) liveOutSite = GetDst(raw[i]);
+            if (liveOutSite is not (Temporary or Variable)) return null;
+            raw.Add(new Return(liveOutSite));
+        }
+        else if (escaping.Count > 1) return null;
 
         // Region-local dead-store elimination (removes folded-but-unused copies
         // the inliner leaves behind, so sibling expansions canonicalise alike).
@@ -2630,6 +2656,7 @@ private static Function CloneFunction(Function f)
             Core = core, Rename = rename, LabelRename = labelRename,
             Inputs = inputs, InputVals = inputVals,
             Signature = sig.ToString(), HoleValues = holeVals, HoleTypes = holeTypes,
+            LiveOutSite = liveOutSite,
         };
     }
 
@@ -2798,6 +2825,28 @@ private static Function CloneFunction(Function f)
             return;
         }
 
+        // MMIO bit ops and the live-out Return: encoded literally (an MMIO address
+        // and bit are structural -- two regions touching different registers must
+        // NEVER group), no constant holes.
+        switch (ins)
+        {
+            case BitSet bs:
+                sig.Append("bset,").Append(CanonTok(bs.Target, rename, inputs))
+                   .Append('.').Append(bs.Bit).Append(';');
+                return;
+            case BitClear bcl:
+                sig.Append("bclr,").Append(CanonTok(bcl.Target, rename, inputs))
+                   .Append('.').Append(bcl.Bit).Append(';');
+                return;
+            case BitCheck bck:
+                sig.Append(CanonTok(bck.Dst, rename, inputs)).Append("=bchk,")
+                   .Append(CanonTok(bck.Source, rename, inputs)).Append('.').Append(bck.Bit).Append(';');
+                return;
+            case Return r:
+                sig.Append("ret,").Append(CanonTok(r.Value, rename, inputs)).Append(';');
+                return;
+        }
+
         sig.Append(CanonTok(GetDst(ins), rename, inputs)).Append('=');
         switch (ins)
         {
@@ -2901,7 +2950,9 @@ private static Function CloneFunction(Function f)
         // instruction 1, a Label 0.
         //   inline  = nSites * bodyCost
         //   outline = bodyCost + 1 (ret) + nParams (prologue) + nSites * call
-        long bodyCost = r0.Core.Sum(InstrCost);
+        // The live-out Return (when present) exists only in the outlined form --
+        // exclude it from the per-site inline cost; the formula's +1 covers the ret.
+        long bodyCost = r0.Core.Sum(i => i is Return ? 0 : InstrCost(i));
         long inlineTotal = (long)nSites * bodyCost;
         long outlineTotal = bodyCost + 1 + nParams + (long)nSites * (nParams + 2);
         if (outlineTotal >= inlineTotal) return false;
@@ -2931,7 +2982,16 @@ private static Function CloneFunction(Function f)
         }
 
         string gName = "__pymcu_outline_" + counter++;
-        var g = new Function { Name = gName, ReturnType = DataType.VOID, IsInline = false };
+        // A region with a live-out ends in Return(<local>) (see TryCanonicalizeRegion):
+        // the subroutine returns that value and each call site's Call receives it.
+        var retVal = r0.Core.OfType<Return>()
+            .Select(rr => rr.Value).FirstOrDefault(v => v is not NoneVal);
+        var g = new Function
+        {
+            Name = gName,
+            ReturnType = retVal != null ? GetDataType(retVal) : DataType.VOID,
+            IsInline = false,
+        };
         for (int p = 0; p < nParams; p++) g.Params.Add(gName + ".p" + p);
 
         var variantSet = new HashSet<int>(variant);
@@ -2940,7 +3000,7 @@ private static Function CloneFunction(Function f)
             g.Body.Add(RebuildOutlined(ins, gName, r0.Rename, r0.LabelRename,
                 inputParamIndex, nInputs,
                 variantSet, variantParamIndexOf, finalHoleTypes, ref ctr));
-        g.Body.Add(new Return(new NoneVal()));
+        if (retVal == null) g.Body.Add(new Return(new NoneVal()));
         program.Functions.Add(g);
 
         // Replace each region with a Call; splice high->low so indices stay valid.
@@ -2952,7 +3012,7 @@ private static Function CloneFunction(Function f)
                 args.AddRange(r.InputVals);
                 args.AddRange(variant.Select(k => (Val)new Constant((int)r.HoleValues[k])));
                 r.Func.Body.RemoveRange(r.Start, r.End - r.Start + 1);
-                r.Func.Body.Insert(r.Start, new Call(gName, args, new NoneVal()));
+                r.Func.Body.Insert(r.Start, new Call(gName, args, r.LiveOutSite ?? new NoneVal()));
             }
         return true;
     }
@@ -2985,6 +3045,10 @@ private static Function CloneFunction(Function f)
             case JumpIfGreaterOrEqual j: return new JumpIfGreaterOrEqual(MapName(j.Src1), MapName(j.Src2), L(j.Target));
             case JumpIfBitSet j: return new JumpIfBitSet(MapName(j.Source), j.Bit, L(j.Target));
             case JumpIfBitClear j: return new JumpIfBitClear(MapName(j.Source), j.Bit, L(j.Target));
+            // The MMIO source/target stays literal; only BitCheck's dst is a local.
+            case BitCheck bck: return new BitCheck(bck.Source, bck.Bit, MapName(bck.Dst));
+            // The live-out Return: its operand is the region-defined local.
+            case Return r: return new Return(MapName(r.Value));
         }
 
         Val MapName(Val v)
