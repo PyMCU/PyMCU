@@ -709,6 +709,19 @@ private static Function CloneFunction(Function f)
                 return new Binary(BinaryOp.LShift, other, new Constant(System.Numerics.BitOperations.TrailingZeroCount(k)), b.Dst);
             case BinaryOp.BitAnd when k == 0: return Zero();
             case BinaryOp.BitAnd when fullMask >= 0 && (k & fullMask) == fullMask: return Keep();
+            // Strength-reduce power-of-two floored division and modulo. PyMCU's // and %
+            // are FLOORED (Python semantics), which shift/mask implement exactly for
+            // signed AND unsigned operands when the divisor is a positive power of two:
+            // the arithmetic right shift rounds toward -inf and x & (2^n - 1) is the
+            // non-negative residue -- both ARE the floored results. Dropping the divide
+            // also un-links the software division runtime when nothing else divides.
+            case BinaryOp.FloorDiv when rightConst && k == 1: return Keep();
+            case BinaryOp.FloorDiv when rightConst && k > 1 && (k & (k - 1)) == 0:
+                return new Binary(BinaryOp.RShift, other,
+                    new Constant(System.Numerics.BitOperations.TrailingZeroCount(k)), b.Dst);
+            case BinaryOp.Mod when rightConst && k == 1: return Zero();
+            case BinaryOp.Mod when rightConst && k > 1 && (k & (k - 1)) == 0:
+                return new Binary(BinaryOp.BitAnd, other, new Constant(k - 1), b.Dst);
             // Non-commutative: identity only when the constant is the right operand.
             case BinaryOp.Sub when rightConst && k == 0: return Keep();
             case BinaryOp.LShift when rightConst && k == 0: return Keep();
