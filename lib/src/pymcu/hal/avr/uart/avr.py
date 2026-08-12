@@ -109,41 +109,41 @@ def uart_read_line(buf: bytearray, max_len: uint8) -> uint8:
 
 
 def uart_write_decimal_u8(value: uint8):
-    # Print uint8 value as decimal digits (0-255).
-    # Uses __div8 / __mod8 from the AVR math runtime.
+    # Print uint8 value as decimal digits (0-255) by subtracting powers of ten.
+    # No division: printing is the most common reason firmware links the
+    # __div8/__mod8 runtime, and a subtract loop per digit is smaller and
+    # bounded (<= 9 iterations per digit).
+    started: uint8 = 0
     if value >= 100:
-        hundreds: uint8 = value // 100
-        uart_write(hundreds + 48)
-        tens: uint8 = (value // 10) % 10
-        uart_write(tens + 48)
-        units: uint8 = value % 10
-        uart_write(units + 48)
-    elif value >= 10:
-        tens: uint8 = value // 10
-        uart_write(tens + 48)
-        units: uint8 = value % 10
-        uart_write(units + 48)
-    else:
-        uart_write(value + 48)
+        c: uint8 = 48
+        while value >= 100:
+            value -= 100
+            c += 1
+        uart_write(c)
+        started = 1
+    if value >= 10 or started == 1:
+        c2: uint8 = 48
+        while value >= 10:
+            value -= 10
+            c2 += 1
+        uart_write(c2)
+    uart_write(value + 48)
 
 
 def uart_write_decimal_u16(value: uint16):
-    # Print uint16 value as decimal digits (0-65535).
-    # Standard digit-extraction: peel least-significant digits into a buffer,
-    # then emit them in reverse. One division per digit (vs the unrolled
-    # divide-by-powers-of-ten form, which costs several divisions per call).
-    if value == 0:
-        uart_write(48)  # '0'
-        return
-    buf: uint8[5] = [0, 0, 0, 0, 0]
-    n: uint8 = 0
-    while value > 0:
-        buf[n] = uint8(value % 10) + 48
-        value = value // 10
-        n = n + 1
-    while n > 0:
-        n = n - 1
-        uart_write(buf[n])
+    # Print uint16 value as decimal digits (0-65535) by subtracting powers of
+    # ten (no division; the constant list unrolls, so each digit group compares
+    # against a compile-time constant).
+    started: uint8 = 0
+    for d in [10000, 1000, 100, 10]:
+        c: uint8 = 48
+        while value >= d:
+            value -= d
+            c += 1
+        if c != 48 or started == 1:
+            uart_write(c)
+            started = 1
+    uart_write(uint8(value) + 48)
 
 
 def uart_write_decimal_i16(value: int16):
@@ -157,22 +157,20 @@ def uart_write_decimal_i16(value: int16):
 
 
 def uart_write_decimal_u32(value: uint32):
-    # Print uint32 value as decimal digits (0-4294967295). Peel least-significant digits into a
-    # buffer, then emit them in reverse (same shape as uart_write_decimal_u16). The accumulator
-    # stays uint32 throughout: a uint16 intermediate would truncate any value whose low group is
-    # 65536..99999 (e.g. 83647 -> 18111), corrupting large values.
-    if value == 0:
-        uart_write(48)  # '0'
-        return
-    buf: uint8[10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    n: uint8 = 0
-    while value > 0:
-        buf[n] = uint8(value % 10) + 48
-        value = value // 10
-        n = n + 1
-    while n > 0:
-        n = n - 1
-        uart_write(buf[n])
+    # Print uint32 value as decimal digits (0-4294967295) by subtracting powers
+    # of ten. Bigger body than the divide-and-buffer form, but shared once per
+    # program and free of the 32-bit division runtime. The accumulator stays
+    # uint32 throughout so no digit group can truncate.
+    started: uint8 = 0
+    for d in [1000000000, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10]:
+        c: uint8 = 48
+        while value >= d:
+            value -= d
+            c += 1
+        if c != 48 or started == 1:
+            uart_write(c)
+            started = 1
+    uart_write(uint8(value) + 48)
 
 
 def uart_write_decimal_i32(value: int32):
