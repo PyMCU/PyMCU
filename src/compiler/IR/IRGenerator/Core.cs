@@ -489,6 +489,14 @@ public partial class IRGenerator
 
         currentModulePrefix = "";
         currentSourceFile = "main.py";
+
+        // Record entry-file module-level `name = Ctor(...)` targets: their construction
+        // is injected into main as module init, but later references resolve them as
+        // module globals — the instance tracking must use the module key (SlotInstanceKey).
+        foreach (var s in mainAst.GlobalStatements)
+            if (s is AssignStmt { Target: VariableExpr tlTv, Value: CallExpr })
+                topLevelInstanceTargets.Add(tlTv.Name);
+
         ScanGlobals(mainAst);
         ScanFunctions(mainAst);
 

@@ -259,6 +259,11 @@ public partial class IRGenerator
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
 
+    // Names assigned a constructor call at MODULE level of the entry file. Their init
+    // runs inside main (module init), but references resolve them as module globals —
+    // SlotInstanceKey uses this to register the boxed instance under its module key.
+    private readonly HashSet<string> topLevelInstanceTargets = new();
+
     // The declared element type of a runtime ptr[T] value, or UINT8 when untyped/unknown.
     // Passed as the Elem of Load/StoreIndirect so the access width survives the optimizer
     // collapsing typed temporaries into raw constants.

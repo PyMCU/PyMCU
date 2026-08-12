@@ -307,9 +307,7 @@ public partial class IRGenerator
     private void MaterializeSlotFromFlattened(string name, string cls)
     {
         if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
-        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + name
-            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+        string qn = SlotInstanceKey(name);
         if (slotInstances.ContainsKey(qn)) return;   // already a slot
 
         // Snapshot current field values (flattened/aliased) before we repoint the instance.
@@ -2104,17 +2102,33 @@ public partial class IRGenerator
         throw UserError("Array size '" + atom + "' is not a compile-time constant");
     }
 
+    // The tracking key for a boxed (slot) ZCA instance. Normally the function-qualified
+    // name -- but a MODULE-LEVEL instance in a top-level script is registered by
+    // ScanGlobals as a module global, and every later reference resolves to that module
+    // name. Registering the slot under the synthesized-main qualified name ("main.a")
+    // while call sites resolve "a" made the slot lookup miss, so outlined methods fell
+    // back to passing the flattened field VALUES -- and silently mutated copies.
+    private string SlotInstanceKey(string name)
+    {
+        // A module-level `a = Acc()` executes inside the synthesized/explicit main (as
+        // module init), but every later reference resolves the name as a MODULE global.
+        // Track the instance under its module key so the slot lookup at method call
+        // sites hits instead of falling back to flattened by-value fields.
+        if (!string.IsNullOrEmpty(currentFunction) && string.IsNullOrEmpty(currentInlinePrefix)
+            && topLevelInstanceTargets.Contains(name))
+            return currentModulePrefix + name;
+        return !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : name);
+    }
+
     // RFC 0001 Model B (SRAM slot): box a multi-field ZCA. Allocate a fixed SRAM byte slot
     // for the instance and store each field at its byte offset, mapping the field's source
     // __init__ parameter to the corresponding constructor argument. Tracks the instance so
     // its @outline (self-ptr) methods receive the slot base address as `self`.
     private void EmitSlotConstruction(VariableExpr targetVar, string cls, List<Expression> args)
     {
-        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + targetVar.Name
-            : (!string.IsNullOrEmpty(currentFunction)
-                ? currentFunction + "." + targetVar.Name
-                : targetVar.Name);
+        string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
@@ -2151,11 +2165,7 @@ public partial class IRGenerator
     private void EmitSlotFactoryCall(VariableExpr targetVar, string facFn, string cls,
         List<Expression> args)
     {
-        string qn = !string.IsNullOrEmpty(currentInlinePrefix)
-            ? currentInlinePrefix + targetVar.Name
-            : (!string.IsNullOrEmpty(currentFunction)
-                ? currentFunction + "." + targetVar.Name
-                : targetVar.Name);
+        string qn = SlotInstanceKey(targetVar.Name);
         string slot = qn + "__slot";
 
         var layout = classFieldLayout[cls];
@@ -3020,6 +3030,11 @@ public partial class IRGenerator
             string zq = string.IsNullOrEmpty(currentInlinePrefix)
                 ? (string.IsNullOrEmpty(currentFunction) ? zve.Name : currentFunction + "." + zve.Name)
                 : currentInlinePrefix + zve.Name;
+            // A module-level instance in a top-level script is tracked under its module
+            // key (see SlotInstanceKey), not the function-qualified name.
+            if (!instanceClasses.ContainsKey(zq)
+                && instanceClasses.ContainsKey(currentModulePrefix + zve.Name))
+                zq = currentModulePrefix + zve.Name;
             if (instanceClasses.TryGetValue(zq, out var zcls) && !string.IsNullOrEmpty(zcls))
             {
                 string idunder = stmt.Op switch

@@ -618,6 +618,33 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void TopLevelInstance_MethodCall_PassesSlotByReference()
+    {
+        // A module-level `a = Acc()` in a top-level script constructs inside the
+        // synthesized main, but later references resolve `a` as a module global. The
+        // boxed instance must be tracked under its module key so the outlined method
+        // call passes the slot base (by reference) — previously the lookup missed and
+        // the call passed the flattened field VALUES, silently mutating copies.
+        const string src =
+            "class Acc:\n" +
+            "    def __init__(self):\n" +
+            "        self.total: uint16 = 0\n" +
+            "        self.count: uint8 = 0\n" +
+            "    def add(self, v: uint8):\n" +
+            "        self.total += v\n" +
+            "        self.count += 1\n" +
+            "a = Acc()\n" +
+            "i: uint8 = 0\n" +
+            "while i < 4:\n" +
+            "    a.add(3)\n" +
+            "    i += 1\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var main = ir.Functions.Single(f => f.Name == "main");
+        var call = main.Body.OfType<Call>().First(c => c.FunctionName == "Acc_add");
+        Assert.Contains(call.Args, a => a is ArrayBase ab && ab.ArrayName.Contains("__slot"));
+    }
+
+    [Fact]
     public void InOperator_AcceptsTupleLiteral()
     {
         // `x in (1, 2, 3)` (a tuple literal on the RHS) is valid Python and must compile the
