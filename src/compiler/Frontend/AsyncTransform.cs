@@ -195,7 +195,8 @@ public static class AsyncTransform
         // is a READ (its value flows in from a previous activation / the zero init).
         // Params are always fields (initialized once in __init__).
         var localNames = new List<string>();
-        CollectAssignedLocals(fn.Body, new HashSet<string>(paramNames), localNames);
+        var localTypes = new Dictionary<string, string>();
+        CollectAssignedLocals(fn.Body, new HashSet<string>(paramNames), localNames, localTypes);
 
         var touchStates = new Dictionary<string, HashSet<int>>();
         var firstTouchIsRead = new Dictionary<string, bool>();
@@ -219,17 +220,25 @@ public static class AsyncTransform
                 st.Raw[i] = rw.RewriteStmt(st.Raw[i]);
 
         // __init__(self, <params>): _state=0, params, field locals, machinery fields.
+        // Field WIDTHS matter enormously on 8-bit targets: a blanket uint32 quadruples
+        // the state and drags 4-byte load/store chains into every poll() -- a two-yield
+        // generator once cost 4.2 KB of flash from this alone. _state only ever holds
+        // small ids plus the 0x7FFF terminal (uint16); lifted locals keep their declared
+        // annotation; _value is inferred from the yielded/returned expressions and falls
+        // back to uint32 only when one of them cannot be classified.
         var initBody = new Block();
-        initBody.Statements.Add(SelfDecl("_state", "uint32", Int(0)));
+        initBody.Statements.Add(SelfDecl("_state", "uint16", Int(0)));
         foreach (var p in fn.Params)
             initBody.Statements.Add(SelfDecl(p.Name, ScalarType(p.Type), new VariableExpr(p.Name)));
         foreach (var l in localNames)
             if (fields.Contains(l))
-                initBody.Statements.Add(SelfDecl(l, "uint32", Int(0)));
+                initBody.Statements.Add(SelfDecl(l,
+                    localTypes.TryGetValue(l, out var lt) ? ScalarType(lt) : "uint32", Int(0)));
         foreach (var sf in b.StartFields)
             initBody.Statements.Add(SelfDecl(sf, "uint32", Int(0)));
         if (b.NeedsValue)
-            initBody.Statements.Add(SelfDecl("_value", "uint32", Int(0)));
+            initBody.Statements.Add(SelfDecl("_value",
+                InferValueFieldType(b, localTypes, fn.Params), Int(0)));
 
         var initParams = new List<Param> { new Param("self", "") };
         initParams.AddRange(fn.Params);
@@ -250,7 +259,8 @@ public static class AsyncTransform
                 new BinaryExpr(SelfRef("_state"), BinaryOp.Equal, Int(st.Id)), blk));
         }
         dispatch.Statements.Add(new ReturnStmt(Int(0)));
-        var pollFn = new FunctionDef("poll", new List<Param> { new Param("self", "") }, "uint32", dispatch);
+        // poll() only ever returns the protocol codes 0/1/2 -- a byte, not a uint32.
+        var pollFn = new FunctionDef("poll", new List<Param> { new Param("self", "") }, "uint8", dispatch);
 
         var classBody = new Block();
         classBody.Statements.Add(initFn);
@@ -748,29 +758,70 @@ public static class AsyncTransform
         _ => false,
     };
 
-    private static void CollectAssignedLocals(Statement s, HashSet<string> exclude, List<string> outList)
+    private static void CollectAssignedLocals(Statement s, HashSet<string> exclude, List<string> outList,
+        Dictionary<string, string>? outTypes = null)
     {
-        void Add(string n)
+        void Add(string n, string? declared = null)
         {
             if (!exclude.Contains(n) && !outList.Contains(n)) outList.Add(n);
+            if (outTypes != null && !string.IsNullOrEmpty(declared) && !outTypes.ContainsKey(n))
+                outTypes[n] = declared!;
         }
         switch (s)
         {
             case AssignStmt a when a.Target is VariableExpr v: Add(v.Name); break;
-            case VarDecl vd: Add(vd.Name); break;
-            case AnnAssign aa: Add(aa.Target); break;
-            case Block b: foreach (var st in b.Statements) CollectAssignedLocals(st, exclude, outList); break;
+            case VarDecl vd: Add(vd.Name, vd.VarType); break;
+            case AnnAssign aa: Add(aa.Target, aa.Annotation); break;
+            case Block b: foreach (var st in b.Statements) CollectAssignedLocals(st, exclude, outList, outTypes); break;
             case IfStmt iff:
-                CollectAssignedLocals(iff.ThenBranch, exclude, outList);
-                if (iff.ElseBranch != null) CollectAssignedLocals(iff.ElseBranch, exclude, outList);
-                foreach (var e in iff.ElifBranches) CollectAssignedLocals(e.Item2, exclude, outList);
+                CollectAssignedLocals(iff.ThenBranch, exclude, outList, outTypes);
+                if (iff.ElseBranch != null) CollectAssignedLocals(iff.ElseBranch, exclude, outList, outTypes);
+                foreach (var e in iff.ElifBranches) CollectAssignedLocals(e.Item2, exclude, outList, outTypes);
                 break;
-            case WhileStmt w: CollectAssignedLocals(w.Body, exclude, outList); break;
+            case WhileStmt w: CollectAssignedLocals(w.Body, exclude, outList, outTypes); break;
             case ForStmt f:
                 Add(f.VarName);
-                CollectAssignedLocals(f.Body, exclude, outList);
+                CollectAssignedLocals(f.Body, exclude, outList, outTypes);
                 break;
         }
+    }
+
+    // The narrowest type that can hold every expression assigned to self._value (the
+    // yield / return payloads). Classifiable: non-negative integer literals and
+    // variables with a declared scalar type. Anything else -> uint32 (the historical
+    // width) so no value can silently truncate.
+    private static string InferValueFieldType(Builder b, Dictionary<string, string> localTypes,
+        List<Param> pars)
+    {
+        static int Rank(string t) => t switch
+        {
+            "uint8" or "int8" => 1,
+            "uint16" or "int16" or "int" => 2,
+            _ => 3,
+        };
+        static bool Signed(string t) => t.StartsWith("int");
+
+        int rank = 1;
+        bool signed = false;
+        foreach (var st in b.States)
+            foreach (var raw in st.Raw)
+            {
+                if (raw is not AssignStmt { Target: MemberAccessExpr { Member: "_value" } } asg) continue;
+                string? t = asg.Value switch
+                {
+                    IntegerLiteral il when il.Value >= 0 && il.Value <= 255 => "uint8",
+                    IntegerLiteral il when il.Value >= 0 && il.Value <= 65535 => "uint16",
+                    VariableExpr v when localTypes.TryGetValue(v.Name, out var lt) => lt,
+                    VariableExpr v when pars.FirstOrDefault(p => p.Name == v.Name) is { } p
+                                        && !string.IsNullOrEmpty(p.Type) => p.Type,
+                    _ => null,
+                };
+                if (t == null || Rank(t) >= 3) return "uint32";
+                rank = Math.Max(rank, Rank(t));
+                signed |= Signed(t);
+            }
+        if (signed) return rank == 1 ? "int8" : "int16";
+        return rank == 1 ? "uint8" : "uint16";
     }
 
     private static string ScalarType(string t) => string.IsNullOrEmpty(t) ? "uint32" : t;
