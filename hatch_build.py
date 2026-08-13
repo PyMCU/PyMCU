@@ -33,6 +33,11 @@ class CustomBuildHook(BuildHookInterface):
         binary_name = "pymcuc.exe" if sys.platform == "win32" else "pymcuc"
         dst = root / "src" / "driver" / binary_name
 
+        rid = _get_rid()
+        # One tag, computed once: the label the wheel will carry is also the
+        # one the guard checks against the payload.
+        plat_tag = _narrow_universal_tag(rid, _get_wheel_platform_tag())
+
         if os.environ.get("PYMCU_SKIP_DOTNET_BUILD") == "1" and dst.exists():
             self.app.display_info(
                 f"[hatch-hook] Skipping dotnet publish (PYMCU_SKIP_DOTNET_BUILD=1). "
@@ -46,7 +51,9 @@ class CustomBuildHook(BuildHookInterface):
                 "-o", str(publish_dir),
                 "--nologo",
             ]
-            rid = _get_rid()
+            # Before the publish, not after: catching this later would mean
+            # discovering the mismatch at the end of a multi-minute AOT build.
+            _check_rid_matches_wheel_tag(rid, plat_tag)
             if rid:
                 cmd += ["-r", rid, "--self-contained", "true"]
                 self.app.display_info(f"[hatch-hook] Target RID: {rid}")
@@ -67,16 +74,79 @@ class CustomBuildHook(BuildHookInterface):
         # pymcuc is a .NET AOT binary — no Python ABI, but platform-specific.
         # Tag the wheel py3-none-<platform> so one wheel covers all Python 3
         # versions on a given OS/arch.
-        plat_tag = _get_wheel_platform_tag()
         build_data["pure_python"] = False
         build_data["tag"] = f"py3-none-{plat_tag}"
         self.app.display_info(f"[hatch-hook] Wheel tag: py3-none-{plat_tag}")
+
+
+# A Runtime Identifier names what dotnet puts in the wheel; the wheel's
+# platform tag names what pip will install it onto. They have to agree, and
+# nothing used to check, because they are computed from different questions:
+# the RID from platform.machine() (the machine) and the tag from
+# sysconfig.get_platform() (the interpreter). Those answers diverge under
+# emulation. On the Windows 11 ARM64 trial machine, which had only an x64
+# Python, the build compiled ARM64 binaries and shipped them in a wheel
+# labelled win_amd64 without a word of complaint.
+_RID_WHEEL_ARCH = {
+    "linux-x64":   "x86_64",
+    "linux-arm64": "aarch64",
+    "osx-x64":     "x86_64",
+    "osx-arm64":   "arm64",
+    "win-x64":     "amd64",
+    # 32-bit Windows tags as "win32", not "*_x86" -- and "x86" would also
+    # match inside "x86_64", which would wave through a linux-x64 mismatch.
+    "win-x86":     "win32",
+    "win-arm64":   "arm64",
+}
+
+
+def _narrow_universal_tag(rid: str | None, plat_tag: str) -> str:
+    """Cut a universal2 tag down to the architecture actually shipped.
+
+    A universal2 wheel promises both Intel and Apple Silicon, but dotnet
+    publishes one RID, so the payload only ever holds one of them. The default
+    Python on an Apple Silicon Mac is itself a universal2 build, so
+    sysconfig hands out that tag for what is really a single-arch wheel --
+    which is the mislabel we already had to correct by hand for the a5
+    release. Narrowing it here means the label describes the payload without
+    anyone remembering to pass an override.
+    """
+    if os.environ.get("WHEEL_PLATFORM_TAG"):
+        return plat_tag             # an explicit tag is a deliberate choice
+    arch = _RID_WHEEL_ARCH.get(rid or "")
+    if arch and "universal2" in plat_tag:
+        return plat_tag.replace("universal2", arch)
+    return plat_tag
+
+
+def _check_rid_matches_wheel_tag(rid: str | None, plat_tag: str) -> None:
+    """Fail the build when the payload and the label disagree."""
+    if rid is None:
+        return                      # no -r passed: dotnet targets the host
+    expected = _RID_WHEEL_ARCH.get(rid)
+    if expected is None:
+        return                      # an override we have no rule for
+    if expected in plat_tag:
+        return
+    raise RuntimeError(
+        f"This wheel would be a lie: dotnet is building for {rid}, but the "
+        f"wheel would be tagged {plat_tag}, which promises {expected!r}.\n"
+        f"platform.machine() reports {platform.machine()!r} (the machine) "
+        f"while the interpreter is built for "
+        f"{sysconfig.get_platform()!r} -- they disagree, which normally means "
+        f"this Python is running under emulation.\n"
+        f"Install a Python matching the machine, or, for a deliberate "
+        f"cross-build, set DOTNET_RID and WHEEL_PLATFORM_TAG together."
+    )
 
 
 def _get_rid() -> str | None:
     override = os.environ.get("DOTNET_RID")
     if override:
         return override
+    # platform.machine() answers "what machine is this", not "what is this
+    # process built for". Right for picking a binary that runs as its own
+    # process; wrong for anything that has to match this interpreter.
     m = platform.machine().lower()
     s = platform.system().lower()
     table = {
