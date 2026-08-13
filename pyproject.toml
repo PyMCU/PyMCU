@@ -26,11 +26,13 @@ dependencies = [
 avr = ["pymcu-avr>=0.1.0a4"]
 arm = ["pymcu-arm>=0.1.0a4"]
 pic = ["pymcu-pic>=0.1.0a3"]
-all = ["pymcu-avr>=0.1.0a4", "pymcu-arm>=0.1.0a4", "pymcu-pic>=0.1.0a3"]
+riscv = ["pymcu-backend-riscv>=0.1.0a1"]
+all = ["pymcu-avr>=0.1.0a4", "pymcu-arm>=0.1.0a4", "pymcu-pic>=0.1.0a3", "pymcu-backend-riscv>=0.1.0a1"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
 pymcu-sdk = {path = "extensions/pymcu-sdk", editable = true}
+pymcu-backend-riscv = {path = "extensions/pymcu-backend-riscv", editable = true}
 
 [project.scripts]
 pymcu = "driver.main:run_cli"

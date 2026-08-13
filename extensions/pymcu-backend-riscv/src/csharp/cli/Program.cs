@@ -103,6 +103,7 @@ rootCmd.SetAction(pr =>
 
     var cfg = new DeviceConfig
     {
+        Chip       = target,
         TargetChip = target,
         Arch       = arch,
         Frequency  = freq,

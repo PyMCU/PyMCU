@@ -9,7 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <!-- Must match the version pymcuc pulls in: Program.cs targets the 2.0.6 API. -->
+    <PackageReference Include="System.CommandLine" Version="2.0.6" />
   </ItemGroup>
 
   <ItemGroup>

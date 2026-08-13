@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pymcu-backend-riscv"
 version = "0.1.0a1"
-description = "PyMCU RISC-V codegen backend (RV32EC, CH32V)"
+description = "PyMCU RISC-V codegen backend and toolchain (RV32EC, CH32V)"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
@@ -15,5 +15,17 @@ dependencies = [
 [project.entry-points."pymcu.backends"]
 riscv = "pymcu.backend.riscv:RiscVBackendPlugin"
 
+[project.entry-points."pymcu.toolchains"]
+riscv = "pymcu.toolchain.riscv:RiscvToolchainPlugin"
+
+[project.entry-points."pymcu.programmers"]
+wch-link = "pymcu.toolchain.riscv:WchLinkProgrammer"
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/python/pymcu"]
+# The linker scripts must travel with the wheel: the toolchain resolves them
+# relative to its own __file__ at runtime.
+artifacts = ["src/python/pymcu/toolchain/riscv/ld/*.ld"]

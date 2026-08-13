@@ -82,6 +82,8 @@ def default_toolchain(chip: str) -> str:
         return "rp2040"
     if chip_lower.startswith("pic"):
         return "gputils"
+    if chip_lower.startswith("ch32v"):
+        return "riscv"
     return "avr"
 
 
@@ -92,6 +94,8 @@ def default_programmer(chip: str) -> str:
         return "avrdude"
     if chip_lower in ("rp2040", "rp2350"):
         return "rp2040"
+    if chip_lower.startswith("ch32v"):
+        return "wch-link"
     return "pk2cmd"
 
 
@@ -109,6 +113,9 @@ def default_frequency(chip: str) -> int:
         return 150_000_000
     if chip_lower.startswith("pic"):
         return 4_000_000
+    if chip_lower.startswith("ch32v"):
+        # HSI 24 MHz through the PLL, which is what the chip file assumes.
+        return 48_000_000
     return 8_000_000
 
 
@@ -128,4 +135,6 @@ def firmware_artifacts(chip: str) -> tuple[str, ...]:
     chip_lower = chip.lower()
     if chip_lower in ("rp2040", "rp2350"):
         return ("firmware.uf2", "firmware.bin")
+    if chip_lower.startswith("ch32v"):
+        return ("firmware.bin", "firmware.hex")
     return ("firmware.hex",)

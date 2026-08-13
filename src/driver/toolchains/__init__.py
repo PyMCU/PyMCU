@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 _CHIP_INSTALL_HINTS: dict[str, str] = {
     "at": "pip install pymcu[avr]",
     "pic": "pip install pymcu[pic]",
+    "ch32v": "pip install pymcu[riscv]",
 }
 
 

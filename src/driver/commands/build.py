@@ -88,6 +88,7 @@ FLASH_SIZES: dict[str, int] = {
     "attiny2313": 2048, "attiny4313": 4096,
     "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
     "rp2350": 4194304,   # 4 MB external QSPI flash (Raspberry Pi Pico 2 default)
+    "ch32v003": 16384,   # WCH QingKe V2A (RV32EC)
 }
 
 
@@ -1105,6 +1106,26 @@ def build(
                     elf_file = gas_tc.link(firmware_obj, [], output_dir)
                     progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
                     hex_file = gas_tc.elf_to_hex(elf_file)
+
+                    debug_dir = output_dir / "debug"
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(elf_file), str(debug_dir / elf_file.name))
+                    if firmware_obj.exists():
+                        firmware_obj.unlink()
+
+                elif toolchain.get_name() == "riscv-as":
+                    # ── riscv-as pipeline: assemble → link → objcopy ───────────────────
+                    # pymcuc emits a self-contained .asm (reset vector, helpers and
+                    # ISA attributes included), so there is no crt0 or libgcc to link.
+                    gas_tc = toolchain  # type: ignore[assignment]
+
+                    firmware_obj = gas_tc.assemble(output_file)
+                    progress.update(build_task, description="  [cyan]Linking[/cyan]...", completed=75)
+                    elf_file = gas_tc.link(firmware_obj, [], output_dir)
+                    progress.update(build_task, description="  [cyan]Generating HEX[/cyan]...", completed=85)
+                    hex_file = gas_tc.elf_to_hex(elf_file)
+                    # WCH-Link flashes a flat image, so ship both.
+                    gas_tc.elf_to_bin(elf_file)
 
                     debug_dir = output_dir / "debug"
                     debug_dir.mkdir(parents=True, exist_ok=True)
