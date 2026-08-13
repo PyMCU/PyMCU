@@ -230,22 +230,28 @@ def _delay_ms_avr(ms: uint16):
                 _delay_1ms_avr_16mhz()
         i = i + 1
 
-@inline
-def _delay_ms_riscv(ms: uint8):
-    """Software millisecond delay loop for RISC-V architecture."""
+def _delay_1ms_riscv():
     # RISC-V: ADDI+BNE = ~3-4 cycles/iter depending on pipeline.
     # CH32V003 at 48MHz: 1ms = 48000 cycles.
     # Nested: 63 x 255 x 3 = 48195 ~ 1ms
+    # Deliberately not @inline: the loop labels below are fixed names, so the
+    # body must be emitted exactly once no matter how many delay_ms calls the
+    # program makes. t0/t1 are caller-saved, so there is nothing to preserve.
+    asm("    LI t0, 63")
+    asm("_dly_outer_rv:")
+    asm("    LI t1, 255")
+    asm("_dly_inner_rv:")
+    asm("    ADDI t1, t1, -1")
+    asm("    BNEZ t1, _dly_inner_rv")
+    asm("    ADDI t0, t0, -1")
+    asm("    BNEZ t0, _dly_outer_rv")
+
+@inline
+def _delay_ms_riscv(ms: uint8):
+    """Software millisecond delay loop for RISC-V architecture."""
     i: uint8 = 0
     while i < ms:
-        asm("    LI t0, 63")
-        asm("_dly_outer_rv:")
-        asm("    LI t1, 255")
-        asm("_dly_inner_rv:")
-        asm("    ADDI t1, t1, -1")
-        asm("    BNEZ t1, _dly_inner_rv")
-        asm("    ADDI t0, t0, -1")
-        asm("    BNEZ t0, _dly_outer_rv")
+        _delay_1ms_riscv()
         i = i + 1
 
 @inline

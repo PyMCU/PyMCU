@@ -11,5 +11,7 @@ elif __CHIP__.name == "rp2040":
     from pymcu.hal.rp2040.gpio import Pin
 elif __CHIP__.name == "rp2350":
     from pymcu.hal.rp2350.gpio import Pin
+elif __CHIP__.arch == "riscv":
+    from pymcu.hal.riscv.gpio import Pin
 else:
     raise CompileError("GPIO not supported on this architecture")
