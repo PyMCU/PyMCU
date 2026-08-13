@@ -38,6 +38,7 @@ Thumbs.db
 
 # Python virtual environments and caches
 .venv/
+.venv-ci/
 **/__pycache__/
 **/*.py[cod]
 **/*.pyd

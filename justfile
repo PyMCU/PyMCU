@@ -74,6 +74,22 @@ test-integration: build
         --blame-hang-timeout 120s --nologo \
         -- NUnit.NumberOfTestWorkers=1
 
+# ─── test-driver-ci ─────────────────────────────────────────────────────────
+# Run the driver tests against CI's dependency set, in a throwaway venv.
+#
+# The dev venv has every backend and flavor installed; CI installs a handful of
+# packages and nothing else. Tests that quietly depend on the difference pass
+# here and fail there -- which is exactly how main went red once. Keep the pip
+# lines in step with the "Install driver dependencies" step in ci.yml.
+test-driver-ci:
+    rm -rf "{{repo_root}}/.venv-ci"
+    python3 -m venv "{{repo_root}}/.venv-ci"
+    "{{repo_root}}/.venv-ci/bin/pip" -q install --upgrade pip
+    "{{repo_root}}/.venv-ci/bin/pip" -q install pytest pytest-mock tomlkit rich typer questionary
+    "{{repo_root}}/.venv-ci/bin/pip" -q install "{{repo_root}}/extensions/pymcu-sdk"
+    "{{repo_root}}/.venv-ci/bin/pip" -q install --pre --no-deps pymcu-pic
+    cd "{{repo_root}}" && "{{repo_root}}/.venv-ci/bin/python" -m pytest tests/driver/ -q
+
 # ─── build-stdlib ───────────────────────────────────────────────────────────
 # Build the pymcu-stdlib wheel into lib/dist/.
 build-stdlib:

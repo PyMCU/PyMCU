@@ -21,7 +21,13 @@ import sys
 import sysconfig
 from pathlib import Path
 
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+try:
+    from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+except ImportError:
+    # Importable without the build backend, so the RID/tag rules below can be
+    # tested from a bare checkout. hatchling is present whenever a wheel is
+    # actually being built, and then this falls through to the real class.
+    BuildHookInterface = object
 
 
 class CustomBuildHook(BuildHookInterface):
