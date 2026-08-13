@@ -714,6 +714,27 @@ public class RISCVCodeGenTests
     }
 
     [Theory]
+    [InlineData(DataType.UINT8, "sb", "lbu")]
+    [InlineData(DataType.UINT16, "sh", "lhu")]
+    [InlineData(DataType.INT16, "sh", "lh")]
+    [InlineData(DataType.UINT32, "sw", "lw")]
+    [InlineData(DataType.INT32, "sw", "lw")]
+    public void MmioAccessUsesTheRegisterWidth(DataType type, string store, string load)
+    {
+        // A word store into an 8-bit peripheral register clobbers the three
+        // registers next to it.
+        var reg = new MemoryAddress(0x40011000, type);
+        var prog = MakeProgram("main",
+            new Copy(new Constant(0xA5), reg),
+            new Copy(reg, new Variable("v")),
+            new Return(new NoneVal()));
+        var asm = Compile(prog);
+
+        Assert.Contains($"{store}\tt0, 0(t2)", asm);
+        Assert.Contains($"{load}\tt0, 0(t2)", asm);
+    }
+
+    [Theory]
     [InlineData(DataType.UINT8, "sb")]
     [InlineData(DataType.INT8, "sb")]
     [InlineData(DataType.UINT16, "sh")]

@@ -130,7 +130,7 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                 return;
             case MemoryAddress mem:
                 Emit("li", "t2", $"0x{mem.Address:X8}");
-                Emit("lw", reg, "0(t2)");
+                Emit(LoadMnemonic(mem.Type), reg, "0(t2)");
                 return;
             case FunctionRef fr:
                 Emit("la", reg, fr.FunctionName);
@@ -167,7 +167,9 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         if (val is MemoryAddress mem)
         {
             Emit("li", "t2", $"0x{mem.Address:X8}");
-            Emit("sw", reg, "0(t2)");
+            // A peripheral register is only as wide as it is declared: a word
+            // store into an 8-bit one would clobber its three neighbours.
+            Emit(StoreMnemonic(mem.Type), reg, "0(t2)");
             return;
         }
 
