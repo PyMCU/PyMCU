@@ -96,10 +96,10 @@ class TestScaffoldWithoutATerminal:
         result = self._run(tmp_path, monkeypatch)
         assert result.exit_code == 0, result.output
 
-    def test_prints_the_summary(self, tmp_path, monkeypatch):
+    def test_prints_the_summary(self, tmp_path, monkeypatch, unwrapped):
         # The crash used to swallow it entirely.
         result = self._run(tmp_path, monkeypatch)
-        assert "created successfully" in result.output
+        assert "created successfully" in unwrapped(result.output)
         assert "atmega328p" in result.output
 
     def test_leaves_a_complete_project(self, tmp_path, monkeypatch):
@@ -108,12 +108,12 @@ class TestScaffoldWithoutATerminal:
         for expected in ("pyproject.toml", "src/main.py", ".vscode/tasks.json"):
             assert (project / expected).exists(), expected
 
-    def test_says_how_to_install_the_dependencies(self, tmp_path, monkeypatch):
+    def test_says_how_to_install_the_dependencies(self, tmp_path, monkeypatch, unwrapped):
         # Answering no (or being headless) leaves a project that cannot build,
         # so the way out has to be on screen.
         result = self._run(tmp_path, monkeypatch)
-        assert "Dependencies are not installed" in result.output
-        assert "uv sync" in result.output
+        assert "Dependencies are not installed" in unwrapped(result.output)
+        assert "uv sync" in unwrapped(result.output)
 
     def test_does_not_install_unattended(self, tmp_path, monkeypatch):
         # Recommended to a human, never run behind their back: it is a slow

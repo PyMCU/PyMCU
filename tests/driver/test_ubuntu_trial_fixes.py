@@ -44,17 +44,17 @@ class TestGitIsOptional:
             ["new", "blinky", "--board", "arduino_uno", "--stdlib", "micropython"],
         )
 
-    def test_a_missing_git_does_not_fail_the_command(self, tmp_path, monkeypatch):
+    def test_a_missing_git_does_not_fail_the_command(self, tmp_path, monkeypatch, unwrapped):
         result = self._new(tmp_path, monkeypatch, git=False)
         assert result.exit_code == 0, result.output
-        assert "git is not installed" in result.output
+        assert "git is not installed" in unwrapped(result.output)
         # The point: the project it just wrote is still there and complete.
         assert (tmp_path / "blinky" / "pyproject.toml").exists()
 
-    def test_the_errno_is_not_what_the_user_reads(self, tmp_path, monkeypatch):
+    def test_the_errno_is_not_what_the_user_reads(self, tmp_path, monkeypatch, unwrapped):
         result = self._new(tmp_path, monkeypatch, git=False)
-        assert "Errno 2" not in result.output
-        assert "No such file or directory" not in result.output
+        assert "Errno 2" not in unwrapped(result.output)
+        assert "No such file or directory" not in unwrapped(result.output)
 
 
 class TestVersionIsACommand:

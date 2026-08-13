@@ -23,7 +23,7 @@ def _invoke_new(project_name: str, *extra_args: str, input_text: str = ""):
 # ---------------------------------------------------------------------------
 
 class TestNewErrors:
-    def test_existing_directory_exits_1(self, tmp_path, monkeypatch):
+    def test_existing_directory_exits_1(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "my_project").mkdir()
         result = _invoke_new(
@@ -32,7 +32,7 @@ class TestNewErrors:
             "--stdlib", "micropython",
         )
         assert result.exit_code == 1
-        assert "already exists" in result.output.lower()
+        assert "already exists" in unwrapped(result.output).lower()
 
     def test_invalid_frequency_exits_1(self, tmp_path, monkeypatch):
         # --freq is a hidden advanced flag; 0 must be rejected immediately.

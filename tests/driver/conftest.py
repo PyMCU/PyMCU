@@ -14,6 +14,31 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
+# unwrapped — assert on what a message says, not on where rich broke the line
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def unwrapped():
+    """Collapse rich's line wrapping so an assertion tests content, not layout.
+
+    CliRunner pins the console to 80 columns everywhere, so the wrap points
+    depend on whatever variable-length values the message interpolates -- a
+    tmp_path, most often. `pymcu toolchain clean` on a missing directory broke
+    CI this way: the phrase "does not exist" survived intact on macOS, where
+    /private/var/folders/... is long enough to take a line of its own, and
+    split across the wrap on Linux, where /tmp/pytest-of-runner/... is not.
+    The test was right about the message and wrong to care where it wrapped.
+
+    Note this joins genuinely separate lines too, so it is for asserting that
+    a phrase was said -- not for asserting anything about layout.
+    """
+    def _plain(output: str) -> str:
+        return " ".join(output.split())
+
+    return _plain
+
+
+# ---------------------------------------------------------------------------
 # tmp_project — creates a minimal pyproject.toml + entry file in a tmp_path
 # ---------------------------------------------------------------------------
 

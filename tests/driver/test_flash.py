@@ -178,7 +178,7 @@ class TestProgrammerDispatch:
         assert fake_programmer.requested == ["avrdude"]
         assert "deprecated" not in result.output.lower()
 
-    def test_unknown_programmer_exits_1(self, tmp_path, monkeypatch):
+    def test_unknown_programmer_exits_1(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.setattr(
             "src.driver.commands.flash.get_programmer", lambda name, console: None
         )
@@ -186,7 +186,7 @@ class TestProgrammerDispatch:
         _project(tmp_path, monkeypatch, toml, ("firmware.hex",))
         result = _invoke_flash()
         assert result.exit_code == 1
-        assert "unknown programmer" in result.output.lower()
+        assert "unknown programmer" in unwrapped(result.output).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -228,27 +228,27 @@ class TestFlashFailures:
         assert result.exit_code == 1
         assert "pyproject.toml" in result.output
 
-    def test_no_target_or_board_exits_1(self, tmp_path, monkeypatch):
+    def test_no_target_or_board_exits_1(self, tmp_path, monkeypatch, unwrapped):
         _project(tmp_path, monkeypatch, "[tool.pymcu]\nfrequency = 16000000\n")
         result = _invoke_flash()
         assert result.exit_code == 1
-        assert "no 'target' or 'board'" in result.output.lower()
+        assert "no 'target' or 'board'" in unwrapped(result.output).lower()
 
     def test_programmer_runtime_error_is_reported(
-        self, tmp_path, monkeypatch, fake_programmer
+        self, tmp_path, monkeypatch, fake_programmer, unwrapped
     ):
         fake_programmer.raises = RuntimeError("device not responding")
         _project(tmp_path, monkeypatch, AVR_TOML, ("firmware.hex",))
         result = _invoke_flash()
         assert result.exit_code == 1
-        assert "flash failed" in result.output.lower()
+        assert "flash failed" in unwrapped(result.output).lower()
 
     def test_programmer_os_error_is_reported_as_a_flash_failure(
-        self, tmp_path, monkeypatch, fake_programmer
+        self, tmp_path, monkeypatch, fake_programmer, unwrapped
     ):
         # e.g. the rp2040 plugin raising FileNotFoundError for a missing .uf2.
         fake_programmer.raises = FileNotFoundError("expected a .uf2 file")
         _project(tmp_path, monkeypatch, PICO_TOML, ("firmware.bin",))
         result = _invoke_flash()
         assert result.exit_code == 1
-        assert "flash failed" in result.output.lower()
+        assert "flash failed" in unwrapped(result.output).lower()

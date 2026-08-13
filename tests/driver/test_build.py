@@ -94,7 +94,8 @@ class TestBuildStdlibFlag:
 # ---------------------------------------------------------------------------
 
 class TestBuildBoardResolution:
-    def test_known_board_resolves(self, tmp_path, monkeypatch, mock_toolchain, mock_compiler):
+    def test_known_board_resolves(self, tmp_path, monkeypatch, mock_toolchain, mock_compiler,
+                                  unwrapped):
         pytest.importorskip("pymcu.toolchain.avr", reason="pymcu-avr not installed")
         monkeypatch.chdir(tmp_path)
         (tmp_path / "src").mkdir()
@@ -108,9 +109,9 @@ class TestBuildBoardResolution:
         )
         result = _invoke_build()
         # Should not error out on board resolution
-        assert "unknown board" not in result.output.lower()
+        assert "unknown board" not in unwrapped(result.output).lower()
 
-    def test_unknown_board_exits_1(self, tmp_path, monkeypatch):
+    def test_unknown_board_exits_1(self, tmp_path, monkeypatch, unwrapped):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("def main(): pass\n")
@@ -123,4 +124,4 @@ class TestBuildBoardResolution:
         )
         result = _invoke_build()
         assert result.exit_code == 1
-        assert "unknown board" in result.output.lower()
+        assert "unknown board" in unwrapped(result.output).lower()

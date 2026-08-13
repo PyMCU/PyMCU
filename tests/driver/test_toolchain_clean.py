@@ -77,11 +77,11 @@ class TestCommand:
         env = {"PYMCU_TOOLS_DIR": str(tmp_path)}
         return runner.invoke(app, ["toolchain", "clean", *args], env=env)
 
-    def test_dry_run_removes_nothing(self, tmp_path):
+    def test_dry_run_removes_nothing(self, tmp_path, unwrapped):
         base = _cache(tmp_path, "pymcu-avr-toolchain", ["v1", "v2", "v3"])
         result = self._run(tmp_path, "--dry-run")
         assert result.exit_code == 0
-        assert "Would free" in result.output
+        assert "Would free" in unwrapped(result.output)
         assert (base / "v1").exists()
 
     def test_removes_superseded_versions(self, tmp_path):
@@ -91,15 +91,15 @@ class TestCommand:
         assert not (base / "v1").exists()
         assert (base / "v2").exists() and (base / "v3").exists()
 
-    def test_is_idempotent(self, tmp_path):
+    def test_is_idempotent(self, tmp_path, unwrapped):
         _cache(tmp_path, "pymcu-avr-toolchain", ["v1", "v2", "v3"])
         self._run(tmp_path)
-        assert "already tidy" in self._run(tmp_path).output
+        assert "already tidy" in unwrapped(self._run(tmp_path).output)
 
-    def test_missing_cache_is_not_an_error(self, tmp_path):
+    def test_missing_cache_is_not_an_error(self, tmp_path, unwrapped):
         result = self._run(tmp_path / "nope")
         assert result.exit_code == 0
-        assert "does not exist" in result.output
+        assert "does not exist" in unwrapped(result.output)
 
     def test_all_empties_the_cache(self, tmp_path):
         base = _cache(tmp_path, "pymcu-avr-toolchain", ["v1", "v2"])
