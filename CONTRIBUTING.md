@@ -31,6 +31,18 @@ and pull requests.
 All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
 compiler feature before merging.
 
+### Driver tests run against CI's dependency set
+
+`just test-driver-ci` builds a throwaway venv with exactly the packages CI installs and
+runs `tests/driver/` in it. `just test` includes it, and it is the one that counts before
+you push.
+
+A development checkout has every backend and stdlib flavor installed; CI installs a short
+list and nothing else. A test that reads the difference — asserting that a package appears
+in a table, or importing the build backend — passes here and fails on all four runners.
+That has happened three times, so if you write a test that depends on what is installed,
+supply the environment yourself with fakes rather than asking the machine.
+
 ### Building on Windows
 
 Step 3 needs three things that are easy to get subtly wrong. All of them were hit

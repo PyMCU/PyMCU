@@ -55,10 +55,17 @@ test-backend name: (build-backend name)
         -- NUnit.NumberOfTestWorkers=1
 
 # ─── test ───────────────────────────────────────────────────────────────────
-# Run unit tests then integration tests (requires build first).
+# Run unit tests, integration tests, then the driver tests as CI runs them.
+#
+# The driver tests run against CI's dependency set rather than the dev venv,
+# and deliberately so: three times now a test has passed here and failed on
+# the runners because this machine has backends and flavors installed that CI
+# does not. Checking parity only when you remember is the same as not
+# checking it.
 test: build
     just test-unit
     just test-integration
+    just test-driver-ci
 
 # ─── test-unit ──────────────────────────────────────────────────────────────
 # Run unit tests only.
