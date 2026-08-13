@@ -38,19 +38,69 @@ console = Console()
 _COMPAT_FLAVORS = ("micropython", "circuitpython")
 
 
-def _select(message: str, choices: list, default=None):
-    """Arrow-key interactive select. Raises typer.Exit on Ctrl-C."""
-    answer = questionary.select(message, choices=choices, default=default).ask()
+def _interactive() -> bool:
+    """
+    True when there is a real terminal on both ends.
+
+    stdin alone is not enough: prompt_toolkit also opens the output console, and
+    on Windows it raises "No Windows console found" when stdout is redirected
+    even though stdin is a tty. Note that NUL is a character device there, so
+    `< NUL` does not make stdin look redirected either -- the output side is
+    what actually decides.
+    """
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):   # closed or replaced streams
+        return False
+
+
+def _select(message: str, choices: list, default=None, *, flag: str = ""):
+    """
+    Arrow-key interactive select. Raises typer.Exit on Ctrl-C.
+
+    Without a terminal there is no safe answer to invent -- picking a board or
+    an MCU on the user's behalf would silently scaffold the wrong target -- so
+    this asks for the equivalent flag instead. Every call site runs before any
+    file is written, so failing here leaves nothing behind.
+    """
+    if not _interactive():
+        hint = f" Pass {flag} on the command line." if flag else ""
+        console.print(f"[red]Cannot prompt for '{message}' without a terminal.[/red]{hint}")
+        raise typer.Exit(code=1)
+
+    try:
+        answer = questionary.select(message, choices=choices, default=default).ask()
+    except Exception as e:
+        hint = f" Pass {flag} on the command line." if flag else ""
+        console.print(f"[red]Interactive prompt unavailable:[/red] {e}{hint}")
+        raise typer.Exit(code=1)
+
     if answer is None:
         raise typer.Exit(0)
     return answer
 
 
-def _confirm(message: str, default: bool = False) -> bool:
-    """Y/N confirm via questionary. In non-TTY mode returns default silently."""
-    if not sys.stdin.isatty():
-        return default
-    answer = questionary.confirm(message, default=default).ask()
+def _confirm(message: str, default: bool = False, *, non_interactive: bool | None = None) -> bool:
+    """
+    Y/N confirm via questionary.
+
+    Without a terminal it answers `non_interactive` (falling back to `default`)
+    instead of raising: these questions are all optional extras, and the project
+    is already on disk by the time they are asked. A prompt that blows up here
+    used to abort the command mid-scaffold.
+    """
+    if non_interactive is None:
+        non_interactive = default
+    if not _interactive():
+        return non_interactive
+
+    try:
+        answer = questionary.confirm(message, default=default).ask()
+    except Exception:
+        # prompt_toolkit can still fail on a console it cannot drive; treat it
+        # the same as having no terminal rather than losing the scaffold.
+        return non_interactive
+
     return bool(answer) if answer is not None else default
 
 
@@ -231,13 +281,13 @@ def new(
             compat_options = [f for f in discovered if f in _COMPAT_FLAVORS]
             if not compat_options:
                 compat_options = list(_COMPAT_FLAVORS)
-            flavor_choice = _select("Compatibility layer:", compat_options, default=compat_options[0])
+            flavor_choice = _select("Compatibility layer:", compat_options, default=compat_options[0], flag="--stdlib")
             stdlib = [flavor_choice]
 
         # 2. Board selection — two-level: manufacturer → board
         if board is None:
             manufacturers = list(BOARD_GROUPS.keys())
-            mfr = _select("Manufacturer:", manufacturers)
+            mfr = _select("Manufacturer:", manufacturers, flag="--board")
 
             board_keys = BOARD_GROUPS[mfr]
             board_choices = [
@@ -247,7 +297,7 @@ def new(
                 )
                 for k in board_keys
             ]
-            board = _select(f"Board:", board_choices)
+            board = _select(f"Board:", board_choices, flag="--board")
 
         chip = BOARD_CHIPS.get(board)
         if chip is None:
@@ -369,6 +419,9 @@ def new(
             project_tbl = tomlkit.table()
             project_tbl.add("name", name)
             project_tbl.add("version", "0.1.0")
+            # Without this uv picks its own floor (>=3.12 today) and the project
+            # refuses to sync on the 3.11 the docs say is supported.
+            project_tbl.add("requires-python", ">=3.11")
 
             deps = tomlkit.array()
             deps.append(_pin_version("pymcu-stdlib", "pymcu-stdlib"))
@@ -524,7 +577,11 @@ def new(
                     hook_file.chmod(0o755)
 
         # ── Install dependencies ──────────────────────────────────────
-        if _confirm(f"Install dependencies with {pkg_manager} now?", default=False):
+        install_deps = _confirm(
+            f"Install dependencies with {pkg_manager} now?",
+            default=True, non_interactive=False,
+        )
+        if install_deps:
             with console.status(
                 f"[bold green]Installing dependencies via {pkg_manager}..."
             ):
@@ -566,6 +623,26 @@ def new(
         if stdlib:
             console.print(f"[blue]stdlib:[/blue]         {', '.join(stdlib)}")
         console.print("[dim]VS Code tasks created in .vscode/tasks.json[/dim]")
+
+        # Without its dependencies the project does not compile -- `pymcu build`
+        # fails on the compat import -- so never leave that state unexplained.
+        if not install_deps:
+            if pkg_manager == "uv":
+                install_cmd = "uv sync"
+            elif pkg_manager == "poetry":
+                install_cmd = "poetry install"
+            else:
+                install_cmd = (
+                    "python -m venv .venv && .venv\\Scripts\\pip install -r requirements.txt"
+                    if sys.platform == "win32"
+                    else "python -m venv .venv && .venv/bin/pip install -r requirements.txt"
+                )
+            console.print(
+                f"\n[yellow]Dependencies are not installed yet.[/yellow] "
+                f"Run this before [bold]pymcu build[/bold]:\n"
+                f"  [bold]cd {name} && {install_cmd}[/bold]"
+            )
+
         if sys.platform == "win32":
             console.print(
                 "[dim]Windows: 'make' is not preinstalled — run [bold]pymcu sync[/bold] "
