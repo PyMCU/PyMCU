@@ -323,7 +323,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
 
         has_hash = bool(expected_hash) and expected_hash.lower() != "placeholder"
 
-        from ..core.base_tool import _is_non_interactive, _tool_lock
+        from ..core.base_tool import _confirm_download, _is_non_interactive, _tool_lock
         if _is_non_interactive():
             # Downloading a binary nobody watches is only acceptable when the
             # bytes can be checked against a known digest. Without one there is
@@ -338,7 +338,9 @@ class AvrdudeProgrammer(HardwareProgrammer):
             self.console.print(
                 "[dim]Non-interactive mode: auto-accepting verified download.[/dim]"
             )
-        elif not Confirm.ask("Do you want to download and install it automatically?", default=True):
+        elif not _confirm_download(
+            self.console, "Do you want to download and install it automatically?"
+        ):
             raise RuntimeError(f"Installation of {name} aborted by user.")
 
         target_dir = self._get_tool_dir()

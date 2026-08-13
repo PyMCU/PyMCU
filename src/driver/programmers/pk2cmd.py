@@ -79,10 +79,10 @@ class Pk2cmdProgrammer(HardwareProgrammer):
         self.console.print(f"[bold cyan]PyMCU Hardware Manager[/bold cyan]")
         self.console.print(f"Programmer '{name}' ({desc}) is required but not found locally.")
 
-        from ..core.base_tool import _is_non_interactive, _tool_lock
-        if _is_non_interactive():
-            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
-        elif not Confirm.ask("Do you want to download and install it automatically?", default=True):
+        from ..core.base_tool import _confirm_download, _tool_lock
+        if not _confirm_download(
+            self.console, "Do you want to download and install it automatically?"
+        ):
             raise RuntimeError(f"Installation of {name} aborted by user.")
 
         target_dir = self._get_tool_dir()

@@ -18,6 +18,7 @@
 from pymcu.toolchain.sdk.base_tool import (  # noqa: F401
     CacheableTool,
     _default_platform_key,
+    _confirm_download,
     _is_non_interactive,
     _tool_lock,
 )

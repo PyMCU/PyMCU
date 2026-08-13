@@ -31,6 +31,29 @@ and pull requests.
 All tests must stay green. Add a new test in `tests/integration/Tests/AVR/` for any new
 compiler feature before merging.
 
+### Building on Windows
+
+Step 3 needs three things that are easy to get subtly wrong. All of them were hit
+setting up a Windows 11 ARM64 machine, and none of them fails with a message that
+points at the real cause.
+
+- **A .NET SDK from the 10.0.1xx band.** `winget` currently installs 10.0.400, which
+  the AOT publish rejects. Check with `dotnet --list-sdks` and install the matching
+  band from the [.NET downloads page](https://dotnet.microsoft.com/download) if it
+  is missing.
+- **Visual Studio Build Tools with the C++ workload for your architecture** — on an
+  ARM64 machine that means the ARM64 C++ tools specifically, not just the x64 ones.
+  Native AOT links with the platform linker, so the compiler alone is not enough.
+- **The directory containing `vswhere.exe` on `PATH`.** ILCompiler invokes it by bare
+  name. Without it the build fails as `MSB3073`, which reads like a linker error and
+  sends you looking in the wrong place entirely. It normally lives in
+  `C:\Program Files (x86)\Microsoft Visual Studio\Installer`.
+
+An architecture note while you are here: building with an emulated x64 Python on an
+ARM64 machine used to produce an ARM64 binary inside a wheel tagged `win_amd64`. The
+build now refuses to do that and tells you which half to fix, but the shortest path
+is to install a Python that matches the machine.
+
 ---
 
 ## Repository Layout

@@ -133,9 +133,39 @@ def _is_non_interactive() -> bool:
     if os.environ.get("PYMCU_NO_INTERACTIVE") == "1":
         return True
     try:
-        return not sys.stdin.isatty()
+        # Both ends: a prompt needs somewhere to read the answer AND somewhere
+        # to show the question. `pymcu new` had the same bug (a redirected
+        # stdout with a tty stdin), and isatty() can be optimistic anyway --
+        # see _confirm_download for the case where it says yes and the read
+        # still hits EOF.
+        return not (sys.stdin.isatty() and sys.stdout.isatty())
     except Exception:
         return True
+
+
+def _confirm_download(console, prompt: str, *, default: bool = True) -> bool:
+    """Ask permission to download, surviving a console that cannot be read.
+
+    On the Windows 11 ARM trial machine the prompt appeared and then died with
+    a traceback -- "EOFError: EOF when reading a line", exit 1 -- because
+    stdin claimed to be a tty and then had nothing to give. A question nobody
+    can answer is not an error in the user's setup, it is a context where the
+    answer has to be assumed, so this reports what it decided instead of
+    dumping a stack trace at someone who only ran `pymcu flash`.
+    """
+    if _is_non_interactive():
+        console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
+        return True
+    try:
+        from rich.prompt import Confirm
+        return Confirm.ask(prompt, default=default)
+    except (EOFError, KeyboardInterrupt):
+        console.print(
+            f"[dim]No console to read the answer from — assuming "
+            f"{'yes' if default else 'no'}.[/dim]\n"
+            f"[dim]Set PYMCU_NO_INTERACTIVE=1 to skip this question.[/dim]"
+        )
+        return default
 
 
 @contextlib.contextmanager
@@ -249,10 +279,27 @@ class CacheableTool(ABC):
                 sha256_hash.update(byte_block)
         
         calculated_hash = sha256_hash.hexdigest()
-        return calculated_hash.lower() == expected_hash.lower()
+        matched = calculated_hash.lower() == expected_hash.lower()
+        # A verified download used to leave no trace: the check passed in
+        # silence, so afterwards there was no way to tell which asset had been
+        # fetched or what it hashed to. Someone auditing an install -- or
+        # reporting a bad one -- needs the digest they actually got.
+        self._log_verbose(
+            f"sha256 {calculated_hash} "
+            f"({'matches' if matched else 'DOES NOT match'} expected "
+            f"{expected_hash.lower()}) for {file_path.name}"
+        )
+        return matched
+
+    def _log_verbose(self, message: str) -> None:
+        """Print only under --verbose, which sets PYMCU_VERBOSE."""
+        if os.environ.get("PYMCU_VERBOSE") == "1":
+            self.console.print(f"[dim]\\[download] {message}[/dim]")
 
     def _download_file(self, url: str, dest_path: Path, description: str):
         """Helper to download a file with a rich progress bar."""
+        self._log_verbose(f"asset {dest_path.name}")
+        self._log_verbose(f"from  {url}")
         try:
             with Progress(
                 SpinnerColumn(),
