@@ -15,7 +15,6 @@
  */
 
 using PyMCU.Backend.Targets.PIO;
-using PyMCU.Backend.Targets.RiscV;
 using PyMCU.Common;
 using PyMCU.Common.Models;
 
@@ -49,6 +48,12 @@ public static class CodeGenFactory
         return false;
     }
 
+    private static bool IsRiscvArch(string arch)
+    {
+        var a = arch.ToLowerInvariant();
+        return a is "riscv" or "rv32ec" or "rv32i" || a.StartsWith("ch32v");
+    }
+
     public static CodeGen Create(string arch, DeviceConfig config)
     {
         // AVR has moved to an external backend binary (pymcuc-avr).
@@ -74,11 +79,17 @@ public static class CodeGenFactory
                 "  Or use 'pymcu build' which handles this automatically.");
         }
 
-        if (arch == "riscv" || arch == "rv32ec" || arch.StartsWith("ch32v"))
+        // RISC-V has moved to an external backend binary (pymcuc-riscv).
+        if (IsRiscvArch(arch))
         {
-            return new RiscvCodeGen(config);
+            throw new NotSupportedException(
+                $"RISC-V codegen ({arch}) is not available in pymcuc directly.\n" +
+                "  Use '--emit-ir output.mir' to produce IR and run:\n" +
+                "    pymcuc-riscv output.mir -o firmware.asm --target <chip>\n" +
+                "  Or use 'pymcu build' which handles this automatically.");
         }
-        
+
+
         if (arch == "pio" || arch == "rp2040-pio")
         {
             return new PIOCodeGen(config);

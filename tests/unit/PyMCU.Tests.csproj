@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\compiler\PyMCU.csproj" />
+    <!-- RISC-V codegen lives in its own backend package, like AVR and PIC. -->
+    <ProjectReference Include="..\..\extensions\pymcu-backend-riscv\src\csharp\lib\PyMCU.Backend.RiscV.csproj" />
   </ItemGroup>
 
 </Project>
