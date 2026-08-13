@@ -12,6 +12,10 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import os
+import shutil
+from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -150,3 +154,128 @@ def toolchain_update(
     except RuntimeError as e:
         console.print(f"[bold red]Update failed:[/bold red] {e}")
         raise typer.Exit(code=1)
+
+
+@toolchain_app.command("clean")
+def toolchain_clean(
+    all_versions: bool = typer.Option(
+        False, "--all",
+        help="Remove every cached toolchain, including the ones in use. "
+             "Without this, only superseded versions and stale layouts go.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List what would be removed and exit."
+    ),
+):
+    """
+    Reclaim space in the toolchain cache (~/.pymcu/tools).
+
+    Nothing pruned this cache until now, so every upgrade left its predecessor
+    on disk indefinitely -- a developer machine can carry several gigabytes of
+    superseded toolchains without noticing.
+
+    By default this keeps the two newest versions of each toolchain, so a
+    project pinned to the previous release still works, and removes older ones
+    plus directories left by earlier cache layouts. Use --all to empty it
+    entirely; anything still needed is re-downloaded on the next build.
+
+    Examples
+    --------
+        pymcu toolchain clean --dry-run
+        pymcu toolchain clean
+        pymcu toolchain clean --all
+    """
+    root = _tools_root()
+    if not root.is_dir():
+        console.print(f"[dim]Nothing to clean: {root} does not exist.[/dim]")
+        return
+
+    targets = _collect_clean_targets(root, all_versions=all_versions)
+    if not targets:
+        console.print("[green]Toolchain cache is already tidy.[/green]")
+        return
+
+    total = 0
+    table = Table(box=box.SIMPLE)
+    table.add_column("Path")
+    table.add_column("Size", justify="right")
+    table.add_column("Why")
+    for path, reason in targets:
+        size = _dir_size(path)
+        total += size
+        table.add_row(str(path.relative_to(root)), _human(size), reason)
+    console.print(table)
+
+    if dry_run:
+        console.print(f"[dim]Would free {_human(total)}. Run without --dry-run to remove.[/dim]")
+        return
+
+    freed = 0
+    for path, _ in targets:
+        size = _dir_size(path)
+        try:
+            shutil.rmtree(path)
+            freed += size
+        except OSError as e:
+            console.print(f"[yellow]Could not remove {path}:[/yellow] {e}")
+
+    console.print(f"[bold green]Freed {_human(freed)}.[/bold green]")
+
+
+def _tools_root() -> Path:
+    env = os.environ.get("PYMCU_TOOLS_DIR")
+    return Path(env).resolve() if env else Path.home() / ".pymcu" / "tools"
+
+
+def _collect_clean_targets(root: Path, *, all_versions: bool) -> list[tuple[Path, str]]:
+    """
+    Decide what can go, newest-first within each toolchain.
+
+    Conservative on purpose: a directory is only dropped when it is clearly
+    superseded, or when the user asked for everything.
+    """
+    from pymcu.toolchain.sdk import _default_platform_key
+
+    current_key = _default_platform_key()
+    targets: list[tuple[Path, str]] = []
+
+    for platform_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        # Directories from earlier key layouts (e.g. plain "darwin", or a key
+        # naming an architecture whose binaries were never architecture-specific)
+        # are dead weight: nothing looks there any more.
+        if platform_dir.name != current_key and "-" not in platform_dir.name:
+            targets.append((platform_dir, "stale cache layout"))
+            continue
+
+        for tool_dir in sorted(p for p in platform_dir.iterdir() if p.is_dir()):
+            versions = sorted(
+                (p for p in tool_dir.iterdir() if p.is_dir()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if all_versions:
+                targets.append((tool_dir, "all versions requested"))
+            elif len(versions) > 2:
+                targets.extend((v, "superseded version") for v in versions[2:])
+
+    return targets
+
+
+def _dir_size(path: Path) -> int:
+    total = 0
+    for entry in path.rglob("*"):
+        try:
+            if entry.is_file() and not entry.is_symlink():
+                total += entry.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _human(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GB"
