@@ -99,6 +99,20 @@ class TestToolchain:
         # RV32EC must link as ilp32e; mixing ABIs is a hard link error.
         assert RiscvGasToolchain(console, "ch32v003")._mabi() == "ilp32e"
 
+    def test_ch32v203_uses_the_full_abi(self, console):
+        assert RiscvGasToolchain(console, "ch32v203")._mabi() == "ilp32"
+
+    def test_ch32v203_has_its_own_linker_script(self, console):
+        script = RiscvGasToolchain(console, "ch32v203").packaged_linker_script()
+        assert script.name == "ch32v203.ld"
+        text = script.read_text()
+        assert "LENGTH = 64K" in text      # flash
+        assert "LENGTH = 20K" in text      # RAM
+
+    def test_both_wch_parts_are_supported(self):
+        assert RiscvGasToolchain.supports("ch32v003")
+        assert RiscvGasToolchain.supports("ch32v203")
+
     def test_missing_toolchain_reports_install_instructions(self, console):
         tc = RiscvGasToolchain(console, "ch32v003")
         with patch("shutil.which", return_value=None):

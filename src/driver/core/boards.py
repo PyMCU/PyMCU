@@ -113,6 +113,9 @@ def default_frequency(chip: str) -> int:
         return 150_000_000
     if chip_lower.startswith("pic"):
         return 4_000_000
+    if chip_lower.startswith("ch32v2") or chip_lower.startswith("ch32v3"):
+        # HSI 8 MHz through the PLL up to the V203's maximum.
+        return 144_000_000
     if chip_lower.startswith("ch32v"):
         # HSI 24 MHz through the PLL, which is what the chip file assumes.
         return 48_000_000

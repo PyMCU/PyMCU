@@ -89,6 +89,7 @@ FLASH_SIZES: dict[str, int] = {
     "rp2040": 2097152,   # 2 MB external QSPI flash (Raspberry Pi Pico default)
     "rp2350": 4194304,   # 4 MB external QSPI flash (Raspberry Pi Pico 2 default)
     "ch32v003": 16384,   # WCH QingKe V2A (RV32EC)
+    "ch32v203": 65536,   # WCH QingKe V4B (RV32IMAC)
 }
 
 

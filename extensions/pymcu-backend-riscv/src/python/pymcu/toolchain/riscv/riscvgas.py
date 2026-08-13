@@ -54,7 +54,10 @@ _REQUIRED_TOOLS = ("as", "ld", "objcopy")
 # Per-chip ISA/ABI and RAM/flash geometry.  The ABI matters at link time: an
 # ilp32e object cannot be linked against an ilp32 one.
 _CHIPS: dict[str, dict] = {
+    # QingKe V2A, RV32EC: the embedded ABI, half the register file.
     "ch32v003": {"mabi": "ilp32e", "ld": "ch32v003.ld"},
+    # QingKe V4B, RV32IMAC: full register file, hardware multiply/divide.
+    "ch32v203": {"mabi": "ilp32", "ld": "ch32v203.ld"},
 }
 
 

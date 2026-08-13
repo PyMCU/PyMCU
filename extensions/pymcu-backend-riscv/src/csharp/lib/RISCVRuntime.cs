@@ -24,9 +24,33 @@ namespace PyMCU.Backend.Targets.RiscV;
 // multilib set ships no rv32ec libgcc either, hence the mul/div helpers below).
 public partial class RiscvCodeGen
 {
-    // Default when the chip file declares no RAM size: the CH32V003's 2 KB.
-    private const int DefaultRamSize = 2048;
     private const int RamBase = 0x20000000;
+
+    // Per-chip ISA facts the emitted assembly depends on.
+    //   Isa         goes into .attribute arch, so the file assembles without -march
+    //   StackAlign  ilp32e keeps the stack word-aligned; ilp32 wants 16
+    //   HasMulDiv   the M extension makes the software helpers unnecessary
+    private sealed record ChipProfile(string Isa, int RamSize, int StackAlign, bool HasMulDiv);
+
+    private static readonly ChipProfile QingKeV2 = new("rv32ec_zicsr", 2 * 1024, 4, false);
+    private static readonly ChipProfile QingKeV4 = new("rv32imac_zicsr", 20 * 1024, 16, true);
+
+    private static ChipProfile ProfileFor(string chipOrArch)
+    {
+        var s = (chipOrArch ?? "").ToLowerInvariant();
+
+        // CH32V103/V203/V208 are RV32IMAC QingKe V3/V4 cores.
+        if (s.StartsWith("ch32v1") || s.StartsWith("ch32v2") || s.StartsWith("ch32v3")
+            || s is "rv32imac" or "rv32i")
+            return QingKeV4;
+
+        return QingKeV2;
+    }
+
+    // The chip identifier is the more specific signal; arch is the fallback for
+    // callers that only pass a family.
+    private ChipProfile Profile =>
+        ProfileFor(string.IsNullOrEmpty(cfg.Chip) ? cfg.Arch : cfg.Chip);
 
     // System vectors (reset, NMI, fault, ...) followed by the external IRQ slots.
     private const int SystemVectorCount = 16;
@@ -55,7 +79,7 @@ public partial class RiscvCodeGen
             arrayBytes[name] = bytes;
     }
 
-    private int StackTop => RamBase + (cfg.RamSize > 0 ? cfg.RamSize : DefaultRamSize);
+    private int StackTop => RamBase + (cfg.RamSize > 0 ? cfg.RamSize : Profile.RamSize);
 
     private static bool HasMain(ProgramIR program)
     {
@@ -80,10 +104,12 @@ public partial class RiscvCodeGen
 
             switch (op)
             {
-                case PyMCU.IR.BinaryOp.Mul: needsMul = true; break;
-                case PyMCU.IR.BinaryOp.Div: needsDiv = true; break;
+                // With the M extension these lower to single instructions, so the
+                // helpers would be dead weight in flash.
+                case PyMCU.IR.BinaryOp.Mul: needsMul = !Profile.HasMulDiv; break;
+                case PyMCU.IR.BinaryOp.Div: needsDiv = !Profile.HasMulDiv; break;
+                case PyMCU.IR.BinaryOp.Mod: needsMod = !Profile.HasMulDiv; break;
                 case PyMCU.IR.BinaryOp.FloorDiv: needsFloorDiv = true; break;
-                case PyMCU.IR.BinaryOp.Mod: needsMod = true; break;
             }
         }
     }
@@ -330,6 +356,24 @@ public partial class RiscvCodeGen
     {
         EmitRaw(".globl __floordivsi3");
         EmitLabel("__floordivsi3");
+
+        if (Profile.HasMulDiv)
+        {
+            // div truncates and rem takes the dividend's sign, so the quotient is
+            // one too high exactly when the signs disagree and something is left
+            // over.
+            Emit("div", "a2", "a0", "a1");
+            Emit("rem", "a3", "a0", "a1");
+            Emit("beqz", "a3", "__floordivsi3_done");
+            Emit("xor", "t0", "a0", "a1");
+            Emit("bgez", "t0", "__floordivsi3_done");
+            Emit("addi", "a2", "a2", "-1");
+            EmitLabel("__floordivsi3_done");
+            Emit("mv", "a0", "a2");
+            Emit("ret");
+            return;
+        }
+
         Emit("li", "t0", "0");
         Emit("bgez", "a0", "__floordivsi3_num_ok");
         Emit("neg", "a0", "a0");

@@ -322,6 +322,78 @@ public class RISCVCodeGenTests
         Assert.False(match.Success, $"emitted register outside RV32E: {match.Value}");
     }
 
+    // ─── Per-chip ISA profile ────────────────────────────────────────────────
+
+    private static readonly DeviceConfig Ch32v203 = new() { Chip = "ch32v203", Arch = "riscv" };
+
+    [Fact]
+    public void Ch32v003TargetsTheEmbeddedIsa()
+    {
+        var asm = Compile(MakeProgram("main", new Return(new NoneVal())));
+        Assert.Contains(".attribute arch, \"rv32ec_zicsr\"", asm);
+        // ilp32e keeps the stack word-aligned.
+        Assert.Contains(".attribute stack_align, 4", asm);
+    }
+
+    [Fact]
+    public void Ch32v203TargetsTheFullIsa()
+    {
+        var asm = Compile(MakeProgram("main", new Return(new NoneVal())), Ch32v203);
+        Assert.Contains(".attribute arch, \"rv32imac_zicsr\"", asm);
+        Assert.Contains(".attribute stack_align, 16", asm);
+    }
+
+    [Fact]
+    public void HardwareMultiplyReplacesTheHelperOnV203()
+    {
+        var prog = MakeProgram("main",
+            new Binary(BinaryOp.Mul, new Variable("a"), new Variable("b"), new Variable("c")),
+            new Binary(BinaryOp.Div, new Variable("a"), new Variable("b"), new Variable("d")),
+            new Binary(BinaryOp.Mod, new Variable("a"), new Variable("b"), new Variable("e")));
+        var asm = Compile(prog, Ch32v203);
+
+        Assert.Contains("mul\tt0, t0, t1", asm);
+        Assert.Contains("div\tt0, t0, t1", asm);
+        Assert.Contains("rem\tt0, t0, t1", asm);
+        // The software helpers would be dead weight in flash.
+        Assert.DoesNotContain("__mulsi3", asm);
+        Assert.DoesNotContain("__divsi3", asm);
+        Assert.DoesNotContain("__modsi3", asm);
+    }
+
+    [Fact]
+    public void FlooringStillNeedsAHelperWhereDivisionIsHardware()
+    {
+        // No single instruction rounds toward negative infinity.
+        var prog = MakeProgram("main",
+            new Binary(BinaryOp.FloorDiv, new Variable("a"), new Variable("b"), new Variable("c")));
+        var asm = Compile(prog, Ch32v203);
+        Assert.Contains("call\t__floordivsi3", asm);
+        // ...but it can use the hardware inside the helper.
+        Assert.Contains("div\ta2, a0, a1", asm);
+        Assert.Contains("rem\ta3, a0, a1", asm);
+    }
+
+    [Fact]
+    public void StackTopFollowsTheChipWhenNoRamSizeIsGiven()
+    {
+        // 20 KB on the V203 versus 2 KB on the V003.
+        Assert.Contains("li\tsp, 0x20005000",
+            Compile(MakeProgram("main", new Return(new NoneVal())), Ch32v203));
+        Assert.Contains("li\tsp, 0x20000800",
+            Compile(MakeProgram("main", new Return(new NoneVal()))));
+    }
+
+    [Fact]
+    public void MultiplyOnV203DoesNotForceANonLeafFrame()
+    {
+        // Without a call there is no return address to preserve.
+        var prog = MakeProgram("helper",
+            new Binary(BinaryOp.Mul, new Variable("a"), new Variable("b"), new Variable("c")),
+            new Return(new Variable("c")));
+        Assert.DoesNotContain("sw\tra,", Compile(prog, Ch32v203));
+    }
+
     // ─── Division semantics ──────────────────────────────────────────────────
 
     [Fact]
