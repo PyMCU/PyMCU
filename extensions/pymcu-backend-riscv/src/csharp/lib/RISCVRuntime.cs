@@ -57,9 +57,8 @@ public partial class RiscvCodeGen
     private const int ExternalVectorCount = 16;
 
     private bool needsMul;
-    private bool needsDiv;
-    private bool needsFloorDiv;
-    private bool needsMod;
+    private bool needsFloorDivMod;
+    private bool needsUDivMod;
 
     // Read-only byte tables (const[uint8[N]] and interned strings) destined for
     // .rodata, and the SRAM footprint of every array the program indexes.
@@ -90,7 +89,8 @@ public partial class RiscvCodeGen
 
     private void ScanForRuntimeHelpers(ProgramIR program)
     {
-        needsMul = needsDiv = needsFloorDiv = needsMod = false;
+        needsMul = needsFloorDivMod = needsUDivMod = false;
+        if (Profile.HasMulDiv) return;
 
         foreach (var func in program.Functions)
         foreach (var instr in func.Body)
@@ -102,15 +102,7 @@ public partial class RiscvCodeGen
                 _ => null,
             };
 
-            switch (op)
-            {
-                // With the M extension these lower to single instructions, so the
-                // helpers would be dead weight in flash.
-                case PyMCU.IR.BinaryOp.Mul: needsMul = !Profile.HasMulDiv; break;
-                case PyMCU.IR.BinaryOp.Div: needsDiv = !Profile.HasMulDiv; break;
-                case PyMCU.IR.BinaryOp.Mod: needsMod = !Profile.HasMulDiv; break;
-                case PyMCU.IR.BinaryOp.FloorDiv: needsFloorDiv = true; break;
-            }
+            if (op == PyMCU.IR.BinaryOp.Mul) needsMul = true;
         }
     }
 
@@ -272,15 +264,14 @@ public partial class RiscvCodeGen
 
     private void EmitRuntimeHelpers()
     {
-        if (!needsMul && !needsDiv && !needsFloorDiv && !needsMod) return;
+        if (!needsMul && !needsFloorDivMod && !needsUDivMod) return;
 
         EmitRaw(".section .text");
         EmitRaw(".align 2");
 
         if (needsMul) EmitMulHelper();
-        if (needsDiv) EmitDivHelper();
-        if (needsFloorDiv) EmitFloorDivHelper();
-        if (needsMod) EmitModHelper();
+        if (needsFloorDivMod) EmitFloorDivModHelpers();
+        if (needsUDivMod) EmitUDivModHelpers();
     }
 
     // a0 * a1 -> a0, by shift-and-add. Works for signed and unsigned operands
@@ -327,31 +318,17 @@ public partial class RiscvCodeGen
         Emit("bnez", "a4", $"{prefix}_loop");
     }
 
-    // a0 / a1 -> a0, truncating toward zero.
-    private void EmitDivHelper()
+    // Signed division with Python semantics, matching the AVR backend's
+    // __divs*/__mods* pair: the quotient floors toward negative infinity and the
+    // remainder takes the sign of the DIVISOR. C truncation differs from both
+    // whenever the operands disagree in sign.
+    private void EmitFloorDivModHelpers()
     {
-        EmitRaw(".globl __divsi3");
-        EmitLabel("__divsi3");
-        Emit("li", "t0", "0");
-        Emit("bgez", "a0", "__divsi3_num_ok");
-        Emit("neg", "a0", "a0");
-        Emit("xori", "t0", "t0", "1");
-        EmitLabel("__divsi3_num_ok");
-        Emit("bgez", "a1", "__divsi3_den_ok");
-        Emit("neg", "a1", "a1");
-        Emit("xori", "t0", "t0", "1");
-        EmitLabel("__divsi3_den_ok");
-        EmitUDivModCore("__divsi3");
-        Emit("mv", "a0", "a2");
-        Emit("beqz", "t0", "__divsi3_done");
-        Emit("neg", "a0", "a0");
-        EmitLabel("__divsi3_done");
-        Emit("ret");
+        EmitFloorDivHelper();
+        EmitFloorModHelper();
     }
 
-    // a0 // a1 -> a0, rounding toward negative infinity (Python semantics).
-    // Truncation and flooring only differ when the signs disagree and the
-    // division leaves a remainder, in which case the quotient is one lower.
+    // a0 // a1 -> a0.
     private void EmitFloorDivHelper()
     {
         EmitRaw(".globl __floordivsi3");
@@ -393,24 +370,64 @@ public partial class RiscvCodeGen
         Emit("ret");
     }
 
-    // a0 % a1 -> a0. The remainder takes the sign of the dividend.
-    private void EmitModHelper()
+    // a0 % a1 -> a0, with the sign of the divisor.
+    private void EmitFloorModHelper()
     {
-        EmitRaw(".globl __modsi3");
-        EmitLabel("__modsi3");
+        EmitRaw(".globl __floormodsi3");
+        EmitLabel("__floormodsi3");
+
+        // The C remainder is one divisor away from the Python one exactly when
+        // it is non-zero and its sign disagrees with the divisor's.
+        if (Profile.HasMulDiv)
+        {
+            Emit("rem", "a0", "a0", "a1");
+            Emit("beqz", "a0", "__floormodsi3_done");
+            Emit("xor", "t0", "a0", "a1");
+            Emit("bgez", "t0", "__floormodsi3_done");
+            Emit("add", "a0", "a0", "a1");
+            EmitLabel("__floormodsi3_done");
+            Emit("ret");
+            return;
+        }
+
+        Emit("mv", "t2", "a1");
         Emit("li", "t0", "0");
-        Emit("bgez", "a0", "__modsi3_num_ok");
+        Emit("li", "t1", "0");
+        Emit("bgez", "a0", "__floormodsi3_num_ok");
         Emit("neg", "a0", "a0");
         Emit("li", "t0", "1");
-        EmitLabel("__modsi3_num_ok");
-        Emit("bgez", "a1", "__modsi3_den_ok");
+        EmitLabel("__floormodsi3_num_ok");
+        Emit("bgez", "a1", "__floormodsi3_den_ok");
         Emit("neg", "a1", "a1");
-        EmitLabel("__modsi3_den_ok");
-        EmitUDivModCore("__modsi3");
+        Emit("li", "t1", "1");
+        EmitLabel("__floormodsi3_den_ok");
+        EmitUDivModCore("__floormodsi3");
         Emit("mv", "a0", "a3");
-        Emit("beqz", "t0", "__modsi3_done");
+        Emit("beqz", "t0", "__floormodsi3_signed");
         Emit("neg", "a0", "a0");
-        EmitLabel("__modsi3_done");
+        EmitLabel("__floormodsi3_signed");
+        Emit("beqz", "a0", "__floormodsi3_done");
+        Emit("xor", "t0", "t0", "t1");
+        Emit("beqz", "t0", "__floormodsi3_done");
+        Emit("add", "a0", "a0", "t2");
+        EmitLabel("__floormodsi3_done");
+        Emit("ret");
+    }
+
+    // Unsigned division. Flooring and truncation agree when nothing is negative,
+    // so these are the plain restoring-division results.
+    private void EmitUDivModHelpers()
+    {
+        EmitRaw(".globl __udivsi3");
+        EmitLabel("__udivsi3");
+        EmitUDivModCore("__udivsi3");
+        Emit("mv", "a0", "a2");
+        Emit("ret");
+
+        EmitRaw(".globl __umodsi3");
+        EmitLabel("__umodsi3");
+        EmitUDivModCore("__umodsi3");
+        Emit("mv", "a0", "a3");
         Emit("ret");
     }
 }

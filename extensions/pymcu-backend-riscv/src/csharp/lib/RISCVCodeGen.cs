@@ -78,6 +78,29 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
     private static string ValName(Val val)
         => val is Variable vr ? vr.Name : val is Temporary tr ? tr.Name : "";
 
+    private static bool IsSignedType(DataType t)
+        => t is DataType.INT8 or DataType.INT16 or DataType.INT32;
+
+    private static DataType TypeOf(Val val) => val switch
+    {
+        Variable v => v.Type,
+        Temporary t => t.Type,
+        MemoryAddress m => m.Type,
+        _ => DataType.UNKNOWN,
+    };
+
+    // Whether a division runs in a signed context, mirroring the AVR backend: a
+    // negative literal implies signedness even when constant folding lost the
+    // type. Unsigned division cannot use the signed routines, because an operand
+    // above 2^31 would read as negative.
+    private static bool IsSignedContext(Val a, Val b)
+    {
+        if (IsSignedType(TypeOf(a)) || IsSignedType(TypeOf(b))) return true;
+        if (a is Constant ca && ca.Value < 0) return true;
+        if (b is Constant cb && cb.Value < 0) return true;
+        return false;
+    }
+
     // Load/store mnemonics for an access of the given element width. Narrow
     // signed types sign-extend (lb/lh) so a negative int8 keeps its value in a
     // 32-bit register; unsigned ones zero-extend (lbu/lhu). Stores only care
@@ -279,11 +302,12 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
 
     private bool CallsHelper(PyMCU.IR.BinaryOp op) => op switch
     {
-        // Flooring always needs the helper: no single instruction rounds toward
-        // negative infinity.
-        PyMCU.IR.BinaryOp.FloorDiv => true,
-        PyMCU.IR.BinaryOp.Mul or PyMCU.IR.BinaryOp.Div or PyMCU.IR.BinaryOp.Mod
-            => !Profile.HasMulDiv,
+        // Division only stays in registers when the operands are unsigned and
+        // the core divides in hardware. That depends on the operand types, which
+        // this check does not see, so it assumes the call happens: over-saving ra
+        // costs a store, under-saving it corrupts the return address.
+        PyMCU.IR.BinaryOp.Div or PyMCU.IR.BinaryOp.FloorDiv or PyMCU.IR.BinaryOp.Mod => true,
+        PyMCU.IR.BinaryOp.Mul => !Profile.HasMulDiv,
         _ => false,
     };
 
@@ -680,35 +704,27 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
                 case PyMCU.IR.BinaryOp.BitAnd: Emit("and", "t0", "t0", "t1"); break;
                 case PyMCU.IR.BinaryOp.BitOr: Emit("or", "t0", "t0", "t1"); break;
                 case PyMCU.IR.BinaryOp.BitXor: Emit("xor", "t0", "t0", "t1"); break;
-                // Cores with the M extension do these in one instruction; the
+                // Cores with the M extension multiply in one instruction; the
                 // rest pay for a software helper.
                 case PyMCU.IR.BinaryOp.Mul when Profile.HasMulDiv:
                     Emit("mul", "t0", "t0", "t1");
-                    break;
-                case PyMCU.IR.BinaryOp.Div when Profile.HasMulDiv:
-                    Emit("div", "t0", "t0", "t1");
-                    break;
-                case PyMCU.IR.BinaryOp.Mod when Profile.HasMulDiv:
-                    Emit("rem", "t0", "t0", "t1");
                     break;
                 case PyMCU.IR.BinaryOp.Mul:
                     Emit("mv", "a0", "t0"); Emit("mv", "a1", "t1");
                     Emit("call", "__mulsi3"); Emit("mv", "t0", "a0");
                     break;
+
+                // `/` and `//` are the same operation on integers here, and both
+                // follow Python: the quotient floors toward negative infinity.
+                // Unsigned operands can go straight to the hardware (or the
+                // unsigned helper) because flooring and truncation agree when
+                // nothing is negative.
                 case PyMCU.IR.BinaryOp.Div:
-                    Emit("mv", "a0", "t0"); Emit("mv", "a1", "t1");
-                    Emit("call", "__divsi3"); Emit("mv", "t0", "a0");
-                    break;
-                // Python's // rounds toward negative infinity, which is not what
-                // C division does once the operands have different signs, so it
-                // needs the helper even where hardware division exists.
                 case PyMCU.IR.BinaryOp.FloorDiv:
-                    Emit("mv", "a0", "t0"); Emit("mv", "a1", "t1");
-                    Emit("call", "__floordivsi3"); Emit("mv", "t0", "a0");
+                    EmitDivision(arg, wantRemainder: false);
                     break;
                 case PyMCU.IR.BinaryOp.Mod:
-                    Emit("mv", "a0", "t0"); Emit("mv", "a1", "t1");
-                    Emit("call", "__modsi3"); Emit("mv", "t0", "a0");
+                    EmitDivision(arg, wantRemainder: true);
                     break;
                 case PyMCU.IR.BinaryOp.Equal: Emit("xor", "t0", "t0", "t1"); Emit("seqz", "t0", "t0"); break;
                 case PyMCU.IR.BinaryOp.NotEqual: Emit("xor", "t0", "t0", "t1"); Emit("snez", "t0", "t0"); break;
@@ -722,6 +738,36 @@ public partial class RiscvCodeGen(DeviceConfig cfg) : CodeGen
         }
 
         StoreRegInto("t0", arg.Dst);
+    }
+
+    // Lowers Div/FloorDiv/Mod with the operands already in t0 and t1, leaving the
+    // result in t0. Which routine applies depends on signedness and on whether
+    // the core divides in hardware.
+    private void EmitDivision(Binary arg, bool wantRemainder)
+    {
+        bool signed = IsSignedContext(arg.Src1, arg.Src2);
+
+        if (!signed && Profile.HasMulDiv)
+        {
+            Emit(wantRemainder ? "remu" : "divu", "t0", "t0", "t1");
+            return;
+        }
+
+        string helper = (signed, wantRemainder) switch
+        {
+            (true, false) => "__floordivsi3",
+            (true, true) => "__floormodsi3",
+            (false, false) => "__udivsi3",
+            (false, true) => "__umodsi3",
+        };
+
+        if (signed) needsFloorDivMod = true;
+        else needsUDivMod = true;
+
+        Emit("mv", "a0", "t0");
+        Emit("mv", "a1", "t1");
+        Emit("call", helper);
+        Emit("mv", "t0", "a0");
     }
 
     private void CompileBitSet(BitSet arg)

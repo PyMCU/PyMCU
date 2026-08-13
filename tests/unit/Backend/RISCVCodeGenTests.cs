@@ -267,11 +267,11 @@ public class RISCVCodeGenTests
         // RV32EC has no M extension and the GCC multilib set ships no rv32ec
         // libgcc, so the helper has to be defined here or the link fails.
         var prog = MakeProgram("main",
-            new Binary(BinaryOp.Div, new Variable("a"), new Variable("b"), new Variable("c")));
+            new Binary(BinaryOp.Div, Signed("a"), Signed("b"), Signed("c")));
         var asm = Compile(prog);
-        Assert.Contains("call\t__divsi3", asm);
-        Assert.Contains(".globl __divsi3", asm);
-        Assert.Contains("__divsi3:", asm);
+        Assert.Contains("call\t__floordivsi3", asm);
+        Assert.Contains(".globl __floordivsi3", asm);
+        Assert.Contains("__floordivsi3:", asm);
     }
 
     [Fact]
@@ -344,34 +344,35 @@ public class RISCVCodeGenTests
     }
 
     [Fact]
-    public void HardwareMultiplyReplacesTheHelperOnV203()
+    public void HardwareArithmeticReplacesTheHelpersOnV203()
     {
         var prog = MakeProgram("main",
             new Binary(BinaryOp.Mul, new Variable("a"), new Variable("b"), new Variable("c")),
-            new Binary(BinaryOp.Div, new Variable("a"), new Variable("b"), new Variable("d")),
-            new Binary(BinaryOp.Mod, new Variable("a"), new Variable("b"), new Variable("e")));
+            new Binary(BinaryOp.Div, Unsigned("a"), Unsigned("b"), Unsigned("d")),
+            new Binary(BinaryOp.Mod, Unsigned("a"), Unsigned("b"), Unsigned("e")));
         var asm = Compile(prog, Ch32v203);
 
         Assert.Contains("mul\tt0, t0, t1", asm);
-        Assert.Contains("div\tt0, t0, t1", asm);
-        Assert.Contains("rem\tt0, t0, t1", asm);
-        // The software helpers would be dead weight in flash.
+        // Unsigned division needs no flooring fix-up, so it stays in registers.
+        Assert.Contains("divu\tt0, t0, t1", asm);
+        Assert.Contains("remu\tt0, t0, t1", asm);
         Assert.DoesNotContain("__mulsi3", asm);
-        Assert.DoesNotContain("__divsi3", asm);
-        Assert.DoesNotContain("__modsi3", asm);
+        Assert.DoesNotContain("__udivsi3", asm);
     }
 
     [Fact]
-    public void FlooringStillNeedsAHelperWhereDivisionIsHardware()
+    public void SignedDivisionStillNeedsAHelperWhereDivisionIsHardware()
     {
         // No single instruction rounds toward negative infinity.
         var prog = MakeProgram("main",
-            new Binary(BinaryOp.FloorDiv, new Variable("a"), new Variable("b"), new Variable("c")));
+            new Binary(BinaryOp.FloorDiv, Signed("a"), Signed("b"), Signed("c")),
+            new Binary(BinaryOp.Mod, Signed("a"), Signed("b"), Signed("d")));
         var asm = Compile(prog, Ch32v203);
         Assert.Contains("call\t__floordivsi3", asm);
-        // ...but it can use the hardware inside the helper.
+        Assert.Contains("call\t__floormodsi3", asm);
+        // ...but the helper itself uses the hardware.
         Assert.Contains("div\ta2, a0, a1", asm);
-        Assert.Contains("rem\ta3, a0, a1", asm);
+        Assert.Contains("rem\ta0, a0, a1", asm);
     }
 
     [Fact]
@@ -396,26 +397,54 @@ public class RISCVCodeGenTests
 
     // ─── Division semantics ──────────────────────────────────────────────────
 
-    [Fact]
-    public void FloorDivisionUsesTheFlooringHelper()
+    private static Variable Signed(string name) => new(name, DataType.INT32);
+    private static Variable Unsigned(string name) => new(name, DataType.UINT32);
+
+    [Theory]
+    [InlineData(BinaryOp.Div)]
+    [InlineData(BinaryOp.FloorDiv)]
+    public void SignedDivisionFloorsLikePython(BinaryOp op)
     {
-        // Python's // rounds toward negative infinity; C division truncates.
+        // `/` and `//` are the same operation on integers, and both floor toward
+        // negative infinity -- the semantics the AVR backend already implements.
         var prog = MakeProgram("main",
-            new Binary(BinaryOp.FloorDiv, new Variable("a"), new Variable("b"), new Variable("c")));
+            new Binary(op, Signed("a"), Signed("b"), Signed("c")));
         var asm = Compile(prog);
         Assert.Contains("call\t__floordivsi3", asm);
         Assert.Contains("__floordivsi3:", asm);
-        Assert.DoesNotContain("call\t__divsi3", asm);
     }
 
     [Fact]
-    public void TruncatingDivisionStillUsesDivsi3()
+    public void SignedRemainderTakesTheDivisorSign()
     {
         var prog = MakeProgram("main",
-            new Binary(BinaryOp.Div, new Variable("a"), new Variable("b"), new Variable("c")));
+            new Binary(BinaryOp.Mod, Signed("a"), Signed("b"), Signed("c")));
         var asm = Compile(prog);
-        Assert.Contains("call\t__divsi3", asm);
+        Assert.Contains("call\t__floormodsi3", asm);
+        Assert.Contains("__floormodsi3:", asm);
+    }
+
+    [Fact]
+    public void UnsignedDivisionUsesTheUnsignedHelpers()
+    {
+        // Flooring and truncation agree when nothing can be negative, and the
+        // signed routine would misread any operand above 2^31.
+        var prog = MakeProgram("main",
+            new Binary(BinaryOp.Div, Unsigned("a"), Unsigned("b"), Unsigned("c")),
+            new Binary(BinaryOp.Mod, Unsigned("a"), Unsigned("b"), Unsigned("d")));
+        var asm = Compile(prog);
+        Assert.Contains("call\t__udivsi3", asm);
+        Assert.Contains("call\t__umodsi3", asm);
         Assert.DoesNotContain("__floordivsi3", asm);
+    }
+
+    [Fact]
+    public void ANegativeLiteralMakesTheContextSigned()
+    {
+        // Constant folding can lose the type; a negative operand still implies it.
+        var prog = MakeProgram("main",
+            new Binary(BinaryOp.Div, new Variable("a"), new Constant(-2), new Variable("c")));
+        Assert.Contains("call\t__floordivsi3", Compile(prog));
     }
 
     // ─── Inline assembly ─────────────────────────────────────────────────────
