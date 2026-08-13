@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pymcu-compiler"
-version = "0.1.0a4"
+version = "0.1.0a5"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
@@ -18,16 +18,19 @@ dependencies = [
     "rich>=13.0.0",
     "questionary>=2.0",
     "packaging>=23.0",
-    "pymcu-stdlib>=0.1.0a4",
-    "pymcu-sdk>=0.1.0a3",
+    "pymcu-stdlib>=0.1.0a5",
+    "pymcu-sdk>=0.1.0a4",
 ]
 
 [project.optional-dependencies]
-avr = ["pymcu-avr>=0.1.0a4"]
+avr = ["pymcu-avr>=0.1.0a5"]
 arm = ["pymcu-arm>=0.1.0a4"]
 pic = ["pymcu-pic>=0.1.0a3"]
-riscv = ["pymcu-backend-riscv>=0.1.0a1"]
-all = ["pymcu-avr>=0.1.0a4", "pymcu-arm>=0.1.0a4", "pymcu-pic>=0.1.0a3", "pymcu-backend-riscv>=0.1.0a1"]
+# No `riscv` extra yet: pymcu-backend-riscv is not on PyPI, and an extra that
+# cannot resolve fails harder than a missing one (pip only warns about an
+# unknown extra, and `pymcu build` already points at the install command).
+# Restore it here, and in `all`, once the package is published.
+all = ["pymcu-avr>=0.1.0a5", "pymcu-arm>=0.1.0a4", "pymcu-pic>=0.1.0a3"]
 
 [tool.uv.sources]
 pymcu-stdlib = {path = "lib", editable = true}
