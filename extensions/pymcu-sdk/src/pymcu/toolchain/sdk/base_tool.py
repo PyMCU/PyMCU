@@ -298,8 +298,10 @@ class CacheableTool(ABC):
         Extract tar.gz, tar.bz2, or zip to *target_dir*.
 
         Path-traversal (zip-slip) protection is applied: any member whose
-        resolved path escapes *target_dir* is silently skipped and a warning
-        is printed.
+        resolved path escapes *target_dir* is skipped and a warning is printed.
+        Containment is a path comparison, not a string prefix -- the latter also
+        accepts a sibling directory that merely starts with the same characters
+        (target ``/opt/tools`` would admit ``/opt/tools-evil/payload``).
         """
         self.console.print(f"Extracting to {target_dir}...")
         resolved_target = target_dir.resolve()
@@ -307,7 +309,7 @@ class CacheableTool(ABC):
         def _safe_tar_members(tar: tarfile.TarFile):
             for member in tar.getmembers():
                 dest = (resolved_target / member.name).resolve()
-                if not str(dest).startswith(str(resolved_target)):
+                if not dest.is_relative_to(resolved_target):
                     self.console.print(
                         f"[yellow]Skipping unsafe archive member: {member.name}[/yellow]"
                     )
@@ -318,7 +320,7 @@ class CacheableTool(ABC):
             safe = []
             for name in zf.namelist():
                 dest = (resolved_target / name).resolve()
-                if not str(dest).startswith(str(resolved_target)):
+                if not dest.is_relative_to(resolved_target):
                     self.console.print(
                         f"[yellow]Skipping unsafe archive member: {name}[/yellow]"
                     )

@@ -2,8 +2,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from driver.commands.new import new
-from driver.main import _ensure_venv
+# `src.driver`, not `driver`: tests/driver/ is itself a package named driver,
+# so a bare `driver` import resolves to whichever of the two pytest collected
+# first. Alone this file passed; in a full run it failed to import and its
+# tests were skipped silently. Every other test module spells it this way.
+from src.driver.commands.new import new
+from src.driver.main import _ensure_venv
 
 
 class TestVersioningLogic(unittest.TestCase):
@@ -95,10 +99,10 @@ class TestVersioningLogic(unittest.TestCase):
         mock_execv.assert_not_called()
 
     @patch("importlib.metadata.version")
-    @patch("driver.commands.new.open", new_callable=MagicMock)
-    @patch("driver.commands.new.Path")
-    @patch("driver.commands.new.Prompt")
-    @patch("driver.commands.new.console")  # Suppress console output
+    @patch("src.driver.commands.new.open", new_callable=MagicMock)
+    @patch("src.driver.commands.new.Path")
+    @patch("src.driver.commands.new.Prompt")
+    @patch("src.driver.commands.new.console")  # Suppress console output
     def test_new_command_pins_version(self, mock_console, mock_prompt, mock_path, mock_open, mock_version):
         # Setup
         mock_version.return_value = "1.2.3"

@@ -138,6 +138,10 @@ def main(
 
 app.command()(new)
 app.command()(build)
+# `version` backs the --version flag, but people type `pymcu version` too and
+# used to get "No such command". bench/profile/coffee stay hidden on purpose:
+# they work, they are just not part of the advertised surface.
+app.command()(version)
 app.command()(clean)
 app.command()(flash)
 app.command()(sync)

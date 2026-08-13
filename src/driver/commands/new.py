@@ -554,6 +554,17 @@ def new(
                     ["git", "init"], cwd=project_path, check=True, capture_output=True
                 )
                 git_inited = True
+            except FileNotFoundError:
+                # A minimal Ubuntu server has no git. This used to escape to the
+                # handler at the bottom, which aborted `pymcu new` with a bare
+                # "[Errno 2] No such file or directory: 'git'" -- after the whole
+                # project had already been written. The scaffold does not need
+                # git, so say what happened and carry on.
+                console.print(
+                    "[yellow]git is not installed — skipping repository setup.[/yellow]\n"
+                    "  The project is complete without it. To add one later:\n"
+                    "  [bold]git init && pymcu sync[/bold]"
+                )
             except subprocess.CalledProcessError as e:
                 console.print(f"[red]Failed to initialize git repository:[/red] {e}")
 
