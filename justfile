@@ -91,10 +91,27 @@ package: build
 
 # ─── install-dev ────────────────────────────────────────────────────────────
 # Editable install: compiler binary is symlinked so driver finds it immediately.
-install-dev: build
+install-dev: build link-dev
     uv pip install -e "{{repo_root}}" --no-build-isolation
     uv pip install --no-deps -e "{{repo_root}}/lib/"
+
+# ─── link-dev ───────────────────────────────────────────────────────────────
+# Point every packaged binary at the current build output.
+#
+# Both the driver and each backend plugin look for their binary *inside* the
+# Python package first, and a real file there wins over build/bin. A stale copy
+# is therefore invisible: the build succeeds and silently uses an old compiler.
+# Run this after any dotnet publish, or whenever a wheel build leaves a copy
+# behind (the hatch hook writes one next to the module).
+link-dev:
     ln -sf "{{compiler_out}}/pymcuc" "{{repo_root}}/src/driver/pymcuc"
+    @for pkg in "{{repo_root}}"/extensions/*/src/python/pymcu/backend/*/; do \
+        name="pymcuc-$(basename "$pkg")"; \
+        if [ -f "{{compiler_out}}/$name" ]; then \
+            ln -sf "{{compiler_out}}/$name" "$pkg$name"; \
+            echo "linked $name -> {{compiler_out}}/$name"; \
+        fi; \
+    done
 
 # ─── clean ──────────────────────────────────────────────────────────────────
 # Remove all build artifacts (compiler binary, .NET obj/bin, Python dist).
