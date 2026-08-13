@@ -96,6 +96,30 @@ def _discover_stdlib_flavors() -> List[str]:
         return []
 
 
+# Floor used when a package cannot be inspected locally. It names a prerelease
+# on purpose: pip only considers prereleases for a requirement when the
+# specifier itself mentions one (or when nothing stable exists at all), so a
+# bare name would make the generated project need `pip install --pre` the day
+# any of these packages ships a stable release.
+_PRERELEASE_FLOOR = "0.1.0a1"
+
+
+def _pin(pkg_name: str, extra: str = "") -> str:
+    """
+    Requirement line for *pkg_name*, pinned to what is installed here.
+
+    The version is read from the environment running the CLI, which is not the
+    environment the generated project will use. Under pipx that gap is the
+    normal case: the CLI lives in its own venv and the stdlib flavors are not
+    among its dependencies, so they are simply not importable from here.
+    """
+    try:
+        from importlib.metadata import version
+        return f"{pkg_name}{extra}>={version(pkg_name)}"
+    except Exception:
+        return f"{pkg_name}{extra}>={_PRERELEASE_FLOOR}"
+
+
 def _chip_imports(chip: str, flavor: str | None) -> str:
     """Generate the import block and a minimal main() body for the given chip
     and optional stdlib flavor.  No star imports."""
@@ -309,12 +333,8 @@ def new(
     toolchain_name = default_toolchain(chip)
     programmer_name = default_programmer(chip)
 
-    def _pin_version(pkg_name: str, fallback: str) -> str:
-        try:
-            from importlib.metadata import version
-            return f"{pkg_name}>={version(pkg_name)}"
-        except Exception:
-            return fallback
+    def _pin_version(pkg_name: str, fallback: str = "") -> str:
+        return _pin(pkg_name)
 
     # Compiler driver + backend extra. The PyPI package is `pymcu-compiler`
     # (the `pymcuc` binary it ships is NOT a distribution); installing it with
@@ -329,11 +349,7 @@ def new(
         compiler_extra = ""
 
     def _pin_compiler() -> str:
-        try:
-            from importlib.metadata import version
-            return f"pymcu-compiler{compiler_extra}>={version('pymcu-compiler')}"
-        except Exception:
-            return f"pymcu-compiler{compiler_extra}"
+        return _pin("pymcu-compiler", extra=compiler_extra)
 
     # ------------------------------------------------------------------
     # File generation
