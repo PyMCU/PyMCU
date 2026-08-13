@@ -126,19 +126,19 @@ sdist = { url = "https://files.pythonhosted.org/packages/eb/8a/55f9a3a69f7570ac4
 
 [[package]]
 name = "pymcu-avr"
-version = "0.1.0a4"
+version = "0.1.0a5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pymcu-avr-toolchain", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pymcu-sdk" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/d0/52eb24a531f8fe9c5b6b2858615891004dbd9bfa50ac64f5c0687692085b/pymcu_avr-0.1.0a4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:959ffe24c7e3eb665609c0f2a2608b4a55723119d6ad11ced00c000e8bb139c7", size = 2880804, upload-time = "2026-08-02T04:57:34.503Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/8f/a84873c8c6326c52034b00b88c6f3d5d6309c6b6856148eecca069279086/pymcu_avr-0.1.0a4-py3-none-macosx_26_0_arm64.whl", hash = "sha256:adc7d7a596af7fce9e0df9b5928543111d75986bd95ef68bbdcaf7e6c3b71aef", size = 2639464, upload-time = "2026-08-02T04:57:36.17Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/88/ee70d3e935871ca759c283ad7ce2057a8d6b46bef3a90a14d6c24df658fd/pymcu_avr-0.1.0a4-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:bc4402fecfc1917e36ed7f85aeab8b6a3216230ec90d53e6e603a5a7c6d9b62a", size = 2709993, upload-time = "2026-08-02T04:57:37.702Z" },
-    { url = "https://files.pythonhosted.org/packages/db/4c/17a085a5917dbdc8efd69922ab58e5654eaf6c9ff2d4beb55901e6ff1ad6/pymcu_avr-0.1.0a4-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:b4a3611a106fe59db8795a6dd8924c6ad53694a7deb5e198b9593a775bfae366", size = 2866325, upload-time = "2026-08-02T04:57:38.935Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/0c/0878749e94d2590d5e77994181c7d195207a26cf9af0d41c415c0d0bb8c5/pymcu_avr-0.1.0a4-py3-none-win_amd64.whl", hash = "sha256:4458081f993052710801afd77202fdfefca1d2ada56f3f9ee0a040604a8c7e15", size = 2575579, upload-time = "2026-08-02T04:57:40.149Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/b8/1224df98b55a0a3a02f51da7c83715380d8c7a74ad2a0aec700a029e4f91/pymcu_avr-0.1.0a4-py3-none-win_arm64.whl", hash = "sha256:841f4d7a53e05045a5b19d2284a27a6a46aced5fa967259f2cd4a54c62024d0a", size = 2461942, upload-time = "2026-08-02T04:57:42.189Z" },
+    { url = "https://files.pythonhosted.org/packages/88/b2/493b073a7c523e939820550a0a740fdb81817921057448e4569e149bbf3a/pymcu_avr-0.1.0a5-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:ea6a4ab2a1c8719ee3ff96682d5dfde842d6034b9db58828c4e1beb050db712c", size = 2892067, upload-time = "2026-08-13T09:42:17.702Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/23/b37ab6ce61b357cd4d532e53aede6b87a1cc354a65092a67d484af728ae7/pymcu_avr-0.1.0a5-py3-none-macosx_14_0_arm64.whl", hash = "sha256:6dd302fd0d8111644ea480d978c49e464fbc07b26a744dafab2b3fc769d1e269", size = 2650396, upload-time = "2026-08-13T09:42:19.157Z" },
+    { url = "https://files.pythonhosted.org/packages/be/60/2e6d7c5a19cef6e41743e16937a8145eceff69e4bd756e9b2d86afbd8338/pymcu_avr-0.1.0a5-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:925cd3ea258c35938b7083fba47f00b8362f971cfbd8841c3edbf2e822f786f7", size = 2721244, upload-time = "2026-08-13T09:42:20.316Z" },
+    { url = "https://files.pythonhosted.org/packages/08/dc/8396f25b662009c0411663c59ed78cfb195306708f9a6fc5a0eadb2abd3a/pymcu_avr-0.1.0a5-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:f536e85eba3a14a2df5da50dc6e409c5f3169022f9fdee6a57908c4e74fb8dff", size = 2880645, upload-time = "2026-08-13T09:42:22.019Z" },
+    { url = "https://files.pythonhosted.org/packages/66/0c/a27ce90ef1a08487578acdc1b5a4144b878a217d706c4a418e4ae3d47c13/pymcu_avr-0.1.0a5-py3-none-win_amd64.whl", hash = "sha256:042184a8456c5b6ef7d7b405f697b35faa1ddb87728e7b7a551051764b8328f3", size = 2587084, upload-time = "2026-08-13T09:42:23.325Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/6b/4af8343aa14487231250c352b412fc10aea729facd57d5206d423ec2b47d/pymcu_avr-0.1.0a5-py3-none-win_arm64.whl", hash = "sha256:38721925fd58293828bb4f8672d804f7dbdc189164a25bb6a8f6af7ed67149e5", size = 2475319, upload-time = "2026-08-13T09:42:24.533Z" },
 ]
 
 [[package]]
@@ -155,7 +155,7 @@ wheels = [
 
 [[package]]
 name = "pymcu-compiler"
-version = "0.1.0a4"
+version = "0.1.0a5"
 source = { editable = "." }
 dependencies = [
     { name = "packaging" },
@@ -193,8 +193,8 @@ requires-dist = [
     { name = "packaging", specifier = ">=23.0" },
     { name = "pymcu-arm", marker = "extra == 'all'", specifier = ">=0.1.0a4" },
     { name = "pymcu-arm", marker = "extra == 'arm'", specifier = ">=0.1.0a4" },
-    { name = "pymcu-avr", marker = "extra == 'all'", specifier = ">=0.1.0a4" },
-    { name = "pymcu-avr", marker = "extra == 'avr'", specifier = ">=0.1.0a4" },
+    { name = "pymcu-avr", marker = "extra == 'all'", specifier = ">=0.1.0a5" },
+    { name = "pymcu-avr", marker = "extra == 'avr'", specifier = ">=0.1.0a5" },
     { name = "pymcu-pic", marker = "extra == 'all'", specifier = ">=0.1.0a3" },
     { name = "pymcu-pic", marker = "extra == 'pic'", specifier = ">=0.1.0a3" },
     { name = "pymcu-sdk", editable = "extensions/pymcu-sdk" },
@@ -227,7 +227,7 @@ wheels = [
 
 [[package]]
 name = "pymcu-sdk"
-version = "0.1.0a3"
+version = "0.1.0a4"
 source = { editable = "extensions/pymcu-sdk" }
 dependencies = [
     { name = "rich" },
@@ -238,7 +238,7 @@ requires-dist = [{ name = "rich", specifier = ">=13.0.0" }]
 
 [[package]]
 name = "pymcu-stdlib"
-version = "0.1.0a4"
+version = "0.1.0a5"
 source = { editable = "lib" }
 
 [[package]]
