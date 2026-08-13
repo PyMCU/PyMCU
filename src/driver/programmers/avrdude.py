@@ -14,6 +14,7 @@
 
 import glob
 import os
+import platform
 import shutil
 import sys
 import subprocess
@@ -57,45 +58,148 @@ class AvrdudeProgrammer(HardwareProgrammer):
       3. Download v8.1 from GitHub (user is prompted first).
     """
 
+    _RELEASE_URL = "https://github.com/avrdudes/avrdude/releases/download/v8.1"
+
+    # One asset per OS/architecture pair. Selecting on the OS alone shipped an
+    # x86_64 binary to every Linux machine, which simply does not execute on a
+    # Raspberry Pi. SHA-256 sums were taken by downloading each asset and hashing
+    # it locally; they match the digests GitHub reports for the v8.1 release.
     METADATA = {
         "version": "8.1",
         "description": "AVRDUDE - AVR Downloader/UploaDEr",
         "platforms": {
             "win32": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude-v8.1-windows-x64.zip",
-                "hash": "PLACEHOLDER",
-                "archive_type": "zip",
-                "bin_path": "avrdude.exe",
-                "conf_path": "avrdude.conf",
+                "x86_64": {
+                    "url": f"{_RELEASE_URL}/avrdude-v8.1-windows-x64.zip",
+                    "hash": "e4d571d81fee3387d51bfdedd0b6565e4c201e974101cac2caec7adfd6201da3",
+                    "archive_type": "zip",
+                    "bin_path": "avrdude.exe",
+                    "conf_path": "avrdude.conf",
+                },
+                "arm64": {
+                    "url": f"{_RELEASE_URL}/avrdude-v8.1-windows-arm64.zip",
+                    "hash": "2194b65669e680b855d139ccb863c75971b0a0fbdfbb50942bc554158020bf29",
+                    "archive_type": "zip",
+                    "bin_path": "avrdude.exe",
+                    "conf_path": "avrdude.conf",
+                },
+                "x86": {
+                    "url": f"{_RELEASE_URL}/avrdude-v8.1-windows-x86.zip",
+                    "hash": "b863613dd2fe21c45b4da04e4902fe2007a93dff906d770a5221de48eb92b8c6",
+                    "archive_type": "zip",
+                    "bin_path": "avrdude.exe",
+                    "conf_path": "avrdude.conf",
+                },
             },
             "linux": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude_v8.1_Linux_64bit.tar.gz",
-                "hash": "PLACEHOLDER",
-                "archive_type": "tar.gz",
-                "bin_path": "avrdude",
-                "conf_path": "avrdude.conf",
+                "x86_64": {
+                    "url": f"{_RELEASE_URL}/avrdude_v8.1_Linux_64bit.tar.gz",
+                    "hash": "c751c88b1c0b886834d85cd4b19f100cc3415c896ab9f98cf7e2955edbcd678f",
+                    "archive_type": "tar.gz",
+                    "bin_path": "avrdude",
+                    "conf_path": "avrdude.conf",
+                },
+                "arm64": {
+                    "url": f"{_RELEASE_URL}/avrdude_v8.1_Linux_ARM64.tar.gz",
+                    "hash": "9e1f2c1e7988bac93f30e5e8aea6cd7a9c8e782542f4d93dc04b6495820184d8",
+                    "archive_type": "tar.gz",
+                    "bin_path": "avrdude",
+                    "conf_path": "avrdude.conf",
+                },
+                # Built for ARMv6, so it also runs on the ARMv7 Pis.
+                "armv6": {
+                    "url": f"{_RELEASE_URL}/avrdude_v8.1_Linux_ARMv6.tar.gz",
+                    "hash": "174343ea5c4c3b0d29e98eb4c8de44e0f075a407fded755a1b7fcf793909d1da",
+                    "archive_type": "tar.gz",
+                    "bin_path": "avrdude",
+                    "conf_path": "avrdude.conf",
+                },
+                "x86": {
+                    "url": f"{_RELEASE_URL}/avrdude_v8.1_Linux_32bit.tar.gz",
+                    "hash": "de4b3fbf0683fd998e139a352392994566a7d729f67d32dd95cfaf95abe08b09",
+                    "archive_type": "tar.gz",
+                    "bin_path": "avrdude",
+                    "conf_path": "avrdude.conf",
+                },
             },
             "darwin": {
-                "url": "https://github.com/avrdudes/avrdude/releases/download/v8.1/avrdude_v8.1_macOS_64bit.tar.gz",
-                "hash": "PLACEHOLDER",
-                "archive_type": "tar.gz",
-                "bin_path": "avrdude",
-                "conf_path": "avrdude.conf",
+                # Upstream publishes a single x86_64 macOS build. On Apple Silicon
+                # it runs under Rosetta 2, which is why the PATH lookup comes first
+                # in _get_binary: a `brew install avrdude` gives a native arm64
+                # binary and is the better answer on those machines.
+                "x86_64": {
+                    "url": f"{_RELEASE_URL}/avrdude_v8.1_macOS_64bit.tar.gz",
+                    "hash": "d7739fbb5d1fe649511121a695dac3f4ca5ccb348919bf1f45f9bc5a2ea0ce72",
+                    "archive_type": "tar.gz",
+                    "bin_path": "avrdude",
+                    "conf_path": "avrdude.conf",
+                },
             },
         },
+    }
+
+    # platform.machine() spellings vary by OS and kernel; fold them onto the
+    # names used as keys above.
+    _MACHINE_ALIASES = {
+        "x86_64": "x86_64", "amd64": "x86_64", "x64": "x86_64",
+        "aarch64": "arm64", "arm64": "arm64", "armv8l": "arm64", "armv8b": "arm64",
+        "armv7l": "armv6", "armv7": "armv6", "armv6l": "armv6",
+        "armv6": "armv6", "armhf": "armv6", "arm": "armv6",
+        "i386": "x86", "i486": "x86", "i586": "x86", "i686": "x86",
+        "x86": "x86", "i86pc": "x86",
     }
 
     def get_name(self) -> str:
         return "avrdude"
 
-    def _get_platform_info(self) -> Dict[str, Any]:
-        platform = sys.platform
-        if platform.startswith("linux"):
-            platform = "linux"
-        info = self.METADATA["platforms"].get(platform)
-        if not info:
-            raise RuntimeError(f"avrdude has no configuration for platform: {sys.platform}")
+    @classmethod
+    def _os_key(cls) -> str:
+        return "linux" if sys.platform.startswith("linux") else sys.platform
+
+    @classmethod
+    def _arch_key(cls, machine: str | None = None) -> str | None:
+        """Canonical architecture name, or None when it is not recognised."""
+        raw = (machine if machine is not None else platform.machine()).lower()
+        return cls._MACHINE_ALIASES.get(raw)
+
+    @classmethod
+    def _select_asset(cls, os_key: str, machine: str) -> Dict[str, Any]:
+        """
+        Pick the release asset for an OS/machine pair.
+
+        Raises RuntimeError rather than guessing: downloading a binary for the
+        wrong architecture fails later, at flash time, with a far more confusing
+        message than "no build for this architecture".
+        """
+        assets = cls.METADATA["platforms"].get(os_key)
+        if not assets:
+            raise RuntimeError(f"avrdude has no configuration for platform: {os_key}")
+
+        arch = cls._arch_key(machine)
+        if arch is None:
+            raise RuntimeError(
+                f"avrdude: unrecognised architecture '{machine}' on {os_key}. "
+                "Install avrdude with your package manager and it will be used from PATH."
+            )
+
+        info = assets.get(arch)
+        if info is None:
+            # Apple Silicon lands here only if upstream ever drops the x86_64
+            # build; today it resolves through the Rosetta-compatible asset.
+            if os_key == "darwin" and arch == "arm64":
+                info = assets.get("x86_64")
+            if info is None:
+                available = ", ".join(sorted(assets))
+                raise RuntimeError(
+                    f"avrdude publishes no {arch} build for {os_key} "
+                    f"(available: {available}). Install avrdude with your package "
+                    "manager and it will be used from PATH."
+                )
+
         return info
+
+    def _get_platform_info(self) -> Dict[str, Any]:
+        return self._select_asset(self._os_key(), platform.machine())
 
     # ------------------------------------------------------------------
     # Binary discovery
