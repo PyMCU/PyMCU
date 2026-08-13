@@ -30,7 +30,9 @@ import contextlib
 import hashlib
 import os
 import platform
+import ssl
 import sys
+import urllib.error
 import urllib.request
 import tarfile
 import zipfile
@@ -44,6 +46,60 @@ from rich.progress import (
     TransferSpeedColumn,
     TimeRemainingColumn
 )
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """
+    A verifying SSL context that works on interpreters with no CA bundle wired up.
+
+    Python installed from python.org on macOS ships without certificates until
+    "Install Certificates.command" is run, leaving
+    ssl.get_default_verify_paths().cafile as None -- every https download then
+    fails with CERTIFICATE_VERIFY_FAILED even though the network is fine. The
+    same happens on trimmed-down container images.
+
+    Verification is never disabled: this only points the context at a bundle that
+    exists. Mirrors what pymcu-avr-toolchain's _fetch.py already does.
+    """
+    ctx = ssl.create_default_context()
+    if ctx.cert_store_stats().get("x509_ca", 0) > 0:
+        return ctx
+
+    for cafile in (
+        os.environ.get("SSL_CERT_FILE", ""),
+        "/etc/ssl/cert.pem",
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/usr/local/etc/openssl/cert.pem",
+    ):
+        if cafile and os.path.isfile(cafile):
+            with contextlib.suppress(ssl.SSLError, OSError):
+                ctx.load_verify_locations(cafile=cafile)
+                return ctx
+
+    with contextlib.suppress(ImportError, ssl.SSLError, OSError):
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+
+    return ctx
+
+
+def _certificate_help() -> str:
+    """Advice for an SSL failure that survived _ssl_context()."""
+    lines = [
+        "TLS certificate verification failed, so the download could not be trusted.",
+        "This usually means the Python running pymcu has no CA bundle configured.",
+    ]
+    if sys.platform == "darwin":
+        version = ".".join(str(v) for v in sys.version_info[:2])
+        lines.append(
+            f'  Run: /Applications/Python\\ {version}/Install\\ Certificates.command'
+        )
+    lines += [
+        "  Or:  pip install certifi",
+        "  Or point SSL_CERT_FILE at a CA bundle you already trust.",
+    ]
+    return "\n".join(lines)
 
 
 def _default_platform_key() -> str:
@@ -209,11 +265,29 @@ class CacheableTool(ABC):
                 console=self.console
             ) as progress:
                 task_id = progress.add_task(description, total=None)
-                
-                def reporthook(block_num, block_size, total_size):
-                    progress.update(task_id, total=total_size, completed=block_num * block_size)
 
-                urllib.request.urlretrieve(url, dest_path, reporthook=reporthook)
+                # urlretrieve cannot be given an SSL context, so the transfer is
+                # streamed by hand to keep the progress bar and still verify
+                # against a CA bundle that actually exists.
+                request = urllib.request.Request(url, headers={"User-Agent": "pymcu"})
+                with urllib.request.urlopen(request, context=_ssl_context()) as response, \
+                        open(dest_path, "wb") as out:
+                    length = response.headers.get("Content-Length")
+                    progress.update(task_id, total=int(length) if length else None)
+
+                    downloaded = 0
+                    while chunk := response.read(65536):
+                        out.write(chunk)
+                        downloaded += len(chunk)
+                        progress.update(task_id, completed=downloaded)
+        except urllib.error.URLError as e:
+            if dest_path.exists():
+                dest_path.unlink()
+            # A certificate problem is worth naming: the generic message reads as
+            # a network outage and sends people looking in the wrong place.
+            if isinstance(e.reason, ssl.SSLError):
+                raise RuntimeError(f"Download failed: {e.reason}\n\n{_certificate_help()}")
+            raise RuntimeError(f"Download failed: {e}")
         except Exception as e:
             if dest_path.exists():
                 dest_path.unlink()
