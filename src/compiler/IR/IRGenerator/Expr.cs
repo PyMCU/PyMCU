@@ -1580,7 +1580,8 @@ public partial class IRGenerator
 
         if (constantVariables.TryGetValue(flattenedName, out int cv)) return new Constant(cv);
         if (constantAddressVariables.TryGetValue(flattenedName, out int ca))
-            return new MemoryAddress(ca, DataType.UINT16);
+            return new MemoryAddress(ca,
+                variableTypes.TryGetValue(flattenedName, out var caDt) ? caDt : DataType.UINT16);
 
         // Nested single-field ZCA field access: `obj.theOnlyField` where obj is a known single-
         // field class whose only field is itself a class (machine.Pin._pin -> hal.Pin). The

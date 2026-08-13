@@ -950,7 +950,8 @@ public partial class IRGenerator
                 {
                     if (constantVariables.TryGetValue(next, out int tmpVal)) return new Constant(tmpVal);
                     if (constantAddressVariables.TryGetValue(next, out int tmpAddr))
-                        return new MemoryAddress(tmpAddr, DataType.UINT16);
+                        return new MemoryAddress(tmpAddr,
+                            variableTypes.TryGetValue(next, out var tmpDt) ? tmpDt : DataType.UINT16);
                     break;
                 }
 
@@ -962,7 +963,8 @@ public partial class IRGenerator
             {
                 if (constantVariables.TryGetValue(lastNonTemp, out int lstVal)) return new Constant(lstVal);
                 if (constantAddressVariables.TryGetValue(lastNonTemp, out int lstAddr))
-                    return new MemoryAddress(lstAddr, DataType.UINT16);
+                    return new MemoryAddress(lstAddr,
+                        variableTypes.TryGetValue(lastNonTemp, out var lstDt) ? lstDt : DataType.UINT16);
                 DataType resolvedType = DataType.UINT8;
                 if (variableTypes.TryGetValue(lastNonTemp, out var lastDt)) resolvedType = lastDt;
                 return new Variable(lastNonTemp, resolvedType);

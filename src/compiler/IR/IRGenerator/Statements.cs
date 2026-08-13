@@ -610,6 +610,12 @@ public partial class IRGenerator
                         if (!ctx.ResultAssigned)
                         {
                             constantAddressVariables[ctx.ResultTemp.Name] = m.Address;
+                            // Carry the pointed-to width across the inline return too.
+                            // Without it a `ptr[T]` returned from an @inline selector
+                            // loses T, and a later `.value` access is sized by whatever
+                            // the temporary happened to be typed as -- a 16-bit store
+                            // to a 32-bit peripheral register on a 32-bit target.
+                            variableTypes[ctx.ResultTemp.Name] = m.Type;
                             ctx.ResultAssigned = true;
                         }
 

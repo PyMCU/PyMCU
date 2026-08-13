@@ -984,6 +984,10 @@ public partial class IRGenerator
                 if (constantAddressVariables.TryGetValue(tname, out int cv))
                 {
                     constantAddressVariables[flattenedName] = cv;
+                    // The element width travels with the address: a ptr[T] aliased
+                    // into a field is still T wide at its use sites.
+                    if (variableTypes.TryGetValue(tname, out var tempType))
+                        variableTypes[flattenedName] = tempType;
                     return true;
                 }
 
