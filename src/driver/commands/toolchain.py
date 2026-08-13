@@ -43,8 +43,8 @@ def toolchain_list():
     if not plugins:
         console.print(
             "[yellow]No toolchain plugins installed.[/yellow]\n"
-            "Install one with:  [bold]pip install pymcu[avr][/bold]  "
-            "or  [bold]pip install pymcu[pic][/bold]"
+            'Install one with:  [bold]pip install "pymcu-compiler\\[avr]"[/bold]  '
+            'or  [bold]pip install "pymcu-compiler\\[pic]"[/bold]'
         )
         return
 

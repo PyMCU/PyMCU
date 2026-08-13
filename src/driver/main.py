@@ -36,12 +36,12 @@ def _ensure_venv():
         os.environ["PYMCU_VERBOSE"] = "1"
 
     if is_verbose:
-        console.print(f"[debug] _ensure_venv() called", style="dim")
-        console.print(f"[debug] Current working directory: {cwd}", style="dim")
-        console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
-        console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
-        console.print(f"[debug] Looking for venv at: {venv_path}", style="dim")
-        console.print(f"[debug] venv exists: {venv_path.exists()}", style="dim")
+        console.print(f"\\[debug] _ensure_venv() called", style="dim")
+        console.print(f"\\[debug] Current working directory: {cwd}", style="dim")
+        console.print(f"\\[debug] sys.executable: {sys.executable}", style="dim")
+        console.print(f"\\[debug] sys.prefix: {sys.prefix}", style="dim")
+        console.print(f"\\[debug] Looking for venv at: {venv_path}", style="dim")
+        console.print(f"\\[debug] venv exists: {venv_path.exists()}", style="dim")
 
     if venv_path.exists() and venv_path.is_dir():
         # Check if we are already using this venv
@@ -50,8 +50,8 @@ def _ensure_venv():
             target_prefix = venv_path.resolve()
 
             if is_verbose:
-                console.print(f"[debug] Current prefix: {current_prefix}", style="dim")
-                console.print(f"[debug] Target prefix: {target_prefix}", style="dim")
+                console.print(f"\\[debug] Current prefix: {current_prefix}", style="dim")
+                console.print(f"\\[debug] Target prefix: {target_prefix}", style="dim")
 
             if current_prefix != target_prefix:
                  # Determine executable path based on platform
@@ -61,12 +61,12 @@ def _ensure_venv():
                     local_exe = venv_path / "bin" / "pymcu"
                 
                 if is_verbose:
-                    console.print(f"[debug] Checking local executable: {local_exe}", style="dim")
+                    console.print(f"\\[debug] Checking local executable: {local_exe}", style="dim")
                 
                 # If the local pymcu executable exists, switch to it
                 if local_exe.exists():
                     if is_verbose:
-                        console.print(f"[debug] Switching to local venv: {local_exe}", style="dim")
+                        console.print(f"\\[debug] Switching to local venv: {local_exe}", style="dim")
                     # Hand off to the local venv version.
                     # Guard against symlink loops (e.g. project dir is itself a symlink).
                     try:
@@ -86,22 +86,22 @@ def _ensure_venv():
                     except (OSError, PermissionError) as exec_err:
                         if is_verbose:
                             console.print(
-                                f"[debug] exec/relaunch failed ({exec_err}), continuing with current interpreter",
+                                f"\\[debug] exec/relaunch failed ({exec_err}), continuing with current interpreter",
                                 style="dim",
                             )
                 else:
                      if is_verbose:
-                        console.print(f"[debug] Local executable not found at {local_exe}", style="dim")
+                        console.print(f"\\[debug] Local executable not found at {local_exe}", style="dim")
             else:
                 if is_verbose:
-                    console.print(f"[debug] Already using target venv, no switch needed", style="dim")
+                    console.print(f"\\[debug] Already using target venv, no switch needed", style="dim")
         except Exception as e:
             if is_verbose:
-                console.print(f"[debug] Venv switch failed: {e}", style="dim")
+                console.print(f"\\[debug] Venv switch failed: {e}", style="dim")
             pass # Fallback if resolution fails or execv fails
     else:
         if is_verbose:
-            console.print(f"[debug] No local .venv found, continuing with current Python", style="dim")
+            console.print(f"\\[debug] No local .venv found, continuing with current Python", style="dim")
 
 
 # Application definition

@@ -63,7 +63,7 @@ _CHIPS: dict[str, dict] = {
 
 def _run(cmd: list, **kwargs) -> subprocess.CompletedProcess:
     if _VERBOSE:
-        print(f"[debug] {' '.join(str(c) for c in cmd)}")
+        print(f"\\[debug] {' '.join(str(c) for c in cmd)}")
     return subprocess.run(cmd, **kwargs)
 
 

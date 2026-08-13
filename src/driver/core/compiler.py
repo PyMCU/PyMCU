@@ -76,30 +76,30 @@ class PyMCUCompiler:
         is_verbose = verbose or os.environ.get("PYMCU_VERBOSE") == "1"
         try:
             if is_verbose:
-                self.console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
-                self.console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
-                self.console.print(f"[debug] sys.path ({len(sys.path)} entries):", style="dim")
+                self.console.print(f"\\[debug] sys.executable: {sys.executable}", style="dim")
+                self.console.print(f"\\[debug] sys.prefix: {sys.prefix}", style="dim")
+                self.console.print(f"\\[debug] sys.path ({len(sys.path)} entries):", style="dim")
                 for i, path_entry in enumerate(sys.path):
-                    self.console.print(f"[debug]   [{i}] {path_entry}", style="dim")
-                self.console.print(f"[debug] VIRTUAL_ENV env var: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
-                self.console.print(f"[debug] PATH env var: {os.environ.get('PATH', 'NOT SET')}", style="dim")
+                    self.console.print(f"\\[debug]   [{i}] {path_entry}", style="dim")
+                self.console.print(f"\\[debug] VIRTUAL_ENV env var: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
+                self.console.print(f"\\[debug] PATH env var: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
             import pymcu
             if is_verbose:
-                self.console.print(f"[debug] pymcu namespace __path__: {list(pymcu.__path__)}", style="dim green")
+                self.console.print(f"\\[debug] pymcu namespace __path__: {list(pymcu.__path__)}", style="dim green")
             for _p in pymcu.__path__:
                 chips_dir = Path(_p) / "chips"
                 if chips_dir.is_dir():
                     return str(Path(_p))
             if is_verbose:
-                self.console.print(f"[debug] chips/ not found in any pymcu.__path__ entry", style="yellow")
+                self.console.print(f"\\[debug] chips/ not found in any pymcu.__path__ entry", style="yellow")
         except ImportError as e:
             if is_verbose:
-                self.console.print(f"[debug] Failed to import pymcu: {e}", style="dim")
-                self.console.print(f"[debug] sys.path was: {sys.path}", style="dim")
+                self.console.print(f"\\[debug] Failed to import pymcu: {e}", style="dim")
+                self.console.print(f"\\[debug] sys.path was: {sys.path}", style="dim")
         except Exception as e:
             if is_verbose:
-                self.console.print(f"[debug] Error in get_stdlib_path: {e}", style="dim")
+                self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
     def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None):
@@ -124,7 +124,7 @@ class PyMCUCompiler:
             for inc in extra_includes:
                 cmd.extend(["-I", str(inc)])
                 if verbose:
-                    self.console.print(f"[debug] Extra include: {inc}", style="dim")
+                    self.console.print(f"\\[debug] Extra include: {inc}", style="dim")
 
         stdlib = self.get_stdlib_path(verbose=verbose)
         if stdlib:
@@ -133,8 +133,8 @@ class PyMCUCompiler:
             stdlib_abs = str(Path(stdlib).resolve())
 
             if verbose:
-                self.console.print(f"[debug] Stdlib found at: {stdlib_abs}", style="dim")
-                self.console.print(f"[debug] Adding include path: {include_path}", style="dim")
+                self.console.print(f"\\[debug] Stdlib found at: {stdlib_abs}", style="dim")
+                self.console.print(f"\\[debug] Adding include path: {include_path}", style="dim")
 
             # Only the stdlib's parent directory is added as an include path, so
             # imports must go through the `pymcu.*` namespace (e.g. `from pymcu.time

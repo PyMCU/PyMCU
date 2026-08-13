@@ -414,7 +414,7 @@ class AvrdudeProgrammer(HardwareProgrammer):
             raise RuntimeError(
                 "No serial port specified and auto-detection found none.\n"
                 f"Pass --port {example} on the command line, or add:\n\n"
-                "  [tool.pymcu.flash]\n"
+                "  \\[tool.pymcu.flash]\n"
                 f'  port = "{example}"\n\n'
                 "to your pyproject.toml."
             )

@@ -89,7 +89,7 @@ class _Linter(ast.NodeVisitor):
         # mutation needs the fixed-capacity pymcu.collections.FixedDict.
         self._add(node, INFO, "dict",
                   "dict literal: supported as a closed (read-only) lookup table.",
-                  "d[k] / `k in d` / len(d) work as-is; for mutation use "
+                  "d\\[k] / `k in d` / len(d) work as-is; for mutation use "
                   "pymcu.collections.FixedDict(capacity).")
         self.generic_visit(node)
 

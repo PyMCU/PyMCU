@@ -16,7 +16,7 @@
 Backend discovery and factory functions.
 
 Backends are discovered at runtime via the ``pymcu.backends`` entry-point
-group.  Install a backend plugin package (e.g. ``pip install pymcu[avr]``)
+group.  Install a backend plugin package (e.g. ``pip install "pymcu-compiler[avr]"``)
 to make it available.  No code in this module needs to change when new
 backend packages are released.
 """
@@ -28,20 +28,33 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Install-hint table: chip prefix -> suggested pip install command
+#
+# The extras here must exist in pyproject.toml and the distribution is
+# pymcu-compiler, not pymcu: this text is meant to be pasted into a shell, so
+# a name that resolves to nothing sends the reader further from a working
+# install. Quoted because brackets are glob characters in zsh. Escaped for
+# rich, which otherwise reads "[avr]" as a style tag and drops it silently --
+# leaving advice that installs the compiler without the backend it is
+# complaining about.
 # ---------------------------------------------------------------------------
 _CHIP_INSTALL_HINTS: dict[str, str] = {
-    "at": "pip install pymcu[avr]",
-    "avr": "pip install pymcu[avr]",
-    "pic": "pip install pymcu[pic]",
-    "ch32v": "pip install pymcu[riscv]",
-    "riscv": "pip install pymcu[riscv]",
-    "rp2040": "pip install pymcu[rp2040]",
-    "rp2350": "pip install pymcu[arm]",
+    "at": 'pip install "pymcu-compiler\\[avr]"',
+    "avr": 'pip install "pymcu-compiler\\[avr]"',
+    "pic": 'pip install "pymcu-compiler\\[pic]"',
+    "rp2040": 'pip install "pymcu-compiler\\[arm]"',
+    "rp2350": 'pip install "pymcu-compiler\\[arm]"',
 }
+
+# No RISC-V entry: pymcu-backend-riscv is not published yet, so there is no
+# install command to give. Saying so beats naming an extra that cannot resolve.
+_UNRELEASED_HINT = " The RISC-V backend is not released yet."
+_UNRELEASED_PREFIXES = ("ch32v", "riscv")
 
 
 def _hint_for_chip(chip: str) -> str:
     chip_lower = chip.lower()
+    if chip_lower.startswith(_UNRELEASED_PREFIXES):
+        return _UNRELEASED_HINT
     for prefix, hint in _CHIP_INSTALL_HINTS.items():
         if chip_lower.startswith(prefix):
             return f" Try: {hint}"
@@ -221,5 +234,5 @@ def run_backend(
     except FileNotFoundError:
         raise RuntimeError(
             f"Backend binary not found: {backend_binary}\n"
-            f"Install the backend package: pip install pymcu[avr]"
+            f"Install the backend package.{_hint_for_chip(target)}"
         )

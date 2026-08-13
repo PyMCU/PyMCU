@@ -16,7 +16,7 @@
 Toolchain discovery and factory functions.
 
 Toolchains are discovered at runtime via the ``pymcu.toolchains`` entry-point
-group.  Install a toolchain plugin package (e.g. ``pip install pymcu[avr]``)
+group.  Install a toolchain plugin package (e.g. ``pip install "pymcu-compiler[avr]"``)
 to make it available.  No code in this module needs to change when new
 toolchain packages are released.
 """
@@ -31,22 +31,10 @@ from pymcu.toolchain.sdk import ExternalToolchain, ToolchainPlugin
 if TYPE_CHECKING:
     from rich.console import Console
 
-# ---------------------------------------------------------------------------
-# Hint table: chip prefix -> suggested install command
-# ---------------------------------------------------------------------------
-_CHIP_INSTALL_HINTS: dict[str, str] = {
-    "at": "pip install pymcu[avr]",
-    "pic": "pip install pymcu[pic]",
-    "ch32v": "pip install pymcu[riscv]",
-}
-
-
-def _hint_for_chip(chip: str) -> str:
-    chip_lower = chip.lower()
-    for prefix, hint in _CHIP_INSTALL_HINTS.items():
-        if chip_lower.startswith(prefix):
-            return f" Try: {hint}"
-    return ""
+# The install hint lives in driver.backends: a backend and its toolchain ship
+# in the same extra, so one table serves both. It used to be copied here, and
+# the copy drifted -- it still named extras that no longer exist.
+from ..backends import _hint_for_chip  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -109,5 +97,5 @@ def get_ffi_toolchain_for_chip(chip: str, console: "Console") -> ExternalToolcha
 
     hint = _hint_for_chip(chip)
     raise ValueError(
-        f"C interop ([tool.pymcu.ffi]) is not supported for chip '{chip}'.{hint}"
+        f"C interop (\\[tool.pymcu.ffi]) is not supported for chip '{chip}'.{hint}"
     )

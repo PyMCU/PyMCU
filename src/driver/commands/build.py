@@ -570,12 +570,12 @@ def build(
     _diag_log(f"PYTHONPATH: {os.environ.get('PYTHONPATH', 'NOT SET')}", verbose=is_verbose)
 
     if is_verbose:
-        console.print("[debug] === Build command started ===", style="dim cyan")
-        console.print(f"[debug] Current working directory: {os.getcwd()}", style="dim")
-        console.print(f"[debug] sys.executable: {sys.executable}", style="dim")
-        console.print(f"[debug] sys.prefix: {sys.prefix}", style="dim")
-        console.print(f"[debug] VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
-        console.print(f"[debug] PATH: {os.environ.get('PATH', 'NOT SET')}", style="dim")
+        console.print("\\[debug] === Build command started ===", style="dim cyan")
+        console.print(f"\\[debug] Current working directory: {os.getcwd()}", style="dim")
+        console.print(f"\\[debug] sys.executable: {sys.executable}", style="dim")
+        console.print(f"\\[debug] sys.prefix: {sys.prefix}", style="dim")
+        console.print(f"\\[debug] VIRTUAL_ENV: {os.environ.get('VIRTUAL_ENV', 'NOT SET')}", style="dim")
+        console.print(f"\\[debug] PATH: {os.environ.get('PATH', 'NOT SET')}", style="dim")
 
     pyproject_path = Path("pyproject.toml")
     _diag_log(f"Looking for pyproject.toml at: {pyproject_path.absolute()}", verbose=is_verbose)
@@ -779,7 +779,7 @@ def build(
             )
             if is_verbose:
                 console.print(
-                    f"[debug] {_trigger} without UART — stdout preamble injected "
+                    f"\\[debug] {_trigger} without UART — stdout preamble injected "
                     f"({_stdout_device} at {_stdout_baud} baud)",
                     style="dim",
                 )
@@ -826,7 +826,7 @@ def build(
             )
             if is_verbose:
                 console.print(
-                    f"[debug] {_millis_reason} detected — millis_init() preamble injected",
+                    f"\\[debug] {_millis_reason} detected — millis_init() preamble injected",
                     style="dim",
                 )
 
