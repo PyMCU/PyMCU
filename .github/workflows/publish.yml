@@ -51,8 +51,15 @@ jobs:
             os: ubuntu-latest
           - name: linux-arm64
             os: ubuntu-24.04-arm
+          # The tag must be pinned: without it hatch_build falls back to
+          # sysconfig.get_platform(), which reports whatever macOS the runner
+          # happens to be on. macos-latest moved to macOS 26 and stamped the
+          # 0.1.0a4 wheels macosx_26_0_arm64, so pip on macOS 14/15 found no
+          # candidate at all. 14.0 is the floor .NET 10 supports and the one
+          # pymcu-avr-toolchain already publishes.
           - name: macos-arm64
             os: macos-latest
+            wheel_platform_tag: macosx_14_0_arm64
           - name: macos-x64
             os: macos-latest
             dotnet_rid: osx-x64
