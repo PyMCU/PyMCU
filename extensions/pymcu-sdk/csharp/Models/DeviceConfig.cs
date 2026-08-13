@@ -38,11 +38,23 @@ public class DeviceConfig
 
     // Native pointer size in bytes, derived from the target architecture.
     // AVR / PIC12 / PIC14 / PIC18 = 2 bytes; ARM Cortex-M / RISC-V 32 = 4 bytes.
-    public int PointerWidth => Arch switch
+    // Getting this wrong is not just a pointer-size issue: the IR generator uses
+    // it to decide whether a wide constant store has to be split into byte-sized
+    // pieces the way 8-bit AVR needs, so a 32-bit target reported as 2 would emit
+    // split MMIO writes to consecutive addresses.
+    public int PointerWidth => Is32BitArch(Arch) ? 4 : 2;
+
+    private static bool Is32BitArch(string arch)
     {
-        "arm" or "rp2040" or "cortex-m" => 4,
-        "rp2350" or "cortex-m33" or "cortex-m33f" => 4,
-        "riscv32" => 4,
-        _ => 2,
-    };
+        var a = arch.ToLowerInvariant();
+
+        if (a is "arm" or "rp2040" or "cortex-m" or "cortex-m0" or "cortex-m0plus"
+            or "cortex-m0+" or "rp2350" or "cortex-m33" or "cortex-m33f")
+            return true;
+
+        if (a is "riscv" or "riscv32" or "rv32ec" or "rv32i" or "rv32imac")
+            return true;
+
+        return a.StartsWith("ch32v");
+    }
 }
