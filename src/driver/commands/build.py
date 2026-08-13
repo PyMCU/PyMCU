@@ -443,6 +443,22 @@ def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
     return extra.get(board) or BOARD_CHIPS.get(board)
 
 
+def _install_deps_hint(project_root: Path) -> str:
+    """
+    The command that installs this project's dependencies.
+
+    Picks by what the project actually carries, so the advice matches the layout
+    `pymcu new` produced rather than assuming a package manager.
+    """
+    if (project_root / "uv.lock").exists() or shutil.which("uv"):
+        return "uv sync"
+    if (project_root / "poetry.lock").exists():
+        return "poetry install"
+    if (project_root / "requirements.txt").exists():
+        return "pip install -r requirements.txt"
+    return "uv sync   (or: pip install -r requirements.txt)"
+
+
 def _parse_hex_flash_bytes(hex_file: Path) -> int:
     """
     Parse an Intel HEX file and return the total number of data bytes.
@@ -464,12 +480,13 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
         pass
 
     # Deduct the constant startup preamble that every PyMCU binary carries:
-    #   - 26 interrupt vector slots x 4 bytes (RJMP + NOP padding) = 104 bytes
-    #   - __bad_interrupt: RJMP main                                =   2 bytes
-    # Total preamble = 106 bytes. This matches avr-libc's crt0 footprint
-    # (26 x JMP = 104 bytes + __bad_interrupt: JMP = 4 bytes = 108 bytes),
-    # keeping the differential comparison fair.
-    PREAMBLE_SIZE = 106
+    # the 26 interrupt vector slots, 4 bytes each (RJMP + NOP padding).
+    #
+    # Only the vector table. __bad_interrupt is a real instruction the program
+    # branches to, so it counts as code, the same way a disassembly of the image
+    # counts it -- that is the figure the published write-ups quote, and the two
+    # must agree or the number the reader sees does not match the article.
+    PREAMBLE_SIZE = 104
     if total >= PREAMBLE_SIZE:
         total -= PREAMBLE_SIZE
 
@@ -585,7 +602,7 @@ def build(
             target_key = pymcu_config.get("chip")
             _diag_log(f"Using legacy 'chip' key: {target_key}", verbose=is_verbose)
             console.print(
-                "[bold yellow]Deprecation:[/bold yellow] 'chip' in [tool.pymcu] is deprecated. "
+                "[bold yellow]Deprecation:[/bold yellow] 'chip' in \\[tool.pymcu] is deprecated. "
                 "Rename it to 'target'."
             )
         board_key    = pymcu_config.get("board", None)
@@ -640,9 +657,16 @@ def build(
                 if boards_dir.is_dir():
                     extension_board_dirs[flavor] = boards_dir
             else:
+                # The flavor is imported from the project's environment, not
+                # from wherever the CLI happens to live. Under pipx those are
+                # different interpreters, and `pip install pymcu-<flavor>`
+                # installs into neither of them -- the reported symptom was
+                # doing exactly that and seeing the build fail unchanged.
                 console.print(
-                    f"[bold yellow]Warning:[/bold yellow] stdlib flavor 'pymcu_{flavor}' not found. "
-                    f"Install it with: pip install pymcu-{flavor}"
+                    f"[bold yellow]Warning:[/bold yellow] stdlib flavor "
+                    f"'pymcu_{flavor}' is not installed in this project's environment.\n"
+                    f"  Install the project's dependencies, then build again:\n"
+                    f"    [bold]{_install_deps_hint(pyproject_path.parent)}[/bold]"
                 )
 
         # Derive target from board or fall back to explicit target / default

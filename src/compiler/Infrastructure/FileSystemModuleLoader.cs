@@ -112,11 +112,17 @@ public class FileSystemModuleLoader : IModuleLoader
                 => "circuitpython",
             _ => null,
         };
+        // Two different things produce this, and the loader cannot tell them
+        // apart: the flavor may not be declared, or it may be declared and
+        // simply not installed in the project's environment. Saying "add
+        // stdlib = [...]" outright sent a user to re-add a line that was
+        // already there, so name both checks instead of guessing.
         if (flavorHint is not null)
             throw new Exception(
                 $"Module not found: {moduleName} -- this module comes from the {flavorHint} " +
-                $"compat package; add stdlib = [\"{flavorHint}\"] under [tool.pymcu] in " +
-                $"pyproject.toml (and pymcu-{flavorHint} to the project dependencies)");
+                $"compat package. Check that stdlib = [\"{flavorHint}\"] is set under " +
+                $"[tool.pymcu] in pyproject.toml, and that pymcu-{flavorHint} is installed " +
+                $"in the project's environment (uv sync, or pip install -r requirements.txt)");
 
         throw new Exception($"Module not found: {moduleName}");
     }

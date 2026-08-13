@@ -49,7 +49,7 @@ def flash(
         None, "--port", "-P",
         help="Serial port for flashing (e.g. COM3 on Windows, /dev/cu.usbmodemXXXX on "
              "macOS, /dev/ttyACM0 on Linux). "
-             "Overrides [tool.pymcu.flash].port in pyproject.toml.",
+             "Overrides \\[tool.pymcu.flash].port in pyproject.toml.",
     ),
 ):
     """
@@ -57,7 +57,7 @@ def flash(
 
     Port resolution order:
       1. --port / -P CLI argument
-      2. port = "..." in [tool.pymcu.flash] of pyproject.toml
+      2. port = "..." in \\[tool.pymcu.flash] of pyproject.toml
       3. Auto-detection (first matching USB-serial device)
       4. Error with configuration instructions
     """
@@ -78,7 +78,7 @@ def flash(
         )
         if not chip:
             console.print(
-                "[red]No 'target' or 'board' specified in [tool.pymcu] of pyproject.toml.[/red]"
+                "[red]No 'target' or 'board' specified in \\[tool.pymcu] of pyproject.toml.[/red]"
             )
             raise typer.Exit(code=1)
 

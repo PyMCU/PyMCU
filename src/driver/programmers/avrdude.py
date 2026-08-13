@@ -315,13 +315,29 @@ class AvrdudeProgrammer(HardwareProgrammer):
             f"Programmer '{name}' ({desc}) is not found in system PATH or local cache."
         )
         self.console.print(
-            "[dim]Tip: install avrdude via Homebrew ([bold]brew install avrdude[/bold]) "
-            "or apt ([bold]sudo apt install avrdude[/bold]) to skip this step.[/dim]"
+            "[dim]Tip: install avrdude with your package manager to skip this step "
+            "([bold]winget install avrdude[/bold] on Windows, "
+            "[bold]brew install avrdude[/bold] on macOS, "
+            "[bold]sudo apt install avrdude[/bold] on Debian/Ubuntu).[/dim]"
         )
+
+        has_hash = bool(expected_hash) and expected_hash.lower() != "placeholder"
 
         from ..core.base_tool import _is_non_interactive, _tool_lock
         if _is_non_interactive():
-            self.console.print("[dim]Non-interactive mode: auto-accepting download.[/dim]")
+            # Downloading a binary nobody watches is only acceptable when the
+            # bytes can be checked against a known digest. Without one there is
+            # no consent and no verification, so stop and let a human decide.
+            if not has_hash:
+                raise RuntimeError(
+                    f"Refusing to download {name} unattended: no SHA-256 is configured "
+                    f"for this platform, so the download cannot be verified.\n"
+                    f"Install avrdude with your package manager, or run this "
+                    f"interactively to accept the download explicitly."
+                )
+            self.console.print(
+                "[dim]Non-interactive mode: auto-accepting verified download.[/dim]"
+            )
         elif not Confirm.ask("Do you want to download and install it automatically?", default=True):
             raise RuntimeError(f"Installation of {name} aborted by user.")
 

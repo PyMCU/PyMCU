@@ -23,7 +23,7 @@ console = Console()
 def sync():
     """Sync pyproject.toml board config with dist/_generated/board.py.
 
-    Run this after changing the 'board' key in [tool.pymcu] so that IDEs
+    Run this after changing the 'board' key in \\[tool.pymcu] so that IDEs
     can resolve 'import board' before the next full build.
     """
     toml_path = Path("pyproject.toml")
@@ -39,14 +39,14 @@ def sync():
 
     if not board:
         console.print(
-            "[yellow]No 'board' key in [tool.pymcu] — nothing to sync.[/yellow]\n"
+            "[yellow]No 'board' key in \\[tool.pymcu] — nothing to sync.[/yellow]\n"
             "[dim]Add 'board = \"arduino_uno\"' (or similar) to your pyproject.toml.[/dim]"
         )
         raise typer.Exit(code=0)
 
     if not stdlib_list:
         console.print(
-            "[yellow]No 'stdlib' in [tool.pymcu] — nothing to sync.[/yellow]\n"
+            "[yellow]No 'stdlib' in \\[tool.pymcu] — nothing to sync.[/yellow]\n"
             "[dim]Add stdlib = [\"micropython\"] or [\"circuitpython\"] to your pyproject.toml.[/dim]"
         )
         raise typer.Exit(code=0)
