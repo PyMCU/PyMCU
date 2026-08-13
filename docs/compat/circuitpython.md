@@ -32,14 +32,13 @@ import board
 from digitalio import DigitalInOut, Direction
 from time import sleep_ms
 
-def main():
-    led = DigitalInOut(board.LED)
-    led.direction = Direction.OUTPUT
-    while True:
-        led.value = True
-        sleep_ms(500)
-        led.value = False
-        sleep_ms(500)
+led = DigitalInOut(board.LED)
+led.direction = Direction.OUTPUT
+while True:
+    led.value = True
+    sleep_ms(500)
+    led.value = False
+    sleep_ms(500)
 ```
 
 ```bash

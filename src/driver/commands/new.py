@@ -171,8 +171,17 @@ def _pin(pkg_name: str, extra: str = "") -> str:
 
 
 def _chip_imports(chip: str, flavor: str | None) -> str:
-    """Generate the import block and a minimal main() body for the given chip
-    and optional stdlib flavor.  No star imports."""
+    """Generate a minimal blink program for the given chip and stdlib flavor.
+
+    The compat flavors get a top-level script, because that is how MicroPython
+    and CircuitPython code is actually written -- main.py and code.py run at
+    module level, and every published snippet a newcomer will paste in looks
+    like that, including this project's own docs/compat pages. Wrapping the
+    scaffold in `def main():` made "replace the contents with your program"
+    misleading: the obvious move produces a file whose indentation no longer
+    matches. The native register-level targets keep `def main():`, which is
+    the shape their examples and the test fixtures use.
+    """
     chip_lower = chip.lower()
     is_avr = chip_lower.startswith("at")
     is_pic = chip_lower.startswith("pic")
@@ -180,23 +189,23 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
     if flavor == "micropython":
         imports = "from machine import Pin\nfrom time import sleep_ms"
         body = (
-            "    led = Pin(13, Pin.OUT)\n"
-            "    while True:\n"
-            "        led.value(1)\n"
-            "        sleep_ms(500)\n"
-            "        led.value(0)\n"
-            "        sleep_ms(500)"
+            "led = Pin(13, Pin.OUT)\n"
+            "while True:\n"
+            "    led.value(1)\n"
+            "    sleep_ms(500)\n"
+            "    led.value(0)\n"
+            "    sleep_ms(500)"
         )
     elif flavor == "circuitpython":
         imports = "import board\nimport digitalio\nimport time"
         body = (
-            "    led = digitalio.DigitalInOut(board.LED)\n"
-            "    led.direction = digitalio.Direction.OUTPUT\n"
-            "    while True:\n"
-            "        led.value = True\n"
-            "        time.sleep(0.5)\n"
-            "        led.value = False\n"
-            "        time.sleep(0.5)"
+            "led = digitalio.DigitalInOut(board.LED)\n"
+            "led.direction = digitalio.Direction.OUTPUT\n"
+            "while True:\n"
+            "    led.value = True\n"
+            "    time.sleep(0.5)\n"
+            "    led.value = False\n"
+            "    time.sleep(0.5)"
         )
     elif is_avr:
         imports = (
@@ -204,24 +213,28 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
             "from pymcu.time import delay_ms"
         )
         body = (
-            "    DDRB[DDB5] = 1\n"
-            "    while True:\n"
-            "        PORTB[PORTB5] = 1\n"
-            "        delay_ms(500)\n"
-            "        PORTB[PORTB5] = 0\n"
-            "        delay_ms(500)"
+            "DDRB[DDB5] = 1\n"
+            "while True:\n"
+            "    PORTB[PORTB5] = 1\n"
+            "    delay_ms(500)\n"
+            "    PORTB[PORTB5] = 0\n"
+            "    delay_ms(500)"
         )
     elif is_pic:
         imports = f"from pymcu.chips.{chip} import TRISB, PORTB, RB0"
         body = (
-            "    TRISB[RB0] = 0\n"
-            "    PORTB[RB0] = 1"
+            "TRISB[RB0] = 0\n"
+            "PORTB[RB0] = 1"
         )
     else:
         imports = f"from pymcu.chips.{chip} import PORTB"
-        body = "    PORTB[0] = 1"
+        body = "PORTB[0] = 1"
 
-    return f"{imports}\n\n\ndef main():\n{body}\n"
+    if flavor in ("micropython", "circuitpython"):
+        return f"{imports}\n\n{body}\n"
+
+    indented = "\n".join(f"    {line}" if line else "" for line in body.split("\n"))
+    return f"{imports}\n\n\ndef main():\n{indented}\n"
 
 
 def new(
