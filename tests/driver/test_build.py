@@ -50,6 +50,41 @@ class TestBuildMutuallyExclusiveTargetBoard:
 
 
 # ---------------------------------------------------------------------------
+# Two compat layers at once → Exit(1)
+#
+# They define the same module names with different APIs (time.sleep takes a
+# uint16 in one and a float in the other), so the include-path order silently
+# decided which one the program got.
+# ---------------------------------------------------------------------------
+
+class TestBuildMultipleFlavors:
+    def _project(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.pymcu]\n"
+            'board = "arduino_uno"\n'
+            "frequency = 16000000\n"
+            'sources = "src"\n'
+            'entry = "main.py"\n'
+            'stdlib = ["micropython", "circuitpython"]\n'
+        )
+
+    def test_two_flavors_exit_1(self, tmp_path, monkeypatch, unwrapped):
+        monkeypatch.chdir(tmp_path)
+        self._project(tmp_path)
+        result = _invoke_build()
+        assert result.exit_code == 1
+        assert "more than one compat layer" in unwrapped(result.output)
+
+    def test_cli_override_can_narrow_to_one(self, tmp_path, monkeypatch, unwrapped):
+        monkeypatch.chdir(tmp_path)
+        self._project(tmp_path)
+        result = _invoke_build("--stdlib", "micropython")
+        assert "more than one compat layer" not in unwrapped(result.output)
+
+
+# ---------------------------------------------------------------------------
 # Entry file not found → Exit(1)
 # ---------------------------------------------------------------------------
 

@@ -654,6 +654,22 @@ def build(
             if stdlib_override
             else list(pymcu_config.get("stdlib", []))
         )
+        # Two flavors at once used to "work": both directories went on the
+        # include path and whichever came first in the list won every clash.
+        # They do clash -- `time.sleep` takes a uint16 in the MicroPython layer
+        # and a float in the CircuitPython one, and boards/arduino_uno.py
+        # defines D0 as 0 in one and "PD0" in the other -- so the winner
+        # silently decided the semantics of the program.
+        if len(stdlib_flavors) > 1:
+            console.print(
+                f"[bold red]Error:[/bold red] stdlib declares more than one compat "
+                f"layer ({', '.join(stdlib_flavors)}).\n"
+                "  The layers are not interoperable: they define the same module "
+                "names with different APIs.\n"
+                "  Pick one in \\[tool.pymcu], or pass a single --stdlib."
+            )
+            raise typer.Exit(code=1)
+
         extension_board_chips: dict[str, str] = {}
         extra_includes: list[str] = []
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
