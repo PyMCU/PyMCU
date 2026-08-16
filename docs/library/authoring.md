@@ -274,16 +274,26 @@ not support and confirm the build fails with your `CompileError`, not with wrong
    make forgetting impossible: CI fails if the hash moved and the version did not.
 3. **Publish to PyPI**, ideally with trusted publishing from a GitHub Release, the same
    way the PyMCU packages are published.
-4. **Submit to the index**: open a PR against `pymcu-libraries` adding one line with your
-   distribution name. CI validates the manifest, checks that the sources are ASCII,
-   compiles the example for every declared architecture (and confirms it fails for an
-   undeclared one), and measures flash and RAM. Merge regenerates
-   `pymcu.org/libraries/index.json`.
+4. **Submit to the index**: open a PR against
+   [`pymcu-libraries`](https://github.com/PyMCU/pymcu-libraries) adding one line with your
+   distribution name. CI installs it, runs the checks above, and compiles your example for
+   **one chip per architecture — including the ones you did not declare**. That last part
+   is the whole point: it is what separates "does not support ARM" from "nobody updated
+   `supports.arch`". Declaring an architecture that does not build fails the check;
+   building for one you never declared is reported so you can claim it.
 
-You do not need a new PR for later releases: the index is regenerated periodically, picks
-up the newest version from PyPI and re-measures it. That regeneration is also what marks a
-library `broken` when a compiler release stops building it, so the listing reflects
-reality rather than the day it was submitted.
+You do not need a new PR for later releases. A scheduled run re-installs the newest
+version of everything listed and measures it again, so an entry says what builds *today*
+rather than what built the day it was submitted — and a library that stops building
+against a new compiler is marked `broken` without anyone filing an issue.
+
+### Where the index lives
+
+Two copies of the same file: `https://libraries.pymcu.org/index.json` (an R2 bucket behind
+a Worker) and a mirror at `raw.githubusercontent.com/PyMCU/pymcu-libraries/main/index.json`.
+The driver tries the first and falls back to the second, because the `pymcu.org` zone
+answers 403 to requests from data centres and `pymcu install` runs inside other people's
+CI. `PYMCU_LIBRARY_INDEX` overrides both, which is also how you test against a local file.
 
 ---
 

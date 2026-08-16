@@ -230,6 +230,28 @@ See {doc}`../library/authoring` for the full authoring guide.
 
 ---
 
+## `pymcu index` (index maintainers)
+
+Builds the curated index by **compiling**, not by reading declarations. Run by the CI of
+the `pymcu-libraries` repository; useful locally when working on the index itself.
+
+```bash
+pymcu index build --from libraries.txt --output index.json   # install, measure, write
+pymcu index verify --venv .venv                              # measure what is installed
+```
+
+Each library's example is compiled for one chip per architecture — including architectures
+it does not declare, because "does not build there" is exactly what the index has to be
+able to state, and because a library that builds somewhere it never claimed means nobody
+is maintaining its `supports.arch`. The build runs with `PYMCU_LIBRARY_FILTER=0` so the
+usual compatibility filter does not pre-empt the compiler; filtering first would only
+measure the manifest.
+
+`--strict` exits non-zero when a measurement contradicts a manifest, which is what turns
+the submission check into a gate.
+
+---
+
 ## `pymcu profile`
 
 Compiles the project, assembles it, simulates it with the cycle-accurate AVR simulator,
