@@ -541,7 +541,7 @@ def test_resolve_uv_returns_none_when_there_is_no_uv(tmp_path, monkeypatch):
     assert new_mod._resolve_uv() is None
 
 
-def test_new_survives_a_venv_that_cannot_be_created(tmp_path, monkeypatch):
+def test_new_survives_a_venv_that_cannot_be_created(tmp_path, monkeypatch, unwrapped):
     """A base Python without `ensurepip` must not take the whole command down.
 
     Apple's Command Line Tools python3 and Debian's split python3-venv both fail
@@ -576,5 +576,5 @@ def test_new_survives_a_venv_that_cannot_be_created(tmp_path, monkeypatch):
     )
 
     assert result.exit_code == 0, result.output
-    assert "ensurepip is not available" in result.output
+    assert "ensurepip is not available" in unwrapped(result.output)
     assert (tmp_path / "blink" / "pyproject.toml").is_file()
