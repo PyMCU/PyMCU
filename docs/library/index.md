@@ -33,6 +33,11 @@ All modules compile to tight native machine code — there is no Python runtime 
 |---|---|---|
 | {doc}`DHT11 <drivers/dht11>` | `pymcu.drivers.dht11` | Temperature and humidity sensor |
 
+## Third-party libraries
+
+{doc}`Writing a PyMCU library <authoring>` — package layout, manifest, architecture
+dispatch and publishing, for anyone shipping a driver of their own.
+
 ## Design principles
 
 All HAL classes are `@inline` — they have **zero SRAM cost**. Instantiating a `Pin` or `UART`
@@ -55,4 +60,5 @@ watchdog
 power
 time
 drivers/index
+authoring
 ```

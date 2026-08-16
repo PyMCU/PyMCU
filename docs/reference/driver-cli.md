@@ -163,6 +163,73 @@ pymcu clean
 
 ---
 
+## `pymcu install <library>`
+
+Installs a third-party library into this project. Names are resolved against the curated
+PyMCU index, not against PyPI at large: PyPI is full of Python that cannot compile for a
+microcontroller, and an install that succeeds and then breaks the build is worse than one
+that refuses.
+
+```bash
+pymcu install dht11
+```
+
+What it does, in order:
+
+1. resolves the name in the index (cached under `~/.pymcu/`, `--refresh` to update);
+2. refuses, **before downloading anything**, if the measured matrix says the library does
+   not build for this project's chip, if it belongs to a compat layer this project does
+   not declare, or if it needs a newer language level;
+3. installs into the project's `.venv` with `uv` or `pip` — never globally;
+4. re-checks the manifest that actually landed on disk, and with `--verify` (the default
+   when the library ships an example) compiles that example for this chip;
+5. records the dependency in `pyproject.toml`.
+
+Anything that fails after step 3 rolls the installation back, so a refused library leaves
+neither files nor a dependency line behind.
+
+| Option | Effect |
+|---|---|
+| `--from-pypi` | Skip the index and install this distribution directly. The manifest is still required. |
+| `--no-verify` | Skip the verification build. |
+| `--refresh` | Re-download the index before resolving. |
+| `--no-pre` | Exclude pre-release versions. |
+
+## `pymcu uninstall <library>`
+
+Removes the library from the project's environment and from `pyproject.toml`.
+
+## `pymcu libraries`
+
+Lists the libraries installed in this project, with a verdict for the current chip.
+`--all` also shows the ones that do not apply to it, and why.
+
+## `pymcu search [text]`
+
+Searches the index. Without `--all`, only libraries usable on this project's chip are
+listed.
+
+---
+
+## `pymcu lint --library <package_dir>`
+
+Checks a library package before publication: manifest validity, ASCII-only sources
+(non-ASCII inside a string is an error — the lexer accepts it and then encodes it as
+ASCII, corrupting the byte), a `match __CHIP__.arch` whose default branch raises instead
+of returning a sentinel, and the public API surface against `api-surface.lock`.
+
+```bash
+pymcu lint --library src/pymcu_lib_dht11                   # check
+pymcu lint --library src/pymcu_lib_dht11 --write-surface   # record the surface
+```
+
+The surface check is what catches a package growing a public function without its version
+moving — two different wheels shipping under one version number.
+
+See {doc}`../library/authoring` for the full authoring guide.
+
+---
+
 ## `pymcu profile`
 
 Compiles the project, assembles it, simulates it with the cycle-accurate AVR simulator,
