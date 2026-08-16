@@ -670,8 +670,19 @@ def new(
                         ["poetry", "install"], cwd=project_path, check=True
                     )
                 elif pkg_manager == "pip":
-                    subprocess.run(
-                        [sys.executable, "-m", "venv", ".venv"], cwd=project_path
+                    # Creating the venv can fail for reasons that have nothing to
+                    # do with us -- a base Python built without `ensurepip` is the
+                    # usual one, and Apple's Command Line Tools python3 and
+                    # Debian's split python3-venv are both like that. The result
+                    # used to be ignored, so the next line ran an interpreter that
+                    # had never been created and the whole command died with
+                    # `[Errno 2] No such file or directory: '.venv/bin/python'`,
+                    # blaming a missing file instead of the real cause.
+                    venv = subprocess.run(
+                        [sys.executable, "-m", "venv", ".venv"],
+                        cwd=project_path,
+                        capture_output=True,
+                        text=True,
                     )
                     # The venv layout differs by platform: Scripts/python.exe on
                     # Windows, bin/python elsewhere. Invoke pip via "python -m pip" so
@@ -680,12 +691,27 @@ def new(
                         venv_python = project_path / ".venv" / "Scripts" / "python.exe"
                     else:
                         venv_python = project_path / ".venv" / "bin" / "python"
-                    pip_cmd = [
-                        str(venv_python),
-                        "-m", "pip",
-                        "install", "-r", "requirements.txt",
-                    ]
-                    subprocess.run(pip_cmd, cwd=project_path, check=True)
+
+                    if venv.returncode != 0 or not venv_python.is_file():
+                        detail = (venv.stderr or venv.stdout or "").strip()
+                        console.print(
+                            "[yellow]Could not create the project's virtual environment, "
+                            "so dependencies were not installed.[/yellow]"
+                        )
+                        if detail:
+                            console.print(f"[dim]{detail.splitlines()[-1]}[/dim]")
+                        console.print(
+                            "[dim]The project itself is fine. Create the environment "
+                            "yourself and install into it, then `pymcu build`.[/dim]"
+                        )
+                        install_deps = False
+                    else:
+                        pip_cmd = [
+                            str(venv_python),
+                            "-m", "pip",
+                            "install", "-r", "requirements.txt",
+                        ]
+                        subprocess.run(pip_cmd, cwd=project_path, check=True)
 
         # ── Summary ───────────────────────────────────────────────────
         console.print(

@@ -4,6 +4,7 @@
 # All I/O is exercised via typer's test client — no real prompts needed.
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 import pytest
@@ -538,3 +539,42 @@ def test_resolve_uv_returns_none_when_there_is_no_uv(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "uv", None)   # import uv -> ImportError
 
     assert new_mod._resolve_uv() is None
+
+
+def test_new_survives_a_venv_that_cannot_be_created(tmp_path, monkeypatch):
+    """A base Python without `ensurepip` must not take the whole command down.
+
+    Apple's Command Line Tools python3 and Debian's split python3-venv both fail
+    to create a virtual environment. The result of `python -m venv` was ignored,
+    so the next line ran `.venv/bin/python`, which had never been created, and
+    the command died with `[Errno 2] No such file or directory` — pointing at a
+    missing file instead of the reason it was missing.
+    """
+    from src.driver.commands import new as new_mod
+
+    real_run = new_mod.subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if len(cmd) >= 3 and cmd[1] == "-m" and cmd[2] == "venv":
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="Error: ensurepip is not available"
+            )
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(new_mod.subprocess, "run", fake_run)
+    # Headless, the "install dependencies now?" prompt answers no and the branch
+    # under test is never reached; force it to yes.
+    monkeypatch.setattr(
+        new_mod, "_confirm",
+        lambda message, default=False, **kw: "Install dependencies" in message,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_new(
+        "blink", "--board", "arduino_uno", "--stdlib", "micropython",
+        "--pkg-manager", "pip", "--no-git",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "ensurepip is not available" in result.output
+    assert (tmp_path / "blink" / "pyproject.toml").is_file()
