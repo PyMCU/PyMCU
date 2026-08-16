@@ -243,6 +243,48 @@ def entry_verdict(entry: dict, chip: str, flavors: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# JSON shaping (consumed by the IDE plugins; keep the keys stable)
+# ---------------------------------------------------------------------------
+
+def _entry_json(entry: dict, reasons: list[str], installed: set[str]) -> dict:
+    """An index entry as the IDE plugins consume it."""
+    distribution = str(entry.get("distribution", ""))
+    return {
+        "name": str(entry.get("name", "")),
+        "distribution": distribution,
+        "version": str(entry.get("version", "")),
+        "summary": str(entry.get("summary", "")),
+        "categories": [str(c) for c in entry.get("categories", [])],
+        "layer": str(entry.get("layer", "native")),
+        "arch": [str(a) for a in entry.get("arch", [])],
+        "status": str(entry.get("status", "active")),
+        "repository": str(entry.get("repository", "")),
+        # Empty means "nothing stops this library serving the current target".
+        "reasons": reasons,
+        "fits": not reasons,
+        "installed": distribution.lower() in installed,
+    }
+
+
+def _installed_json(lib: Library, project: Project) -> dict:
+    """An installed library as the IDE plugins consume it."""
+    reasons = (check_compatibility(lib, chip=project.chip, flavors=project.flavors)
+               if project.chip else ["no board or target declared"])
+    return {
+        "name": lib.name,
+        "distribution": lib.distribution,
+        "version": lib.version,
+        "summary": lib.summary,
+        "modules": list(lib.modules),
+        "categories": list(lib.categories),
+        "layer": lib.layer,
+        "repository": lib.repository,
+        "reasons": reasons,
+        "usable": not reasons,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Project context
 # ---------------------------------------------------------------------------
 
@@ -681,10 +723,23 @@ def uninstall(
 def libraries(
     all_targets: bool = typer.Option(
         False, "--all", help="List every installed library, not just the usable ones."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the list as JSON on stdout (for IDE integrations)."),
 ):
     """List the PyMCU libraries installed in this project."""
     project = _load_project()
     installed, problems = _installed_libraries(project)
+
+    if json_output:
+        print(json.dumps({
+            "chip": project.chip,
+            "board": project.board,
+            "flavors": project.flavors,
+            "libraries": [_installed_json(lib, project) for lib in installed],
+            "collisions": find_module_collisions(installed),
+            "invalid": problems,
+        }))
+        return
 
     for problem in problems:
         console.print(f"[bold red]Invalid library[/bold red] {problem}")
@@ -750,6 +805,26 @@ def search(
         chip, flavors = project.chip, project.flavors
 
     needle = query.strip().lower()
+
+    if json_output:
+        installed_names = set()
+        if Path("pyproject.toml").exists():
+            found, _ = _installed_libraries(_load_project())
+            installed_names = {lib.distribution.lower() for lib in found}
+        results = []
+        for entry in sorted(_entries(index), key=lambda e: str(e.get("name", ""))):
+            haystack = (f"{entry.get('name', '')} {entry.get('summary', '')} "
+                        f"{' '.join(entry.get('categories', []))}")
+            if needle and needle not in haystack.lower():
+                continue
+            reasons = entry_verdict(entry, chip, flavors) if chip else []
+            if reasons and not all_targets:
+                continue
+            results.append(_entry_json(entry, reasons, installed_names))
+        print(json.dumps({
+            "chip": chip, "flavors": flavors, "source": source, "libraries": results,
+        }))
+        return
     table = Table(title="PyMCU libraries")
     table.add_column("Name")
     table.add_column("Version")
