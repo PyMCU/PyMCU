@@ -1,13 +1,16 @@
 # Writing a PyMCU Library
 
-:::{admonition} Proposed design — not implemented yet
+:::{admonition} The index is not online yet
 :class: warning
 
-The `pymcu.libraries` entry point, the `pymcu install` command and the curated index at
-`pymcu.org/libraries` are **designed but not released**. This page documents the target
-shape so libraries can be written against it today; the packaging and publishing steps
-will only work once the tooling ships. Nothing here changes how `pymcu.drivers.*` works
-in the current release.
+The tooling described here works: `pymcu build` discovers libraries through the
+`pymcu.libraries` entry point, and `pymcu install`, `pymcu libraries` and
+`pymcu lint --library` are in the driver.
+
+What does not exist yet is the curated index at `pymcu.org/libraries`, so
+`pymcu install <name>` has nothing to resolve names against. Until it is published,
+install with `pymcu install --from-pypi <distribution>`, which skips the index but still
+requires a valid manifest and still checks the target.
 :::
 
 A PyMCU library is **source code the compiler reads at build time**, not a module
