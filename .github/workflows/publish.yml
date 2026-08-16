@@ -36,9 +36,6 @@ jobs:
   # per OS/arch. pymcuc is a .NET AOT binary with no Python ABI dependency, so
   # there is no need to build one wheel per Python version.
   #
-  # The macOS x86_64 (osx-x64) wheel is cross-compiled from the macos-latest
-  # (Apple Silicon) runner using .NET's built-in cross-compilation support,
-  # avoiding the slow macos-13 Intel runner entirely.
   build-wheels:
     name: Build wheel (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -60,10 +57,6 @@ jobs:
           - name: macos-arm64
             os: macos-latest
             wheel_platform_tag: macosx_14_0_arm64
-          - name: macos-x64
-            os: macos-latest
-            dotnet_rid: osx-x64
-            wheel_platform_tag: macosx_13_0_x86_64
           - name: windows-x64
             os: windows-latest
           # Native arm64 build on a GitHub-hosted Windows on Arm runner (GA &
