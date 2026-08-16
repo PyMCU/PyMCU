@@ -31,6 +31,8 @@ from ..backends import get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
 from ..core.boards import (
     BOARD_CHIPS,
+    board_frequency,
+    default_frequency,
     load_extension_board_chips,
     resolve_chip_for_board,
 )
@@ -638,7 +640,10 @@ def build(
             )
         board_key    = pymcu_config.get("board", None)
         _diag_log(f"board_key from config: {board_key}", verbose=is_verbose)
-        freq         = pymcu_config.get("frequency", 4000000)
+        # Resolved once the target is known: a fixed 4 MHz was the PIC16F84A's
+        # default and silently ran an Arduino at a quarter speed, skewing every
+        # delay and UART divisor. None means "decide from the target", below.
+        freq         = pymcu_config.get("frequency", None)
         src_path     = pymcu_config.get("sources", "src")
         _diag_log(f"freq: {freq}, src_path: {src_path}", verbose=is_verbose)
 
@@ -727,8 +732,25 @@ def build(
                     f"Add it to BOARD_CHIPS in core/boards.py or provide a board_chips.py in your extension package."
                 )
                 raise typer.Exit(code=1)
+        elif target_key:
+            target = target_key
         else:
-            target = target_key or "pic16f84a"
+            # Defaulting here used to produce a PIC16F84A image. That is a
+            # leftover from when this compiler only had a PIC backend, and it is
+            # the worst failure mode available: the build succeeds, prints a
+            # flash figure, and hands over firmware for hardware nobody named.
+            # An unknown board already exits; an absent one now does too.
+            console.print(
+                "[bold red]Error:[/bold red] No 'board' or 'target' in \\[tool.pymcu].\n"
+                "  Add [bold]board = \"arduino_uno\"[/bold] for a known board, or\n"
+                "  [bold]target = \"atmega328p\"[/bold] for a bare chip.\n"
+                "  [dim]`pymcu boards` lists what this installation supports.[/dim]"
+            )
+            raise typer.Exit(code=1)
+
+        if freq is None:
+            freq = board_frequency(board_key) if board_key else default_frequency(target)
+            _diag_log(f"freq defaulted from target: {freq}", verbose=is_verbose)
 
         # Third-party libraries, discovered through the pymcu.libraries entry
         # point.  Added after the flavor packages so no library can shadow

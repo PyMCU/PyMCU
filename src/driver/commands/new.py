@@ -460,7 +460,12 @@ def new(
         compiler_extra = "[avr]"
     elif _chip_lower in ("rp2040", "rp2350"):
         compiler_extra = "[arm]"
+    elif _chip_lower.startswith("pic"):
+        compiler_extra = "[pic]"
     else:
+        # No riscv extra exists yet -- see the note in pymcu-compiler's
+        # pyproject.toml. An extra that cannot resolve fails harder than a
+        # missing one, and `pymcu build` already prints the install command.
         compiler_extra = ""
 
     def _pin_compiler() -> str:
