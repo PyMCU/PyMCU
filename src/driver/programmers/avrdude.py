@@ -265,11 +265,8 @@ class AvrdudeProgrammer(HardwareProgrammer):
         return "/dev/cu.usbmodemXXXX"
 
     @staticmethod
-    def auto_detect_port() -> str | None:
-        """
-        Return the first detected serial port for a USB-connected AVR device,
-        or None if nothing is found.
-        """
+    def candidate_ports() -> list[str]:
+        """Every serial port that could be a USB-connected AVR device."""
         if sys.platform == "darwin":
             candidates = glob.glob("/dev/cu.usbmodem*") + glob.glob("/dev/cu.usbserial*")
         elif sys.platform.startswith("linux"):
@@ -298,7 +295,13 @@ class AvrdudeProgrammer(HardwareProgrammer):
                 candidates = []
         else:
             candidates = []
-        return candidates[0] if candidates else None
+        return sorted(set(candidates))
+
+    @classmethod
+    def auto_detect_port(cls) -> str | None:
+        """The one detected port, or None when there is not exactly one."""
+        candidates = cls.candidate_ports()
+        return candidates[0] if len(candidates) == 1 else None
 
     # ------------------------------------------------------------------
     # Installation
@@ -452,16 +455,28 @@ class AvrdudeProgrammer(HardwareProgrammer):
         conf_path = None if self.find_system_avrdude() else self._find_cached_conf()
 
         # Resolve port: caller > auto-detect > error
-        resolved_port = port or self.auto_detect_port()
+        resolved_port = port
         if not resolved_port:
-            example = self._example_port()
-            raise RuntimeError(
-                "No serial port specified and auto-detection found none.\n"
-                f"Pass --port {example} on the command line, or add:\n\n"
-                "  \\[tool.pymcu.flash]\n"
-                f'  port = "{example}"\n\n'
-                "to your pyproject.toml."
-            )
+            candidates = self.candidate_ports()
+            if len(candidates) == 1:
+                resolved_port = candidates[0]
+            else:
+                example = candidates[0] if candidates else self._example_port()
+                if candidates:
+                    found = "\n".join(f"  {c}" for c in candidates)
+                    problem = (
+                        f"{len(candidates)} serial ports are connected, so there is "
+                        f"no way to tell which board to write to:\n\n{found}\n"
+                    )
+                else:
+                    problem = "No serial port specified and auto-detection found none."
+                raise RuntimeError(
+                    f"{problem}\n"
+                    f"Pass --port {example} on the command line, or add:\n\n"
+                    "  \\[tool.pymcu.flash]\n"
+                    f'  port = "{example}"\n\n'
+                    "to your pyproject.toml."
+                )
 
         cmd = [str(avrdude)]
         if conf_path and conf_path.exists():

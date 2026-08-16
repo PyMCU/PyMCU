@@ -170,3 +170,41 @@ class TestExecutabilityGuard:
 
     def test_a_runnable_binary_passes(self):
         Avrdude._verify_runs(Path("/bin/echo"))
+
+
+class TestPortDisambiguation:
+    def _prog(self):
+        return Avrdude(Console())
+
+    def test_one_port_is_used_without_asking(self):
+        with patch.object(Avrdude, "candidate_ports", return_value=["/dev/cu.usbmodem1101"]):
+            assert self._prog().auto_detect_port() == "/dev/cu.usbmodem1101"
+
+    def test_several_ports_are_never_guessed(self):
+        ports = ["/dev/cu.usbmodem1101", "/dev/cu.usbserial-A50285BI"]
+        with patch.object(Avrdude, "candidate_ports", return_value=ports):
+            assert self._prog().auto_detect_port() is None
+
+    def test_flashing_with_several_ports_lists_them_instead_of_writing(self, tmp_path):
+        ports = ["/dev/cu.usbmodem1101", "/dev/cu.usbserial-A50285BI"]
+        prog = self._prog()
+        with patch.object(Avrdude, "candidate_ports", return_value=ports), \
+             patch.object(Avrdude, "is_cached", return_value=True), \
+             patch.object(Avrdude, "_get_binary", return_value=Path("/usr/bin/true")), \
+             patch.object(Avrdude, "find_system_avrdude", return_value=Path("/usr/bin/true")), \
+             patch("src.driver.programmers.avrdude.subprocess.run") as run:
+            with pytest.raises(RuntimeError) as err:
+                prog.flash(tmp_path / "f.hex", "atmega328p")
+        assert run.call_count == 0
+        for p in ports:
+            assert p in str(err.value)
+
+    def test_an_explicit_port_wins_over_detection(self, tmp_path):
+        prog = self._prog()
+        with patch.object(Avrdude, "candidate_ports", return_value=["/dev/cu.other"]), \
+             patch.object(Avrdude, "is_cached", return_value=True), \
+             patch.object(Avrdude, "_get_binary", return_value=Path("/usr/bin/true")), \
+             patch.object(Avrdude, "find_system_avrdude", return_value=Path("/usr/bin/true")), \
+             patch("src.driver.programmers.avrdude.subprocess.run") as run:
+            prog.flash(tmp_path / "f.hex", "atmega328p", port="/dev/cu.chosen")
+        assert "/dev/cu.chosen" in run.call_args[0][0]
