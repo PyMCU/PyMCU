@@ -4,6 +4,7 @@
 # All I/O is exercised via typer's test client — no real prompts needed.
 
 import json
+import sys
 from pathlib import Path
 import pytest
 from typer.testing import CliRunner
@@ -493,3 +494,47 @@ class TestBoardFrequencies:
         assert result.exit_code == 0
         doc = tomlkit.loads((tmp_path / "proj" / "pyproject.toml").read_text())
         assert doc["tool"]["pymcu"]["frequency"] == expected
+
+
+# ---------------------------------------------------------------------------
+# uv resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_uv_finds_binary_next_to_the_interpreter(tmp_path, monkeypatch):
+    """A uv that is not on PATH but sits in the venv's bin/ must still be found.
+
+    This is the pipx case: `pip install uv` from the CLI's own venv drops the
+    binary there, and pipx only puts the app's declared entry points on PATH.
+    Trusting PATH alone made `pymcu new` install uv, report success and then die
+    with `[Errno 2] No such file or directory: 'uv'` when it ran `uv sync`.
+    """
+    from src.driver.commands import new as new_mod
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_python = bindir / "python"
+    fake_python.write_text("")
+    fake_uv = bindir / ("uv.exe" if sys.platform == "win32" else "uv")
+    fake_uv.write_text("")
+
+    monkeypatch.setattr(new_mod.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(new_mod.sys, "executable", str(fake_python))
+
+    assert new_mod._resolve_uv() == str(fake_uv)
+
+
+def test_resolve_uv_returns_none_when_there_is_no_uv(tmp_path, monkeypatch):
+    """No uv anywhere means None, so the caller can fall back to pip."""
+    from src.driver.commands import new as new_mod
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_python = bindir / "python"
+    fake_python.write_text("")
+
+    monkeypatch.setattr(new_mod.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(new_mod.sys, "executable", str(fake_python))
+    monkeypatch.setitem(sys.modules, "uv", None)   # import uv -> ImportError
+
+    assert new_mod._resolve_uv() is None

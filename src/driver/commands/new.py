@@ -104,6 +104,35 @@ def _confirm(message: str, default: bool = False, *, non_interactive: bool | Non
     return bool(answer) if answer is not None else default
 
 
+def _resolve_uv() -> str | None:
+    """Absolute path to a runnable `uv`, or None.
+
+    PATH alone is not enough. When PyMCU runs from a pipx venv, `pip install uv`
+    puts the binary in that venv's bin/ and pipx exposes only the app's declared
+    entry points, so `uv` never reaches PATH. Look there too, and let the `uv`
+    package point at its own binary if it can.
+    """
+    found = shutil.which("uv")
+    if found:
+        return found
+
+    exe = "uv.exe" if sys.platform == "win32" else "uv"
+    candidate = Path(sys.executable).parent / exe
+    if candidate.is_file():
+        return str(candidate)
+
+    try:
+        from uv import find_uv_bin  # type: ignore
+
+        located = Path(find_uv_bin())
+        if located.is_file():
+            return str(located)
+    except Exception:
+        pass
+
+    return None
+
+
 def _detect_pkg_manager() -> str | None:
     """Return the first available package manager found in PATH, or None."""
     if shutil.which("uv"):
@@ -356,11 +385,17 @@ def new(
     # ------------------------------------------------------------------
     # Package manager — auto-detect, then ask if none found
     # ------------------------------------------------------------------
+    # Ruta absoluta a uv, resuelta una sola vez: no basta con el nombre, ver
+    # _resolve_uv(). None mientras no se sepa que hay uv utilizable.
+    uv_bin: str | None = None
+
     if pkg_manager is None:
         detected = _detect_pkg_manager()
         if detected:
             console.print(f"[dim]Detected package manager: {detected}[/dim]")
             pkg_manager = detected
+            if detected == "uv":
+                uv_bin = _resolve_uv()
         else:
             console.print(
                 "[yellow]No package manager (uv or poetry) found in PATH.[/yellow]"
@@ -371,8 +406,21 @@ def new(
                         [sys.executable, "-m", "pip", "install", "uv"],
                         capture_output=True,
                     )
+                # A zero exit code is NOT enough to conclude that `uv` can be
+                # run. Installed from a pipx venv it lands in that venv's bin/,
+                # which pipx does not expose on PATH -- only the app's own entry
+                # points get shims -- so `subprocess.run(["uv", ...])` later
+                # dies with ENOENT. Resolve the real executable and keep it.
                 if result.returncode == 0:
-                    pkg_manager = "uv"
+                    uv_bin = _resolve_uv()
+                    if uv_bin:
+                        pkg_manager = "uv"
+                    else:
+                        console.print(
+                            "[yellow]uv installed but its executable could not be located; "
+                            "falling back to pip.[/yellow]"
+                        )
+                        pkg_manager = "pip"
                 else:
                     console.print(
                         "[yellow]uv installation failed, falling back to pip.[/yellow]"
@@ -380,6 +428,10 @@ def new(
                     pkg_manager = "pip"
             else:
                 pkg_manager = "pip"
+
+    # Tambien cuando llega por --pkg-manager uv: ahi no pasamos por la deteccion.
+    if pkg_manager == "uv" and uv_bin is None:
+        uv_bin = _resolve_uv()
 
     # ------------------------------------------------------------------
     # Layout
@@ -610,7 +662,9 @@ def new(
                 f"[bold green]Installing dependencies via {pkg_manager}..."
             ):
                 if pkg_manager == "uv":
-                    subprocess.run(["uv", "sync"], cwd=project_path, check=True)
+                    subprocess.run(
+                        [uv_bin or "uv", "sync"], cwd=project_path, check=True
+                    )
                 elif pkg_manager == "poetry":
                     subprocess.run(
                         ["poetry", "install"], cwd=project_path, check=True
