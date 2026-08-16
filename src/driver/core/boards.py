@@ -73,6 +73,35 @@ BOARD_GROUPS: dict[str, list[str]] = {
 }
 
 
+def load_extension_board_chips(flavor: str) -> dict[str, str]:
+    """
+    BOARD_CHIPS supplied by the pymcu_<flavor> compat package, or {}.
+
+    Returns empty rather than raising: a flavor that is not installed, or one
+    that ships no board_chips.py, is a normal situation for every caller.
+    """
+    try:
+        import importlib
+
+        mod = importlib.import_module(f"pymcu_{flavor}.board_chips")
+        return dict(getattr(mod, "BOARD_CHIPS", {}))
+    except Exception:
+        return {}
+
+
+def extension_board_chips(flavors: list[str]) -> dict[str, str]:
+    """Merge the board tables of several flavors, later ones winning."""
+    merged: dict[str, str] = {}
+    for flavor in flavors:
+        merged.update(load_extension_board_chips(flavor))
+    return merged
+
+
+def resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
+    """Return the chip name for *board*, checking extension-supplied entries first."""
+    return extra.get(board) or BOARD_CHIPS.get(board)
+
+
 def default_toolchain(chip: str) -> str:
     """Return the toolchain name for a given chip without requiring plugins installed."""
     chip_lower = chip.lower()

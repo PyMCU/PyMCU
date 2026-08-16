@@ -29,7 +29,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
-from ..core.boards import BOARD_CHIPS
+from ..core.boards import (
+    BOARD_CHIPS,
+    load_extension_board_chips,
+    resolve_chip_for_board,
+)
+from ..core.libraries import (
+    include_paths as library_include_paths,
+    resolve_for_target,
+    search_path_for_project as library_search_path,
+)
 from ..core.update_check import get_available_updates, get_installed_pymcu_versions
 
 console = Console()
@@ -151,15 +160,8 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
 
 
 def _load_extension_board_chips(flavor: str) -> dict[str, str]:
-    """
-    Try to import pymcu_<flavor>.board_chips and return its BOARD_CHIPS dict.
-    Returns an empty dict if the module or attribute does not exist.
-    """
-    try:
-        mod = importlib.import_module(f"pymcu_{flavor}.board_chips")
-        return dict(getattr(mod, "BOARD_CHIPS", {}))
-    except Exception:
-        return {}
+    """Try to import pymcu_<flavor>.board_chips and return its BOARD_CHIPS dict."""
+    return load_extension_board_chips(flavor)
 
 
 _PRINT_RE    = re.compile(r'\bprint\s*\(')
@@ -457,7 +459,7 @@ def _correct_linemap(linemap_path: Path, filename: str, offset: int) -> None:
 
 def _resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
     """Return the chip name for *board*, checking extension-supplied entries first."""
-    return extra.get(board) or BOARD_CHIPS.get(board)
+    return resolve_chip_for_board(board, extra)
 
 
 def _install_deps_hint(project_root: Path) -> str:
@@ -724,6 +726,31 @@ def build(
                 raise typer.Exit(code=1)
         else:
             target = target_key or "pic16f84a"
+
+        # Third-party libraries, discovered through the pymcu.libraries entry
+        # point.  Added after the flavor packages so no library can shadow
+        # `machine` or `digitalio`, and only when they apply to this target: a
+        # library that cannot serve this chip is skipped with a reason instead
+        # of failing later inside the compiler.
+        libs, skipped_libs, lib_errors = resolve_for_target(
+            target, stdlib_flavors,
+            search_path=library_search_path(pyproject_path.parent.absolute()),
+        )
+        if lib_errors:
+            console.print("[bold red]Error:[/bold red] installed libraries are not usable:")
+            for problem in lib_errors:
+                console.print(f"  {problem}")
+            raise typer.Exit(code=1)
+
+        for note in skipped_libs:
+            console.print(f"[bold yellow]Skipping library[/bold yellow] {note}")
+
+        extra_includes.extend(library_include_paths(libs, stdlib_flavors))
+        for lib in libs:
+            _diag_log(
+                f"library {lib.name} {lib.version} -> {', '.join(lib.modules)}",
+                verbose=is_verbose,
+            )
 
         project_root = pyproject_path.parent.absolute()
         sources_dir = (project_root / src_path).resolve()
