@@ -687,10 +687,16 @@ def new(
                     # The venv layout differs by platform: Scripts/python.exe on
                     # Windows, bin/python elsewhere. Invoke pip via "python -m pip" so
                     # we don't depend on the exact pip executable name either.
+                    #
+                    # ABSOLUTA, y no es un detalle: `project_path` es relativa
+                    # (Path(name)), asi que esto valia "blink/.venv/bin/python", y
+                    # se pasaba junto con cwd=project_path. El hijo resuelve el
+                    # programa contra SU cwd, o sea buscaba blink/blink/... y
+                    # moria con [Errno 2] aunque el entorno estuviera creado.
                     if sys.platform == "win32":
-                        venv_python = project_path / ".venv" / "Scripts" / "python.exe"
+                        venv_python = (project_path / ".venv" / "Scripts" / "python.exe").resolve()
                     else:
-                        venv_python = project_path / ".venv" / "bin" / "python"
+                        venv_python = (project_path / ".venv" / "bin" / "python").resolve()
 
                     if venv.returncode != 0 or not venv_python.is_file():
                         detail = (venv.stderr or venv.stdout or "").strip()

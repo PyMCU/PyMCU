@@ -578,3 +578,48 @@ def test_new_survives_a_venv_that_cannot_be_created(tmp_path, monkeypatch, unwra
     assert result.exit_code == 0, result.output
     assert "ensurepip is not available" in unwrapped(result.output)
     assert (tmp_path / "blink" / "pyproject.toml").is_file()
+
+
+def test_new_runs_the_venv_python_by_absolute_path(tmp_path, monkeypatch):
+    """The interpreter handed to subprocess must not be a relative path.
+
+    `project_path` is relative (`Path(name)`), so building the interpreter from
+    it gave "blink/.venv/bin/python" — and it was passed together with
+    `cwd=project_path`, so the child resolved the program against its own cwd and
+    looked for blink/blink/.venv/bin/python. The venv was there; the command died
+    anyway with [Errno 2]. Found on a clean macOS install.
+    """
+    from src.driver.commands import new as new_mod
+
+    seen: list[list[str]] = []
+    real_run = new_mod.subprocess.run
+
+    def fake_run(cmd, *args, **kwargs):
+        if len(cmd) >= 3 and cmd[1] == "-m" and cmd[2] == "venv":
+            # Pretend the environment was created, interpreter included.
+            venv_bin = Path(kwargs["cwd"]) / ".venv" / (
+                "Scripts" if sys.platform == "win32" else "bin"
+            )
+            venv_bin.mkdir(parents=True, exist_ok=True)
+            (venv_bin / ("python.exe" if sys.platform == "win32" else "python")).write_text("")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if "pip" in cmd:
+            seen.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(new_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        new_mod, "_confirm",
+        lambda message, default=False, **kw: "Install dependencies" in message,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = _invoke_new(
+        "blink", "--board", "arduino_uno", "--stdlib", "micropython",
+        "--pkg-manager", "pip", "--no-git",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen, "pip was never invoked"
+    assert Path(seen[0][0]).is_absolute(), seen[0][0]
