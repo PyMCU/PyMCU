@@ -86,12 +86,65 @@ def _read_cached_index() -> dict | None:
         return None
 
 
+# Why the last attempt failed, for the caller to show. A module-level value
+# rather than a return value so the existing (index, source) contract stays put:
+# every command asks for it in the one place it reports the failure.
+_LAST_INDEX_ERROR = ""
+
+
+def last_index_error() -> str:
+    """A human-readable reason the index could not be fetched, or ""."""
+    return _LAST_INDEX_ERROR
+
+
+def _ssl_context():
+    """
+    A context with certificates that actually verify, when we can build one.
+
+    The python.org macOS builds ship without the system trust store until
+    `Install Certificates.command` is run, so every HTTPS request fails with
+    CERTIFICATE_VERIFY_FAILED -- which reads exactly like the index being down.
+    certifi is not a dependency, but pip pulls it into most environments, and
+    using it when present turns a dead end into a working command.
+    """
+    try:
+        import ssl
+
+        import certifi  # type: ignore
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def _download_index(url: str) -> dict | None:
+    global _LAST_INDEX_ERROR
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError,
-            ValueError):
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if "CERTIFICATE_VERIFY_FAILED" in str(reason):
+            context = _ssl_context()
+            if context is not None:
+                try:
+                    with urllib.request.urlopen(url, timeout=10, context=context) as response:
+                        return json.loads(response.read().decode("utf-8"))
+                except Exception as retry_exc:
+                    reason = retry_exc
+            if "CERTIFICATE_VERIFY_FAILED" in str(reason):
+                _LAST_INDEX_ERROR = (
+                    "TLS certificate verification failed. This is a local trust "
+                    "store problem, not the index being down: on a python.org "
+                    "build for macOS, run "
+                    "'/Applications/Python 3.x/Install Certificates.command', or "
+                    "install certifi in this environment."
+                )
+                return None
+        _LAST_INDEX_ERROR = f"{url}: {reason}"
+        return None
+    except (TimeoutError, json.JSONDecodeError, OSError, ValueError) as exc:
+        _LAST_INDEX_ERROR = f"{url}: {exc}"
         return None
 
 
@@ -103,6 +156,9 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
     more than an aborted command, and the caller says where the data came from
     so a stale answer is never passed off as a fresh one.
     """
+    global _LAST_INDEX_ERROR
+    _LAST_INDEX_ERROR = ""
+
     cached = None if refresh else _read_cached_index()
     if cached is not None:
         return cached, "cache"
@@ -111,6 +167,7 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
         payload = _download_index(url)
         if payload is None:
             continue
+        _LAST_INDEX_ERROR = ""
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             CACHE_FILE.write_text(json.dumps(payload), encoding="utf-8")
@@ -445,7 +502,11 @@ def install(
         if not index:
             console.print(
                 f"[red]Could not reach the library index at {_index_url()} and no cached "
-                "copy is available.[/red]\n"
+                "copy is available.[/red]"
+            )
+            if last_index_error():
+                console.print(f"[dim]{last_index_error()}[/dim]")
+            console.print(
                 "[dim]Retry when online, or use --from-pypi <distribution> if you know "
                 "what you are installing.[/dim]"
             )
@@ -655,13 +716,23 @@ def search(
     refresh: bool = typer.Option(False, "--refresh", help="Re-download the index first."),
     all_targets: bool = typer.Option(
         False, "--all", help="Include libraries that do not fit this project's chip."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the results as JSON on stdout (for IDE integrations)."),
 ):
     """Search the PyMCU library index."""
     index, source = fetch_index(refresh=refresh)
     if not index:
+        if json_output:
+            print(json.dumps({
+                "error": f"Could not reach the library index at {_index_url()}.",
+                "detail": last_index_error(),
+            }))
+            raise typer.Exit(code=1)
         console.print(f"[red]Could not reach the library index at {_index_url()}.[/red]")
+        if last_index_error():
+            console.print(f"[dim]{last_index_error()}[/dim]")
         raise typer.Exit(code=1)
-    if source == "cache":
+    if source == "cache" and not json_output:
         console.print("[dim]Using the cached index (run with --refresh to update).[/dim]")
 
     chip, flavors = "", []

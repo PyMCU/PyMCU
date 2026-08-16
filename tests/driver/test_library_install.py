@@ -93,6 +93,70 @@ INDEX = {
 }
 
 
+class TestIndexFetching:
+    """
+    Two hosts and a diagnosis. The mirror exists because the primary answers 403
+    from data centres; the diagnosis exists because a macOS python.org build
+    without its certificates fails in a way that reads exactly like the index
+    being down.
+    """
+
+    def _no_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(cmd, "CACHE_FILE", tmp_path / "cache.json")
+        monkeypatch.setattr(cmd, "CACHE_DIR", tmp_path / "cache")
+        monkeypatch.delenv("PYMCU_LIBRARY_INDEX", raising=False)
+
+    def test_the_mirror_is_used_when_the_primary_fails(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        tried = []
+
+        def _fake_download(url):
+            tried.append(url)
+            return None if url == cmd.DEFAULT_INDEX_URL else {"v": 1, "libraries": []}
+
+        monkeypatch.setattr(cmd, "_download_index", _fake_download)
+        index, source = cmd.fetch_index(refresh=True)
+
+        assert tried == [cmd.DEFAULT_INDEX_URL, cmd.MIRROR_INDEX_URL]
+        assert source == "network"
+        assert index == {"v": 1, "libraries": []}
+
+    def test_an_override_replaces_both(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        monkeypatch.setenv("PYMCU_LIBRARY_INDEX", "https://example.test/i.json")
+        assert cmd._index_urls() == ["https://example.test/i.json"]
+
+    def test_a_certificate_failure_says_it_is_local(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+
+        def _boom(url, timeout=10, context=None):
+            raise cmd.urllib.error.URLError(
+                "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+
+        monkeypatch.setattr(cmd.urllib.request, "urlopen", _boom)
+        monkeypatch.setattr(cmd, "_ssl_context", lambda: None)
+
+        index, source = cmd.fetch_index(refresh=True)
+        assert index == {} and source == ""
+        assert "local trust store" in cmd.last_index_error()
+
+    def test_the_error_is_cleared_on_success(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        monkeypatch.setattr(cmd, "_download_index", lambda url: {"v": 1, "libraries": []})
+        cmd.fetch_index(refresh=True)
+        assert cmd.last_index_error() == ""
+
+    def test_a_cached_copy_survives_both_hosts_failing(self, tmp_path, monkeypatch):
+        self._no_cache(tmp_path, monkeypatch)
+        cache = tmp_path / "cache.json"
+        cache.write_text(json.dumps({"v": 1, "libraries": [{"name": "dht11"}]}))
+        monkeypatch.setattr(cmd, "_download_index", lambda url: None)
+
+        index, source = cmd.fetch_index(refresh=True)
+        assert source == "cache"
+        assert index["libraries"][0]["name"] == "dht11"
+
+
 class TestIndexVerdict:
     def test_measured_ok_passes(self):
         assert cmd.entry_verdict(INDEX["libraries"][0], "atmega328p", []) == []
