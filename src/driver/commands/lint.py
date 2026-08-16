@@ -272,8 +272,58 @@ def _lint_source(src: str, filename: str) -> tuple[list[Finding], Optional[str]]
     return lint.findings, lint.flavor
 
 
+def _report_library(path: str, json_output: bool, write_surface: bool) -> None:
+    """Run the library checks over a package directory and exit accordingly."""
+    from ..core.library_lint import lint_library
+
+    package_dir = Path(path)
+    if not package_dir.is_dir():
+        message = f"--library expects the package directory, not a file: {path}"
+        if json_output:
+            print(json.dumps({"error": message}))
+        else:
+            console.print(f"[bold red]{message}[/]")
+        raise typer.Exit(1)
+
+    findings = lint_library(package_dir, write_surface=write_surface)
+    errors = sum(1 for f in findings if f.severity == ERROR)
+    warnings = sum(1 for f in findings if f.severity == WARN)
+
+    if json_output:
+        print(json.dumps({
+            "package": str(package_dir),
+            "findings": [asdict(f) for f in findings],
+            "summary": {"errors": errors, "warnings": warnings},
+        }))
+        raise typer.Exit(1 if errors else 0)
+
+    if write_surface:
+        console.print("[green]api-surface.lock written.[/]")
+
+    for f in findings:
+        console.print(
+            f"  [{_STYLE[f.severity]}]{f.severity.upper():5}[/] [dim]{f.file}:{f.line}:{f.col}[/] "
+            f"[{_STYLE[f.severity]}]{f.code}[/]  {f.message}")
+        console.print(f"        [green]→ {f.suggestion}[/]")
+
+    console.print()
+    console.print(
+        f"Summary: [bold red]{errors} errors[/], [yellow]{warnings} warnings[/] "
+        f"in {package_dir.name}/.")
+    if errors == 0:
+        console.print("[bold green]This library is ready to publish.[/]")
+    raise typer.Exit(1 if errors else 0)
+
+
 def lint(
     path: str = typer.Argument(..., help="A .py file or a directory of sources to analyze."),
+    library: bool = typer.Option(
+        False, "--library",
+        help="Check a library package for publication: manifest, ASCII, "
+             "architecture dispatch and public API surface."),
+    write_surface: bool = typer.Option(
+        False, "--write-surface",
+        help="With --library, (re)write api-surface.lock instead of comparing it."),
     flavor: Optional[str] = typer.Option(
         None, "--flavor", help="Override detected flavor: micropython | circuitpython."),
     errors_only: bool = typer.Option(
@@ -282,6 +332,9 @@ def lint(
         False, "--json", help="Emit findings as JSON on stdout (for IDE integrations)."),
 ) -> None:
     """Porting assistant: flag MicroPython/CircuitPython idioms that need a rewrite for PyMCU."""
+    if library:
+        _report_library(path, json_output, write_surface)
+
     root = Path(path)
     files = sorted(root.rglob("*.py")) if root.is_dir() else [root]
     if not files or (len(files) == 1 and not files[0].exists()):
