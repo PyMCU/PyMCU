@@ -511,7 +511,16 @@ def new(
                 stdlib_arr.append(f)
             pymcu_tool.add("stdlib", stdlib_arr)
 
-        pymcu_tool.add("config", tomlkit.table())
+        # [tool.pymcu.config] son los bits de configuracion del chip (los config
+        # words de PIC: FOSC, WDTE...), que el driver pasa al compilador como
+        # --config CLAVE=VALOR. En AVR no se usa, asi que escribirla vacia solo
+        # dejaba en el pyproject una seccion muda que invita a preguntar que es.
+        # Se emite unicamente donde tiene sentido, y con un comentario que lo
+        # explique en el propio fichero.
+        if chip.startswith("pic"):
+            config_table = tomlkit.table()
+            config_table.comment("Chip configuration bits, e.g. FOSC = \"XT\"")
+            pymcu_tool.add("config", config_table)
 
         pymcu_toolchain = tomlkit.table()
         pymcu_toolchain.add("name", toolchain_name)
