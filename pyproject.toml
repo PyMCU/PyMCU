@@ -19,7 +19,7 @@ dependencies = [
     "questionary>=2.0",
     "packaging>=23.0",
     "pymcu-stdlib>=0.1.0a5",
-    "pymcu-sdk>=0.1.0a4",
+    "pymcu-sdk>=0.1.0a5",
 ]
 
 [project.optional-dependencies]
