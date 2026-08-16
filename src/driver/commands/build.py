@@ -35,6 +35,7 @@ from ..core.boards import (
     resolve_chip_for_board,
 )
 from ..core.libraries import (
+    find_layer_shadowing as library_layer_shadowing,
     include_paths as library_include_paths,
     resolve_for_target,
     search_path_for_project as library_search_path,
@@ -675,6 +676,7 @@ def build(
         extension_board_chips: dict[str, str] = {}
         extra_includes: list[str] = []
         extension_board_dirs: dict[str, Path] = {}  # flavor -> boards/ dir
+        flavor_dirs: dict[str, Path] = {}           # flavor -> package dir
 
         # stdlib_path: inject a local stdlib directory before any installed package
         stdlib_path_override: str | None = pymcu_config.get("stdlib_path", None)
@@ -696,6 +698,7 @@ def build(
                 pkg_parent = pkg_dir.parent
                 extra_includes.append(str(pkg_parent))
                 extra_includes.append(str(pkg_dir))
+                flavor_dirs[flavor] = pkg_dir
                 # Collect board_chips supplements
                 extension_board_chips.update(_load_extension_board_chips(flavor))
                 # Record boards/ dir for shim generation
@@ -748,6 +751,9 @@ def build(
 
         for note in skipped_libs:
             console.print(f"[bold yellow]Skipping library[/bold yellow] {note}")
+
+        for note in library_layer_shadowing(libs, flavor_dirs):
+            console.print(f"[bold yellow]Warning:[/bold yellow] {note}")
 
         extra_includes.extend(library_include_paths(libs, stdlib_flavors))
         for lib in libs:

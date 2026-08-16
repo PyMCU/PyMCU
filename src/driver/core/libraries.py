@@ -34,9 +34,12 @@ may use compiler-only constructs).
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 import tomllib
+from urllib.parse import urlparse
+from urllib.request import url2pathname as url_to_path
 from dataclasses import dataclass, field
 from importlib.metadata import (
     PackageNotFoundError,
@@ -200,20 +203,60 @@ def site_packages_of(venv: Path) -> list[str]:
     return [str(p) for p in sorted((venv / "lib").glob("python*/site-packages")) if p.is_dir()]
 
 
+def _editable_project_dir(dist) -> Path | None:
+    """
+    Where an editable install actually keeps its sources, or None.
+
+    A PEP 660 install leaves nothing in site-packages but a path hook, so the
+    directory scan below finds nothing -- which is precisely the layout a
+    library author works in while developing one.  direct_url.json records the
+    project it points at.
+    """
+    try:
+        raw = dist.read_text("direct_url.json")
+        if not raw:
+            return None
+        info = json.loads(raw)
+        if not info.get("dir_info", {}).get("editable"):
+            return None
+        url = str(info.get("url", ""))
+        if not url.startswith("file://"):
+            return None
+        return Path(url_to_path(urlparse(url).path))
+    except Exception:
+        return None
+
+
+def _find_package_dir(top: str, search_path: list[str], dist=None) -> Path | None:
+    """Locate an importable package by directory, without importing anything."""
+    for base in search_path:
+        candidate = Path(base) / top
+        if candidate.is_dir():
+            return candidate
+
+    project = _editable_project_dir(dist) if dist is not None else None
+    if project is not None:
+        for candidate in (project / "src" / top, project / top):
+            if candidate.is_dir():
+                return candidate
+
+    return None
+
+
 def _load_from_path(module_name: str, search_path: list[str], distribution: str,
-                    version: str) -> Library:
+                    version: str, dist=None) -> Library:
     """Load a library from an explicit search path, bypassing sys.path."""
     top = module_name.split(".")[0]
-    for base in search_path:
-        package_dir = Path(base) / top
-        if package_dir.is_dir():
-            return parse_manifest(
-                package_dir / MANIFEST_NAME,
-                distribution=distribution,
-                version=version,
-                package_dir=package_dir,
-            )
-    raise ManifestError(f"package '{module_name}' not found in {', '.join(search_path)}")
+    package_dir = _find_package_dir(top, search_path, dist)
+    if package_dir is None:
+        raise ManifestError(f"package '{module_name}' not found in {', '.join(search_path)}")
+
+    return parse_manifest(
+        package_dir / MANIFEST_NAME,
+        distribution=distribution,
+        version=version,
+        package_dir=package_dir,
+    )
 
 
 def discover_libraries(search_path: list[str] | None = None) -> tuple[list[Library], list[str]]:
@@ -246,7 +289,8 @@ def discover_libraries(search_path: list[str] | None = None) -> tuple[list[Libra
                     continue
                 try:
                     libraries.append(
-                        _load_from_path(ep.value, search_path, name, dist.version or "unknown")
+                        _load_from_path(ep.value, search_path, name,
+                                        dist.version or "unknown", dist)
                     )
                 except ManifestError as exc:
                     problems.append(f"{name or ep.name}: {exc}")
@@ -361,6 +405,28 @@ def check_compatibility(lib: Library, *, chip: str, flavors: list[str]) -> list[
             reasons.append(message)
 
     return reasons
+
+
+def find_layer_shadowing(libraries: list[Library], flavor_dirs: dict[str, Path]) -> list[str]:
+    """
+    Modules a compat layer already provides, which a library also claims.
+
+    The layer wins -- it comes first on the include path so no library can
+    hijack `machine` or `digitalio` -- and that is the right call, but silence
+    here means someone installs a library and compiles something else entirely.
+    Extracting a driver out of a compat package is exactly when this happens.
+    """
+    warnings: list[str] = []
+    for lib in libraries:
+        for module in lib.modules:
+            for flavor, directory in flavor_dirs.items():
+                if (directory / f"{module}.py").exists() or (directory / module).is_dir():
+                    warnings.append(
+                        f"'{module}' is provided by both the {flavor} layer and "
+                        f"{lib.distribution}; the layer wins, so the library's "
+                        f"version is not being compiled"
+                    )
+    return warnings
 
 
 def find_module_collisions(libraries: list[Library]) -> list[str]:
