@@ -67,14 +67,31 @@ DISTRIBUTION_PREFIX = "pymcu-lib-"
 # Index
 # ---------------------------------------------------------------------------
 
+def _index_urls() -> list[str]:
+    """The URLs to try, in order. PYMCU_LIBRARY_INDEX overrides both."""
+    override = os.environ.get("PYMCU_LIBRARY_INDEX")
+    if override:
+        return [override]
+    return [DEFAULT_INDEX_URL, MIRROR_INDEX_URL]
+
+
 def _index_url() -> str:
-    return os.environ.get("PYMCU_LIBRARY_INDEX", DEFAULT_INDEX_URL)
+    return _index_urls()[0]
 
 
 def _read_cached_index() -> dict | None:
     try:
         return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _download_index(url: str) -> dict | None:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError,
+            ValueError):
         return None
 
 
@@ -86,26 +103,25 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
     more than an aborted command, and the caller says where the data came from
     so a stale answer is never passed off as a fresh one.
     """
-    url = _index_url()
     cached = None if refresh else _read_cached_index()
-
-    if cached is not None and not refresh:
+    if cached is not None:
         return cached, "cache"
 
-    try:
-        with urllib.request.urlopen(url, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+    for url in _index_urls():
+        payload = _download_index(url)
+        if payload is None:
+            continue
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
             CACHE_FILE.write_text(json.dumps(payload), encoding="utf-8")
         except OSError:
             pass
         return payload, "network"
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        fallback = cached if cached is not None else _read_cached_index()
-        if fallback is not None:
-            return fallback, "cache"
-        return {}, ""
+
+    fallback = _read_cached_index()
+    if fallback is not None:
+        return fallback, "cache"
+    return {}, ""
 
 
 def _entries(index: dict) -> list[dict]:
