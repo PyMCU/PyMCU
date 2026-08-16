@@ -107,7 +107,10 @@ public class FileSystemModuleLoader : IModuleLoader
         {
             "machine" or "utime" or "micropython" or "network" or "rp2"
                 => "micropython",
-            "board" or "digitalio" or "analogio" or "busio" or "pwmio" or "neopixel"
+            // `neopixel` is deliberately absent: it ships as a library now, and
+            // sending someone to the circuitpython package for it is advice that
+            // no longer installs anything.
+            "board" or "digitalio" or "analogio" or "busio" or "pwmio"
              or "microcontroller" or "supervisor" or "wifi" or "socketpool" or "alarm"
                 => "circuitpython",
             _ => null,
@@ -123,6 +126,13 @@ public class FileSystemModuleLoader : IModuleLoader
                 $"compat package. Check that stdlib = [\"{flavorHint}\"] is set under " +
                 $"[tool.pymcu] in pyproject.toml, and that pymcu-{flavorHint} is installed " +
                 $"in the project's environment (uv sync, or pip install -r requirements.txt)");
+
+        // Anything else with no dots is a plain top-level import, which is what a
+        // third-party library provides. The name is the one people type.
+        if (!moduleName.Contains('.'))
+            throw new Exception(
+                $"Module not found: {moduleName} -- if it is a PyMCU library, install it " +
+                $"into this project with `pymcu install {moduleName}`");
 
         throw new Exception($"Module not found: {moduleName}");
     }
