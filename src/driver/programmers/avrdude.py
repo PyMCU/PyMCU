@@ -12,6 +12,7 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import errno
 import glob
 import os
 import platform
@@ -321,6 +322,19 @@ class AvrdudeProgrammer(HardwareProgrammer):
             "[bold]sudo apt install avrdude[/bold] on Debian/Ubuntu).[/dim]"
         )
 
+        if sys.platform == "darwin" and platform.machine() in ("arm64", "aarch64"):
+            self.console.print(
+                "\n[yellow]Note for Apple Silicon:[/yellow] avrdude publishes no "
+                "arm64 build for macOS, so this download is the Intel one and only "
+                "runs under Rosetta 2."
+            )
+            self.console.print(
+                "A native binary is one command away and PyMCU prefers it:\n"
+                "  [bold]brew install avrdude[/bold]\n"
+                "Otherwise install Rosetta first:\n"
+                "  [bold]softwareupdate --install-rosetta --agree-to-license[/bold]"
+            )
+
         has_hash = bool(expected_hash) and expected_hash.lower() != "placeholder"
 
         from ..core.base_tool import _confirm_download, _is_non_interactive, _tool_lock
@@ -393,7 +407,35 @@ class AvrdudeProgrammer(HardwareProgrammer):
         found = self._find_cached_binary()
         if found is None:
             raise RuntimeError("avrdude binary not found after extraction.")
+
+        self._verify_runs(found)
         return found
+
+    @staticmethod
+    def _verify_runs(binary: Path) -> None:
+        """Fail with an actionable message if the binary cannot be executed."""
+        try:
+            subprocess.run(
+                [str(binary), "-?"], capture_output=True, timeout=15, check=False
+            )
+        except OSError as exc:
+            wrong_arch = getattr(exc, "errno", None) == getattr(errno, "EBADARCH", 86)
+            if wrong_arch and sys.platform == "darwin":
+                raise RuntimeError(
+                    f"avrdude cannot run on this Mac: {exc}\n\n"
+                    "Upstream ships only an Intel build, and running it needs "
+                    "Rosetta 2, which this Mac does not have installed.\n\n"
+                    "Install a native avrdude (recommended — PyMCU picks up "
+                    "anything on PATH first):\n"
+                    "  brew install avrdude\n\n"
+                    "Or install Rosetta 2 and try again:\n"
+                    "  softwareupdate --install-rosetta --agree-to-license"
+                ) from exc
+            raise RuntimeError(
+                f"avrdude cannot run on this machine: {exc}\n"
+                "Install avrdude with your package manager instead; PyMCU uses "
+                "whatever is on PATH before its own copy."
+            ) from exc
 
     # ------------------------------------------------------------------
     # Flash
@@ -439,3 +481,6 @@ class AvrdudeProgrammer(HardwareProgrammer):
             self.console.print("[bold green]Flash successful![/bold green]")
         except subprocess.CalledProcessError:
             raise RuntimeError("Flashing failed. Check USB connection and port, then try again.")
+        except OSError as exc:
+            self._verify_runs(avrdude)
+            raise RuntimeError(f"Could not run avrdude: {exc}") from exc

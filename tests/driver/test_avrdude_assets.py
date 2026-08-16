@@ -7,6 +7,8 @@
 # every Linux machine got the x86_64 tarball -- which does not execute on a
 # Raspberry Pi, and failed later at flash time with an unhelpful message.
 
+import errno
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -142,3 +144,29 @@ class TestHostResolution:
         for spelling in ("linux", "linux2"):
             with patch("sys.platform", spelling):
                 assert Avrdude._os_key() == "linux"
+
+
+class TestExecutabilityGuard:
+    def test_a_wrong_architecture_binary_names_rosetta(self, tmp_path):
+        binary = tmp_path / "avrdude"
+        binary.write_bytes(b"\xcf\xfa\xed\xfe")
+        exc = OSError(errno.EBADARCH, "Bad CPU type in executable")
+        with patch("src.driver.programmers.avrdude.subprocess.run", side_effect=exc), \
+             patch("sys.platform", "darwin"):
+            with pytest.raises(RuntimeError) as err:
+                Avrdude._verify_runs(binary)
+        assert "Rosetta 2" in str(err.value)
+        assert "brew install avrdude" in str(err.value)
+
+    def test_any_other_os_error_does_not_blame_rosetta(self, tmp_path):
+        binary = tmp_path / "avrdude"
+        binary.write_bytes(b"\xcf\xfa\xed\xfe")
+        exc = OSError(errno.EACCES, "Permission denied")
+        with patch("src.driver.programmers.avrdude.subprocess.run", side_effect=exc), \
+             patch("sys.platform", "darwin"):
+            with pytest.raises(RuntimeError) as err:
+                Avrdude._verify_runs(binary)
+        assert "Rosetta" not in str(err.value)
+
+    def test_a_runnable_binary_passes(self):
+        Avrdude._verify_runs(Path("/bin/echo"))
