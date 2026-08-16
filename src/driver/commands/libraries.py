@@ -57,7 +57,16 @@ from ..core.libraries import (
 
 console = Console()
 
-DEFAULT_INDEX_URL = "https://pymcu.org/libraries/index.json"
+DEFAULT_INDEX_URL = "https://libraries.pymcu.org/index.json"
+
+# Mirror on raw.githubusercontent, tried when the primary does not answer.
+# This is not belt-and-braces: the pymcu.org zone runs Bot Fight Mode, which
+# answers 403 to requests from data centres -- and `pymcu install` runs inside
+# other people's CI. An index that only resolves from a laptop would break
+# reproducible builds for everyone else.
+MIRROR_INDEX_URL = (
+    "https://raw.githubusercontent.com/PyMCU/pymcu-libraries/main/index.json"
+)
 CACHE_DIR = Path.home() / ".pymcu"
 CACHE_FILE = CACHE_DIR / "libraries-index.json"
 DISTRIBUTION_PREFIX = "pymcu-lib-"
