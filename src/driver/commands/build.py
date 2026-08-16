@@ -732,9 +732,13 @@ def build(
         # `machine` or `digitalio`, and only when they apply to this target: a
         # library that cannot serve this chip is skipped with a reason instead
         # of failing later inside the compiler.
+        # PYMCU_LIBRARY_FILTER=0 puts every installed library on the include
+        # path regardless of what it declares.  The index generator sets it so
+        # the compiler, not the manifest, decides what builds where.
         libs, skipped_libs, lib_errors = resolve_for_target(
             target, stdlib_flavors,
             search_path=library_search_path(pyproject_path.parent.absolute()),
+            enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
         )
         if lib_errors:
             console.print("[bold red]Error:[/bold red] installed libraries are not usable:")

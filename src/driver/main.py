@@ -136,6 +136,7 @@ from .commands.bench import bench
 from .commands.upgrade import upgrade
 from .commands.coffee import coffee
 from .commands.libraries import install, libraries, search, uninstall
+from .commands.library_index import index_app
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -174,6 +175,7 @@ app.command()(stubs)
 app.command(hidden=True)(bench)
 app.add_typer(toolchain_app)
 app.add_typer(backend_app)
+app.add_typer(index_app)
 
 def _force_utf8_console():
     """Make stdout/stderr UTF-8 on Windows.

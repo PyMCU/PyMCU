@@ -419,20 +419,27 @@ def search_path_for_project(root: Path) -> list[str] | None:
 
 
 def resolve_for_target(chip: str, flavors: list[str],
-                       search_path: list[str] | None = None) -> tuple[list[Library], list[str], list[str]]:
+                       search_path: list[str] | None = None,
+                       enforce: bool = True) -> tuple[list[Library], list[str], list[str]]:
     """
     Split the installed libraries into (usable, skipped, errors) for a target.
 
     `skipped` holds human-readable "name: reason" lines for libraries that are
     installed but not applicable here -- worth showing, never worth failing on.
     `errors` holds hard problems (bad manifests, module collisions).
+
+    With enforce=False nothing is skipped: every installed library goes on the
+    include path and the compiler decides.  That is how the index measures
+    compatibility -- filtering by the manifest first would only measure the
+    manifest, and could never catch a library that builds for an architecture
+    it never declared.
     """
     libraries, errors = discover_libraries(search_path=search_path)
 
     usable: list[Library] = []
     skipped: list[str] = []
     for lib in libraries:
-        reasons = check_compatibility(lib, chip=chip, flavors=flavors)
+        reasons = check_compatibility(lib, chip=chip, flavors=flavors) if enforce else []
         if reasons:
             skipped.append(f"{lib.name}: {'; '.join(reasons)}")
         else:
