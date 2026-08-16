@@ -90,7 +90,22 @@ def _ensure_venv():
                                 style="dim",
                             )
                 else:
-                     if is_verbose:
+                    # Hay entorno del proyecto pero PyMCU no esta dentro, asi que
+                    # se sigue con el global. Silenciarlo es lo peor de los dos
+                    # mundos: el proyecto declara sus versiones en pyproject.toml
+                    # y no se usa ninguna, sin que nadie lo diga. Lo tipico es que
+                    # las dependencias no se llegaran a instalar.
+                    console.print(
+                        "[yellow]Note:[/yellow] this project has a .venv but PyMCU is not "
+                        "installed in it, so the global installation is being used and the "
+                        "versions pinned in pyproject.toml are ignored.",
+                        style="dim",
+                    )
+                    console.print(
+                        "[dim]      Install them with `uv sync`, `poetry install` or "
+                        "`.venv/bin/pip install -r requirements.txt`.[/dim]"
+                    )
+                    if is_verbose:
                         console.print(f"\\[debug] Local executable not found at {local_exe}", style="dim")
             else:
                 if is_verbose:
