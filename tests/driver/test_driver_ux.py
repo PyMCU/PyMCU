@@ -12,7 +12,7 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from src.driver.commands.build import _install_deps_hint, _parse_hex_flash_bytes
+from src.driver.commands.build import _flash_report_lines, _install_deps_hint, _parse_hex_flash_bytes
 from src.driver.main import app
 from src.driver.programmers.avrdude import AvrdudeProgrammer
 
@@ -105,11 +105,14 @@ class TestUnattendedDownloadPolicy:
 
 class TestFlashMetric:
     """
-    The driver subtracts the constant startup preamble so the figure reflects
-    user code. It counted 106 bytes -- the 26-slot vector table plus
-    __bad_interrupt -- while the published disassembly counts only the table,
-    treating __bad_interrupt as the code it is. That made the tool report 36
-    where the article says 38.
+    What gets reported after a build, and why it is two numbers now.
+
+    The driver used to subtract the 104-byte AVR preamble and present the
+    remainder as "N of 32768 bytes of program storage". That under-reported
+    occupancy: the whole image is what the programmer writes, so avrdude and
+    PyMCU disagreed by 104 bytes on every AVR build. The image is now the
+    headline figure and the preamble gets named on its own line, which keeps
+    the number the published write-ups quote without claiming it is occupancy.
     """
 
     def _hex(self, tmp_path: Path, data_bytes: int) -> Path:
@@ -127,15 +130,33 @@ class TestFlashMetric:
         path.write_text("\n".join(lines))
         return path
 
-    def test_only_the_vector_table_is_deducted(self, tmp_path):
-        assert _parse_hex_flash_bytes(self._hex(tmp_path, 104 + 38)) == 38
+    def test_the_whole_image_is_counted(self, tmp_path):
+        # No deduction here: this is what lands on the chip.
+        assert _parse_hex_flash_bytes(self._hex(tmp_path, 104 + 38)) == 142
 
     def test_the_published_blink_figure_is_reproduced(self, tmp_path):
-        # 142 bytes of image is what the gist's blink assembles to.
-        assert _parse_hex_flash_bytes(self._hex(tmp_path, 142)) == 38
+        # 142 bytes of image is what the gist's blink assembles to, and 38 is
+        # the code figure the article quotes. Both must appear.
+        lines = _flash_report_lines(142, 32768, "atmega328p")
+        assert "142 / 32768" in lines[0]
+        assert "38 bytes of your code" in lines[1]
+        assert "104 bytes of interrupt vector table" in lines[1]
 
-    def test_an_image_smaller_than_the_table_is_not_negative(self, tmp_path):
-        assert _parse_hex_flash_bytes(self._hex(tmp_path, 64)) == 64
+    def test_the_scaffold_blink_figure_is_reproduced(self, tmp_path):
+        # The scaffold uses value(1)/value(0) rather than toggle(): 150 / 46.
+        lines = _flash_report_lines(150, 32768, "atmega328p")
+        assert "150 / 32768" in lines[0]
+        assert "46 bytes of your code" in lines[1]
+
+    def test_pic_images_lose_nothing(self, tmp_path):
+        # A PIC14 image has no AVR vector table. Deducting 104 from one
+        # under-reported its size by exactly that much.
+        assert _parse_hex_flash_bytes(self._hex(tmp_path, 300)) == 300
+        assert len(_flash_report_lines(300, 8192, "pic16f877a")) == 1
+
+    def test_an_image_smaller_than_the_preamble_gets_no_breakdown(self, tmp_path):
+        # Nothing sensible to split, and a negative "your code" would be absurd.
+        assert len(_flash_report_lines(64, 32768, "atmega328p")) == 1
 
     def test_unreadable_file_reports_zero(self, tmp_path):
         assert _parse_hex_flash_bytes(tmp_path / "missing.hex") == 0

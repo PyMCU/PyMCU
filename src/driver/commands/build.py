@@ -496,18 +496,29 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     except Exception:
         pass
 
-    # Deduct the constant startup preamble that every PyMCU binary carries:
-    # the 26 interrupt vector slots, 4 bytes each (RJMP + NOP padding).
-    #
-    # Only the vector table. __bad_interrupt is a real instruction the program
-    # branches to, so it counts as code, the same way a disassembly of the image
-    # counts it -- that is the figure the published write-ups quote, and the two
-    # must agree or the number the reader sees does not match the article.
-    PREAMBLE_SIZE = 104
-    if total >= PREAMBLE_SIZE:
-        total -= PREAMBLE_SIZE
-
     return total
+
+
+_AVR_PREAMBLE_BYTES = 104
+
+
+def _flash_report_lines(flash_bytes: int, flash_total: int, target: str) -> list[str]:
+    """Render the size report: the whole image, and how much of it is user code."""
+    if flash_total:
+        pct = flash_bytes * 100 // flash_total
+        head = (f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
+                f"({pct}% of program storage)")
+    else:
+        head = f"[dim]Flash:[/dim] {flash_bytes} bytes"
+
+    lines = [head]
+    if target.lower().startswith("at") and flash_bytes > _AVR_PREAMBLE_BYTES:
+        code = flash_bytes - _AVR_PREAMBLE_BYTES
+        lines.append(
+            f"[dim]       {code} bytes of your code + "
+            f"{_AVR_PREAMBLE_BYTES} bytes of interrupt vector table[/dim]"
+        )
+    return lines
 
 def _print_explain(output_dir) -> None:
     """--explain: everything the build did on the user's behalf, as one summary.
@@ -1207,14 +1218,8 @@ def build(
 
                     flash_total = FLASH_SIZES.get(target.lower(), 0)
                     flash_bytes = bin_file.stat().st_size
-                    if flash_total:
-                        pct = flash_bytes * 100 // flash_total
-                        console.print(
-                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
-                            f"({pct}% of program storage)"
-                        )
-                    else:
-                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
+                    for line in _flash_report_lines(flash_bytes, flash_total, target):
+                        console.print(line)
 
                 else:
                     # ── Generic toolchain assembly (e.g. gputils/PIC) ──────────────────
@@ -1243,14 +1248,8 @@ def build(
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:
                     flash_total = FLASH_SIZES.get(target.lower(), 0)
-                    if flash_total:
-                        pct = flash_bytes * 100 // flash_total
-                        console.print(
-                            f"[dim]Flash:[/dim] {flash_bytes} / {flash_total} bytes "
-                            f"({pct}% of program storage)"
-                        )
-                    else:
-                        console.print(f"[dim]Flash:[/dim] {flash_bytes} bytes")
+                    for line in _flash_report_lines(flash_bytes, flash_total, target):
+                        console.print(line)
 
             # Step 3: Cleanup
             progress.update(build_task, description="Cleaning up...")
