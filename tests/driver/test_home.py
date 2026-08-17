@@ -171,28 +171,3 @@ class TestConfig:
         with pytest.raises(urllib.error.HTTPError) as exc:
             _post(f"{base}/api/install", token, {})
         assert exc.value.code == 400
-
-
-class TestAssembly:
-    """
-    The assembly is compiled on request, not stored: it is only true for one
-    chip and one compiler version, which are exactly the two things that move
-    underneath a published file.
-    """
-
-    def test_an_unknown_library_says_to_install_it_first(self, server):
-        base, token, _root = server
-        _status, body = _get(f"{base}/api/assembly?name=nothing", token=token)
-        assert body["ok"] is False
-        assert "install" in body["error"].lower()
-
-    def test_no_name_is_refused(self, server):
-        base, token, _root = server
-        _status, body = _get(f"{base}/api/assembly?name=", token=token)
-        assert body["ok"] is False
-
-    def test_it_needs_the_token_like_everything_else(self, server):
-        base, _token, _root = server
-        with pytest.raises(urllib.error.HTTPError) as exc:
-            _get(f"{base}/api/assembly?name=neopixel")
-        assert exc.value.code == 403

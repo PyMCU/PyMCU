@@ -340,6 +340,7 @@ def _installed_json(lib: Library, project: Project) -> dict:
         "arch": list(lib.arch),
         "chips": list(lib.chips),
         "repository": lib.repository,
+        "license": lib.license,
         "reasons": reasons,
         "usable": not reasons,
     }

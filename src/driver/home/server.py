@@ -39,8 +39,6 @@ from urllib.parse import parse_qs, urlparse
 
 from ..commands import libraries as lib_cmd
 from ..core.libraries import read_description, read_example, site_packages_of
-from ..commands.library_index import _pymcu_executable
-from ..core.library_index import build_example_assembly
 from ..core.project_config import apply_changes, available_boards, describe
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -54,8 +52,6 @@ class HomeState:
         self.project = project
         self.token = token
         self.lock = threading.Lock()
-        # (distribution, version, chip) -> the assembly that came out.
-        self.assembly: dict[tuple[str, str, str], dict] = {}
 
     def reload_project(self) -> None:
         """Re-read pyproject.toml after a change written by an install."""
@@ -158,8 +154,6 @@ class HomeHandler(BaseHTTPRequestHandler):
             self._send_json({"libraries": self._installed_payload()})
         elif parsed.path == "/api/index":
             self._send_json(self._index_payload(refresh=query.get("refresh") == ["1"]))
-        elif parsed.path == "/api/assembly":
-            self._send_json(self._assembly_payload(query.get("name", [""])[0]))
         else:
             self._error(404, "not found")
 
@@ -200,42 +194,6 @@ class HomeHandler(BaseHTTPRequestHandler):
             self._error(500, "the UI is missing from this installation")
             return
         self._send(200, html, "text/html; charset=utf-8")
-
-    def _assembly_payload(self, name: str) -> dict:
-        """
-        Compile an installed library's example and return the assembly.
-
-        Cached per (library, version, chip): the answer only changes when one of
-        those does, and compiling takes seconds -- long enough that repeating it
-        on every tab switch would be felt.
-        """
-        project = self.state.project
-        if not name:
-            return {"ok": False, "error": "No library named."}
-        if not project.chip:
-            return {"ok": False, "error": "This project declares no board or target."}
-
-        installed, _ = lib_cmd._installed_libraries(project)
-        lib = next((candidate for candidate in installed if candidate.name == name), None)
-        if lib is None:
-            return {"ok": False,
-                    "error": "Install the library first: the assembly comes from compiling it."}
-
-        key = (lib.distribution, lib.version, project.chip)
-        with self.state.lock:
-            cached = self.state.assembly.get(key)
-        if cached is not None:
-            return cached
-
-        pymcu = _pymcu_executable()
-        if pymcu is None:
-            return {"ok": False, "error": "The pymcu executable is not on PATH."}
-
-        search = site_packages_of(project.venv) if project.venv.exists() else None
-        result = build_example_assembly(lib, project.chip, pymcu=pymcu, env_paths=search)
-        with self.state.lock:
-            self.state.assembly[key] = result
-        return result
 
     def _apply_config(self, body: dict) -> None:
         """
