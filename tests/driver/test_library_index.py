@@ -195,7 +195,7 @@ class TestExampleSource:
         unpacked = tmp_path / "sdist-root"
         (unpacked / "examples" / "basic" / "src").mkdir(parents=True)
 
-        monkeypatch.setattr(idx, "fetch_sdist", lambda *_a, **_k: unpacked)
+        monkeypatch.setattr(idx, "fetch_sdist", lambda *_a, **_k: (unpacked, "sdist"))
 
         lib = _library(tmp_path, examples={"basic": "examples/basic"})
         source, how = idx.example_source(lib, "", tmp_path / "work")
@@ -211,13 +211,17 @@ class TestExampleSource:
         Reporting the two the same way would mark a perfectly good library
         `broken` in the index because its author published no sdist.
         """
-        monkeypatch.setattr(idx, "fetch_sdist", lambda *_a, **_k: None)
+        monkeypatch.setattr(idx, "fetch_sdist",
+                            lambda d, v, _dest: (None, f"{d} {v} publishes no sdist"))
 
         lib = _library(tmp_path, examples={"basic": "examples/basic"})
         source, how = idx.example_source(lib, "", tmp_path / "work")
 
         assert source is None
-        assert how == "no sdist available"
+        # The reason has to name the actual cause. "no sdist available" was
+        # printed for two libraries that do publish one, when what had
+        # happened was a TLS failure on the measuring machine.
+        assert how == "pymcu-lib-dht11 0.2.0 publishes no sdist"
 
     def test_a_library_without_examples_says_so(self, tmp_path):
         source, how = idx.example_source(_library(tmp_path), "", tmp_path / "work")
@@ -238,7 +242,7 @@ class TestExampleSource:
 
         def _fetch(distribution, version, dest):
             calls.append(distribution)
-            return unpacked
+            return unpacked, "sdist"
 
         monkeypatch.setattr(idx, "fetch_sdist", _fetch)
 
@@ -255,3 +259,96 @@ class TestExampleSource:
         assert len(calls) == 1
         assert len(entry.targets) > 1
         assert entry.example["source"].strip() == "def main():\n    pass"
+
+
+class TestOurFaultsAreNotTheirFaults:
+    """
+    Two failures that reported someone else's library as broken.
+
+    Both showed up generating the first real index, and both said the wrong
+    thing in the same way: they took something about the measuring machine and
+    published it as a fact about the library being measured.
+    """
+
+    def test_a_missing_backend_is_unmeasured_not_failed(self, tmp_path, monkeypatch):
+        """
+        The index said "does not build for rp2040" about two AVR libraries.
+
+        What had happened is that the environment doing the measuring had only
+        the AVR backend installed, so the compiler refused the target before
+        it ever looked at the library.
+        """
+        example = tmp_path / "examples" / "basic"
+        (example / "src").mkdir(parents=True)
+        (example / "pyproject.toml").write_text('[tool.pymcu]\nboard = "arduino_uno"\n')
+        (example / "src" / "main.py").write_text("def main():\n    pass\n")
+
+        class _Result:
+            returncode = 1
+            stdout = ''
+            stderr = ('No backend for rp2040. Install it with:\n'
+                      '  pip install "pymcu-compiler[arm]"\n')
+
+        monkeypatch.setattr(idx.subprocess, "run", lambda *_a, **_k: _Result())
+
+        lib = _library(tmp_path, examples={"basic": "examples/basic"})
+        result = idx.measure_example(lib, "rp2040", pymcu=Path("pymcu"),
+                                    example_dir=example)
+
+        assert result.build == idx.BUILD_UNMEASURED
+        assert "not installed" in result.detail
+
+    def test_an_unmeasured_target_is_not_held_against_the_manifest(self, tmp_path):
+        """
+        Telling an author their supports.arch is wrong needs a real build.
+
+        With a missing backend there is no measurement, so a warning here
+        would be an accusation resting on a build that never ran.
+        """
+        lib = _library(tmp_path, arch=["avr", "arm"])
+        targets = {
+            "atmega328p": idx.TargetResult("atmega328p", idx.BUILD_OK, flash=900),
+            "rp2040": idx.TargetResult("rp2040", idx.BUILD_UNMEASURED,
+                                       detail="backend for rp2040 not installed"),
+        }
+        assert idx.compare_with_manifest(lib, targets) == []
+
+    def test_a_real_failure_is_still_reported(self, tmp_path):
+        """The quiet path must not swallow the case it exists to catch."""
+        lib = _library(tmp_path, arch=["avr", "arm"])
+        targets = {
+            "rp2040": idx.TargetResult("rp2040", idx.BUILD_FAILED,
+                                       detail="CompileError: not supported here"),
+        }
+        warnings = idx.compare_with_manifest(lib, targets)
+        assert len(warnings) == 1
+        assert "declares arm" in warnings[0]
+
+
+class TestFailureReason:
+    """What gets published as the reason a build failed."""
+
+    def test_the_temporary_path_is_not_the_reason(self):
+        """
+        A diagnostic starts with the path of the copy that was compiled.
+
+        The first real index recorded that path as the reason two libraries
+        did not build: it filled the whole 200-character budget on its own and
+        said nothing at all.
+        """
+        output = (
+            '/private/var/folders/t_/n_fcfh5n0yv8fryx9b9sy2m40000gn/T/tmph5jb45kc/'
+            'example/src/main.py:-1:1: error: TypeError: cannot shift by the string '
+            '"PB5" -- a number is expected here.\n'
+            'Compilation Error: Compilation failed (see diagnostics above)\n'
+        )
+        reason = idx._failure_reason(output)
+        assert reason.startswith("TypeError: cannot shift by the string")
+        assert "tmph5jb45kc" not in reason
+
+    def test_output_without_a_diagnostic_falls_back_to_the_last_line(self):
+        reason = idx._failure_reason("something went wrong\nand then stopped\n")
+        assert reason == "and then stopped"
+
+    def test_empty_output_still_says_something(self):
+        assert idx._failure_reason("   \n") == "build failed"

@@ -64,6 +64,16 @@ BUILD_OK = "ok"
 BUILD_FAILED = "failed"
 BUILD_UNSUPPORTED = "unsupported"
 
+# The build never ran, so nothing was learned about the library. Distinct from
+# "failed" on purpose: a missing backend, or an index host that cannot be
+# reached, says something about the machine doing the measuring, and
+# publishing it as "does not build here" would put a claim about someone
+# else's library on a fault of our own.
+BUILD_UNMEASURED = "unmeasured"
+
+# What the driver prints when the backend for a chip is not installed.
+_MISSING_BACKEND = "pymcu-compiler["
+
 
 @dataclass
 class TargetResult:
@@ -216,15 +226,19 @@ def measure_example(lib: Library, chip: str, *, pymcu: Path,
         result = subprocess.run([str(pymcu), "build"], cwd=work,
                                 capture_output=True, text=True, env=env)
         if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip().splitlines()
-            return TargetResult(chip, BUILD_FAILED,
-                                detail=detail[-1][:200] if detail else "build failed")
+            output = (result.stderr or result.stdout or "")
+            message = _failure_reason(output)
+            if _MISSING_BACKEND in output:
+                # Our environment, not their library.
+                return TargetResult(chip, BUILD_UNMEASURED,
+                                    detail=f"backend for {chip} not installed")
+            return TargetResult(chip, BUILD_FAILED, detail=message)
 
         flash, ram = _parse_flash(result.stdout)
         return TargetResult(chip, BUILD_OK, flash=flash, ram=ram)
 
 
-def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
+def fetch_sdist(distribution: str, version: str, dest: Path) -> tuple[Path | None, str]:
     """
     Unpack the distribution's sdist into *dest*, returning its root.
 
@@ -246,8 +260,8 @@ def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
                   if context else urllib.request.urlopen(url, timeout=30))
         with opener as response:
             metadata = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return None, f"could not reach PyPI: {exc}"
 
     archive_url = next(
         (f["url"] for f in metadata.get("urls", [])
@@ -255,7 +269,7 @@ def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
         None,
     )
     if archive_url is None:
-        return None
+        return None, f"{distribution} {version} publishes no sdist"
 
     archive = dest / "sdist.tar.gz"
     try:
@@ -264,8 +278,8 @@ def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
                   if context else urllib.request.urlopen(archive_url, timeout=60))
         with opener as response:
             archive.write_bytes(response.read())
-    except (urllib.error.URLError, OSError):
-        return None
+    except (urllib.error.URLError, OSError) as exc:
+        return None, f"could not download the sdist: {exc}"
 
     import tarfile
 
@@ -276,11 +290,11 @@ def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
             # anything that is not a plain file or directory: this is an
             # archive from the network, unpacked by CI.
             tar.extractall(unpacked, filter="data")
-    except (tarfile.TarError, OSError):
-        return None
+    except (tarfile.TarError, OSError) as exc:
+        return None, f"could not unpack the sdist: {exc}"
 
     roots = [p for p in unpacked.iterdir() if p.is_dir()]
-    return roots[0] if len(roots) == 1 else unpacked
+    return (roots[0] if len(roots) == 1 else unpacked), "sdist"
 
 
 def example_source(lib: Library, name: str, workdir: Path) -> tuple[Path | None, str]:
@@ -301,12 +315,34 @@ def example_source(lib: Library, name: str, workdir: Path) -> tuple[Path | None,
     if not rel:
         return None, "none declared"
 
-    root = fetch_sdist(lib.distribution, lib.version, workdir)
+    root, reason = fetch_sdist(lib.distribution, lib.version, workdir)
     if root is None:
-        return None, "no sdist available"
+        return None, reason
 
     candidate = root / rel
     return (candidate, "sdist") if candidate.is_dir() else (None, f"sdist has no {rel}")
+
+
+def _failure_reason(output: str) -> str:
+    """
+    The line worth publishing out of a failed build's output.
+
+    The last line is usually the path of the temporary directory the example
+    was copied into, which tells a reader nothing -- the first index recorded
+    "/private/var/folders/.../tmpg0ohl5wd/e" as the reason two libraries did
+    not build. The diagnostic itself is the line that says so.
+    """
+    lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
+    for line in lines:
+        marker = line.find("error:")
+        if marker != -1:
+            # From the marker on, not the whole line: a diagnostic starts with
+            # the path of the temporary directory the example was copied into,
+            # which is both meaningless to a reader and long enough to fill the
+            # 200-character budget on its own -- the first index published
+            # "/private/var/folders/.../tmph5jb45kc/exampl" as a reason.
+            return line[marker + len("error:"):].strip()[:200]
+    return lines[-1][:200] if lines else "build failed"
 
 
 def compare_with_manifest(lib: Library, targets: dict[str, TargetResult]) -> list[str]:
@@ -323,6 +359,11 @@ def compare_with_manifest(lib: Library, targets: dict[str, TargetResult]) -> lis
     for chip, result in targets.items():
         arch = arch_of_chip.get(chip)
         if arch is None:
+            continue
+        if result.build == BUILD_UNMEASURED:
+            # Nothing was learned here, so there is nothing to hold against
+            # the author: telling someone their manifest is wrong on the
+            # strength of a build that never ran is worse than staying quiet.
             continue
         declared = arch in lib.arch
         built = result.build == BUILD_OK

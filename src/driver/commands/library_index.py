@@ -32,7 +32,11 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError, version as dist_version
+from importlib.metadata import (
+    PackageNotFoundError,
+    distributions as installed_distributions,
+    version as dist_version,
+)
 from pathlib import Path
 from typing import Optional
 
@@ -55,7 +59,29 @@ index_app = typer.Typer(
 )
 
 
-def _compiler_version() -> str:
+def _compiler_version(venv: Path | None = None) -> str:
+    """
+    The version of the compiler that did the measuring.
+
+    When the measurement ran inside *venv*, that is the version to record --
+    not this process's own. The first real index said it had been measured
+    with 0.1.0a3, the editable install the generator happened to be running
+    from, while every figure in it came from the a6 in the throwaway
+    environment.
+    """
+    if venv is not None:
+        from ..core.libraries import site_packages_of
+
+        for site in site_packages_of(venv):
+            try:
+                found = installed_distributions(path=[site])
+                for dist in found:
+                    name = ((dist.metadata["Name"] if dist.metadata else "") or "").lower()
+                    if name.replace("_", "-") == "pymcu-compiler":
+                        return dist.version
+            except Exception:
+                continue
+
     try:
         return dist_version("pymcu-compiler")
     except PackageNotFoundError:
@@ -90,7 +116,12 @@ def _prepare_venv(distributions: list[str], venv: Path, *, pre: bool) -> bool:
         return False
 
     ok = True
-    for distribution in distributions:
+    # Every backend, not just the one this machine happens to have. The index
+    # states which architectures a library builds for, and a missing backend
+    # makes that compile fail for a reason that has nothing to do with the
+    # library -- publishing it as "does not build on rp2040" would be a
+    # measurement of our own environment.
+    for distribution in ["pymcu-compiler[all]", *distributions]:
         cmd = [uv, "pip", "install", "--python", str(venv), distribution]
         if pre:
             cmd.append("--prerelease=allow")
@@ -142,9 +173,21 @@ def index_build(
         console.print(f"[red]{venv} does not exist. Pass --from to create it.[/red]")
         raise typer.Exit(code=1)
 
+    # Measure with the compiler inside the environment being measured, when it
+    # has one: that is the install carrying every backend, and using the
+    # outside one meant the matrix reflected whichever extras this machine
+    # happened to have.
+    # Absolute: each build runs with its cwd inside a temporary copy of the
+    # example, so a relative path here resolves against that directory and the
+    # compiler is simply not found.
+    inner = (venv / ("Scripts" if sys.platform == "win32" else "bin") / (
+        "pymcu.exe" if sys.platform == "win32" else "pymcu")).resolve()
+    if inner.exists():
+        pymcu = inner
+
     console.print("[bold]Measuring[/bold] (compiling each example per architecture) ...")
     index, problems = build_index(
-        venv, pymcu=pymcu, compiler_version=_compiler_version(), generated=_today()
+        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today()
     )
 
     for problem in problems:
@@ -182,7 +225,7 @@ def index_verify(
         raise typer.Exit(code=1)
 
     index, problems = build_index(
-        venv, pymcu=pymcu, compiler_version=_compiler_version(), generated=_today()
+        venv, pymcu=pymcu, compiler_version=_compiler_version(venv), generated=_today()
     )
 
     if as_json:

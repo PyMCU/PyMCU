@@ -18,6 +18,12 @@ dependencies = [
     "rich>=13.0.0",
     "questionary>=2.0",
     "packaging>=23.0",
+    # Every HTTPS request this driver makes -- toolchains, the library index,
+    # sdists -- fails with CERTIFICATE_VERIFY_FAILED on a python.org macOS
+    # build until the user runs Install Certificates.command. The code already
+    # preferred certifi when it happened to be installed; depending on it
+    # removes a whole class of errors that read like the server being down.
+    "certifi>=2023.7.22",
     "pymcu-stdlib>=0.1.0a6",
     "pymcu-sdk>=0.1.0a6",
 ]
