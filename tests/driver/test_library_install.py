@@ -291,3 +291,98 @@ class TestInstallerChoice:
         assert cmd.install_command(project, "pymcu-lib-dht11", pre=True) is None
 
 
+
+
+class TestVerifyImports:
+    """
+    What `--verify` compiles, now that no example ships in the wheel.
+
+    It used to build the library's example, which is why examples were in the
+    package in the first place -- and being in the package is what put them on
+    the include path for every project in the environment. Importing the
+    declared modules asks a narrower question that needs nothing but the
+    wheel: do these modules resolve, and does their code compile, here.
+    """
+
+    def _library(self, tmp_path: Path) -> core.Library:
+        return core.Library(
+            name="dht11",
+            distribution="pymcu-lib-dht11",
+            version="0.2.0",
+            package_dir=tmp_path,
+            modules=["dht11", "_dht11"],
+            arch=["avr"],
+            layer="native",
+        )
+
+    def _project(self, tmp_path: Path, flavors=()):
+        config = tmp_path / "pyproject.toml"
+        stdlib = ("stdlib = [" + ", ".join(f'"{f}"' for f in flavors) + "]\n") if flavors else ""
+        config.write_text(
+            "[project]\nname = 'app'\nversion = '0.1.0'\n\n"
+            '[tool.pymcu]\ntarget = "atmega328p"\n' + stdlib
+        )
+        import tomlkit as _tomlkit
+        return cmd.Project(config, _tomlkit.loads(config.read_text()))
+
+    def test_it_compiles_a_program_importing_every_public_module(self, tmp_path,
+                                                                 monkeypatch):
+        written = {}
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def _fake_run(cmd_args, **kwargs):
+            work = Path(kwargs["cwd"])
+            written["main"] = (work / "src" / "main.py").read_text()
+            written["config"] = (work / "pyproject.toml").read_text()
+            return _Result()
+
+        monkeypatch.setattr(cmd, "_pymcu_executable", lambda: Path("pymcu"))
+        monkeypatch.setattr(cmd.subprocess, "run", _fake_run)
+
+        ok, detail = cmd.verify_imports(self._library(tmp_path), self._project(tmp_path))
+
+        assert ok, detail
+        assert "import dht11" in written["main"]
+        # Private modules are the library's own business; importing one
+        # directly is not something a user is promised.
+        assert "import _dht11" not in written["main"]
+        assert 'target = "atmega328p"' in written["config"]
+
+    def test_the_projects_layers_are_carried_over(self, tmp_path, monkeypatch):
+        """A library resolves differently per layer, so the check must match."""
+        written = {}
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def _fake_run(cmd_args, **kwargs):
+            written["config"] = (Path(kwargs["cwd"]) / "pyproject.toml").read_text()
+            return _Result()
+
+        monkeypatch.setattr(cmd, "_pymcu_executable", lambda: Path("pymcu"))
+        monkeypatch.setattr(cmd.subprocess, "run", _fake_run)
+
+        cmd.verify_imports(self._library(tmp_path),
+                           self._project(tmp_path, flavors=["micropython"]))
+
+        assert "micropython" in written["config"]
+
+    def test_a_failed_build_reports_the_last_line(self, tmp_path, monkeypatch):
+        class _Result:
+            returncode = 1
+            stdout = "compiling\nerror: DHT11 is not supported here\n"
+            stderr = ""
+
+        monkeypatch.setattr(cmd, "_pymcu_executable", lambda: Path("pymcu"))
+        monkeypatch.setattr(cmd.subprocess, "run", lambda *_a, **_k: _Result())
+
+        ok, detail = cmd.verify_imports(self._library(tmp_path), self._project(tmp_path))
+
+        assert not ok
+        assert "not supported here" in detail

@@ -54,6 +54,7 @@ from ..core.libraries import (
     discover_libraries,
     find_module_collisions,
     site_packages_of,
+    ssl_context,
 )
 
 console = Console()
@@ -126,24 +127,9 @@ def last_index_error() -> str:
     return _LAST_INDEX_ERROR
 
 
-def _ssl_context():
-    """
-    A context with certificates that actually verify, when we can build one.
-
-    The python.org macOS builds ship without the system trust store until
-    `Install Certificates.command` is run, so every HTTPS request fails with
-    CERTIFICATE_VERIFY_FAILED -- which reads exactly like the index being down.
-    certifi is not a dependency, but pip pulls it into most environments, and
-    using it when present turns a dead end into a working command.
-    """
-    try:
-        import ssl
-
-        import certifi  # type: ignore
-
-        return ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        return None
+# Shared with the index builder, which fetches sdists over the same HTTPS and
+# hits the same macOS trust-store problem.
+_ssl_context = ssl_context
 
 
 def _download_index(url: str) -> dict | None:
@@ -537,46 +523,66 @@ def _pymcu_executable() -> Path | None:
     return Path(found) if found else None
 
 
-def verify_example(lib: Library, project: Project) -> tuple[bool, str]:
+def verify_imports(lib: Library, project: Project) -> tuple[bool, str]:
     """
-    Compile the library's example for this project's chip.
+    Compile a program that imports what the library says it provides.
 
-    The example is copied and retargeted rather than built in place: it ships
-    pinned to whatever board its author used, and the only question worth
-    answering here is whether it builds for *this* chip.
+    This used to build the library's example, which meant every wheel had to
+    carry one -- examples are a repository and sdist thing, like tests, and
+    putting them in the package is what let them leak onto the include path.
+    Importing the declared modules asks a narrower question and a more
+    honest one: do the modules this library promises resolve, and does their
+    code compile, for *this* project's chip and layer. The full per-chip
+    measurement is the index's job, where the sdist is at hand.
     """
-    example = lib.example_dir()
-    if example is None:
-        return True, "no example shipped -- nothing to verify"
+    modules = [m for m in lib.modules if not m.startswith("_")]
+    if not modules:
+        return True, "nothing public to verify"
 
     pymcu = _pymcu_executable()
     if pymcu is None:
         return True, "pymcu executable not found -- skipped"
 
     with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "example"
-        shutil.copytree(example, work)
+        work = Path(tmp) / "verify"
+        (work / "src").mkdir(parents=True)
 
-        config = work / "pyproject.toml"
-        if not config.exists():
-            return True, "example has no pyproject.toml -- skipped"
+        doc = tomlkit.document()
+        project_table = tomlkit.table()
+        project_table["name"] = "pymcu-import-check"
+        project_table["version"] = "0.0.0"
+        project_table["dependencies"] = tomlkit.array()
+        doc["project"] = project_table
 
-        doc = tomlkit.loads(config.read_text(encoding="utf-8"))
-        pymcu_cfg = doc.setdefault("tool", tomlkit.table()).setdefault("pymcu", tomlkit.table())
-        pymcu_cfg.pop("board", None)
+        pymcu_cfg = tomlkit.table()
         pymcu_cfg["target"] = project.chip
+        pymcu_cfg["sources"] = "src"
+        pymcu_cfg["entry"] = "main.py"
         if project.flavors:
             arr = tomlkit.array()
             for flavor in project.flavors:
                 arr.append(flavor)
             pymcu_cfg["stdlib"] = arr
-        config.write_text(tomlkit.dumps(doc), encoding="utf-8")
+        tool = tomlkit.table()
+        tool["pymcu"] = pymcu_cfg
+        doc["tool"] = tool
+        (work / "pyproject.toml").write_text(tomlkit.dumps(doc), encoding="utf-8")
+
+        # Importing a module is enough to compile it: the frontend reads the
+        # whole file. Nothing is called, so this stays valid whatever the
+        # library's API looks like.
+        imports = "\n".join(f"import {module}" for module in modules)
+        (work / "src" / "main.py").write_text(
+            f"{imports}\n\n\ndef main():\n    while True:\n        pass\n",
+            encoding="utf-8",
+        )
 
         result = subprocess.run(
             [str(pymcu), "build"], cwd=work, capture_output=True, text=True
         )
         if result.returncode == 0:
-            return True, "example builds for this chip"
+            listed = ", ".join(modules)
+            return True, f"{listed} compiles for this chip"
 
         detail = (result.stderr or result.stdout or "").strip().splitlines()
         return False, detail[-1] if detail else "build failed"
@@ -707,11 +713,11 @@ def install_library(project: Project, name: str, *, verify: bool = True,
         return result.failed(rollback(project, lib.distribution, "; ".join(problems)))
 
     if verify:
-        ok, detail = verify_example(lib, project)
+        ok, detail = verify_imports(lib, project)
         if not ok:
             return result.failed(rollback(
                 project, lib.distribution,
-                f"its example does not build for {project.chip}: {detail}"))
+                f"it does not compile for {project.chip}: {detail}"))
         result.log.append(f"Verified: {detail}")
 
     # `uv add` already recorded it; writing again would list it twice.
