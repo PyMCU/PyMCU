@@ -766,10 +766,16 @@ def build(
             enforce=os.environ.get("PYMCU_LIBRARY_FILTER") != "0",
         )
         if lib_errors:
-            console.print("[bold red]Error:[/bold red] installed libraries are not usable:")
+            # Reported, not fatal. These are other people's packages: one
+            # library with a broken manifest used to stop every build in the
+            # environment, including builds that never import it. The library
+            # is left off the include path instead, so a project that does
+            # import it fails on the import itself -- with this warning
+            # already on screen to say why.
+            console.print("[bold yellow]Warning:[/bold yellow] installed libraries "
+                          "the compiler cannot use:")
             for problem in lib_errors:
                 console.print(f"  {problem}")
-            raise typer.Exit(code=1)
 
         for note in skipped_libs:
             console.print(f"[bold yellow]Skipping library[/bold yellow] {note}")

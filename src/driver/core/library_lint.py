@@ -250,6 +250,50 @@ def check_surface(package_dir: Path, lock_path: Path, *, write: bool) -> list[Fi
 # Manifest
 # ---------------------------------------------------------------------------
 
+def check_stray_sources(package_dir: Path, sources: str) -> list[Finding]:
+    """
+    Nothing but the package's own __init__.py may sit outside sources/.
+
+    The compiler is handed sources/ and resolves imports by walking it, so a
+    stray .py elsewhere in the package is either dead weight in the wheel or,
+    if someone later widens the include path again, a module every project in
+    the world can import. This is the check that keeps that from coming back:
+    an examples/ directory inside the package used to be reachable as
+    `import examples` from any firmware, and two libraries shipping one
+    shadowed each other silently.
+    """
+    source_root = package_dir / sources
+    findings: list[Finding] = []
+
+    for path in package_dir.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        if path.is_relative_to(source_root):
+            continue
+        if path.parent == package_dir and path.name == "__init__.py":
+            continue                      # the package is a real package
+        rel = path.relative_to(package_dir).as_posix()
+        findings.append(Finding(
+            rel, 0, 0, "error", "stray-source",
+            f"{rel} sits outside {sources}/, where the compiler cannot see it",
+            f"Move it into {sources}/ if the compiler should read it. Examples, "
+            "tests and tooling belong at the distribution root, outside the "
+            "package, so they travel in the sdist and not the wheel.",
+        ))
+
+    for path in sorted(package_dir.glob("*")):
+        if path.is_dir() and path.name not in {sources, "__pycache__"}:
+            rel = path.relative_to(package_dir).as_posix()
+            findings.append(Finding(
+                rel, 0, 0, "warn", "stray-directory",
+                f"{rel}/ is in the wheel but is not read by anything",
+                "Directories other than the source tree belong at the "
+                "distribution root, so they ship in the sdist only.",
+            ))
+
+    return findings
+
+
 def check_manifest(package_dir: Path) -> list[Finding]:
     """Validate pymcu.toml and its claims about what the package contains."""
     from .libraries import MANIFEST_NAME, ManifestError, parse_manifest
@@ -271,14 +315,16 @@ def check_manifest(package_dir: Path) -> list[Finding]:
 
     findings: list[Finding] = []
     for module in lib.modules:
-        target = package_dir / f"{module}.py"
-        package = package_dir / module / "__init__.py"
+        target = lib.source_dir / f"{module}.py"
+        package = lib.source_dir / module / "__init__.py"
         if not target.exists() and not package.exists():
             findings.append(Finding(
                 rel, 0, 0, "error", "module-missing",
-                f"provides.modules lists '{module}', which is not in the package",
-                f"Add {module}.py, or drop it from provides.modules.",
+                f"provides.modules lists '{module}', which is not in {lib.sources}/",
+                f"Add {lib.sources}/{module}.py, or drop it from provides.modules.",
             ))
+
+    findings.extend(check_stray_sources(package_dir, lib.sources))
 
     for flavor in lib.adapters:
         if lib.adapter_dir(flavor) is None:
@@ -321,16 +367,35 @@ def _surface_lock_path(package_dir: Path) -> Path:
     return package_dir / SURFACE_LOCK
 
 
+def _declared_source_dir(package_dir: Path) -> Path:
+    """The source tree the manifest declares, or the package when it cannot say."""
+    from .libraries import MANIFEST_NAME, ManifestError, parse_manifest
+
+    try:
+        lib = parse_manifest(package_dir / MANIFEST_NAME,
+                             distribution=package_dir.name.replace("_", "-"),
+                             version="0", package_dir=package_dir)
+    except ManifestError:
+        return package_dir
+    return lib.source_dir
+
+
 def lint_library(package_dir: Path, *, write_surface: bool = False) -> list[Finding]:
     """Run every library check over a package directory."""
     findings = check_manifest(package_dir)
 
-    for path in _sources(package_dir):
-        rel = path.relative_to(package_dir).as_posix()
+    # The per-file checks are about what the compiler will read, so they run
+    # over the source tree.  When the manifest is unreadable there is no
+    # declared source directory to trust, and the package itself is the only
+    # thing left to look at -- better a noisy pass than a silent one.
+    source_root = _declared_source_dir(package_dir)
+
+    for path in _sources(source_root):
+        rel = path.relative_to(source_root).as_posix()
         findings.extend(check_ascii(path, rel))
         findings.extend(check_dispatch(path, rel))
 
     findings.extend(
-        check_surface(package_dir, _surface_lock_path(package_dir), write=write_surface)
+        check_surface(source_root, _surface_lock_path(package_dir), write=write_surface)
     )
     return findings

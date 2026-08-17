@@ -52,6 +52,12 @@ from pathlib import Path
 ENTRY_POINT_GROUP = "pymcu.libraries"
 MANIFEST_NAME = "pymcu.toml"
 
+# Subdirectory of the package holding the sources the compiler reads.  The
+# package itself is an ordinary Python package -- importable, with an
+# __init__.py -- and this is package data inside it, which is the only part
+# put on the include path.
+DEFAULT_SOURCES = "mcu"
+
 # Bumped when the compiler stops accepting syntax a previous level allowed.
 # A library declaring a higher level than this driver understands is refused
 # during resolution instead of failing halfway through a build.
@@ -70,6 +76,7 @@ class Library:
     distribution: str
     version: str
     package_dir: Path
+    sources: str = DEFAULT_SOURCES
     summary: str = ""
     license: str = ""
     repository: str = ""
@@ -85,22 +92,41 @@ class Library:
     language_level: int = 1
     examples: dict[str, str] = field(default_factory=dict)
 
+    @property
+    def source_dir(self) -> Path:
+        """
+        The directory the compiler is given, and the only one it can see.
+
+        Not the package directory.  Everything under here is reachable from a
+        user's firmware by a plain import, so the boundary has to be a
+        directory the author put things in deliberately -- when this returned
+        the package itself, a library's examples/ became importable, and two
+        libraries shipping examples/ shadowed each other.
+        """
+        return self.package_dir / self.sources
+
     def adapter_dir(self, flavor: str) -> Path | None:
         """Directory of the compat adapter for *flavor*, if the library ships one."""
-        candidate = self.package_dir / "compat" / flavor
+        candidate = self.source_dir / "compat" / flavor
         return candidate if candidate.is_dir() else None
 
     def example_dir(self, name: str = "") -> Path | None:
-        """Directory of a declared example, resolved relative to the distribution root."""
+        """
+        Directory of a declared example, when one is reachable on disk.
+
+        Examples do not travel in the wheel -- they are a repository and sdist
+        thing, like tests and docs -- so this is normally None for an installed
+        library and callers fall back to the copy the index carries.  It still
+        resolves for a library being worked on from a source checkout, which is
+        what `pymcu index build` measures from.
+        """
         if not self.examples:
             return None
         rel = self.examples.get(name) if name else next(iter(self.examples.values()))
         if not rel:
             return None
-        # examples/ sits beside src/<package>/, i.e. two levels above the
-        # package directory in the canonical layout.  Installed wheels usually
-        # do not ship it, hence the existence check.
-        for base in (self.package_dir, self.package_dir.parent, self.package_dir.parent.parent):
+        # examples/ sits at the distribution root, beside src/<package>/.
+        for base in (self.package_dir.parent.parent, self.package_dir.parent, self.package_dir):
             candidate = (base / rel).resolve()
             if candidate.is_dir():
                 return candidate
@@ -152,11 +178,30 @@ def parse_manifest(manifest_path: Path, *, distribution: str, version: str,
     if not modules:
         raise ManifestError(f"{manifest_path}: [library.provides] modules is required")
 
+    sources = str(lib.get("sources", DEFAULT_SOURCES))
+    if Path(sources).is_absolute() or ".." in Path(sources).parts:
+        raise ManifestError(
+            f"{manifest_path}: [library] sources must be a directory inside the "
+            f"package, not '{sources}'"
+        )
+    if not (package_dir / sources).is_dir():
+        # Refused rather than defaulted to the package root.  Putting the
+        # package itself on the include path is what let examples/ leak into
+        # every project's namespace; a library whose sources are not where it
+        # says they are is a layout error to fix, not a case to fall back on.
+        raise ManifestError(
+            f"{manifest_path}: [library] sources = '{sources}' but "
+            f"{package_dir / sources} does not exist. The compiler reads that "
+            "directory and nothing else in the package -- move the modules "
+            f"into {sources}/, or point 'sources' at the directory holding them."
+        )
+
     return Library(
         name=str(name),
         distribution=distribution,
         version=version,
         package_dir=package_dir,
+        sources=sources,
         summary=str(lib.get("summary", "")),
         license=str(lib.get("license", "")),
         repository=str(lib.get("repository", "")),
@@ -200,6 +245,27 @@ def load_library(module_name: str, *, distribution: str = "") -> Library:
 README_LIMIT = 24_000
 
 
+def ssl_context():
+    """
+    A context with certificates that actually verify, when we can build one.
+
+    The python.org macOS builds ship without the system trust store until
+    `Install Certificates.command` is run, so every HTTPS request fails with
+    CERTIFICATE_VERIFY_FAILED -- which reads exactly like the server being
+    down. certifi is not a dependency, but pip pulls it into most
+    environments, and using it when present turns a dead end into a working
+    command.
+    """
+    try:
+        import ssl
+
+        import certifi  # type: ignore
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def read_description(distribution: str, search_path: list[str] | None = None) -> tuple[str, str]:
     """
     The long description a wheel carries, as (text, content type).
@@ -240,15 +306,20 @@ def read_description(distribution: str, search_path: list[str] | None = None) ->
 EXAMPLE_LIMIT = 8_000
 
 
-def read_example(lib: Library, name: str = "") -> dict:
+def read_example(lib: Library, name: str = "", directory: Path | None = None) -> dict:
     """
     The source of a library's example, ready to show.
 
     This is the same file the index compiles to measure the library, so what a
-    page shows and what the byte figure came from cannot drift apart. Returns
-    an empty dict when the wheel ships no example.
+    page shows and what the byte figure came from cannot drift apart -- which
+    is why the index passes the *directory* it measured rather than reading
+    the example a second way. Returns an empty dict when there is none to
+    read: examples do not travel in the wheel, so that is the normal answer
+    for an installed library, and the copy carried in the index is what a page
+    falls back to.
     """
-    directory = lib.example_dir(name)
+    if directory is None:
+        directory = lib.example_dir(name)
     if directory is None:
         return {}
 
@@ -532,6 +603,11 @@ def include_paths(libraries: list[Library], flavors: list[str]) -> list[str]:
     can shadow the native module under the same name; the caller places the
     whole block after the flavor packages, so no library can hijack `machine`
     or `digitalio`.
+
+    What goes on the path is the library's source directory, never the package
+    that contains it: the package also holds the manifest, an __init__.py, and
+    whatever else a wheel legitimately carries, and none of that is code the
+    compiler should be able to resolve an import to.
     """
     paths: list[str] = []
     for lib in libraries:
@@ -539,7 +615,7 @@ def include_paths(libraries: list[Library], flavors: list[str]) -> list[str]:
             adapter = lib.adapter_dir(flavor)
             if adapter is not None:
                 paths.append(str(adapter))
-        paths.append(str(lib.package_dir))
+        paths.append(str(lib.source_dir))
     return paths
 
 

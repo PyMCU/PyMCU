@@ -30,11 +30,20 @@ language-level = 1
 
 
 def _make_package(tmp_path: Path, manifest: str = MANIFEST, *, name: str = "pymcu_lib_dht11") -> Path:
+    """
+    A library laid out the way one is published.
+
+    The package is an ordinary Python package; the modules the compiler reads
+    are package data under mcu/, which is the only directory that ends up on
+    the include path.
+    """
     pkg = tmp_path / "src" / name
-    pkg.mkdir(parents=True)
+    sources = pkg / core.DEFAULT_SOURCES
+    sources.mkdir(parents=True)
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'pymcu-lib-dht11'\n")
+    (pkg / "__init__.py").write_text("")
     (pkg / "pymcu.toml").write_text(manifest)
-    (pkg / "dht11.py").write_text(
+    (sources / "dht11.py").write_text(
         "from pymcu.chips import __CHIP__\n"
         "from pymcu.exceptions import CompileError\n"
         "from pymcu.types import uint16, inline\n"
@@ -54,7 +63,7 @@ def _make_package(tmp_path: Path, manifest: str = MANIFEST, *, name: str = "pymc
         "            case _:\n"
         "                raise CompileError(\"DHT11 is not supported here\")\n"
     )
-    adapter = pkg / "compat" / "micropython"
+    adapter = sources / "compat" / "micropython"
     adapter.mkdir(parents=True)
     (adapter / "dht11.py").write_text("from dht11 import DHT11\n")
     return pkg
@@ -146,15 +155,34 @@ class TestCollisionsAndPaths:
         collisions = core.find_module_collisions([first, second])
         assert collisions and "dht11" in collisions[0]
 
-    def test_adapter_comes_before_the_package(self, tmp_path):
+    def test_adapter_comes_before_the_source_tree(self, tmp_path):
         lib = _library(_make_package(tmp_path))
         paths = core.include_paths([lib], ["micropython"])
         assert paths[0].endswith("compat/micropython")
-        assert paths[1] == str(lib.package_dir)
+        assert paths[1] == str(lib.source_dir)
 
     def test_no_adapter_without_the_flavor(self, tmp_path):
         lib = _library(_make_package(tmp_path))
-        assert core.include_paths([lib], []) == [str(lib.package_dir)]
+        assert core.include_paths([lib], []) == [str(lib.source_dir)]
+
+    def test_the_package_itself_never_reaches_the_compiler(self, tmp_path):
+        """
+        Only the source tree goes on the include path.
+
+        When this was the package directory, anything a wheel legitimately
+        carries became importable from a user's firmware: a library's
+        examples/ answered `import examples`, and two libraries shipping one
+        shadowed each other with no diagnostic at all.
+        """
+        pkg = _make_package(tmp_path)
+        (pkg / "examples").mkdir()
+        (pkg / "examples" / "basic.py").write_text("# not the compiler's business\n")
+
+        lib = _library(pkg)
+        paths = core.include_paths([lib], ["micropython"])
+
+        assert str(lib.package_dir) not in paths
+        assert all(Path(p).is_relative_to(lib.source_dir) for p in paths)
 
 
 class TestChipArch:
@@ -176,9 +204,10 @@ class TestVenvDiscovery:
     def test_libraries_are_read_from_an_explicit_search_path(self, tmp_path):
         site = tmp_path / "site-packages"
         pkg = site / "pymcu_lib_dht11"
-        pkg.mkdir(parents=True)
+        (pkg / core.DEFAULT_SOURCES).mkdir(parents=True)
+        (pkg / "__init__.py").write_text("")
         (pkg / "pymcu.toml").write_text(MANIFEST)
-        (pkg / "dht11.py").write_text("")
+        (pkg / core.DEFAULT_SOURCES / "dht11.py").write_text("")
 
         dist_info = site / "pymcu_lib_dht11-0.2.0.dist-info"
         dist_info.mkdir()
