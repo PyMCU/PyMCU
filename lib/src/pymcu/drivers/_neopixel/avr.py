@@ -15,7 +15,7 @@
 # Port/bit dispatch (_ws2812_port_b / _ws2812_port_d) are @inline so
 # the compiler folds away all non-matching branches at compile time.
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr
+from pymcu.types import uint8, uint16, inline, ptr, asm
 from pymcu.chips.atmega328p import PORTB, PORTD, DDRB, DDRD
 from pymcu.time import delay_us
 
@@ -246,36 +246,71 @@ def _ws2812_b(bit: uint8, val: uint8):
             case 1:
                 PORTB[1] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[1] = 0
                 PORTB[1] = 0
             case 2:
                 PORTB[2] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[2] = 0
                 PORTB[2] = 0
             case 3:
                 PORTB[3] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[3] = 0
                 PORTB[3] = 0
             case 4:
                 PORTB[4] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[4] = 0
                 PORTB[4] = 0
             case 5:
                 PORTB[5] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[5] = 0
                 PORTB[5] = 0
             case _:
@@ -293,43 +328,85 @@ def _ws2812_d(bit: uint8, val: uint8):
             case 2:
                 PORTD[2] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[2] = 0
                 PORTD[2] = 0
             case 3:
                 PORTD[3] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[3] = 0
                 PORTD[3] = 0
             case 4:
                 PORTD[4] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[4] = 0
                 PORTD[4] = 0
             case 5:
                 PORTD[5] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[5] = 0
                 PORTD[5] = 0
             case 6:
                 PORTD[6] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[6] = 0
                 PORTD[6] = 0
             case 7:
                 PORTD[7] = 1
                 if b >= 128:
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
+                    asm("NOP")
+                    asm("NOP")
                     PORTD[7] = 0
                 PORTD[7] = 0
             case _:
