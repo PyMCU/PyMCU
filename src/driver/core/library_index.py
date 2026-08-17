@@ -45,6 +45,7 @@ from .libraries import (
     read_description,
     read_example,
     site_packages_of,
+    ssl_context,
 )
 
 # One chip per architecture, chosen to be the cheapest representative that a
@@ -56,6 +57,8 @@ REPRESENTATIVE_CHIPS: dict[str, str] = {
     "arm": "rp2040",
     "pic14": "pic16f877a",
 }
+
+PYPI_JSON = "https://pypi.org/pypi/{distribution}/{version}/json"
 
 BUILD_OK = "ok"
 BUILD_FAILED = "failed"
@@ -155,7 +158,8 @@ def _parse_flash(build_output: str) -> tuple[int | None, int | None]:
 
 
 def measure_example(lib: Library, chip: str, *, pymcu: Path,
-                    example: str = "", env_paths: list[str] | None = None) -> TargetResult:
+                    example: str = "", env_paths: list[str] | None = None,
+                    example_dir: Path | None = None) -> TargetResult:
     """
     Compile the library's example for *chip* and report what happened.
 
@@ -163,14 +167,19 @@ def measure_example(lib: Library, chip: str, *, pymcu: Path,
     pinned to whatever board its author used, and the question here is whether
     it builds for this chip.
 
+    *example_dir* is the already-resolved source, which the caller fetches once
+    per library rather than once per chip -- it usually comes out of the sdist,
+    since examples do not travel in the wheel.
+
     *env_paths* is prepended to the child's PYTHONPATH.  Without it the build
     would run against whatever environment the driver itself lives in, and
     measure the absence of the very library it is measuring -- which is exactly
     the first thing this got wrong.
     """
-    example_dir = lib.example_dir(example)
     if example_dir is None:
-        return TargetResult(chip, BUILD_UNSUPPORTED, detail="no example shipped")
+        example_dir = lib.example_dir(example)
+    if example_dir is None:
+        return TargetResult(chip, BUILD_UNSUPPORTED, detail="no example available")
 
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "example"
@@ -215,6 +224,91 @@ def measure_example(lib: Library, chip: str, *, pymcu: Path,
         return TargetResult(chip, BUILD_OK, flash=flash, ram=ram)
 
 
+def fetch_sdist(distribution: str, version: str, dest: Path) -> Path | None:
+    """
+    Unpack the distribution's sdist into *dest*, returning its root.
+
+    Examples do not ship in the wheel -- they belong with the tests and the
+    docs, at the distribution root -- so the installed package cannot answer
+    "what does this library's example compile to". The sdist can: it is an
+    immutable, versioned artefact that already carries everything needed to
+    build and check the project, which is what it exists for. Returns None if
+    the distribution publishes no sdist or the download fails; the caller
+    reports that rather than treating it as a build failure.
+    """
+    import urllib.error
+    import urllib.request
+
+    url = PYPI_JSON.format(distribution=distribution, version=version)
+    try:
+        context = ssl_context()
+        opener = (urllib.request.urlopen(url, timeout=30, context=context)
+                  if context else urllib.request.urlopen(url, timeout=30))
+        with opener as response:
+            metadata = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+    archive_url = next(
+        (f["url"] for f in metadata.get("urls", [])
+         if f.get("packagetype") == "sdist"),
+        None,
+    )
+    if archive_url is None:
+        return None
+
+    archive = dest / "sdist.tar.gz"
+    try:
+        context = ssl_context()
+        opener = (urllib.request.urlopen(archive_url, timeout=60, context=context)
+                  if context else urllib.request.urlopen(archive_url, timeout=60))
+        with opener as response:
+            archive.write_bytes(response.read())
+    except (urllib.error.URLError, OSError):
+        return None
+
+    import tarfile
+
+    unpacked = dest / "unpacked"
+    try:
+        with tarfile.open(archive) as tar:
+            # filter="data" refuses absolute paths, parent traversal and
+            # anything that is not a plain file or directory: this is an
+            # archive from the network, unpacked by CI.
+            tar.extractall(unpacked, filter="data")
+    except (tarfile.TarError, OSError):
+        return None
+
+    roots = [p for p in unpacked.iterdir() if p.is_dir()]
+    return roots[0] if len(roots) == 1 else unpacked
+
+
+def example_source(lib: Library, name: str, workdir: Path) -> tuple[Path | None, str]:
+    """
+    Where to build a library's example from, and how it was found.
+
+    A source checkout has them on disk; an installed wheel does not, and the
+    sdist is fetched instead.
+    """
+    on_disk = lib.example_dir(name)
+    if on_disk is not None:
+        return on_disk, "checkout"
+
+    if not lib.examples:
+        return None, "none declared"
+
+    rel = lib.examples.get(name) if name else next(iter(lib.examples.values()))
+    if not rel:
+        return None, "none declared"
+
+    root = fetch_sdist(lib.distribution, lib.version, workdir)
+    if root is None:
+        return None, "no sdist available"
+
+    candidate = root / rel
+    return (candidate, "sdist") if candidate.is_dir() else (None, f"sdist has no {rel}")
+
+
 def compare_with_manifest(lib: Library, targets: dict[str, TargetResult]) -> list[str]:
     """
     Where the author's promise and the measurement disagree.
@@ -248,10 +342,22 @@ def build_entry(lib: Library, *, pymcu: Path,
     """Measure one library across the chips that apply to it."""
     entry = IndexEntry(library=lib)
     entry.readme, entry.readme_type = read_description(lib.distribution, env_paths)
-    entry.example = read_example(lib)
-    for chip in chips_to_measure(lib):
-        entry.targets[chip] = measure_example(lib, chip, pymcu=pymcu, env_paths=env_paths)
-    entry.warnings = compare_with_manifest(lib, entry.targets)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Resolved once, not once per chip: this may pull the sdist over the
+        # network, and doing that per target would download the same archive
+        # three times to compile three copies of one file.
+        source, how = example_source(lib, "", Path(tmp))
+        if source is None:
+            entry.warnings.append(f"no example measured: {how}")
+        else:
+            entry.example = read_example(lib, directory=source)
+            for chip in chips_to_measure(lib):
+                entry.targets[chip] = measure_example(
+                    lib, chip, pymcu=pymcu, env_paths=env_paths, example_dir=source
+                )
+
+    entry.warnings.extend(compare_with_manifest(lib, entry.targets))
     return entry
 
 

@@ -158,3 +158,100 @@ class TestMeasurement:
         assert seen.get("PYMCU_LIBRARY_FILTER") == "0"
         assert result.build == idx.BUILD_OK
         assert result.flash == 100
+
+
+class TestExampleSource:
+    """
+    Where a measurement's input comes from now that wheels carry no examples.
+
+    Examples belong at the distribution root, with the tests and the docs, so
+    they travel in the sdist. That keeps them out of the package -- when they
+    were inside it, the whole package went on the include path and `import
+    examples` resolved from any user's firmware.
+    """
+
+    def _with_example(self, tmp_path: Path) -> Library:
+        example = tmp_path / "examples" / "basic"
+        (example / "src").mkdir(parents=True)
+        (example / "pyproject.toml").write_text('[tool.pymcu]\nboard = "arduino_uno"\n')
+        (example / "src" / "main.py").write_text("def main():\n    pass\n")
+        return _library(tmp_path, examples={"basic": "examples/basic"})
+
+    def test_a_checkout_is_used_without_touching_the_network(self, tmp_path, monkeypatch):
+        def _no_network(*_args, **_kwargs):
+            raise AssertionError("a checkout on disk must not be fetched again")
+
+        monkeypatch.setattr(idx, "fetch_sdist", _no_network)
+
+        # package_dir is tmp_path/pymcu_lib_dht11, so examples/ at tmp_path is
+        # the distribution root -- exactly the published layout.
+        lib = self._with_example(tmp_path)
+        source, how = idx.example_source(lib, "", tmp_path / "work")
+
+        assert how == "checkout"
+        assert (source / "src" / "main.py").exists()
+
+    def test_an_installed_library_falls_back_to_the_sdist(self, tmp_path, monkeypatch):
+        unpacked = tmp_path / "sdist-root"
+        (unpacked / "examples" / "basic" / "src").mkdir(parents=True)
+
+        monkeypatch.setattr(idx, "fetch_sdist", lambda *_a, **_k: unpacked)
+
+        lib = _library(tmp_path, examples={"basic": "examples/basic"})
+        source, how = idx.example_source(lib, "", tmp_path / "work")
+
+        assert how == "sdist"
+        assert source == unpacked / "examples" / "basic"
+
+    def test_no_sdist_is_reported_rather_than_read_as_a_build_failure(self, tmp_path,
+                                                                     monkeypatch):
+        """
+        A library nobody can measure is not a library that fails to compile.
+
+        Reporting the two the same way would mark a perfectly good library
+        `broken` in the index because its author published no sdist.
+        """
+        monkeypatch.setattr(idx, "fetch_sdist", lambda *_a, **_k: None)
+
+        lib = _library(tmp_path, examples={"basic": "examples/basic"})
+        source, how = idx.example_source(lib, "", tmp_path / "work")
+
+        assert source is None
+        assert how == "no sdist available"
+
+    def test_a_library_without_examples_says_so(self, tmp_path):
+        source, how = idx.example_source(_library(tmp_path), "", tmp_path / "work")
+        assert source is None
+        assert how == "none declared"
+
+    def test_the_sdist_is_fetched_once_per_library_not_once_per_chip(self, tmp_path,
+                                                                     monkeypatch):
+        """Three chips used to mean three downloads of the same archive."""
+        unpacked = tmp_path / "sdist-root"
+        (unpacked / "examples" / "basic" / "src").mkdir(parents=True)
+        (unpacked / "examples" / "basic" / "pyproject.toml").write_text(
+            '[tool.pymcu]\nboard = "arduino_uno"\n')
+        (unpacked / "examples" / "basic" / "src" / "main.py").write_text(
+            "def main():\n    pass\n")
+
+        calls = []
+
+        def _fetch(distribution, version, dest):
+            calls.append(distribution)
+            return unpacked
+
+        monkeypatch.setattr(idx, "fetch_sdist", _fetch)
+
+        class _Result:
+            returncode = 0
+            stdout = "Flash: 100 / 32768 bytes\n"
+            stderr = ""
+
+        monkeypatch.setattr(idx.subprocess, "run", lambda *_a, **_k: _Result())
+
+        lib = _library(tmp_path, examples={"basic": "examples/basic"})
+        entry = idx.build_entry(lib, pymcu=Path("pymcu"))
+
+        assert len(calls) == 1
+        assert len(entry.targets) > 1
+        assert entry.example["source"].strip() == "def main():\n    pass"
