@@ -331,6 +331,11 @@ def _installed_json(lib: Library, project: Project) -> dict:
         "modules": list(lib.modules),
         "categories": list(lib.categories),
         "layer": lib.layer,
+        # The manifest knows both of these; leaving them out made an installed
+        # library look poorer than the same library in the registry listing.
+        "adapters": list(lib.adapters),
+        "arch": list(lib.arch),
+        "chips": list(lib.chips),
         "repository": lib.repository,
         "reasons": reasons,
         "usable": not reasons,

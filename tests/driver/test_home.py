@@ -102,10 +102,16 @@ class TestWhoMayAsk:
         assert exc.value.code == 403
 
     def test_the_page_itself_needs_no_token(self, server):
+        """
+        The shell is public; the data behind it is not. Asserted on the app's
+        own mount point rather than on any wording, so a rewrite of the copy is
+        not a failing test.
+        """
         base, _token, _root = server
         with urllib.request.urlopen(base, timeout=5) as response:
-            assert response.status == 200
-            assert b"Flash budget" in response.read()
+            body = response.read()
+        assert response.status == 200
+        assert b'id="view"' in body and b"PyMCU" in body
 
     def test_an_unknown_route_is_a_404(self, server):
         base, token, _root = server
