@@ -86,10 +86,22 @@ class CustomBuildHook(BuildHookInterface):
             if not src.exists():
                 raise FileNotFoundError(f"Binary not found after publish: {src}")
 
-        shutil.copy2(str(src), str(dst))
+        # The two paths can already be the same file -- a hard link or symlink
+        # between the publish directory and the package, which is how a
+        # developer keeps the driver's binary fresh. copy2 raises SameFileError
+        # on that and fails the wheel over a binary already in place.
+        same = False
+        if dst.exists():
+            try:
+                same = src.samefile(dst)
+            except OSError:
+                same = False
+        if not same:
+            shutil.copy2(str(src), str(dst))
         if sys.platform != "win32":
             dst.chmod(0o755)
-        self.app.display_info(f"[hatch-hook] Binary placed at: {dst}")
+        self.app.display_info(
+            f"[hatch-hook] Binary {'already in place' if same else 'placed at'}: {dst}")
 
         build_data["artifacts"].append(str(dst.relative_to(root)))
 

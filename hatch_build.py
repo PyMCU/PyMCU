@@ -69,13 +69,8 @@ class CustomBuildHook(BuildHookInterface):
                 raise RuntimeError(f"dotnet publish failed. Command: {' '.join(cmd)}")
 
             src = publish_dir / binary_name
-            if not src.exists():
-                raise FileNotFoundError(f"Binary not found after publish: {src}")
-
-            shutil.copy2(str(src), str(dst))
-            if sys.platform != "win32":
-                dst.chmod(0o755)
-            self.app.display_info(f"[hatch-hook] Binary placed at: {dst}")
+            what = place_binary(src, dst)
+            self.app.display_info(f"[hatch-hook] Binary {what}: {dst}")
 
         # pymcuc is a .NET AOT binary — no Python ABI, but platform-specific.
         # Tag the wheel py3-none-<platform> so one wheel covers all Python 3
@@ -83,6 +78,40 @@ class CustomBuildHook(BuildHookInterface):
         build_data["pure_python"] = False
         build_data["tag"] = f"py3-none-{plat_tag}"
         self.app.display_info(f"[hatch-hook] Wheel tag: py3-none-{plat_tag}")
+
+
+def place_binary(src: Path, dst: Path) -> str:
+    """
+    Put the freshly published binary where the wheel expects it.
+
+    Copying is the normal case, but the two paths can already be the same file:
+    a hard link between build/bin and src/driver, or a publish directory
+    pointed straight at the package. `shutil.copy2` raises SameFileError on
+    that, which failed the whole wheel build over a binary that was already in
+    the right place -- and only on the machine set up that way, which is the
+    maintainer's.
+
+    Returns what happened, for the build log to report.
+    """
+    if not src.exists():
+        raise FileNotFoundError(f"Binary not found after publish: {src}")
+
+    same = False
+    if dst.exists():
+        try:
+            same = src.samefile(dst)
+        except OSError:
+            same = False            # cannot tell: copying is the safe answer
+
+    if not same:
+        shutil.copy2(str(src), str(dst))
+
+    # Set unconditionally: a hard-linked binary can carry whatever mode the
+    # publish left, and a wheel needs the executable bit either way.
+    if sys.platform != "win32":
+        dst.chmod(0o755)
+
+    return "already in place" if same else "placed at"
 
 
 # A Runtime Identifier names what dotnet puts in the wheel; the wheel's
