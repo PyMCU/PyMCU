@@ -823,10 +823,13 @@ def _print_measured(entry: dict, chip: str) -> None:
     measured = entry.get("measured", {}).get("targets", {})
     result = measured.get(chip.lower()) if isinstance(measured, dict) else None
     if isinstance(result, dict) and result.get("flash") is not None:
-        console.print(
-            f"  measured on {chip}: [bold]{result['flash']}[/bold] bytes flash, "
-            f"[bold]{result.get('ram', '?')}[/bold] bytes RAM"
-        )
+        line = f"  measured on {chip}: [bold]{result['flash']}[/bold] bytes flash"
+        # RAM is only mentioned when it was measured. The index does not
+        # measure it yet, and "? bytes RAM" reads like a figure that went
+        # missing rather than one nobody took.
+        if result.get("ram") is not None:
+            line += f", [bold]{result['ram']}[/bold] bytes RAM"
+        console.print(line)
 
 
 def uninstall(
