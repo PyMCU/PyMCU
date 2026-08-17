@@ -237,10 +237,15 @@ def _ws2812_b(bit: uint8, val: uint8):
             case 0:
                 PORTB[0] = 1
                 if b >= 128:
-                    # 1-bit: hold high ~13 cycles total (SBI=2, 11 NOPs)
-                    pass
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
+                    asm("NOP")
                 else:
-                    # 0-bit: hold high ~6 cycles total (SBI=2, 4 NOPs, then LOW)
+                    asm("NOP")
+                    asm("NOP")
                     PORTB[0] = 0
                 PORTB[0] = 0
             case 1:
