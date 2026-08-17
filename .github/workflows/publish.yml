@@ -128,9 +128,50 @@ jobs:
   # Runs on any release — stable (vX.Y.Z) or pre-release (e.g. v0.1.0a1).
   # The public alpha ships on real PyPI so `pip install --pre pymcu-compiler[avr]`
   # resolves the whole set; TestPyPI is reserved for manual dispatch smoke tests.
+
+  # Installs the wheels that are about to be uploaded, in a clean environment,
+  # and puts them to work -- before anything reaches PyPI. Every check in
+  # tools/smoke_release.py stands for a release that went out broken without a
+  # red build: a pin naming an unpublished version, a package left at a version
+  # that publish would skip by filename, an SDK missing a symbol the driver
+  # imports from inside a function.
+  #
+  # Runs on linux-x64 because that wheel is native to the runner. The other
+  # platforms share the same pure-Python driver; what differs is the AOT binary,
+  # which the per-platform build job already exercises.
+  smoke:
+    name: Try the wheels before publishing
+    needs: [check-tag, build-wheels, build-pure-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Named one by one rather than by pattern: the other platforms' wheels
+      # are not installable on this runner, and the script installs everything
+      # of ours that it finds.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-linux-x64
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-pure
+          path: dist
+
+      - run: pip install certifi
+
+      - name: Smoke-test the release
+        run: |
+          python tools/smoke_release.py dist \
+            ${{ github.ref_type == 'tag' && format('--tag {0}', github.ref_name) || '' }}
+
   publish-pypi:
     name: Publish to PyPI
-    needs: [check-tag, build-wheels, build-pure-wheels]
+    needs: [check-tag, build-wheels, build-pure-wheels, smoke]
     if: needs.check-tag.outputs.is_stable == 'true' || needs.check-tag.outputs.is_prerelease == 'true'
     runs-on: ubuntu-latest
     environment: release
@@ -159,7 +200,7 @@ jobs:
   # longer fires on tags.
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [check-tag, build-wheels, build-pure-wheels]
+    needs: [check-tag, build-wheels, build-pure-wheels, smoke]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: prerelease
