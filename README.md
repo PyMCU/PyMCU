@@ -61,6 +61,13 @@ PyMCU compiles a **statically-typed subset of Python** into bare-metal firmware 
 **AVR, ARM (RP2040 / RP2350) and PIC** — no runtime, no interpreter, no virtual machine.
 The same binary you would write in C.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/blink-demo.gif" alt="PyMCU demo: MicroPython-flavoured blink compiled to 150 bytes and flashed to an Arduino Uno" width="860">
+</p>
+
+<p align="center"><em>A real session: 9 lines of Python &rarr; <code>pymcu build</code> &rarr; <strong>150 bytes of flash</strong> &rarr; running on an Arduino Uno.
+Then the delay is edited, rebuilt and reflashed &mdash; the whole loop takes seconds.</em></p>
+
 ---
 
 ## The pitch in one table
@@ -71,17 +78,19 @@ configure PB5 as output, then loop `LED on → wait 500 ms → LED off → wait 
 | Source | **Total flash** | SRAM |
 |---|---|---|
 | **C** (`avr-gcc -Os`) | 176 B | 0 B |
-| **PyMCU** (native HAL) | **162 B** | 0 B |
-| **PyMCU** (MicroPython API) | **162 B** | 0 B |
-| **PyMCU** (CircuitPython API) | **164 B** | 0 B |
-| **Arduino** (IDE defaults) | ~1 024 B | 9 B |
+| **PyMCU** (native HAL) | **150 B** | 0 B |
+| **PyMCU** (MicroPython API) | **150 B** | 0 B |
+| **PyMCU** (CircuitPython API) | **152 B** | 0 B |
+| **Arduino** (IDE defaults) | 924 B | 9 B |
 
 PyMCU produces a **smaller binary than C** here. Why?
 
 `Pin("PB5", Pin.OUT)` and `delay_ms(500)` are resolved entirely at compile time — the
 compiler sees through the Python objects and emits the same raw `SBI`/`CBI` port-toggle
-instructions a C programmer would write by hand. The delay loop PyMCU generates happens to
-use one fewer padding instruction than the loop `avr-gcc -Os` emits for this particular pattern.
+instructions a C programmer would write by hand. The rest of the difference is the delay:
+PyMCU emits one calibrated delay subroutine shared by both waits (`rcall` twice), where
+avr-libc's `_delay_ms` is inlined at each call site — and there is no `call main` / `jmp _exit`
+scaffolding around the program.
 The interrupt vector table and startup stub are identical fixed overhead in both toolchains.
 
 **Native HAL and MicroPython API produce byte-for-byte identical firmware** — both compile down to the same `SBI`/`CBI` toggle and the same delay loop. The API is a zero-cost abstraction. CircuitPython is 2 bytes larger because the `Direction.OUTPUT` setter clears the PORT register before setting DDR, as the CircuitPython spec requires.

@@ -177,7 +177,7 @@ Compiling `blink` (toggle D13, delay 500 ms) for Arduino Uno (16 MHz):
 
 | Toolchain | Flash | SRAM |
 |-----------|-------|------|
-| Arduino (avr-gcc -Os) | ~928 bytes | 9 bytes |
+| Arduino (avr-gcc -Os) | 924 bytes | 9 bytes |
 | PyMCU | **142 bytes** | **0 bytes** |
 
 Both numbers are total firmware (user code + interrupt vector table). PyMCU's 142 bytes
