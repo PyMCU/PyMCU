@@ -26,33 +26,55 @@ global install — the compiler looks inside the project's `.venv`.
 ## 1. Package layout
 
 ```
-pymcu-lib-dht11/                     # distribution name on PyPI
+pymcu-lib-dht/                       # distribution name on PyPI
   pyproject.toml
-  src/pymcu_lib_dht11/
-    pymcu.toml                       # the manifest
-    dht11.py                         # public API, arch-neutral
-    _dht11_avr.py                    # per-architecture implementation
-    _dht11_arm.py
-    compat/
-      micropython/dht11.py           # optional adapter
-      circuitpython/dht11.py         # optional adapter
-    examples/basic/                  # a compilable project; see below
+  README.md
   api-surface.lock
+  docs/
+  tests/
+  examples/basic/                    # a compilable project; see below
+  src/pymcu_lib_dht/
+    __init__.py                      # an ordinary Python package
+    pymcu.toml                       # the manifest
+    mcu/                             # everything the compiler reads
+      dht.py                         # public API, arch-neutral
+      adafruit_dht.py                # a second public name, CircuitPython's
+      _dht/                          # private implementation package
+        __init__.py
+        core.py
+        avr.py
+      compat/
+        micropython/dht.py           # optional adapter
 ```
 
-`examples/` goes **inside** the package, not beside `src/`. It is what
-`pymcu install --verify` compiles for the user's chip, and that only works if
-the example travels in the wheel — a few KB of `.py` for a check that runs on
-the machine that will actually build the firmware.
+Two rules, and everything else follows from them.
 
-The directory of the installed package is added to the compiler's include path, so the
-modules inside it become **top-level imports** for the user:
+**The package is an ordinary Python package.** It has an `__init__.py`, so
+`import pymcu_lib_dht` works and `importlib.resources` can find its data. Without one
+it would be a PEP 420 namespace package by accident, which is not something to be by
+accident.
+
+**Only `mcu/` reaches the compiler.** The include path gets that directory and nothing
+else, so what a user can import is exactly what you put there. Everything else —
+examples, tests, docs, tooling — lives at the distribution root, outside the package,
+and so travels in the sdist and not the wheel. That is the normal split for a Python
+project, and `pymcu lint --library` enforces it: a `.py` anywhere else in the package
+is an error. It has to be, because when the include path was the package itself, a
+library's `examples/` answered `import examples` from any firmware in the world, and two
+libraries shipping one shadowed each other with no diagnostic at all.
+
+Modules directly inside `mcu/` become **top-level imports** for the user:
 
 ```python
-from dht11 import DHT11
+from dht import DHT11
 ```
 
-The distribution name (`pymcu-lib-dht11`) and the import name (`dht11`) are deliberately
+Anything deeper is yours. A private package is how you avoid stamping a prefix on every
+file: the include path is flat and shared with every other installed library, so a bare
+`core.py` would be a global name — but `_dht/core.py` is not, and reads better than
+`_dht_core.py` at every call site.
+
+The distribution name (`pymcu-lib-dht`) and the import name (`dht`) are deliberately
 different: the first has to be unique on PyPI, the second only has to be unique among the
 libraries a project actually installs.
 
@@ -64,18 +86,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pymcu-lib-dht11"
+name = "pymcu-lib-dht"
 version = "0.2.0"
-description = "DHT11 temperature and humidity sensor for PyMCU"
+description = "DHT11, DHT22 and DHT21 sensors for PyMCU"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = ["pymcu-stdlib>=0.1.0a5"]
 
 [project.entry-points."pymcu.libraries"]
-dht11 = "pymcu_lib_dht11"
+dht = "pymcu_lib_dht"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pymcu_lib_dht11"]
+packages = ["src/pymcu_lib_dht"]
 ```
 
 `pymcu-stdlib` is a real dependency: the sources import `pymcu.types` and `pymcu.hal.*`,
@@ -90,14 +112,15 @@ finds the package without anyone listing it in `[tool.pymcu]`.
 
 ```toml
 [library]
-name = "dht11"
-summary = "DHT11 temperature and humidity sensor"
+name = "dht"
+summary = "DHT11, DHT22 and DHT21 temperature and humidity sensors"
 license = "MIT"
-repository = "https://github.com/example/pymcu-lib-dht11"
+repository = "https://github.com/example/pymcu-lib-dht"
 categories = ["sensor"]
+sources = "mcu"
 
 [library.provides]
-modules = ["dht11"]
+modules = ["dht", "adafruit_dht", "_dht"]
 
 [library.supports]
 arch = ["avr", "arm"]
@@ -117,7 +140,8 @@ basic = "examples/basic"
 
 | Key | Meaning |
 |---|---|
-| `provides.modules` | Top-level names the library claims. Two installed libraries claiming the same name is a resolution error. |
+| `sources` | Directory inside the package holding what the compiler reads. Defaults to `mcu`. Nothing outside it is on the include path. |
+| `provides.modules` | Top-level names the library claims, private ones included. Two installed libraries claiming the same name is a resolution error, so a private package has to be declared to be protected. |
 | `supports.arch` | Architectures, as reported by `__CHIP__.arch`: `avr`, `arm`, `pic12`, `pic14`, `pic14e`, `pic18`, `riscv`. |
 | `supports.chips` | Narrows to specific chips. Empty means every chip of the listed architectures. |
 | `supports.layer` | `native`, `micropython` or `circuitpython` — which API the core is written against. |
@@ -164,11 +188,11 @@ class DHT11:
     def read(self) -> uint16:
         match __CHIP__.arch:
             case "avr":
-                from _dht11_avr import _avr_read
-                return _avr_read(self.name)
+                from _dht.avr import read
+                return read(self.name)
             case "arm":
-                from _dht11_arm import _arm_read
-                return _arm_read(self.name)
+                from _dht.arm import read
+                return read(self.name)
             case _:
                 raise CompileError("DHT11 is not supported on this architecture")
 ```
@@ -203,28 +227,34 @@ characters included.
 ## 4. Optional compatibility adapters
 
 An adapter re-exports the core with the idioms of one layer. It lives under
-`compat/<layer>/` and only enters the include path when the project declares that layer,
-so both adapters can use the same module name:
+`mcu/compat/<layer>/` and only enters the include path when the project declares that
+layer, so several adapters can use the same module name:
 
 ```python
-# compat/circuitpython/dht11.py
+# mcu/compat/micropython/dht.py
 from pymcu.types import uint16, inline
-from _dht11_avr import _avr_read as _read_avr   # or import the shared core
+from _dht.core import Frame
 
 
 class DHT11:
 
     @inline
     def __init__(self, pin):
-        self._name = pin        # board.D4 is already a pin-name string
+        self._frame = Frame(pin)    # a machine.Pin, not a bare name
 
     @inline
-    def read(self) -> uint16:
+    def measure(self):
         ...
 ```
 
-Import the core through its private module name (`_dht11_avr`), never through the public
-one — inside the adapter, `dht11` is the adapter itself.
+An adapter is only worth writing where the API actually differs. If a layer would import
+the same name with the same shape, do not add a directory for it — a copy that shadows
+nothing is just a second place to fix the same bug.
+
+Import the core through its private package (`_dht.core`), never through the public
+name — inside the adapter, `dht` *is* the adapter. That is the whole reason the core has
+a name of its own rather than living in a `dht/` package: an adapter that shadows the
+public name would otherwise shadow the implementation along with it.
 
 This mirrors what the compat packages already do with `pymcu.drivers.neopixel`: one core,
 thin wrappers per layer.
@@ -234,14 +264,18 @@ thin wrappers per layer.
 ## 5. The example project
 
 `examples/basic/` is a normal PyMCU project — `pyproject.toml` with `[tool.pymcu]` plus a
-`src/main.py`. It has three jobs: it is the copy-pasteable snippet in the docs, it is what
-CI compiles per chip to produce the compatibility matrix and the flash/RAM figures in the
-index, and it is what `pymcu install --verify` builds on the user's machine for their
-chip.
+`src/main.py`. It sits at the **distribution root**, beside `tests/` and `docs/`, so it
+travels in the sdist and not in the wheel.
 
-That last one is why it ships inside the package. `--verify` copies it to a temporary
-directory, rewrites `[tool.pymcu]` to the installing project's chip and layer, and builds
-it; a failure rolls the install back instead of leaving a library that only breaks later.
+It has two jobs: it is the copy-pasteable snippet the docs and the catalogue show, and it
+is what the index compiles per chip to produce the compatibility matrix and the flash/RAM
+figures. The index reads it from the sdist, which is exactly what an sdist is for — an
+immutable, versioned artefact carrying everything needed to build and check the project.
+
+It is *not* what `pymcu install --verify` compiles. That builds a small program importing
+the modules in `provides.modules`, which needs nothing but the wheel: it answers whether
+those modules resolve and compile for the installing project's chip and layer, and rolls
+the install back if they do not.
 
 Keep it minimal. Anything the example pulls in shows up in the numbers.
 
