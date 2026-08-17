@@ -777,8 +777,23 @@ public partial class IRGenerator
             // would otherwise fold to a wrong value (C# masks the count to 5 bits, so
             // `1 << 99` silently becomes `1 << 3`).
             if (expr.Op is AstBinOp.LShift or AstBinOp.RShift && (cB.Value < 0 || cB.Value >= 32))
+            {
+                // A string reaching arithmetic through a variable carries no literal
+                // for the check above to notice, so it arrives here as its interned
+                // id -- and the report was a shift count nobody wrote. Passing a pin
+                // name where a pin number belongs (`Pin("GP25")` on RP2040) lands
+                // exactly here. The id could also be an ordinary integer, so this
+                // only ever runs on the way to an error that was happening anyway.
+                if (stringIdToStr.TryGetValue(cB.Value, out string? asText))
+                    throw new TypeError(
+                        $"cannot shift by the string \"{asText}\" -- a number is expected here. "
+                        + "This usually means a name was passed where a number belongs "
+                        + $"(for example a pin name instead of a pin number).",
+                        expr.Line > 0 ? expr.Line : lastLine, 1);
+
                 throw new ValueError($"shift count {cB.Value} out of range (expected 0..31)",
                     expr.Line > 0 ? expr.Line : lastLine, 1);
+            }
 
             switch (expr.Op)
             {

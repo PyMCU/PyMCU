@@ -125,15 +125,37 @@ class TestTheReportedMessages:
         return cap.get()
 
     def test_flash_message_keeps_its_toml_section(self, monkeypatch):
+        """
+        No port to choose from: the branch that prints the pyproject snippet.
+
+        `candidate_ports` is what flash() actually consults -- this used to patch
+        `auto_detect_port`, which nothing calls, so the outcome depended on how
+        many serial ports happened to be plugged into the machine. With exactly
+        one board connected the test ran avrdude for real, took a minute, and
+        failed on a message about USB.
+        """
         from src.driver.programmers.avrdude import AvrdudeProgrammer
 
         prog = AvrdudeProgrammer(Console())
-        # No port given and none to detect: the branch that prints the snippet.
-        monkeypatch.setattr(prog, "auto_detect_port", lambda: None)
+        monkeypatch.setattr(prog, "candidate_ports", lambda: [])
         monkeypatch.setattr(prog, "find_system_avrdude", lambda: Path("avrdude"))
         with pytest.raises(RuntimeError) as excinfo:
             prog.flash(Path("firmware.hex"), "atmega328p", port=None, baud=None)
         assert "[tool.pymcu.flash]" in self._render(str(excinfo.value))
+
+    def test_flash_message_lists_the_ports_when_there_are_several(self, monkeypatch):
+        """The other half of the same branch: too many to choose from."""
+        from src.driver.programmers.avrdude import AvrdudeProgrammer
+
+        prog = AvrdudeProgrammer(Console())
+        monkeypatch.setattr(prog, "candidate_ports",
+                            lambda: ["/dev/cu.usbmodem1", "/dev/cu.usbmodem2"])
+        monkeypatch.setattr(prog, "find_system_avrdude", lambda: Path("avrdude"))
+        with pytest.raises(RuntimeError) as excinfo:
+            prog.flash(Path("firmware.hex"), "atmega328p", port=None, baud=None)
+        rendered = self._render(str(excinfo.value))
+        assert "[tool.pymcu.flash]" in rendered
+        assert "/dev/cu.usbmodem1" in rendered and "/dev/cu.usbmodem2" in rendered
 
     def test_ffi_message_keeps_its_toml_section(self):
         from src.driver.toolchains import get_ffi_toolchain_for_chip
