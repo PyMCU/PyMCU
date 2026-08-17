@@ -75,6 +75,21 @@ BUILD_UNMEASURED = "unmeasured"
 _MISSING_BACKEND = "pymcu-compiler["
 
 
+def _claims_chip(lib: "Library", chip: str) -> bool:
+    """Whether the library's own manifest covers this chip.
+
+    A library that declares nothing claims everything, so an unqualified
+    manifest keeps getting `failed` -- silence is not a get-out.
+    """
+    from .libraries import chip_arch  # noqa: PLC0415
+
+    if lib.chips:
+        return chip.lower() in lib.chips
+    if lib.arch:
+        return chip_arch(chip) in lib.arch
+    return True
+
+
 @dataclass
 class TargetResult:
     chip: str
@@ -232,6 +247,15 @@ def measure_example(lib: Library, chip: str, *, pymcu: Path,
                 # Our environment, not their library.
                 return TargetResult(chip, BUILD_UNMEASURED,
                                     detail=f"backend for {chip} not installed")
+            # Outside what the author declared, a failure is not a defect: it is
+            # the library being used where it never claimed to work. Reporting
+            # `failed` there reads as "this library is broken", which is an
+            # accusation the manifest already answered. The build still runs --
+            # the point of PYMCU_LIBRARY_FILTER=0 is that code beating an
+            # over-cautious manifest is worth publishing as `ok` -- but when it
+            # does not build, the honest label is `unsupported`.
+            if not _claims_chip(lib, chip):
+                return TargetResult(chip, BUILD_UNSUPPORTED, detail=message)
             return TargetResult(chip, BUILD_FAILED, detail=message)
 
         flash, ram = _parse_flash(result.stdout)

@@ -127,6 +127,50 @@ class TestMeasurement:
         assert result.build == idx.BUILD_UNSUPPORTED
         assert "no example" in result.detail
 
+    def _failing_build(self, tmp_path, monkeypatch, chip, **lib_kwargs):
+        example = tmp_path / "pymcu_lib_dht11" / "examples" / "basic"
+        example.mkdir(parents=True, exist_ok=True)
+        (example / "pyproject.toml").write_text('[tool.pymcu]\nboard = "arduino_uno"\n')
+        (example / "src").mkdir(exist_ok=True)
+        (example / "src" / "main.py").write_text("def main():\n    pass\n")
+
+        class _Result:
+            returncode = 1
+            stdout = ""
+            stderr = 'main.py:-1:1: error: TypeError: cannot shift by the string "PB5"\n'
+
+        monkeypatch.setattr(idx.subprocess, "run", lambda cmd, **kw: _Result())
+        lib = _library(tmp_path, examples={"basic": "examples/basic"}, **lib_kwargs)
+        return idx.measure_example(lib, chip, pymcu=Path("pymcu"))
+
+    def test_failing_where_the_author_never_claimed_is_unsupported(self, tmp_path, monkeypatch):
+        """
+        The published index said pymcu-lib-dht `failed` on rp2040, quoting a
+        compiler internals error, for a library whose manifest says
+        arch = ["avr"]. That reads as "this library is broken" about something
+        it never promised. The build still runs -- code beating a cautious
+        manifest is worth publishing -- but a failure there is out of scope,
+        not a defect.
+        """
+        result = self._failing_build(tmp_path, monkeypatch, "rp2040", arch=["avr"])
+        assert result.build == idx.BUILD_UNSUPPORTED
+        assert "PB5" in result.detail
+
+    def test_failing_on_a_declared_architecture_is_still_a_failure(self, tmp_path, monkeypatch):
+        """A broken promise is exactly what the index must be able to state."""
+        result = self._failing_build(tmp_path, monkeypatch, "atmega328p", arch=["avr"])
+        assert result.build == idx.BUILD_FAILED
+
+    def test_declaring_nothing_claims_everything(self, tmp_path, monkeypatch):
+        """Silence in the manifest is not a way out of being measured."""
+        result = self._failing_build(tmp_path, monkeypatch, "rp2040", arch=[])
+        assert result.build == idx.BUILD_FAILED
+
+    def test_a_declared_chip_list_wins_over_the_architecture(self, tmp_path, monkeypatch):
+        result = self._failing_build(tmp_path, monkeypatch, "atmega328p",
+                                    arch=["avr"], chips=["attiny85"])
+        assert result.build == idx.BUILD_UNSUPPORTED
+
     def test_the_build_runs_with_the_filter_disabled(self, tmp_path, monkeypatch):
         """
         Measuring with the compatibility filter on would only measure the
