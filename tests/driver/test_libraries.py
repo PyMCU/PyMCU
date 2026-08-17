@@ -266,3 +266,38 @@ class TestReadme:
         text, _kind = core.read_description("pymcu-lib-dht11", search)
         assert len(text) <= core.README_LIMIT + 40
         assert text.endswith("[…truncated]")
+
+
+class TestExample:
+    """
+    The example on a library's page is the same file the index compiles to
+    measure it, so the code someone reads and the byte figure they see cannot
+    describe different things.
+    """
+
+    def _with_example(self, tmp_path, body="from x import y\n"):
+        pkg = _make_package(tmp_path)
+        example = pkg / "examples" / "basic" / "src"
+        example.mkdir(parents=True)
+        (example / "main.py").write_text(body)
+        (pkg / "examples" / "basic" / "pyproject.toml").write_text('[tool.pymcu]\nboard = "arduino_uno"\n')
+        manifest = MANIFEST + '\n[library.examples]\nbasic = "examples/basic"\n'
+        (pkg / "pymcu.toml").write_text(manifest)
+        return _library(pkg, manifest)
+
+    def test_it_reads_the_entry_point(self, tmp_path):
+        lib = self._with_example(tmp_path, "from dht11 import DHT11\n")
+        example = core.read_example(lib)
+        assert example["file"] == "main.py"
+        assert example["name"] == "basic"
+        assert "from dht11 import DHT11" in example["source"]
+
+    def test_no_example_is_an_empty_dict(self, tmp_path):
+        lib = _library(_make_package(tmp_path))
+        assert core.read_example(lib) == {}
+
+    def test_a_long_example_is_cut_and_marked(self, tmp_path):
+        lib = self._with_example(tmp_path, "x = 1\n" * 4000)
+        example = core.read_example(lib)
+        assert len(example["source"]) <= core.EXAMPLE_LIMIT + 40
+        assert example["source"].endswith("# …truncated")

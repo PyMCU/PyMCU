@@ -43,6 +43,7 @@ from .libraries import (
     ManifestError,
     discover_libraries,
     read_description,
+    read_example,
     site_packages_of,
 )
 
@@ -87,6 +88,7 @@ class IndexEntry:
     warnings: list[str] = field(default_factory=list)
     readme: str = ""
     readme_type: str = ""
+    example: dict = field(default_factory=dict)
 
     def to_json(self, compiler_version: str, generated: str) -> dict:
         lib = self.library
@@ -101,6 +103,7 @@ class IndexEntry:
             "provides": lib.modules,
             "readme": self.readme,
             "readme_type": self.readme_type,
+            "example": self.example,
             "layer": lib.layer,
             "adapters": lib.adapters,
             "arch": lib.arch,
@@ -245,6 +248,7 @@ def build_entry(lib: Library, *, pymcu: Path,
     """Measure one library across the chips that apply to it."""
     entry = IndexEntry(library=lib)
     entry.readme, entry.readme_type = read_description(lib.distribution, env_paths)
+    entry.example = read_example(lib)
     for chip in chips_to_measure(lib):
         entry.targets[chip] = measure_example(lib, chip, pymcu=pymcu, env_paths=env_paths)
     entry.warnings = compare_with_manifest(lib, entry.targets)

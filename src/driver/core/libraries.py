@@ -236,6 +236,46 @@ def read_description(distribution: str, search_path: list[str] | None = None) ->
     return "", ""
 
 
+# An example is there to be read, not to be a payload.
+EXAMPLE_LIMIT = 8_000
+
+
+def read_example(lib: Library, name: str = "") -> dict:
+    """
+    The source of a library's example, ready to show.
+
+    This is the same file the index compiles to measure the library, so what a
+    page shows and what the byte figure came from cannot drift apart. Returns
+    an empty dict when the wheel ships no example.
+    """
+    directory = lib.example_dir(name)
+    if directory is None:
+        return {}
+
+    entry = directory / "src" / "main.py"
+    if not entry.is_file():
+        candidates = sorted(directory.rglob("*.py"))
+        if not candidates:
+            return {}
+        entry = candidates[0]
+
+    try:
+        source = entry.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    truncated = len(source) > EXAMPLE_LIMIT
+    if truncated:
+        source = source[:EXAMPLE_LIMIT].rsplit("\n", 1)[0] + "\n# …truncated\n"
+
+    label = name or (next(iter(lib.examples), "") if lib.examples else "")
+    return {
+        "name": label,
+        "file": entry.name,
+        "source": source.strip(),
+    }
+
+
 def site_packages_of(venv: Path) -> list[str]:
     """Return the site-packages directories of a virtualenv, newest layout first."""
     if sys.platform == "win32":

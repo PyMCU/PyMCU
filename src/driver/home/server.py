@@ -38,7 +38,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ..commands import libraries as lib_cmd
-from ..core.libraries import read_description, site_packages_of
+from ..core.libraries import read_description, read_example, site_packages_of
 from ..core.project_config import apply_changes, available_boards, describe
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -278,6 +278,7 @@ class HomeHandler(BaseHTTPRequestHandler):
             readme, kind = read_description(lib.distribution, search)
             item["readme"] = readme or str((entry or {}).get("readme", ""))
             item["readme_type"] = kind or str((entry or {}).get("readme_type", ""))
+            item["example"] = read_example(lib) or (entry or {}).get("example") or {}
             payload.append(item)
         return payload
 

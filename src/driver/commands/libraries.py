@@ -314,6 +314,7 @@ def _entry_json(entry: dict, reasons: list[str], installed: set[str],
         "measured": measured_for(entry, chip),
         "readme": str(entry.get("readme", "")),
         "readme_type": str(entry.get("readme_type", "")),
+        "example": entry.get("example") or {},
         # Empty means "nothing stops this library serving the current target".
         "reasons": reasons,
         "fits": not reasons,

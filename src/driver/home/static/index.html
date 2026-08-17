@@ -189,6 +189,8 @@
     padding: 12px 14px; font: 13px/1.7 var(--mono); overflow-x: auto; color: var(--text);
   }
   pre.cmd .p { color: var(--faint); }
+  .cli { color: var(--faint); font-size: 12.5px; }
+  .cli code { font: 12.5px/1.5 var(--mono); color: var(--muted); }
 
   /* Readme: someone else's prose, so it gets room to breathe and a measure. */
   .readme { max-width: 74ch; }
@@ -593,12 +595,29 @@
         ${lib.measured?.compiler ? `<p class="lede" style="margin-top:12px">Measured with
           pymcu-compiler ${esc(lib.measured.compiler)} on ${esc(lib.measured.date)}.</p>` : ""}`,
 
-      install: () => `
-        <p class="lede">The button does exactly this, in this project's environment.</p>
-        <pre class="cmd"><span class="p">$</span> pymcu ${installed ? "uninstall" : "install"} ${esc(lib.name)}</pre>
-        <h2>In your code</h2>
+      usage: () => {
+        const example = lib.example || {};
+        const layer = state.project.layer || "native";
+        const adapter = (lib.adapters || []).includes(layer);
+        return `
+        <h2>Import</h2>
         <pre class="cmd">from ${esc(modules[0] || lib.name)} import ...</pre>
-        ${lib.distribution ? `<h2>Distribution</h2><pre class="cmd">${esc(lib.distribution)}</pre>` : ""}`,
+        <p class="lede">${
+          lib.layer === layer
+            ? `Written against the ${esc(layer)} layer, which is the one this project declares.`
+            : adapter
+              ? `This project declares the ${esc(layer)} layer, so the ${esc(layer)} adapter is what gets compiled — the API follows ${esc(layer)}, not ${esc(lib.layer)}.`
+              : `Written against the ${esc(lib.layer)} layer; this project declares ${esc(layer)}.`
+        }</p>
+        ${example.source ? `
+          <h2>Example${example.name ? ` · ${esc(example.name)}` : ""}</h2>
+          <p class="lede">The library's own example — the same file the registry
+            compiles to measure it.${lib.layer !== layer
+              ? ` It is written against the ${esc(lib.layer)} API; on the ${esc(layer)}
+                  layer the calls follow ${esc(layer)}'s own conventions.` : ""}</p>
+          <pre class="cmd">${esc(example.source)}</pre>`
+          : `<h2>Example</h2><p class="lede">This library ships no example.</p>`}`;
+      },
     };
 
     view.innerHTML = `
@@ -614,9 +633,11 @@
         ${installed
           ? `<button class="btn danger" data-act="uninstall" data-name="${esc(lib.name)}">Remove</button>`
           : `<button class="btn primary" data-act="install" data-name="${esc(lib.name)}" ${fits ? "" : "disabled"}>Install</button>`}
+        <span class="cli">or <code>pymcu ${installed ? "uninstall" : "install"} ${esc(lib.name)}</code>${
+          lib.distribution ? ` · <code>${esc(lib.distribution)}</code> on PyPI` : ""}</span>
       </div>
       <div class="tabs" role="tablist">
-        ${["overview", "compatibility", "install"].map((t) =>
+        ${["overview", "compatibility", "usage"].map((t) =>
           `<button role="tab" aria-selected="${t === tab}" data-tab="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
       </div>
       <div>${panes[tab]()}</div>`;
