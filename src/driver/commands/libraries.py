@@ -35,6 +35,7 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version as dist_version
 from pathlib import Path
 from typing import Optional
@@ -88,9 +89,28 @@ def _index_url() -> str:
     return _index_urls()[0]
 
 
+def _cache_file() -> Path:
+    """
+    The cache belongs to the source it came from.
+
+    One file for everything meant that pointing PYMCU_LIBRARY_INDEX at another
+    index -- a local file while testing, a fork, a staging copy -- kept serving
+    whatever the default index had cached, with no way to tell from the output.
+    The default source keeps the plain name so existing caches still count.
+    """
+    override = os.environ.get("PYMCU_LIBRARY_INDEX")
+    if not override:
+        return CACHE_FILE
+
+    import hashlib
+
+    digest = hashlib.sha256(override.encode("utf-8")).hexdigest()[:12]
+    return CACHE_FILE.with_name(f"libraries-index-{digest}.json")
+
+
 def _read_cached_index() -> dict | None:
     try:
-        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        return json.loads(_cache_file().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -179,7 +199,7 @@ def fetch_index(refresh: bool = False) -> tuple[dict, str]:
         _LAST_INDEX_ERROR = ""
         try:
             CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            CACHE_FILE.write_text(json.dumps(payload), encoding="utf-8")
+            _cache_file().write_text(json.dumps(payload), encoding="utf-8")
         except OSError:
             pass
         return payload, "network"
@@ -246,7 +266,37 @@ def entry_verdict(entry: dict, chip: str, flavors: list[str]) -> list[str]:
 # JSON shaping (consumed by the IDE plugins; keep the keys stable)
 # ---------------------------------------------------------------------------
 
-def _entry_json(entry: dict, reasons: list[str], installed: set[str]) -> dict:
+def measured_for(entry: dict, chip: str) -> dict:
+    """
+    What compiling this library's example produced, on *chip* and everywhere else.
+
+    The flash figure is the whole point of a library page on a part with 32 KB
+    of it, and it is the one number nobody has to take on trust: it comes from a
+    build, not from a claim.
+    """
+    targets = entry.get("measured", {}).get("targets", {})
+    if not isinstance(targets, dict):
+        targets = {}
+
+    here = targets.get(chip.lower()) if chip else None
+    return {
+        "targets": {
+            str(name): {
+                "build": str(result.get("build", "")) if isinstance(result, dict) else str(result),
+                "flash": (result.get("flash") if isinstance(result, dict) else None),
+                "ram": (result.get("ram") if isinstance(result, dict) else None),
+            }
+            for name, result in sorted(targets.items())
+        },
+        "flash": here.get("flash") if isinstance(here, dict) else None,
+        "ram": here.get("ram") if isinstance(here, dict) else None,
+        "compiler": str(entry.get("measured", {}).get("compiler", "")),
+        "date": str(entry.get("measured", {}).get("date", "")),
+    }
+
+
+def _entry_json(entry: dict, reasons: list[str], installed: set[str],
+                chip: str = "") -> dict:
     """An index entry as the IDE plugins consume it."""
     distribution = str(entry.get("distribution", ""))
     return {
@@ -256,9 +306,12 @@ def _entry_json(entry: dict, reasons: list[str], installed: set[str]) -> dict:
         "summary": str(entry.get("summary", "")),
         "categories": [str(c) for c in entry.get("categories", [])],
         "layer": str(entry.get("layer", "native")),
+        "adapters": [str(a) for a in entry.get("adapters", [])],
         "arch": [str(a) for a in entry.get("arch", [])],
+        "provides": [str(m) for m in entry.get("provides", [])],
         "status": str(entry.get("status", "active")),
         "repository": str(entry.get("repository", "")),
+        "measured": measured_for(entry, chip),
         # Empty means "nothing stops this library serving the current target".
         "reasons": reasons,
         "fits": not reasons,
@@ -524,6 +577,190 @@ def verify_example(lib: Library, project: Project) -> tuple[bool, str]:
 # Commands
 # ---------------------------------------------------------------------------
 
+@dataclass
+class ChangeResult:
+    """The outcome of an install or an uninstall, for whoever asked for it."""
+
+    ok: bool
+    message: str
+    log: list[str] = field(default_factory=list)
+    library: Library | None = None
+    entry: dict | None = None
+
+    def failed(self, message: str) -> "ChangeResult":
+        self.ok = False
+        self.message = message
+        return self
+
+
+def resolve_from_index(project: Project, name: str, *, refresh: bool = False
+                       ) -> tuple[dict | None, str, str]:
+    """
+    Look *name* up in the index and decide whether it can serve this project.
+
+    Returns (entry, distribution, error). A non-empty error means no, and says
+    why in the words the user needs to act on.
+    """
+    index, source = fetch_index(refresh=refresh)
+    if not index:
+        detail = f" {last_index_error()}" if last_index_error() else ""
+        return None, "", (
+            f"Could not reach the library index at {_index_url()} and no cached copy "
+            f"is available.{detail}"
+        )
+
+    entry = find_entry(index, name)
+    if entry is None:
+        return None, "", (
+            f"'{name}' is not in the PyMCU library index. PyMCU only installs libraries "
+            "that are known to compile; to add one, open a PR against the "
+            "pymcu-libraries repository."
+        )
+
+    reasons = entry_verdict(entry, project.chip, project.flavors)
+    if reasons:
+        return entry, "", (
+            f"'{name}' does not fit this project: "
+            + "; ".join(f"it {reason}" for reason in reasons)
+        )
+
+    distribution = str(entry.get("distribution") or f"{DISTRIBUTION_PREFIX}{name}")
+    return entry, distribution, ""
+
+
+def install_library(project: Project, name: str, *, verify: bool = True,
+                    from_pypi: bool = False, refresh: bool = False,
+                    pre: bool = True) -> ChangeResult:
+    """
+    Install a library into *project*, with every check the CLI applies.
+
+    The command and the local UI both go through here, so neither can grow a
+    behaviour the other does not have -- which is how `pio home` and its CLI
+    drifted apart.
+    """
+    result = ChangeResult(ok=True, message="")
+
+    if not project.chip:
+        return result.failed(
+            "This project declares no board or target in [tool.pymcu]. A library is only "
+            "installable once we know which chip it has to serve."
+        )
+
+    entry: dict | None = None
+    distribution = name
+    if not from_pypi:
+        entry, distribution, error = resolve_from_index(project, name, refresh=refresh)
+        if error:
+            return result.failed(error)
+        if str(entry.get("status", "active")) == "unmaintained":
+            result.log.append("Note: the index marks this library as unmaintained.")
+
+    if _needs_environment(project):
+        return result.failed(
+            "This project has no .venv, and nothing here can create one. Run `uv sync` "
+            "(or python -m venv .venv) first: a library the compiler cannot see in the "
+            "project's environment does nothing."
+        )
+
+    cmd = install_command(project, distribution, pre=pre)
+    if cmd is None:
+        return result.failed(
+            "No .venv in this project and uv is not available. Create the environment "
+            "first (uv sync, or python -m venv .venv)."
+        )
+
+    known = {lib.name for lib in _installed_libraries(project)[0]}
+    result.log.append(f"Installing {distribution} ...")
+    if not _run(cmd, project.root):
+        return result.failed(f"Installation of {distribution} failed.")
+
+    # Preflight against what actually landed on disk. The index can lag behind a
+    # release; the manifest in the wheel cannot. The package is found through the
+    # entry point it registered, never by guessing an import name from the
+    # distribution name -- those differ by design, and a local path has neither.
+    installed, problems_found = _installed_libraries(project)
+    lib = next((candidate for candidate in installed if candidate.name not in known), None)
+    if lib is None and entry is not None:
+        lib = next((c for c in installed if c.name == str(entry.get("name", ""))), None)
+
+    if lib is None:
+        detail = "; ".join(problems_found) if problems_found else (
+            "it registers no pymcu.libraries entry point, so the compiler would never see it"
+        )
+        return result.failed(rollback(project, distribution, detail))
+
+    problems = check_compatibility(lib, chip=project.chip, flavors=project.flavors)
+    problems.extend(
+        collision for collision in find_module_collisions(installed)
+        if lib.distribution in collision
+    )
+    if problems:
+        return result.failed(rollback(project, lib.distribution, "; ".join(problems)))
+
+    if verify:
+        ok, detail = verify_example(lib, project)
+        if not ok:
+            return result.failed(rollback(
+                project, lib.distribution,
+                f"its example does not build for {project.chip}: {detail}"))
+        result.log.append(f"Verified: {detail}")
+
+    # `uv add` already recorded it; writing again would list it twice.
+    if not _uses_uv_add(project):
+        _add_dependency(project, f"{distribution}>={lib.version}")
+
+    result.library = lib
+    result.entry = entry
+    result.message = f"{lib.name} {lib.version} installed"
+    return result
+
+
+def uninstall_library(project: Project, name: str) -> ChangeResult:
+    """Remove a library from *project* and stop recording it as a dependency."""
+    result = ChangeResult(ok=True, message="")
+
+    libraries_installed, _ = _installed_libraries(project)
+    match = next(
+        (lib for lib in libraries_installed
+         if name.lower() in (lib.name.lower(), lib.distribution.lower())),
+        None,
+    )
+    distribution = match.distribution if match else name
+
+    cmd = uninstall_command(project, distribution)
+    if cmd is None:
+        return result.failed("No .venv in this project and uv is not available.")
+
+    if not _run(cmd, project.root):
+        return result.failed(f"Could not uninstall {distribution}.")
+
+    if not _uses_uv_add(project):
+        _remove_dependency(project, distribution)
+
+    result.message = f"{distribution} removed"
+    return result
+
+
+def rollback(project: Project, distribution: str, reason: str) -> str:
+    """
+    Undo an install that turned out not to fit, and describe the outcome.
+
+    `uv add` records the dependency before this code ever sees the package, so
+    the rollback has to remove it from pyproject.toml too -- and say so, rather
+    than claiming the file was left alone when it was not.
+    """
+    message = f"{distribution} cannot be used here: {reason}"
+
+    cmd = uninstall_command(project, distribution)
+    if cmd is None:
+        return f"{message}. Could not roll back automatically; remove it with: pip uninstall {distribution}"
+
+    outcome = subprocess.run(cmd, cwd=project.root, capture_output=True, text=True)
+    if outcome.returncode == 0:
+        return f"{message}. Rolled back: it is not installed and not recorded."
+    return f"{message}. Rollback failed; undo it with: {' '.join(cmd)}"
+
+
 def install(
     name: str = typer.Argument(..., help="Library name as listed in the PyMCU index."),
     from_pypi: bool = typer.Option(
@@ -543,144 +780,28 @@ def install(
 ):
     """Install a PyMCU library into this project."""
     project = _load_project()
-    chip = _require_chip(project)
 
-    distribution = name if from_pypi else ""
-    entry: dict | None = None
+    result = install_library(project, name, verify=verify, from_pypi=from_pypi,
+                             refresh=refresh, pre=pre)
 
-    if not from_pypi:
-        index, source = fetch_index(refresh=refresh)
-        if not index:
+    for note in result.log:
+        console.print(f"[dim]{note}[/dim]")
+
+    if not result.ok:
+        console.print(f"[red]{result.message}[/red]")
+        if "not in the PyMCU library index" in result.message:
             console.print(
-                f"[red]Could not reach the library index at {_index_url()} and no cached "
-                "copy is available.[/red]"
-            )
-            if last_index_error():
-                console.print(f"[dim]{last_index_error()}[/dim]")
-            console.print(
-                "[dim]Retry when online, or use --from-pypi <distribution> if you know "
-                "what you are installing.[/dim]"
-            )
-            raise typer.Exit(code=1)
-        if source == "cache":
-            console.print("[dim]Using the cached index (run with --refresh to update).[/dim]")
-
-        entry = find_entry(index, name)
-        if entry is None:
-            console.print(
-                f"[red]'{name}' is not in the PyMCU library index.[/red]\n"
-                "[dim]PyMCU only installs libraries that are known to compile. To add one, "
-                "open a PR against the pymcu-libraries repository.[/dim]\n"
-                "[dim]To install it anyway: pymcu install --from-pypi <distribution>[/dim]"
-            )
-            raise typer.Exit(code=1)
-
-        reasons = entry_verdict(entry, chip, project.flavors)
-        if reasons:
-            console.print(f"[red]'{name}' does not fit this project:[/red]")
-            for reason in reasons:
-                console.print(f"  - it {reason}")
-            raise typer.Exit(code=1)
-
-        if str(entry.get("status", "active")) == "unmaintained":
-            console.print(
-                "[yellow]Note:[/yellow] the index marks this library as unmaintained."
-            )
-        distribution = str(entry.get("distribution") or f"{DISTRIBUTION_PREFIX}{name}")
-
-    known = {lib.name for lib in _installed_libraries(project)[0]}
-
-    if _needs_environment(project):
-        console.print(
-            "[red]This project has no .venv, and nothing here can create one.[/red]\n"
-            "[dim]Run `uv sync` (or python -m venv .venv) first: a library the "
-            "compiler cannot see in the project's environment does nothing.[/dim]"
-        )
+                "[dim]To install it anyway: pymcu install --from-pypi <distribution>[/dim]")
         raise typer.Exit(code=1)
 
-    cmd = install_command(project, distribution, pre=pre)
-    if cmd is None:
-        console.print(
-            "[red]No .venv in this project and uv is not available.[/red]\n"
-            "[dim]Create the environment first (uv sync, or python -m venv .venv).[/dim]"
-        )
-        raise typer.Exit(code=1)
-
-    console.print(f"[bold]Installing[/bold] {distribution} ...")
-    if not _run(cmd, project.root):
-        console.print(f"[red]Installation of {distribution} failed.[/red]")
-        raise typer.Exit(code=1)
-
-    # Preflight against what actually landed on disk. The index can lag behind a
-    # release; the manifest in the wheel cannot.  The package is found through
-    # the entry point it registered, never by guessing an import name from the
-    # distribution name -- those differ by design, and a local path has neither.
-    installed, problems_found = _installed_libraries(project)
-    lib = next((candidate for candidate in installed if candidate.name not in known), None)
-    if lib is None and entry is not None:
-        lib = next((c for c in installed if c.name == str(entry.get("name", ""))), None)
-
-    if lib is None:
-        detail = "; ".join(problems_found) if problems_found else (
-            "it registers no pymcu.libraries entry point, so the compiler would "
-            "never see it"
-        )
-        _rollback(project, distribution, detail)
-
-    problems = check_compatibility(lib, chip=chip, flavors=project.flavors)
-    problems.extend(
-        collision for collision in find_module_collisions(installed)
-        if lib.distribution in collision
-    )
-    if problems:
-        _rollback(project, lib.distribution, "; ".join(problems))
-
-    if verify:
-        ok, detail = verify_example(lib, project)
-        if not ok:
-            _rollback(project, lib.distribution,
-                      f"its example does not build for {chip}: {detail}")
-        console.print(f"[dim]Verified: {detail}[/dim]")
-
-    # `uv add` already recorded it; writing again would list it twice.
-    if not _uses_uv_add(project):
-        _add_dependency(project, f"{distribution}>={lib.version}")
-
-    console.print(f"[bold green]+[/bold green] {lib.name} {lib.version} installed.")
+    lib = result.library
+    console.print(f"[bold green]+[/bold green] {result.message}.")
     console.print(f"  import with: [bold]from {lib.modules[0]} import ...[/bold]")
     for flavor in project.flavors:
         if lib.adapter_dir(flavor) is not None:
             console.print(f"  using the [bold]{flavor}[/bold] adapter")
-    if entry:
-        _print_measured(entry, chip)
-
-
-def _rollback(project: Project, distribution: str, reason: str) -> None:
-    """
-    Undo an install that turned out not to fit, then exit.
-
-    `uv add` records the dependency before this code ever sees the package, so
-    the rollback has to remove it from pyproject.toml too -- and say so, rather
-    than claiming the file was left alone when it was not.
-    """
-    console.print(f"[red]{distribution} cannot be used here: {reason}[/red]")
-
-    cmd = uninstall_command(project, distribution)
-    if cmd is None:
-        console.print(
-            f"[yellow]Could not roll back automatically. Remove it with: "
-            f"pip uninstall {distribution}[/yellow]"
-        )
-        raise typer.Exit(code=1)
-
-    result = subprocess.run(cmd, cwd=project.root, capture_output=True, text=True)
-    if result.returncode == 0:
-        console.print("[dim]Rolled back: the library is not installed and not recorded.[/dim]")
-    else:
-        console.print(
-            f"[yellow]Rollback failed. Undo it with: {' '.join(cmd)}[/yellow]"
-        )
-    raise typer.Exit(code=1)
+    if result.entry:
+        _print_measured(result.entry, project.chip)
 
 
 def _print_measured(entry: dict, chip: str) -> None:
@@ -698,26 +819,13 @@ def uninstall(
 ):
     """Remove a PyMCU library from this project."""
     project = _load_project()
+    result = uninstall_library(project, name)
 
-    libraries, _ = _installed_libraries(project)
-    match = next(
-        (lib for lib in libraries if name.lower() in (lib.name.lower(), lib.distribution.lower())),
-        None,
-    )
-    distribution = match.distribution if match else name
-
-    cmd = uninstall_command(project, distribution)
-    if cmd is None:
-        console.print("[red]No .venv in this project and uv is not available.[/red]")
+    if not result.ok:
+        console.print(f"[red]{result.message}[/red]")
         raise typer.Exit(code=1)
 
-    if not _run(cmd, project.root):
-        console.print(f"[red]Could not uninstall {distribution}.[/red]")
-        raise typer.Exit(code=1)
-
-    if not _uses_uv_add(project):
-        _remove_dependency(project, distribution)
-    console.print(f"[bold green]-[/bold green] {distribution} removed.")
+    console.print(f"[bold green]-[/bold green] {result.message}.")
 
 
 def libraries(
@@ -820,7 +928,7 @@ def search(
             reasons = entry_verdict(entry, chip, flavors) if chip else []
             if reasons and not all_targets:
                 continue
-            results.append(_entry_json(entry, reasons, installed_names))
+            results.append(_entry_json(entry, reasons, installed_names, chip))
         print(json.dumps({
             "chip": chip, "flavors": flavors, "source": source, "libraries": results,
         }))

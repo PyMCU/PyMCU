@@ -1,0 +1,716 @@
+<title>PyMCU Libraries</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /*
+   * The subject is a flash budget, so the page is built like the instrument
+   * that measures one: a datasheet page and a scale rule. Copper marks what a
+   * part costs you, verdigris what fits, and nothing is decorative.
+   */
+  :root {
+    --paper:     #f5f4ef;
+    --ink:       #16202b;
+    --graphite:  #59636e;
+    --rule:      #d9d6cc;
+    --copper:    #9a5b2d;
+    --verdigris: #2c6a54;
+    --flag:      #a33726;
+    --sunk:      #ebe9e2;
+
+    --display: "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+    --body: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  }
+  :root:not([data-theme="light"]) {
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:     #11161b;
+      --ink:       #e9e7e0;
+      --graphite:  #939ba5;
+      --rule:      #262e37;
+      --copper:    #c9834b;
+      --verdigris: #6fb391;
+      --flag:      #dd7f6c;
+      --sunk:      #1a212a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.55 var(--body);
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 28px 64px; }
+
+  .eyebrow {
+    font: 600 11px/1 var(--display);
+    letter-spacing: .18em; text-transform: uppercase; color: var(--graphite);
+  }
+
+  /* ---- Header: the part, then its budget ------------------------------ */
+
+  header { padding: 34px 0 0; }
+  .part { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .part h1 {
+    margin: 0; font: 600 30px/1 var(--display); letter-spacing: -0.005em;
+  }
+  .part .chip {
+    font: 500 13px/1 var(--mono); color: var(--graphite);
+    padding-bottom: 2px;
+  }
+  .part .layer {
+    font: 600 10.5px/1 var(--display); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--verdigris); border: 1px solid currentColor; border-radius: 2px;
+    padding: 3px 6px;
+  }
+
+  /* The signature: a scale rule for the part's flash. */
+  .budget { margin: 22px 0 0; }
+  .budget-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    margin-bottom: 7px;
+  }
+  .budget-figure { font: 500 12.5px/1 var(--mono); color: var(--graphite); }
+  .budget-figure b { color: var(--copper); font-weight: 600; }
+  .rulebar {
+    position: relative; height: 26px; background: var(--sunk);
+    border: 1px solid var(--rule); border-radius: 2px; overflow: hidden;
+    display: flex;
+  }
+  .seg { height: 100%; background: var(--copper); position: relative; }
+  .seg + .seg { border-left: 1px solid var(--paper); }
+  .seg.ghost {
+    background: transparent;
+    background-image: repeating-linear-gradient(
+      -45deg, var(--copper) 0 2px, transparent 2px 6px);
+    opacity: .85;
+  }
+  .ticks {
+    position: relative; height: 15px; margin-top: 3px;
+    border-top: 1px solid var(--rule);
+  }
+  .tick { position: absolute; top: 0; transform: translateX(-50%); }
+  .tick i {
+    display: block; width: 1px; height: 4px; background: var(--rule); margin: 0 auto;
+  }
+  .tick span {
+    display: block; font: 500 10px/1.4 var(--mono); color: var(--graphite);
+    white-space: nowrap;
+  }
+  .tick:first-child { transform: none; }
+  .tick:first-child span { text-align: left; }
+  .tick:last-child { transform: translateX(-100%); }
+  .tick:last-child span { text-align: right; }
+  .caveat { margin: 9px 0 0; font-size: 12.5px; color: var(--graphite); max-width: 62ch; }
+
+  /* ---- Project sheet: what the build will use, and how to change it ---- */
+
+  .sheet { margin-top: 26px; border-top: 1px solid var(--rule); }
+  .sheet summary {
+    list-style: none; cursor: pointer; padding: 12px 2px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .sheet summary::-webkit-details-marker { display: none; }
+  .sheet summary:focus-visible { outline: 2px solid var(--verdigris); outline-offset: 2px; }
+  .sheet .arrow { font: 500 11px/1 var(--mono); color: var(--graphite); }
+  .sheet[open] .arrow { transform: rotate(90deg); }
+  .sheet .arrow { display: inline-block; transition: transform .15s ease; }
+  @media (prefers-reduced-motion: reduce) { .sheet .arrow { transition: none; } }
+
+  .fields {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px 22px; padding: 4px 2px 20px;
+  }
+  .field label {
+    display: block; font: 600 10.5px/1 var(--display);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--graphite);
+    margin-bottom: 5px;
+  }
+  .field select, .field input[type=text], .field input[type=number] {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 2px;
+    background: transparent; color: inherit; font: 13.5px/1.3 var(--mono);
+  }
+  .field select:focus-visible, .field input:focus-visible {
+    outline: 2px solid var(--verdigris); outline-offset: 1px;
+  }
+  .field .derived {
+    font: 13.5px/1.3 var(--mono); color: var(--ink);
+    padding: 7px 0; border-bottom: 1px dotted var(--rule);
+  }
+  .field .note { margin-top: 4px; font-size: 12px; color: var(--graphite); }
+  .field .note.warn { color: var(--flag); }
+  .sheet-actions { display: flex; gap: 10px; align-items: center; padding: 0 2px 18px; }
+  .sheet-actions .said { font-size: 12.5px; color: var(--graphite); }
+
+  /* ---- Controls -------------------------------------------------------- */
+
+  .controls {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin: 30px 0 6px; padding-top: 18px; border-top: 1px solid var(--rule);
+  }
+  input[type=search] {
+    flex: 1 1 220px; min-width: 0; padding: 8px 11px;
+    border: 1px solid var(--rule); border-radius: 2px;
+    background: transparent; color: inherit; font: inherit;
+  }
+  input[type=search]:focus-visible, button:focus-visible, .row:focus-visible {
+    outline: 2px solid var(--verdigris); outline-offset: 2px;
+  }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--graphite); }
+  button {
+    font: 600 11px/1 var(--display); letter-spacing: .1em; text-transform: uppercase;
+    padding: 9px 14px; border: 1px solid var(--ink); border-radius: 2px;
+    background: transparent; color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+  button.go { border-color: var(--verdigris); color: var(--verdigris); }
+  button.go:hover:not(:disabled) { background: var(--verdigris); color: var(--paper); }
+  button:disabled { opacity: .38; cursor: default; }
+  button.quiet { border-color: var(--rule); color: var(--graphite); }
+
+  /* ---- Rows ------------------------------------------------------------ */
+
+  h2 { margin: 30px 0 0; font: 600 11px/1 var(--display);
+       letter-spacing: .18em; text-transform: uppercase; color: var(--graphite); }
+  .rows { border-top: 1px solid var(--rule); margin-top: 10px; }
+  .row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 18px; align-items: start;
+    padding: 15px 2px; border-bottom: 1px solid var(--rule);
+  }
+  .row.no { opacity: .62; }
+  .row .name { font: 600 19px/1.15 var(--display); }
+  .row .name .v { font: 500 12px/1 var(--mono); color: var(--graphite); margin-left: 7px; }
+  .row .imp { font: 12.5px/1.5 var(--mono); color: var(--graphite); margin-top: 3px; }
+  .row .sum { margin-top: 5px; font-size: 14px; }
+  .row .why { margin-top: 6px; font-size: 13px; color: var(--flag); }
+
+  .matrix { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .m { font: 500 11.5px/1.35 var(--mono); color: var(--graphite); white-space: nowrap; }
+  .m b { font-weight: 600; }
+  .m.ok b { color: var(--verdigris); }
+  .m.no b { color: var(--flag); }
+
+  .cost { text-align: right; font: 600 20px/1.1 var(--mono); color: var(--copper); }
+  .cost small { display: block; font: 500 10.5px/1.6 var(--display);
+                letter-spacing: .12em; text-transform: uppercase; color: var(--graphite); }
+  .cost.none { color: var(--graphite); }
+
+  .empty { padding: 18px 2px; color: var(--graphite); border-bottom: 1px solid var(--rule); }
+
+  /* ---- Console --------------------------------------------------------- */
+
+  #log {
+    margin-top: 26px; padding: 13px 15px; border: 1px solid var(--rule);
+    border-left: 2px solid var(--copper); border-radius: 2px;
+    font: 12.5px/1.6 var(--mono); background: var(--sunk);
+    max-height: 220px; overflow: auto; white-space: pre-wrap;
+  }
+  #log:empty { display: none; }
+  #log .bad { color: var(--flag); }
+  #log .good { color: var(--verdigris); }
+
+  @media (max-width: 620px) {
+    .row { grid-template-columns: 1fr auto; }
+    .cost { grid-column: 2; text-align: right; }
+    .row > button { grid-column: 2; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .seg, .cost { transition: width .18s ease, color .18s ease; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Libraries for this project</div>
+    <div class="part">
+      <h1 id="project">…</h1>
+      <span class="chip" id="chip"></span>
+      <span class="layer" id="layer" hidden></span>
+    </div>
+
+    <div class="budget">
+      <div class="budget-head">
+        <span class="eyebrow">Flash budget</span>
+        <span class="budget-figure" id="figure"></span>
+      </div>
+      <div class="rulebar" id="rulebar"></div>
+      <div class="ticks" id="ticks"></div>
+      <p class="caveat">
+        Each figure is that library's own example compiled for this board — measured,
+        not claimed. Your firmware will weigh what your code uses.
+      </p>
+    </div>
+
+    <details class="sheet" id="sheet">
+      <summary>
+        <span class="eyebrow">Project settings <span class="arrow">›</span></span>
+        <span class="budget-figure" id="sheet-summary"></span>
+      </summary>
+
+      <div class="fields">
+        <div class="field">
+          <label for="f-board">Board</label>
+          <select id="f-board"></select>
+          <div class="note" id="n-board"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-layer">API layer</label>
+          <select id="f-layer">
+            <option value="native">native — pymcu.hal</option>
+            <option value="micropython">micropython — machine, time</option>
+            <option value="circuitpython">circuitpython — board, digitalio</option>
+          </select>
+          <div class="note" id="n-layer"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-freq">Clock</label>
+          <input type="number" id="f-freq" min="1" step="1">
+          <div class="note" id="n-freq"></div>
+        </div>
+
+        <div class="field">
+          <label>Chip</label>
+          <div class="derived" id="d-chip"></div>
+          <div class="note">Follows from the board.</div>
+        </div>
+
+        <div class="field">
+          <label for="f-sources">Sources</label>
+          <input type="text" id="f-sources" spellcheck="false">
+          <div class="note" id="n-sources"></div>
+        </div>
+
+        <div class="field">
+          <label for="f-entry">Entry point</label>
+          <input type="text" id="f-entry" spellcheck="false">
+          <div class="note" id="n-entry"></div>
+        </div>
+
+        <div class="field">
+          <label>Toolchain</label>
+          <div class="derived" id="d-toolchain"></div>
+          <div class="note">Chosen by the chip family.</div>
+        </div>
+
+        <div class="field">
+          <label>Programmer</label>
+          <div class="derived" id="d-programmer"></div>
+          <div class="note" id="n-programmer"></div>
+        </div>
+      </div>
+
+      <div class="sheet-actions">
+        <button class="go" id="save">Save to pyproject.toml</button>
+        <button class="quiet" id="revert">Discard</button>
+        <span class="said" id="saved"></span>
+      </div>
+    </details>
+  </header>
+
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search libraries" autocomplete="off" spellcheck="false">
+    <label class="toggle"><input type="checkbox" id="showall"> Show what doesn't fit</label>
+    <button class="quiet" id="refresh">Refresh index</button>
+  </div>
+
+  <h2>Installed</h2>
+  <div class="rows" id="installed"></div>
+
+  <h2>Available</h2>
+  <div class="rows" id="available"></div>
+
+  <div id="log" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+  const token = new URLSearchParams(location.search).get("token") || "";
+  const el = (id) => document.getElementById(id);
+  const state = { project: {}, installed: [], index: [], boards: [], ghost: 0 };
+
+  const api = async (path, options = {}) => {
+    const res = await fetch(path, {
+      ...options,
+      headers: { "X-PyMCU-Token": token, "Content-Type": "application/json" },
+    });
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    return body;
+  };
+
+  const bytes = (n) => {
+    if (n === null || n === undefined) return "—";
+    if (n < 1024) return n + " B";
+    return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+  };
+
+  const log = (text, cls) => {
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = text;
+    el("log").append(line);
+    el("log").scrollTop = el("log").scrollHeight;
+  };
+
+  // ---- The budget rule ---------------------------------------------------
+
+  function drawBudget() {
+    const total = state.project.flash_total || 0;
+    const used = state.installed.reduce((sum, l) => sum + (l.measured?.flash || 0), 0);
+    const bar = el("rulebar");
+    bar.textContent = "";
+
+    if (!total) {
+      el("figure").textContent = "flash size unknown for this part";
+      el("ticks").textContent = "";
+      return;
+    }
+
+    for (const lib of state.installed) {
+      const cost = lib.measured?.flash || 0;
+      if (!cost) continue;
+      const seg = document.createElement("div");
+      seg.className = "seg";
+      seg.style.width = (100 * cost / total) + "%";
+      seg.title = `${lib.name} — ${bytes(cost)}`;
+      bar.append(seg);
+    }
+    if (state.ghost) {
+      const seg = document.createElement("div");
+      seg.className = "seg ghost";
+      seg.style.width = (100 * state.ghost / total) + "%";
+      bar.append(seg);
+    }
+
+    const pct = total ? Math.round(1000 * (used + state.ghost) / total) / 10 : 0;
+    el("figure").innerHTML = state.ghost
+      ? `<b>${bytes(used)}</b> + ${bytes(state.ghost)} of ${bytes(total)} · ${pct}%`
+      : `<b>${bytes(used)}</b> of ${bytes(total)} · ${pct}%`;
+
+    const ticks = el("ticks");
+    ticks.textContent = "";
+    const step = total / 4;
+    for (let i = 0; i <= 4; i++) {
+      const t = document.createElement("div");
+      t.className = "tick";
+      t.style.left = (100 * i / 4) + "%";
+      t.innerHTML = `<i></i><span>${i === 0 ? "0" : bytes(step * i)}</span>`;
+      ticks.append(t);
+    }
+  }
+
+  const setGhost = (value) => { state.ghost = value; drawBudget(); };
+
+  // ---- Rows --------------------------------------------------------------
+
+  function matrix(lib) {
+    const box = document.createElement("div");
+    box.className = "matrix";
+    const targets = lib.measured?.targets || {};
+    const names = Object.keys(targets);
+    if (!names.length) return box;
+
+    for (const chip of names) {
+      const result = targets[chip];
+      const ok = result.build === "ok";
+      const item = document.createElement("span");
+      item.className = "m " + (ok ? "ok" : "no");
+      item.innerHTML = `${chip} <b>${ok ? bytes(result.flash) : "no"}</b>`;
+      box.append(item);
+    }
+    return box;
+  }
+
+  function row(lib, { installed }) {
+    const root = document.createElement("div");
+    root.className = "row" + (!installed && !lib.fits ? " no" : "");
+    root.tabIndex = 0;
+
+    const main = document.createElement("div");
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = lib.name;
+    if (lib.version) {
+      const v = document.createElement("span");
+      v.className = "v";
+      v.textContent = lib.version;
+      name.append(v);
+    }
+    main.append(name);
+
+    const modules = lib.provides || lib.modules || [];
+    const layers = [lib.layer, ...(lib.adapters || [])].filter(Boolean);
+    const imp = document.createElement("div");
+    imp.className = "imp";
+    imp.textContent = [
+      modules.length ? "import " + modules.join(", ") : "",
+      layers.join(" · "),
+    ].filter(Boolean).join("   ");
+    main.append(imp);
+
+    if (lib.summary) {
+      const sum = document.createElement("div");
+      sum.className = "sum";
+      sum.textContent = lib.summary;
+      main.append(sum);
+    }
+
+    main.append(matrix(lib));
+
+    if (lib.reasons?.length) {
+      const why = document.createElement("div");
+      why.className = "why";
+      why.textContent = lib.reasons.join("; ");
+      main.append(why);
+    }
+    root.append(main);
+
+    const cost = document.createElement("div");
+    const flash = lib.measured?.flash;
+    cost.className = "cost" + (flash ? "" : " none");
+    cost.innerHTML = `${bytes(flash)}<small>${flash ? "flash" : "not measured here"}</small>`;
+    root.append(cost);
+
+    const button = document.createElement("button");
+    if (installed) {
+      button.textContent = "Remove";
+      button.onclick = () => change("/api/uninstall", lib.name, button);
+    } else {
+      button.textContent = "Install";
+      button.className = "go";
+      button.disabled = !lib.fits;
+      button.onclick = () => change("/api/install", lib.name, button);
+    }
+    root.append(button);
+
+    // Hovering a candidate previews what it would cost on the rule above.
+    if (!installed && lib.fits && flash) {
+      const on = () => setGhost(flash);
+      const off = () => setGhost(0);
+      root.addEventListener("mouseenter", on);
+      root.addEventListener("mouseleave", off);
+      root.addEventListener("focus", on);
+      root.addEventListener("blur", off);
+    }
+    return root;
+  }
+
+  function render() {
+    const p = state.project;
+    el("project").textContent = p.name || "this project";
+    el("chip").textContent = p.board ? `${p.board} · ${p.chip}` : (p.chip || "no board set");
+    const layer = (p.layers && p.layers[0]) || "native";
+    el("layer").textContent = layer;
+    el("layer").hidden = false;
+
+    drawBudget();
+
+    const installedBox = el("installed");
+    installedBox.textContent = "";
+    if (!state.installed.length) {
+      installedBox.innerHTML = '<div class="empty">No libraries in this project yet.</div>';
+    } else {
+      state.installed.forEach((lib) => installedBox.append(row(lib, { installed: true })));
+    }
+
+    const query = el("q").value.trim().toLowerCase();
+    const showAll = el("showall").checked;
+    const here = new Set(state.installed.map((l) => l.name));
+    const shown = state.index.filter((lib) => {
+      if (here.has(lib.name)) return false;
+      if (!showAll && !lib.fits) return false;
+      if (!query) return true;
+      return `${lib.name} ${lib.summary || ""} ${(lib.categories || []).join(" ")}`
+        .toLowerCase().includes(query);
+    });
+
+    const availableBox = el("available");
+    availableBox.textContent = "";
+    if (!shown.length) {
+      const chip = p.chip || "this board";
+      // "Nothing here" and "you already have all of it" are different answers,
+      // and only one of them is a reason to go looking elsewhere.
+      const all = state.index.length;
+      const message =
+        query ? "Nothing matches that." :
+        !all ? "The index is empty. It is regenerated as libraries are published." :
+        here.size >= all ? `Everything the index has for ${chip} is already installed.` :
+        showAll ? "Nothing left to show." :
+        `The index has nothing else for ${chip}. Tick “Show what doesn't fit” to see the rest.`;
+      availableBox.innerHTML = `<div class="empty">${message}</div>`;
+    } else {
+      shown.forEach((lib) => availableBox.append(row(lib, { installed: false })));
+    }
+  }
+
+  // ---- Project settings --------------------------------------------------
+
+  function fillBoards() {
+    const select = el("f-board");
+    select.textContent = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = state.project.board ? "— keep current —" : "— no board set —";
+    select.append(none);
+
+    for (const group of state.boards) {
+      const box = document.createElement("optgroup");
+      box.label = group.group;
+      for (const board of group.boards) {
+        const option = document.createElement("option");
+        option.value = board.name;
+        option.dataset.chip = board.chip;
+        option.dataset.frequency = board.frequency;
+        option.textContent = board.name;
+        box.append(option);
+      }
+      select.append(box);
+    }
+    select.value = state.project.board || "";
+  }
+
+  function fillSheet() {
+    const p = state.project;
+    el("f-layer").value = p.layer || "native";
+    el("f-freq").value = p.frequency || "";
+    el("f-sources").value = p.sources || "src";
+    el("f-entry").value = p.entry || "main.py";
+    el("d-chip").textContent = p.chip || "—";
+    el("d-toolchain").textContent = p.toolchain || "—";
+    el("d-programmer").textContent = p.programmer || "—";
+
+    const mhz = p.frequency ? `${(p.frequency / 1e6).toFixed(p.frequency % 1e6 ? 1 : 0)} MHz` : "";
+    el("n-freq").textContent = [
+      mhz,
+      p.frequency_explicit ? "set in pyproject.toml" : "board default, not written",
+    ].filter(Boolean).join(" · ");
+    el("n-programmer").textContent = p.programmer_explicit
+      ? "Set under [tool.pymcu.flash]." : "Default for this chip.";
+    el("n-layer").textContent = p.layer === "native"
+      ? "Libraries use pymcu.hal directly."
+      : `Needs pymcu-${p.layer} installed in this project.`;
+    el("n-board").textContent = p.target && !p.board
+      ? `Set as target = "${p.target}". Choosing a board replaces it.` : "";
+
+    el("n-sources").className = "note" + (p.sources_exist ? "" : " warn");
+    el("n-sources").textContent = p.sources_exist ? "" : "This folder does not exist yet.";
+    el("n-entry").className = "note" + (p.entry_exists ? "" : " warn");
+    el("n-entry").textContent = p.entry_exists ? "" : "No such file under sources.";
+
+    el("sheet-summary").textContent = [
+      p.board || p.chip || "no board",
+      p.layer || "native",
+      p.frequency ? `${(p.frequency / 1e6).toFixed(p.frequency % 1e6 ? 1 : 0)} MHz` : "",
+    ].filter(Boolean).join("  ·  ");
+    el("saved").textContent = "";
+  }
+
+  // A board carries its own clock, so picking one moves the field with it --
+  // a frequency left over from another board compiles and makes every delay
+  // wrong.
+  el("f-board").onchange = () => {
+    const option = el("f-board").selectedOptions[0];
+    if (option?.dataset.frequency) {
+      el("f-freq").value = option.dataset.frequency;
+      el("d-chip").textContent = option.dataset.chip;
+    }
+  };
+
+  el("f-freq").oninput = () => {
+    const hz = Number(el("f-freq").value);
+    el("n-freq").textContent = hz > 0
+      ? `${(hz / 1e6).toFixed(hz % 1e6 ? 1 : 0)} MHz · unsaved`
+      : "Must be a positive number of hertz.";
+  };
+
+  el("revert").onclick = (event) => { event.preventDefault(); fillSheet(); fillBoards(); };
+
+  el("save").onclick = async (event) => {
+    event.preventDefault();
+    const button = el("save");
+    button.disabled = true;
+    el("saved").textContent = "";
+    const payload = {
+      board: el("f-board").value || undefined,
+      layer: el("f-layer").value,
+      frequency: Number(el("f-freq").value) || undefined,
+      sources: el("f-sources").value.trim() || undefined,
+      entry: el("f-entry").value.trim() || undefined,
+    };
+    try {
+      const result = await api("/api/config", { method: "POST", body: JSON.stringify(payload) });
+      state.project = result.project;
+      state.installed = result.installed;
+      const what = Object.entries(result.changed || {})
+        .map(([key, value]) => `${key}=${value}`).join(", ");
+      el("saved").textContent = what ? `Saved: ${what}` : result.message;
+      log(what ? `pyproject.toml updated — ${what}` : result.message, "good");
+      await loadIndex();
+    } catch (error) {
+      el("saved").textContent = String(error.message || error);
+      log(String(error.message || error), "bad");
+    } finally {
+      button.disabled = false;
+      fillSheet();
+      fillBoards();
+      render();
+    }
+  };
+
+  // ---- Actions -----------------------------------------------------------
+
+  async function change(path, name, button) {
+    button.disabled = true;
+    setGhost(0);
+    log(`${path.endsWith("/api/install") ? "Installing" : "Removing"} ${name}…`);
+    try {
+      const result = await api(path, { method: "POST", body: JSON.stringify({ name }) });
+      (result.log || []).forEach((line) => log(line));
+      log(result.message, result.ok ? "good" : "bad");
+      state.installed = result.installed;
+      state.project = result.project;
+      await loadIndex();
+    } catch (error) {
+      log(String(error.message || error), "bad");
+    } finally {
+      button.disabled = false;
+      render();
+    }
+  }
+
+  async function loadIndex(refresh) {
+    const data = await api("/api/index" + (refresh ? "?refresh=1" : ""));
+    state.index = data.libraries || [];
+    if (data.error) log(data.error, "bad");
+    else if (data.source === "cache") log("Index read from cache.");
+  }
+
+  async function boot() {
+    try {
+      state.project = await api("/api/project");
+      state.boards = (await api("/api/boards")).groups || [];
+      state.installed = (await api("/api/installed")).libraries;
+      await loadIndex();
+      fillBoards();
+      fillSheet();
+    } catch (error) {
+      log(String(error.message || error), "bad");
+    }
+    render();
+  }
+
+  el("q").oninput = render;
+  el("showall").onchange = render;
+  el("refresh").onclick = async () => {
+    el("refresh").disabled = true;
+    try { await loadIndex(true); } catch (e) { log(String(e.message || e), "bad"); }
+    el("refresh").disabled = false;
+    render();
+  };
+
+  boot();
+</script>

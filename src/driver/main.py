@@ -137,6 +137,8 @@ from .commands.upgrade import upgrade
 from .commands.coffee import coffee
 from .commands.libraries import install, libraries, search, uninstall
 from .commands.library_index import index_app
+from .commands.home import home
+from .commands.config import config
 
 app = typer.Typer(help="pymcu: Python-to-MCU compiler driver")
 
@@ -170,6 +172,8 @@ app.command()(install)
 app.command()(uninstall)
 app.command(name="libraries")(libraries)
 app.command()(search)
+app.command()(home)
+app.command()(config)
 app.command()(boards)
 app.command()(stubs)
 app.command(hidden=True)(bench)
