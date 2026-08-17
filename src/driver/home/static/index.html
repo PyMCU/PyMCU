@@ -197,6 +197,12 @@
   .tk-num { color: #e5c06a; }
   .tk-type { color: #9fc4e8; }
   .tk-dec { color: var(--copper); }
+  .tk-dir { color: #7f9ac0; }
+  .tk-mn { color: var(--copper-bright); }
+  .tk-reg { color: #9fc4e8; }
+  .tk-lbl { color: var(--text); font-weight: 600; }
+
+  pre.asm { max-height: 62vh; overflow: auto; }
 
   .cli { color: var(--faint); font-size: 12.5px; }
   .cli code { font: 12.5px/1.5 var(--mono); color: var(--muted); }
@@ -296,7 +302,7 @@
 
 <script>
   const token = new URLSearchParams(location.search).get("token") || "";
-  const state = { project: {}, installed: [], index: [], boards: [], source: "", ghost: 0 };
+  const state = { project: {}, installed: [], index: [], boards: [], source: "", ghost: 0, assembly: {} };
   const view = document.getElementById("view");
 
   const api = async (path, options = {}) => {
@@ -343,12 +349,60 @@
     return out + esc(source.slice(last));
   }
 
+  // Assembly, also the playground's: directives, labels, mnemonics, registers.
+  // Line-oriented because that is how assembly is written -- a comment runs to
+  // the end of the line, and the first word decides what the line is.
+  function highlightTokens(source, rx, cls) {
+    let out = "", last = 0;
+    rx.lastIndex = 0;
+    for (let m; (m = rx.exec(source)) !== null;) {
+      out += esc(source.slice(last, m.index));
+      let picked = null;
+      for (let g = 1; g < cls.length; g++) if (m[g] !== undefined) { picked = cls[g]; break; }
+      out += picked ? `<span class="${picked}">${esc(m[0])}</span>` : esc(m[0]);
+      last = m.index + m[0].length;
+    }
+    return out + esc(source.slice(last));
+  }
+
+  const ASM_OP_RX = /\b([rR]\d{1,2})\b|((?:0[xX][0-9a-fA-F]+)|\b\d+\b)/g;
+  const ASM_OP_CLS = [null, "tk-reg", "tk-num"];
+  const asmOperands = (s) => highlightTokens(s, ASM_OP_RX, ASM_OP_CLS);
+
+  function highlightAsm(source) {
+    return source.split("\n").map((line) => {
+      const ci = line.indexOf(";");
+      const body = ci >= 0 ? line.slice(0, ci) : line;
+      const comment = ci >= 0 ? `<span class="tk-com">${esc(line.slice(ci))}</span>` : "";
+      const directive = body.match(/^(\s*)(\.\w+)(.*)$/);
+      const label = body.match(/^(\w+):(.*)$/);
+      let html;
+      if (directive) {
+        html = esc(directive[1]) + `<span class="tk-dir">${esc(directive[2])}</span>`
+             + asmOperands(directive[3]);
+      } else if (label) {
+        html = `<span class="tk-lbl">${esc(label[1])}:</span>` + asmOperands(label[2]);
+      } else {
+        const mnemonic = body.match(/^(\s*)([A-Za-z][\w]*)(.*)$/);
+        html = mnemonic
+          ? esc(mnemonic[1]) + `<span class="tk-mn">${esc(mnemonic[2])}</span>`
+            + asmOperands(mnemonic[3])
+          : esc(body);
+      }
+      return html + comment;
+    }).join("\n");
+  }
+
   // Shell blocks stay plain: a prompt and a command line have nothing worth
   // colouring, and guessing a language we were not told is how snippets end up
   // highlighted as the wrong thing.
-  const code = (source, language) =>
-    `<pre class="cmd">${/^(py|python)$/i.test(language || "")
-      ? highlightPy(source) : esc(source)}</pre>`;
+  const code = (source, language) => {
+    const lang = (language || "").toLowerCase();
+    const painted = /^(py|python)$/.test(lang) ? highlightPy(source)
+      : /^(asm|avrasm|s|gas|assembly)$/.test(lang) ? highlightAsm(source)
+      : esc(source);
+    return `<pre class="cmd">${painted}</pre>`;
+  };
 
   // Readmes come from other people's packages: escape everything, then add only
   // the tags we chose. No innerHTML of anything that arrived over the wire.
@@ -639,6 +693,29 @@
         ${lib.measured?.compiler ? `<p class="lede" style="margin-top:12px">Measured with
           pymcu-compiler ${esc(lib.measured.compiler)} on ${esc(lib.measured.date)}.</p>` : ""}`,
 
+      assembly: () => {
+        // Compiled when the tab is opened, not when the page loads: it costs
+        // seconds, and most visits never ask for it.
+        const cached = state.assembly[`${name}:${state.project.chip}`];
+        if (cached === undefined) {
+          loadAssembly(name);
+          return `<p class="lede"><span class="working"></span>Compiling the example for
+            the ${esc(state.project.chip_label || state.project.chip)}…</p>`;
+        }
+        if (!cached.ok) {
+          return `<p class="lede">${esc(cached.error || "The example did not build.")}</p>`;
+        }
+        return `
+          <p class="lede">What the ${esc(state.project.chip_label || state.project.chip)}
+            actually runs: the example above, compiled here, just now${
+            cached.flash ? ` — ${bytes(cached.flash)} of flash` : ""}.
+            ${cached.truncated
+              ? `Showing the first ${cached.lines > 2000 ? "2,000" : cached.lines} of
+                 ${cached.lines.toLocaleString()} lines; the whole file is in
+                 <code>dist/${esc(cached.file)}</code> after a build.` : ""}</p>
+          <pre class="cmd asm">${highlightAsm(cached.source)}</pre>`;
+      },
+
       usage: () => {
         const example = lib.example || {};
         const layer = state.project.layer || "native";
@@ -681,7 +758,7 @@
           lib.distribution ? ` · <code>${esc(lib.distribution)}</code> on PyPI` : ""}</span>
       </div>
       <div class="tabs" role="tablist">
-        ${["overview", "compatibility", "usage"].map((t) =>
+        ${["overview", "compatibility", "usage", ...(installed ? ["assembly"] : [])].map((t) =>
           `<button role="tab" aria-selected="${t === tab}" data-tab="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}
       </div>
       <div>${panes[tab]()}</div>`;
@@ -803,6 +880,17 @@
       await loadInstalled();
       viewSettings();
     };
+  }
+
+  async function loadAssembly(name) {
+    const key = `${name}:${state.project.chip}`;
+    if (state.assembly[key] !== undefined) return;
+    try {
+      state.assembly[key] = await api(`/api/assembly?name=${encodeURIComponent(name)}`);
+    } catch (err) {
+      state.assembly[key] = { ok: false, error: String(err.message || err) };
+    }
+    if (location.hash === `#/library/${encodeURIComponent(name)}`) viewLibrary(name, "assembly");
   }
 
   // ---- Actions ------------------------------------------------------------
