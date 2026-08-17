@@ -189,6 +189,15 @@
     padding: 12px 14px; font: 13px/1.7 var(--mono); overflow-x: auto; color: var(--text);
   }
   pre.cmd .p { color: var(--faint); }
+  /* Token colours are the playground's, verbatim: the same snippet should not
+     change colour depending on which PyMCU surface you are looking at. */
+  .tk-kw { color: var(--copper-bright); }
+  .tk-str { color: var(--ok); }
+  .tk-com { color: var(--muted); font-style: italic; }
+  .tk-num { color: #e5c06a; }
+  .tk-type { color: #9fc4e8; }
+  .tk-dec { color: var(--copper); }
+
   .cli { color: var(--faint); font-size: 12.5px; }
   .cli code { font: 12.5px/1.5 var(--mono); color: var(--muted); }
 
@@ -306,6 +315,41 @@
   const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) =>
     ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
+  // Python highlighting, carried over from the playground unchanged -- same
+  // pattern, same class names, same colours. It runs on the raw source and
+  // escapes each slice as it goes, so nothing in a readme can smuggle markup
+  // through a token boundary.
+  const PY_RX = new RegExp([
+    /("""[\s\S]*?"""|'''[\s\S]*?''')/.source,
+    /(#[^\n]*)/.source,
+    /([fbru]{0,2}"(?:\\.|[^"\\\n])*"|[fbru]{0,2}'(?:\\.|[^'\\\n])*')/.source,
+    /(@\w[\w.]*)/.source,
+    /\b(def|class|return|if|elif|else|while|for|in|not|and|or|import|from|as|pass|break|continue|True|False|None|with|try|except|finally|raise|lambda|yield|async|await|global|nonlocal|match|case|is|del|assert)\b/.source,
+    /\b(uint8|int8|uint16|int16|uint32|int32|float|bool|ptr|const|bytes|bytearray|str|int|list|dict|set|range|len|enumerate|zip|print|input|asm)\b/.source,
+    /\b(0[xXbBoO][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/.source,
+  ].join("|"), "g");
+  const PY_CLS = [null, "tk-str", "tk-com", "tk-str", "tk-dec", "tk-kw", "tk-type", "tk-num"];
+
+  function highlightPy(source) {
+    let out = "", last = 0;
+    PY_RX.lastIndex = 0;
+    for (let m; (m = PY_RX.exec(source)) !== null;) {
+      out += esc(source.slice(last, m.index));
+      let cls = null;
+      for (let g = 1; g < PY_CLS.length; g++) if (m[g] !== undefined) { cls = PY_CLS[g]; break; }
+      out += cls ? `<span class="${cls}">${esc(m[0])}</span>` : esc(m[0]);
+      last = m.index + m[0].length;
+    }
+    return out + esc(source.slice(last));
+  }
+
+  // Shell blocks stay plain: a prompt and a command line have nothing worth
+  // colouring, and guessing a language we were not told is how snippets end up
+  // highlighted as the wrong thing.
+  const code = (source, language) =>
+    `<pre class="cmd">${/^(py|python)$/i.test(language || "")
+      ? highlightPy(source) : esc(source)}</pre>`;
+
   // Readmes come from other people's packages: escape everything, then add only
   // the tags we chose. No innerHTML of anything that arrived over the wire.
   function markdown(source, kind) {
@@ -322,7 +366,7 @@
 
     const out = [];
     const lines = text.split("\n");
-    let fence = null, list = false, para = [];
+    let fence = null, fenceLang = "", list = false, para = [];
 
     const flush = () => {
       if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; }
@@ -332,8 +376,8 @@
     for (const line of lines) {
       const fenced = line.match(/^```(\w*)/);
       if (fenced) {
-        if (fence === null) { closeList(); flush(); fence = []; }
-        else { out.push(`<pre class="cmd">${esc(fence.join("\n"))}</pre>`); fence = null; }
+        if (fence === null) { closeList(); flush(); fence = []; fenceLang = fenced[1]; }
+        else { out.push(code(fence.join("\n"), fenceLang)); fence = null; fenceLang = ""; }
         continue;
       }
       if (fence !== null) { fence.push(line); continue; }
@@ -357,7 +401,7 @@
       para.push(line.trim());
     }
     closeList(); flush();
-    if (fence !== null) out.push(`<pre class="cmd">${esc(fence.join("\n"))}</pre>`);
+    if (fence !== null) out.push(code(fence.join("\n"), fenceLang));
     return `<div class="readme">${out.join("\n")}</div>`;
   }
 
@@ -601,7 +645,7 @@
         const adapter = (lib.adapters || []).includes(layer);
         return `
         <h2>Import</h2>
-        <pre class="cmd">from ${esc(modules[0] || lib.name)} import ...</pre>
+        ${code(`from ${modules[0] || lib.name} import ...`, "python")}
         <p class="lede">${
           lib.layer === layer
             ? `Written against the ${esc(layer)} layer, which is the one this project declares.`
@@ -615,7 +659,7 @@
             compiles to measure it.${lib.layer !== layer
               ? ` It is written against the ${esc(lib.layer)} API; on the ${esc(layer)}
                   layer the calls follow ${esc(layer)}'s own conventions.` : ""}</p>
-          <pre class="cmd">${esc(example.source)}</pre>`
+          ${code(example.source, "python")}`
           : `<h2>Example</h2><p class="lede">This library ships no example.</p>`}`;
       },
     };
