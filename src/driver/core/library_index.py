@@ -38,7 +38,13 @@ from pathlib import Path
 
 import tomlkit
 
-from .libraries import Library, ManifestError, discover_libraries, site_packages_of
+from .libraries import (
+    Library,
+    ManifestError,
+    discover_libraries,
+    read_description,
+    site_packages_of,
+)
 
 # One chip per architecture, chosen to be the cheapest representative that a
 # backend actually supports today.  Measuring every chip would multiply CI time
@@ -79,6 +85,8 @@ class IndexEntry:
     library: Library
     targets: dict[str, TargetResult] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    readme: str = ""
+    readme_type: str = ""
 
     def to_json(self, compiler_version: str, generated: str) -> dict:
         lib = self.library
@@ -91,6 +99,8 @@ class IndexEntry:
             "license": lib.license,
             "categories": lib.categories,
             "provides": lib.modules,
+            "readme": self.readme,
+            "readme_type": self.readme_type,
             "layer": lib.layer,
             "adapters": lib.adapters,
             "arch": lib.arch,
@@ -234,6 +244,7 @@ def build_entry(lib: Library, *, pymcu: Path,
                 env_paths: list[str] | None = None) -> IndexEntry:
     """Measure one library across the chips that apply to it."""
     entry = IndexEntry(library=lib)
+    entry.readme, entry.readme_type = read_description(lib.distribution, env_paths)
     for chip in chips_to_measure(lib):
         entry.targets[chip] = measure_example(lib, chip, pymcu=pymcu, env_paths=env_paths)
     entry.warnings = compare_with_manifest(lib, entry.targets)

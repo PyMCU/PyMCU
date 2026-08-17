@@ -73,6 +73,51 @@ BOARD_GROUPS: dict[str, list[str]] = {
 }
 
 
+# The name on the box, for anything a person reads. `arduino_uno` is a key --
+# it belongs in pyproject.toml and on the command line, not in a sentence.
+BOARD_LABELS: dict[str, str] = {
+    "arduino_uno":        "Arduino Uno Rev3",
+    "arduino_nano":       "Arduino Nano",
+    "arduino_mega":       "Arduino Mega 2560 Rev3",
+    "arduino_micro":      "Arduino Micro",
+    "digispark":          "Digispark",
+    "adafruit_trinket":   "Adafruit Trinket 5V",
+    "raspberry_pi_pico":  "Raspberry Pi Pico",
+    "raspberry_pi_pico2": "Raspberry Pi Pico 2",
+    "pico":               "Raspberry Pi Pico",
+    "pico2":              "Raspberry Pi Pico 2",
+}
+
+# Silkscreen capitalisation. Nobody writes "atmega328p" on a datasheet, and a
+# rule that lowercases everything after "AT" would still get ATmega32U4 wrong.
+CHIP_LABELS: dict[str, str] = {
+    "atmega328p": "ATmega328P", "atmega328": "ATmega328",
+    "atmega168p": "ATmega168P", "atmega168": "ATmega168",
+    "atmega88p": "ATmega88P", "atmega88": "ATmega88",
+    "atmega48p": "ATmega48P", "atmega48": "ATmega48",
+    "atmega2560": "ATmega2560", "atmega32u4": "ATmega32U4",
+    "attiny85": "ATtiny85", "attiny45": "ATtiny45", "attiny25": "ATtiny25",
+    "attiny84": "ATtiny84", "attiny44": "ATtiny44", "attiny24": "ATtiny24",
+    "attiny13": "ATtiny13", "attiny13a": "ATtiny13A",
+    "attiny2313": "ATtiny2313", "attiny4313": "ATtiny4313",
+    "rp2040": "RP2040", "rp2350": "RP2350",
+    "pic16f877a": "PIC16F877A", "pic16f84a": "PIC16F84A",
+    "pic16f18877": "PIC16F18877", "pic18f45k50": "PIC18F45K50",
+    "pic10f200": "PIC10F200", "pic12f508": "PIC12F508",
+    "ch32v003": "CH32V003", "ch32v203": "CH32V203",
+}
+
+
+def board_label(board: str) -> str:
+    """The product name for *board*, or the key itself if we have none."""
+    return BOARD_LABELS.get(board, board)
+
+
+def chip_label(chip: str) -> str:
+    """The part number as the vendor writes it, or the identifier unchanged."""
+    return CHIP_LABELS.get(chip.lower(), chip)
+
+
 def load_extension_board_chips(flavor: str) -> dict[str, str]:
     """
     BOARD_CHIPS supplied by the pymcu_<flavor> compat package, or {}.

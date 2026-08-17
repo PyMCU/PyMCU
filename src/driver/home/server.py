@@ -38,6 +38,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ..commands import libraries as lib_cmd
+from ..core.libraries import read_description, site_packages_of
 from ..core.project_config import apply_changes, available_boards, describe
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -257,6 +258,7 @@ class HomeHandler(BaseHTTPRequestHandler):
         are joined here by distribution name.
         """
         installed, _ = lib_cmd._installed_libraries(self.state.project)
+        search = site_packages_of(self.state.project.venv) if self.state.project.venv.exists() else None
         index, _source = lib_cmd.fetch_index()
         by_distribution = {
             str(entry.get("distribution", "")).lower(): entry
@@ -271,6 +273,11 @@ class HomeHandler(BaseHTTPRequestHandler):
                                 if entry else
                                 {"targets": {}, "flash": None, "ram": None,
                                  "compiler": "", "date": ""})
+            # Read from the installed wheel rather than the index: it is the
+            # copy this project actually has, and it needs no network.
+            readme, kind = read_description(lib.distribution, search)
+            item["readme"] = readme or str((entry or {}).get("readme", ""))
+            item["readme_type"] = kind or str((entry or {}).get("readme_type", ""))
             payload.append(item)
         return payload
 

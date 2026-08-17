@@ -15,7 +15,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer, default_toolchain
+from ..core.boards import BOARD_CHIPS, BOARD_GROUPS, default_programmer, default_toolchain, board_label, chip_label
 
 console = Console()
 
@@ -54,12 +54,15 @@ def boards(
 
     table = Table(title="Supported boards")
     table.add_column("Board", style="bold")
+    table.add_column("Name", style="dim")
     table.add_column("Chip")
     table.add_column("Group", style="dim")
     table.add_column("Toolchain", style="dim")
     table.add_column("Programmer", style="dim")
     for b in catalog["boards"]:
-        table.add_row(b["name"], b["chip"], b["group"] or "-", b["toolchain"], b["programmer"])
+        # The key is what goes in pyproject.toml; the name is what is on the box.
+        table.add_row(b["name"], board_label(b["name"]), chip_label(b["chip"]),
+                      b["group"] or "-", b["toolchain"], b["programmer"])
     console.print(table)
 
     if catalog["chips"]:

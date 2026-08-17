@@ -312,6 +312,8 @@ def _entry_json(entry: dict, reasons: list[str], installed: set[str],
         "status": str(entry.get("status", "active")),
         "repository": str(entry.get("repository", "")),
         "measured": measured_for(entry, chip),
+        "readme": str(entry.get("readme", "")),
+        "readme_type": str(entry.get("readme_type", "")),
         # Empty means "nothing stops this library serving the current target".
         "reasons": reasons,
         "fits": not reasons,

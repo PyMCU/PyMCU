@@ -190,6 +190,23 @@
   }
   pre.cmd .p { color: var(--faint); }
 
+  /* Readme: someone else's prose, so it gets room to breathe and a measure. */
+  .readme { max-width: 74ch; }
+  .readme p { margin: 10px 0; }
+  .readme h2.md, .readme h3.md, .readme h4.md {
+    font: 600 15px/1.35 var(--sans); color: var(--text);
+    text-transform: none; letter-spacing: 0; margin: 22px 0 8px;
+  }
+  .readme h2.md { font-size: 17px; }
+  .readme ul { margin: 10px 0 10px 20px; }
+  .readme li { margin: 4px 0; }
+  .readme code {
+    font: 12.5px/1.5 var(--mono); background: var(--raised);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+  }
+  .readme pre.cmd { margin: 12px 0; }
+  .readme pre.cmd code { background: none; border: 0; padding: 0; }
+
   /* ── Controls ────────────────────────────────────────────────────────── */
 
   .bar-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
@@ -287,6 +304,61 @@
   const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) =>
     ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
+  // Readmes come from other people's packages: escape everything, then add only
+  // the tags we chose. No innerHTML of anything that arrived over the wire.
+  function markdown(source, kind) {
+    const text = String(source || "").replace(/\r\n/g, "\n");
+    if (!text.trim()) return "";
+    if ((kind || "").includes("rst") || (kind || "").includes("plain")) {
+      return `<pre class="cmd">${esc(text)}</pre>`;
+    }
+
+    const inline = (s) => esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+    const out = [];
+    const lines = text.split("\n");
+    let fence = null, list = false, para = [];
+
+    const flush = () => {
+      if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; }
+    };
+    const closeList = () => { if (list) { out.push("</ul>"); list = false; } };
+
+    for (const line of lines) {
+      const fenced = line.match(/^```(\w*)/);
+      if (fenced) {
+        if (fence === null) { closeList(); flush(); fence = []; }
+        else { out.push(`<pre class="cmd">${esc(fence.join("\n"))}</pre>`); fence = null; }
+        continue;
+      }
+      if (fence !== null) { fence.push(line); continue; }
+
+      const heading = line.match(/^(#{1,4})\s+(.*)$/);
+      if (heading) {
+        closeList(); flush();
+        const level = Math.min(heading[1].length + 1, 4);
+        out.push(`<h${level} class="md">${inline(heading[2])}</h${level}>`);
+        continue;
+      }
+      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+      if (bullet) {
+        flush();
+        if (!list) { out.push("<ul>"); list = true; }
+        out.push(`<li>${inline(bullet[1])}</li>`);
+        continue;
+      }
+      if (!line.trim()) { closeList(); flush(); continue; }
+      if (list) { out.push(`<li>${inline(line.trim())}</li>`); continue; }
+      para.push(line.trim());
+    }
+    closeList(); flush();
+    if (fence !== null) out.push(`<pre class="cmd">${esc(fence.join("\n"))}</pre>`);
+    return `<div class="readme">${out.join("\n")}</div>`;
+  }
+
   const activity = [];
   function say(text, kind) {
     activity.push({ text, kind });
@@ -303,7 +375,7 @@
     state.project = await api("/api/project");
     const p = state.project;
     document.getElementById("foot").innerHTML =
-      `<b>${esc(p.name || "project")}</b>${esc(p.board || p.chip || "no board set")}`;
+      `<b>${esc(p.name || "project")}</b>${esc(p.board_label || p.chip_label || "no board set")}`;
   }
   async function loadInstalled() {
     state.installed = (await api("/api/installed")).libraries;
@@ -316,6 +388,15 @@
     document.getElementById("c-registry").textContent = state.index.length || "";
     if (data.error) say(data.error, "bad");
   }
+  // Chip labels ride along with the board list; the registry speaks identifiers.
+  const chipLabel = (chip) => {
+    for (const group of state.boards) {
+      for (const board of group.boards) {
+        if (board.chip === chip) return board.chip_label || chip;
+      }
+    }
+    return chip;
+  };
   const usedFlash = () => state.installed.reduce((n, l) => n + (l.measured?.flash || 0), 0);
   const find = (name) =>
     state.installed.find((l) => l.name === name) || state.index.find((l) => l.name === name);
@@ -367,8 +448,9 @@
       <div class="cards">
         <div class="card">
           <div class="k">Board</div>
-          <div class="v">${esc(p.board || p.target || "not set")}</div>
-          <div class="n">${esc(p.chip || "no chip resolved")}</div>
+          <div class="v">${esc(p.board_label || p.board || p.target || "not set")}</div>
+          <div class="n">${esc(p.chip_label || p.chip || "no chip resolved")}${
+            p.board ? ` · <span style="font-family:var(--mono)">${esc(p.board)}</span>` : ""}</div>
         </div>
         <div class="card">
           <div class="k">API layer</div>
@@ -439,8 +521,8 @@
           : `<div class="empty"><p>${
               q ? "Nothing matches that search."
                 : state.index.length && here.size >= state.index.length
-                  ? `Everything the registry has for ${esc(state.project.chip)} is already installed.`
-                  : state.index.length ? `Nothing else fits ${esc(state.project.chip)}.`
+                  ? `Everything the registry has for the ${esc(state.project.board_label || state.project.chip)} is already installed.`
+                  : state.index.length ? `Nothing else fits the ${esc(state.project.board_label || state.project.chip)}.`
                   : "The registry is empty. It fills as libraries are published."
             }</p></div>`}
       </div>`;
@@ -490,7 +572,9 @@
               ? "adapters: " + esc((lib.adapters || []).join(", ")) : "no layer adapters"}</div></div>
         </div>
         ${lib.repository ? `<h2>Source</h2><p><a href="${esc(lib.repository)}" target="_blank"
-          rel="noopener">${esc(lib.repository)}</a></p>` : ""}`,
+          rel="noopener">${esc(lib.repository)}</a></p>` : ""}
+        ${lib.readme ? `<h2>Readme</h2>${markdown(lib.readme, lib.readme_type)}`
+          : `<h2>Readme</h2><p class="lede">This library ships no long description.</p>`}`,
 
       compatibility: () => `
         <p class="lede">Every figure comes from compiling this library's own example for
@@ -500,7 +584,7 @@
           <tr><th>Chip</th><th>Build</th><th>Flash</th></tr>
           ${Object.entries(targets).map(([chip, r]) => `
             <tr>
-              <td class="n">${esc(chip)}${chip === state.project.chip
+              <td class="n">${esc(chipLabel(chip))}${chip === state.project.chip
                 ? ' <span class="pill">this board</span>' : ""}</td>
               <td><span class="pill ${r.build === "ok" ? "ok" : "no"}">${esc(r.build)}</span></td>
               <td class="n">${r.build === "ok" ? bytes(r.flash) : "—"}</td>
@@ -522,7 +606,7 @@
       <div class="head">
         <h1>${esc(lib.name)}</h1>
         <span class="pill">${esc(lib.version || "")}</span>
-        ${fits ? `<span class="pill ok">fits ${esc(state.project.chip)}</span>`
+        ${fits ? `<span class="pill ok">fits the ${esc(state.project.board_label || state.project.chip_label || state.project.chip)}</span>`
                 : `<span class="pill no">${esc((lib.reasons || [])[0] || "does not fit")}</span>`}
       </div>
       <p class="lede">${esc(lib.summary || "")}</p>
@@ -574,7 +658,7 @@
           <div class="n" id="n-freq"></div></div>
 
         <div class="field"><label>Chip</label>
-          <div class="ro" id="d-chip">${esc(p.chip || "—")}</div>
+          <div class="ro" id="d-chip">${esc(p.chip_label || p.chip || "—")}</div>
           <div class="n">Follows from the board.</div></div>
 
         <div class="field"><label for="f-sources">Sources</label>

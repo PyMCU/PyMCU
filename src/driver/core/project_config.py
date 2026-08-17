@@ -35,6 +35,8 @@ from .boards import (
     BOARD_CHIPS,
     BOARD_GROUPS,
     board_frequency,
+    board_label,
+    chip_label,
     default_frequency,
     default_programmer,
     default_toolchain,
@@ -71,8 +73,10 @@ def describe(doc: tomlkit.TOMLDocument, root: Path) -> dict:
 
     return {
         "board": board,
+        "board_label": board_label(board) if board else "",
         "target": target,
         "chip": chip,
+        "chip_label": chip_label(chip) if chip else "",
         "layer": layers[0] if layers else "native",
         "layers": layers,
         "frequency": int(frequency) if frequency else (board_frequency(board) if board else 0),
@@ -103,13 +107,25 @@ def available_boards(layers: list[str] | None = None) -> list[dict]:
             if not chip:
                 continue
             seen.add(name)
-            boards.append({"name": name, "chip": chip, "frequency": board_frequency(name)})
+            boards.append({
+                "name": name,
+                "label": board_label(name),
+                "chip": chip,
+                "chip_label": chip_label(chip),
+                "frequency": board_frequency(name),
+            })
         if boards:
             groups.append({"group": group, "boards": boards})
 
     # Boards contributed by a compat package are not in BOARD_GROUPS.
     rest = [
-        {"name": name, "chip": chip, "frequency": board_frequency(name)}
+        {
+            "name": name,
+            "label": board_label(name),
+            "chip": chip,
+            "chip_label": chip_label(chip),
+            "frequency": board_frequency(name),
+        }
         for name, chip in sorted(extra.items()) if name not in seen
     ]
     if rest:

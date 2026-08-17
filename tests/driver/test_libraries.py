@@ -213,3 +213,56 @@ class TestVenvDiscovery:
         assert core.search_path_for_project(tmp_path) is None
 
 
+
+
+class TestReadme:
+    """
+    A library page without the author's own words is a stub. The readme is
+    already inside the wheel, so it is read from there: no network, and no
+    second copy to fall out of step with the installed version.
+    """
+
+    def _dist(self, tmp_path, body, headers=""):
+        site = tmp_path / "site-packages"
+        info = site / "pymcu_lib_dht11-0.2.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(
+            "Metadata-Version: 2.1\n"
+            "Name: pymcu-lib-dht11\n"
+            "Version: 0.2.0\n"
+            "Description-Content-Type: text/markdown\n"
+            f"{headers}\n{body}"
+        )
+        return [str(site)]
+
+    def test_the_body_of_metadata_is_the_readme(self, tmp_path):
+        search = self._dist(tmp_path, "# dht11\n\nA sensor driver.\n")
+        text, kind = core.read_description("pymcu-lib-dht11", search)
+        assert "# dht11" in text and "A sensor driver." in text
+        assert kind == "text/markdown"
+
+    def test_the_legacy_description_header_still_works(self, tmp_path):
+        site = tmp_path / "site-packages"
+        info = site / "pymcu_lib_dht11-0.2.0.dist-info"
+        info.mkdir(parents=True)
+        (info / "METADATA").write_text(
+            "Metadata-Version: 2.1\n"
+            "Name: pymcu-lib-dht11\n"
+            "Version: 0.2.0\n"
+            "Description: An older wheel put it here.\n\n"
+        )
+        text, _kind = core.read_description("pymcu-lib-dht11", [str(site)])
+        assert "older wheel" in text
+
+    def test_underscores_and_dashes_name_the_same_package(self, tmp_path):
+        search = self._dist(tmp_path, "Readme body.\n")
+        assert core.read_description("pymcu_lib_dht11", search)[0] == "Readme body."
+
+    def test_a_missing_package_is_empty_not_an_error(self, tmp_path):
+        assert core.read_description("nothing-here", [str(tmp_path)]) == ("", "")
+
+    def test_a_very_long_readme_is_cut_and_says_so(self, tmp_path):
+        search = self._dist(tmp_path, "line\n" * 20000)
+        text, _kind = core.read_description("pymcu-lib-dht11", search)
+        assert len(text) <= core.README_LIMIT + 40
+        assert text.endswith("[…truncated]")

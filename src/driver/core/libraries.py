@@ -195,6 +195,47 @@ def load_library(module_name: str, *, distribution: str = "") -> Library:
     )
 
 
+# A readme is documentation, not a payload: enough to read, not enough to make
+# the index a download. Anything longer is cut at a line boundary and says so.
+README_LIMIT = 24_000
+
+
+def read_description(distribution: str, search_path: list[str] | None = None) -> tuple[str, str]:
+    """
+    The long description a wheel carries, as (text, content type).
+
+    This is the README the author wrote, already inside the package -- so a
+    library's own page works with no network and no second source of truth.
+    Modern wheels put it in the METADATA body; older ones use a Description
+    header, and both still turn up.
+    """
+    wanted = distribution.strip().lower().replace("_", "-")
+    try:
+        found = list(distributions(path=search_path) if search_path else distributions())
+    except Exception:
+        return "", ""
+
+    for dist in found:
+        name = ((dist.metadata["Name"] if dist.metadata else "") or "").lower().replace("_", "-")
+        if name != wanted:
+            continue
+        metadata = dist.metadata
+        text = ""
+        try:
+            payload = metadata.get_payload()
+            if isinstance(payload, str):
+                text = payload
+        except Exception:
+            text = ""
+        if not text.strip():
+            text = metadata.get("Description", "") or ""
+        kind = metadata.get("Description-Content-Type", "") or "text/markdown"
+        if len(text) > README_LIMIT:
+            text = text[:README_LIMIT].rsplit("\n", 1)[0] + "\n\n[…truncated]"
+        return text.strip(), kind
+    return "", ""
+
+
 def site_packages_of(venv: Path) -> list[str]:
     """Return the site-packages directories of a virtualenv, newest layout first."""
     if sys.platform == "win32":
