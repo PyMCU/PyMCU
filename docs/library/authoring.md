@@ -1,16 +1,14 @@
 # Writing a PyMCU Library
 
-:::{admonition} The index is not online yet
-:class: warning
+:::{admonition} The index is live
+:class: note
 
-The tooling described here works: `pymcu build` discovers libraries through the
-`pymcu.libraries` entry point, and `pymcu install`, `pymcu libraries` and
-`pymcu lint --library` are in the driver.
+`pymcu install <name>` resolves names against the published index at
+`libraries.pymcu.org/index.json`, with a GitHub mirror as fallback. It is
+regenerated weekly, and each entry records which compiler measured it.
 
-What does not exist yet is the curated index at `pymcu.org/libraries`, so
-`pymcu install <name>` has nothing to resolve names against. Until it is published,
-install with `pymcu install --from-pypi <distribution>`, which skips the index but still
-requires a valid manifest and still checks the target.
+There is no browsable catalogue page yet — only the JSON. `pymcu search` and
+`pymcu libraries` read it from the command line.
 :::
 
 A PyMCU library is **source code the compiler reads at build time**, not a module

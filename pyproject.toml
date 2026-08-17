@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pymcu-compiler"
-version = "0.1.0a8"
+version = "0.1.0a9"
 description = "Python-to-MCU compiler driver"
 readme = "README.md"
 authors = [
@@ -25,7 +25,7 @@ dependencies = [
     # removes a whole class of errors that read like the server being down.
     "certifi>=2023.7.22",
     "pymcu-stdlib>=0.1.0a7",
-    "pymcu-sdk>=0.1.0a8",
+    "pymcu-sdk>=0.1.0a9",
 ]
 
 [project.optional-dependencies]
