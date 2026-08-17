@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pymcu-sdk"
-version = "0.1.0a5"
+version = "0.1.0a6"
 description = "Plugin SDK for PyMCU — abstract base classes for codegen backends and toolchain drivers"
 readme = "README.md"
 authors = [
