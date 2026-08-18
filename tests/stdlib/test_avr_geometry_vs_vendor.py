@@ -95,15 +95,30 @@ def backend_table():
     text = DEVICES.read_text()
     out = {}
     for chip, start, size, jmp in re.findall(
-            r'\["(\w+)"\]\s*=\s*new\(\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*(\d+)\s*,\s*(true|false)\s*\)', text):
-        out[chip] = (int(start, 0), int(size), jmp == "true")
+            r'\["(\w+)"\]\s*=\s*new(?:\s+\w+)?\(\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*'
+            r'(0x[0-9A-Fa-f]+|\d+)\s*,\s*(true|false)\s*\)', text):
+        out[chip] = (int(start, 0), int(size, 0), jmp == "true")
     return out
 
 
 BACKEND = backend_table()
 
 needs_gcc = pytest.mark.skipif(AVR_GCC is None, reason="avr toolchain not installed")
-needs_backend = pytest.mark.skipif(not BACKEND, reason="pymcu-avr checkout not present")
+needs_backend = pytest.mark.skipif(not DEVICES.exists(), reason="pymcu-avr checkout not present")
+
+
+@needs_backend
+def test_the_device_table_is_readable():
+    """A file that is present but yields nothing is a broken parser, never a skip.
+
+    AvrDevices.cs is C# source, not a data format, and its owner may reformat it
+    without knowing this test reads it. Two routine edits -- writing the explicit
+    type, or using a collection initialiser -- make the pattern match nothing.
+    Collapsing that into the same skip as "no checkout" would take every backend
+    check out of service and report the absence as somebody else's missing repo.
+    """
+    assert BACKEND, (f"{DEVICES} exists but no device rows parsed out of it; "
+                     "the table format changed and these checks are not running")
 
 
 @needs_gcc

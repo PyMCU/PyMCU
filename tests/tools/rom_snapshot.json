@@ -165,8 +165,8 @@
    "status": "ok"
   },
   "adc|ch32v003": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
    "status": "no-build",
    "tried": {
@@ -174,8 +174,8 @@
    }
   },
   "adc|ch32v203": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
    "status": "no-build",
    "tried": {
@@ -183,8 +183,8 @@
    }
   },
   "adc|pic10f200": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "adc=\"GP0\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
    "status": "no-build",
    "tried": {
@@ -201,8 +201,8 @@
    }
   },
   "adc|pic16f628a": {
-   "kind": "hal-incompleto",
-   "proves": "nada: el HAL de ese chip no define la funcion",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "adc=\"RA0\": CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m",
    "status": "no-build",
    "tried": {
@@ -210,8 +210,8 @@
    }
   },
   "adc|pic16f84a": {
-   "kind": "hal-incompleto",
-   "proves": "nada: el HAL de ese chip no define la funcion",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "adc=\"RA0\": CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
    "status": "no-build",
    "tried": {
@@ -368,9 +368,9 @@
    }
   },
   "asyncio|attiny24": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB0\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
    "status": "no-build",
    "tried": {
     "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
@@ -404,9 +404,9 @@
    }
   },
   "asyncio|attiny44": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB0\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
    "status": "no-build",
    "tried": {
     "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
@@ -428,9 +428,9 @@
    }
   },
   "asyncio|attiny84": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB0\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
    "status": "no-build",
    "tried": {
     "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
@@ -735,14 +735,12 @@
    "status": "ok"
   },
   "blink|pic10f200": {
-   "kind": "sin-clasificar",
-   "proves": "nada: motivo no reconocido por el arnes",
-   "reason": "pin=\"GP0\": Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_",
-   "status": "no-build",
-   "tried": {
-    "\"GP0\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_",
-    "\"GP1\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_"
-   }
+   "asm": "d1c11d25c7341ab7",
+   "asm_from": "debug/firmware.asm",
+   "mir": "3acb69034c430e57",
+   "pin": "\"GP0\"",
+   "rom": 86,
+   "status": "ok"
   },
   "blink|pic16f18877": {
    "kind": "sin-facade",
@@ -987,14 +985,14 @@
    "status": "ok"
   },
   "call|pic10f200": {
-   "kind": "sin-clasificar",
-   "proves": "nada: motivo no reconocido por el arnes",
-   "reason": "pin=\"GP0\": Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp",
-   "status": "no-build",
-   "tried": {
-    "\"GP0\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp",
-    "\"GP1\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp"
-   }
+   "asm": "9999143fb762f014",
+   "asm_from": "debug/firmware.asm",
+   "mir": "d73f657b7b60207d",
+   "pin": "\"GP0\"",
+   "rom": 86,
+   "status": "ok",
+   "warn": 11,
+   "warn_first": "Warning[219] Invalid RAM location specified. 'mix.i' -- 0x020 >"
   },
   "call|pic16f18877": {
    "kind": "sin-facade",
@@ -1020,7 +1018,9 @@
    "mir": "6c9cdc804cc461d7",
    "pin": "\"RB3\"",
    "rom": 172,
-   "status": "ok"
+   "status": "ok",
+   "warn": 3,
+   "warn_first": "Warning[219] Invalid RAM location specified. '__ret_hi' -- 0x0079 in"
   },
   "call|pic16f877a": {
    "asm": "8f000ff281578941",
@@ -1326,14 +1326,14 @@
    "status": "ok"
   },
   "uart|attiny13": {
-   "kind": "sin-RAM",
-   "proves": "nada: el programa no cabe en la RAM del chip",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
    "status": "no-build"
   },
   "uart|attiny13a": {
-   "kind": "sin-RAM",
-   "proves": "nada: el programa no cabe en la RAM del chip",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
    "status": "no-build"
   },
@@ -1394,20 +1394,20 @@
    "status": "ok"
   },
   "uart|ch32v003": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
    "status": "no-build"
   },
   "uart|ch32v203": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
    "status": "no-build"
   },
   "uart|pic10f200": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
    "status": "no-build"
   },
@@ -1425,8 +1425,8 @@
    "status": "ok"
   },
   "uart|pic16f84a": {
-   "kind": "hal-incompleto",
-   "proves": "nada: el HAL de ese chip no define la funcion",
+   "kind": "chip-sin-periferico",
+   "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
    "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
    "status": "no-build"
   },
@@ -1461,48 +1461,51 @@
  },
  "provenance": {
   "compiler_tree_dirty": [],
-  "head": "4416a929",
+  "head": "bdce2451",
   "toolchain": {
    "pymcuc": {
     "binary": "/Users/begeistert/Repos/PyMCU/build/bin/pymcuc",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "4416a929",
+    "repo_head": "bdce2451",
     "scope": "src/compiler",
-    "sha": "d23a91626582ed00",
-    "stamp": "4416a929"
+    "sha": "1a1f13b9490b5951",
+    "stamp": "bdce2451"
    },
    "pymcuc-avr": {
     "binary": "/Users/begeistert/Repos/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr",
-    "dirty_hash": null,
+    "dirty_hash": "38578ad3c4add0b6",
     "repo": "pymcu-avr",
-    "repo_dirty": [],
+    "repo_dirty": [
+     "src/csharp/cli/Program.cs",
+     "src/csharp/lib/Targets/AVR/AvrDevices.cs",
+     "tests/unit/Backend/AvrDeviceDumpTests.cs"
+    ],
     "repo_head": "0d161f88",
     "scope": ".",
-    "sha": "ec364c362124e563",
-    "stale": "compilado en ddd9b9a8, el repo va por 0d161f88",
-    "stamp": "ddd9b9a8"
+    "sha": "701a2b65e8eed690",
+    "stamp": "0d161f88"
    },
    "pymcuc-pic": {
     "binary": "/Users/begeistert/Repos/pymcu-pic/src/python/pymcu/backend/pic/pymcuc-pic",
     "dirty_hash": null,
     "repo": "pymcu-pic",
     "repo_dirty": [],
-    "repo_head": "167b8020",
+    "repo_head": "efda7a02",
     "scope": ".",
-    "sha": "63739724f5a4da70",
-    "stamp": "167b8020"
+    "sha": "02d8c1dbe8e6dcbf",
+    "stamp": "efda7a02"
    },
    "pymcuc-riscv": {
     "binary": "/Users/begeistert/Repos/PyMCU/extensions/pymcu-backend-riscv/src/python/pymcu/backend/riscv/pymcuc-riscv",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "4416a929",
+    "repo_head": "bdce2451",
     "scope": "extensions/pymcu-backend-riscv",
     "sha": "51485c05bf94ba74",
-    "stale": "compilado en 92edbb63, el repo va por 4416a929",
+    "stale": "compilado en 92edbb63, el repo va por bdce2451",
     "stamp": "92edbb63"
    },
    "pymcuc-rp2040": {

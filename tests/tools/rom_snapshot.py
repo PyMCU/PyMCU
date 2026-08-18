@@ -313,6 +313,10 @@ def build(work: Path, chip: str, arch: str, source: str):
         return {"status": "no-build",
                 "reason": (reason.group(1).strip() if reason else "unknown")[:110]}
     entry = {"status": "ok", "rom": int(rom.group(1))}
+    warnings = WARNING.findall(proc.stdout + proc.stderr)
+    if warnings:
+        entry["warn"] = len(warnings)
+        entry["warn_first"] = " ".join(warnings[0].split())[:90]
     mir = work / "dist" / "firmware.mir"
     if mir.exists():
         entry["mir"] = hashlib.sha256(mir.read_bytes()).hexdigest()[:16]
@@ -327,6 +331,8 @@ def build(work: Path, chip: str, arch: str, source: str):
 
 
 PIN_SHAPED = re.compile(r"Unsupported Pin|Unknown pin|no such pin", re.I)
+
+WARNING = re.compile(r"Warning\[\d+\][^\n]{0,90}")
 
 
 def first_that_builds(work, chip, arch, template, candidates, key):
@@ -394,6 +400,29 @@ NO_BUILD_KINDS = [
 ]
 
 
+PERIPHERAL_REGISTERS = {
+    "uart": ("TXREG", "UDR", "SPBRG", "TXSTA", "UBRR"),
+    "adc": ("ADRESH", "ADCON0", "ADMUX", "ADCSRA", "ADRESL"),
+}
+
+
+def chip_lacks(program, chip):
+    """Whether the chip has no such peripheral at all, read from its own register map.
+
+    A facade that rejects a chip and a chip that has no USART produce the same
+    no-build, and calling both "the facade does not cover it" turns a physical
+    fact into a to-do item. The PIC10F200 will never have a UART.
+    """
+    names = PERIPHERAL_REGISTERS.get(program)
+    if not names:
+        return False
+    source = CHIPS_DIR / f"{chip}.py"
+    if not source.exists():
+        return False
+    text = source.read_text()
+    return not any(re.search(rf"^{n}\b", text, re.M) for n in names)
+
+
 def annotate(path):
     import collections
     stored = json.loads(path.read_text())
@@ -408,6 +437,10 @@ def annotate(path):
             if needle in reason:
                 kind, why = k, w
                 break
+        program, chip = key.split("|", 1)
+        if chip_lacks(program, chip):
+            kind = "chip-sin-periferico"
+            why = "el chip no tiene ese periferico: no es deuda, es fisica"
         cell["kind"] = kind
         cell["proves"] = "nada: " + why
         kinds[kind] += 1
@@ -503,13 +536,18 @@ def main():
         path.write_text(json.dumps(
             {"provenance": prov, "cells": current}, indent=1, sort_keys=True) + "\n")
         ok = sum(1 for v in current.values() if v["status"] == "ok")
+        noisy = {k: v for k, v in current.items() if v.get("warn")}
         print(f"\ncapturado: {len(current)} celdas, {ok} compilan -> {path}")
+        if noisy:
+            print(f"  {len(noisy)} compilan CON AVISOS del ensamblador -- ensamblar no es estar bien:")
+            for key, cell in sorted(noisy.items()):
+                print(f"    {key:24s} {cell['warn']:3d}  {cell.get('warn_first', '')}")
         return 0
 
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    COMMENTARY = ("reason", "kind", "proves", "tried")
+    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first")
 
     def measured(cell):
         return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell
@@ -529,7 +567,10 @@ def main():
             continue
         if a and b and a.get("status") == b.get("status") == "ok":
             delta = b["rom"] - a["rom"]
-            diffs.append((key, f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}", delta))
+            note = ""
+            if b.get("warn") and not a.get("warn"):
+                note = f", {b['warn']} AVISOS DEL ENSAMBLADOR nuevos"
+            diffs.append((key, f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}{note}", delta))
         else:
             diffs.append((key, f"{a} -> {b}", None))
     if not diffs:
