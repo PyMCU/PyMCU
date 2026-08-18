@@ -230,3 +230,23 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist
           skip-existing: true
+
+  # Kick the playground rebuild once the wheels are on PyPI: the playground's
+  # compiler shim compiles this repo's sources, so a compiler release IS a
+  # playground change. Advisory: a missing/expired PLAYGROUND_DISPATCH_TOKEN
+  # must never redden a release that already published fine.
+  notify-playground:
+    name: Notify playground
+    needs: [publish-pypi]
+    if: success()
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Dispatch pymcu-release to PyMCU/pymcu-playground
+        env:
+          GH_TOKEN: ${{ secrets.PLAYGROUND_DISPATCH_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "no PLAYGROUND_DISPATCH_TOKEN; skipping"; exit 0; }
+          gh api repos/PyMCU/pymcu-playground/dispatches \
+            -f event_type=pymcu-release \
+            -F 'client_payload[pymcu_ref]='"${GITHUB_REF_NAME}"
