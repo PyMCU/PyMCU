@@ -1048,7 +1048,7 @@ public partial class IRGenerator
 
         inlineStack.Add(new InlineContext
             { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames, CalleeName = callee,
-              Prefix = newPrefix });
+              Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth });
 
         var boundParams = new HashSet<int>();
 

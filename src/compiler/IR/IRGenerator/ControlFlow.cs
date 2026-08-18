@@ -746,7 +746,12 @@ public partial class IRGenerator
         if (stmt.ErrorType == "CompileError")
         {
             string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
-            if (_runtimeBranchDepth == 0)
+            // Only branches opened INSIDE the current inline expansion make the raise
+            // conditional: a `raise` at the top of an @inline body must abort even when
+            // the user wrapped the CALL in a while/if (the expansion is reachable
+            // whenever the call is). Compare against the depth at expansion entry.
+            int baseDepth = inlineStack.Count > 0 ? inlineStack[^1].EntryBranchDepth : 0;
+            if (_runtimeBranchDepth <= baseDepth)
             {
                 // Statically unconditional: the raise is reachable without any runtime
                 // guard. Abort compilation immediately — this is the intended ZCA path.

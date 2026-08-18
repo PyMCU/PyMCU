@@ -32,6 +32,12 @@ public class InlineContext
     // The inline name-prefix active inside this expansion's body (e.g. "inline1.outer.").
     // Used to resolve a free variable captured from an enclosing INLINE scope.
     public string Prefix { get; set; } = "";
+
+    // Runtime-branch depth at the moment this expansion started. A raise
+    // CompileError is "statically unconditional" when no runtime branch was
+    // opened INSIDE the expansion — user control flow around the call site
+    // (a while/if wrapping the call) does not make the raise conditional.
+    public int EntryBranchDepth { get; set; } = 0;
 }
 
 public class ModuleScope
