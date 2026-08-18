@@ -13,8 +13,10 @@ diagnostic). Suites at release: 517 unit, 508 driver, 1549 AVR integration.
   `uint32(float_var)` produced raw float bits (16464 for 3.25 on a real Uno).
 - An unannotated module global widens to its call-result type instead of
   wrapping at a uint8 store (`f0 = pwm.freq()` printed 232 for 1000).
-- A user global no longer shadows a same-named library `@inline` parameter
-  (`data = 5` broke `uart.write('hello')`).
+- A user global no longer shadows a same-named function parameter -- neither
+  of an `@inline` (`data = 5` broke `uart.write('hello')`) nor of a plain def
+  (`start_low_ms = 250` silently drove the DHT driver's start pulse for
+  250 ms instead of 18).
 - `raise CompileError` inside an `@inline` body aborts compilation even when
   the call site sits under runtime control flow (a swallowed raise had let
   `readline()` compile to an unbound temp written to UDR0).
