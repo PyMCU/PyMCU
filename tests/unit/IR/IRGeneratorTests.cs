@@ -22,6 +22,53 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void DunderSliceAssign_UnrollsToPerElementSetitem()
+    {
+        // obj[0:3] = [...] on a class with __setitem__/__len__ unrolls to one
+        // __setitem__ dispatch per element (the CircuitPython nvm pattern).
+        var src =
+            "class Store:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def __len__(self) -> uint16:\n" +
+            "        return 8\n" +
+            "    @inline\n" +
+            "    def __setitem__(self, index: uint16, value: uint8):\n" +
+            "        PORTB: ptr[uint8] = ptr(0x25)\n" +
+            "        PORTB.value = value\n" +
+            "store = Store()\n" +
+            "def main():\n" +
+            "    store[0:3] = [1, 2, 3]\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var writes = ir.Functions.SelectMany(f => f.Body).OfType<StoreIndirect>().Count();
+        Assert.Equal(3, writes);
+    }
+
+    [Fact]
+    public void DunderSliceAssign_LengthMismatch_Errors()
+    {
+        var src =
+            "class Store:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def __len__(self) -> uint16:\n" +
+            "        return 8\n" +
+            "    @inline\n" +
+            "    def __setitem__(self, index: uint16, value: uint8):\n" +
+            "        PORTB: ptr[uint8] = ptr(0x25)\n" +
+            "        PORTB.value = value\n" +
+            "store = Store()\n" +
+            "def main():\n" +
+            "    store[0:2] = [1, 2, 3]\n";
+        var ex = Assert.ThrowsAny<Exception>(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("length mismatch", ex.Message);
+    }
+
+    [Fact]
     public void RaiseCompileError_InInlineBody_FiresUnderCallSiteRuntimeBranch()
     {
         // The raise is unconditional INSIDE the @inline body; user control flow
