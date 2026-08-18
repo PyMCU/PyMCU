@@ -120,7 +120,8 @@ The file uploaded depends on the target, and must exist before flashing:
 ### Supported programmers
 
 The programmer defaults to the one for the target family (`avrdude` for AVR,
-`pk2cmd` for PIC, `rp2040` for the RP boards) and can be overridden:
+`pk2cmd` for PIC, `rp2040` for the RP boards) and can be overridden. For PIC,
+`pk2cmd` drives a PICkit 2 and `ipecmd` drives a PICkit 3:
 
 **AVR (Arduino Uno):**
 
@@ -137,6 +138,20 @@ baud       = 115200                    # optional
 [tool.pymcu.flash]
 programmer = "pk2cmd"    # auto-downloaded on first use
 ```
+
+**PIC (PICkit 3):**
+
+```toml
+[tool.pymcu.flash]
+programmer = "ipecmd"          # MPLAB X IPE command line
+# ipecmd_power = "5.0"         # only if the PICkit powers the target board
+```
+
+`ipecmd` ships with MPLAB X. Install **v6.20 or older** — v6.25 dropped PICkit 3
+support, so the latest MPLAB X cannot talk to it. PyMCU looks for `ipecmd` in
+`PYMCU_IPECMD`, then on `PATH`, then inside the MPLAB X installations it can
+find, preferring versions that still support the PICkit 3. Omit `ipecmd_power`
+when the board has its own supply.
 
 **Raspberry Pi Pico / Pico 2:**
 
