@@ -181,10 +181,13 @@ SOURCE_SCOPE = {"pymcuc": "src/compiler",
 def binary_provenance(name, path):
     """What a compiler binary is, and what it was built from.
 
-    The binary stamps its own commit into __cstring at link time, which beats
-    both mtime and sha: two builds of identical source differ in 210 bytes
-    (LC_UUID, MVID and the ad-hoc code signature), so a changed sha does not
-    mean changed behaviour -- but a changed stamp does.
+    Three facts, because no two of them are enough. The sha identifies the build
+    but over-detects: two links of identical source differ in 210 bytes of UUID,
+    MVID and code signature. The stamp names the commit that was checked out,
+    but it is SourceRevisionId -- it never sees the working tree, so a binary
+    built from an uncommitted fix is labelled with the commit before the fix.
+    The hash of the dirty files closes that gap: it is what tells two builds of
+    the same commit with different uncommitted work apart.
     """
     path = Path(path) if path else None
     if not path or not path.exists():
@@ -201,12 +204,52 @@ def binary_provenance(name, path):
         entry["repo"] = repo.name
         entry["scope"] = scope
         entry["repo_head"] = head
-        entry["repo_dirty"] = sorted(
+        dirty = sorted(
             l.split(maxsplit=1)[-1]
             for l in git(repo, "status", "--short", "--", scope).splitlines() if l.strip())
+        entry["repo_dirty"] = dirty
+        entry["dirty_hash"] = dirty_content_hash(repo, dirty)
         if stamp and head and stamp != head:
             entry["stale"] = f"compilado en {stamp}, el repo va por {head}"
     return entry
+
+
+def dirty_content_hash(repo, dirty):
+    """Fingerprint the uncommitted work, not just its filenames.
+
+    A list of names cannot tell two versions of the same dirty file apart, so a
+    second edit and a republish leaves the stamp equal, the list equal and only
+    the sha moved -- which reads as a harmless relink of a compiler that is in
+    fact different. That is the shape of the hole this campaign paid for twice.
+
+    A snapshot taken before this field existed has no hash to compare, which is
+    absence of evidence and not evidence of change: the drift check skips the
+    comparison rather than reporting the gate's own new field as someone else's
+    drift.
+    """
+    if not dirty:
+        return None
+    digest = hashlib.sha256()
+    for name in dirty:
+        digest.update(name.encode())
+        f = Path(repo) / name
+        digest.update(f.read_bytes() if f.is_file() else b"<ausente>")
+    return digest.hexdigest()[:16]
+
+
+def scope_unchanged_between(repo, old_stamp, new_stamp, scope):
+    """True when two commits differ nowhere inside the tree that builds a binary.
+
+    A stdlib commit cannot change the compiler; without this the gate cries
+    wolf at every commit landing elsewhere in the monorepo, and a gate that
+    cries wolf gets ignored exactly when it is right.
+    """
+    if not (old_stamp and new_stamp and repo):
+        return False
+    for stamp in (old_stamp, new_stamp):
+        if not git(repo, "cat-file", "-t", stamp):
+            return False
+    return git(repo, "diff", "--name-only", f"{old_stamp}..{new_stamp}", "--", scope) == ""
 
 
 def provenance():
@@ -371,7 +414,8 @@ def report_provenance(prov):
         if entry.get("stale"):
             notes.append("DESFASADO: " + entry["stale"])
         if dirty:
-            notes.append(f"{len(dirty)} sin commitear en {entry.get('repo')}/{entry.get('scope')}")
+            notes.append(f"{len(dirty)} sin commitear en {entry.get('repo')}/{entry.get('scope')}"
+                         f" (contenido {entry.get('dirty_hash')}) -- el sello NO lo ve")
         print(f"  {name:16s} {entry.get('stamp') or '?':8s} {entry.get('sha') or '-'}"
               f"  {entry['binary']}")
         for note in notes:
@@ -399,13 +443,29 @@ def provenance_drift(was, now):
     old_tool, new_tool = was.get("toolchain", {}), now.get("toolchain", {})
     for name in sorted(set(old_tool) | set(new_tool)):
         a, b = old_tool.get(name, {}), new_tool.get(name, {})
+        repo = repo_of(b.get("binary") or a.get("binary"))
+        scope = b.get("scope") or a.get("scope") or "."
         if a.get("stamp") != b.get("stamp"):
-            out.append(("distinto", f"{name}: compilado en {a.get('stamp')} -> {b.get('stamp')}"))
+            if scope_unchanged_between(repo, a.get("stamp"), b.get("stamp"), scope):
+                out.append(("inocuo", f"{name}: el repo avanzo {a.get('stamp')} -> {b.get('stamp')}"
+                                      f" sin tocar {scope}"))
+            else:
+                out.append(("distinto", f"{name}: compilado en {a.get('stamp')} -> {b.get('stamp')}"))
+        elif ("dirty_hash" in a and "dirty_hash" in b
+              and a["dirty_hash"] != b["dirty_hash"]):
+            out.append(("distinto", f"{name}: mismo commit, pero cambio el trabajo sin commitear"
+                                    f" de {a.get('repo')}/{scope}"))
         elif a.get("repo_dirty") != b.get("repo_dirty"):
-            out.append(("distinto", f"{name}: cambio el trabajo sin commitear de {a.get('repo')}"))
+            out.append(("distinto", f"{name}: cambio la lista de ficheros sin commitear de {a.get('repo')}"))
         elif a.get("sha") != b.get("sha"):
-            out.append(("inocuo", f"{name}: mismo commit, binario relinkeado (UUID y firma)"))
+            out.append(("inocuo", f"{name}: mismo commit y mismo arbol, binario relinkeado"))
     return out
+
+
+def repo_of(binary):
+    if not binary:
+        return None
+    return next((p for p in Path(binary).parents if (p / ".git").exists()), None)
 
 
 def main():
