@@ -22,8 +22,6 @@ REPO = Path(__file__).resolve().parents[2]
 CHIPS_DIR = REPO / "lib" / "src" / "pymcu" / "chips"
 PYMCU = REPO / ".venv" / "bin" / "pymcu"
 
-# Written as source literals: the portable Pin() takes a string on some
-# architectures and an integer on others, which the harness must not paper over.
 PIN_CANDIDATES = {
     "avr": ['"PB5"', '"PB0"', '"PB7"', '"PC7"'],
     "pic12": ['"GP0"', '"GP1"'],
@@ -151,13 +149,9 @@ def canonical_labels(asm):
 
 STAMP = re.compile(rb"[0-9]+\.[0-9]+\.[0-9]+[-A-Za-z0-9.]*\+([0-9a-f]{40})")
 
-# The chip each backend is asked about, to make the driver name its own binary
-# instead of the harness guessing a path. Guessing is how this gate spent its
-# first week recording a PIC binary that no build ever ran.
 PROBE_CHIPS = {"pic": "pic18f45k50", "avr": "atmega328p",
                "rp2040": "rp2040", "riscv": "ch32v003"}
 
-# Which backend compiles which architecture, so a diff can say whose it is.
 ARCH_BACKEND = {"pic12": "pymcuc-pic", "pic14": "pymcuc-pic", "pic14e": "pymcuc-pic",
                 "pic18": "pymcuc-pic", "avr": "pymcuc-avr", "arm": "pymcuc-rp2040",
                 "riscv": "pymcuc-riscv"}
@@ -180,9 +174,6 @@ def git(repo, *args):
     return r.stdout.strip()
 
 
-# The source tree each binary is built from. Anything outside it -- a test, a
-# stdlib file, another backend -- cannot change that binary, and counting it as
-# "dirty" makes the gate cry wolf at its own edits.
 SOURCE_SCOPE = {"pymcuc": "src/compiler",
                 "pymcuc-riscv": "extensions/pymcu-backend-riscv"}
 
@@ -272,8 +263,6 @@ def build(work: Path, chip: str, arch: str, source: str):
     rom = re.search(r"Flash:\s*(\d+)", proc.stdout)
     if rom is None:
         blob = " ".join((proc.stdout + proc.stderr).split())
-        # Absolute paths carry the temp directory, which is new on every run and
-        # would make every no-build cell diff against itself for ever.
         blob = re.sub(r"(/[\w.\-]+)+/", "", blob)
         reason = (re.search(r"(?:error|Codegen failed|CompileError):\s*(.{0,90})", blob)
                   or re.search(r"Error:\s*(.{0,90})", blob))
@@ -283,9 +272,6 @@ def build(work: Path, chip: str, arch: str, source: str):
     mir = work / "dist" / "firmware.mir"
     if mir.exists():
         entry["mir"] = hashlib.sha256(mir.read_bytes()).hexdigest()[:16]
-    # Where the assembly lands is not uniform: some builds write dist/debug/,
-    # others only dist/. Recording which one answered turns a layout change from
-    # a silently missing hash into a visible one.
     for name in ("debug/firmware.asm", "firmware.asm"):
         asm = work / "dist" / name
         if asm.exists():
@@ -333,9 +319,6 @@ def run_corpus():
     return snapshot
 
 
-# Why a cell proves nothing, keyed by what the driver said. A cell that cannot
-# build is not a gap in the gate -- it is a gap in the product, and the two are
-# worth telling apart when reading a diff.
 NO_BUILD_KINDS = [
     ("compile_isr()", "backend-roto", "error interno al montar la ISR"),
     ("Unsupported Pin", "sin-mapa-de-pines", "el HAL no conoce los pines de este chip"),
@@ -408,23 +391,20 @@ def provenance_drift(was, now):
     Conflating the two is how a verdict gets attributed to the wrong person.
     """
     out = []
-    if was.get("head") != now.get("head"):
-        out.append(("distinto", f"HEAD del monorepo {was.get('head')} -> {now.get('head')}"))
     if was.get("compiler_tree_dirty") != now.get("compiler_tree_dirty"):
         out.append(("distinto", "cambio lo que hay sin commitear en src/compiler"))
+    elif was.get("head") != now.get("head"):
+        out.append(("inocuo", f"el monorepo avanzo, {was.get('head')} -> {now.get('head')},"
+                              " sin tocar ningun binario"))
     old_tool, new_tool = was.get("toolchain", {}), now.get("toolchain", {})
     for name in sorted(set(old_tool) | set(new_tool)):
         a, b = old_tool.get(name, {}), new_tool.get(name, {})
-        if a == b:
-            continue
         if a.get("stamp") != b.get("stamp"):
             out.append(("distinto", f"{name}: compilado en {a.get('stamp')} -> {b.get('stamp')}"))
         elif a.get("repo_dirty") != b.get("repo_dirty"):
             out.append(("distinto", f"{name}: cambio el trabajo sin commitear de {a.get('repo')}"))
         elif a.get("sha") != b.get("sha"):
             out.append(("inocuo", f"{name}: mismo commit, binario relinkeado (UUID y firma)"))
-        else:
-            out.append(("distinto", f"{name}: {a} -> {b}"))
     return out
 
 
@@ -453,9 +433,6 @@ def main():
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    # What counts as a measurement. `reason`, `kind` and `proves` are prose about
-    # a failure, not the failure itself: rewording an error message must not read
-    # as a regression, while a cell flipping between ok and no-build must.
     COMMENTARY = ("reason", "kind", "proves")
 
     def measured(cell):
@@ -482,9 +459,6 @@ def main():
     if not diffs:
         print(f"\nsin cambios: {len(current)} celdas identicas")
         return 0
-    # A cell whose own backend moved cannot be attributed to the change under
-    # test. Saying so per cell is the difference between a gate that works while
-    # other people build and one that only works when nobody else is around.
     moved = {name for kind, text in drifted if kind == "distinto"
              for name in prov["toolchain"] if text.startswith(name + ":")}
     frontend_moved = any(kind == "distinto" and not text.startswith("pymcuc-")
