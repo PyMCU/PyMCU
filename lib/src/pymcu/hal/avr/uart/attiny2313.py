@@ -335,9 +335,9 @@ def uart_write_float(value: float):
     if value < 0.0:
         uart_write(45)
         value = 0.0 - value
-    tenths: uint16 = uint16(value * 10.0)
-    int_part: uint8 = uint8(tenths // 10)
+    tenths: uint32 = uint32(value * 10.0 + 0.5)
+    int_part: uint32 = tenths // 10
     frac: uint8 = uint8(tenths % 10)
-    uart_write_decimal_u8(int_part)
+    uart_write_decimal_u32(int_part)
     uart_write(46)
     uart_write(frac + 48)
