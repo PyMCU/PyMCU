@@ -109,7 +109,7 @@ def flash(
         programmer = get_programmer(programmer_name, console)
         if programmer is None:
             console.print(f"[red]Unknown programmer: {programmer_name!r}[/red]")
-            console.print("Supported programmers: avrdude, pk2cmd")
+            console.print("Supported programmers: avrdude, pk2cmd, ipecmd")
             raise typer.Exit(code=1)
 
         # 3. Locate the firmware artifact this target/programmer flashes from

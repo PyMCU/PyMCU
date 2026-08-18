@@ -153,4 +153,10 @@ class Pk2cmdProgrammer(HardwareProgrammer):
             subprocess.run(cmd, check=True)
             self.console.print("[bold green]Flash successful![/bold green]")
         except subprocess.CalledProcessError:
-            raise RuntimeError("Flashing failed. Check connections/power and try again.")
+            raise RuntimeError(
+                "Flashing failed. Check connections/power and try again.\n\n"
+                "If your programmer is a PICkit 3, pk2cmd cannot drive it: the two "
+                "tools speak different protocols. Use MPLAB IPE instead:\n\n"
+                "  \\[tool.pymcu.flash]\n"
+                '  programmer = "ipecmd"'
+            )

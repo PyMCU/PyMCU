@@ -49,6 +49,7 @@ pymcu = "driver.main:run_cli"
 [project.entry-points."pymcu.programmers"]
 avrdude = "driver.programmers.avrdude:AvrdudeProgrammer"
 pk2cmd  = "driver.programmers.pk2cmd:Pk2cmdProgrammer"
+ipecmd  = "driver.programmers.ipecmd:IpecmdProgrammer"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/driver"]

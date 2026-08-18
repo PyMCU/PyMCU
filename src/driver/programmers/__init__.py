@@ -18,6 +18,7 @@ from importlib.metadata import entry_points
 from .base import HardwareProgrammer
 from .pk2cmd import Pk2cmdProgrammer
 from .avrdude import AvrdudeProgrammer
+from .ipecmd import IpecmdProgrammer
 
 def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
     """
@@ -28,7 +29,7 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
        Third-party packages register via pyproject.toml:
            [project.entry-points."pymcu.programmers"]
            my-prog = "my_package.programmer:MyProgrammer"
-    2. Built-in programmers bundled with the pymcu driver (avrdude, pk2cmd).
+    2. Built-in programmers bundled with the pymcu driver (avrdude, pk2cmd, ipecmd).
     """
     eps = entry_points(group="pymcu.programmers")
     for ep in eps:
@@ -40,6 +41,8 @@ def get_programmer(name: str, console: Console) -> Optional[HardwareProgrammer]:
         return Pk2cmdProgrammer(console)
     elif name == "avrdude":
         return AvrdudeProgrammer(console)
+    elif name == "ipecmd":
+        return IpecmdProgrammer(console)
 
     return None
 
