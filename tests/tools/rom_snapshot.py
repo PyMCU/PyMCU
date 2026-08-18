@@ -110,6 +110,20 @@ def main():
         else:
             led.low()
 """,
+    "print": """from pymcu.types import uint8
+from pymcu.hal.uart import UART
+
+
+def main():
+    u = UART(9600)
+    n: uint8 = 0
+    v: float = 1234.5
+    while True:
+        u.println("hola")
+        u.print_byte(n)
+        u.print_float(v)
+        n = n + 1
+""",
     "float": """from pymcu.types import uint8
 from pymcu.hal.uart import UART
 
@@ -425,12 +439,22 @@ def chip_lacks(program, chip):
     return not any(re.search(rf"^{n}\b", text, re.M) for n in names)
 
 
+ACCEPTED = {
+    "adc|attiny4313": "+12 bytes: importar uart_write_float sin llamarlo arrastra el camino "
+                      "uint32 que la eliminacion de codigo muerto no quita; aceptado a cambio "
+                      "de que el 4313 tenga los mismos 2 decimales que el resto",
+    "float|attiny4313": "+12 bytes, misma causa que adc|attiny4313",
+}
+
+
 def annotate(path):
     import collections
     stored = json.loads(path.read_text())
     cells = stored.get("cells", stored)
     kinds = collections.Counter()
     for key, cell in cells.items():
+        if key in ACCEPTED:
+            cell["accepted"] = ACCEPTED[key]
         if cell.get("status") == "ok":
             continue
         reason = cell.get("reason", "")
@@ -549,7 +573,7 @@ def main():
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first")
+    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first", "accepted")
 
     def measured(cell):
         return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell

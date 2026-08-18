@@ -20,21 +20,25 @@ HAL = Path(__file__).resolve().parents[2] / "lib" / "src" / "pymcu" / "hal"
 WRITERS = ("uart_write_decimal_u8", "uart_write_decimal_u16", "uart_write_decimal_i16",
            "uart_write_decimal_u32", "uart_write_decimal_i32", "uart_write_float")
 
-SOURCES = {
-    "avr": HAL / "avr" / "uart" / "avr.py",
-    "atmega32u4": HAL / "avr" / "uart" / "atmega32u4.py",
-    "attiny2313": HAL / "avr" / "uart" / "attiny2313.py",
-    "pic18": HAL / "pic18" / "pic18_uart.py",
-    "rp": HAL / "rp" / "console.py",
-}
+SOURCES = {"uart_text": HAL / "uart_text.py"}
+
+LEGACY = ["avr/uart/avr.py", "avr/uart/atmega32u4.py", "avr/uart/attiny2313.py",
+          "pic18/pic18_uart.py", "pic14/pic14_uart.py", "rp/console.py"]
+
 
 WIDTH = {"uint8": 8, "uint16": 16, "uint32": 32, "int16": 16, "int32": 32}
 
 
 def truncate(name, value):
-    """Apply the declared width, so a uint8 that overflows wraps like the chip."""
+    """Apply the declared width, so a uint8 that overflows wraps like the chip.
+
+    A float assigned to an integer type is truncated towards zero first, the way
+    the generated code does. Letting it through as a float made the oracle carry
+    fractions into digit arithmetic and print 1.5 as "1.50" -- a wrong answer
+    from the instrument, which is worse than a wrong answer from the code.
+    """
     bits = WIDTH.get(name)
-    if bits is None or isinstance(value, float):
+    if bits is None:
         return value
     value = int(value) & ((1 << bits) - 1)
     if name.startswith("int") and value >> (bits - 1):
@@ -116,31 +120,31 @@ ARGUMENT_TYPE = {"uart_write_decimal_u8": "uint8", "uart_write_decimal_u16": "ui
 @pytest.mark.parametrize("value", [0, 1, 9, 10, 99, 100, 200, 255])
 def test_the_u8_writer_prints_the_number(value):
     """Sanity check on the oracle itself before it is used to accuse anyone."""
-    run = load(SOURCES["avr"])["uart_write_decimal_u8"]
+    run = load(SOURCES["uart_text"])["uart_write_decimal_u8"]
     assert run(value) == str(value)
 
 
 @pytest.mark.parametrize("value", [0, 7, 65535, 12345])
 def test_the_u16_writer_prints_the_number(value):
-    run = load(SOURCES["avr"])["uart_write_decimal_u16"]
+    run = load(SOURCES["uart_text"])["uart_write_decimal_u16"]
     assert run(value) == str(value)
 
 
 @pytest.mark.parametrize("value", [-32768, -1, 0, 32767])
 def test_the_i16_writer_prints_the_number(value):
-    run = load(SOURCES["avr"])["uart_write_decimal_i16"]
+    run = load(SOURCES["uart_text"])["uart_write_decimal_i16"]
     assert run(value) == str(value)
 
 
 @pytest.mark.parametrize("value", [-2147483648, -1, 0, 2147483647])
 def test_the_i32_writer_prints_the_number(value):
-    run = load(SOURCES["avr"])["uart_write_decimal_i32"]
+    run = load(SOURCES["uart_text"])["uart_write_decimal_i32"]
     assert run(value) == str(value)
 
 
 @pytest.mark.parametrize("hal", sorted(SOURCES))
 @pytest.mark.parametrize("value", [0.0, 1.5, 12.5, 99.9, 1234.5, 60000.0])
-def test_every_float_writer_prints_the_integer_part(hal, value):
+def test_the_float_writer_prints_the_integer_part(hal, value):
     """The integer part is not a matter of taste: a wrong digit is a wrong number.
 
     How many decimals a HAL prints is a design choice each one may make; printing
@@ -157,3 +161,20 @@ def test_every_float_writer_prints_the_integer_part(hal, value):
         f"{hal} printed {printed!r} for {value}: the integer part is not digits"
     assert int(integer_part) == int(value), \
         f"{hal} printed {printed!r} for {value}"
+
+
+@pytest.mark.parametrize("name", LEGACY)
+def test_no_hal_keeps_a_private_copy_of_a_writer(name):
+    """One definition cannot disagree with itself; six of them did.
+
+    This is the check that would have caught the drift while it was happening,
+    instead of years later when someone printed 1234.5 on an RP2040.
+    """
+    path = HAL / name
+    if not path.exists():
+        pytest.skip(f"{name} is gone")
+    tree = ast.parse(path.read_text())
+    private = sorted(n.name for n in tree.body
+                     if isinstance(n, ast.FunctionDef) and n.name in WRITERS)
+    assert not private, \
+        f"{name} defines its own {private}; they belong in hal/uart_text.py"

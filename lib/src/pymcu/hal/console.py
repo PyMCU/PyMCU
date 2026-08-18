@@ -8,28 +8,13 @@
 from pymcu.types import uint8, inline, const
 from pymcu.chips import __CHIP__
 
-if __CHIP__.arch == "avr":
-    from pymcu.hal.avr.uart.avr import (
-        uart_write_str,
-        uart_write_decimal_u8,
-        uart_write_float,
-    )
-elif __CHIP__.name == "rp2040":
-    from pymcu.hal.rp.console import (
-        uart_write, uart_write_str,
-        uart_write_decimal_u8, uart_write_decimal_u16, uart_write_decimal_i16,
-        uart_write_decimal_u32, uart_write_decimal_i32, uart_write_fmt,
-    )
-elif __CHIP__.name == "rp2350":
-    from pymcu.hal.rp.console import (
-        uart_write, uart_write_str,
-        uart_write_decimal_u8, uart_write_decimal_u16, uart_write_decimal_i16,
-        uart_write_decimal_u32, uart_write_decimal_i32, uart_write_fmt,
-    )
-elif __CHIP__.arch == "pic14":
-    from pymcu.hal.pic14.pic14_uart import uart_write_str
-elif __CHIP__.arch == "pic18":
-    from pymcu.hal.pic18.pic18_uart import uart_write_str, uart_write_float
+if __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":
+    from pymcu.hal.rp.console import uart_write, uart_write_fmt
+
+from pymcu.hal.uart_text import (
+    uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
+    uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+)
 
 
 @inline

@@ -1,6 +1,10 @@
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.hal.pic18.pic18_uart import *
-from pymcu.hal.pic18.pic18_uart import uart_write_str, uart_write_float
+
+from pymcu.hal.uart_text import (
+    uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
+    uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+)
 
 class UART:
     def __init__(self, baud: const[uint16] = 9600):

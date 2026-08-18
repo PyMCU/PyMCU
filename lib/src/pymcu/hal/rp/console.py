@@ -18,47 +18,6 @@ def uart_write(data: uint8):
     UART0_DR.value = data
 
 
-@inline
-def uart_write_str(s: const[str]):
-    for ch in s:
-        uart_write(ch)
-
-
-def uart_write_decimal_u32(value: uint32):
-    if value == 0:
-        uart_write(48)
-        return
-    buf: uint8[10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    n: uint8 = 0
-    while value > 0:
-        buf[n] = uint8(value % 10) + 48
-        value = value // 10
-        n = n + 1
-    while n > 0:
-        n = n - 1
-        uart_write(buf[n])
-
-
-def uart_write_decimal_u16(value: uint16):
-    uart_write_decimal_u32(uint32(value))
-
-
-def uart_write_decimal_u8(value: uint8):
-    uart_write_decimal_u32(uint32(value))
-
-
-def uart_write_decimal_i32(value: int32):
-    if value < 0:
-        uart_write(45)
-        uart_write_decimal_u32(uint32(0 - value))
-    else:
-        uart_write_decimal_u32(uint32(value))
-
-
-def uart_write_decimal_i16(value: int16):
-    uart_write_decimal_i32(int32(value))
-
-
 def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
     zero_pad: uint8 = flags & 0x04
     pad: uint8 = 32
@@ -113,13 +72,3 @@ def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
         uart_write(buf[n])
 
 
-def uart_write_float(value: float):
-    if value < 0.0:
-        uart_write(45)
-        value = 0.0 - value
-    tenths: uint32 = uint32(value * 10.0 + 0.5)
-    int_part: uint32 = tenths // 10
-    frac: uint8 = uint8(tenths % 10)
-    uart_write_decimal_u32(int_part)
-    uart_write(46)
-    uart_write(frac + 48)

@@ -108,103 +108,6 @@ def uart_read_line(buf: bytearray, max_len: uint8) -> uint8:
     return count
 
 
-def uart_write_decimal_u8(value: uint8):
-    # Print uint8 value as decimal digits (0-255).
-    if value >= 100:
-        hundreds: uint8 = value // 100
-        uart_write(hundreds + 48)
-        tens: uint8 = (value // 10) % 10
-        uart_write(tens + 48)
-        units: uint8 = value % 10
-        uart_write(units + 48)
-    elif value >= 10:
-        tens: uint8 = value // 10
-        uart_write(tens + 48)
-        units: uint8 = value % 10
-        uart_write(units + 48)
-    else:
-        uart_write(value + 48)
-
-
-def uart_write_decimal_u16(value: uint16):
-    # Print uint16 value as decimal digits (0-65535).
-    if value >= 10000:
-        ten_k: uint8 = uint8(value // 10000)
-        uart_write(ten_k + 48)
-        thousands: uint8 = uint8((value // 1000) % 10)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 1000:
-        thousands: uint8 = uint8(value // 1000)
-        uart_write(thousands + 48)
-        hundreds: uint8 = uint8((value // 100) % 10)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 100:
-        hundreds: uint8 = uint8(value // 100)
-        uart_write(hundreds + 48)
-        tens: uint8 = uint8((value // 10) % 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    elif value >= 10:
-        tens: uint8 = uint8(value // 10)
-        uart_write(tens + 48)
-        units: uint8 = uint8(value % 10)
-        uart_write(units + 48)
-    else:
-        uart_write(uint8(value) + 48)
-
-
-def uart_write_decimal_i16(value: int16):
-    # Print int16 value as decimal digits with optional minus sign (-32768 to 32767).
-    if value < 0:
-        uart_write(45)  # '-'
-        abs_val: uint16 = uint16(0 - value)
-        uart_write_decimal_u16(abs_val)
-    else:
-        uart_write_decimal_u16(uint16(value))
-
-
-def uart_write_decimal_u32(value: uint32):
-    # Print uint32 value as decimal digits (0-4294967295). Peel least-significant digits into a
-    # buffer, then emit them in reverse (same shape as uart_write_decimal_u16). The accumulator
-    # stays uint32 throughout: a uint16 intermediate would truncate any value whose low group is
-    # 65536..99999 (e.g. 83647 -> 18111), corrupting large values.
-    if value == 0:
-        uart_write(48)  # '0'
-        return
-    buf: uint8[10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    n: uint8 = 0
-    while value > 0:
-        buf[n] = uint8(value % 10) + 48
-        value = value // 10
-        n = n + 1
-    while n > 0:
-        n = n - 1
-        uart_write(buf[n])
-
-
-def uart_write_decimal_i32(value: int32):
-    # Print int32 value as decimal digits with optional minus sign (-2147483648 to 2147483647).
-    # value == INT32_MIN: 0 - value wraps to 0x80000000, whose uint32 reading (2147483648) is the
-    # correct magnitude, so "-2147483648" still prints correctly.
-    if value < 0:
-        uart_write(45)  # '-'
-        abs_val: uint32 = uint32(0 - value)
-        uart_write_decimal_u32(abs_val)
-    else:
-        uart_write_decimal_u32(uint32(value))
-
-
 def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
     # Generic integer formatter for f-string format specs. See avr.py for the full contract:
     # flags bit0=upper, bit1=signed, bit2=zero-pad; base 2/8/10/16; width-padded; minimal at width<=1.
@@ -248,17 +151,6 @@ def uart_write_fmt(value: int32, base: uint8, width: uint8, flags: uint8):
     while n > 0:
         n = n - 1
         uart_write(buf[n])
-
-
-def uart_write_str(s: const[str]):
-    # Non-@inline: shared subroutine, the string is passed by reference (its flash
-    # address) so the byte-loop is emitted once instead of inlined per print() call.
-    i: uint8 = 0
-    b: uint8 = s[0]
-    while b != 0:
-        uart_write(b)
-        i = i + 1
-        b = s[i]
 
 
 @inline
@@ -331,13 +223,3 @@ def uart_rx_irq_setup():
     compile_isr(uart_rx_isr, 0x0016)
 
 
-def uart_write_float(value: float):
-    if value < 0.0:
-        uart_write(45)
-        value = 0.0 - value
-    tenths: uint32 = uint32(value * 10.0 + 0.5)
-    int_part: uint32 = tenths // 10
-    frac: uint8 = uint8(tenths % 10)
-    uart_write_decimal_u32(int_part)
-    uart_write(46)
-    uart_write(frac + 48)

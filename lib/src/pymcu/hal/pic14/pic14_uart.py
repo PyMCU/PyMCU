@@ -29,15 +29,3 @@ else:
     raise CompileError("UART is not implemented for this PIC14 chip")
 
 
-def uart_write_str(s: const[str]):
-    # Non-@inline on purpose (same rationale as the AVR HAL): as a real
-    # subroutine, the compiler passes the string by reference (the flash word
-    # address of its RETLW table, FlashStrAddr) and this single loop is emitted
-    # once and shared by every write_str/println call site. s[i] reads the
-    # table entry at (s + i) via a computed GOTO (FlashLoadPtr).
-    i: uint8 = 0
-    b: uint8 = s[0]
-    while b != 0:
-        uart_write(b)
-        i = i + 1
-        b = s[i]

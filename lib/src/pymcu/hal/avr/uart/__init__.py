@@ -15,36 +15,44 @@
 from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 
-if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
+if __CHIP__.name == "attiny2313":
     from pymcu.hal.avr.uart.attiny2313 import (
-        uart_init, uart_write, uart_read, uart_write_str,
+        uart_init, uart_write, uart_read,
         uart_available, uart_read_nb, uart_read_byte_isr,
         uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
         uart_rx_available, uart_rx_read,
-        uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
-        uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+        uart_read_line,
         uart_write_fmt,
     )
 elif __CHIP__.name == "atmega32u4":
     from pymcu.hal.avr.uart.atmega32u4 import (
-        uart_init, uart_write, uart_read, uart_write_str,
+        uart_init, uart_write, uart_read,
         uart_available, uart_read_nb, uart_read_byte_isr,
         uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
         uart_rx_available, uart_rx_read,
-        uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
-        uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+        uart_read_line,
         uart_write_fmt,
     )
 else:
     from pymcu.hal.avr.uart.avr import (
-        uart_init, uart_write, uart_read, uart_write_str,
+        uart_init, uart_write, uart_read,
         uart_available, uart_read_nb, uart_read_byte_isr,
         uart_enable_rx_interrupt, uart_rx_isr as _uart_rx_isr_impl,
         uart_rx_available, uart_rx_read,
-        uart_read_line, uart_write_decimal_u8, uart_write_decimal_u16,
-        uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+        uart_read_line,
         uart_write_fmt,
     )
+
+
+from pymcu.hal.uart_text import (
+    uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
+    uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32,
+)
+
+if __CHIP__.name == "attiny2313":
+    from pymcu.hal.uart_text import uart_write_float_compact as uart_write_float
+else:
+    from pymcu.hal.uart_text import uart_write_float
 
 
 @inline

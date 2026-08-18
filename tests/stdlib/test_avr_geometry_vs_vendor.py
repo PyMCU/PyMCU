@@ -201,6 +201,22 @@ def test_there_are_avr_chips_to_check():
 
 
 @needs_backend
+def test_every_chip_the_backend_offers_can_actually_be_built():
+    """The direction that fails silently: a chip promised by the backend, absent here.
+
+    The driver resolves targets from lib/src/pymcu/chips, so a chip with no file
+    is unreachable by `pymcu build` -- dead data that the catalogue nonetheless
+    advertises as supported. The opposite direction announces itself (the backend
+    refuses an unknown chip by name and the build stops); this one has nothing
+    that would ever contradict it.
+    """
+    promised = sorted(set(BACKEND) - set(AVR_CHIPS))
+    assert not promised, \
+        (f"the backend catalogue offers {promised} but there is no chip file, "
+         "so no project can target them")
+
+
+@needs_backend
 def test_every_avr_chip_file_appears_in_the_backend_table():
     """A chip the backend has never heard of gets whatever default it falls back to."""
     missing = [c for c in AVR_CHIPS if c not in BACKEND]

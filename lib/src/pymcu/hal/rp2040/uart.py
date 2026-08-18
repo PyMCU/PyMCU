@@ -26,6 +26,12 @@ from pymcu.types import ptr, uint8, uint32, const, inline
 _CLK_PERI = 125000000
 
 
+from pymcu.hal.uart_text import (
+    uart_write_str, uart_write_decimal_u8, uart_write_decimal_u16,
+    uart_write_decimal_i16, uart_write_decimal_u32, uart_write_decimal_i32, uart_write_float,
+)
+
+
 class UART:
     """Hardware UART0 (PL011), zero-cost abstraction."""
 
@@ -94,7 +100,28 @@ class UART:
 
     @inline
     def print_byte(self, value: uint8):
-        # Write `value` as decimal ASCII followed by a newline. Mirrors the AVR HAL
+        uart_write_decimal_u8(value)
+
+    @inline
+    def print_uint16(self, value: uint16):
+        uart_write_decimal_u16(value)
+
+    @inline
+    def print_int16(self, value: int16):
+        uart_write_decimal_i16(value)
+
+    @inline
+    def print_uint32(self, value: uint32):
+        uart_write_decimal_u32(value)
+
+    @inline
+    def print_int32(self, value: int32):
+        uart_write_decimal_i32(value)
+
+    @inline
+    def print_float(self, value: float):
+        uart_write_float(value)
+
         # (uart_write_decimal_u8 + write(10)) so the MicroPython flavor's
         # uart.print_byte() is portable across arches with no per-arch code in the flavor.
         if value >= 100:
