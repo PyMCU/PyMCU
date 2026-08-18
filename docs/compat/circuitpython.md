@@ -276,16 +276,21 @@ import time
 
 time.sleep_ms(500)         # 500 ms
 time.sleep_us(100)         # 100 µs
-time.sleep(1)              # integer seconds only
+time.sleep(0.5)            # fractional seconds — folded to delay_ms(500)
 
 from pymcu.types import uint32
-t: uint32 = time.monotonic()      # seconds since boot (integer)
+t: float = time.monotonic()       # seconds since boot (float, as in CircuitPython)
 ns: uint32 = time.monotonic_ns()  # nanoseconds since boot (wraps ~71 min)
 ```
 
-:::{warning}
-`time.sleep(s)` takes an integer on PyMCU. Use `time.sleep_ms(500)` instead of
-`time.sleep(0.5)` — float seconds are not supported.
+:::{note}
+`time.sleep(s)` takes the CircuitPython float, and the multiplication folds at compile time
+— `sleep(0.5)` becomes `delay_ms(500)` with no soft-float in the firmware. A *runtime* float
+argument does link the soft-float runtime, so prefer a literal or `sleep_ms()` in a hot path.
+
+`time.monotonic()` returns a `float` like the real thing (`millis() / 1000.0`), which does
+pull in soft-float; the compiler warns once. Use `supervisor.ticks_ms()` for integer
+milliseconds when you do not need the float.
 :::
 
 ---
@@ -448,12 +453,15 @@ count = 0          # CircuitPython — no annotation needed
 count: int = 0     # PyMCU — required (int → int16 on AVR)
 ```
 
-### Replace `time.sleep(float)` with `time.sleep_ms(int)`
+### Keep `time.sleep(float)` — it folds
 
 ```python
-time.sleep(0.5)       # CircuitPython — float seconds
-time.sleep_ms(500)    # PyMCU — integer milliseconds
+time.sleep(0.5)       # CircuitPython spelling; folds to delay_ms(500)
+time.sleep_ms(500)    # explicit integer milliseconds — same firmware
 ```
+
+A constant argument costs nothing. Reach for `sleep_ms()` when the delay comes from a
+runtime variable, so the seconds→milliseconds multiply does not link the soft-float runtime.
 
 ### Use integer arithmetic instead of float ADC conversion
 
@@ -515,7 +523,8 @@ These are the **actual gaps** — anything not listed here behaves identically.
 | Feature | CircuitPython | PyMCU |
 |---|---|---|
 | Execution model | Bytecode interpreter | **Native compiled — zero runtime overhead** |
-| `time.sleep(s)` | Float seconds | Integer only — use `sleep_ms()` |
+| `time.sleep(s)` | Float seconds | ✅ Float accepted — a constant folds to `delay_ms()`; a runtime float links soft-float |
+| `time.monotonic()` | Float seconds | ✅ Float — `millis() / 1000.0`; warns once about the soft-float cost |
 | `float` arithmetic | Full support | Soft-float (~200–400 cycles/op) |
 | `f"..."` format strings | Runtime evaluation | ✅ Runtime interpolation when **streamed** (`print(f"...")`, `uart.write_str(f"...")`) with format specs and `float` values; `s = f"..."` also works, into a compiler-sized fixed buffer (integers only) |
 | `str.join` | Any iterable | ✅ In an assignment: `s = "".join([chr(b) for b in buf])` builds a runtime string from a fixed buffer; `sep.join([...])` of literals folds. Outside an assignment there is nowhere to put the result |
