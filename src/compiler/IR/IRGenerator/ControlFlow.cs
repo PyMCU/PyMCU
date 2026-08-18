@@ -867,10 +867,14 @@ public partial class IRGenerator
             var (exnType, handlerBody) = stmt.Handlers[i];
             string skipLabel = MakeLabel();
 
-            Val expectedCode = ResolveBinding(exnType);
-            Val matchTemp = MakeTemp(DataType.UINT8);
-            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
-            Emit(new JumpIfZero(matchTemp, skipLabel));
+            bool catchAll = string.IsNullOrEmpty(exnType) || exnType is "Exception" or "BaseException";
+            if (!catchAll)
+            {
+                Val expectedCode = ResolveBinding(exnType);
+                Val matchTemp = MakeTemp(DataType.UINT8);
+                Emit(new Binary(PyMCU.IR.BinaryOp.Equal, exnCode, expectedCode, matchTemp));
+                Emit(new JumpIfZero(matchTemp, skipLabel));
+            }
 
             // The finally is pending while the handler body runs, so a `return`/`break`/`continue`
             // inside the handler runs it first. The saved code is pushed so a bare `raise` re-raises

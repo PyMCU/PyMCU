@@ -570,6 +570,15 @@ public partial class IRGenerator
                 bool isEnum = classDef.Bases.Contains("Enum") || classDef.Bases.Contains("IntEnum");
                 if (isEnum) continue;
 
+                bool isException = classDef.Bases.Any(b =>
+                    b is "Exception" or "BaseException" || constantVariables.ContainsKey(b) && exceptionNames.Contains(b));
+                if (isException)
+                {
+                    constantVariables[classDef.Name] = nextUserExceptionCode++;
+                    exceptionNames.Add(classDef.Name);
+                    continue;
+                }
+
                 if (classDef.Body != null)
                 {
                     // Multiple inheritance is not supported (the ZCA model assumes a single base

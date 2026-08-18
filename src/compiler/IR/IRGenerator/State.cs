@@ -255,6 +255,10 @@ public partial class IRGenerator
     private List<string> handlerCodeStack = new();
     private int exnCodeId = 0;
 
+    private HashSet<string> exceptionNames = new()
+        { "ValueError", "TypeError", "IndexError", "KeyError", "NotImplementedError", "ZeroDivisionError" };
+    private int nextUserExceptionCode = 32;
+
     // Module-level `raise CompileError(...)` guards that survived compile-time if/match
     // folding in an IMPORTED module (e.g. the arch guard in hal/wifi.py once DCE picks the
     // else branch). Imported modules' top-level code never executes, so the guard is

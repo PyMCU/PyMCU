@@ -729,7 +729,9 @@ public class Parser
         while (Check(TokenType.Except))
         {
             Consume(TokenType.Except, "Expected 'except'");
-            string exnType = Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+            string exnType = Check(TokenType.Colon)
+                ? ""
+                : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
             Consume(TokenType.Colon, "Expected ':' after exception type");
             ConsumeStatementEnd();
             var handlerBlock = ParseBlock();
