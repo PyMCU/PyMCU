@@ -94,6 +94,7 @@ test-driver-ci:
     "{{repo_root}}/.venv-ci/bin/pip" -q install --upgrade pip
     "{{repo_root}}/.venv-ci/bin/pip" -q install pytest pytest-mock tomlkit rich typer questionary
     "{{repo_root}}/.venv-ci/bin/pip" -q install "{{repo_root}}/extensions/pymcu-sdk"
+    "{{repo_root}}/.venv-ci/bin/pip" -q install --no-deps "{{repo_root}}/lib"
     "{{repo_root}}/.venv-ci/bin/pip" -q install --pre --no-deps pymcu-pic
     cd "{{repo_root}}" && "{{repo_root}}/.venv-ci/bin/python" -m pytest tests/driver/ -q
 
