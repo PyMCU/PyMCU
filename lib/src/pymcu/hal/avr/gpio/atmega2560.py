@@ -139,6 +139,7 @@ def select_bit(name: str) -> uint8:
         case _:
             raise NotImplementedError('Unsupported Pin')
 
+@inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
     # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA/EICRB ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
