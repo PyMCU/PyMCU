@@ -27,7 +27,7 @@ from pymcu.types import uint8, uint16, inline, const, asm
 #   4. OUT 0x21, (WDE=1 | WDP[2:0] | WDP3<<5)  -- within 4 cycles of step 3
 
 @inline
-def wdt_enable(wdp: const[uint8]):
+def wdt_enable(wdp: uint8):
     asm("cli")
     asm("wdr")
     if wdp == 0:
@@ -70,7 +70,7 @@ def wdt_feed():
     asm("wdr")
 
 @inline
-def wdt_timeout_wdp(timeout_ms: const[uint16]) -> uint8:
+def wdt_timeout_wdp(timeout_ms: uint16) -> uint8:
     if timeout_ms <= 16:
         return 0
     elif timeout_ms <= 32:

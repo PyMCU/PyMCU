@@ -35,7 +35,7 @@ from pymcu.types import asm
 
 
 @inline
-def wdt_enable(wdp: const[uint8]):
+def wdt_enable(wdp: uint8):
     # wdp = WDP[3:0] value (0-9). WDE=1 (reset mode).
     # Final WDTCSR = WDE | WDP[2:0] | (WDP3 << 5)
     # Example: wdp=5 (500ms) -> WDP[3:0]=0101 -> WDP3=0,WDP2=1,WDP0=1 -> 0x0D
@@ -85,7 +85,7 @@ def wdt_feed():
     asm("wdr")
 
 @inline
-def wdt_timeout_wdp(timeout_ms: const[uint16]) -> uint8:
+def wdt_timeout_wdp(timeout_ms: uint16) -> uint8:
     # Map a timeout in ms to the WDP[3:0] prescaler code.
     # Returns the closest WDP value >= the requested timeout.
     if timeout_ms <= 16:
