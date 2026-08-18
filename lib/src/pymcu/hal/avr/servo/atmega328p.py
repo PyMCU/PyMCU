@@ -87,14 +87,16 @@ def servo_write_a(degrees: uint8):
 
     degrees: 0 (1000 us) to 180 (2000 us).
     """
-    pulse: uint16 = _PULSE_MIN + (degrees * 11)   # ~11.1 ticks/degree; good for 0-180
+    d: uint16 = degrees
+    pulse: uint16 = _PULSE_MIN + (d * 100) // 9   # 11.111 ticks/degree, exact at 90 and 180
     _write16(OCR1AH, OCR1AL, pulse)
 
 
 @inline
 def servo_write_b(degrees: uint8):
     """Write servo position on channel B (OC1B / Arduino D10)."""
-    pulse: uint16 = _PULSE_MIN + (degrees * 11)
+    d: uint16 = degrees
+    pulse: uint16 = _PULSE_MIN + (d * 100) // 9
     _write16(OCR1BH, OCR1BL, pulse)
 
 
