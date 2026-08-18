@@ -9,8 +9,8 @@
 from pymcu.types import ptr, uint8, device_info
 
 # Device Memory Configuration for PIC10F200
-# RAM: 16 bytes (0x08-0x17 in Bank 0)
-RAM_START = 0x08
+# RAM: 16 bytes (0x10-0x1F in Bank 0; 0x08-0x0F is __BADRAM)
+RAM_START = 0x10
 RAM_SIZE = 16
 
 device_info(chip="pic10f200", arch="pic12", ram_size=RAM_SIZE)

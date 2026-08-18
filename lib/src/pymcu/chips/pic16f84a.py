@@ -14,7 +14,7 @@ from pymcu.types import ptr, uint8, device_info
 # PIC16F84A has 68 bytes of RAM (small device for testing limits)
 # RAM: 0x0C-0x4F (Bank 0: 0x0C-0x2F, Bank 1: 0x8C-0xAF mapped to 0x0C-0x2F)
 # We use 0x20 as start to align with general purpose registers
-RAM_START = 0x20
+RAM_START = 0x0C
 RAM_SIZE = 68
 
 device_info(chip="pic16f84a", arch="pic14", ram_size=RAM_SIZE)

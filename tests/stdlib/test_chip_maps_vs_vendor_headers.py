@@ -1,5 +1,6 @@
 import glob
 import importlib
+import pathlib
 import re
 from pathlib import Path
 
@@ -156,6 +157,127 @@ WCH = Path("/Users/begeistert/Repos/circuitpython/ports/zephyr-cp/modules/hal/wc
 WCH_PAIRS = [("ch32v003", "ch32v003hw.h"), ("ch32v203", "ch32v20xhw.h")]
 WCH_ALIAS = {"SYSTICK": "SysTick"}
 C_WIDTH = {"uint64_t": 8, "uint32_t": 4, "uint16_t": 2, "uint8_t": 1}
+
+
+
+def parse_ram_geometry(path: Path):
+    """__MAXRAM and the __BADRAM holes, straight from the vendor header."""
+    text = path.read_text(errors="replace")
+    bad = []
+    for m in re.finditer(r"__BADRAM\s+H'([0-9A-Fa-f]+)'(?:\s*-\s*H'([0-9A-Fa-f]+)')?", text):
+        lo = int(m.group(1), 16)
+        bad.append((lo, int(m.group(2), 16) if m.group(2) else lo))
+    top = re.search(r"__MAXRAM\s+H'([0-9A-Fa-f]+)'", text)
+    return (int(top.group(1), 16) if top else None), bad
+
+
+NOT_A_REGISTER = {"W", "F", "A", "BANKED", "ACCESS"}
+
+
+def first_general_purpose_byte(addrs, bad):
+    """The byte after the last bank-0 special register, skipping unimplemented holes.
+
+    Config-word constants share the header's EQU syntax and live in the same
+    numeric range: `_CP_ON EQU H'000F'` on the PIC16F84A pushed this derivation
+    four bytes past the truth until the underscore prefix was filtered out.
+    """
+    registers = [a for n, a in addrs.items()
+                 if a < 0x80 and not n.startswith("_") and n not in NOT_A_REGISTER]
+    addr = max(registers, default=-1) + 1
+    moved = True
+    while moved:
+        moved = False
+        for lo, hi in bad:
+            if lo <= addr <= hi:
+                addr, moved = hi + 1, True
+    return addr
+
+
+def chip_ram(chip: str):
+    """Read the two constants out of the source, never out of an import.
+
+    Timestamp invalidation compares mtime and size, so an edit that keeps the
+    file the same length and lands in the same second as an import leaves a
+    stale .pyc behind -- and a check on chip constants that reads a cached copy
+    of the file it is checking proves nothing at all. Changing 0x20 to 0x0C is
+    exactly that shape of edit.
+    """
+    import ast
+    source = pathlib.Path(pymcu_chips_dir()) / f"{chip}.py"
+    tree = ast.parse(source.read_text())
+    found = {}
+    for node in tree.body:
+        target = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+        if isinstance(target, ast.Name) and target.id in ("RAM_START", "RAM_SIZE"):
+            found[target.id] = ast.literal_eval(node.value)
+    return found.get("RAM_START"), found.get("RAM_SIZE")
+
+
+def pymcu_chips_dir():
+    import pymcu.chips
+    return list(pymcu.chips.__path__)[0]
+
+
+def _ram_cases():
+    if GPUTILS is None:
+        return []
+    out = []
+    for chip, inc in PIC_PAIRS:
+        path = GPUTILS / inc
+        if not path.exists():
+            continue
+        addrs, _ = parse_inc(path)
+        maxram, bad = parse_ram_geometry(path)
+        start, size = chip_ram(chip)
+        out.append((chip, start, size, first_general_purpose_byte(addrs, bad), maxram, bad))
+    return out
+
+
+RAM_CASES = _ram_cases()
+
+
+@pytest.mark.skipif(GPUTILS is None, reason="gputils headers not installed")
+@pytest.mark.parametrize("chip,start,size,expected,maxram,bad",
+                         RAM_CASES, ids=[c[0] for c in RAM_CASES])
+def test_ram_starts_where_the_vendor_header_says(chip, start, size, expected, maxram, bad):
+    """RAM_START copied from a sibling chip is the oldest bug in this file.
+
+    The PIC16F84A carried the 0x20 that belongs to the 628A and the 877A; it is
+    the one part of the family whose special registers stop at 0x0B.
+
+    Only the 12- and 14-bit parts, whose bank 0 is special registers followed by
+    general purpose bytes. The PIC18 puts its access-bank registers at the top
+    instead, so this derivation says nothing about it and does not pretend to.
+    """
+    if chip.startswith("pic18"):
+        pytest.skip("PIC18 access bank is laid out the other way round")
+    assert start == expected, \
+        f"{chip}: RAM_START is 0x{start:02X} but the general purpose bytes begin at 0x{expected:02X}"
+
+
+@pytest.mark.skipif(GPUTILS is None, reason="gputils headers not installed")
+@pytest.mark.parametrize("chip,start,size,expected,maxram,bad",
+                         RAM_CASES, ids=[c[0] for c in RAM_CASES])
+def test_ram_does_not_start_in_a_hole(chip, start, size, expected, maxram, bad):
+    """The PIC10F200 declared 0x08, which the header marks unimplemented.
+
+    Whether the whole span is addressable depends on the banking of each part
+    and is not checked here; that a variable placed at the very first byte lands
+    in memory that exists is checkable for every one of them.
+    """
+    inside = [f"0x{lo:02X}-0x{hi:02X}" for lo, hi in bad if lo <= start <= hi]
+    assert not inside, \
+        f"{chip}: RAM_START 0x{start:02X} is inside __BADRAM {', '.join(inside)}"
+
+
+@pytest.mark.skipif(GPUTILS is None, reason="gputils headers not installed")
+def test_the_ram_check_covers_every_pic():
+    assert len(RAM_CASES) == len(PIC_PAIRS), \
+        f"only {len(RAM_CASES)} of {len(PIC_PAIRS)} PIC chips had their RAM compared"
 
 
 def parse_wch(path: Path):
