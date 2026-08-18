@@ -90,10 +90,20 @@ def _millis_t0con() -> uint8:
 def millis_init():
     """Arm Timer0 as the millisecond timebase; it stops being available for anything else.
 
+    The accumulators are zeroed here rather than left to their module-level
+    initialisers: an imported module's globals never get theirs emitted, so on a
+    core without a RAM clear they start as whatever the last reset left behind.
+
     8-bit mode, prescaler scaled per __FREQ__ so one overflow is 1024 us and one
     counter tick is 4 us at 4, 8 and 16 MHz -- the same numbers the ATmega HAL
     produces, so the fractional correction below is the AVR one unchanged.
     """
+    global _millis_count
+    global _millis_ms
+    global _millis_fract
+    _millis_count = 0
+    _millis_ms = 0
+    _millis_fract = 0
     T0CON.value = _millis_t0con()
     TMR0L.value = 0
     INTCON[2] = 0

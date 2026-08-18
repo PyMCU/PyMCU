@@ -65,8 +65,13 @@ def test_millis_on_atmega_still_uses_the_timer0_counter(tmp_path):
     assert "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
 
 
-def test_millis_without_a_timebase_is_a_compile_error_not_a_frozen_zero(tmp_path):
+def test_millis_on_pic18_now_has_a_real_timer0_timebase(tmp_path):
     proc, _ = frontend(tmp_path, "pic18", "pic18f45k50", 16_000_000)
+    assert "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_millis_without_a_timebase_is_a_compile_error_not_a_frozen_zero(tmp_path):
+    proc, _ = frontend(tmp_path, "pic14", "pic16f877a", 8_000_000)
     assert "[BUILD_FAIL]" in proc.stdout, proc.stdout + proc.stderr
     combined = proc.stdout + proc.stderr
     assert "millis() needs a timebase" in combined
@@ -84,6 +89,6 @@ def test_micros_without_a_timebase_is_a_compile_error(tmp_path):
         "        if u > 0:\n"
         "            pass\n"
     )
-    proc, _ = frontend(tmp_path, "pic18", "pic18f45k50", 16_000_000, source)
+    proc, _ = frontend(tmp_path, "pic14", "pic16f877a", 8_000_000, source)
     assert "[BUILD_FAIL]" in proc.stdout, proc.stdout + proc.stderr
     assert "micros() needs a timebase" in proc.stdout + proc.stderr

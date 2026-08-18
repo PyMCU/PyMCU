@@ -37,6 +37,9 @@ def ticks() -> uint32:
     elif __CHIP__.name == "rp2350":
         t2: ptr[uint32] = ptr(0x400B0028)       # TIMER0.TIMERAWL
         return t2.value
+    elif __CHIP__.name == "pic18f45k50":
+        from pymcu.hal.timer import micros as _micros_pic18
+        return _micros_pic18()
     elif __CHIP__.arch == "avr":
         if __CHIP__.name.startswith("attiny"):
             raise CompileError("async needs a timebase; not available on attiny yet: millis/micros are ATmega-only, so every await would block forever. Use pymcu.time.delay_ms() instead.")
@@ -45,7 +48,7 @@ def ticks() -> uint32:
             from pymcu.hal.timer import micros as _micros_avr
             return _micros_avr()
     else:
-        raise CompileError("async needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so every await would block forever. Use pymcu.time.delay_ms() instead.")
+        raise CompileError("async needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so every await would block forever. Use pymcu.time.delay_ms() instead.")
 
 
 def sleep(seconds: uint32):

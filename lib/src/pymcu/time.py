@@ -471,6 +471,9 @@ def millis_init():
         case "avr":
             from pymcu.hal.avr.timer.atmega328p import millis_init as _millis_init_avr
             _millis_init_avr()
+        case "pic18":
+            from pymcu.hal.timer import millis_init as _millis_init_pic18
+            _millis_init_pic18()
 
 
 @inline
@@ -489,8 +492,11 @@ def millis() -> uint32:
     elif __CHIP__.arch == "avr":
         from pymcu.hal.timer import millis as _millis_avr
         return _millis_avr()
+    elif __CHIP__.name == "pic18f45k50":
+        from pymcu.hal.timer import millis as _millis_pic18
+        return _millis_pic18()
     else:
-        raise CompileError("millis() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_ms() to pace a loop instead.")
+        raise CompileError("millis() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_ms() to pace a loop instead.")
 
 
 @inline
@@ -512,6 +518,9 @@ def micros() -> uint32:
     elif __CHIP__.arch == "avr":
         from pymcu.hal.timer import micros as _micros_avr
         return _micros_avr()
+    elif __CHIP__.name == "pic18f45k50":
+        from pymcu.hal.timer import micros as _micros_pic18
+        return _micros_pic18()
     else:
-        raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
+        raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0), PIC18F45K50 (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
 

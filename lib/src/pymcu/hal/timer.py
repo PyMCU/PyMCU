@@ -29,6 +29,7 @@ elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.timer import Timer
 elif __CHIP__.arch == "pic18":
     from pymcu.hal.pic18.timer import Timer
+    from pymcu.hal.pic18.pic18f45k50_timer import millis_init, millis, micros
 elif __CHIP__.arch == "pic12":
     from pymcu.hal.pic12.timer import Timer
 else:
