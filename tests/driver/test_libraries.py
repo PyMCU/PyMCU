@@ -3,6 +3,7 @@
 # Tests for library discovery: manifest parsing, target compatibility, module
 # collisions and where the driver looks for a project's libraries.
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -158,7 +159,7 @@ class TestCollisionsAndPaths:
     def test_adapter_comes_before_the_source_tree(self, tmp_path):
         lib = _library(_make_package(tmp_path))
         paths = core.include_paths([lib], ["micropython"])
-        assert paths[0].endswith("compat/micropython")
+        assert Path(paths[0]).parts[-2:] == ("compat", "micropython")
         assert paths[1] == str(lib.source_dir)
 
     def test_no_adapter_without_the_flavor(self, tmp_path):
@@ -222,13 +223,21 @@ class TestVenvDiscovery:
         assert found[0].distribution == "pymcu-lib-dht11"
         assert found[0].version == "0.2.0"
 
+    @staticmethod
+    def _venv_site(venv: Path) -> Path:
+        # Build the layout site_packages_of expects on the RUNNING platform:
+        # Windows venvs use Lib/site-packages, POSIX lib/pythonX.Y/site-packages.
+        if sys.platform == "win32":
+            return venv / "Lib" / "site-packages"
+        return venv / "lib" / "python3.14" / "site-packages"
+
     def test_site_packages_of_a_venv_layout(self, tmp_path):
-        target = tmp_path / "lib" / "python3.14" / "site-packages"
+        target = self._venv_site(tmp_path)
         target.mkdir(parents=True)
         assert core.site_packages_of(tmp_path) == [str(target)]
 
     def test_build_looks_into_the_project_venv_when_running_elsewhere(self, tmp_path):
-        site = tmp_path / ".venv" / "lib" / "python3.14" / "site-packages"
+        site = self._venv_site(tmp_path / ".venv")
         site.mkdir(parents=True)
         assert core.search_path_for_project(tmp_path) == [str(site)]
 

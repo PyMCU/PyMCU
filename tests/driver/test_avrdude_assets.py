@@ -8,6 +8,7 @@
 # Raspberry Pi, and failed later at flash time with an unhelpful message.
 
 import errno
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -150,7 +151,10 @@ class TestExecutabilityGuard:
     def test_a_wrong_architecture_binary_names_rosetta(self, tmp_path):
         binary = tmp_path / "avrdude"
         binary.write_bytes(b"\xcf\xfa\xed\xfe")
-        exc = OSError(errno.EBADARCH, "Bad CPU type in executable")
+        # errno.EBADARCH only exists on macOS; production reads it with the same
+        # numeric fallback, so the test must too or it cannot even run on CI's
+        # Linux and Windows legs.
+        exc = OSError(getattr(errno, "EBADARCH", 86), "Bad CPU type in executable")
         with patch("src.driver.programmers.avrdude.subprocess.run", side_effect=exc), \
              patch("sys.platform", "darwin"):
             with pytest.raises(RuntimeError) as err:
@@ -169,7 +173,9 @@ class TestExecutabilityGuard:
         assert "Rosetta" not in str(err.value)
 
     def test_a_runnable_binary_passes(self):
-        Avrdude._verify_runs(Path("/bin/echo"))
+        # Any binary that actually executes passes the guard; the interpreter
+        # running this test is the one executable every platform has.
+        Avrdude._verify_runs(Path(sys.executable))
 
 
 class TestPortDisambiguation:

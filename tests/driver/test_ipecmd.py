@@ -26,6 +26,9 @@ def _no_ambient_config(monkeypatch, tmp_path):
     for var in ("PYMCU_IPECMD", "PYMCU_IPECMD_TOOL", "PYMCU_IPECMD_POWER"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("src.driver.programmers.ipecmd.shutil.which", lambda _: None)
+    # The fake MPLAB X trees below carry the POSIX launcher name; pin the OS
+    # key so discovery looks for that same name on every CI platform.
+    monkeypatch.setattr(IpecmdProgrammer, "_os_key", staticmethod(lambda: "darwin"))
     monkeypatch.chdir(tmp_path)
 
 
@@ -181,11 +184,13 @@ class TestCommand:
         cmd = IpecmdProgrammer.build_command(
             Path("/opt/ipecmd"), Path("/p/dist/firmware.hex"), "pic16f877a"
         )
+        # Path renders separators per-OS, so the expectation must be built the
+        # same way the command is, not spelled with literal forward slashes.
         assert cmd == [
-            "/opt/ipecmd",
+            str(Path("/opt/ipecmd")),
             "-TPPK3",
             "-P16f877a",
-            "-F/p/dist/firmware.hex",
+            "-F" + str(Path("/p/dist/firmware.hex")),
             "-M",
             "-OL",
         ]
