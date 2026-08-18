@@ -244,8 +244,11 @@ public static class AsyncTransform
         initParams.AddRange(fn.Params);
         // Constructors are force-inlined (expanded at the construction site), matching how
         // the parser marks a hand-written __init__; otherwise it gets outlined and slot
-        // construction can't find it.
-        var initFn = new FunctionDef("__init__", initParams, "", initBody, isInline: true);
+        // construction can't find it. The return type must be "void" for the same reason:
+        // an empty one makes the expansion allocate a result temp and hand THAT back as the
+        // value of `fast()`, so `gather(fast(), slow())` binds the parameter to a classless
+        // temporary and `a.poll()` has no class to dispatch on.
+        var initFn = new FunctionDef("__init__", initParams, "void", initBody, isInline: true);
 
         // poll(self) -> uint32: flat state dispatch. Each state body ends with a
         // suspend (`return 1`), a done (`return 0`) or a goto (`_state = n; return 1`).

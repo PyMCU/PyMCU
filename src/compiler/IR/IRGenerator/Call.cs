@@ -924,8 +924,9 @@ public partial class IRGenerator
         var rawStrArgs = new List<StringLiteral?>();
         var rawListArgs = new List<ListExpr?>();
 
-        foreach (var arg in expr.Args)
+        foreach (var rawArg in expr.Args)
         {
+            var arg = rawArg;
             if (arg is KeywordArgExpr kw)
             {
                 string savedOuterPct = pendingConstructorTarget;
@@ -938,6 +939,7 @@ public partial class IRGenerator
             }
             else
             {
+                arg = HoistSlotCtorArg(arg);
                 rawStrArgs.Add(arg as StringLiteral);
                 // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
                 // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
@@ -1381,6 +1383,22 @@ public partial class IRGenerator
         if (result != null) return result;
         if (ctorSubexprSynth != null) return new Variable(ctorSubexprSynth);
         return new NoneVal();
+    }
+
+    // `f(Cls(...))` where Cls is boxed into an SRAM slot (RFC 0001 Model B): build the
+    // instance into a named slot first and pass that name, which is exactly what
+    // `x = Cls(...); f(x)` does. As an anonymous subexpression the constructor takes the
+    // flattened (Model A) path instead, so the instance has no slot and an @outline method
+    // compiled with the self-pointer ABI reads its fields from the wrong place -- how
+    // `asyncio.gather(fast(), slow())` used to fail, since a coroutine state machine is
+    // always a multi-field (slot) class.
+    private Expression HoistSlotCtorArg(Expression arg)
+    {
+        if (arg is not CallExpr ctor || ctor.Callee is not VariableExpr ctorName) return arg;
+        if (!slotClasses.Contains(ResolveCallee(ctorName.Name))) return arg;
+        string bound = "__zca" + (++ctorAnonId);
+        VisitAssign(new AssignStmt(new VariableExpr(bound), arg));
+        return new VariableExpr(bound);
     }
 
     // Resolve an overloaded call to its concrete mangled name: build a type suffix
