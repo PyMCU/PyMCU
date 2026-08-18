@@ -22,6 +22,27 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ForIn_SliceWithRuntimeBounds_BecomesRangeLoop()
+    {
+        // for b in buf[0:n] with a runtime n rewrites to a range loop reading
+        // buf[__i] each iteration -- an ArrayLoad with a non-constant index.
+        var src =
+            "def main():\n" +
+            "    buf: bytearray = bytearray(6)\n" +
+            "    n: uint8 = 0\n" +
+            "    while n < 4:\n" +
+            "        buf[n] = n\n" +
+            "        n = n + 1\n" +
+            "    total: uint8 = 0\n" +
+            "    for b in buf[0:n]:\n" +
+            "        total = total + b\n" +
+            "    return total\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body).OfType<ArrayLoad>(),
+            l => l.Index is not Constant);
+    }
+
+    [Fact]
     public void DunderSliceAssign_UnrollsToPerElementSetitem()
     {
         // obj[0:3] = [...] on a class with __setitem__/__len__ unrolls to one
