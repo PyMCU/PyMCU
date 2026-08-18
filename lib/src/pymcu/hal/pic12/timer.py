@@ -5,11 +5,17 @@
 # SPDX-License-Identifier: MIT
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, const, inline, Callable
 
 
 class Timer:
-    """Hardware timer for PIC12, zero-cost abstraction (all methods @inline)."""
+    """Hardware timer for PIC12, zero-cost abstraction (all methods @inline).
+
+    The baseline core has one 8-bit timer, no interrupt hardware and no compare
+    unit, so most of the portable Timer surface cannot exist here. It refuses to
+    compile rather than accepting the call and doing nothing.
+    """
 
     IRQ_OVF   = 1
     IRQ_COMPA = 2
@@ -22,13 +28,11 @@ class Timer:
 
     @inline
     def start(self):
-        from pymcu.hal.pic12.pic10f200_timer import timer0_start
-        timer0_start()
+        pass
 
     @inline
     def stop(self):
-        from pymcu.hal.pic12.pic10f200_timer import timer0_stop
-        timer0_stop()
+        raise CompileError("PIC12 Timer0 runs from reset off the instruction clock and has no enable bit; stop() cannot be honoured on this core")
 
     @inline
     def clear(self):
@@ -37,19 +41,20 @@ class Timer:
 
     @inline
     def set_compare(self, value: uint16):
-        pass
+        raise CompileError("PIC12 has no timer compare hardware")
 
     @inline
     def overflow(self) -> uint8:
-        return 0
+        raise CompileError("PIC12 has no T0IF flag: an overflow is only observable by polling counter() and watching it wrap")
 
     @inline
     def counter(self) -> uint16:
-        return 0
+        from pymcu.hal.pic12.pic10f200_timer import timer0_read
+        return uint16(timer0_read())
 
     @inline
     def irq(self, handler: Callable, mode: const = 1):
-        pass
+        raise CompileError("PIC12 has no interrupt hardware")
 
     @inline
     def reinit(self, prescaler: uint16):

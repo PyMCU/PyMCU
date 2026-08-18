@@ -62,7 +62,7 @@ class Pin:
                 if value != -1:
                     pin_write(name, value)
             case "pic10f200":
-                from pymcu.hal.pic14.pic10f200_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
+                from pymcu.hal.pic12.pic10f200_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
                 pin_set_mode(name, mode)
                 if pull != -1:
                     if pull == 1:
@@ -72,7 +72,7 @@ class Pin:
                 if value != -1:
                     pin_write(name, value)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
                 pin_set_mode(name, mode)
                 if pull != -1:
                     if pull == 1:
@@ -98,10 +98,10 @@ class Pin:
                 from pymcu.hal.pic14.pic16f84a_gpio import pin_high
                 pin_high(self.name)
             case "pic10f200":
-                from pymcu.hal.pic14.pic10f200_gpio import pin_high
+                from pymcu.hal.pic12.pic10f200_gpio import pin_high
                 pin_high(self.name)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_high
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_high
                 pin_high(self.name)
 
     @inline
@@ -120,10 +120,10 @@ class Pin:
                 from pymcu.hal.pic14.pic16f84a_gpio import pin_low
                 pin_low(self.name)
             case "pic10f200":
-                from pymcu.hal.pic14.pic10f200_gpio import pin_low
+                from pymcu.hal.pic12.pic10f200_gpio import pin_low
                 pin_low(self.name)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_low
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_low
                 pin_low(self.name)
 
     @inline
@@ -150,10 +150,10 @@ class Pin:
                 from pymcu.hal.pic14.pic16f84a_gpio import pin_toggle
                 pin_toggle(self.name)
             case "pic10f200":
-                from pymcu.hal.pic14.pic10f200_gpio import pin_toggle
+                from pymcu.hal.pic12.pic10f200_gpio import pin_toggle
                 pin_toggle(self.name)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_toggle
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_toggle
                 pin_toggle(self.name)
 
     @inline
@@ -173,10 +173,10 @@ class Pin:
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_read
                     return pin_read(self.name)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_read
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_read
                     return pin_read(self.name)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_read
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_read
                     return pin_read(self.name)
         else:
             match __CHIP__.name:
@@ -193,10 +193,10 @@ class Pin:
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_write
                     pin_write(self.name, x)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_write
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_write
                     pin_write(self.name, x)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_write
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_write
                     pin_write(self.name, x)
 
     @inline
@@ -216,10 +216,10 @@ class Pin:
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_set_mode
                     pin_set_mode(self.name, mode)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_set_mode
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_set_mode
                     pin_set_mode(self.name, mode)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_set_mode
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_set_mode
                     pin_set_mode(self.name, mode)
         if pull != -1:
             match __CHIP__.name:
@@ -248,13 +248,13 @@ class Pin:
                     elif pull == 0:
                         pin_pull_off(self.name)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_pull_up, pin_pull_off
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(self.name)
                     elif pull == 0:
                         pin_pull_off(self.name)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_pull_up, pin_pull_off
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(self.name)
                     elif pull == 0:
@@ -274,10 +274,10 @@ class Pin:
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_write
                     pin_write(self.name, value)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_write
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_write
                     pin_write(self.name, value)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_write
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_write
                     pin_write(self.name, value)
 
     @inline
@@ -308,13 +308,13 @@ class Pin:
                 elif pull_mode == 0:
                     pin_pull_off(self.name)
             case "pic10f200":
-                from pymcu.hal.pic14.pic10f200_gpio import pin_pull_up, pin_pull_off
+                from pymcu.hal.pic12.pic10f200_gpio import pin_pull_up, pin_pull_off
                 if pull_mode == 1:
                     pin_pull_up(self.name)
                 elif pull_mode == 0:
                     pin_pull_off(self.name)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_pull_up, pin_pull_off
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_pull_up, pin_pull_off
                 if pull_mode == 1:
                     pin_pull_up(self.name)
                 elif pull_mode == 0:
@@ -340,7 +340,7 @@ class Pin:
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger)
             case "pic18f45k50":
-                from pymcu.hal.pic14.pic18f45k50_gpio import pin_irq_setup
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger)
             case "pic10f200":
                 raise CompileError("IRQ not supported on PIC10F200")
@@ -366,8 +366,8 @@ class Pin:
                     from pymcu.hal.pic14.pic16f84a_gpio import pin_set_mode
                     pin_set_mode(self.name, m)
                 case "pic10f200":
-                    from pymcu.hal.pic14.pic10f200_gpio import pin_set_mode
+                    from pymcu.hal.pic12.pic10f200_gpio import pin_set_mode
                     pin_set_mode(self.name, m)
                 case "pic18f45k50":
-                    from pymcu.hal.pic14.pic18f45k50_gpio import pin_set_mode
+                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_set_mode
                     pin_set_mode(self.name, m)
