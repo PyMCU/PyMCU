@@ -508,6 +508,9 @@ public partial class IRGenerator
                             if (value is Temporary tmp) type = tmp.Type;
                             else if (value is Variable vv) type = vv.Type;
                             else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
+                            else if (value is Constant
+                                     && stmt.Value is UnaryExpr or BinaryExpr)
+                                type = DataType.INT32;
                             variableTypes[qualifiedName] = type;
                             if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
                                 Logger.Verbose("IRGen", $"'{varExpr.Name}' inferred as {type.ToString().ToLower()}; annotate explicitly to suppress");
