@@ -28,12 +28,12 @@ from pymcu.exceptions import CompileError
 if __CHIP__.name == "ch32v003":
     from pymcu.hal.riscv.gpio.ch32v003 import (
         select_cfg, select_cfg_shift, select_outdr, select_indr, select_bshr,
-        select_clock_bit, select_bit, RCC_APB2ENR,
+        select_clock_bit, select_bit, RCC_APB2PCENR,
     )
 elif __CHIP__.name == "ch32v203":
     from pymcu.hal.riscv.gpio.ch32v203 import (
         select_cfg, select_cfg_shift, select_outdr, select_indr, select_bshr,
-        select_clock_bit, select_bit, RCC_APB2ENR,
+        select_clock_bit, select_bit, RCC_APB2PCENR,
     )
 
 # CFGLR/CFGHR nibble values (CNF[1:0] << 2 | MODE[1:0]).
@@ -68,7 +68,7 @@ class Pin:
         self._bit   = select_bit(name)
 
         # A GPIO port is dead until its APB2 clock is running.
-        RCC_APB2ENR.value = RCC_APB2ENR.value | (1 << select_clock_bit(name))
+        RCC_APB2PCENR.value = RCC_APB2PCENR.value | (1 << select_clock_bit(name))
 
         if mode == 0:
             self._configure(_CFG_OUT_PP_10M)

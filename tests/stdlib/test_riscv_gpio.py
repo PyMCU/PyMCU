@@ -66,14 +66,14 @@ class TestCh32v003:
         asm = compile_asm(tmp_path, blink("PD4"), "ch32v003")
         assert "li\tt2, 0x40011400" in asm          # GPIOD_CFGLR
         assert "li\tt1, 65536" in asm               # output nibble at (4 % 8) * 4 = 16
-        assert "li\tt2, 0x4001140C" in asm          # GPIOD_BSHR
+        assert "li\tt2, 0x40011410" in asm          # GPIOD_BSHR
         assert "li\tt0, 16" in asm                  # set   -> 1 << 4
         assert "li\tt0, 1048576" in asm             # reset -> 1 << (4 + 16)
 
     def test_port_a_pin_1(self, tmp_path):
         asm = compile_asm(tmp_path, blink("PA1"), "ch32v003")
         assert "li\tt2, 0x40010800" in asm          # GPIOA_CFGLR
-        assert "li\tt2, 0x4001080C" in asm          # GPIOA_BSHR
+        assert "li\tt2, 0x40010810" in asm          # GPIOA_BSHR
         assert "ori\tt0, t0, 4" in asm              # IOPAEN is bit 2
 
     def test_port_c_clock_bit(self, tmp_path):
@@ -123,3 +123,43 @@ class TestCh32v203:
         asm = compile_asm(tmp_path, blink("PD8"), "ch32v203")
         assert "li\tt2, 0x4001140C" in asm          # GPIOD_OUTDR
         assert "xori\tt0, t0, 256" in asm           # 1 << 8
+
+
+class TestCh32v003RegisterMap:
+    """The WCH ch32v003hw.h layout, which the V003 map silently disagreed with."""
+
+    PORT_BASE = {"A": 0x40010800, "C": 0x40011000, "D": 0x40011400}
+    OFFSETS = {"CFGLR": 0x00, "CFGHR": 0x04, "INDR": 0x08,
+               "OUTDR": 0x0C, "BSHR": 0x10, "BCR": 0x14}
+
+    @staticmethod
+    def chip_module():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_ch32v003_map", STDLIB / "pymcu" / "chips" / "ch32v003.py")
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            pass
+        return (STDLIB / "pymcu" / "chips" / "ch32v003.py").read_text()
+
+    @pytest.mark.parametrize("port", sorted(PORT_BASE))
+    @pytest.mark.parametrize("reg,offset", sorted(OFFSETS.items()))
+    def test_gpio_register_sits_at_its_datasheet_offset(self, port, reg, offset):
+        text = self.chip_module()
+        needle = f"GPIO{port}_{reg} "
+        line = next((l for l in text.splitlines() if l.startswith(needle)), None)
+        assert line is not None, f"GPIO{port}_{reg} is not defined"
+        assert f"GPIO{port}_BASE + 0x{offset:02X}" in line, line
+
+    def test_systick_is_the_wch_block_not_the_arm_one(self):
+        text = self.chip_module()
+        assert "SYSTICK_BASE = 0xE000F000" in text
+        assert "SYSTICK_CMP  : ptr[int32] = ptr(SYSTICK_BASE + 0x10)" in text
+
+    @pytest.mark.parametrize("name,offset", [
+        ("RCC_AHBPCENR", 0x14), ("RCC_APB2PCENR", 0x18), ("RCC_APB1PCENR", 0x1C)])
+    def test_clock_enable_registers_use_the_wch_names(self, name, offset):
+        text = self.chip_module()
+        assert f"{name} : ptr[int32] = ptr(RCC_BASE + 0x{offset:02X})" in text

@@ -37,11 +37,6 @@ RCC_AHBPCENR  : ptr[int32] = ptr(RCC_BASE + 0x14)
 RCC_APB2PCENR : ptr[int32] = ptr(RCC_BASE + 0x18)
 RCC_APB1PCENR : ptr[int32] = ptr(RCC_BASE + 0x1C)
 
-# Kept under the CH32V003 spelling too, so shared code can use one name.
-RCC_AHBENR  : ptr[int32] = ptr(RCC_BASE + 0x14)
-RCC_APB2ENR : ptr[int32] = ptr(RCC_BASE + 0x18)
-RCC_APB1ENR : ptr[int32] = ptr(RCC_BASE + 0x1C)
-
 # GPIO A
 GPIOA_BASE = 0x40010800
 GPIOA_CFGLR : ptr[int32] = ptr(GPIOA_BASE + 0x00)

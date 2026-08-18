@@ -13,7 +13,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.ch32v003 import (
-    RCC_APB2ENR,
+    RCC_APB2PCENR,
     GPIOA_CFGLR, GPIOA_INDR, GPIOA_OUTDR, GPIOA_BSHR,
     GPIOC_CFGLR, GPIOC_INDR, GPIOC_OUTDR, GPIOC_BSHR,
     GPIOD_CFGLR, GPIOD_INDR, GPIOD_OUTDR, GPIOD_BSHR,
@@ -21,7 +21,7 @@ from pymcu.chips.ch32v003 import (
 from pymcu.types import uint8, int32, ptr, inline
 from pymcu.exceptions import CompileError
 
-# RCC_APB2ENR clock-enable bits.
+# RCC_APB2PCENR clock-enable bits.
 _IOPAEN = 2
 _IOPCEN = 4
 _IOPDEN = 5

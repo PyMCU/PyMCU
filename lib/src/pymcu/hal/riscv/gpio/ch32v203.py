@@ -14,7 +14,7 @@
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.ch32v203 import (
-    RCC_APB2ENR,
+    RCC_APB2PCENR,
     GPIOA_CFGLR, GPIOA_CFGHR, GPIOA_INDR, GPIOA_OUTDR, GPIOA_BSHR,
     GPIOB_CFGLR, GPIOB_CFGHR, GPIOB_INDR, GPIOB_OUTDR, GPIOB_BSHR,
     GPIOC_CFGLR, GPIOC_CFGHR, GPIOC_INDR, GPIOC_OUTDR, GPIOC_BSHR,
