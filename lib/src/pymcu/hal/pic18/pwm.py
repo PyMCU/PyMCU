@@ -14,7 +14,7 @@ class PWM:
     def __init__(self, pin: str, duty: uint8, freq: uint16 = 0):
         self.pin = pin
         from pymcu.hal.pic18.pic18f45k50_pwm import pwm_init
-        pwm_init(pin, duty)
+        pwm_init(pin, duty, freq)
 
     @inline
     def set_duty(self, duty: uint8):
@@ -33,4 +33,5 @@ class PWM:
 
     @inline
     def set_freq(self, freq: uint16):
-        pass
+        from pymcu.hal.pic18.pic18f45k50_pwm import pwm_set_freq
+        pwm_set_freq(self.pin, freq)
