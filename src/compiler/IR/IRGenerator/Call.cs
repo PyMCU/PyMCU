@@ -2500,6 +2500,32 @@ public partial class IRGenerator
         VisitCall(new CallExpr(new VariableExpr(writeStrFn), new List<Expression> { new StringLiteral(s) }));
     }
 
+    // A bool value in the Python sense: a True/False literal, or a name bound to one
+    // everywhere in the program. A comparison is deliberately NOT a bool here — PyMCU
+    // lowers `a < b` to an integer, and printing it as True/False would misreport any
+    // other integer flowing through the same name.
+    private bool IsBoolExpr(Expression e) => e switch
+    {
+        BooleanLiteral => true,
+        VariableExpr ve => IsBoolName(ve.Name),
+        _ => false,
+    };
+
+    // Stream a runtime bool as Python spells it: the two words live in flash and the
+    // branch picks one, so nothing is formatted at runtime.
+    private void EmitStreamBool(string writeStrFn, Expression e)
+    {
+        var thenBranch = new Block();
+        thenBranch.Statements.Add(new ExprStmt(new CallExpr(new VariableExpr(writeStrFn),
+            new List<Expression> { new StringLiteral("True") })));
+        var elseBranch = new Block();
+        elseBranch.Statements.Add(new ExprStmt(new CallExpr(new VariableExpr(writeStrFn),
+            new List<Expression> { new StringLiteral("False") })));
+        VisitStatement(new IfStmt(
+            new BinaryExpr(e, Frontend.BinaryOp.NotEqual, new IntegerLiteral(0)),
+            thenBranch, null, elseBranch));
+    }
+
     // Write an already-evaluated value to the stream as a number/float.
     private void EmitStreamVal(string floatFn, Val val)
     {
@@ -2604,6 +2630,8 @@ public partial class IRGenerator
             if (part.Expr is FStringExpr nested) { Flush(); EmitStreamFString(writeStrFn, floatFn, nested); continue; }
             string? sv = StaticStringOf(part.Expr!);
             if (sv != null) { pending += sv; continue; }
+            if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
+            if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
             Flush();
             EmitStreamVal(floatFn, VisitExpression(part.Expr!));
         }
@@ -2789,6 +2817,9 @@ public partial class IRGenerator
                 EmitRuntimeStrStream(rsv.Name, rsInfo.LenVar);
                 return;
             }
+
+            if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
+            if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
 
             EmitStreamVal(floatWriteFn, VisitExpression(arg));
         }

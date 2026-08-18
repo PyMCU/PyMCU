@@ -131,6 +131,16 @@ public partial class IRGenerator
     // the length variable; print(s)/write_str(s) stream the buffer up to it.
     private Dictionary<string, (string LenVar, int Capacity)> runtimeStrVars = new();
 
+    // Names that carry a real Python bool, so an interpolation prints True/False instead of
+    // 1/0. Collected program-wide, by UNQUALIFIED name, before IR generation: boolNames holds
+    // every name bound to a True/False literal (or declared `: bool` with such an init);
+    // nonBoolNames holds every name that anywhere receives something else (a comparison, an
+    // integer, a loop variable, a parameter). A name prints as a bool only when it is in the
+    // first set and absent from the second, so a name that is a bool at one point and an
+    // integer later keeps printing as a number everywhere.
+    private HashSet<string> boolNames = new();
+    private HashSet<string> nonBoolNames = new();
+
     // Dict/set literals bound to a name: compile-time CLOSED lookup tables (no storage, no
     // GC). d[k] folds for a constant key or lowers to a compare chain for a runtime key
     // (missing key raises KeyError); `x in s` lowers like a constant list membership.

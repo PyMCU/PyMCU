@@ -122,7 +122,11 @@ public partial class IRGenerator
         // (recursing into class methods and nested blocks). This forms the superset of all
         // class fields used to flag a read of an undefined instance attribute.
         foreach (var stmt in ast.GlobalStatements)
+        {
             CollectAssignedMemberNames(stmt);
+            CollectBoolNames(stmt);
+        }
+        foreach (var fn in ast.Functions) CollectBoolNames(fn);
 
         foreach (var stmt in ast.GlobalStatements)
         {
@@ -924,6 +928,61 @@ public partial class IRGenerator
                 return;
         }
     }
+
+    // Walk a statement and classify every plain-name binding as bool or not-bool (see the
+    // boolNames/nonBoolNames comment in State.cs). Only a True/False literal binds a bool;
+    // everything else -- a comparison (an integer in PyMCU), a loop variable, a parameter --
+    // vetoes the name for the whole program.
+    private void CollectBoolNames(Statement? s)
+    {
+        switch (s)
+        {
+            case null: return;
+            case Block b: foreach (var st in b.Statements) CollectBoolNames(st); return;
+            case ClassDef cd: CollectBoolNames(cd.Body); return;
+            case FunctionDef fd:
+                foreach (var p in fd.Params) nonBoolNames.Add(p.Name);
+                CollectBoolNames(fd.Body);
+                return;
+            case IfStmt iff:
+                CollectBoolNames(iff.ThenBranch);
+                foreach (var br in iff.ElifBranches) CollectBoolNames(br.Body);
+                CollectBoolNames(iff.ElseBranch);
+                return;
+            case WhileStmt w: CollectBoolNames(w.Body); return;
+            case ForStmt f:
+                nonBoolNames.Add(f.VarName);
+                if (!string.IsNullOrEmpty(f.Var2Name)) nonBoolNames.Add(f.Var2Name);
+                CollectBoolNames(f.Body);
+                return;
+            case WithStmt wi: CollectBoolNames(wi.Body); return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectBoolNames(br.Body); return;
+            case TryStmt t:
+                foreach (var st in t.Body) CollectBoolNames(st);
+                foreach (var (_, h) in t.Handlers) foreach (var st in h) CollectBoolNames(st);
+                if (t.ElseBody != null) foreach (var st in t.ElseBody) CollectBoolNames(st);
+                if (t.Finally != null) foreach (var st in t.Finally) CollectBoolNames(st);
+                return;
+            case AssignStmt { Target: VariableExpr av } a: NoteBoolBinding(av.Name, a.Value); return;
+            case AssignStmt { Target: TupleExpr tup }:
+                foreach (var e in tup.Elements)
+                    if (e is VariableExpr tv) nonBoolNames.Add(tv.Name);
+                return;
+            case AugAssignStmt { Target: VariableExpr gv }: nonBoolNames.Add(gv.Name); return;
+            case VarDecl vd: NoteBoolBinding(vd.Name, vd.Init); return;
+            case AnnAssign an when !an.Target.Contains('.'): NoteBoolBinding(an.Target, an.Value); return;
+        }
+    }
+
+    private void NoteBoolBinding(string name, Expression? value)
+    {
+        if (value is BooleanLiteral) boolNames.Add(name);
+        else nonBoolNames.Add(name);
+    }
+
+    // True when `name` is bound to True/False everywhere in the program, so interpolating it
+    // must print Python's words rather than the underlying byte.
+    private bool IsBoolName(string name) => boolNames.Contains(name) && !nonBoolNames.Contains(name);
 
     private void RecordMemberAssignTarget(Expression target)
     {
