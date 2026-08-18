@@ -197,10 +197,21 @@ PIR1:     ptr[uint8] = ptr(0x070D)
 PIR2:     ptr[uint8] = ptr(0x070E)
 PIR3:     ptr[uint8] = ptr(0x070F)
 
+PIR4:     ptr[uint8] = ptr(0x0710)
+PIR5:     ptr[uint8] = ptr(0x0711)
+PIR6:     ptr[uint8] = ptr(0x0712)
+PIR7:     ptr[uint8] = ptr(0x0713)
+PIR8:     ptr[uint8] = ptr(0x0714)
+
 PIE0:     ptr[uint8] = ptr(0x0716)
 PIE1:     ptr[uint8] = ptr(0x0717)
 PIE2:     ptr[uint8] = ptr(0x0718)
 PIE3:     ptr[uint8] = ptr(0x0719)
+PIE4:     ptr[uint8] = ptr(0x071A)
+PIE5:     ptr[uint8] = ptr(0x071B)
+PIE6:     ptr[uint8] = ptr(0x071C)
+PIE7:     ptr[uint8] = ptr(0x071D)
+PIE8:     ptr[uint8] = ptr(0x071E)
 
 # ==========================================
 #  Weak Pull-Up Registers (Bank 4)
@@ -293,14 +304,36 @@ TRMT: int = 1
 SPEN: int = 7
 CREN: int = 4
 
+# PIR0 Bits
+INTF:   int = 0
+IOCIF:  int = 4
+TMR0IF: int = 5
+
 # PIR1 Bits
-TMR1IF: int = 0
-TMR2IF: int = 1
-ADIF:   int = 6
-RCIF:   int = 5
+ADIF:   int = 0
+ADTIF:  int = 1
+CSWIF:  int = 6
+OSFIF:  int = 7
+
+# PIR3 Bits
+SSP1IF: int = 0
+BCL1IF: int = 1
+SSP2IF: int = 2
+BCL2IF: int = 3
 TXIF:   int = 4
+RCIF:   int = 5
 
 # PIR4 Bits
-TMR0IF: int = 0
-CCP1IF: int = 1
-CCP2IF: int = 2
+TMR1IF: int = 0
+TMR2IF: int = 1
+TMR3IF: int = 2
+TMR4IF: int = 3
+TMR5IF: int = 4
+TMR6IF: int = 5
+
+# PIR6 Bits
+CCP1IF: int = 0
+CCP2IF: int = 1
+CCP3IF: int = 2
+CCP4IF: int = 3
+CCP5IF: int = 4

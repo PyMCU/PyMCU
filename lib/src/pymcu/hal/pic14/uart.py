@@ -1,6 +1,6 @@
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.hal.pic14.pic14_uart import *
-from pymcu.hal.pic14.pic14_uart import uart_write_str
+from pymcu.hal.pic14.pic14_uart import uart_write_str, uart_read_ready
 
 class UART:
     def __init__(self, baud: const[uint16] = 9600):
@@ -24,17 +24,21 @@ class UART:
         self.write(10)
 
     @inline
-    def print_byte(self, value: uint8):
-        pass
-
-    @inline
-    def print_uint16(self, value: uint16):
-        pass
+    def read_ready(self) -> uint8:
+        return uart_read_ready()
 
     @inline
     def available(self) -> uint8:
-        return 0
+        return uart_read_ready()
+
+    @inline
+    def print_byte(self, value: uint8):
+        raise NotImplementedError("UART.print_byte needs the decimal writers, which the PIC14 HAL does not have yet; use write() or write_str()")
+
+    @inline
+    def print_uint16(self, value: uint16):
+        raise NotImplementedError("UART.print_uint16 needs the decimal writers, which the PIC14 HAL does not have yet; use write() or write_str()")
 
     @inline
     def irq(self, handler: Callable):
-        pass
+        raise NotImplementedError("UART interrupts are not implemented for PIC14")

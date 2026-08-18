@@ -1,4 +1,4 @@
-from pymcu.chips.pic16f18877 import TX1STA, RC1STA, TX1REG, RC1REG, SP1BRGL, SP1BRGH, BAUD1CON, RC6PPS, RXPPS, TRISC
+from pymcu.chips.pic16f18877 import TX1STA, RC1STA, TX1REG, RC1REG, SP1BRGL, SP1BRGH, BAUD1CON, RC6PPS, RXPPS, TRISC, PIR3
 from pymcu.types import uint8, inline
 
 @inline
@@ -35,3 +35,19 @@ def uart_write(data: uint8):
 @inline
 def uart_write_byte(data: uint8):
     TX1REG.value = data
+
+
+@inline
+def uart_read() -> uint8:
+    while PIR3[5] == 0:
+        pass
+    result: uint8 = RC1REG.value
+    return result
+
+
+@inline
+def uart_read_ready() -> uint8:
+    result: uint8 = 0
+    if PIR3[5] == 1:
+        result = 1
+    return result

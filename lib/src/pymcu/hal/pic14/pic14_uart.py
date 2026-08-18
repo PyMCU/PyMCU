@@ -19,7 +19,7 @@ if __CHIP__.name == "pic16f877a":
     )
 elif __CHIP__.name == "pic16f18877":
     from pymcu.hal.pic14.pic16f18877_uart import (
-        uart_init, uart_write, uart_write_byte,
+        uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
     )
 else:
     raise CompileError("UART is not implemented for this PIC14 chip")
