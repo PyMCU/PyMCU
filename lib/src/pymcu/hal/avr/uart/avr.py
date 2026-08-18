@@ -193,33 +193,53 @@ def uart_write_decimal_i32(value: int32):
 
 
 def uart_write_float(value: float):
-    # Print a float with one decimal place (e.g. 23.5, -5.0).
-    # Precision: one decimal digit, sufficient for DHT22 sensor values.
-    # Uses __fp_* soft-float routines and __div16/__mod16 from the AVR math runtime.
-    # Decimal conversion is inlined to avoid pulling in uart_write_decimal_u8 when
-    # a program only prints floats (not integers).
+    # Print a float with up to two decimal places, rounded, trailing zero
+    # trimmed but never past the first decimal: 3.25 -> "3.25", 3.5 -> "3.5",
+    # 3.0 -> "3.0". One decimal truncated 3.25 to "3.2", which read as a wrong
+    # value next to CPython output. Decimal conversion stays inlined
+    # (subtract-powers, no division beyond the //100 pair) so a program that
+    # only prints floats does not pull in the integer print helpers.
     if value < 0.0:
         uart_write(45)
         value = 0.0 - value
-    tenths: uint16 = uint16(value * 10.0)
-    int_part: uint8 = uint8(tenths // 10)
-    frac: uint8 = uint8(tenths % 10)
-    if int_part >= 100:
-        hundreds: uint8 = int_part // 100
-        uart_write(hundreds + 48)
-        tens: uint8 = (int_part // 10) % 10
-        uart_write(tens + 48)
-        units: uint8 = int_part % 10
-        uart_write(units + 48)
-    elif int_part >= 10:
-        tens: uint8 = int_part // 10
-        uart_write(tens + 48)
-        units: uint8 = int_part % 10
-        uart_write(units + 48)
-    else:
-        uart_write(int_part + 48)
+    centis: uint32 = uint32(value * 100.0 + 0.5)
+    int_part: uint16 = uint16(centis // 100)
+    frac: uint8 = uint8(centis % 100)
+    started: uint8 = 0
+    if int_part >= 10000:
+        c: uint8 = 48
+        while int_part >= 10000:
+            int_part -= 10000
+            c += 1
+        uart_write(c)
+        started = 1
+    if started or int_part >= 1000:
+        c2: uint8 = 48
+        while int_part >= 1000:
+            int_part -= 1000
+            c2 += 1
+        uart_write(c2)
+        started = 1
+    if started or int_part >= 100:
+        c3: uint8 = 48
+        while int_part >= 100:
+            int_part -= 100
+            c3 += 1
+        uart_write(c3)
+        started = 1
+    if started or int_part >= 10:
+        c4: uint8 = 48
+        while int_part >= 10:
+            int_part -= 10
+            c4 += 1
+        uart_write(c4)
+    uart_write(uint8(int_part) + 48)
     uart_write(46)
-    uart_write(frac + 48)
+    d1: uint8 = frac // 10
+    d2: uint8 = frac % 10
+    uart_write(d1 + 48)
+    if d2 != 0:
+        uart_write(d2 + 48)
 
 
 def uart_write_str(s: const[str]):
