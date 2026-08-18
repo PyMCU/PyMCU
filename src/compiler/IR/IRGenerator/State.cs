@@ -250,6 +250,9 @@ public partial class IRGenerator
     // assignment can recover the width of a call result that folded to a Constant.
     private DataType lastInlineReturnType = DataType.UNKNOWN;
 
+    // Unique suffix for the synthesized index of a runtime-bounds slice iteration.
+    private int sliceLoopId = 0;
+
     // Catch-dispatch labels of the `try` blocks whose BODY is currently being
     // lowered (innermost last). A `raise` lexically inside a try body is delivered
     // to the top label instead of propagating to the caller. Pushed/popped by

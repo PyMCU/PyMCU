@@ -942,6 +942,41 @@ public partial class IRGenerator
 
                 if (slSize > 0)
                 {
+                    // Runtime bounds (`for b in buf[0:n]` with n known only at runtime): no
+                    // allocation is needed to ITERATE a slice, so rewrite to the range loop
+                    // the bounds describe -- `for __i in range(lo, hi): v = arr[__i]; <body>`.
+                    // The range machinery provides break/continue/else; ScanStmt already
+                    // marked the array variable-indexed (any slice subscript does), so the
+                    // per-iteration read is a runtime ArrayLoad. Step must still be constant:
+                    // a runtime stride has no clear termination against a fixed array.
+                    bool slConstBounds = true;
+                    try
+                    {
+                        if (slc.Start != null) EvaluateConstantExpr(slc.Start);
+                        if (slc.Stop != null) EvaluateConstantExpr(slc.Stop);
+                    }
+                    catch (Exception) { slConstBounds = false; }
+
+                    if (!slConstBounds)
+                    {
+                        if (slc.Step != null)
+                            throw UserError(
+                                "for-in over a slice with runtime bounds does not take a step; " +
+                                "iterate range() with the stride explicitly");
+                        string slIdx = "__slci" + (++sliceLoopId);
+                        var slBody = new Block();
+                        slBody.Statements.Add(new AssignStmt(
+                            new VariableExpr(stmt.VarName),
+                            new IndexExpr(new VariableExpr(sliceVar.Name), new VariableExpr(slIdx))));
+                        if (stmt.Body is Block slOb) slBody.Statements.AddRange(slOb.Statements);
+                        else slBody.Statements.Add(stmt.Body);
+                        VisitStatement(new ForStmt(slIdx,
+                            slc.Start ?? new IntegerLiteral(0),
+                            slc.Stop ?? new IntegerLiteral(slSize),
+                            null, slBody));
+                        return;
+                    }
+
                     int start = slc.Start != null ? EvaluateConstantExpr(slc.Start) : 0;
                     int stop = slc.Stop != null ? EvaluateConstantExpr(slc.Stop) : slSize;
                     int step = slc.Step != null ? EvaluateConstantExpr(slc.Step) : 1;
