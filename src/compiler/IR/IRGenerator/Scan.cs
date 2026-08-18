@@ -539,6 +539,13 @@ public partial class IRGenerator
                 // handler (e.g. def on_irq(pin: Pin)). Store for on-demand synthesis; do NOT
                 // add to functionsToCompile because the body references ZCA fields that are
                 // only known at the call site.
+                var listParam = func.Params.FirstOrDefault(p => p.Type.StartsWith("list["));
+                if (listParam != null)
+                    throw UserError(
+                        $"function '{func.Name}': parameter '{listParam.Name}: {listParam.Type}' -- " +
+                        "list parameters are not supported (the function would be silently " +
+                        "dropped and fail at link time). Use 'bytearray' for byte buffers, or " +
+                        "mark the function @inline so the list resolves at the call site");
                 bool hasZcaFirstParam = func.Params.Count > 0 &&
                     DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
                     func.Params[0].Type != "bytearray" &&
@@ -686,6 +693,12 @@ public partial class IRGenerator
                         if (clsLayout.Count == 1)
                             zcaFactoryClasses[classKey] = clsLayout[0].Type;
 
+                        // This class body's methods by name, so the field-mutation analysis can
+                        // follow a self.<method>() call into the method it names.
+                        var classMethods = new Dictionary<string, FunctionDef>();
+                        foreach (var s1 in block.Statements)
+                            if (s1 is FunctionDef mf) classMethods[mf.Name] = mf;
+
                         foreach (var inner in block.Statements)
                         {
                             if (inner is FunctionDef func)
@@ -729,7 +742,7 @@ public partial class IRGenerator
                                     // shared subroutine (Model A field-params, or Model B SRAM slot
                                     // for >= 2 fields). After F4 this is redundant with the default
                                     // for outline-safe methods; kept as an explicit request.
-                                    RegisterOutlinedMethod(func, classKey, clsLayout, fullName);
+                                    RegisterOutlinedMethod(func, classKey, clsLayout, fullName, classMethods);
                                 }
                                 else if (func.IsInline)
                                 {
@@ -773,7 +786,7 @@ public partial class IRGenerator
                                         // expanded per call site, not compiled standalone (which
                                         // would treat self as numeric and fail).
                                         if (defLayout.Count == 1
-                                            && MethodMutatesField(func, defLayout[0].Field)
+                                            && MethodMutatesField(func, defLayout[0].Field, classMethods)
                                             && MethodHasReturnStmt(func))
                                         {
                                             inlineFunctions[fullName] = func;
@@ -781,16 +794,19 @@ public partial class IRGenerator
                                         }
                                         else
                                         {
-                                            RegisterOutlinedMethod(func, classKey, defLayout, fullName);
+                                            RegisterOutlinedMethod(func, classKey, defLayout, fullName, classMethods);
                                         }
                                     }
                                     else
                                     {
                                         // Not representable as a shared body (uses self.method(),
                                         // passes self, non-derivable field, or an unhandled construct):
-                                        // force-inline is the only way to give it a runtime form.
-                                        functionsToCompile.Add(new FunctionEntry
-                                            { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                                        // force-inline is the only way to give it a runtime form, so
+                                        // it is registered for expansion ONLY. Compiling it standalone
+                                        // as well would bind `self` to nothing -- a body reading
+                                        // `self._pin.value()` mangled the field to a call on
+                                        // `self__pin`, and the whole program failed to build over a
+                                        // method the program may never even call.
                                         instanceMethodDefs[fullName] = func;
                                     }
                                 }
@@ -1136,7 +1152,8 @@ public partial class IRGenerator
     // field). Used by both the explicit @outline branch and the F4 default (an outline-safe
     // undecorated method).
     private void RegisterOutlinedMethod(FunctionDef func, string classKey,
-        List<(string Field, string Type, string SourceParam)> layout, string fullName)
+        List<(string Field, string Type, string SourceParam)> layout, string fullName,
+        IReadOnlyDictionary<string, FunctionDef>? siblings = null)
     {
         var synthParams = new List<Param>();
         if (layout.Count >= 2) slotClasses.Add(classKey);
@@ -1170,7 +1187,7 @@ public partial class IRGenerator
         Block body = func.Body;
         string returnType = func.ReturnType;
         if (!slotClasses.Contains(classKey) && layout.Count == 1
-            && MethodMutatesField(func, layout[0].Field) && !MethodHasReturnStmt(func))
+            && MethodMutatesField(func, layout[0].Field, siblings) && !MethodHasReturnStmt(func))
         {
             var (field, ftype, _) = layout[0];
             body = new Block();
@@ -1226,6 +1243,13 @@ public partial class IRGenerator
                 case MemberAccessExpr ma when ma.Object is VariableExpr sv && sv.Name == "self":
                     if (!fields.Contains(ma.Member)) safe = false; // self.method() or non-field
                     return; // do NOT descend into the `self` leaf -- it is a field access
+                // `self.<field>.<anything>` -- a member reached THROUGH a field, so the field is
+                // another instance, not the scalar an outlined body would take as a parameter.
+                // The layout types such a field uint8 when it is constructed in __init__, so the
+                // scalar check above cannot catch it; without this the body compiled standalone
+                // and `self._pin.value()` mangled into a call on the field's own name.
+                case MemberAccessExpr { Object: MemberAccessExpr { Object: VariableExpr { Name: "self" } } }:
+                    safe = false; return;
                 case MemberAccessExpr ma2: E(ma2.Object); return;
                 case VariableExpr ve: if (ve.Name == "self") safe = false; return; // bare self
                 case BinaryExpr b: E(b.Left); E(b.Right); return;
@@ -1300,32 +1324,85 @@ public partial class IRGenerator
         return inner.Length > 0 && inner.All(char.IsDigit);
     }
 
-    private static bool MethodMutatesField(FunctionDef method, string field)
+    // The mutation may also be indirect: `bump()` writing nothing itself but calling
+    // `self.inc()`, which does. The field travels by value, so an indirect mutator needs the
+    // same write-back as a direct one -- without it the sibling updated a copy and the
+    // increment vanished. `siblings` maps the enclosing class body's method names to their
+    // ASTs; a self-call naming a method that is not there (inherited, or defined elsewhere)
+    // counts as mutating, since assuming otherwise would silently drop a write.
+    private static bool MethodMutatesField(FunctionDef method, string field,
+        IReadOnlyDictionary<string, FunctionDef>? siblings = null)
     {
         static bool IsSelfField(Expression e, string fld) =>
             e is MemberAccessExpr ma && ma.Member == fld
             && ma.Object is VariableExpr sv && sv.Name == "self";
 
-        bool found = false;
-        void S(Statement? s)
+        var visiting = new HashSet<string>();
+        bool Walk(FunctionDef fn)
         {
-            if (found || s == null) return;
-            switch (s)
+            bool found = false;
+
+            void E(Expression? e)
             {
-                case Block bl: foreach (var cs in bl.Statements) S(cs); break;
-                case AssignStmt asg when IsSelfField(asg.Target, field): found = true; break;
-                case AugAssignStmt aug when IsSelfField(aug.Target, field): found = true; break;
-                case IfStmt iff:
-                    S(iff.ThenBranch);
-                    foreach (var br in iff.ElifBranches) S(br.Body);
-                    S(iff.ElseBranch);
-                    break;
-                case WhileStmt wh: S(wh.Body); break;
-                case ForStmt fr: S(fr.Body); break;
+                if (found || e == null) return;
+                switch (e)
+                {
+                    case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } sc } selfCall:
+                        foreach (var a in selfCall.Args) E(a);
+                        if (found) return;
+                        if (siblings == null || !siblings.TryGetValue(sc.Member, out var sib))
+                        {
+                            found = true;   // unknown sibling: assume it writes the field
+                            return;
+                        }
+                        if (visiting.Add(sc.Member))
+                        {
+                            found = Walk(sib);
+                            visiting.Remove(sc.Member);
+                        }
+                        return;
+                    case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                    case MemberAccessExpr ma: E(ma.Object); return;
+                    case BinaryExpr b: E(b.Left); E(b.Right); return;
+                    case UnaryExpr u: E(u.Operand); return;
+                    case KeywordArgExpr kw: E(kw.Value); return;
+                    case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                    case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                    case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                    case ListExpr le: foreach (var el in le.Elements) E(el); return;
+                }
             }
+
+            void S(Statement? s)
+            {
+                if (found || s == null) return;
+                switch (s)
+                {
+                    case Block bl: foreach (var cs in bl.Statements) S(cs); break;
+                    case AssignStmt asg when IsSelfField(asg.Target, field): found = true; break;
+                    case AugAssignStmt aug when IsSelfField(aug.Target, field): found = true; break;
+                    case AssignStmt asg2: E(asg2.Value); break;
+                    case AugAssignStmt aug2: E(aug2.Value); break;
+                    case VarDecl vd: E(vd.Init); break;
+                    case AnnAssign an: E(an.Value); break;
+                    case ReturnStmt r: E(r.Value); break;
+                    case ExprStmt ex: E(ex.Expr); break;
+                    case IfStmt iff:
+                        E(iff.Condition);
+                        S(iff.ThenBranch);
+                        foreach (var br in iff.ElifBranches) { E(br.Condition); S(br.Body); }
+                        S(iff.ElseBranch);
+                        break;
+                    case WhileStmt wh: E(wh.Condition); S(wh.Body); break;
+                    case ForStmt fr: S(fr.Body); break;
+                }
+            }
+
+            foreach (var st in fn.Body.Statements) S(st);
+            return found;
         }
-        foreach (var st in method.Body.Statements) S(st);
-        return found;
+
+        return Walk(method);
     }
 
     // True if the method contains any return statement (value-returning or bare). Write-back

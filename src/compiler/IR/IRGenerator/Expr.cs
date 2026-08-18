@@ -89,6 +89,11 @@ public partial class IRGenerator
         if (expr is FloatLiteral floatLit)
             return new FloatConstant(floatLit.Value);
 
+        if (expr is TupleExpr)
+            throw UserError(
+                "tuples are not supported as runtime values -- use a fixed list " +
+                "([a, b, c]) for indexable storage, or unpack directly (x, y = f())");
+
         throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 
@@ -1341,6 +1346,38 @@ public partial class IRGenerator
         return loaded;
     }
 
+    // The class a plain name is an instance of, or null when the name is not an instance.
+    // Pure lookup: it emits no IR, so it is safe to ask before deciding how to lower an access.
+    private string? InstanceClassOfName(string recvName)
+    {
+        if (ResolveBinding(recvName) is not Variable rv) return null;
+        string name = rv.Name;
+        for (int depth = 0; depth < 20; depth++)
+        {
+            if (!variableAliases.TryGetValue(name, out var next)
+                || next == null || next.StartsWith("tmp_")) break;
+            name = next;
+        }
+        return instanceClasses.TryGetValue(name, out var cls) ? cls : null;
+    }
+
+    // True when this reads a @property getter on a known instance: the receiver is a plain
+    // name bound to a class that registers <member> as a getter.
+    private bool IsPropertyGetterRead(MemberAccessExpr expr)
+        => expr.Object is VariableExpr recv
+           && InstanceClassOfName(recv.Name) is { } cls
+           && propertyGetters.Contains(cls + "." + expr.Member);
+
+    // The AST of `<instance>.<member>`, resolved through the MRO. Null when the name is not
+    // an instance or its class has no such method.
+    private FunctionDef? TryResolveInstanceMethodAst(string objName, string member)
+    {
+        if (InstanceClassOfName(objName) is not { } cls) return null;
+        string sym = ResolveMROMethod(cls, member) + "_" + member;
+        if (methodAstByName.TryGetValue(sym, out var fd)) return fd;
+        return inlineFunctions.TryGetValue(sym, out var fd2) ? fd2 : null;
+    }
+
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
         // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
@@ -1464,6 +1501,15 @@ public partial class IRGenerator
                 }
             }
         }
+
+        // `.value` is the pointer read (`p.value` on a ptr[T]), but it is also an ordinary
+        // property name -- digitalio.DigitalInOut.value is THE CircuitPython idiom. Let a
+        // registered getter win: without this the pointer path ran on a plain instance,
+        // found no address to load from and handed back the instance itself, so `led.value`
+        // silently read the pin id instead of the pin, and `led.value = not led.value`
+        // never toggled anything.
+        if (expr.Member == "value" && propertyGetters.Count > 0 && IsPropertyGetterRead(expr))
+            return VisitCall(new CallExpr(expr, new List<Expression>()));
 
         if (expr.Member == "value")
         {
