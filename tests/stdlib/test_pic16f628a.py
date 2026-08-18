@@ -124,8 +124,6 @@ def test_portb_pull_ups_go_through_option_reg(tmp_path):
 
 
 @pytest.mark.skipif(not BACKEND.exists(), reason="PIC backend not built")
-@pytest.mark.xfail(strict=True, reason="PIC14 has no DefaultFuses: the 628A ships without a config word "
-                                       "and boots on the erased 0x3FFF -- RC oscillator, WDT on, LVP on")
 def test_the_build_emits_a_config_word(tmp_path):
     src = tmp_path / "main.py"
     src.write_text(BLINK_UART)
