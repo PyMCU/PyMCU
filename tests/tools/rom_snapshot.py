@@ -108,6 +108,33 @@ ADC_CANDIDATES = {"avr": ['"PC0"', '"PB2"'], "pic14": ['"RA0"'], "pic14e": ['"RA
                   "pic12": ['"GP0"']}
 
 
+def provenance():
+    """What produced this snapshot: the toolchain, and whether anyone was mid-edit.
+
+    A gate that compares ROM without pinning the compiler measures whoever else
+    happened to be building at the time; this campaign lost two verdicts that way
+    before the rule became mechanical.
+    """
+    def sha(path):
+        p = Path(path)
+        return hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.exists() else None
+
+    def git(*args):
+        r = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True)
+        return r.stdout.strip()
+
+    dirty = [l.split(maxsplit=1)[-1] for l in git("status", "--short", "src/compiler").splitlines() if l.strip()]
+    return {
+        "head": git("rev-parse", "--short", "HEAD"),
+        "compiler_tree_dirty": dirty,
+        "pymcuc": sha(REPO / "build" / "bin" / "pymcuc"),
+        "pymcuc-avr": sha(REPO / "build" / "bin" / "pymcuc-avr"),
+        "pymcuc-riscv": sha(REPO / "build" / "bin" / "pymcuc-riscv"),
+        "pymcuc-rp2040": sha(REPO / "build" / "bin" / "pymcuc-rp2040"),
+        "pymcuc-pic": sha(REPO.parent / "pymcu-pic" / "build" / "bin" / "pymcuc-pic"),
+    }
+
+
 def chips():
     out = {}
     for f in sorted(CHIPS_DIR.glob("*.py")):
@@ -135,8 +162,12 @@ def build(work: Path, chip: str, arch: str, source: str):
                           capture_output=True, text=True)
     rom = re.search(r"Flash:\s*(\d+)", proc.stdout)
     if rom is None:
-        reason = re.search(r"(?:error|Codegen failed|CompileError):\s*(.{0,90})",
-                           proc.stdout + proc.stderr)
+        blob = " ".join((proc.stdout + proc.stderr).split())
+        # Absolute paths carry the temp directory, which is new on every run and
+        # would make every no-build cell diff against itself for ever.
+        blob = re.sub(r"(/[\w.\-]+)+/", "", blob)
+        reason = (re.search(r"(?:error|Codegen failed|CompileError):\s*(.{0,90})", blob)
+                  or re.search(r"Error:\s*(.{0,90})", blob))
         return {"status": "no-build",
                 "reason": (reason.group(1).strip() if reason else "unknown")[:90]}
     entry = {"status": "ok", "rom": int(rom.group(1))}
@@ -176,25 +207,95 @@ def run_corpus():
     return snapshot
 
 
+# Why a cell proves nothing, keyed by what the driver said. A cell that cannot
+# build is not a gap in the gate -- it is a gap in the product, and the two are
+# worth telling apart when reading a diff.
+NO_BUILD_KINDS = [
+    ("no pin candidate", "sin-facade", "el facade portable no cubre esta arquitectura o el chip"),
+    ("no adc candidate", "sin-periferico", "el chip no tiene ese periferico, o el facade no lo expone"),
+    ("not supported on this architecture", "sin-facade", "el facade rechaza la arquitectura"),
+    ("needs a timebase", "sin-timebase", "sin base de tiempos: async y millis no pueden existir"),
+    ("static data needs", "sin-RAM", "el programa no cabe en la RAM del chip"),
+    ("illegal opcode", "backend-roto", "el ensamblador rechaza lo que emite el backend"),
+    ("InternalCompilerError", "backend-roto", "error interno del compilador"),
+    ("undefined function", "hal-incompleto", "el HAL de ese chip no define la funcion"),
+    ("only supports 1, 2, 4 bytes", "backend-roto", "limitacion del backend"),
+]
+
+
+def annotate(path):
+    import collections
+    stored = json.loads(path.read_text())
+    cells = stored.get("cells", stored)
+    kinds = collections.Counter()
+    for key, cell in cells.items():
+        if cell.get("status") == "ok":
+            continue
+        reason = cell.get("reason", "")
+        kind, why = "sin-clasificar", "motivo no reconocido por el arnes"
+        for needle, k, w in NO_BUILD_KINDS:
+            if needle in reason:
+                kind, why = k, w
+                break
+        cell["kind"] = kind
+        cell["proves"] = "nada: " + why
+        kinds[kind] += 1
+    out = {"provenance": stored.get("provenance"), "cells": cells} if "cells" in stored else cells
+    path.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    total = len(cells)
+    ok = sum(1 for c in cells.values() if c.get("status") == "ok")
+    print(f"  {ok}/{total} celdas prueban algo; {total - ok} no prueban nada:")
+    for k, n in kinds.most_common():
+        print(f"    {n:3d}  {k}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["capture", "check"])
+    ap.add_argument("action", choices=["capture", "check", "annotate"])
     ap.add_argument("--file", default=str(REPO / "tests" / "tools" / "rom_snapshot.json"))
     args = ap.parse_args()
+
+    if args.action == "annotate":
+        return annotate(Path(args.file))
+
+    prov = provenance()
+    if prov["compiler_tree_dirty"]:
+        print("AVISO: el arbol del compilador NO esta limpio -- "
+              f"{', '.join(prov['compiler_tree_dirty'])}")
+        print("       lo que midas incluye trabajo sin commitear de otra persona.\n")
 
     current = run_corpus()
     path = Path(args.file)
 
     if args.action == "capture":
-        path.write_text(json.dumps(current, indent=1, sort_keys=True) + "\n")
+        path.write_text(json.dumps(
+            {"provenance": prov, "cells": current}, indent=1, sort_keys=True) + "\n")
         ok = sum(1 for v in current.values() if v["status"] == "ok")
         print(f"\ncapturado: {len(current)} celdas, {ok} compilan -> {path}")
+        print(f"  toolchain: pymcuc {prov['pymcuc']} @ {prov['head']}"
+              f"{' (ARBOL SUCIO)' if prov['compiler_tree_dirty'] else ''}")
         return 0
 
-    before = json.loads(path.read_text())
+    stored = json.loads(path.read_text())
+    before = stored.get("cells", stored)
+
+    # `annotate` decorates stored cells with kind/proves; those are commentary,
+    # not measurements, and comparing them turns every annotated cell into a
+    # false diff. Strip them from both sides before diffing.
+    def measured(cell):
+        return {k: v for k, v in cell.items() if k not in ("kind", "proves")} if cell else cell
+    was = stored.get("provenance")
+    if was:
+        drifted = [k for k in was if was[k] != prov.get(k)]
+        if drifted:
+            print("PROCEDENCIA DISTINTA de la de la captura: " + ", ".join(drifted))
+            for k in drifted:
+                print(f"    {k}: {was[k]} -> {prov.get(k)}")
+            print("    un diff de celdas aqui puede no ser tuyo.\n")
     diffs = []
     for key in sorted(set(before) | set(current)):
-        a, b = before.get(key), current.get(key)
+        a, b = measured(before.get(key)), measured(current.get(key))
         if a == b:
             continue
         if a and b and a.get("status") == b.get("status") == "ok":

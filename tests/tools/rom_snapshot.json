@@ -42,26 +42,38 @@
   "status": "ok"
  },
  "adc|atmega48": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|atmega48p": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|atmega88": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|atmega88p": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|attiny13": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|attiny13a": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
@@ -122,30 +134,44 @@
   "status": "ok"
  },
  "adc|ch32v003": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|ch32v203": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|pic10f200": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|pic16f18877": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|pic16f628a": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|pic16f84a": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
  "adc|pic16f877a": {
+  "kind": "sin-periferico",
+  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
   "reason": "no adc candidate compiled",
   "status": "no-build"
  },
@@ -185,6 +211,8 @@
   "status": "ok"
  },
  "asyncio|atmega2560": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
@@ -203,90 +231,134 @@
   "status": "ok"
  },
  "asyncio|atmega32u4": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|atmega48": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|atmega48p": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|atmega88": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|atmega88p": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny13": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny13a": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny2313": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny24": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny25": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny4313": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny44": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny45": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny84": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|attiny85": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|ch32v003": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|ch32v203": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|pic10f200": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|pic16f18877": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|pic16f628a": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|pic16f84a": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "asyncio|pic16f877a": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
@@ -326,6 +398,8 @@
   "status": "ok"
  },
  "blink|atmega2560": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
@@ -344,30 +418,44 @@
   "status": "ok"
  },
  "blink|atmega32u4": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|atmega48": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|atmega48p": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|atmega88": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|atmega88p": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|attiny13": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|attiny13a": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
@@ -442,10 +530,14 @@
   "status": "ok"
  },
  "blink|pic10f200": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
  "blink|pic16f18877": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
   "reason": "no pin candidate compiled",
   "status": "no-build"
  },
@@ -528,86 +620,128 @@
   "status": "ok"
  },
  "float|atmega48": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|atmega48p": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|atmega88": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|atmega88p": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny13": {
+  "kind": "sin-RAM",
+  "proves": "nada: el programa no cabe en la RAM del chip",
   "reason": "static data needs 22 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
   "status": "no-build"
  },
  "float|attiny13a": {
+  "kind": "sin-RAM",
+  "proves": "nada: el programa no cabe en la RAM del chip",
   "reason": "static data needs 22 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
   "status": "no-build"
  },
  "float|attiny2313": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny24": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny25": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny4313": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny44": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny45": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny84": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|attiny85": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "float|ch32v003": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "float|ch32v203": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "float|pic10f200": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "float|pic16f18877": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "float|pic16f628a": {
+  "kind": "backend-roto",
+  "proves": "nada: limitacion del backend",
   "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
   "status": "no-build"
  },
  "float|pic16f84a": {
+  "kind": "hal-incompleto",
+  "proves": "nada: el HAL de ese chip no define la funcion",
   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
   "status": "no-build"
  },
  "float|pic16f877a": {
+  "kind": "backend-roto",
+  "proves": "nada: limitacion del backend",
   "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
   "status": "no-build"
  },
@@ -666,26 +800,38 @@
   "status": "ok"
  },
  "uart|atmega48": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "uart|atmega48p": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "uart|atmega88": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "uart|atmega88p": {
+  "kind": "sin-clasificar",
+  "proves": "nada: motivo no reconocido por el arnes",
   "reason": "unknown",
   "status": "no-build"
  },
  "uart|attiny13": {
+  "kind": "sin-RAM",
+  "proves": "nada: el programa no cabe en la RAM del chip",
   "reason": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
   "status": "no-build"
  },
  "uart|attiny13a": {
+  "kind": "sin-RAM",
+  "proves": "nada: el programa no cabe en la RAM del chip",
   "reason": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
   "status": "no-build"
  },
@@ -738,18 +884,26 @@
   "status": "ok"
  },
  "uart|ch32v003": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "uart|ch32v203": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "uart|pic10f200": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
  "uart|pic16f18877": {
+  "kind": "sin-facade",
+  "proves": "nada: el facade rechaza la arquitectura",
   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
   "status": "no-build"
  },
@@ -760,6 +914,8 @@
   "status": "ok"
  },
  "uart|pic16f84a": {
+  "kind": "hal-incompleto",
+  "proves": "nada: el HAL de ese chip no define la funcion",
   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
   "status": "no-build"
  },
