@@ -56,11 +56,11 @@ pymcu build
 | `analogio` | `AnalogIn`, `AnalogOut` | ✅ Complete |
 | `busio` | `UART`, `I2C`, `SPI` | ✅ Complete |
 | `pwmio` | `PWMOut` | ✅ Complete |
-| `neopixel` | `NeoPixel` | ✅ Complete |
+| `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
 | `time` | `sleep`, `sleep_ms`, `sleep_us`, `monotonic`, `monotonic_ns` | ✅ Complete |
 | `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload` | ✅ Complete |
 | `alarm` | `time.TimeAlarm`, `pin.PinAlarm`, `sleep_until_alarms` | ✅ Complete |
-| `microcontroller` | `cpu.frequency`, `cpu.voltage`, `cpu.uid`, `reset`, `delay_us` | ✅ Partial |
+| `microcontroller` | `cpu.frequency`, `cpu.voltage`, `cpu.uid`, `cpu.reset_reason`, `nvm`, `watchdog`, `reset`, `delay_us` | ✅ Partial |
 
 ---
 
@@ -304,7 +304,10 @@ supervisor.reload()     # software reset via watchdog
 ```
 
 `ticks_ms()` uses the Timer0 millis counter auto-injected by the build driver.
-`ticks_add()` and `ticks_diff()` handle 32-bit wrap-around correctly.
+`ticks_add()` and `ticks_diff()` handle 32-bit wrap-around correctly. A Timer0 overflow is
+1024 µs rather than 1000 µs, and the ISR carries the Arduino-style fractional correction, so
+this counter — and `time.monotonic()` above it — measures real milliseconds instead of
+running 2.4% slow.
 
 ---
 
@@ -347,6 +350,52 @@ microcontroller.reset()                        # watchdog reset
 
 `cpu.temperature` and `cpu.uid` are accepted for API compatibility but not
 functionally implemented on ATmega328P (no factory temperature sensor or UID).
+
+`cpu.reset_reason` reports what brought the chip up (`ResetReason.POWER_ON`,
+`BROWNOUT`, `WATCHDOG`, `RESET_PIN`). It reads `MCUSR` live and PyMCU does not snapshot or
+clear it at boot, so flags accumulate across resets — clear `MCUSR` early if you need a
+single-event reading.
+
+#### `microcontroller.nvm`
+
+Byte-addressable persistent storage, backed by the on-chip EEPROM. Every accessor expands
+inline to the EEPROM HAL:
+
+```python
+import microcontroller
+from pymcu.types import uint8, uint16
+
+size: uint16 = len(microcontroller.nvm)     # 1024 on ATmega328P
+microcontroller.nvm[0] = 42                 # one byte
+b: uint8 = microcontroller.nvm[0]
+
+# Slice assignment — the canonical CircuitPython pattern, compiled to byte writes
+microcontroller.nvm[0:4] = b"\xcc\x10\xca\xfe"
+
+print(microcontroller.nvm[0:4])             # bytearray(b'\xcc\x10\xca\xfe')
+```
+
+Slice *assignment* goes through `__setitem__`, one write per byte, with the length checked
+at compile time — so the source and the destination range must match. Binding a slice to a
+name (`buf = microcontroller.nvm[0:4]`) is still not available: the result would need a
+heap-allocated `bytearray`. Read it back a byte at a time, or `print()` it directly as
+above.
+
+#### `microcontroller.watchdog`
+
+```python
+import microcontroller
+from microcontroller import WatchDogMode
+
+microcontroller.watchdog.timeout = 2.0                  # seconds (soft-float)
+microcontroller.watchdog.mode = WatchDogMode.RESET      # arms it
+microcontroller.watchdog.feed()
+microcontroller.watchdog.deinit()                       # disable
+```
+
+AVR only implements reset mode: `WatchDogMode.RAISE` is defined for API compatibility but
+behaves as `RESET`. Assigning `timeout` pulls in the soft-float runtime for the
+seconds↔milliseconds conversion; the compiler warns once so the cost is not a surprise.
 
 ---
 
@@ -468,9 +517,11 @@ These are the **actual gaps** — anything not listed here behaves identically.
 | Execution model | Bytecode interpreter | **Native compiled — zero runtime overhead** |
 | `time.sleep(s)` | Float seconds | Integer only — use `sleep_ms()` |
 | `float` arithmetic | Full support | Soft-float (~200–400 cycles/op) |
-| `f"..."` format strings | Runtime evaluation | ✅ Runtime interpolation when **streamed** (`print(f"...")`, `uart.write_str(f"...")`) with format specs; assigning the result to a string variable still needs a heap |
+| `f"..."` format strings | Runtime evaluation | ✅ Runtime interpolation when **streamed** (`print(f"...")`, `uart.write_str(f"...")`) with format specs and `float` values; `s = f"..."` also works, into a compiler-sized fixed buffer (integers only) |
+| `str.join` | Any iterable | ✅ In an assignment: `s = "".join([chr(b) for b in buf])` builds a runtime string from a fixed buffer; `sep.join([...])` of literals folds. Outside an assignment there is nowhere to put the result |
 | `try / except` | Supported | ✅ Supported on AVR (zero-cost T-flag model) — error sentinels remain a valid bare-metal idiom |
-| `bytearray` | Dynamic heap | Fixed-size `uint8[N]` only |
+| `bytearray` | Dynamic heap | ✅ Same spelling — `bytearray(8)` / `bytearray(b"...")` lower to a fixed `uint8[N]`; the size must be compile-time and cannot grow. `print(buf)` gives the CPython repr |
+| `microcontroller.nvm[a:b] = ...` | Supported | ✅ Slice assignment compiles to byte writes; a slice *read* bound to a name still needs a heap |
 | Lambda expressions | Supported | ✅ `lambda x: expr` (no capture) — inlined at the call site |
 | `AnalogOut` | Supported (SAMD DAC) | ❌ No DAC on ATmega328P |
 | `busio.I2C.scan()` | Returns list of addresses | Returns first address (no heap) |
