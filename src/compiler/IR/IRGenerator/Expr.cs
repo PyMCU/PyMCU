@@ -94,6 +94,12 @@ public partial class IRGenerator
                 "tuples are not supported as runtime values -- use a fixed list " +
                 "([a, b, c]) for indexable storage, or unpack directly (x, y = f())");
 
+        if (expr is ListCompExpr)
+            throw UserError(
+                "list comprehensions with a filter (if) are not supported -- the array " +
+                "length must be a compile-time constant. Build the list with an explicit " +
+                "loop, or drop the filter (plain [f(i) for i in range(N)] works)");
+
         throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
 

@@ -2002,7 +2002,15 @@ public partial class IRGenerator
     // min(a, b): compile-time fold for constants, else compare-and-select.
     private Val EmitMinBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 2) throw UserError("min() expects exactly two arguments");
+        if (expr.Args.Count < 2) throw UserError("min() expects at least two arguments");
+        if (expr.Args.Count > 2)
+        {
+            var folded = expr.Args[0];
+            for (int k = 1; k < expr.Args.Count; k++)
+                folded = new CallExpr(new VariableExpr("min"),
+                    new List<Expression> { folded, expr.Args[k] });
+            return VisitExpression(folded);
+        }
         Val a = VisitExpression(expr.Args[0]);
         Val b = VisitExpression(expr.Args[1]);
         if (a is Constant ca && b is Constant cb) return new Constant(ca.Value < cb.Value ? ca.Value : cb.Value);
@@ -2025,7 +2033,15 @@ public partial class IRGenerator
     // max(a, b): compile-time fold for constants, else compare-and-select.
     private Val EmitMaxBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 2) throw UserError("max() expects exactly two arguments");
+        if (expr.Args.Count < 2) throw UserError("max() expects at least two arguments");
+        if (expr.Args.Count > 2)
+        {
+            var folded = expr.Args[0];
+            for (int k = 1; k < expr.Args.Count; k++)
+                folded = new CallExpr(new VariableExpr("max"),
+                    new List<Expression> { folded, expr.Args[k] });
+            return VisitExpression(folded);
+        }
         var a = VisitExpression(expr.Args[0]);
         var b = VisitExpression(expr.Args[1]);
         if (a is Constant ca && b is Constant cb) return new Constant(ca.Value > cb.Value ? ca.Value : cb.Value);
