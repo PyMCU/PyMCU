@@ -281,12 +281,22 @@ def millis() -> uint32:
 
 @inline
 def micros() -> uint32:
-    # Approximate: millis * 1024 (each overflow = 1024 us) + TCNT0 * 4.
-    # CLI/SEI guard prevents the overflow counter incrementing mid-read.
+    # millis * 1024 (each overflow = 1024 us) + TCNT0 * 4.
+    # CLI stops the ISR from bumping _millis_count mid-read, but the HARDWARE
+    # counter keeps running and can overflow while interrupts are off: TCNT0
+    # then reads small while _millis_count is still the old value, and the
+    # result jumps ~1024 us BACKWARD once per overflow window. Any uint32
+    # ticks()-start wait that samples across that edge wraps to ~4.29e9 and
+    # ends instantly. The Arduino-style correction: with TOV0 pending and
+    # TCNT0 already rolled over, count the overflow ourselves.
     asm("CLI")
     t: uint32 = _millis_count
     tc: uint8 = TCNT0.value
+    pending: uint8 = TIFR0.value & 0x01
     asm("SEI")
+    if pending:
+        if tc < 255:
+            t = t + 1
     ticks: uint32 = uint32(tc)
     return (t << 10) + (ticks << 2)
 
