@@ -718,6 +718,8 @@ public partial class IRGenerator
             return;
         }
 
+        bool isRuntimeLoop = whileOpt == 1;
+
         if (whileOpt == 0)
         {
             Val condVal = VisitExpression(stmt.Condition);
@@ -728,10 +730,13 @@ public partial class IRGenerator
             else
             {
                 Emit(new JumpIfZero(condVal, endLabel));
+                isRuntimeLoop = true;
             }
         }
 
+        if (isRuntimeLoop) _runtimeBranchDepth++;
         VisitStatement(stmt.Body);
+        if (isRuntimeLoop) _runtimeBranchDepth--;
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
