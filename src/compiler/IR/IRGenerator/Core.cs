@@ -794,6 +794,15 @@ public partial class IRGenerator
         return irProgram;
     }
 
+    private bool InlineScopeShadows(string name)
+    {
+        if (string.IsNullOrEmpty(currentInlinePrefix)) return false;
+        string k = currentInlinePrefix + name;
+        return constantVariables.ContainsKey(k) || strConstantVariables.ContainsKey(k)
+            || floatConstantVariables.ContainsKey(k) || variableAliases.ContainsKey(k)
+            || constantAddressVariables.ContainsKey(k) || variableTypes.ContainsKey(k);
+    }
+
     private Val ResolveBinding(string name)
     {
         if (globals.TryGetValue(name, out var symInfo))
@@ -807,7 +816,11 @@ public partial class IRGenerator
         if (loopFunctionAliases.TryGetValue(name, out string? fnAliasName))
             return new FunctionRef(fnAliasName);
 
-        if (mutableGlobals.ContainsKey(name))
+        // Inside an @inline expansion a bound parameter or local shadows any module
+        // global of the same name: `uart.write('hello')` inlines write(data=...) and a
+        // user-level `data = 5` global must not hijack the body's reads of `data`
+        // (the const[str] binding then went unseen and the call hard-errored).
+        if (mutableGlobals.ContainsKey(name) && !InlineScopeShadows(name))
         {
             if (!string.IsNullOrEmpty(currentFunction))
             {
