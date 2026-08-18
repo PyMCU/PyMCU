@@ -20,7 +20,7 @@ namespace PyMCU.Common;
 // Skipped during dependency graph construction and post-CC loading.
 public static class BuiltinModuleNames
 {
-    public static readonly HashSet<string> All = ["pymcu.types", "pymcu.chips"];
+    public static readonly HashSet<string> All = ["pymcu.types", "pymcu.chips", "enum"];
 
     public static bool IsBuiltin(string moduleName) => All.Contains(moduleName);
 }
