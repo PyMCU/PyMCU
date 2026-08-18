@@ -46,6 +46,9 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 {
                     "arch" => config.Arch,
                     "chip" or "name" => config.Chip,
+                    "ram_size" => config.RamSize.ToString(),
+                    "flash_size" => config.FlashSize.ToString(),
+                    "eeprom_size" => config.EepromSize.ToString(),
                     _ => throw new Exception("Unknown member")
                 };
             }
@@ -72,15 +75,80 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 return EvaluateCondition(bin.Left) && EvaluateCondition(bin.Right);
             case BinaryExpr { Op: BinaryOp.Equal or BinaryOp.NotEqual } bin:
             {
+                bool leftNum = TryResolveNumber(bin.Left, out long ln);
+                bool rightNum = TryResolveNumber(bin.Right, out long rn);
+                if (leftNum && rightNum)
+                    return bin.Op == BinaryOp.Equal ? ln == rn : ln != rn;
+                RejectMixedComparison(bin, leftNum, rightNum);
+
                 var left = Resolve(bin.Left);
                 var right = Resolve(bin.Right);
                 return bin.Op == BinaryOp.Equal ? left == right : left != right;
+            }
+            case BinaryExpr { Op: BinaryOp.Less or BinaryOp.LessEq
+                or BinaryOp.Greater or BinaryOp.GreaterEq } rel:
+            {
+                bool lNum = TryResolveNumber(rel.Left, out long lv);
+                bool rNum = TryResolveNumber(rel.Right, out long rv);
+                if (!lNum || !rNum)
+                {
+                    RejectMixedComparison(rel, lNum, rNum);
+                    throw new PyMCU.Common.CompilerError("ConfigError",
+                        $"'{rel.Op}' compares sizes, so both sides must be numbers known at " +
+                        "compile time (a literal, or __CHIP__.ram_size / flash_size / " +
+                        "eeprom_size / __FREQ__)", rel.Line, 0);
+                }
+
+                return rel.Op switch
+                {
+                    BinaryOp.Less => lv < rv,
+                    BinaryOp.LessEq => lv <= rv,
+                    BinaryOp.Greater => lv > rv,
+                    _ => lv >= rv,
+                };
             }
             default:
                 return expr is CallExpr { Callee: MemberAccessExpr { Member: "startswith" } mem, Args: [StringLiteral argStr] }
                     ? Resolve(mem.Object).StartsWith(argStr.Value)
                     : throw new Exception("Unsupported condition");
         }
+    }
+
+    // A compile-time value is either a number or a string; there is no coercion
+    // between them. "2048" == 2048 used to be true because everything resolved to
+    // a string -- a silent equality between a chip name and a size.
+    private bool TryResolveNumber(Expression? expr, out long value)
+    {
+        value = 0;
+        switch (expr)
+        {
+            case IntegerLiteral lit:
+                value = lit.Value;
+                return true;
+            case VariableExpr { Name: "__FREQ__" or "F_CPU" }:
+                value = (long)config.Frequency;
+                return true;
+            case MemberAccessExpr { Object: VariableExpr { Name: "__CHIP__" } } m
+                when m.Member is "ram_size" or "flash_size" or "eeprom_size":
+                value = m.Member switch
+                {
+                    "ram_size" => config.RamSize,
+                    "flash_size" => config.FlashSize,
+                    _ => config.EepromSize,
+                };
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void RejectMixedComparison(BinaryExpr bin, bool leftNum, bool rightNum)
+    {
+        if (leftNum == rightNum) return;
+        throw new PyMCU.Common.CompilerError("ConfigError",
+            "comparing a number with a string at compile time: one side is a size or " +
+            "frequency and the other is a name. There is no conversion between them -- " +
+            "compare sizes with sizes and names with names", bin.Line, 0);
     }
 
     // Returns true if the case-branch pattern matches the given target value.
