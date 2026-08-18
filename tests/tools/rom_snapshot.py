@@ -308,6 +308,7 @@ def build(work: Path, chip: str, arch: str, source: str):
         blob = " ".join((proc.stdout + proc.stderr).split())
         blob = re.sub(r"(/[\w.\-]+)+/", "", blob)
         reason = (re.search(r"(?:error|Codegen failed|CompileError):\s*(.{0,90})", blob)
+                  or re.search(r"(Error\[\d+\]\s+.{0,90})", blob)
                   or re.search(r"Error:\s*(.{0,90})", blob))
         return {"status": "no-build",
                 "reason": (reason.group(1).strip() if reason else "unknown")[:110]}
@@ -325,21 +326,31 @@ def build(work: Path, chip: str, arch: str, source: str):
     return entry
 
 
+PIN_SHAPED = re.compile(r"Unsupported Pin|Unknown pin|no such pin", re.I)
+
+
 def first_that_builds(work, chip, arch, template, candidates, key):
     """Try each pin/channel the architecture might accept, keep the first that builds.
 
-    When none does, report what the compiler actually said about the last try,
-    not just that the search failed: "no pin candidate compiled" reads like a
-    gap in the facade even when the real answer was an internal compiler error.
+    Every attempt's reason is kept. The candidate list runs from most to least
+    likely, so the last one to fail is the least informative -- it fails because
+    that pin does not exist on that chip, which is true and useless, and it used
+    to bury an internal compiler error raised by the first. And the summary only
+    claims "no candidate compiled" when every reason really is about a pin.
     """
-    reason = f"no {key} candidate compiled"
+    tried = {}
     for value in candidates:
         result = build(work, chip, arch, template.format(**{key: value}))
         if result["status"] == "ok":
             result[key] = value
             return result
-        reason = f"{key}={value}: {result['reason']}"
-    return {"status": "no-build", "reason": reason[:120]}
+        tried[value] = result["reason"][:110]
+    only_pins = all(PIN_SHAPED.search(r) for r in tried.values())
+    first = next(iter(tried.items()))
+    return {"status": "no-build",
+            "reason": (f"no {key} candidate compiled" if only_pins
+                       else f"{key}={first[0]}: {first[1]}")[:120],
+            "tried": tried}
 
 
 def run_corpus():
@@ -493,7 +504,7 @@ def main():
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    COMMENTARY = ("reason", "kind", "proves")
+    COMMENTARY = ("reason", "kind", "proves", "tried")
 
     def measured(cell):
         return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell
