@@ -64,6 +64,14 @@ public partial class IRGenerator
     // arithmetic promotion. Consumed (cleared) by the immediate binary op so nested ops promote.
     private DataType? castWidthHint = null;
 
+    // Value range (inclusive) of arithmetic temporaries, keyed by temp name. Arithmetic
+    // promotion widens by STORAGE type, which over-widens whenever the operands cannot
+    // actually reach the type's limits: `hi * 256` with hi:uint8 peaks at 65280, so the
+    // uint16 product needs no uint32. Knowing the product's real range then also keeps
+    // `lo + hi * 256` at 16 bits. Only temps whose range is provably tighter than their
+    // type appear here; anything absent falls back to the full range of its type.
+    private Dictionary<string, (long Min, long Max)> tempRanges = new();
+
     private Dictionary<string, ModuleScope> modules = new();
 
     private HashSet<string> classNames = new(); // Tracks known class names for callee resolution

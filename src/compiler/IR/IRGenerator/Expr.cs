@@ -223,6 +223,59 @@ public partial class IRGenerator
         return DataType.UINT8;
     }
 
+    // Full value range of an integer storage type. FLOAT has no integer range and never
+    // reaches the range-aware promotion below.
+    private static (long Min, long Max) RangeOfType(DataType t) => t switch
+    {
+        DataType.UINT8 => (0L, 255L),
+        DataType.INT8 => (-128L, 127L),
+        DataType.UINT16 => (0L, 65535L),
+        DataType.INT16 => (-32768L, 32767L),
+        DataType.UINT32 => (0L, 4294967295L),
+        _ => (int.MinValue, int.MaxValue),
+    };
+
+    // What values this operand can actually hold: exact for a constant, the recorded
+    // range for an arithmetic temporary, otherwise the whole range of its declared type.
+    // Only these three carry a meaningful integer range -- a MemoryAddress types its
+    // ELEMENT, not the address it holds, and the remaining Vals fall back to a guessed
+    // uint8 in GetValType. Both would understate the range, so they report the widest.
+    private (long Min, long Max) ValRange(Val v)
+    {
+        switch (v)
+        {
+            case Constant c: return (c.Value, c.Value);
+            case Temporary t:
+                return tempRanges.TryGetValue(t.Name, out var r) ? r : RangeOfType(t.Type);
+            case Variable varV: return RangeOfType(varV.Type);
+            default: return (int.MinValue, int.MaxValue);
+        }
+    }
+
+    // Range of `a op b` for the promoting operators, or null when it cannot be bounded
+    // cheaply (non-constant or out-of-range shift count). Operands are 16-bit or narrower
+    // wherever this is consulted, so the long arithmetic cannot overflow.
+    private static (long Min, long Max)? BinaryResultRange(
+        AstBinOp op, (long Min, long Max) a, (long Min, long Max) b)
+    {
+        switch (op)
+        {
+            case AstBinOp.Add: return (a.Min + b.Min, a.Max + b.Max);
+            case AstBinOp.Sub: return (a.Min - b.Max, a.Max - b.Min);
+            case AstBinOp.Mul:
+            {
+                long p1 = a.Min * b.Min, p2 = a.Min * b.Max;
+                long p3 = a.Max * b.Min, p4 = a.Max * b.Max;
+                return (Math.Min(Math.Min(p1, p2), Math.Min(p3, p4)),
+                        Math.Max(Math.Max(p1, p2), Math.Max(p3, p4)));
+            }
+            case AstBinOp.LShift:
+                if (b.Min != b.Max || b.Min < 0 || b.Min > 31) return null;
+                return (a.Min << (int)b.Min, a.Max << (int)b.Min);
+            default: return null;
+        }
+    }
+
     private Val VisitFStringExpr(FStringExpr expr)
     {
         string result = "";
@@ -759,22 +812,43 @@ public partial class IRGenerator
         // explicit store or cast. Capped at 32-bit (64-bit is impractical on AVR, wraps there).
         // Bitwise/compare/div/mod cannot overflow their width and are not promoted. The backend
         // widens narrower operands into the result width when loading them.
+        // The promotion is by storage type, so it over-widens whenever the operands cannot
+        // reach the type's limits. `hi * 256` with hi:uint8 tops out at 65280 — a uint16 —
+        // yet promoting to uint32 cost AVR a four-byte frame spill to reload the low half.
+        // Skip the promotion when the result provably FITS the unpromoted type: no value is
+        // truncated, so semantics are unchanged, and nothing that was narrow gets widened.
+        (long Min, long Max)? resRange = null;
         if (resType is not DataType.FLOAT
             && expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul or AstBinOp.LShift)
-            resType = resType switch
-            {
-                DataType.UINT8 => DataType.UINT16,
-                DataType.INT8 => DataType.INT16,
-                DataType.UINT16 => DataType.UINT32,
-                DataType.INT16 => DataType.INT32,
-                _ => resType,
-            };
+        {
+            resRange = BinaryResultRange(expr.Op, ValRange(v1), ValRange(v2));
+            var (tMin, tMax) = RangeOfType(resType);
+            bool fits = resRange is (long rMin, long rMax) && rMin >= tMin && rMax <= tMax;
+            if (!fits)
+                resType = resType switch
+                {
+                    DataType.UINT8 => DataType.UINT16,
+                    DataType.INT8 => DataType.INT16,
+                    DataType.UINT16 => DataType.UINT32,
+                    DataType.INT16 => DataType.INT32,
+                    _ => resType,
+                };
+        }
 
         // An explicit cast around this op (`uint8(a + b)`) forces fixed-width: compute at the
         // cast's width, overriding promotion. Gives wraparound + the matching 8/16-bit flags.
         if (widthHint is DataType hint && hint is not DataType.FLOAT) resType = hint;
 
         Temporary dst = MakeTemp(resType);
+        // Record the range so a consumer of this temp promotes on the real values rather
+        // than on the storage type. Only when it fits the emitted type: an explicit cast
+        // (widthHint) narrows on purpose, and the wrapped value is no longer bounded by it.
+        if (resRange is (long dMin, long dMax))
+        {
+            var (fMin, fMax) = RangeOfType(resType);
+            if (dMin >= fMin && dMax <= fMax) tempRanges[dst.Name] = (dMin, dMax);
+        }
+
         if (v1 is Constant cA && v2 is Constant cB)
         {
             // Division/modulo by a constant zero is a compile-time error (Python raises
