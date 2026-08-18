@@ -16,8 +16,9 @@ from pymcu.time import *
 # Linear Data Memory starts at 0x2000, but traditional banks are used here.
 RAM_START = 0x20
 RAM_SIZE = 4096 # Supports Linear Addressing
+FLASH_SIZE = 65536
 
-device_info(chip="pic16f18877", arch="pic14e", ram_size=RAM_SIZE)
+device_info(chip="pic16f18877", arch="pic14e", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Core Registers (Bank 0 - Common)

@@ -16,8 +16,9 @@ from pymcu.types import ptr, uint8, device_info
 # We use 0x20 as start to align with general purpose registers
 RAM_START = 0x0C
 RAM_SIZE = 68
+FLASH_SIZE = 2048
 
-device_info(chip="pic16f84a", arch="pic14", ram_size=RAM_SIZE)
+device_info(chip="pic16f84a", arch="pic14", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions

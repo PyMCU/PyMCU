@@ -13,9 +13,10 @@ from pymcu.types import ptr, uint8, uint16, device_info
 # ==========================================
 RAM_START = 0x20
 RAM_SIZE = 224
+FLASH_SIZE = 4096
 FLASH_WORDS = 2048
 
-device_info(chip="pic16f628a", arch="pic14", ram_size=RAM_SIZE)
+device_info(chip="pic16f628a", arch="pic14", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (SFRs)

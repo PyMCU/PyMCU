@@ -13,8 +13,10 @@ from pymcu.types import ptr, uint8, int32, device_info
 # ==========================================
 RAM_START = 0x20000000
 RAM_SIZE = 2048
+# 16 KB, ch32fun 1e92c65: MEMORY FLASH LENGTH = 16K for v00x
+FLASH_SIZE = 16384
 
-device_info(chip="ch32v003", arch="riscv", ram_size=RAM_SIZE)
+device_info(chip="ch32v003", arch="riscv", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (MMIO)

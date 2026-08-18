@@ -12,8 +12,9 @@ from pymcu.types import ptr, uint8, device_info
 # RAM: 16 bytes (0x10-0x1F in Bank 0; 0x08-0x0F is __BADRAM)
 RAM_START = 0x10
 RAM_SIZE = 16
+FLASH_SIZE = 512
 
-device_info(chip="pic10f200", arch="pic12", ram_size=RAM_SIZE)
+device_info(chip="pic10f200", arch="pic12", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # PIC10F200 Registers
 INDF:    ptr[uint8] = ptr(0x00)

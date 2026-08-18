@@ -19,8 +19,11 @@ from pymcu.types import ptr, int32, device_info
 # ==========================================
 RAM_START = 0x20000000
 RAM_SIZE = 20480
+# 64 KB, ch32fun 1e92c65: the v20x MCU_PACKAGE 1 variant, the one
+# whose RAM is 20K -- which is the RAM_SIZE this file already declares
+FLASH_SIZE = 65536
 
-device_info(chip="ch32v203", arch="riscv", ram_size=RAM_SIZE)
+device_info(chip="ch32v203", arch="riscv", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (MMIO)

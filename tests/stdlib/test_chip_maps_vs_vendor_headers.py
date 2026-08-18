@@ -350,3 +350,37 @@ def test_every_ch32_register_is_actually_compared():
         ours = {n for n in chip_addresses(chip) if "_" in n}
         checked = {c.values[1] for c in _wch_cases() if c.values[0] == chip}
         assert ours == checked, f"{chip}: sin cotejar {sorted(ours - checked)}"
+
+
+PK2_DAT = Path("/Users/begeistert/Repos/pk2cmd-minus/pk2cmd/PK2DeviceFile.dat")
+
+
+def pk2_program_words(part: str):
+    """Program memory in words, from the database the PICkit itself programs with.
+
+    The file is written sequentially, not as a fixed struct array: a 7-bit
+    length-prefixed name, then Family (u16), DeviceID (u32), ProgramMem (u32).
+    Reading it as fixed-width records is what produced four almost-right numbers
+    before the reader in PICkitFunctions.cpp was followed properly.
+    """
+    import struct
+    blob = PK2_DAT.read_bytes()
+    name = part.encode()
+    for m in re.finditer(re.escape(name), blob):
+        if m.start() and blob[m.start() - 1] == len(name):
+            return struct.unpack_from("<I", blob, m.end() + 6)[0]
+    return None
+
+
+@pytest.mark.skipif(not PK2_DAT.exists(), reason="PK2DeviceFile.dat not present")
+@pytest.mark.parametrize("chip,inc", PIC_PAIRS, ids=[c for c, _ in PIC_PAIRS])
+def test_flash_size_matches_the_programmer_database(chip, inc):
+    """The authority here is verified by use: get this wrong and the part will not program."""
+    words = pk2_program_words(chip.upper())
+    assert words, f"{chip} has no record in PK2DeviceFile.dat"
+    source = pathlib.Path(pymcu_chips_dir()) / f"{chip}.py"
+    m = re.search(r"^FLASH_SIZE\s*=\s*(\d+)", source.read_text(), re.M)
+    assert m, f"{chip} declares no FLASH_SIZE"
+    assert int(m.group(1)) == words * 2, \
+        (f"{chip}: chip file says {m.group(1)} bytes, the programmer database says "
+         f"{words} words = {words * 2} bytes")

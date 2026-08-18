@@ -15,8 +15,9 @@ from pymcu.types import ptr, uint8, device_info
 # GPR Banks 1-14: 0x100-0xEFF (additional banks)
 RAM_START = 0x060
 RAM_SIZE = 2048
+FLASH_SIZE = 32768
 
-device_info(chip="pic18f45k50", arch="pic18", ram_size=RAM_SIZE)
+device_info(chip="pic18f45k50", arch="pic18", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # SFRs for PIC18F45K50 (Partial)
 PORTA: ptr[uint8] = ptr(0xF80)

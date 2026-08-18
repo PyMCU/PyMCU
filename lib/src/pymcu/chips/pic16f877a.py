@@ -16,8 +16,9 @@ from pymcu.time import *
 # RAM starts at 0x20 and spans across multiple banks
 RAM_START = 0x20
 RAM_SIZE = 368
+FLASH_SIZE = 16384
 
-device_info(chip="pic16f877a", arch="pic14", ram_size=RAM_SIZE)
+device_info(chip="pic16f877a", arch="pic14", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (SRAM & SFRs)
