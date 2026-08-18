@@ -116,8 +116,15 @@ public partial class IRGenerator
         {
             case FloatLiteral:
                 return DataType.FLOAT;
-            case BooleanLiteral or IntegerLiteral:
+            case BooleanLiteral:
                 break;
+            case IntegerLiteral il:
+                if (il.Value < short.MinValue) return DataType.INT32;
+                if (il.Value < sbyte.MinValue) return DataType.INT16;
+                if (il.Value < 0) return DataType.INT8;
+                if (il.Value <= byte.MaxValue) break;
+                if (il.Value <= ushort.MaxValue) return DataType.UINT16;
+                return DataType.UINT32;
             case VariableExpr varExpr:
             {
                 var key = currentInlinePrefix + varExpr.Name;

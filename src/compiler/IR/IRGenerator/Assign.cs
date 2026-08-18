@@ -509,7 +509,10 @@ public partial class IRGenerator
                             else if (value is Variable vv) type = vv.Type;
                             else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
                             else if (value is Constant
-                                     && stmt.Value is UnaryExpr or BinaryExpr)
+                                     && stmt.Value is CallExpr { Callee: VariableExpr castFn }
+                                     && CastTypes.TryGetValue(castFn.Name, out var castDt))
+                                type = castDt;
+                            else if (value is Constant && stmt.Value is not IntegerLiteral)
                                 type = DataType.INT32;
                             variableTypes[qualifiedName] = type;
                             if (type != DataType.UINT8 && string.IsNullOrEmpty(currentInlinePrefix))
