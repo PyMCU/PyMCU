@@ -169,7 +169,7 @@ def _load_extension_board_chips(flavor: str) -> dict[str, str]:
 
 _PRINT_RE    = re.compile(r'\bprint\s*\(')
 _UART_RE     = re.compile(r'\bUART\s*\(')
-_TICKS_MS_RE = re.compile(r'\bticks_ms\s*\(')
+_TICKS_MS_RE = re.compile(r'\b(?:ticks_ms|monotonic|monotonic_ns|ticks_us|micros)\s*\(')
 _INPUT_RE    = re.compile(r'\binput\s*\(')
 _ASYNC_DEF_RE = re.compile(r'^\s*async\s+def\s', re.MULTILINE)
 # `board` is a CircuitPython concept (board.LED, board.GP25). MicroPython code
@@ -259,7 +259,13 @@ def _inject_strfmt_preamble(entry_point: Path, generated_dir: Path) -> tuple[Pat
 
 
 def _detect_ticks_ms_usage(sources_dir: Path) -> bool:
-    """Return True if any .py file in sources_dir calls ticks_ms()."""
+    """Return True if any source file reads the Timer0 time base.
+
+    Covers MicroPython ticks_ms()/ticks_us()/micros() and CircuitPython
+    time.monotonic()/monotonic_ns()/supervisor.ticks_ms(): all of them read
+    the millis/micros counter, which stays frozen at 0 until millis_init()
+    arms the overflow ISR -- a monotonic()-scheduled loop then never fires.
+    """
     for py_file in sources_dir.rglob("*.py"):
         try:
             text = py_file.read_text(encoding="utf-8", errors="ignore")
