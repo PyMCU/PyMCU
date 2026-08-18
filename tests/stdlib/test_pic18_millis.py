@@ -118,3 +118,35 @@ def test_async_is_no_longer_gated_on_pic18(tmp_path):
     proc, _ = build(tmp_path, ASYNC)
     assert "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
     assert "needs a timebase" not in proc.stdout + proc.stderr
+
+
+FLOATPRINT = (
+    "from pymcu.types import uint8\n"
+    "from pymcu.hal.pic18.uart import UART\n"
+    "from pymcu.chips.pic18f45k50 import TRISD, ANSELD\n"
+    "\n"
+    "def main():\n"
+    "    ANSELD.value = 0\n"
+    "    TRISD.value = 0\n"
+    "    u = UART(9600)\n"
+    "    while True:\n"
+    "        u.print_float(3.25)\n"
+    "        print(1.5)\n"
+)
+
+
+def test_print_float_is_wired_on_pic18(tmp_path):
+    proc, ir = build(tmp_path, FLOATPRINT)
+    assert "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
+    called = {ins["functionName"] for func in ir["functions"] for ins in func["body"]
+              if ins.get("$t") == "call"}
+    assert any(n.endswith("uart_write_float") for n in called), sorted(called)
+
+
+def test_print_float_is_not_a_silent_stub(tmp_path):
+    _, ir = build(tmp_path, FLOATPRINT)
+    names = {f["name"] for f in ir["functions"]}
+    writer = next((n for n in names if n.endswith("uart_write_float")), None)
+    assert writer is not None
+    body = next(f["body"] for f in ir["functions"] if f["name"] == writer)
+    assert len(body) > 20, "uart_write_float compiled to a stub"

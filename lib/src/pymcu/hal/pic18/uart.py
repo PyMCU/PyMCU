@@ -1,6 +1,6 @@
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.hal.pic18.pic18_uart import *
-from pymcu.hal.pic18.pic18_uart import uart_write_str
+from pymcu.hal.pic18.pic18_uart import uart_write_str, uart_write_float
 
 class UART:
     def __init__(self, baud: const[uint16] = 9600):
@@ -38,3 +38,8 @@ class UART:
     @inline
     def irq(self, handler: Callable):
         pass
+
+    @inline
+    def print_float(self, value: float):
+        uart_write_float(value)
+        self.write(10)

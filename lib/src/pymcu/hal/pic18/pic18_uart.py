@@ -93,3 +93,47 @@ def uart_write_decimal_i32(value: int32):
         uart_write_decimal_u32(abs_val)
     else:
         uart_write_decimal_u32(uint32(value))
+
+
+def uart_write_float(value: float):
+    if value < 0.0:
+        uart_write(45)
+        value = 0.0 - value
+    centis: uint32 = uint32(value * 100.0 + 0.5)
+    int_part: uint16 = uint16(centis // 100)
+    frac: uint8 = uint8(centis % 100)
+    started: uint8 = 0
+    if int_part >= 10000:
+        c: uint8 = 48
+        while int_part >= 10000:
+            int_part -= 10000
+            c += 1
+        uart_write(c)
+        started = 1
+    if started or int_part >= 1000:
+        c2: uint8 = 48
+        while int_part >= 1000:
+            int_part -= 1000
+            c2 += 1
+        uart_write(c2)
+        started = 1
+    if started or int_part >= 100:
+        c3: uint8 = 48
+        while int_part >= 100:
+            int_part -= 100
+            c3 += 1
+        uart_write(c3)
+        started = 1
+    if started or int_part >= 10:
+        c4: uint8 = 48
+        while int_part >= 10:
+            int_part -= 10
+            c4 += 1
+        uart_write(c4)
+    uart_write(uint8(int_part) + 48)
+    uart_write(46)
+    d1: uint8 = frac // 10
+    d2: uint8 = frac % 10
+    uart_write(d1 + 48)
+    if d2 != 0:
+        uart_write(d2 + 48)

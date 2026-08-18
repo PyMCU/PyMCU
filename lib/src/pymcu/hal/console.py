@@ -29,7 +29,7 @@ elif __CHIP__.name == "rp2350":
 elif __CHIP__.arch == "pic14":
     from pymcu.hal.pic14.pic14_uart import uart_write_str
 elif __CHIP__.arch == "pic18":
-    from pymcu.hal.pic18.pic18_uart import uart_write_str
+    from pymcu.hal.pic18.pic18_uart import uart_write_str, uart_write_float
 
 
 @inline
@@ -60,4 +60,6 @@ def print_u8(value: uint8):
 def print_float(value: float):
     match __CHIP__.arch:
         case "avr":
+            uart_write_float(value)
+        case "pic18":
             uart_write_float(value)
