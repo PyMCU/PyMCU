@@ -280,11 +280,13 @@ def main():
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    # `annotate` decorates stored cells with kind/proves; those are commentary,
-    # not measurements, and comparing them turns every annotated cell into a
-    # false diff. Strip them from both sides before diffing.
+    # What counts as a measurement. `reason`, `kind` and `proves` are prose about
+    # a failure, not the failure itself: rewording an error message must not read
+    # as a regression, while a cell flipping between ok and no-build must.
+    COMMENTARY = ("reason", "kind", "proves")
+
     def measured(cell):
-        return {k: v for k, v in cell.items() if k not in ("kind", "proves")} if cell else cell
+        return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell
     was = stored.get("provenance")
     if was:
         drifted = [k for k in was if was[k] != prov.get(k)]
