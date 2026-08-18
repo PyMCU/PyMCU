@@ -994,6 +994,17 @@ public partial class IRGenerator
                 }
             }
 
+            // An instance of a class defining __iter__/__next__ is the one shape worth naming
+            // separately: it looks like it should work, and the generic list would leave the
+            // author guessing why their iterator protocol is ignored.
+            if (stmt.Iterable is VariableExpr itVe
+                && TryResolveInstanceMethodAst(itVe.Name, "__next__") != null)
+                throw UserError(
+                    $"'{itVe.Name}' defines __iter__/__next__, but PyMCU does not run the iterator " +
+                    "protocol: there is no exception to stop on, so the loop could never end. " +
+                    "Write the loop explicitly (`while <cond>: v = obj.next()`), or iterate a " +
+                    "range/fixed array instead. A `yield` generator function IS supported.");
+
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
         }
@@ -1062,12 +1073,45 @@ public partial class IRGenerator
 
             var enterCallee = new MemberAccessExpr(new VariableExpr(objName), "__enter__");
             var enterCall = new CallExpr(enterCallee, new List<Expression>());
-            VisitExpression(enterCall);
+            Val entered = VisitExpression(enterCall);
+
+            // `with obj as v`: v is what __enter__ RETURNED. The alias above already covers the
+            // usual `return self` (the value IS the instance, and aliasing keeps its class), but
+            // a context manager handing back something else -- a value, a different object --
+            // would otherwise leave v bound to the manager itself.
+            if (!string.IsNullOrEmpty(stmt.AsName))
+            {
+                string qualified = string.IsNullOrEmpty(currentFunction)
+                    ? stmt.AsName
+                    : currentFunction + "." + stmt.AsName;
+                string qualifiedObj = string.IsNullOrEmpty(currentFunction) ? objName : currentFunction + "." + objName;
+                bool entersSelf = entered is NoneVal
+                                  || (entered is Variable ev && (ev.Name == qualifiedObj || ev.Name == objName));
+                if (!entersSelf)
+                {
+                    variableAliases.Remove(qualified);
+                    DataType et = entered switch
+                    {
+                        Variable v3 => v3.Type,
+                        Temporary t3 => t3.Type,
+                        _ => DataType.UINT8,
+                    };
+                    variableTypes[qualified] = et;
+                    Emit(new Copy(entered, new Variable(qualified, et)));
+                }
+            }
 
             VisitStatement(stmt.Body);
 
+            // CPython always calls __exit__(exc_type, exc_value, traceback); PyMCU's own HAL
+            // declares it as __exit__(self) alone. Pass exactly as many placeholders as the
+            // resolved method declares, so both spellings work instead of the CPython one
+            // reporting a missing argument.
+            var exitArgs = new List<Expression>();
+            if (TryResolveInstanceMethodAst(objName, "__exit__") is { } exitDef)
+                for (int i = 1; i < exitDef.Params.Count; i++) exitArgs.Add(new IntegerLiteral(0));
             var exitCallee = new MemberAccessExpr(new VariableExpr(objName), "__exit__");
-            var exitCall = new CallExpr(exitCallee, new List<Expression>());
+            var exitCall = new CallExpr(exitCallee, exitArgs);
             VisitExpression(exitCall);
         }
         else
