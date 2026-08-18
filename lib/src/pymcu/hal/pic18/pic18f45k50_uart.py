@@ -5,7 +5,7 @@ from pymcu.types import uint8, inline
 def uart_init(baud: uint8):
     TRISC[6] = 0
     TRISC[7] = 1
-    BAUDCON.value = 0x08
+    BAUDCON.value = 0x00
     if baud == 96:
         SPBRG.value = 103
         SPBRGH.value = 0

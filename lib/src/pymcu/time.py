@@ -123,16 +123,51 @@ def _delay_ms_pic18(ms: uint8):
     # Nested: 16 x 255 x 3 = 12240 Tcy ~ 1.02ms
     i: uint8 = 0
     while i < ms:
-        asm("    MOVLW 0x10")
-        asm("    MOVWF __dly_c2, ACCESS")
-        asm("_dly_outer_18:")
-        asm("    MOVLW 0xFF")
-        asm("    MOVWF __dly_c1, ACCESS")
-        asm("_dly_inner_18:")
-        asm("    DECFSZ __dly_c1, F, ACCESS")
-        asm("    BRA _dly_inner_18")
-        asm("    DECFSZ __dly_c2, F, ACCESS")
-        asm("    BRA _dly_outer_18")
+        match __FREQ__:
+            case 4_000_000:
+                asm("    MOVLW 0x03")
+                asm("    MOVWF __dly_c2, ACCESS")
+                asm("_dly_o4m18:")
+                asm("    MOVLW 0x6E")
+                asm("    MOVWF __dly_c1, ACCESS")
+                asm("_dly_i4m18:")
+                asm("    DECFSZ __dly_c1, F, ACCESS")
+                asm("    BRA _dly_i4m18")
+                asm("    DECFSZ __dly_c2, F, ACCESS")
+                asm("    BRA _dly_o4m18")
+            case 8_000_000:
+                asm("    MOVLW 0x03")
+                asm("    MOVWF __dly_c2, ACCESS")
+                asm("_dly_o8m18:")
+                asm("    MOVLW 0xDD")
+                asm("    MOVWF __dly_c1, ACCESS")
+                asm("_dly_i8m18:")
+                asm("    DECFSZ __dly_c1, F, ACCESS")
+                asm("    BRA _dly_i8m18")
+                asm("    DECFSZ __dly_c2, F, ACCESS")
+                asm("    BRA _dly_o8m18")
+            case 16_000_000:
+                asm("    MOVLW 0x06")
+                asm("    MOVWF __dly_c2, ACCESS")
+                asm("_dly_o16m18:")
+                asm("    MOVLW 0xDD")
+                asm("    MOVWF __dly_c1, ACCESS")
+                asm("_dly_i16m18:")
+                asm("    DECFSZ __dly_c1, F, ACCESS")
+                asm("    BRA _dly_i16m18")
+                asm("    DECFSZ __dly_c2, F, ACCESS")
+                asm("    BRA _dly_o16m18")
+            case _:
+                asm("    MOVLW 0x10")
+                asm("    MOVWF __dly_c2, ACCESS")
+                asm("_dly_outer_18:")
+                asm("    MOVLW 0xFF")
+                asm("    MOVWF __dly_c1, ACCESS")
+                asm("_dly_inner_18:")
+                asm("    DECFSZ __dly_c1, F, ACCESS")
+                asm("    BRA _dly_inner_18")
+                asm("    DECFSZ __dly_c2, F, ACCESS")
+                asm("    BRA _dly_outer_18")
         i = i + 1
 
 def _delay_1ms_avr_1mhz():
