@@ -750,7 +750,14 @@ public partial class IRGenerator
             {
                 // Statically unconditional: the raise is reachable without any runtime
                 // guard. Abort compilation immediately — this is the intended ZCA path.
-                throw new ArchitectureError(msg, stmt.Line, 0);
+                // Inside an @inline expansion the raise's own line belongs to the library,
+                // while the diagnostic is printed against the file being compiled -- so a
+                // library line number lands on an unrelated line of the user's program, or
+                // past its end (machine.py:115 reported against an 8-line sketch).
+                // currentStmtLine stays frozen at the call site during an expansion, which
+                // is the line whoever reads the error can actually act on.
+                int raiseLine = inlineDepth > 0 && currentStmtLine > 0 ? currentStmtLine : stmt.Line;
+                throw new ArchitectureError(msg, raiseLine, 0);
             }
 
             // Inside a runtime-conditional branch: the const-propagation chain failed to
