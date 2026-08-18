@@ -1252,6 +1252,50 @@ public partial class IRGenerator
         return true;
     }
 
+    // Compile-time __len__ of a class, when its body is a single constant return
+    // (e.g. _NVM.__len__ -> 1024). Null when absent or not statically known.
+    private int? DunderConstLen(string cls)
+    {
+        if (!inlineFunctions.TryGetValue(cls + "_" + "__len__", out var lenFn)) return null;
+        if (lenFn.Body.Statements is [ReturnStmt { Value: IntegerLiteral il }]) return il.Value;
+        return null;
+    }
+
+    // `obj[a:b] = <list/bytes literal>` where obj's class defines __setitem__: unroll
+    // to one obj[i] = v per element (each dispatches the dunder), so the canonical
+    // CircuitPython `microcontroller.nvm[0:4] = b'...'` compiles to four EEPROM writes.
+    // Bounds come from the slice; negative/omitted bounds need a compile-time __len__.
+    private bool TryEmitDunderSliceAssign(AssignStmt stmt, IndexExpr tgt, SliceExpr sl)
+    {
+        Val tgtVal = VisitExpression(tgt.Target);
+        string cls = GetValClass(tgtVal);
+        if (string.IsNullOrEmpty(cls) || !inlineFunctions.ContainsKey(cls + "_" + "__setitem__"))
+            return false;
+
+        int? len = DunderConstLen(cls);
+        if (len is null && (sl.Start is null || sl.Stop is null))
+            throw UserError(
+                "slice assignment on this object needs explicit start and stop " +
+                "(its __len__ is not a compile-time constant)");
+        List<int> idx;
+        try { idx = SliceIndices(sl, len ?? int.MaxValue); }
+        catch (Exception) { return false; }
+
+        if (stmt.Value is not ListExpr le)
+            throw UserError(
+                "slice assignment to an object with __setitem__ needs a bytes or list " +
+                "literal source of the same length");
+        if (le.Elements.Count != idx.Count)
+            throw UserError(
+                $"slice assignment length mismatch: target selects {idx.Count} " +
+                $"element(s), source has {le.Elements.Count}");
+
+        for (int k = 0; k < idx.Count; k++)
+            VisitStatement(new AssignStmt(
+                new IndexExpr(tgt.Target, new IntegerLiteral(idx[k])), le.Elements[k]));
+        return true;
+    }
+
     // Resolve a slice's [start, stop, step) over a known array size (Python semantics:
     // negatives from the end, clamped). Returns the ordered index list.
     private List<int> SliceIndices(SliceExpr sl, int size)
@@ -1374,6 +1418,7 @@ public partial class IRGenerator
         if (indexExpr.Index is SliceExpr slA)
         {
             if (TryEmitSliceAssign(stmt, indexExpr, slA)) return;
+            if (TryEmitDunderSliceAssign(stmt, indexExpr, slA)) return;
             throw UserError(
                 "slice assignment needs compile-time indices and a source of the SAME length " +
                 "(list literal, array, or array slice); inserting/deleting via slices is not " +
