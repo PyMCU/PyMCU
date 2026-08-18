@@ -108,40 +108,44 @@ def pwm_select_start_val(pin: str) -> uint8:
 
 @inline
 def pwm_init(pin: str, duty: uint8, prescaler: uint8):
+    # TCCRxA is shared by both channels of a timer: the COM bits are OR-ed in so
+    # initializing OC1B does not silently disconnect an already-running OC1A
+    # (Arduino's analogWrite on D9+D10 together froze D9 before this). The two
+    # channels of one timer necessarily share WGM and prescaler.
     match pin:
         case "PD6":
             # Timer0 OC0A: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x83
             DDRD[6] = 1
             OCR0A.value = duty
-            TCCR0A.value = 0x83
+            TCCR0A.value = TCCR0A.value | 0x83
             TCCR0B.value = prescaler
         case "PD5":
             # Timer0 OC0B: Fast PWM non-inverting, WGM01:00=11 -> TCCR0A=0x23
             DDRD[5] = 1
             OCR0B.value = duty
-            TCCR0A.value = 0x23
+            TCCR0A.value = TCCR0A.value | 0x23
             TCCR0B.value = prescaler
         case "PB1":
             # Timer1 OC1A: Fast PWM 8-bit (WGM=0101), COM1A1=1
             DDRB[1] = 1
             OCR1AL.value = duty
-            TCCR1A.value = 0x81
+            TCCR1A.value = TCCR1A.value | 0x81
             TCCR1B.value = prescaler
         case "PB2":
             # Timer1 OC1B: Fast PWM 8-bit, COM1B1=1
             DDRB[2] = 1
             OCR1BL.value = duty
-            TCCR1A.value = 0x21
+            TCCR1A.value = TCCR1A.value | 0x21
             TCCR1B.value = prescaler
         case "PB3":
             # Timer2 OC2A: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x83
             DDRB[3] = 1
             OCR2A.value = duty
-            TCCR2A.value = 0x83
+            TCCR2A.value = TCCR2A.value | 0x83
             TCCR2B.value = prescaler
         case "PD3":
             # Timer2 OC2B: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x23
             DDRD[3] = 1
             OCR2B.value = duty
-            TCCR2A.value = 0x23
+            TCCR2A.value = TCCR2A.value | 0x23
             TCCR2B.value = prescaler
