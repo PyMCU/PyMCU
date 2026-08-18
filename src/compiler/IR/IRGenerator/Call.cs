@@ -1497,13 +1497,32 @@ public partial class IRGenerator
             {
                 var argCount = expr.Args.Count(a => a is not KeywordArgExpr);
 
-                // 1) Existing behaviour: first overload whose parameter count equals the
-                //    number of supplied positional arguments exactly.
+                // The registered key spells parameter types RAW (BuildOverloadSuffix), while the
+                // suffix built above spells them normalized -- so for any `const[...]` parameter
+                // the exact lookup can never hit, and every such call lands here. Normalizing the
+                // declared type is what lets the steps below compare like with like.
+                static string NormType(string t)
+                    => string.IsNullOrEmpty(t) ? "uint8"
+                     : t.StartsWith("const[") && t.EndsWith("]") ? t[6..^1] : t;
+
+                // 1) Exact arity, and the parameter types must MATCH the argument types. Arity
+                //    alone used to be enough, which handed the call to whichever overload was
+                //    declared first: Pin("RA4", Pin.OUT) picked the const[uint8] overload and
+                //    died advising the caller to pass a port name -- which is what it had passed.
                 string? pick = null;
+                string? arityOnly = null;
                 foreach (var kvp in inlineFunctions)
                 {
                     if (!kvp.Key.StartsWith(callee + "___")) continue;
-                    if (kvp.Value.Params.Count(p => p.Name != "self") == argCount) { pick = kvp.Key; break; }
+                    var ps = kvp.Value.Params.Where(p => p.Name != "self").ToList();
+                    if (ps.Count != argCount) continue;
+                    arityOnly ??= kvp.Key;
+                    if (argCount == 0
+                        || string.Join("_", ps.Select(p => NormType(p.Type))) == suffix)
+                    {
+                        pick = kvp.Key;
+                        break;
+                    }
                 }
 
                 // 2) Default-aware fallback. When no exact-arity overload exists — e.g. a
@@ -1516,9 +1535,6 @@ public partial class IRGenerator
                 //    ARM alike) are unchanged.
                 if (pick is null)
                 {
-                    static string NormType(string t)
-                        => t.StartsWith("const[") && t.EndsWith("]") ? t[6..^1] : t;
-
                     string? typed = null, anyArity = null;
                     foreach (var kvp in inlineFunctions)
                     {
@@ -1537,6 +1553,10 @@ public partial class IRGenerator
                     }
                     pick = typed ?? anyArity;
                 }
+
+                // Nothing matched on types: keep the old arity-only choice rather than failing to
+                // resolve at all, so a call whose argument types we cannot name still compiles.
+                pick ??= arityOnly;
 
                 if (pick != null) callee = pick;
             }
