@@ -1231,6 +1231,14 @@ public partial class IRGenerator
                         $"Parameter '{func.Params[paramIdx].Name}' is declared as const[str] and requires a compile-time string constant value");
                 }
 
+                if (argValues[i] is FloatConstant fcArg2)
+                {
+                    floatConstantVariables[paramName] = fcArg2.Value;
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    continue;
+                }
                 if (!(argValues[i] is Constant cArg2))
                     throw UserError(
                         $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
@@ -1293,10 +1301,13 @@ public partial class IRGenerator
                         }
                         else
                         {
-                            if (!(kvp.Value is Constant ckw))
+                            if (kvp.Value is Constant ckw)
+                                constantVariables[paramName] = ckw.Value;
+                            else if (kvp.Value is FloatConstant fkw)
+                                floatConstantVariables[paramName] = fkw.Value;
+                            else
                                 throw UserError(
                                     $"Parameter '{func.Params[pi].Name}' is declared as const and requires a compile-time constant value");
-                            constantVariables[paramName] = ckw.Value;
                         }
                     }
                     else if (kvp.Value is Constant ckw2)
