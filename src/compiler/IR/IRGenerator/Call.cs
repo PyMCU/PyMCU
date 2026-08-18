@@ -153,6 +153,7 @@ public partial class IRGenerator
         // runtime interpolation). Same generic lowering as print().
         if (TryEmitStreamMethodFString(expr) is { } streamResult) return streamResult;
         if (TryEmitLcdMethodFString(expr) is { } lcdResult) return lcdResult;
+        if (TryEmitDictMethod(expr) is { } dictResult) return dictResult;
 
         string callee = "";
         if (expr.Callee is VariableExpr varE)
@@ -1399,6 +1400,29 @@ public partial class IRGenerator
         string bound = "__zca" + (++ctorAnonId);
         VisitAssign(new AssignStmt(new VariableExpr(bound), arg));
         return new VariableExpr(bound);
+    }
+
+    // `d.get(key, default)` on a dict-literal binding. The dict is a compile-time closed
+    // table, so this is the d[key] lowering with the miss handed the default instead of a
+    // KeyError. Returns null when the receiver is not a dict literal, so a real method call
+    // on an instance is unaffected -- without this the call mangled into an undefined `d_get`.
+    private Val? TryEmitDictMethod(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr { Object: VariableExpr dv } dm) return null;
+        if (!TryGetDictBinding(dv.Name, out var dict)) return null;
+
+        if (dm.Member != "get")
+            throw UserError(
+                $"dict literals are compile-time lookup tables: '{dm.Member}()' is not available. " +
+                "Supported: d[key], key in d, len(d), d.get(key, default). For a mutable dict use " +
+                "pymcu.collections.FixedDict(capacity).");
+
+        if (expr.Args.Count != 2)
+            throw UserError(
+                "d.get(key, default) needs the default spelled out: PyMCU has no None value to " +
+                "return for a missing key.");
+
+        return EmitDictLookup(dict, expr.Args[0], expr.Args[1]);
     }
 
     // Resolve an overloaded call to its concrete mangled name: build a type suffix
