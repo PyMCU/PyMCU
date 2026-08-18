@@ -258,8 +258,36 @@ public partial class IRGenerator
         return 0;
     }
 
+    // Python's truthiness for an instance: __bool__, else __len__ != 0, else always true.
+    // PyMCU evaluates an instance as whatever scalar it collapsed to -- 0 for a multi-field
+    // class -- so `if obj:` silently took the false branch for every object. Rewrite to the
+    // protocol method the class defines, and refuse when it defines neither: a condition that
+    // is constant-false by accident is worse to debug than a compile error.
+    private Expression LowerInstanceTruthiness(Expression cond)
+    {
+        if (cond is not VariableExpr ve) return cond;
+        if (InstanceClassOfName(ve.Name) is not { } cls) return cond;
+        foreach (var m in new[] { "__bool__", "__len__" })
+            if (TryResolveInstanceMethodAst(ve.Name, m) != null)
+                return new CallExpr(new MemberAccessExpr(ve, m), new List<Expression>())
+                    { Line = cond.Line };
+        string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
+        throw UserError(
+            $"'{ve.Name}' is an instance of '{shown}' with no __bool__ or __len__, so it has no " +
+            $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).");
+    }
+
     private void VisitIf(IfStmt stmt)
     {
+        if (LowerInstanceTruthiness(stmt.Condition) is var loweredCond
+            && !ReferenceEquals(loweredCond, stmt.Condition))
+        {
+            VisitIf(new IfStmt(loweredCond, stmt.ThenBranch,
+                stmt.ElifBranches.Select(b => ((Expression)b.Condition, b.Body)).ToList(),
+                stmt.ElseBranch) { Line = stmt.Line });
+            return;
+        }
+
         string endLabel = MakeLabel();
         string nextLabel = (stmt.ElifBranches.Count == 0 && stmt.ElseBranch == null) ? endLabel : MakeLabel();
 
@@ -656,6 +684,13 @@ public partial class IRGenerator
 
     private void VisitWhile(WhileStmt stmt)
     {
+        if (LowerInstanceTruthiness(stmt.Condition) is var loweredWhileCond
+            && !ReferenceEquals(loweredWhileCond, stmt.Condition))
+        {
+            VisitWhile(new WhileStmt(loweredWhileCond, stmt.Body) { Line = stmt.Line });
+            return;
+        }
+
         string startLabel = MakeLabel();
         string endLabel = MakeLabel();
         loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel,
