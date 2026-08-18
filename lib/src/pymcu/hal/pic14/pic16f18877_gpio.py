@@ -1,5 +1,6 @@
 from pymcu.chips.pic16f18877 import TRISA, TRISB, TRISC, TRISD, TRISE, LATA, LATB, LATC, LATD, LATE, PORTA, PORTB, PORTC, PORTD, PORTE, WPUA, WPUB, WPUC, WPUD, WPUE, IOCAP, IOCAN, IOCBP, IOCBN, IOCCP, IOCCN, IOCEP, IOCEN, INTCON, PIE0
 from pymcu.types import uint8, inline
+from pymcu.exceptions import CompileError
 
 @inline
 def pin_set_mode(name: str, mode: uint8):
@@ -875,7 +876,7 @@ def pin_irq_setup(name: str, trigger: uint8):
         PIE0[4] = 1
         INTCON[7] = 1
     elif name == "RD0" or name == "RD1" or name == "RD2" or name == "RD3" or name == "RD4" or name == "RD5" or name == "RD6" or name == "RD7":
-        raise NotImplementedError("interrupt-on-change is not available on PORTD of the PIC16F18877; only ports A, B, C and E have IOC registers")
+        raise CompileError("interrupt-on-change is not available on PORTD of the PIC16F18877; only ports A, B, C and E have IOC registers")
     elif name == "RE0":
         if trigger == 1:
             IOCEN[0] = 1

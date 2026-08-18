@@ -6,6 +6,7 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 from pymcu.types import uint8, uint16, const, inline, Callable
+from pymcu.exceptions import CompileError
 
 
 class Timer:
@@ -52,11 +53,11 @@ class Timer:
 
     @inline
     def set_compare(self, value: uint16):
-        raise NotImplementedError("Timer0 on the PIC18F45K50 has no compare register; poll counter() or use the overflow flag")
+        raise CompileError("Timer0 on the PIC18F45K50 has no compare register; poll counter() or use the overflow flag")
 
     @inline
     def irq(self, handler: Callable, mode: const = 1):
-        raise NotImplementedError("Timer.irq is not wired for PIC18; decorate the handler with @interrupt and enable TMR0IE in INTCON")
+        raise CompileError("Timer.irq is not wired for PIC18; decorate the handler with @interrupt and enable TMR0IE in INTCON")
 
     @inline
     def reinit(self, prescaler: uint16):

@@ -49,4 +49,4 @@ class AnalogPin:
 
     @inline
     def irq(self, handler: Callable):
-        raise NotImplementedError("ADC interrupts are not implemented for PIC18F45K50")
+        raise CompileError("ADC interrupts are not implemented for PIC18F45K50")
