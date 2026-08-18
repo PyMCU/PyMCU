@@ -513,6 +513,24 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
 _AVR_PREAMBLE_BYTES = 104
 
 
+def _check_flash_capacity(flash_bytes: int, flash_total: int, target: str) -> None:
+    """Refuse to call an over-capacity image a successful build.
+
+    The generated linker script declares no MEMORY regions, so ld never
+    errors on overflow; without this gate a 33 KB image for a 32 KB chip
+    reported "100%" and built "successfully", then failed mysteriously at
+    flash time - on an Uno it would also invade the bootloader section.
+    """
+    if flash_total and flash_bytes > flash_total:
+        over = flash_bytes - flash_total
+        console.print(
+            f"[bold red]Error:[/bold red] firmware is {flash_bytes} bytes but "
+            f"{target} has {flash_total} bytes of flash ({over} bytes over). "
+            "Reduce code size or pick a larger chip."
+        )
+        raise typer.Exit(code=1)
+
+
 def _flash_report_lines(flash_bytes: int, flash_total: int, target: str) -> list[str]:
     """Render the size report: the whole image, and how much of it is user code."""
     if flash_total:
@@ -1307,6 +1325,7 @@ def build(
                     flash_bytes = bin_file.stat().st_size
                     for line in _flash_report_lines(flash_bytes, flash_total, target):
                         console.print(line)
+                    _check_flash_capacity(flash_bytes, flash_total, target)
 
                 else:
                     # ── Generic toolchain assembly (e.g. gputils/PIC) ──────────────────
@@ -1337,6 +1356,7 @@ def build(
                     flash_total = FLASH_SIZES.get(target.lower(), 0)
                     for line in _flash_report_lines(flash_bytes, flash_total, target):
                         console.print(line)
+                    _check_flash_capacity(flash_bytes, flash_total, target)
 
             # Step 3: Cleanup
             progress.update(build_task, description="Cleaning up...")
