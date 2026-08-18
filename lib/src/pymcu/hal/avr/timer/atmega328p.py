@@ -12,13 +12,29 @@ from pymcu.types import uint8, uint16, uint32, inline, asm, compile_isr, Callabl
 # micros() approximates using the current TCNT0 value (each tick = 4 us).
 
 _millis_count: uint32 = 0
+_millis_ms: uint32 = 0
+_millis_fract: uint8 = 0
 
 
 def _millis_ovf_isr():
     # Non-inline: compiled once, placed at Timer0 OVF vector by millis_init().
-    # Increment the global overflow counter; main reads it via millis().
+    # _millis_count stays the RAW overflow count (micros() multiplies it by
+    # 1024 us exactly). The millisecond counter gets the Arduino-style
+    # fractional correction: one overflow is 1.024 ms, so counting overflows
+    # as milliseconds ran 2.4% slow - a monotonic()-scheduled 1 s blink
+    # measured 1024.1 ms on a real Uno. Each overflow adds 1 ms plus 3/125
+    # of a millisecond carried in eighths.
     global _millis_count
+    global _millis_ms
+    global _millis_fract
     _millis_count = _millis_count + 1
+    f: uint8 = _millis_fract + 3
+    m: uint32 = _millis_ms + 1
+    if f >= 125:
+        f = f - 125
+        m = m + 1
+    _millis_fract = f
+    _millis_ms = m
 
 # ---- Timer0 (8-bit, shared with delay_ms / PWM OC0A/OC0B) ----
 
@@ -274,7 +290,7 @@ def millis_init():
 def millis() -> uint32:
     # Read the 4-byte counter atomically by disabling interrupts briefly.
     asm("CLI")
-    t: uint32 = _millis_count
+    t: uint32 = _millis_ms
     asm("SEI")
     return t
 
