@@ -951,11 +951,15 @@ private static Function CloneFunction(Function f)
     // numeric cast / reinterpret whose type must be preserved (it governs sign/zero
     // extension, signed comparisons, and the print formatter); copy propagation must not
     // forward through it. Unknown types are treated as non-changing to avoid over-blocking.
+    // Float<->integer at equal width is also a repr change: uint32(float_var) emits
+    // Copy(FLOAT -> UINT32 temp) and forwarding the float source through it made the
+    // conversion vanish entirely (the call/print then received raw float bits).
     private static bool ChangesRepr(Val src, DataType dstType)
     {
         DataType st = GetDataType(src);
         if (st == DataType.UNKNOWN || dstType == DataType.UNKNOWN) return false;
-        return st.SizeOf() != dstType.SizeOf() || st.IsSigned() != dstType.IsSigned();
+        return st.SizeOf() != dstType.SizeOf() || st.IsSigned() != dstType.IsSigned()
+            || (st == DataType.FLOAT) != (dstType == DataType.FLOAT);
     }
 
     private static int WrapToType(int value, DataType type)

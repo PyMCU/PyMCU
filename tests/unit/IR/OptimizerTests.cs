@@ -46,6 +46,33 @@ public class OptimizerTests
     }
 
     [Fact]
+    public void CopyPropagation_DoesNotForwardThroughFloatToIntCast()
+    {
+        // uint32(float_var) emits Copy(FLOAT -> UINT32 temp). FLOAT and UINT32 are
+        // both 4 bytes, so size/signedness checks alone let copy propagation forward
+        // the float source through the cast: the conversion vanished and the consumer
+        // received raw float bits (uint32(3.25) printed 16464 on a real Uno).
+        var optimized = GenerateAndOptimize(
+            "def main():\n" +
+            "    x: float = 3.25\n" +
+            "    c: uint32 = uint32(x)\n" +
+            "    return c");
+        var body = optimized.Functions[0].Body;
+
+        var ret = body.OfType<Return>().First();
+        var retType = ret.Value switch
+        {
+            Variable v => v.Type,
+            Temporary t => t.Type,
+            _ => DataType.UNKNOWN
+        };
+        Assert.NotEqual(DataType.FLOAT, retType);
+        Assert.Contains(body, i =>
+            i is Copy c && c.Src is Variable { Type: DataType.FLOAT }
+            && (c.Dst is Variable { Type: DataType.UINT32 } or Temporary { Type: DataType.UINT32 }));
+    }
+
+    [Fact]
     public void DeadCodeElimination()
     {
         // Unused temporary `a = 1 + 2` — after DCE no Binary should remain.
