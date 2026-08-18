@@ -638,6 +638,13 @@ public partial class IRGenerator
                     $"class '{shown}' cannot be constructed: it has no __init__ method (PyMCU does " +
                     "not synthesize a default constructor — add `def __init__(self): ...`)");
 
+            // `obj(args)` where obj is an instance whose class defines __call__: Python's
+            // callable-object protocol. Dispatch it as the method call it stands for.
+            if (expr.Callee is VariableExpr callableVe
+                && TryResolveInstanceMethodAst(callableVe.Name, "__call__") != null)
+                return VisitCall(new CallExpr(
+                    new MemberAccessExpr(callableVe, "__call__"), expr.Args) { Line = expr.Line });
+
             // A known variable used as if it were callable (`x(3)` where x is a value).
             if (expr.Callee is VariableExpr cv)
             {
