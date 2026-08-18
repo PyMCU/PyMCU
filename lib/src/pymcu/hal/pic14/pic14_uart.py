@@ -13,7 +13,11 @@ from pymcu.chips import __CHIP__
 from pymcu.exceptions import CompileError
 from pymcu.types import uint8, const
 
-if __CHIP__.name == "pic16f877a":
+if __CHIP__.name == "pic16f628a":
+    from pymcu.hal.pic14.pic16f628a_uart import (
+        uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
+    )
+elif __CHIP__.name == "pic16f877a":
     from pymcu.hal.pic14.pic16f877a_uart import (
         uart_init, uart_write, uart_read, uart_read_ready, uart_write_byte,
     )

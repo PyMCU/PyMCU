@@ -17,6 +17,7 @@ PIC_PAIRS = [
     ("pic10f200", "p10f200.inc"),
     ("pic16f18877", "p16f18877.inc"),
     ("pic16f84a", "p16f84a.inc"),
+    ("pic16f628a", "p16f628a.inc"),
     ("pic16f877a", "p16f877a.inc"),
     ("pic18f45k50", "p18f45k50.inc"),
 ]
@@ -46,20 +47,32 @@ def chip_addresses(chip: str):
             if isinstance(v, ptr) and not n.startswith("_")}
 
 
+BIT_HEADER = re.compile(r"^#\s*(?:-+\s*)?(\w+)(?:\s+Register)? Bits", re.I)
+BIT_DECL = re.compile(r"\b(\w+)\s*(?::\s*int\s*)?=\s*(\d{1,2})\b")
+
+
 def chip_bit_blocks(chip: str):
+    """Bit constants per register, across the three comment styles in use.
+
+    `# REG Bits`, `# --- REG Bits ---` and `# Status Register Bits` all appear,
+    and the constants are written both `NAME: int = n` and bare `NAME = n`.
+    A parser that knows only one style silently checks nothing.
+    """
     blocks, block = {}, None
     for line in (CHIPS / f"{chip}.py").read_text().splitlines():
-        header = re.match(r"^#\s*(\w+) Bits", line)
+        header = BIT_HEADER.match(line)
         if header:
-            block = header.group(1)
+            block = header.group(1).upper()
             blocks.setdefault(block, {})
             continue
         if not line.strip():
             block = None
             continue
         if block and not line.startswith("#"):
-            for m in re.finditer(r"(\w+)\s*:\s*int\s*=\s*(\d+)", line):
-                blocks[block][m.group(1)] = int(m.group(2))
+            for m in BIT_DECL.finditer(line.split("#")[0]):
+                value = int(m.group(2))
+                if value <= 31:
+                    blocks[block][m.group(1)] = value
     return blocks
 
 

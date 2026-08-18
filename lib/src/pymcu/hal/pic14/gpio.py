@@ -31,6 +31,16 @@ class Pin:
                         pin_pull_off(name)
                 if value != -1:
                     pin_write(name, value)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
+                pin_set_mode(name, mode)
+                if pull != -1:
+                    if pull == 1:
+                        pin_pull_up(name)
+                    elif pull == 0:
+                        pin_pull_off(name)
+                if value != -1:
+                    pin_write(name, value)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_set_mode, pin_pull_up, pin_pull_off, pin_write
                 pin_set_mode(name, mode)
@@ -78,6 +88,9 @@ class Pin:
             case "pic16f18877":
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_high
                 pin_high(self.name)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_high
+                pin_high(self.name)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_high
                 pin_high(self.name)
@@ -96,6 +109,9 @@ class Pin:
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_low
+                pin_low(self.name)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_low
                 pin_low(self.name)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_low
@@ -124,6 +140,9 @@ class Pin:
             case "pic16f18877":
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_toggle
                 pin_toggle(self.name)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_toggle
+                pin_toggle(self.name)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_toggle
                 pin_toggle(self.name)
@@ -144,6 +163,9 @@ class Pin:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_read
                     return pin_read(self.name)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_read
+                    return pin_read(self.name)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_read
                     return pin_read(self.name)
@@ -160,6 +182,9 @@ class Pin:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_write
+                    pin_write(self.name, x)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_write
                     pin_write(self.name, x)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_write
@@ -181,6 +206,9 @@ class Pin:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_set_mode
                     pin_set_mode(self.name, mode)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_set_mode
+                    pin_set_mode(self.name, mode)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_set_mode
                     pin_set_mode(self.name, mode)
@@ -197,6 +225,12 @@ class Pin:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_pull_up, pin_pull_off
+                    if pull == 1:
+                        pin_pull_up(self.name)
+                    elif pull == 0:
+                        pin_pull_off(self.name)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_pull_up, pin_pull_off
                     if pull == 1:
                         pin_pull_up(self.name)
                     elif pull == 0:
@@ -230,6 +264,9 @@ class Pin:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_write
                     pin_write(self.name, value)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_write
+                    pin_write(self.name, value)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_write
                     pin_write(self.name, value)
@@ -248,6 +285,12 @@ class Pin:
         match __CHIP__.name:
             case "pic16f18877":
                 from pymcu.hal.pic14.pic16f18877_gpio import pin_pull_up, pin_pull_off
+                if pull_mode == 1:
+                    pin_pull_up(self.name)
+                elif pull_mode == 0:
+                    pin_pull_off(self.name)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_pull_up, pin_pull_off
                 if pull_mode == 1:
                     pin_pull_up(self.name)
                 elif pull_mode == 0:
@@ -284,6 +327,9 @@ class Pin:
     @inline
     def irq(self, trigger: const = 3, handler: const = 0):
         match __CHIP__.name:
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_irq_setup
+                pin_irq_setup(self.name, trigger)
             case "pic16f877a":
                 from pymcu.hal.pic14.pic16f877a_gpio import pin_irq_setup
                 pin_irq_setup(self.name, trigger)
@@ -309,6 +355,9 @@ class Pin:
             match __CHIP__.name:
                 case "pic16f18877":
                     from pymcu.hal.pic14.pic16f18877_gpio import pin_set_mode
+                    pin_set_mode(self.name, m)
+                case "pic16f628a":
+                    from pymcu.hal.pic14.pic16f628a_gpio import pin_set_mode
                     pin_set_mode(self.name, m)
                 case "pic16f877a":
                     from pymcu.hal.pic14.pic16f877a_gpio import pin_set_mode
