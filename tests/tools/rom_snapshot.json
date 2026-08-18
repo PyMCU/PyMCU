@@ -2,81 +2,81 @@
  "cells": {
   "adc|atmega168": {
    "adc": "\"PC0\"",
-   "asm": "b1c26ff8d5b37989",
+   "asm": "3f41ecf3d03c660a",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega168p": {
    "adc": "\"PC0\"",
-   "asm": "b1c26ff8d5b37989",
+   "asm": "3f41ecf3d03c660a",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega2560": {
    "adc": "\"PC0\"",
-   "asm": "950c448108d34434",
+   "asm": "46948c0fcb194c99",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega328": {
    "adc": "\"PC0\"",
-   "asm": "fc1d04424f8e5b65",
+   "asm": "55c8b3ed4235ae38",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega328p": {
    "adc": "\"PC0\"",
-   "asm": "fc1d04424f8e5b65",
+   "asm": "55c8b3ed4235ae38",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega32u4": {
    "adc": "\"PC0\"",
-   "asm": "efdc55a7b1ff28a5",
+   "asm": "af074d82a6c6117f",
    "asm_from": "debug/firmware.asm",
-   "mir": "71d269707d9a68e2",
+   "mir": "db13da457915602f",
    "rom": 222,
    "status": "ok"
   },
   "adc|atmega48": {
    "adc": "\"PC0\"",
-   "asm": "eda741dd84f183c3",
+   "asm": "ec4789553e70da4c",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 172,
    "status": "ok"
   },
   "adc|atmega48p": {
    "adc": "\"PC0\"",
-   "asm": "eda741dd84f183c3",
+   "asm": "ec4789553e70da4c",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 172,
    "status": "ok"
   },
   "adc|atmega88": {
    "adc": "\"PC0\"",
-   "asm": "602d9870d771164d",
+   "asm": "7aeb8058555a2d2a",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 172,
    "status": "ok"
   },
   "adc|atmega88p": {
    "adc": "\"PC0\"",
-   "asm": "602d9870d771164d",
+   "asm": "7aeb8058555a2d2a",
    "asm_from": "debug/firmware.asm",
-   "mir": "1b9e0890599eb092",
+   "mir": "7757572dbdbea472",
    "rom": 172,
    "status": "ok"
   },
@@ -102,65 +102,66 @@
   },
   "adc|attiny2313": {
    "adc": "\"PC0\"",
-   "asm": "6afddb995ee48c56",
+   "asm": "0a88eff9da9339af",
    "asm_from": "debug/firmware.asm",
-   "mir": "de8229145c302f02",
+   "mir": "b909fdd1a26e50b1",
    "rom": 160,
    "status": "ok"
   },
   "adc|attiny24": {
    "adc": "\"PC0\"",
-   "asm": "63cf8b9c802de7f8",
+   "asm": "1f84902b33a30ff4",
    "asm_from": "debug/firmware.asm",
-   "mir": "201bbf6511e7c06e",
+   "mir": "76e496c368a5dfb5",
    "rom": 154,
    "status": "ok"
   },
   "adc|attiny25": {
    "adc": "\"PC0\"",
-   "asm": "c91c0c466f649ebd",
+   "asm": "0d01328ecd74867b",
    "asm_from": "debug/firmware.asm",
-   "mir": "33d21584c98d8357",
+   "mir": "c768d41566217cd5",
    "rom": 154,
    "status": "ok"
   },
   "adc|attiny4313": {
+   "accepted": "+12 bytes: importar uart_write_float sin llamarlo arrastra el camino uint32 que la eliminacion de codigo muerto no quita; aceptado a cambio de que el 4313 tenga los mismos 2 decimales que el resto",
    "adc": "\"PC0\"",
-   "asm": "629afb32a300626d",
+   "asm": "1fa893add6fa2e37",
    "asm_from": "debug/firmware.asm",
-   "mir": "de8229145c302f02",
-   "rom": 160,
+   "mir": "7c3a65355c1359a5",
+   "rom": 172,
    "status": "ok"
   },
   "adc|attiny44": {
    "adc": "\"PC0\"",
-   "asm": "e97ab343d3a9e79f",
+   "asm": "511c0ee35cb54244",
    "asm_from": "debug/firmware.asm",
-   "mir": "201bbf6511e7c06e",
+   "mir": "76e496c368a5dfb5",
    "rom": 154,
    "status": "ok"
   },
   "adc|attiny45": {
    "adc": "\"PC0\"",
-   "asm": "1937a07e8c66fc7f",
+   "asm": "b7fb89d9171442d5",
    "asm_from": "debug/firmware.asm",
-   "mir": "33d21584c98d8357",
+   "mir": "c768d41566217cd5",
    "rom": 154,
    "status": "ok"
   },
   "adc|attiny84": {
    "adc": "\"PC0\"",
-   "asm": "a3cc0d29280792d8",
+   "asm": "6ca54578eebdc981",
    "asm_from": "debug/firmware.asm",
-   "mir": "201bbf6511e7c06e",
+   "mir": "76e496c368a5dfb5",
    "rom": 154,
    "status": "ok"
   },
   "adc|attiny85": {
    "adc": "\"PC0\"",
-   "asm": "e4749f6eb56041d5",
+   "asm": "f8fe0247f7cb27b5",
    "asm_from": "debug/firmware.asm",
-   "mir": "33d21584c98d8357",
+   "mir": "c768d41566217cd5",
    "rom": 154,
    "status": "ok"
   },
@@ -212,10 +213,10 @@
   "adc|pic16f84a": {
    "kind": "chip-sin-periferico",
    "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
-   "reason": "adc=\"RA0\": CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "reason": "adc=\"RA0\": CompileError: UART is not implemented for this PIC14 chip (module guard at pic14_uart.py:2",
    "status": "no-build",
    "tried": {
-    "\"RA0\"": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)"
+    "\"RA0\"": "CompileError: UART is not implemented for this PIC14 chip (module guard at pic14_uart.py:2"
    }
   },
   "adc|pic16f877a": {
@@ -229,25 +230,25 @@
   },
   "adc|pic18f45k50": {
    "adc": "\"RA0\"",
-   "asm": "dcaba6c771a3f2e9",
+   "asm": "a096b780e5044bec",
    "asm_from": "debug/firmware.asm",
-   "mir": "fc7342a061c5f213",
+   "mir": "643d7544f0dbbd5e",
    "rom": 156,
    "status": "ok"
   },
   "adc|rp2040": {
    "adc": "26",
-   "asm": "92dcecfa97157ed6",
+   "asm": "4240b79d40777d43",
    "asm_from": "debug/firmware.asm",
-   "mir": "1f431c1ce3d2cdd0",
+   "mir": "b37d24b49e51e208",
    "rom": 948,
    "status": "ok"
   },
   "adc|rp2350": {
    "adc": "26",
-   "asm": "29707a1af3e1d39d",
+   "asm": "98162068698d2d4e",
    "asm_from": "debug/firmware.asm",
-   "mir": "3d2d475aa57c5d8b",
+   "mir": "b6e55c3bf47f48ef",
    "rom": 892,
    "status": "ok"
   },
@@ -761,7 +762,7 @@
    "status": "ok"
   },
   "blink|pic16f84a": {
-   "asm": "fbc8c787dda8fe16",
+   "asm": "ab62d73f1e8974f4",
    "asm_from": "debug/firmware.asm",
    "mir": "481aa5e3ed3750ed",
    "pin": "\"RB3\"",
@@ -1005,30 +1006,37 @@
    }
   },
   "call|pic16f628a": {
-   "asm": "5bf0586db368ccd4",
-   "asm_from": "debug/firmware.asm",
-   "mir": "3c0c671476e32b34",
-   "pin": "\"RB3\"",
-   "rom": 180,
-   "status": "ok"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"RB3\": PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RB3\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RD2\"": "CompileError: Unknown pin for PIC16F628A 14 | def main(): 15 | led = Pin(\"RD2\", Pin.OUT) ^"
+   }
   },
   "call|pic16f84a": {
-   "asm": "e71dd1bd6722830a",
-   "asm_from": "debug/firmware.asm",
-   "mir": "6c9cdc804cc461d7",
-   "pin": "\"RB3\"",
-   "rom": 172,
-   "status": "ok",
-   "warn": 3,
-   "warn_first": "Warning[219] Invalid RAM location specified. '__ret_hi' -- 0x0051 in"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"RB3\": PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RB3\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RD2\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only"
+   }
   },
   "call|pic16f877a": {
-   "asm": "8f000ff281578941",
-   "asm_from": "debug/firmware.asm",
-   "mir": "8d923221a829ce63",
-   "pin": "\"RB3\"",
-   "rom": 172,
-   "status": "ok"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"RB3\": PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RB3\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only",
+    "\"RD2\"": "PIC14: 'LShift' on a 4-byte value is not implemented for this backend. At this width only"
+   }
   },
   "call|pic18f45k50": {
    "asm": "605fea056cf234b8",
@@ -1055,72 +1063,72 @@
    "status": "ok"
   },
   "float|atmega168": {
-   "asm": "9ac47ba42b7359cf",
+   "asm": "7087320bb8c11abb",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1248,
    "status": "ok"
   },
   "float|atmega168p": {
-   "asm": "9ac47ba42b7359cf",
+   "asm": "7087320bb8c11abb",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1248,
    "status": "ok"
   },
   "float|atmega2560": {
-   "asm": "3661650b5549ae01",
+   "asm": "03db298b364489a1",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1218,
    "status": "ok"
   },
   "float|atmega328": {
-   "asm": "cfa837393aa8bd03",
+   "asm": "6a31d4e952e8fb53",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1248,
    "status": "ok"
   },
   "float|atmega328p": {
-   "asm": "cfa837393aa8bd03",
+   "asm": "6a31d4e952e8fb53",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1248,
    "status": "ok"
   },
   "float|atmega32u4": {
-   "asm": "3e92c49874c24642",
+   "asm": "bb95a7a34103a4d7",
    "asm_from": "debug/firmware.asm",
-   "mir": "9ca9a0d0589aeb1e",
+   "mir": "cebdeff8b2636d94",
    "rom": 1248,
    "status": "ok"
   },
   "float|atmega48": {
-   "asm": "3efc6e9bc64f7cab",
+   "asm": "0dd5622e9aacf6d5",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|atmega48p": {
-   "asm": "3efc6e9bc64f7cab",
+   "asm": "0dd5622e9aacf6d5",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|atmega88": {
-   "asm": "3ab69bca8be50b1b",
+   "asm": "79d221533df4fb1c",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|atmega88p": {
-   "asm": "3ab69bca8be50b1b",
+   "asm": "79d221533df4fb1c",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
@@ -1137,58 +1145,59 @@
    "status": "no-build"
   },
   "float|attiny2313": {
-   "asm": "4a149880928d3194",
+   "asm": "6d54607792a42324",
    "asm_from": "debug/firmware.asm",
-   "mir": "dbbbd90c41274cee",
+   "mir": "12dbe675fca1372c",
    "rom": 1186,
    "status": "ok"
   },
   "float|attiny24": {
-   "asm": "0cc7e490c5d0f7d0",
+   "asm": "9c0c2af9a0730726",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|attiny25": {
-   "asm": "0cc7e490c5d0f7d0",
+   "asm": "9c0c2af9a0730726",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|attiny4313": {
-   "asm": "da5d9a87e4f338ea",
+   "accepted": "+12 bytes, misma causa que adc|attiny4313",
+   "asm": "701b96b611567fcc",
    "asm_from": "debug/firmware.asm",
-   "mir": "dbbbd90c41274cee",
-   "rom": 1186,
+   "mir": "9006f06cc995edbd",
+   "rom": 1198,
    "status": "ok"
   },
   "float|attiny44": {
-   "asm": "6a02bbf606be9e5b",
+   "asm": "03cc69609b6c0508",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|attiny45": {
-   "asm": "6a02bbf606be9e5b",
+   "asm": "03cc69609b6c0508",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|attiny84": {
-   "asm": "cb61d9bf6afb4296",
+   "asm": "520917a30964f697",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
   "float|attiny85": {
-   "asm": "cb61d9bf6afb4296",
+   "asm": "520917a30964f697",
    "asm_from": "debug/firmware.asm",
-   "mir": "321d5870759311e9",
+   "mir": "9b012eaca60ae695",
    "rom": 1198,
    "status": "ok"
   },
@@ -1223,9 +1232,9 @@
    "status": "no-build"
   },
   "float|pic16f84a": {
-   "kind": "hal-incompleto",
-   "proves": "nada: el HAL de ese chip no define la funcion",
-   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "CompileError: UART is not implemented for this PIC14 chip (module guard at pic14_uart.py:2",
    "status": "no-build"
   },
   "float|pic16f877a": {
@@ -1235,93 +1244,290 @@
    "status": "no-build"
   },
   "float|pic18f45k50": {
-   "asm": "0af48c0175f4035b",
+   "asm": "ccfdf4d84c6d5d39",
    "asm_from": "debug/firmware.asm",
-   "mir": "03d65bebe5121913",
+   "mir": "57d79c6da95f9675",
    "rom": 2764,
    "status": "ok"
   },
   "float|rp2040": {
-   "asm": "231e31a2d5325f82",
+   "asm": "c8ec2ba519d6d36a",
    "asm_from": "debug/firmware.asm",
-   "mir": "902772999576a1fb",
+   "mir": "c87fe449e37b2277",
    "rom": 840,
    "status": "ok"
   },
   "float|rp2350": {
-   "asm": "e274dfeb7b9ddb37",
+   "asm": "6e5c03b5fcd57d8d",
    "asm_from": "debug/firmware.asm",
-   "mir": "fbab42ef8cc23653",
+   "mir": "279dc614ab692b16",
    "rom": 772,
    "status": "ok"
   },
-  "uart|atmega168": {
-   "asm": "fd5a94a28d690c86",
+  "print|atmega168": {
+   "asm": "bdabcff39313d1c2",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2714,
+   "status": "ok"
+  },
+  "print|atmega168p": {
+   "asm": "bdabcff39313d1c2",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2714,
+   "status": "ok"
+  },
+  "print|atmega2560": {
+   "asm": "3f2b9c72f33f3a94",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2686,
+   "status": "ok"
+  },
+  "print|atmega328": {
+   "asm": "53a3b1b46a9c2593",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2714,
+   "status": "ok"
+  },
+  "print|atmega328p": {
+   "asm": "53a3b1b46a9c2593",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2714,
+   "status": "ok"
+  },
+  "print|atmega32u4": {
+   "asm": "b0024ca3cdfb6e45",
+   "asm_from": "debug/firmware.asm",
+   "mir": "5b8b1fbc38d3caba",
+   "rom": 2714,
+   "status": "ok"
+  },
+  "print|atmega48": {
+   "asm": "8806fa844bd19dc6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|atmega48p": {
+   "asm": "8806fa844bd19dc6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|atmega88": {
+   "asm": "79fd906b772e6e10",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|atmega88p": {
+   "asm": "79fd906b772e6e10",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|attiny13": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 40 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build"
+  },
+  "print|attiny13a": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 40 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
+   "status": "no-build"
+  },
+  "print|attiny2313": {
+   "asm": "206df6687b472a0b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "b4c406abce3d9f59",
+   "rom": 1698,
+   "status": "ok"
+  },
+  "print|attiny24": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "ld returned 1 exit status\\n\" stdout='' avr-ld: firmwa re.elf section `.text' will not fit",
+   "status": "no-build"
+  },
+  "print|attiny25": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "ld returned 1 exit status\\n\" stdout='' avr-ld: firmwa re.elf section `.text' will not fit",
+   "status": "no-build"
+  },
+  "print|attiny4313": {
+   "asm": "030f6ae38876a7a9",
+   "asm_from": "debug/firmware.asm",
+   "mir": "0689c7bdfcd2db72",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|attiny44": {
+   "asm": "1faeb7a6082da4cf",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|attiny45": {
+   "asm": "1faeb7a6082da4cf",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|attiny84": {
+   "asm": "d6be6222e5504131",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|attiny85": {
+   "asm": "d6be6222e5504131",
+   "asm_from": "debug/firmware.asm",
+   "mir": "10c02a10a8e9a37d",
+   "rom": 2664,
+   "status": "ok"
+  },
+  "print|ch32v003": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "print|ch32v203": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "print|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "print|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "print|pic16f628a": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "PIC14CodeGen: floating-point Sub is not implemented yet for the PIC14 backend. No float op",
+   "status": "no-build"
+  },
+  "print|pic16f84a": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "CompileError: UART is not implemented for this PIC14 chip (module guard at pic14_uart.py:2",
+   "status": "no-build"
+  },
+  "print|pic16f877a": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "PIC14CodeGen: floating-point Sub is not implemented yet for the PIC14 backend. No float op",
+   "status": "no-build"
+  },
+  "print|pic18f45k50": {
+   "asm": "4c30cd539940954c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "89b18ae7ed17b2ef",
+   "rom": 4520,
+   "status": "ok"
+  },
+  "print|rp2040": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "float binary op Mod",
+   "status": "no-build"
+  },
+  "print|rp2350": {
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "float binary op Mod",
+   "status": "no-build"
+  },
+  "uart|atmega168": {
+   "asm": "a6c5a78279c9efaf",
+   "asm_from": "debug/firmware.asm",
+   "mir": "697b084edc1ceee4",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega168p": {
-   "asm": "fd5a94a28d690c86",
+   "asm": "a6c5a78279c9efaf",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega2560": {
-   "asm": "b191f7806e7f34e1",
+   "asm": "c34e2d366b6a100d",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega328": {
-   "asm": "3ff11305d160049c",
+   "asm": "06053c2a281402d0",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega328p": {
-   "asm": "3ff11305d160049c",
+   "asm": "06053c2a281402d0",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega32u4": {
-   "asm": "0df52aa470f405d6",
+   "asm": "d1f8b1d48e159d8d",
    "asm_from": "debug/firmware.asm",
-   "mir": "e92892a546185dea",
+   "mir": "4b59ad40a4421c46",
    "rom": 182,
    "status": "ok"
   },
   "uart|atmega48": {
-   "asm": "293e1028dc2ee2a6",
+   "asm": "647fe500f40228c6",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|atmega48p": {
-   "asm": "293e1028dc2ee2a6",
+   "asm": "647fe500f40228c6",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|atmega88": {
-   "asm": "5cee91f468f974dc",
+   "asm": "ea4bf52ca72e4f74",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|atmega88p": {
-   "asm": "5cee91f468f974dc",
+   "asm": "ea4bf52ca72e4f74",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
@@ -1338,58 +1544,58 @@
    "status": "no-build"
   },
   "uart|attiny2313": {
-   "asm": "f6fb8b620e2dd5d5",
+   "asm": "53e0cf856f4f0e2c",
    "asm_from": "debug/firmware.asm",
-   "mir": "c030319cdeef5d3b",
+   "mir": "05335ef0c9d428dc",
    "rom": 120,
    "status": "ok"
   },
   "uart|attiny24": {
-   "asm": "5045d317d4aa5930",
+   "asm": "f973d5df23e397a1",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|attiny25": {
-   "asm": "5045d317d4aa5930",
+   "asm": "f973d5df23e397a1",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|attiny4313": {
-   "asm": "a09bbe3e8a3dc999",
+   "asm": "2d72dffe0ac24927",
    "asm_from": "debug/firmware.asm",
-   "mir": "c030319cdeef5d3b",
-   "rom": 120,
+   "mir": "eb99fd72dc930baa",
+   "rom": 132,
    "status": "ok"
   },
   "uart|attiny44": {
-   "asm": "9c589486228116ea",
+   "asm": "22db7177e99546b5",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|attiny45": {
-   "asm": "9c589486228116ea",
+   "asm": "22db7177e99546b5",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|attiny84": {
-   "asm": "6a025f2c7da67bb7",
+   "asm": "33c90585a0ee7c70",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
   "uart|attiny85": {
-   "asm": "6a025f2c7da67bb7",
+   "asm": "33c90585a0ee7c70",
    "asm_from": "debug/firmware.asm",
-   "mir": "a91555221972ba84",
+   "mir": "697b084edc1ceee4",
    "rom": 132,
    "status": "ok"
   },
@@ -1418,60 +1624,60 @@
    "status": "no-build"
   },
   "uart|pic16f628a": {
-   "asm": "9b10b1ca663242cd",
+   "asm": "9b1de05c64e73d8c",
    "asm_from": "debug/firmware.asm",
-   "mir": "b8e2a024ae25f15b",
+   "mir": "c637958433c3862f",
    "rom": 78,
    "status": "ok"
   },
   "uart|pic16f84a": {
    "kind": "chip-sin-periferico",
    "proves": "nada: el chip no tiene ese periferico: no es deuda, es fisica",
-   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "reason": "CompileError: UART is not implemented for this PIC14 chip (module guard at pic14_uart.py:2",
    "status": "no-build"
   },
   "uart|pic16f877a": {
-   "asm": "5b8457841611b0a4",
+   "asm": "75ddb108ceb90f23",
    "asm_from": "debug/firmware.asm",
-   "mir": "0bcf878d8ea9956e",
+   "mir": "26317e9e419c1954",
    "rom": 76,
    "status": "ok"
   },
   "uart|pic18f45k50": {
-   "asm": "08e002f61b86dc47",
+   "asm": "8212143b5456eade",
    "asm_from": "debug/firmware.asm",
-   "mir": "da3f9ff0af0e89cd",
+   "mir": "0e354af1ac83e78c",
    "rom": 104,
    "status": "ok"
   },
   "uart|rp2040": {
-   "asm": "e36a807f102114b1",
+   "asm": "8f179720da39c0aa",
    "asm_from": "debug/firmware.asm",
-   "mir": "77c546743d9104b3",
+   "mir": "7f55fbb003d72dfe",
    "rom": 840,
    "status": "ok"
   },
   "uart|rp2350": {
-   "asm": "a9bf48eca4fea675",
+   "asm": "4c3b737432a29662",
    "asm_from": "debug/firmware.asm",
-   "mir": "f008caaf6fc1864e",
+   "mir": "c7a80e530084860e",
    "rom": 780,
    "status": "ok"
   }
  },
  "provenance": {
   "compiler_tree_dirty": [],
-  "head": "a9c603ce",
+  "head": "73935a9e",
   "toolchain": {
    "pymcuc": {
     "binary": "/Users/begeistert/Repos/PyMCU/build/bin/pymcuc",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "a9c603ce",
+    "repo_head": "73935a9e",
     "scope": "src/compiler",
     "sha": "1a1f13b9490b5951",
-    "stale": "compilado en bdce2451, el repo va por a9c603ce",
+    "stale": "compilado en bdce2451, el repo va por 73935a9e",
     "stamp": "bdce2451"
    },
    "pymcuc-avr": {
@@ -1479,30 +1685,30 @@
     "dirty_hash": null,
     "repo": "pymcu-avr",
     "repo_dirty": [],
-    "repo_head": "fe8a5636",
+    "repo_head": "a0f461ba",
     "scope": ".",
-    "sha": "a5d541aaa8e5615e",
-    "stamp": "fe8a5636"
+    "sha": "4e02680356e46e91",
+    "stamp": "a0f461ba"
    },
    "pymcuc-pic": {
     "binary": "/Users/begeistert/Repos/pymcu-pic/src/python/pymcu/backend/pic/pymcuc-pic",
     "dirty_hash": null,
     "repo": "pymcu-pic",
     "repo_dirty": [],
-    "repo_head": "73f8f05c",
+    "repo_head": "d46f0201",
     "scope": ".",
-    "sha": "4f01cfe5a5a82bf6",
-    "stamp": "73f8f05c"
+    "sha": "7625d1711de7fc25",
+    "stamp": "d46f0201"
    },
    "pymcuc-riscv": {
     "binary": "/Users/begeistert/Repos/PyMCU/extensions/pymcu-backend-riscv/src/python/pymcu/backend/riscv/pymcuc-riscv",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "a9c603ce",
+    "repo_head": "73935a9e",
     "scope": "extensions/pymcu-backend-riscv",
     "sha": "51485c05bf94ba74",
-    "stale": "compilado en 92edbb63, el repo va por a9c603ce",
+    "stale": "compilado en 92edbb63, el repo va por 73935a9e",
     "stamp": "92edbb63"
    },
    "pymcuc-rp2040": {
