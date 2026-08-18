@@ -117,13 +117,13 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
             # Timer1 OC1A: Fast PWM 8-bit (WGM=0101), COM1A1=1
             DDRB[1] = 1
             OCR1AL.value = duty
-            TCCR1A.value = 0x82
+            TCCR1A.value = 0x81
             TCCR1B.value = prescaler
         case "PB2":
             # Timer1 OC1B: Fast PWM 8-bit, COM1B1=1
             DDRB[2] = 1
             OCR1BL.value = duty
-            TCCR1A.value = 0x22
+            TCCR1A.value = 0x21
             TCCR1B.value = prescaler
         case "PB3":
             # Timer2 OC2A: Fast PWM non-inverting, WGM21:20=11 -> TCCR2A=0x83
