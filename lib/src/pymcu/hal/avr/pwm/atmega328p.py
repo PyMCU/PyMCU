@@ -18,38 +18,46 @@ from pymcu.types import uint8, uint16, inline, ptr
 def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
     match pin:
         case "PD6" | "PD5":
-            # Timer0: CS[2:0] = 001/010/011/100/101
-            if freq > 7812:
+            # Timer0: CS[2:0] = 001/010/011/100/101. Thresholds are the geometric
+            # midpoints between achievable frequencies: the chosen prescaler is
+            # always the nearest one.
+            if freq > 22097:
                 return 0x01
-            elif freq > 976:
+            elif freq > 2762:
                 return 0x02
-            elif freq > 244:
+            elif freq > 488:
                 return 0x03
-            elif freq > 61:
+            elif freq > 122:
                 return 0x04
             else:
                 return 0x05
         case "PB1" | "PB2":
             # Timer1 Fast PWM 8-bit: WGM12 must stay set (bit3); CS in bits 2:0
-            if freq > 7812:
+            if freq > 22097:
                 return 0x09
-            elif freq > 976:
+            elif freq > 2762:
                 return 0x0A
-            elif freq > 244:
+            elif freq > 488:
                 return 0x0B
-            elif freq > 61:
+            elif freq > 122:
                 return 0x0C
             else:
                 return 0x0D
         case "PB3" | "PD3":
-            # Timer2: CS encoding 001(1) 010(8) 100(64) 110(256) 111(1024)
-            if freq > 7812:
+            # Timer2: CS encoding 001(1) 010(8) 011(32) 100(64) 101(128) 110(256)
+            # 111(1024) -- unlike Timer0/1 it also has /32 and /128, so it gets
+            # 1953 Hz and 488 Hz buckets the other timers cannot reach.
+            if freq > 22097:
                 return 0x01
-            elif freq > 976:
+            elif freq > 3906:
                 return 0x02
-            elif freq > 244:
+            elif freq > 1381:
+                return 0x03
+            elif freq > 690:
                 return 0x04
-            elif freq > 61:
+            elif freq > 345:
+                return 0x05
+            elif freq > 122:
                 return 0x06
             else:
                 return 0x07
