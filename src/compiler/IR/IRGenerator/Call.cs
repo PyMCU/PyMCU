@@ -1126,6 +1126,36 @@ public partial class IRGenerator
                     continue;
                 }
 
+                if (IsConstType(func.Params[paramIdx].Type))
+                {
+                    string chase = vArg.Name;
+                    int? resolved = null;
+                    for (int hop = 0; hop < 20; hop++)
+                    {
+                        if (constantVariables.TryGetValue(chase, out int cvv)) { resolved = cvv; break; }
+                        if (!variableAliases.TryGetValue(chase, out var nextAlias)) break;
+                        chase = nextAlias;
+                    }
+                    if (resolved is int rv)
+                    {
+                        constantVariables[paramName] = rv;
+                        strConstantVariables.Remove(paramName);
+                        variableAliases.Remove(paramName);
+                        continue;
+                    }
+                    string bare = vArg.Name.Split('.')[^1];
+                    bool isFunctionRef = functionParams.ContainsKey(vArg.Name)
+                        || functionParams.ContainsKey(bare)
+                        || inlineFunctions.ContainsKey(vArg.Name)
+                        || inlineFunctions.ContainsKey(bare);
+                    if (!isFunctionRef)
+                        throw UserError(
+                            $"Parameter '{func.Params[paramIdx].Name}' is declared as " +
+                            $"{func.Params[paramIdx].Type} and requires a compile-time constant; " +
+                            $"'{bare}' varies at runtime. A loop variable only qualifies when " +
+                            "the loop unrolls (small constant range with a simple body); " +
+                            "otherwise select with explicit constants (if/elif or match)");
+                }
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);
                 strConstantVariables.Remove(paramName);

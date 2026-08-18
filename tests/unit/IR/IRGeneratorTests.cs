@@ -1003,6 +1003,46 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void ConstParam_RuntimeVariable_RaisesCompileError()
+    {
+        // Passing a runtime-varying variable where a const[...] parameter is declared
+        // used to bind silently as an alias: the callee's compile-time dispatch (a
+        // match over the value, a raise CompileError guard) then ran against a value
+        // it could not see, and machine.Pin(loop_var) drove one fixed pin - PD0, the
+        // Uno's RX - for every iteration, confirmed on real silicon. It must be a
+        // located hard error instead.
+        const string src =
+            "from pymcu.types import uint8, const, inline, ptr\n" +
+            "G: ptr[uint8] = ptr(0x3E)\n" +
+            "@inline\n" +
+            "def picky(n: const[uint8]) -> uint8:\n" +
+            "    return n + 1\n" +
+            "def main():\n" +
+            "    seed: uint8 = G.value\n" +
+            "    t = picky(seed)\n";
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => GenerateIR(src));
+        Assert.Contains("requires a compile-time constant", ex.Message);
+    }
+
+    [Fact]
+    public void ConstParam_ModuleConst_Resolves()
+    {
+        // The enforcement must not reject the legitimate paths: a module-level
+        // const reaches the parameter as a constant, and the inline-expansion
+        // alias chain (Watchdog.enable's wdp local) is covered by the AVR
+        // integration suite.
+        const string src =
+            "from pymcu.types import uint8, const, inline\n" +
+            "K: const[uint8] = 4\n" +
+            "@inline\n" +
+            "def picky(n: const[uint8]) -> uint8:\n" +
+            "    return n + 1\n" +
+            "def main():\n" +
+            "    t = picky(K)\n";
+        GenerateIR(src);
+    }
+
+    [Fact]
     public void PtrUint16_Param_BitSet_PreservesType()
     {
         // A function parameter declared as ptr[uint16] must propagate its type
