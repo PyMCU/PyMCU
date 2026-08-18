@@ -1707,6 +1707,20 @@ public partial class IRGenerator
                     DataTypeExtensions.StringToDataType(ty)));
         foreach (var a in expr.Args) fwdArgs.Add(VisitExpression(a));
 
+        // RFC 0001 (write-back), sibling case: the callee is a mutator that returns its
+        // updated field because Model A passes the field BY VALUE. This method's own copy
+        // lives in its field parameter, so the returned value has to land there -- otherwise
+        // the sibling mutates a copy that dies with the call and the write is lost. (Model B
+        // needs nothing: both share the slot the self pointer names.)
+        if (!slotMethods.Contains(currentFunction)
+            && outlineWriteBack.TryGetValue(target, out var swb))
+        {
+            Temporary swDst = MakeTemp(swb.Type);
+            Emit(new Call(target, fwdArgs, swDst));
+            Emit(new Copy(swDst, new Variable(currentFunction + ".self_" + swb.Field, swb.Type)));
+            return new NoneVal();
+        }
+
         bool tVoid = !functionReturnTypes.TryGetValue(target, out var tRt)
                      || tRt == "void" || tRt == "None";
         if (tVoid) { Emit(new Call(target, fwdArgs, new NoneVal())); return new NoneVal(); }
@@ -2531,6 +2545,20 @@ public partial class IRGenerator
         VisitCall(new CallExpr(new VariableExpr(writeStrFn), new List<Expression> { new StringLiteral(s) }));
     }
 
+    // Interpolating an instance would need __str__ at runtime, which PyMCU has no room for:
+    // the value that reaches the formatter is whatever scalar the instance collapsed to, so it
+    // printed a meaningless number (0 for a multi-field class) with no warning at all.
+    private void RejectInstanceInterpolation(Expression e)
+    {
+        if (e is not VariableExpr ve) return;
+        if (InstanceClassOfName(ve.Name) is not { } cls) return;
+        string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
+        throw UserError(
+            $"cannot interpolate '{ve.Name}', an instance of '{shown}': PyMCU resolves attributes " +
+            "at compile time and has no runtime __str__. Interpolate a value instead, e.g. " +
+            $"f\"{{{ve.Name}.<field>}}\" or a method that returns a number.");
+    }
+
     // A bool value in the Python sense: a True/False literal, or a name bound to one
     // everywhere in the program. A comparison is deliberately NOT a bool here — PyMCU
     // lowers `a < b` to an integer, and printing it as True/False would misreport any
@@ -2663,6 +2691,7 @@ public partial class IRGenerator
             if (sv != null) { pending += sv; continue; }
             if (part.Expr is BooleanLiteral bl) { pending += bl.Value ? "True" : "False"; continue; }
             if (IsBoolExpr(part.Expr!)) { Flush(); EmitStreamBool(writeStrFn, part.Expr!); continue; }
+            RejectInstanceInterpolation(part.Expr!);
             Flush();
             EmitStreamVal(floatFn, VisitExpression(part.Expr!));
         }
@@ -2852,6 +2881,7 @@ public partial class IRGenerator
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
 
+            RejectInstanceInterpolation(arg);
             EmitStreamVal(floatWriteFn, VisitExpression(arg));
         }
 
