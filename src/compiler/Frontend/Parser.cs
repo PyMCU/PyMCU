@@ -700,20 +700,39 @@ public class Parser
         // ErrorType "" marks that re-raise; VisitRaise re-signals the pending code (in R22).
         string errorType = "";
         string message = "";
+        string? messageName = null;
         if (Check(TokenType.Identifier))
         {
             errorType = Advance().Value;
             if (Check(TokenType.LParen))
             {
                 Advance();
+                while (Check(TokenType.Newline)) Advance();
                 if (Check(TokenType.String))
-                    message = Advance().Value;
-                Consume(TokenType.RParen, "Expected ')' after error message");
+                {
+                    var parts = new System.Text.StringBuilder();
+                    while (Check(TokenType.String) || Check(TokenType.Newline))
+                    {
+                        if (Check(TokenType.Newline)) Advance();
+                        else parts.Append(Advance().Value);
+                    }
+
+                    message = parts.ToString();
+                }
+                else if (Check(TokenType.Identifier))
+                {
+                    messageName = Advance().Value;
+                    while (Check(TokenType.Newline)) Advance();
+                }
+
+                Consume(TokenType.RParen,
+                    "Expected ')' after the error message. The message must be one or more " +
+                    "adjacent string literals, or the name of a module-level string constant");
             }
         }
 
         ConsumeStatementEnd();
-        return new RaiseStmt(errorType, message) { Line = line };
+        return new RaiseStmt(errorType, message, messageName) { Line = line };
     }
 
     private Statement ParseTryStatement()
@@ -1763,7 +1782,12 @@ public class Parser
 
         if (Match(TokenType.String))
         {
-            return new StringLiteral(Previous().Value);
+            // Python concatenates adjacent string literals: "a" "b" is one string, and
+            // inside parentheses the pieces may sit on separate lines. Without this a
+            // long message had to live on one 200-character line.
+            string joined = Previous().Value;
+            while (Check(TokenType.String)) joined += Advance().Value;
+            return new StringLiteral(joined);
         }
 
         if (Match(TokenType.FString))

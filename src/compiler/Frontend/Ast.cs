@@ -551,11 +551,13 @@ public class RaiseStmt : Statement
 {
     public string ErrorType { get; }
     public string Message { get; }
+    public string? MessageName { get; }
 
-    public RaiseStmt(string errorType, string message)
+    public RaiseStmt(string errorType, string message, string? messageName = null)
     {
         ErrorType = errorType;
         Message = message;
+        MessageName = messageName;
     }
 }
 

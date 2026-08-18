@@ -760,9 +760,24 @@ public partial class IRGenerator
 
     private void VisitRaise(RaiseStmt stmt)
     {
+        string resolvedMessage = stmt.Message;
+        if (!string.IsNullOrEmpty(stmt.MessageName))
+        {
+            string qualified = string.IsNullOrEmpty(currentFunction)
+                ? stmt.MessageName
+                : currentFunction + "." + stmt.MessageName;
+            resolvedMessage = ResolveStrConstant(qualified)
+                ?? ResolveStrConstant(stmt.MessageName)
+                ?? throw UserError(
+                    $"raise {stmt.ErrorType}({stmt.MessageName}): '{stmt.MessageName}' is not a " +
+                    "string constant known at compile time. The message must be one or more " +
+                    "string literals, or the name of a module-level constant declared as " +
+                    $"`{stmt.MessageName}: str = \"...\"`");
+        }
+
         if (stmt.ErrorType == "CompileError")
         {
-            string msg = stmt.Message.Length > 0 ? stmt.Message : "CompileError";
+            string msg = resolvedMessage.Length > 0 ? resolvedMessage : "CompileError";
             // Only branches opened INSIDE the current inline expansion make the raise
             // conditional: a `raise` at the top of an @inline body must abort even when
             // the user wrapped the CALL in a while/if (the expansion is reachable
@@ -798,7 +813,7 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(stmt.ErrorType) && inlineStack.Count > 0 &&
             tryCatchStack.Count == 0 && _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
         {
-            string reason = stmt.Message.Length > 0 ? stmt.Message : stmt.ErrorType;
+            string reason = resolvedMessage.Length > 0 ? resolvedMessage : stmt.ErrorType;
             int line = currentStmtLine > 0 ? currentStmtLine : stmt.Line;
             throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0);
         }

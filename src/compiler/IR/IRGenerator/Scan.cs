@@ -157,6 +157,9 @@ public partial class IRGenerator
 
                 if (type == "bytearray" && initializer != null)
                     TryRegisterModuleBytearray(name, initializer);
+
+                if ((type == "str" || type == "const[str]") && initializer is StringLiteral vdStr)
+                    strConstantVariables[currentModulePrefix + name] = vdStr.Value;
             }
             else if (stmt is AssignStmt assign)
             {
