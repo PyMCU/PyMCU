@@ -332,11 +332,12 @@ PIN_SHAPED = re.compile(r"Unsupported Pin|Unknown pin|no such pin", re.I)
 def first_that_builds(work, chip, arch, template, candidates, key):
     """Try each pin/channel the architecture might accept, keep the first that builds.
 
-    Every attempt's reason is kept. The candidate list runs from most to least
-    likely, so the last one to fail is the least informative -- it fails because
-    that pin does not exist on that chip, which is true and useless, and it used
-    to bury an internal compiler error raised by the first. And the summary only
-    claims "no candidate compiled" when every reason really is about a pin.
+    Every attempt's reason is kept, and the summary quotes the first one that is
+    not merely "that pin does not exist here". A candidate failing on the pin is
+    saying something true and useless; whichever candidate got far enough to hit
+    a timebase gap or an internal error is the one worth reading, wherever it
+    sits in the list. Only when every reason is about a pin does the summary
+    claim that no candidate compiled.
     """
     tried = {}
     for value in candidates:
@@ -345,12 +346,13 @@ def first_that_builds(work, chip, arch, template, candidates, key):
             result[key] = value
             return result
         tried[value] = result["reason"][:110]
-    only_pins = all(PIN_SHAPED.search(r) for r in tried.values())
-    first = next(iter(tried.items()))
-    return {"status": "no-build",
-            "reason": (f"no {key} candidate compiled" if only_pins
-                       else f"{key}={first[0]}: {first[1]}")[:120],
-            "tried": tried}
+    informative = [(v, r) for v, r in tried.items() if not PIN_SHAPED.search(r)]
+    if not informative:
+        reason = f"no {key} candidate compiled"
+    else:
+        value, why = informative[0]
+        reason = f"{key}={value}: {why}"
+    return {"status": "no-build", "reason": reason[:120], "tried": tried}
 
 
 def run_corpus():
@@ -375,6 +377,9 @@ def run_corpus():
 
 NO_BUILD_KINDS = [
     ("compile_isr()", "backend-roto", "error interno al montar la ISR"),
+    ("Unknown opcode", "backend-roto", "el backend emite una instruccion que el core no tiene"),
+    ("Symbol not previously defined", "backend-roto", "el backend usa un simbolo que no declara"),
+    ("Address label duplicated", "backend-roto", "el backend acuna la misma etiqueta dos veces"),
     ("Unsupported Pin", "sin-mapa-de-pines", "el HAL no conoce los pines de este chip"),
     ("Unknown pin for", "pin-inexistente", "ese pin no existe en este chip: el arnes probo mal"),
     ("no pin candidate", "sin-facade", "el facade portable no cubre esta arquitectura o el chip"),

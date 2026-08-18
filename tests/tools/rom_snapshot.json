@@ -83,14 +83,22 @@
   "adc|attiny13": {
    "kind": "sin-RAM",
    "proves": "nada: el programa no cabe en la RAM del chip",
-   "reason": "adc=\"PB2\": static data needs 9 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
-   "status": "no-build"
+   "reason": "adc=\"PC0\": static data needs 9 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+   "status": "no-build",
+   "tried": {
+    "\"PB2\"": "static data needs 9 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+    "\"PC0\"": "static data needs 9 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room"
+   }
   },
   "adc|attiny13a": {
    "kind": "sin-RAM",
    "proves": "nada: el programa no cabe en la RAM del chip",
-   "reason": "adc=\"PB2\": static data needs 9 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
-   "status": "no-build"
+   "reason": "adc=\"PC0\": static data needs 9 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build",
+   "tried": {
+    "\"PB2\"": "static data needs 9 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+    "\"PC0\"": "static data needs 9 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo"
+   }
   },
   "adc|attiny2313": {
    "adc": "\"PC0\"",
@@ -160,43 +168,64 @@
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
    "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"PA1\"": "CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m"
+   }
   },
   "adc|ch32v203": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
    "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"PA1\"": "CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m"
+   }
   },
   "adc|pic10f200": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
    "reason": "adc=\"GP0\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"GP0\"": "CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m"
+   }
   },
   "adc|pic16f18877": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
    "reason": "adc=\"RA0\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"RA0\"": "CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m"
+   }
   },
   "adc|pic16f628a": {
    "kind": "hal-incompleto",
    "proves": "nada: el HAL de ese chip no define la funcion",
    "reason": "adc=\"RA0\": CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"RA0\"": "CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m"
+   }
   },
   "adc|pic16f84a": {
    "kind": "hal-incompleto",
    "proves": "nada: el HAL de ese chip no define la funcion",
    "reason": "adc=\"RA0\": CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"RA0\"": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)"
+   }
   },
   "adc|pic16f877a": {
    "kind": "hal-incompleto",
    "proves": "nada: el HAL de ese chip no define la funcion",
    "reason": "adc=\"RA0\": CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m",
-   "status": "no-build"
+   "status": "no-build",
+   "tried": {
+    "\"RA0\"": "CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m"
+   }
   },
   "adc|pic18f45k50": {
    "adc": "\"RA0\"",
@@ -239,10 +268,12 @@
    "status": "ok"
   },
   "asyncio|atmega2560": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "8cd90dcaa646b057",
+   "asm_from": "debug/firmware.asm",
+   "mir": "f60421c5851eb0fd",
+   "pin": "\"PB5\"",
+   "rom": 1794,
+   "status": "ok"
   },
   "asyncio|atmega328": {
    "asm": "495a11fe74c1df2b",
@@ -261,10 +292,12 @@
    "status": "ok"
   },
   "asyncio|atmega32u4": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "f639397505fed6c7",
+   "asm_from": "debug/firmware.asm",
+   "mir": "3c49fa515161d08e",
+   "pin": "\"PB5\"",
+   "rom": 1754,
+   "status": "ok"
   },
   "asyncio|atmega48": {
    "asm": "930db414fb8a6aac",
@@ -299,106 +332,199 @@
    "status": "ok"
   },
   "asyncio|attiny13": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny13a": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny2313": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny24": {
    "kind": "sin-mapa-de-pines",
    "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny25": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny4313": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny44": {
    "kind": "sin-mapa-de-pines",
    "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny45": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny84": {
    "kind": "sin-mapa-de-pines",
    "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "reason": "pin=\"PB5\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|attiny85": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PB5\": CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB5\"": "CompileError: async needs a timebase; not available on attiny yet: millis/micros are ATmeg",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P"
+   }
   },
   "asyncio|ch32v003": {
    "kind": "sin-timebase",
    "proves": "nada: sin base de tiempos: async y millis no pueden existir",
-   "reason": "pin=\"PA1\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
-   "status": "no-build"
+   "reason": "pin=\"PD4\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"PA1\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"PC0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"PD4\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega"
+   }
   },
   "asyncio|ch32v203": {
    "kind": "sin-timebase",
    "proves": "nada: sin base de tiempos: async y millis no pueden existir",
-   "reason": "pin=\"PA1\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
-   "status": "no-build"
+   "reason": "pin=\"PD4\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"PA1\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"PC0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"PD4\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega"
+   }
   },
   "asyncio|pic10f200": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | asy",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"GP0\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"GP0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"GP1\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega"
+   }
   },
   "asyncio|pic16f18877": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | asy",
-   "status": "no-build"
+   "reason": "pin=\"RD2\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | asy",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | asy",
+    "\"RD2\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | asy"
+   }
   },
   "asyncio|pic16f628a": {
-   "kind": "pin-inexistente",
-   "proves": "nada: ese pin no existe en este chip: el arnes probo mal",
-   "reason": "pin=\"RD2\": CompileError: Unknown pin for PIC16F628A 5 | async def blink(): 6 | led = Pin(\"RD2\", Pin.O",
-   "status": "no-build"
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"RB3\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RB3\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RD2\"": "CompileError: Unknown pin for PIC16F628A 5 | async def blink(): 6 | led = Pin(\"RD2\", Pin.O"
+   }
   },
   "asyncio|pic16f84a": {
    "kind": "sin-timebase",
    "proves": "nada: sin base de tiempos: async y millis no pueden existir",
-   "reason": "pin=\"RD2\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
-   "status": "no-build"
+   "reason": "pin=\"RB3\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RB3\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RD2\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega"
+   }
   },
   "asyncio|pic16f877a": {
    "kind": "sin-timebase",
    "proves": "nada: sin base de tiempos: async y millis no pueden existir",
-   "reason": "pin=\"RD2\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
-   "status": "no-build"
+   "reason": "pin=\"RB3\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RB3\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+    "\"RD2\"": "CompileError: async needs a timebase; not available on this architecture yet: only ATmega"
+   }
   },
   "asyncio|pic18f45k50": {
    "asm": "812ba251a4e00c08",
@@ -441,10 +567,12 @@
    "status": "ok"
   },
   "blink|atmega2560": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "08cf9a5a9a483b8b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "62bfcc6aa28febf8",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
   },
   "blink|atmega328": {
    "asm": "1818dd00fa269485",
@@ -463,10 +591,12 @@
    "status": "ok"
   },
   "blink|atmega32u4": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "84dc8069c6baeaf4",
+   "asm_from": "debug/firmware.asm",
+   "mir": "94e2523974a484cf",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
   },
   "blink|atmega48": {
    "asm": "16f06adc58b8f083",
@@ -501,16 +631,28 @@
    "status": "ok"
   },
   "blink|attiny13": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi",
-   "status": "no-build"
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "pin=\"PB5\": static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+    "\"PB5\"": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PB7\", Pi",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi"
+   }
   },
   "blink|attiny13a": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi",
-   "status": "no-build"
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "pin=\"PB5\": static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+    "\"PB5\"": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PB7\", Pi",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi"
+   }
   },
   "blink|attiny2313": {
    "asm": "16e1e87a7d65195c",
@@ -593,16 +735,24 @@
    "status": "ok"
   },
   "blink|pic10f200": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | def",
-   "status": "no-build"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"GP0\": Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_",
+   "status": "no-build",
+   "tried": {
+    "\"GP0\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_",
+    "\"GP1\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Error[113] Symbol not previously defined: \"__dly_"
+   }
   },
   "blink|pic16f18877": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | def",
-   "status": "no-build"
+   "reason": "pin=\"RD2\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | def",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | def",
+    "\"RD2\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 5 | def"
+   }
   },
   "blink|pic16f628a": {
    "asm": "8b48c89b8b5d8066",
@@ -669,10 +819,12 @@
    "status": "ok"
   },
   "call|atmega2560": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "82e33a4432ebf774",
+   "asm_from": "debug/firmware.asm",
+   "mir": "2362c13842fb9790",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
   },
   "call|atmega328": {
    "asm": "ac253c909bf05ece",
@@ -691,10 +843,12 @@
    "status": "ok"
   },
   "call|atmega32u4": {
-   "kind": "backend-roto",
-   "proves": "nada: error interno al montar la ISR",
-   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
-   "status": "no-build"
+   "asm": "80e45b50cc22b6ea",
+   "asm_from": "debug/firmware.asm",
+   "mir": "61e472da56fa0fe7",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
   },
   "call|atmega48": {
    "asm": "5702fc7d524960f6",
@@ -729,16 +883,28 @@
    "status": "ok"
   },
   "call|attiny13": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\",",
-   "status": "no-build"
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "pin=\"PB5\": static data needs 15 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "static data needs 15 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
+    "\"PB5\"": "static data needs 15 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PB7\",",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\","
+   }
   },
   "call|attiny13a": {
-   "kind": "sin-mapa-de-pines",
-   "proves": "nada: el HAL no conoce los pines de este chip",
-   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\",",
-   "status": "no-build"
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "pin=\"PB5\": static data needs 15 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
+   "status": "no-build",
+   "tried": {
+    "\"PB0\"": "static data needs 15 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
+    "\"PB5\"": "static data needs 15 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
+    "\"PB7\"": "CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PB7\",",
+    "\"PC7\"": "CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\","
+   }
   },
   "call|attiny2313": {
    "asm": "2e880da86a5d6609",
@@ -821,16 +987,24 @@
    "status": "ok"
   },
   "call|pic10f200": {
-   "kind": "sin-facade",
-   "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 14 | de",
-   "status": "no-build"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"GP0\": Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp",
+   "status": "no-build",
+   "tried": {
+    "\"GP0\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp",
+    "\"GP1\"": "Error[181] Unknown opcode: \"SUBLW\" firmwa re.asm:30:Warning[219] Invalid RAM location specified. 'tmp"
+   }
   },
   "call|pic16f18877": {
    "kind": "sin-facade",
    "proves": "nada: el facade rechaza la arquitectura",
-   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 14 | de",
-   "status": "no-build"
+   "reason": "pin=\"RD2\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 14 | de",
+   "status": "no-build",
+   "tried": {
+    "\"RB0\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 14 | de",
+    "\"RD2\"": "CompileError: GPIO not supported on this architecture (module guard at gpio.py:19) 14 | de"
+   }
   },
   "call|pic16f628a": {
    "asm": "5bf0586db368ccd4",
@@ -1287,49 +1461,53 @@
  },
  "provenance": {
   "compiler_tree_dirty": [],
-  "head": "86e30a93",
+  "head": "4416a929",
   "toolchain": {
    "pymcuc": {
     "binary": "/Users/begeistert/Repos/PyMCU/build/bin/pymcuc",
+    "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "86e30a93",
+    "repo_head": "4416a929",
     "scope": "src/compiler",
-    "sha": "40450439983c687a",
-    "stamp": "86e30a93"
+    "sha": "d23a91626582ed00",
+    "stamp": "4416a929"
    },
    "pymcuc-avr": {
     "binary": "/Users/begeistert/Repos/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr",
+    "dirty_hash": null,
     "repo": "pymcu-avr",
     "repo_dirty": [],
-    "repo_head": "ddd9b9a8",
+    "repo_head": "0d161f88",
     "scope": ".",
-    "sha": "7255063841a1a57d",
-    "stale": "compilado en 63328d10, el repo va por ddd9b9a8",
-    "stamp": "63328d10"
+    "sha": "ec364c362124e563",
+    "stale": "compilado en ddd9b9a8, el repo va por 0d161f88",
+    "stamp": "ddd9b9a8"
    },
    "pymcuc-pic": {
-    "binary": "/Users/begeistert/Repos/pymcu-pic-fix/build/bin/pymcuc-pic",
-    "repo": "pymcu-pic-fix",
+    "binary": "/Users/begeistert/Repos/pymcu-pic/src/python/pymcu/backend/pic/pymcuc-pic",
+    "dirty_hash": null,
+    "repo": "pymcu-pic",
     "repo_dirty": [],
-    "repo_head": "50135feb",
+    "repo_head": "167b8020",
     "scope": ".",
-    "sha": "94c5efc0945e6e9a",
-    "stale": "compilado en b35d455f, el repo va por 50135feb",
-    "stamp": "b35d455f"
+    "sha": "63739724f5a4da70",
+    "stamp": "167b8020"
    },
    "pymcuc-riscv": {
     "binary": "/Users/begeistert/Repos/PyMCU/extensions/pymcu-backend-riscv/src/python/pymcu/backend/riscv/pymcuc-riscv",
+    "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "86e30a93",
+    "repo_head": "4416a929",
     "scope": "extensions/pymcu-backend-riscv",
     "sha": "51485c05bf94ba74",
-    "stale": "compilado en 92edbb63, el repo va por 86e30a93",
+    "stale": "compilado en 92edbb63, el repo va por 4416a929",
     "stamp": "92edbb63"
    },
    "pymcuc-rp2040": {
     "binary": "/Users/begeistert/Repos/pymcu-arm/src/python/pymcu/backend/rp2040/pymcuc-arm",
+    "dirty_hash": "3822a3d15d63eecf",
     "repo": "pymcu-arm",
     "repo_dirty": [
      "src/python/pymcu/toolchain/rp2040/llvm.py",
