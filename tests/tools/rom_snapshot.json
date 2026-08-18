@@ -1,946 +1,1346 @@
 {
- "adc|atmega168": {
-  "adc": "\"PC0\"",
-  "asm": "b0c433fd116d0791",
-  "mir": "1b9e0890599eb092",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega168p": {
-  "adc": "\"PC0\"",
-  "asm": "b0c433fd116d0791",
-  "mir": "1b9e0890599eb092",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega2560": {
-  "adc": "\"PC0\"",
-  "asm": "b0c433fd116d0791",
-  "mir": "1b9e0890599eb092",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega328": {
-  "adc": "\"PC0\"",
-  "asm": "b0c433fd116d0791",
-  "mir": "1b9e0890599eb092",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega328p": {
-  "adc": "\"PC0\"",
-  "asm": "b0c433fd116d0791",
-  "mir": "1b9e0890599eb092",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega32u4": {
-  "adc": "\"PC0\"",
-  "asm": "191044ef237aa6bd",
-  "mir": "71d269707d9a68e2",
-  "rom": 222,
-  "status": "ok"
- },
- "adc|atmega48": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|atmega48p": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|atmega88": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|atmega88p": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|attiny13": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|attiny13a": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|attiny2313": {
-  "adc": "\"PC0\"",
-  "asm": "ec00fea6d80b8f93",
-  "mir": "de8229145c302f02",
-  "rom": 160,
-  "status": "ok"
- },
- "adc|attiny24": {
-  "adc": "\"PC0\"",
-  "asm": "f0813ef841be8a24",
-  "mir": "201bbf6511e7c06e",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|attiny25": {
-  "adc": "\"PC0\"",
-  "asm": "881a8f78558ce200",
-  "mir": "33d21584c98d8357",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|attiny4313": {
-  "adc": "\"PC0\"",
-  "asm": "143d50b5aa6c7cc0",
-  "mir": "de8229145c302f02",
-  "rom": 160,
-  "status": "ok"
- },
- "adc|attiny44": {
-  "adc": "\"PC0\"",
-  "asm": "4aaec270cbf77c08",
-  "mir": "201bbf6511e7c06e",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|attiny45": {
-  "adc": "\"PC0\"",
-  "asm": "445bb3433556d59b",
-  "mir": "33d21584c98d8357",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|attiny84": {
-  "adc": "\"PC0\"",
-  "asm": "1647aebe6c642490",
-  "mir": "201bbf6511e7c06e",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|attiny85": {
-  "adc": "\"PC0\"",
-  "asm": "c67c636f0c873b39",
-  "mir": "33d21584c98d8357",
-  "rom": 154,
-  "status": "ok"
- },
- "adc|ch32v003": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|ch32v203": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic10f200": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic16f18877": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic16f628a": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic16f84a": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic16f877a": {
-  "kind": "sin-periferico",
-  "proves": "nada: el chip no tiene ese periferico, o el facade no lo expone",
-  "reason": "no adc candidate compiled",
-  "status": "no-build"
- },
- "adc|pic18f45k50": {
-  "adc": "\"RA0\"",
-  "asm": "4e2858dfb48a923d",
-  "mir": "d60ebe23d6425e82",
-  "rom": 156,
-  "status": "ok"
- },
- "adc|rp2040": {
-  "adc": "26",
-  "asm": "d0c12bed45bb769d",
-  "mir": "1f431c1ce3d2cdd0",
-  "rom": 948,
-  "status": "ok"
- },
- "adc|rp2350": {
-  "adc": "26",
-  "asm": "477c6232862fd423",
-  "mir": "3d2d475aa57c5d8b",
-  "rom": 892,
-  "status": "ok"
- },
- "asyncio|atmega168": {
-  "asm": "7e50f3f78fe7e5d0",
-  "mir": "bebfa2892bfbb174",
-  "pin": "\"PB5\"",
-  "rom": 1754,
-  "status": "ok"
- },
- "asyncio|atmega168p": {
-  "asm": "7e50f3f78fe7e5d0",
-  "mir": "bebfa2892bfbb174",
-  "pin": "\"PB5\"",
-  "rom": 1754,
-  "status": "ok"
- },
- "asyncio|atmega2560": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|atmega328": {
-  "asm": "7e50f3f78fe7e5d0",
-  "mir": "bebfa2892bfbb174",
-  "pin": "\"PB5\"",
-  "rom": 1754,
-  "status": "ok"
- },
- "asyncio|atmega328p": {
-  "asm": "7e50f3f78fe7e5d0",
-  "mir": "bebfa2892bfbb174",
-  "pin": "\"PB5\"",
-  "rom": 1754,
-  "status": "ok"
- },
- "asyncio|atmega32u4": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|atmega48": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|atmega48p": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|atmega88": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|atmega88p": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny13": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny13a": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny2313": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny24": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny25": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny4313": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny44": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny45": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny84": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|attiny85": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|ch32v003": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|ch32v203": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic10f200": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic16f18877": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic16f628a": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic16f84a": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic16f877a": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "asyncio|pic18f45k50": {
-  "asm": "5ae3f8a636a08c26",
-  "mir": "4ad8f5ffed71f2b7",
-  "pin": "\"RD2\"",
-  "rom": 1298,
-  "status": "ok"
- },
- "asyncio|rp2040": {
-  "asm": "25dbb556a78a06a5",
-  "mir": "618221aa5f9c7cc0",
-  "pin": "25",
-  "rom": 1216,
-  "status": "ok"
- },
- "asyncio|rp2350": {
-  "asm": "34753ca010f2ab64",
-  "mir": "36fee577a9614af3",
-  "pin": "25",
-  "rom": 1196,
-  "status": "ok"
- },
- "blink|atmega168": {
-  "asm": "ade52c41415861f4",
-  "mir": "c28e3ab3f371a9b6",
-  "pin": "\"PB5\"",
-  "rom": 150,
-  "status": "ok"
- },
- "blink|atmega168p": {
-  "asm": "ade52c41415861f4",
-  "mir": "c28e3ab3f371a9b6",
-  "pin": "\"PB5\"",
-  "rom": 150,
-  "status": "ok"
- },
- "blink|atmega2560": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|atmega328": {
-  "asm": "ade52c41415861f4",
-  "mir": "c28e3ab3f371a9b6",
-  "pin": "\"PB5\"",
-  "rom": 150,
-  "status": "ok"
- },
- "blink|atmega328p": {
-  "asm": "ade52c41415861f4",
-  "mir": "c28e3ab3f371a9b6",
-  "pin": "\"PB5\"",
-  "rom": 150,
-  "status": "ok"
- },
- "blink|atmega32u4": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|atmega48": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|atmega48p": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|atmega88": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|atmega88p": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|attiny13": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|attiny13a": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|attiny2313": {
-  "asm": "c21aa1e9c52029df",
-  "mir": "b87d3f54e8c27523",
-  "pin": "\"PB5\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny24": {
-  "asm": "d7c91209bbb6bd03",
-  "mir": "20c7d776e3f4ac5a",
-  "pin": "\"PB0\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny25": {
-  "asm": "9acbde8057a8e1d7",
-  "mir": "eebfa1a291147bea",
-  "pin": "\"PB5\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny4313": {
-  "asm": "cec2f850f0faf87c",
-  "mir": "b87d3f54e8c27523",
-  "pin": "\"PB5\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny44": {
-  "asm": "0676060a50f7be23",
-  "mir": "20c7d776e3f4ac5a",
-  "pin": "\"PB0\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny45": {
-  "asm": "430a2a86cb2b28e9",
-  "mir": "eebfa1a291147bea",
-  "pin": "\"PB5\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny84": {
-  "asm": "806b4d0286260f4d",
-  "mir": "20c7d776e3f4ac5a",
-  "pin": "\"PB0\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|attiny85": {
-  "asm": "f327c646b00d9a69",
-  "mir": "eebfa1a291147bea",
-  "pin": "\"PB5\"",
-  "rom": 112,
-  "status": "ok"
- },
- "blink|ch32v003": {
-  "asm": "159f295389d3501e",
-  "mir": "e250e2839cd6e7fb",
-  "pin": "\"PD4\"",
-  "rom": 444,
-  "status": "ok"
- },
- "blink|ch32v203": {
-  "asm": "500133ecc4d9bcfb",
-  "mir": "cc93114278675dfa",
-  "pin": "\"PD4\"",
-  "rom": 440,
-  "status": "ok"
- },
- "blink|pic10f200": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|pic16f18877": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade portable no cubre esta arquitectura o el chip",
-  "reason": "no pin candidate compiled",
-  "status": "no-build"
- },
- "blink|pic16f628a": {
-  "asm": "e51c40dd38a8b6c3",
-  "mir": "ac27a43cd858dc63",
-  "pin": "\"RB3\"",
-  "rom": 104,
-  "status": "ok"
- },
- "blink|pic16f84a": {
-  "asm": "dd80583591182187",
-  "mir": "481aa5e3ed3750ed",
-  "pin": "\"RB3\"",
-  "rom": 96,
-  "status": "ok"
- },
- "blink|pic16f877a": {
-  "asm": "951ed93ab89c17a5",
-  "mir": "c49a54a2e647bdc9",
-  "pin": "\"RB3\"",
-  "rom": 96,
-  "status": "ok"
- },
- "blink|pic18f45k50": {
-  "asm": "3caf762e879babf7",
-  "mir": "b844e8e34aaa724a",
-  "pin": "\"RD2\"",
-  "rom": 110,
-  "status": "ok"
- },
- "blink|rp2040": {
-  "asm": "2cf70dc5e199d1ba",
-  "mir": "66b3b792546c79ce",
-  "pin": "25",
-  "rom": 924,
-  "status": "ok"
- },
- "blink|rp2350": {
-  "asm": "89c58515d4e816ab",
-  "mir": "3ee09f31a2b93c4f",
-  "pin": "25",
-  "rom": 872,
-  "status": "ok"
- },
- "float|atmega168": {
-  "asm": "3d29513b5f2558c8",
-  "mir": "321d5870759311e9",
-  "rom": 1248,
-  "status": "ok"
- },
- "float|atmega168p": {
-  "asm": "3d29513b5f2558c8",
-  "mir": "321d5870759311e9",
-  "rom": 1248,
-  "status": "ok"
- },
- "float|atmega2560": {
-  "asm": "3d29513b5f2558c8",
-  "mir": "321d5870759311e9",
-  "rom": 1218,
-  "status": "ok"
- },
- "float|atmega328": {
-  "asm": "3d29513b5f2558c8",
-  "mir": "321d5870759311e9",
-  "rom": 1248,
-  "status": "ok"
- },
- "float|atmega328p": {
-  "asm": "3d29513b5f2558c8",
-  "mir": "321d5870759311e9",
-  "rom": 1248,
-  "status": "ok"
- },
- "float|atmega32u4": {
-  "asm": "931daf9dfdaf0424",
-  "mir": "9ca9a0d0589aeb1e",
-  "rom": 1248,
-  "status": "ok"
- },
- "float|atmega48": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|atmega48p": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|atmega88": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|atmega88p": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny13": {
-  "kind": "sin-RAM",
-  "proves": "nada: el programa no cabe en la RAM del chip",
-  "reason": "static data needs 22 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
-  "status": "no-build"
- },
- "float|attiny13a": {
-  "kind": "sin-RAM",
-  "proves": "nada: el programa no cabe en la RAM del chip",
-  "reason": "static data needs 22 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
-  "status": "no-build"
- },
- "float|attiny2313": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny24": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny25": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny4313": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny44": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny45": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny84": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|attiny85": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "float|ch32v003": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "float|ch32v203": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "float|pic10f200": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "float|pic16f18877": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "float|pic16f628a": {
-  "kind": "backend-roto",
-  "proves": "nada: limitacion del backend",
-  "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
-  "status": "no-build"
- },
- "float|pic16f84a": {
-  "kind": "hal-incompleto",
-  "proves": "nada: el HAL de ese chip no define la funcion",
-  "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
-  "status": "no-build"
- },
- "float|pic16f877a": {
-  "kind": "backend-roto",
-  "proves": "nada: limitacion del backend",
-  "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
-  "status": "no-build"
- },
- "float|pic18f45k50": {
-  "asm": "316709c32a6bbd2b",
-  "mir": "03d65bebe5121913",
-  "rom": 2764,
-  "status": "ok"
- },
- "float|rp2040": {
-  "asm": "6d3d8e13212056b8",
-  "mir": "902772999576a1fb",
-  "rom": 840,
-  "status": "ok"
- },
- "float|rp2350": {
-  "asm": "63e5180e38e5ab34",
-  "mir": "fbab42ef8cc23653",
-  "rom": 772,
-  "status": "ok"
- },
- "uart|atmega168": {
-  "asm": "dd86181b0bc87553",
-  "mir": "a91555221972ba84",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega168p": {
-  "asm": "dd86181b0bc87553",
-  "mir": "a91555221972ba84",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega2560": {
-  "asm": "dd86181b0bc87553",
-  "mir": "a91555221972ba84",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega328": {
-  "asm": "dd86181b0bc87553",
-  "mir": "a91555221972ba84",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega328p": {
-  "asm": "dd86181b0bc87553",
-  "mir": "a91555221972ba84",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega32u4": {
-  "asm": "5c3af0d272f0cc30",
-  "mir": "e92892a546185dea",
-  "rom": 182,
-  "status": "ok"
- },
- "uart|atmega48": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "uart|atmega48p": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "uart|atmega88": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "uart|atmega88p": {
-  "kind": "sin-clasificar",
-  "proves": "nada: motivo no reconocido por el arnes",
-  "reason": "unknown",
-  "status": "no-build"
- },
- "uart|attiny13": {
-  "kind": "sin-RAM",
-  "proves": "nada: el programa no cabe en la RAM del chip",
-  "reason": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
-  "status": "no-build"
- },
- "uart|attiny13a": {
-  "kind": "sin-RAM",
-  "proves": "nada: el programa no cabe en la RAM del chip",
-  "reason": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
-  "status": "no-build"
- },
- "uart|attiny2313": {
-  "asm": "ae7a5b812a936695",
-  "mir": "c030319cdeef5d3b",
-  "rom": 120,
-  "status": "ok"
- },
- "uart|attiny24": {
-  "asm": "8d10a57b21ea2b54",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|attiny25": {
-  "asm": "8d10a57b21ea2b54",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|attiny4313": {
-  "asm": "d43b668aa88e01d2",
-  "mir": "c030319cdeef5d3b",
-  "rom": 120,
-  "status": "ok"
- },
- "uart|attiny44": {
-  "asm": "458963b96ec98a67",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|attiny45": {
-  "asm": "458963b96ec98a67",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|attiny84": {
-  "asm": "5e649f9eda18811a",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|attiny85": {
-  "asm": "5e649f9eda18811a",
-  "mir": "a91555221972ba84",
-  "rom": 132,
-  "status": "ok"
- },
- "uart|ch32v003": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "uart|ch32v203": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "uart|pic10f200": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "uart|pic16f18877": {
-  "kind": "sin-facade",
-  "proves": "nada: el facade rechaza la arquitectura",
-  "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24)",
-  "status": "no-build"
- },
- "uart|pic16f628a": {
-  "asm": "a382718c0404f50a",
-  "mir": "b8e2a024ae25f15b",
-  "rom": 78,
-  "status": "ok"
- },
- "uart|pic16f84a": {
-  "kind": "hal-incompleto",
-  "proves": "nada: el HAL de ese chip no define la funcion",
-  "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
-  "status": "no-build"
- },
- "uart|pic16f877a": {
-  "asm": "95fde8885444895c",
-  "mir": "0bcf878d8ea9956e",
-  "rom": 76,
-  "status": "ok"
- },
- "uart|pic18f45k50": {
-  "asm": "99b2834c4edd031c",
-  "mir": "da3f9ff0af0e89cd",
-  "rom": 104,
-  "status": "ok"
- },
- "uart|rp2040": {
-  "asm": "8cd9542ed1c39d81",
-  "mir": "77c546743d9104b3",
-  "rom": 840,
-  "status": "ok"
- },
- "uart|rp2350": {
-  "asm": "4b724d8b78bdbe6f",
-  "mir": "f008caaf6fc1864e",
-  "rom": 780,
-  "status": "ok"
+ "cells": {
+  "adc|atmega168": {
+   "adc": "\"PC0\"",
+   "asm": "b1c26ff8d5b37989",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega168p": {
+   "adc": "\"PC0\"",
+   "asm": "b1c26ff8d5b37989",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega2560": {
+   "adc": "\"PC0\"",
+   "asm": "950c448108d34434",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega328": {
+   "adc": "\"PC0\"",
+   "asm": "fc1d04424f8e5b65",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega328p": {
+   "adc": "\"PC0\"",
+   "asm": "fc1d04424f8e5b65",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega32u4": {
+   "adc": "\"PC0\"",
+   "asm": "efdc55a7b1ff28a5",
+   "asm_from": "debug/firmware.asm",
+   "mir": "71d269707d9a68e2",
+   "rom": 222,
+   "status": "ok"
+  },
+  "adc|atmega48": {
+   "adc": "\"PC0\"",
+   "asm": "eda741dd84f183c3",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 172,
+   "status": "ok"
+  },
+  "adc|atmega48p": {
+   "adc": "\"PC0\"",
+   "asm": "eda741dd84f183c3",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 172,
+   "status": "ok"
+  },
+  "adc|atmega88": {
+   "adc": "\"PC0\"",
+   "asm": "602d9870d771164d",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 172,
+   "status": "ok"
+  },
+  "adc|atmega88p": {
+   "adc": "\"PC0\"",
+   "asm": "602d9870d771164d",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1b9e0890599eb092",
+   "rom": 172,
+   "status": "ok"
+  },
+  "adc|attiny13": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "adc=\"PB2\": static data needs 9 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+   "status": "no-build"
+  },
+  "adc|attiny13a": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "adc=\"PB2\": static data needs 9 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build"
+  },
+  "adc|attiny2313": {
+   "adc": "\"PC0\"",
+   "asm": "6afddb995ee48c56",
+   "asm_from": "debug/firmware.asm",
+   "mir": "de8229145c302f02",
+   "rom": 160,
+   "status": "ok"
+  },
+  "adc|attiny24": {
+   "adc": "\"PC0\"",
+   "asm": "63cf8b9c802de7f8",
+   "asm_from": "debug/firmware.asm",
+   "mir": "201bbf6511e7c06e",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|attiny25": {
+   "adc": "\"PC0\"",
+   "asm": "c91c0c466f649ebd",
+   "asm_from": "debug/firmware.asm",
+   "mir": "33d21584c98d8357",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|attiny4313": {
+   "adc": "\"PC0\"",
+   "asm": "629afb32a300626d",
+   "asm_from": "debug/firmware.asm",
+   "mir": "de8229145c302f02",
+   "rom": 160,
+   "status": "ok"
+  },
+  "adc|attiny44": {
+   "adc": "\"PC0\"",
+   "asm": "e97ab343d3a9e79f",
+   "asm_from": "debug/firmware.asm",
+   "mir": "201bbf6511e7c06e",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|attiny45": {
+   "adc": "\"PC0\"",
+   "asm": "1937a07e8c66fc7f",
+   "asm_from": "debug/firmware.asm",
+   "mir": "33d21584c98d8357",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|attiny84": {
+   "adc": "\"PC0\"",
+   "asm": "a3cc0d29280792d8",
+   "asm_from": "debug/firmware.asm",
+   "mir": "201bbf6511e7c06e",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|attiny85": {
+   "adc": "\"PC0\"",
+   "asm": "e4749f6eb56041d5",
+   "asm_from": "debug/firmware.asm",
+   "mir": "33d21584c98d8357",
+   "rom": 154,
+   "status": "ok"
+  },
+  "adc|ch32v003": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|ch32v203": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "adc=\"PA1\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "adc=\"GP0\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "adc=\"RA0\": CompileError: ADC not supported on this architecture (module guard at adc.py:15) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|pic16f628a": {
+   "kind": "hal-incompleto",
+   "proves": "nada: el HAL de ese chip no define la funcion",
+   "reason": "adc=\"RA0\": CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|pic16f84a": {
+   "kind": "hal-incompleto",
+   "proves": "nada: el HAL de ese chip no define la funcion",
+   "reason": "adc=\"RA0\": CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "status": "no-build"
+  },
+  "adc|pic16f877a": {
+   "kind": "hal-incompleto",
+   "proves": "nada: el HAL de ese chip no define la funcion",
+   "reason": "adc=\"RA0\": CompileError: call to undefined function 'adc_init' (typo, or a missing import?) 6 | def m",
+   "status": "no-build"
+  },
+  "adc|pic18f45k50": {
+   "adc": "\"RA0\"",
+   "asm": "dcaba6c771a3f2e9",
+   "asm_from": "debug/firmware.asm",
+   "mir": "fc7342a061c5f213",
+   "rom": 156,
+   "status": "ok"
+  },
+  "adc|rp2040": {
+   "adc": "26",
+   "asm": "92dcecfa97157ed6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "1f431c1ce3d2cdd0",
+   "rom": 948,
+   "status": "ok"
+  },
+  "adc|rp2350": {
+   "adc": "26",
+   "asm": "29707a1af3e1d39d",
+   "asm_from": "debug/firmware.asm",
+   "mir": "3d2d475aa57c5d8b",
+   "rom": 892,
+   "status": "ok"
+  },
+  "asyncio|atmega168": {
+   "asm": "e6e50b93e9111527",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1754,
+   "status": "ok"
+  },
+  "asyncio|atmega168p": {
+   "asm": "e6e50b93e9111527",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1754,
+   "status": "ok"
+  },
+  "asyncio|atmega2560": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "asyncio|atmega328": {
+   "asm": "495a11fe74c1df2b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1754,
+   "status": "ok"
+  },
+  "asyncio|atmega328p": {
+   "asm": "495a11fe74c1df2b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1754,
+   "status": "ok"
+  },
+  "asyncio|atmega32u4": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "asyncio|atmega48": {
+   "asm": "930db414fb8a6aac",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1704,
+   "status": "ok"
+  },
+  "asyncio|atmega48p": {
+   "asm": "930db414fb8a6aac",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1704,
+   "status": "ok"
+  },
+  "asyncio|atmega88": {
+   "asm": "97a370952111907c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1704,
+   "status": "ok"
+  },
+  "asyncio|atmega88p": {
+   "asm": "97a370952111907c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "bebfa2892bfbb174",
+   "pin": "\"PB5\"",
+   "rom": 1704,
+   "status": "ok"
+  },
+  "asyncio|attiny13": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny13a": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny2313": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny24": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny25": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny4313": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny44": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny45": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny84": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|attiny85": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | async def blink(): 6 | led = Pin(\"P",
+   "status": "no-build"
+  },
+  "asyncio|ch32v003": {
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PA1\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build"
+  },
+  "asyncio|ch32v203": {
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"PA1\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build"
+  },
+  "asyncio|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | asy",
+   "status": "no-build"
+  },
+  "asyncio|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | asy",
+   "status": "no-build"
+  },
+  "asyncio|pic16f628a": {
+   "kind": "pin-inexistente",
+   "proves": "nada: ese pin no existe en este chip: el arnes probo mal",
+   "reason": "pin=\"RD2\": CompileError: Unknown pin for PIC16F628A 5 | async def blink(): 6 | led = Pin(\"RD2\", Pin.O",
+   "status": "no-build"
+  },
+  "asyncio|pic16f84a": {
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"RD2\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build"
+  },
+  "asyncio|pic16f877a": {
+   "kind": "sin-timebase",
+   "proves": "nada: sin base de tiempos: async y millis no pueden existir",
+   "reason": "pin=\"RD2\": CompileError: async needs a timebase; not available on this architecture yet: only ATmega",
+   "status": "no-build"
+  },
+  "asyncio|pic18f45k50": {
+   "asm": "812ba251a4e00c08",
+   "asm_from": "debug/firmware.asm",
+   "mir": "4ad8f5ffed71f2b7",
+   "pin": "\"RD2\"",
+   "rom": 1298,
+   "status": "ok"
+  },
+  "asyncio|rp2040": {
+   "asm": "1062284641a9c357",
+   "asm_from": "debug/firmware.asm",
+   "mir": "618221aa5f9c7cc0",
+   "pin": "25",
+   "rom": 1216,
+   "status": "ok"
+  },
+  "asyncio|rp2350": {
+   "asm": "1f78349c7d3a0289",
+   "asm_from": "debug/firmware.asm",
+   "mir": "36fee577a9614af3",
+   "pin": "25",
+   "rom": 1196,
+   "status": "ok"
+  },
+  "blink|atmega168": {
+   "asm": "c58b9f040edff8fd",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
+  },
+  "blink|atmega168p": {
+   "asm": "c58b9f040edff8fd",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
+  },
+  "blink|atmega2560": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "blink|atmega328": {
+   "asm": "1818dd00fa269485",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
+  },
+  "blink|atmega328p": {
+   "asm": "1818dd00fa269485",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 150,
+   "status": "ok"
+  },
+  "blink|atmega32u4": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "blink|atmega48": {
+   "asm": "16f06adc58b8f083",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 100,
+   "status": "ok"
+  },
+  "blink|atmega48p": {
+   "asm": "16f06adc58b8f083",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 100,
+   "status": "ok"
+  },
+  "blink|atmega88": {
+   "asm": "10fab22e17b9ab39",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 100,
+   "status": "ok"
+  },
+  "blink|atmega88p": {
+   "asm": "10fab22e17b9ab39",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c28e3ab3f371a9b6",
+   "pin": "\"PB5\"",
+   "rom": 100,
+   "status": "ok"
+  },
+  "blink|attiny13": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi",
+   "status": "no-build"
+  },
+  "blink|attiny13a": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 5 | def main(): 6 | led = Pin(\"PC7\", Pi",
+   "status": "no-build"
+  },
+  "blink|attiny2313": {
+   "asm": "16e1e87a7d65195c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "b87d3f54e8c27523",
+   "pin": "\"PB5\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny24": {
+   "asm": "a7aadcfc3bbcfb3c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "20c7d776e3f4ac5a",
+   "pin": "\"PB0\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny25": {
+   "asm": "16e1e87a7d65195c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "eebfa1a291147bea",
+   "pin": "\"PB5\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny4313": {
+   "asm": "7c047869fc055b71",
+   "asm_from": "debug/firmware.asm",
+   "mir": "b87d3f54e8c27523",
+   "pin": "\"PB5\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny44": {
+   "asm": "522fec1a41f0bac5",
+   "asm_from": "debug/firmware.asm",
+   "mir": "20c7d776e3f4ac5a",
+   "pin": "\"PB0\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny45": {
+   "asm": "7c047869fc055b71",
+   "asm_from": "debug/firmware.asm",
+   "mir": "eebfa1a291147bea",
+   "pin": "\"PB5\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny84": {
+   "asm": "4db138c1debbc772",
+   "asm_from": "debug/firmware.asm",
+   "mir": "20c7d776e3f4ac5a",
+   "pin": "\"PB0\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|attiny85": {
+   "asm": "274983b84066725a",
+   "asm_from": "debug/firmware.asm",
+   "mir": "eebfa1a291147bea",
+   "pin": "\"PB5\"",
+   "rom": 112,
+   "status": "ok"
+  },
+  "blink|ch32v003": {
+   "asm": "2020e53c28aa37de",
+   "asm_from": "debug/firmware.asm",
+   "mir": "e250e2839cd6e7fb",
+   "pin": "\"PD4\"",
+   "rom": 444,
+   "status": "ok"
+  },
+  "blink|ch32v203": {
+   "asm": "dfcfef0395585d90",
+   "asm_from": "debug/firmware.asm",
+   "mir": "cc93114278675dfa",
+   "pin": "\"PD4\"",
+   "rom": 440,
+   "status": "ok"
+  },
+  "blink|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | def",
+   "status": "no-build"
+  },
+  "blink|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 5 | def",
+   "status": "no-build"
+  },
+  "blink|pic16f628a": {
+   "asm": "8b48c89b8b5d8066",
+   "asm_from": "debug/firmware.asm",
+   "mir": "ac27a43cd858dc63",
+   "pin": "\"RB3\"",
+   "rom": 104,
+   "status": "ok"
+  },
+  "blink|pic16f84a": {
+   "asm": "fbc8c787dda8fe16",
+   "asm_from": "debug/firmware.asm",
+   "mir": "481aa5e3ed3750ed",
+   "pin": "\"RB3\"",
+   "rom": 96,
+   "status": "ok"
+  },
+  "blink|pic16f877a": {
+   "asm": "532d066bd9046c2a",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c49a54a2e647bdc9",
+   "pin": "\"RB3\"",
+   "rom": 96,
+   "status": "ok"
+  },
+  "blink|pic18f45k50": {
+   "asm": "db6ec12e26f8a71b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "b844e8e34aaa724a",
+   "pin": "\"RD2\"",
+   "rom": 110,
+   "status": "ok"
+  },
+  "blink|rp2040": {
+   "asm": "3030e12d9798ac8b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "66b3b792546c79ce",
+   "pin": "25",
+   "rom": 924,
+   "status": "ok"
+  },
+  "blink|rp2350": {
+   "asm": "f74f4594449b247d",
+   "asm_from": "debug/firmware.asm",
+   "mir": "3ee09f31a2b93c4f",
+   "pin": "25",
+   "rom": 872,
+   "status": "ok"
+  },
+  "call|atmega168": {
+   "asm": "4a30b5df928a1833",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
+  },
+  "call|atmega168p": {
+   "asm": "4a30b5df928a1833",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
+  },
+  "call|atmega2560": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "call|atmega328": {
+   "asm": "ac253c909bf05ece",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
+  },
+  "call|atmega328p": {
+   "asm": "ac253c909bf05ece",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 232,
+   "status": "ok"
+  },
+  "call|atmega32u4": {
+   "kind": "backend-roto",
+   "proves": "nada: error interno al montar la ISR",
+   "reason": "pin=\"PC7\": InternalCompilerError: compile_isr(): function 'handler' not found. Ensure the handler is",
+   "status": "no-build"
+  },
+  "call|atmega48": {
+   "asm": "5702fc7d524960f6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|atmega48p": {
+   "asm": "5702fc7d524960f6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|atmega88": {
+   "asm": "8bf54905004aea4b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|atmega88p": {
+   "asm": "8bf54905004aea4b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "24233c5248bac5bd",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny13": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\",",
+   "status": "no-build"
+  },
+  "call|attiny13a": {
+   "kind": "sin-mapa-de-pines",
+   "proves": "nada: el HAL no conoce los pines de este chip",
+   "reason": "pin=\"PC7\": CompileError: NotImplementedError: Unsupported Pin 14 | def main(): 15 | led = Pin(\"PC7\",",
+   "status": "no-build"
+  },
+  "call|attiny2313": {
+   "asm": "2e880da86a5d6609",
+   "asm_from": "debug/firmware.asm",
+   "mir": "d4080a27c358386f",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny24": {
+   "asm": "3ce7d99aeea5c113",
+   "asm_from": "debug/firmware.asm",
+   "mir": "dcc3e709341ee698",
+   "pin": "\"PB0\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny25": {
+   "asm": "2e880da86a5d6609",
+   "asm_from": "debug/firmware.asm",
+   "mir": "11a355f69ae6b516",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny4313": {
+   "asm": "dec1451fecab4c73",
+   "asm_from": "debug/firmware.asm",
+   "mir": "d4080a27c358386f",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny44": {
+   "asm": "0ce35931f7fec29f",
+   "asm_from": "debug/firmware.asm",
+   "mir": "dcc3e709341ee698",
+   "pin": "\"PB0\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny45": {
+   "asm": "dec1451fecab4c73",
+   "asm_from": "debug/firmware.asm",
+   "mir": "11a355f69ae6b516",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny84": {
+   "asm": "404226a179277f40",
+   "asm_from": "debug/firmware.asm",
+   "mir": "dcc3e709341ee698",
+   "pin": "\"PB0\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|attiny85": {
+   "asm": "ea35e19698fa0eff",
+   "asm_from": "debug/firmware.asm",
+   "mir": "11a355f69ae6b516",
+   "pin": "\"PB5\"",
+   "rom": 182,
+   "status": "ok"
+  },
+  "call|ch32v003": {
+   "asm": "a50c566456b3ffde",
+   "asm_from": "debug/firmware.asm",
+   "mir": "d395d1939ded31ec",
+   "pin": "\"PD4\"",
+   "rom": 472,
+   "status": "ok"
+  },
+  "call|ch32v203": {
+   "asm": "322edf898e7770ed",
+   "asm_from": "debug/firmware.asm",
+   "mir": "35ee564dd49942e5",
+   "pin": "\"PD4\"",
+   "rom": 468,
+   "status": "ok"
+  },
+  "call|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"GP1\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 14 | de",
+   "status": "no-build"
+  },
+  "call|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "pin=\"RB0\": CompileError: GPIO not supported on this architecture (module guard at gpio.py:17) 14 | de",
+   "status": "no-build"
+  },
+  "call|pic16f628a": {
+   "asm": "5bf0586db368ccd4",
+   "asm_from": "debug/firmware.asm",
+   "mir": "3c0c671476e32b34",
+   "pin": "\"RB3\"",
+   "rom": 180,
+   "status": "ok"
+  },
+  "call|pic16f84a": {
+   "asm": "85ffe227241c64a9",
+   "asm_from": "debug/firmware.asm",
+   "mir": "6c9cdc804cc461d7",
+   "pin": "\"RB3\"",
+   "rom": 172,
+   "status": "ok"
+  },
+  "call|pic16f877a": {
+   "asm": "8f000ff281578941",
+   "asm_from": "debug/firmware.asm",
+   "mir": "8d923221a829ce63",
+   "pin": "\"RB3\"",
+   "rom": 172,
+   "status": "ok"
+  },
+  "call|pic18f45k50": {
+   "asm": "605fea056cf234b8",
+   "asm_from": "debug/firmware.asm",
+   "mir": "edceb4b72e91aed4",
+   "pin": "\"RD2\"",
+   "rom": 210,
+   "status": "ok"
+  },
+  "call|rp2040": {
+   "asm": "73af8baa8e18f0da",
+   "asm_from": "debug/firmware.asm",
+   "mir": "d5f9db53ea4b080a",
+   "pin": "25",
+   "rom": 908,
+   "status": "ok"
+  },
+  "call|rp2350": {
+   "asm": "930fc24161d2b9ed",
+   "asm_from": "debug/firmware.asm",
+   "mir": "5c932cb0dc171e17",
+   "pin": "25",
+   "rom": 848,
+   "status": "ok"
+  },
+  "float|atmega168": {
+   "asm": "9ac47ba42b7359cf",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1248,
+   "status": "ok"
+  },
+  "float|atmega168p": {
+   "asm": "9ac47ba42b7359cf",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1248,
+   "status": "ok"
+  },
+  "float|atmega2560": {
+   "asm": "3661650b5549ae01",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1218,
+   "status": "ok"
+  },
+  "float|atmega328": {
+   "asm": "cfa837393aa8bd03",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1248,
+   "status": "ok"
+  },
+  "float|atmega328p": {
+   "asm": "cfa837393aa8bd03",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1248,
+   "status": "ok"
+  },
+  "float|atmega32u4": {
+   "asm": "3e92c49874c24642",
+   "asm_from": "debug/firmware.asm",
+   "mir": "9ca9a0d0589aeb1e",
+   "rom": 1248,
+   "status": "ok"
+  },
+  "float|atmega48": {
+   "asm": "3efc6e9bc64f7cab",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|atmega48p": {
+   "asm": "3efc6e9bc64f7cab",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|atmega88": {
+   "asm": "3ab69bca8be50b1b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|atmega88p": {
+   "asm": "3ab69bca8be50b1b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny13": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 22 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build"
+  },
+  "float|attiny13a": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 22 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs ro",
+   "status": "no-build"
+  },
+  "float|attiny2313": {
+   "asm": "4a149880928d3194",
+   "asm_from": "debug/firmware.asm",
+   "mir": "dbbbd90c41274cee",
+   "rom": 1186,
+   "status": "ok"
+  },
+  "float|attiny24": {
+   "asm": "0cc7e490c5d0f7d0",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny25": {
+   "asm": "0cc7e490c5d0f7d0",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny4313": {
+   "asm": "da5d9a87e4f338ea",
+   "asm_from": "debug/firmware.asm",
+   "mir": "dbbbd90c41274cee",
+   "rom": 1186,
+   "status": "ok"
+  },
+  "float|attiny44": {
+   "asm": "6a02bbf606be9e5b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny45": {
+   "asm": "6a02bbf606be9e5b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny84": {
+   "asm": "cb61d9bf6afb4296",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|attiny85": {
+   "asm": "cb61d9bf6afb4296",
+   "asm_from": "debug/firmware.asm",
+   "mir": "321d5870759311e9",
+   "rom": 1198,
+   "status": "ok"
+  },
+  "float|ch32v003": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "float|ch32v203": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "float|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "float|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "float|pic16f628a": {
+   "kind": "backend-roto",
+   "proves": "nada: limitacion del backend",
+   "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
+   "status": "no-build"
+  },
+  "float|pic16f84a": {
+   "kind": "hal-incompleto",
+   "proves": "nada: el HAL de ese chip no define la funcion",
+   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "status": "no-build"
+  },
+  "float|pic16f877a": {
+   "kind": "backend-roto",
+   "proves": "nada: limitacion del backend",
+   "reason": "PIC14: Copy only supports 1, 2, 4 bytes",
+   "status": "no-build"
+  },
+  "float|pic18f45k50": {
+   "asm": "0af48c0175f4035b",
+   "asm_from": "debug/firmware.asm",
+   "mir": "03d65bebe5121913",
+   "rom": 2764,
+   "status": "ok"
+  },
+  "float|rp2040": {
+   "asm": "231e31a2d5325f82",
+   "asm_from": "debug/firmware.asm",
+   "mir": "902772999576a1fb",
+   "rom": 840,
+   "status": "ok"
+  },
+  "float|rp2350": {
+   "asm": "e274dfeb7b9ddb37",
+   "asm_from": "debug/firmware.asm",
+   "mir": "fbab42ef8cc23653",
+   "rom": 772,
+   "status": "ok"
+  },
+  "uart|atmega168": {
+   "asm": "fd5a94a28d690c86",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega168p": {
+   "asm": "fd5a94a28d690c86",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega2560": {
+   "asm": "b191f7806e7f34e1",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega328": {
+   "asm": "3ff11305d160049c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega328p": {
+   "asm": "3ff11305d160049c",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega32u4": {
+   "asm": "0df52aa470f405d6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "e92892a546185dea",
+   "rom": 182,
+   "status": "ok"
+  },
+  "uart|atmega48": {
+   "asm": "293e1028dc2ee2a6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|atmega48p": {
+   "asm": "293e1028dc2ee2a6",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|atmega88": {
+   "asm": "5cee91f468f974dc",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|atmega88p": {
+   "asm": "5cee91f468f974dc",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny13": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 4 bytes but attiny13 has 64 bytes of SRAM (and the call stack needs room",
+   "status": "no-build"
+  },
+  "uart|attiny13a": {
+   "kind": "sin-RAM",
+   "proves": "nada: el programa no cabe en la RAM del chip",
+   "reason": "static data needs 4 bytes but attiny13a has 64 bytes of SRAM (and the call stack needs roo",
+   "status": "no-build"
+  },
+  "uart|attiny2313": {
+   "asm": "f6fb8b620e2dd5d5",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c030319cdeef5d3b",
+   "rom": 120,
+   "status": "ok"
+  },
+  "uart|attiny24": {
+   "asm": "5045d317d4aa5930",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny25": {
+   "asm": "5045d317d4aa5930",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny4313": {
+   "asm": "a09bbe3e8a3dc999",
+   "asm_from": "debug/firmware.asm",
+   "mir": "c030319cdeef5d3b",
+   "rom": 120,
+   "status": "ok"
+  },
+  "uart|attiny44": {
+   "asm": "9c589486228116ea",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny45": {
+   "asm": "9c589486228116ea",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny84": {
+   "asm": "6a025f2c7da67bb7",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|attiny85": {
+   "asm": "6a025f2c7da67bb7",
+   "asm_from": "debug/firmware.asm",
+   "mir": "a91555221972ba84",
+   "rom": 132,
+   "status": "ok"
+  },
+  "uart|ch32v003": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "uart|ch32v203": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "uart|pic10f200": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "uart|pic16f18877": {
+   "kind": "sin-facade",
+   "proves": "nada: el facade rechaza la arquitectura",
+   "reason": "CompileError: UART not supported on this architecture (module guard at uart.py:24) 5 | def",
+   "status": "no-build"
+  },
+  "uart|pic16f628a": {
+   "asm": "9b10b1ca663242cd",
+   "asm_from": "debug/firmware.asm",
+   "mir": "b8e2a024ae25f15b",
+   "rom": 78,
+   "status": "ok"
+  },
+  "uart|pic16f84a": {
+   "kind": "hal-incompleto",
+   "proves": "nada: el HAL de ese chip no define la funcion",
+   "reason": "CompileError: call to undefined function 'uart_write' (typo, or a missing import?)",
+   "status": "no-build"
+  },
+  "uart|pic16f877a": {
+   "asm": "5b8457841611b0a4",
+   "asm_from": "debug/firmware.asm",
+   "mir": "0bcf878d8ea9956e",
+   "rom": 76,
+   "status": "ok"
+  },
+  "uart|pic18f45k50": {
+   "asm": "08e002f61b86dc47",
+   "asm_from": "debug/firmware.asm",
+   "mir": "da3f9ff0af0e89cd",
+   "rom": 104,
+   "status": "ok"
+  },
+  "uart|rp2040": {
+   "asm": "e36a807f102114b1",
+   "asm_from": "debug/firmware.asm",
+   "mir": "77c546743d9104b3",
+   "rom": 840,
+   "status": "ok"
+  },
+  "uart|rp2350": {
+   "asm": "a9bf48eca4fea675",
+   "asm_from": "debug/firmware.asm",
+   "mir": "f008caaf6fc1864e",
+   "rom": 780,
+   "status": "ok"
+  }
+ },
+ "provenance": {
+  "compiler_tree_dirty": [],
+  "head": "86e30a93",
+  "toolchain": {
+   "pymcuc": {
+    "binary": "/Users/begeistert/Repos/PyMCU/build/bin/pymcuc",
+    "repo": "PyMCU",
+    "repo_dirty": [],
+    "repo_head": "86e30a93",
+    "scope": "src/compiler",
+    "sha": "40450439983c687a",
+    "stamp": "86e30a93"
+   },
+   "pymcuc-avr": {
+    "binary": "/Users/begeistert/Repos/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr",
+    "repo": "pymcu-avr",
+    "repo_dirty": [],
+    "repo_head": "ddd9b9a8",
+    "scope": ".",
+    "sha": "7255063841a1a57d",
+    "stale": "compilado en 63328d10, el repo va por ddd9b9a8",
+    "stamp": "63328d10"
+   },
+   "pymcuc-pic": {
+    "binary": "/Users/begeistert/Repos/pymcu-pic-fix/build/bin/pymcuc-pic",
+    "repo": "pymcu-pic-fix",
+    "repo_dirty": [],
+    "repo_head": "50135feb",
+    "scope": ".",
+    "sha": "94c5efc0945e6e9a",
+    "stale": "compilado en b35d455f, el repo va por 50135feb",
+    "stamp": "b35d455f"
+   },
+   "pymcuc-riscv": {
+    "binary": "/Users/begeistert/Repos/PyMCU/extensions/pymcu-backend-riscv/src/python/pymcu/backend/riscv/pymcuc-riscv",
+    "repo": "PyMCU",
+    "repo_dirty": [],
+    "repo_head": "86e30a93",
+    "scope": "extensions/pymcu-backend-riscv",
+    "sha": "51485c05bf94ba74",
+    "stale": "compilado en 92edbb63, el repo va por 86e30a93",
+    "stamp": "92edbb63"
+   },
+   "pymcuc-rp2040": {
+    "binary": "/Users/begeistert/Repos/pymcu-arm/src/python/pymcu/backend/rp2040/pymcuc-arm",
+    "repo": "pymcu-arm",
+    "repo_dirty": [
+     "src/python/pymcu/toolchain/rp2040/llvm.py",
+     "src/python/pymcu/toolchain/rp2040/wasi.py"
+    ],
+    "repo_head": "e5e40639",
+    "scope": ".",
+    "sha": "0e795246d6f748c4",
+    "stale": "compilado en 1eb37be2, el repo va por e5e40639",
+    "stamp": "1eb37be2"
+   }
+  }
  }
 }
