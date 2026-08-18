@@ -73,6 +73,43 @@ public class OptimizerTests
     }
 
     [Fact]
+    public void InlineParam_ShadowsSameNamedModuleGlobal()
+    {
+        // A user global named like a library @inline's parameter must not hijack the
+        // body's reads of that parameter: `data = 5` at module level made
+        // uart.write('hello') error claiming 'data' varies at runtime.
+        var optimized = GenerateAndOptimize(
+            "@inline\n" +
+            "def emit(data: const[str]) -> uint8:\n" +
+            "    return len(data)\n" +
+            "data = 5\n" +
+            "def main():\n" +
+            "    x: uint8 = emit(\"hola\")\n" +
+            "    return x");
+        var ret = optimized.Functions[0].Body.OfType<Return>().First();
+        var c = Assert.IsType<Constant>(ret.Value);
+        Assert.Equal(4, c.Value);
+    }
+
+    [Fact]
+    public void UnannotatedModuleGlobal_WidensToInlineCallResultType()
+    {
+        // ScanGlobals cannot type `f0 = get()` and registered it uint8; the store
+        // then wrapped 1000 to 232. The first top-level assignment must widen the
+        // global to the call's declared return type.
+        var optimized = GenerateAndOptimize(
+            "@inline\n" +
+            "def get() -> uint16:\n" +
+            "    return 1000\n" +
+            "f0 = get()\n" +
+            "def main():\n" +
+            "    return f0");
+        var body = optimized.Functions[0].Body;
+        Assert.Contains(body, i =>
+            i is Copy { Src: Constant { Value: 1000 }, Dst: Variable { Type: DataType.UINT16 } });
+    }
+
+    [Fact]
     public void DeadCodeElimination()
     {
         // Unused temporary `a = 1 + 2` — after DCE no Binary should remain.

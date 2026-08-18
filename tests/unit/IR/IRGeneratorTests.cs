@@ -22,6 +22,43 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void RaiseCompileError_InInlineBody_FiresUnderCallSiteRuntimeBranch()
+    {
+        // The raise is unconditional INSIDE the @inline body; user control flow
+        // around the CALL must not downgrade it to a warning (readline() inside
+        // `while True: if uart.any():` silently compiled to garbage).
+        var src =
+            "@inline\n" +
+            "def bad() -> uint8:\n" +
+            "    raise CompileError(\"no heap here\")\n" +
+            "def main():\n" +
+            "    n: uint8 = 0\n" +
+            "    while n < 10:\n" +
+            "        x: uint8 = bad()\n" +
+            "        n = n + 1\n";
+        var ex = Assert.ThrowsAny<Exception>(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+        Assert.Contains("no heap here", ex.Message);
+    }
+
+    [Fact]
+    public void RaiseCompileError_BehindFoldedConstGuard_DoesNotFire()
+    {
+        var src =
+            "@inline\n" +
+            "def guarded(mode: const[uint8]) -> uint8:\n" +
+            "    if mode == 1:\n" +
+            "        raise CompileError(\"wrong mode\")\n" +
+            "    return 7\n" +
+            "def main():\n" +
+            "    n: uint8 = 0\n" +
+            "    while n < 10:\n" +
+            "        x: uint8 = guarded(0)\n" +
+            "        n = n + 1\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
     public void SimpleReturn()
     {
         var ir = GenerateIR("def main():\n    return 42");
