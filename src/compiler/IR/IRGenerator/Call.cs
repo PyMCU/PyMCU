@@ -1495,6 +1495,17 @@ public partial class IRGenerator
             string ArgTypeSuffix(Expression arg)
             {
                 if (arg is StringLiteral) return "str";
+                // A nested constructor call types as its class: ADC(Pin(14)) must select
+                // the Pin overload, not fall through to a numeric suffix and land on
+                // the const[uint8] channel overload.
+                if (arg is CallExpr { Callee: VariableExpr ctor })
+                {
+                    string ctorName = aliasToOriginal.TryGetValue(ctor.Name, out var orig) && orig != null
+                        ? orig : ctor.Name;
+                    if (classNames.Contains(ctorName)) return ctorName;
+                    string shortCtor = ShortClassName(ctorName);
+                    if (classNames.Contains(shortCtor)) return shortCtor;
+                }
                 if (arg is VariableExpr v)
                 {
                     string key = currentInlinePrefix + v.Name;
