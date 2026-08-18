@@ -1431,4 +1431,4 @@ __fp_floor_guard:
 	RLCF	__fp_ma+3, F
 	DECFSZ	__fp_c, F
 	BRA	__fp_floor_guard
-	BRA	__fp_round
+	GOTO	__fp_round
