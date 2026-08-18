@@ -13,8 +13,9 @@ from pymcu.types import ptr, uint8, uint16, device_info
 # ==========================================
 RAM_START = 0x0100
 RAM_SIZE = 2560
+FLASH_SIZE = 32768
 
-device_info(chip="atmega32u4", arch="avr", ram_size=RAM_SIZE)
+device_info(chip="atmega32u4", arch="avr", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (ATmega32U4)

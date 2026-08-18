@@ -19,8 +19,9 @@ from pymcu.types import ptr, uint8, uint16, device_info
 # ==========================================
 RAM_START = 0x0060
 RAM_SIZE = 128
+FLASH_SIZE = 2048
 
-device_info(chip="attiny24", arch="avr", ram_size=RAM_SIZE)
+device_info(chip="attiny24", arch="avr", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (ATtiny24)

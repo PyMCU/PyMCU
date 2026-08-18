@@ -20,8 +20,9 @@ from pymcu.types import ptr, uint8, uint16, device_info
 # ==========================================
 RAM_START = 0x0200
 RAM_SIZE = 8192
+FLASH_SIZE = 262144
 
-device_info(chip="atmega2560", arch="avr", ram_size=RAM_SIZE)
+device_info(chip="atmega2560", arch="avr", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (ATmega2560)

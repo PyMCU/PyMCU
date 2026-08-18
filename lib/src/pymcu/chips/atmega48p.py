@@ -18,8 +18,9 @@ from pymcu.types import ptr, uint8, uint16, device_info
 # ==========================================
 RAM_START = 0x0100
 RAM_SIZE = 512
+FLASH_SIZE = 4096
 
-device_info(chip="atmega48p", arch="avr", ram_size=RAM_SIZE)
+device_info(chip="atmega48p", arch="avr", ram_size=RAM_SIZE, flash_size=FLASH_SIZE)
 
 # ==========================================
 #  Register Definitions (ATmega48P)

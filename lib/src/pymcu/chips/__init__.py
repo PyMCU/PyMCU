@@ -46,6 +46,10 @@ class _ChipInfo:
     # Total SRAM in bytes as reported by device_info().
     ram_size: int = 0
 
+    # Program storage in bytes as reported by device_info(); 0 means the chip
+    # has none of its own, as on the RP parts that run from board flash.
+    flash_size: int = 0
+
 
 # Singleton used as a type anchor for `from pymcu.chips import __CHIP__`.
 # The compiler replaces every __CHIP__ reference; this object is only here

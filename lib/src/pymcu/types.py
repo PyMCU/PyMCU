@@ -97,7 +97,12 @@ class const(Generic[T]):
         )
 
 
-def device_info(arch: str, chip: str = "", ram_size: int = 0):
+def device_info(arch: str, chip: str = "", ram_size: int = 0, flash_size: int = 0):
+    # flash_size is program storage in BYTES as the programmer and the hex file
+    # address it: native bytes on AVR and PIC18, words x2 on PIC12 and PIC14,
+    # whose hex format is byte-doubled. Left at 0 where it is not a property of
+    # the chip -- the RP parts execute from a board's external flash through the
+    # XIP window -- and 0 there means "does not apply", never "tiny".
     pass
 
 

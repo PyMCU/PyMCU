@@ -37,7 +37,7 @@ def chip_constants(path: Path):
     """Read the constants from source; an import can serve a stale .pyc."""
     text = path.read_text()
     out = {}
-    for name in ("RAM_START", "RAM_SIZE"):
+    for name in ("RAM_START", "RAM_SIZE", "FLASH_SIZE"):
         m = re.search(rf"^{name}\s*=\s*(0x[0-9A-Fa-f]+|\d+)", text, re.M)
         if m:
             out[name] = int(m.group(1), 0)
@@ -108,7 +108,8 @@ def backend_table():
     except json.JSONDecodeError as exc:
         raise AssertionError(
             f"{BACKEND_BINARY} devices did not return JSON: {exc}") from exc
-    return {r["Chip"]: (r["RamStart"], r["RamSize"], r["HasJmpCall"], r["RamEnd"])
+    return {r["Chip"]: (r["RamStart"], r["RamSize"], r["HasJmpCall"], r["RamEnd"],
+                        r.get("FlashSize"))
             for r in rows}
 
 
@@ -160,7 +161,7 @@ def test_the_backend_table_agrees_with_the_chip_file(chip):
     """The ATmega2560 case: a correct chip file the backend was not reading."""
     if chip not in BACKEND:
         pytest.skip(f"the backend table has no entry for {chip}")
-    start, size, _, _ = BACKEND[chip]
+    start, size, _, _, _ = BACKEND[chip]
     ours = chip_constants(CHIPS / f"{chip}.py")
     assert (start, size) == (ours["RAM_START"], ours["RAM_SIZE"]), \
         (f"{chip}: backend has 0x{start:04X}/{size}, "
@@ -191,13 +192,29 @@ def test_the_backend_computes_its_own_ram_end(chip):
     """RamEnd is published, not transcribed; if it stops agreeing there is a third source."""
     if chip not in BACKEND:
         pytest.skip(f"the backend catalogue has no entry for {chip}")
-    start, size, _, end = BACKEND[chip]
+    start, size, _, end, _ = BACKEND[chip]
     assert end == start + size - 1, \
         f"{chip}: backend publishes RamEnd={end}, its own start and size give {start + size - 1}"
 
 
 def test_there_are_avr_chips_to_check():
     assert len(AVR_CHIPS) >= 15, f"only {len(AVR_CHIPS)} AVR chip files found"
+
+
+@needs_backend
+@pytest.mark.parametrize("chip", AVR_CHIPS)
+def test_flash_size_matches_the_backend_catalogue(chip):
+    """Program storage, in the bytes the programmer and the hex file address.
+
+    It decides which parts can afford the full float writer, so a wrong value
+    here does not misprint a number -- it silently picks the wrong writer for a
+    chip, or overflows one that could not afford it.
+    """
+    if chip not in BACKEND:
+        pytest.skip(f"the backend catalogue has no entry for {chip}")
+    ours = chip_constants(CHIPS / f"{chip}.py").get("FLASH_SIZE")
+    assert ours == BACKEND[chip][4], \
+        f"{chip}: chip file says {ours}, the backend catalogue says {BACKEND[chip][4]}"
 
 
 @needs_backend
