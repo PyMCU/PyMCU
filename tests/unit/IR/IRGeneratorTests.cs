@@ -22,6 +22,28 @@ public class IRGeneratorTests
     }
 
     [Fact]
+    public void PlainFunctionParam_ShadowsSameNamedModuleGlobal()
+    {
+        // The non-@inline half of the shadowing bug: a module global named like a
+        // plain def's parameter hijacked every read of that parameter (a user-level
+        // start_low_ms = 250 drove the DHT driver's start pulse for 250 ms).
+        var src =
+            "def probe(start_low_ms: uint16) -> uint32:\n" +
+            "    wide: uint32 = start_low_ms\n" +
+            "    return wide * 2\n" +
+            "start_low_ms: uint16 = 250\n" +
+            "def main():\n" +
+            "    x: uint32 = probe(18)\n" +
+            "    return x\n";
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+        var probe = ir.Functions.First(f => f.Name == "probe");
+        Assert.Contains(probe.Body, i2 =>
+            i2 is Copy { Src: Variable { Name: "probe.start_low_ms" } });
+        Assert.DoesNotContain(probe.Body, i2 =>
+            i2 is Copy { Src: Variable { Name: "start_low_ms" } });
+    }
+
+    [Fact]
     public void ForIn_SliceWithRuntimeBounds_BecomesRangeLoop()
     {
         // for b in buf[0:n] with a runtime n rewrites to a range loop reading

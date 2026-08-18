@@ -834,6 +834,19 @@ public partial class IRGenerator
                 {
                     return new Constant(localVal);
                 }
+
+                // A PARAMETER of a plain (non-@inline) function shadows a module global
+                // of the same name -- Python scoping. Without this, a user-level
+                // `start_low_ms = 250` hijacked every read of dht_read's start_low_ms
+                // parameter and the driver held its start pulse for 250 ms. Only
+                // parameters can collide here: assigning a global-named local inside a
+                // non-main function is already a NameError, and `main` IS the module's
+                // top level, where the qualified name and the global are one binding.
+                if (currentFunction != "main"
+                    && variableTypes.TryGetValue(localName, out var localDt))
+                {
+                    return new Variable(localName, localDt);
+                }
             }
 
             string moduleGlobal = currentModulePrefix + name;
