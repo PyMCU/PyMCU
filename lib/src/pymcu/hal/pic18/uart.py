@@ -1,6 +1,6 @@
-from pymcu.hal.pic18.pic18_uart import *
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
 from pymcu.hal.pic18.pic18_uart import *
+from pymcu.hal.pic18.pic18_uart import uart_write_str
 
 class UART:
     def __init__(self, baud: const[uint16] = 9600):
@@ -33,7 +33,7 @@ class UART:
 
     @inline
     def available(self) -> uint8:
-        return 0
+        return uart_read_ready()
 
     @inline
     def irq(self, handler: Callable):
