@@ -548,8 +548,10 @@ public partial class IRGenerator
                 // Collect module-level statements with a runtime effect, in source order.
                 // Pure declarations (imports, class defs, const/already-folded globals) are
                 // skipped. A VarDecl initializer for a mutable global becomes an AnnAssign so
-                // the global is actually written (BSS only zeroes it); a zero/false init needs
-                // nothing. Everything else -- AnnAssign SRAM arrays, plain constructions like
+                // the global is actually written -- zero inits included: the AVR backend may
+                // give a mutable global a register home, which BSS zeroing never touches, and
+                // AVR registers power up undefined (the emulator zeroes them, real silicon
+                // does not). Everything else -- AnnAssign SRAM arrays, plain constructions like
                 // `led = Pin(...)`, bare calls, control flow -- runs as written.
                 var moduleInit = new List<Statement>();
                 foreach (var s in mainAst.GlobalStatements)
@@ -559,9 +561,7 @@ public partial class IRGenerator
                     {
                         if (d.Init != null
                             && mutableGlobals.ContainsKey(d.Name)
-                            && !globals.ContainsKey(d.Name)
-                            && !(d.Init is IntegerLiteral z && z.Value == 0)
-                            && !(d.Init is BooleanLiteral bz && !bz.Value))
+                            && !globals.ContainsKey(d.Name))
                             moduleInit.Add(new AnnAssign(d.Name, d.VarType, d.Init));
                         continue;
                     }
