@@ -29,7 +29,9 @@ This page tracks which language and HAL features have been implemented, and what
 | `try / except / else / finally`, `raise`, bare `raise` | AVR + ARM (RP2040/RP2350); zero-cost T-flag propagation (AVR: `SET`/`CLT`/`BRTS`; ARM: an internal flag+code global pair — no `setjmp`/`longjmp` on either); errors propagate across calls to any depth and are caught at the call site; `finally` runs on every exit path (caught, propagated, `return`/`break`/`continue`); unhandled raise prints `"E:TypeName\r\n"` to UART0 then halts |
 | Integer arithmetic promotion | `+`/`-`/`*`/`<<` promote to the next wider type (`uint8 255 + 45 == 300`); the annotation is a storage width; `uint8(a + b)` is the fixed-width escape hatch; out-of-range literals / folded constants are `CompileError` |
 | True division `/` vs `//` | `/` yields `float` (soft-float, warns on integer operands); `//` / `%` are integer floor div / mod; runtime divide-by-zero raises `ZeroDivisionError` |
-| f-strings (streamed) | `print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")` with runtime interpolations and format specs (`{x:02x}`, `{x:08b}`, `{x:04d}`, …); lowered to direct writes, no heap |
+| f-strings (streamed) | `print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")` with runtime interpolations and format specs (`{x:02x}`, `{x:08b}`, `{x:04d}`, …); lowered to direct writes, no heap. `float` interpolations print two rounded decimals |
+| `print()` of a buffer | `print(bytearray)`, `print(arr[a:b])` and `print(obj[a:b])` (via `__getitem__`/`__len__`) emit the CPython repr — `bytearray(b'\xcc\x10\xca\xfe')`; the length must be compile-time |
+| `print(float)` | Two rounded decimals, trailing zero trimmed but never past the first: `3.25`, `-2.25`, `0.05`, `123.75`, `1234.5` |
 | Functions with > 5 arguments | Overflow arguments passed via a fixed SRAM spill region |
 | `in` / `not in` | Compile-time fold on constant list; runtime equality chain |
 | `is` / `is not` | Maps to `==` / `!=` |
@@ -47,13 +49,20 @@ This page tracks which language and HAL features have been implemented, and what
 | Extended unpacking `first, *rest = tup` | Compile-time tuples only (PEP 3132) |
 | Nested list comprehensions | Full outer × inner product unroll; `if` filter supported |
 | `for v in [Cls(p) for p in (...)]` | CT unroll of ZCA instance arrays from list comprehensions; plain for-in and enumerate both supported |
-| Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices; equal-length slice ASSIGNMENT (`arr[a:b] = src`) with list/array/slice sources, incl. overlapping same-array copies (snapshot semantics) |
+| `str.join` | `s = sep.join([...])` folds compile-time strings; `s = ''.join([chr(b) for b in buf])` lowers to a runtime string (the MicroPython/CircuitPython bytes-to-string idiom). Outside an assignment it is a diagnostic |
+| Slice indexing `arr[1:3]`, `arr[::2]` | READ needs compile-time constant bounds and yields a fixed-size array. Equal-length slice ASSIGNMENT (`arr[a:b] = src`) with list/`bytes`/array/slice sources, incl. overlapping same-array copies (snapshot semantics), and through `__setitem__` objects (`nvm[0:4] = b'...'`). ITERATION accepts runtime bounds (`for b in buf[0:n]`); a runtime `step` is a diagnostic |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function |
 | Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, comparisons, bitwise |
 | `@extern("symbol")` | External C/C++ symbol interop with AVR ABI |
 | `__name__` / `if __name__ == "__main__":` | Compile-time guard; body promoted in main, eliminated in libs |
 | Triple-quoted strings `"""..."""` / `'''...'''` | Multiline string literals; leading newline after opening quote stripped; useful for multiline `asm()` |
 | `list[T]` heap-allocated list | `x: list[uint8] = list()` / `list(N)` / `[a, b, c]`; `append()`, `len()`, `x[i]`, `for v in x:`; bounded bump allocator + GC; suitable for ATmega328P (2 KB SRAM) and larger |
+| Closed `dict` / `set` literals | `d = {0: 10, "mid": 2}` / `OK = {1, 3, 5}` bind compile-time lookup tables with no storage: `d[const]` folds, `d[runtime]` compare-chains and raises `KeyError`, `x in d` and `len(d)` fold. Read-only |
+| `pymcu.collections.FixedDict` | Mutable fixed-capacity integer dict — open addressing over per-instance fixed arrays, no heap and no GC |
+| f-string as a **value** | `s = f"t={t} C"` builds into a compiler-managed fixed `bytearray`; `len(s)`, `s[i]`, `print(s)`, buffer reuse on re-assignment. No float interpolations in this form |
+| `async def` / `await`, generators (`yield`) | Lowered to a zero-cost state-machine class with `poll()`; `await asyncio.sleep/sleep_ms` anywhere in the body; executors `asyncio.run` / `asyncio.gather`; `for x in gen(...)` desugars to a poll loop |
+| Type inference for unannotated `def` params/returns | Outlined functions join call-site evidence, defaults and return expressions (safe integer widening) instead of defaulting to `uint8` |
+| Value-returning methods on nested ZCA fields | `self.pin.read()` on a class-typed field dispatches through facade re-exports and single-level inheritance — the shape the compat layers are built on |
 
 ### MCU extensions
 
@@ -62,10 +71,10 @@ This page tracks which language and HAL features have been implemented, and what
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` / `ptr(addr)` | Memory-mapped I/O |
-| `const[T]` / `const[uint8[N]]` | Compile-time constants; flash-resident arrays via `LPM Z` |
+| `const[T]` / `const[uint8[N]]` | Compile-time constants, integer / string / **float** (`Timer(freq=2.5)`); flash-resident arrays via `LPM Z`. A runtime-varying argument is a located `CompileError`, not a silent fold |
 | `asm("instr")` | Inline assembly with register constraints `%N` |
 | `delay_ms(n)` / `delay_us(n)` | Intrinsic busy-wait |
-| `millis()` / `micros()` | Timer0 overflow; atomic 32-bit read under CLI/SEI |
+| `millis()` / `micros()` | Timer0 overflow; atomic 32-bit read under CLI/SEI. `millis()` carries the Arduino-style fractional correction (an overflow is 1024 µs, not 1000 µs); `micros()` is monotonic across an overflow |
 | `@inline` | Zero-cost expansion |
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
 | `@property` / `@name.setter` | Compile-time expansion |
@@ -85,7 +94,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `pymcu.hal.uart` | `UART` — `write/read/read_line/write_str/println/print_byte/available` + RX interrupt |
 | `pymcu.hal.adc` | `AnalogPin` — poll + interrupt; channels `"PC0"`–`"PC5"`, `"TEMP"` (internal sensor), `"VBG"`, `"ADC8"` |
 | `pymcu.hal.timer` | `Timer(n, prescaler)` — Timer0/1/2 unified; CTC mode |
-| `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty/set_freq`; multi-channel |
+| `pymcu.hal.pwm` | `PWM` — `start/stop/set_duty/set_freq`; multi-channel (two channels of the same timer coexist — the COM bits are OR-ed). `set_freq` picks the **nearest** reachable prescaler bucket |
 | `pymcu.hal.spi` | `SPI` + `SoftSPI` |
 | `pymcu.hal.i2c` | `I2C` + `SoftI2C`; `write_to` / `read_from` / `write_bytes` / `writeto_mem` / `readfrom_mem` |
 | `pymcu.hal.eeprom` | `EEPROM` — `write(addr, val)` / `read(addr)` |
@@ -112,8 +121,8 @@ read directly with `AnalogPin`. The `pymcu-micropython` compat package does ship
 
 | Package | Activation | Coverage |
 |---------|-----------|----------|
-| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin, UART, ADC, PWM, SPI, I2C, `Timer(id, period, callback)`), `utime`, `micropython` |
-| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `analogio`, `busio` (SPI + I2C), `pwmio`, `time`, `neopixel.NeoPixel` |
+| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin, UART, ADC — pin or channel number, PWM with `freq()`/`duty_u16()` getters, SPI, I2C, `SoftI2C`, `Timer(id, period, callback)`), `utime`, `micropython` |
+| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `analogio`, `busio` (SPI + I2C), `pwmio`, `time`, `supervisor`, `alarm`, `microcontroller` (`cpu`, `nvm`, `watchdog`, `reset_reason`) |
 
 ### Boards
 
@@ -176,7 +185,7 @@ emulator (`pip install pymcu[rp2040]`, requires LLVM on the host).
 |---|---|
 | **Mutable** `dict` / `set` | Dynamic hash tables require heap. Closed literals (read-only lookup tables: `d[k]`, `x in d`, `len(d)`, `KeyError` on missing runtime key) ARE supported |
 | Garbage collection beyond `list[T]` | Full GC incompatible with deterministic ISR timing |
-| `async` / `await` beyond the v1 subset | v1 (compile-time state machine over `asyncio.sleep/sleep_ms`) is implemented; `await` in `if`/nested loops, arbitrary awaitables and `await`-as-expression are the planned v2 |
+| `await` on another coroutine, `await` as an expression | The compile-time state machine (v2) covers `await asyncio.sleep/sleep_ms` anywhere in the body — `if`/`elif`/`else`, `while`, `for`, `break`/`continue`, `return expr` — plus `asyncio.run`/`gather`. A sub-future needs ZCA construction outside `__init__`, which is the remaining gap |
 | `f"..."` inline in arbitrary expressions | Streaming (`print(f"...")`) and assignment (`s = f"..."` — built into a fixed buffer, no heap) are supported; other expression positions have no lowering — assign to a name first |
 | Closures capturing mutable vars | `nonlocal` in `@inline` is supported |
 | `*args` / `**kwargs` | Requires heap |

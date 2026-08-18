@@ -57,9 +57,9 @@ Everything in this section is shipped and tested in the current alpha build.
 | Tuple literal `(a, b)` / unpacking `a, b = f()` / `a, b = b, a` | Stack-allocated; multi-return (`f` must be `@inline` — a real subroutine has one return register); bare-tuple RHS supported, so swap evaluates the RHS before assigning |
 | Member access `obj.x` / method calls `obj.m()` | Inline expansion; zero SRAM |
 | Keyword arguments `f(key=val)` | Matched by name in inline binding |
-| `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml` |
+| `print(val)` | Maps to UART; requires `default_uart` in `pyproject.toml`. A `float` prints with two rounded decimals, trailing zero trimmed but never past the first (`3.25`, `-2.25`, `0.05`, `123.75`, `1234.5`). A `bytearray`, an array slice or a `__getitem__`/`__len__` slice prints the CPython repr — `bytearray(b'\xcc\x10\xca\xfe')` — with a compile-time length |
 | `input(prompt?, maxlen?)` | `line: bytearray = input("prompt")` — reads newline-terminated line from UART; auto-injects UART preamble |
-| F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap. As a *value* (`s = f"..."`) since v0.14: built into a compiler-managed fixed buffer |
+| F-strings `f"text={var}"` | Streamed to a sink (`print(f"...")`, `uart.write_str/println(f"...")`, `lcd.print_str(f"...")`) with runtime interpolations and format specs — no heap; a streamed `float` interpolation prints two rounded decimals. As a *value* (`s = f"..."`) since v0.14: built into a compiler-managed fixed buffer, integers only |
 
 ### MCU-Specific Extensions
 
@@ -68,7 +68,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `uint8 / int8 / uint16 / int16 / uint32 / int32` | Annotation for variables; unannotated `def` params/returns of outlined functions are inferred from call sites (v0.14) |
 | `int` (built-in) | Maps to `int16`; no import required |
 | `ptr[T]` | Memory-mapped I/O pointer |
-| `const[T]` | Compile-time constant enforcement |
+| `const[T]` | Compile-time constant enforcement; accepts integer, string and **float** constants (`Timer(freq=2.5)`). A runtime-varying argument is a located `CompileError` naming the parameter, not a silent fold — this is what makes `Pin(n)` with a runtime `n` an honest error |
 | `asm("instr")` | Inline assembly emission |
 | `delay_ms(n)` / `delay_us(n)` | Intrinsic timing |
 | `@inline` | Zero-cost abstraction |
@@ -87,7 +87,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `pymcu.hal.uart` | `UART` | All | `write/read/write_str/println/print_byte` |
 | `pymcu.hal.adc` | `AnalogPin` | AVR, PIC | `start()` + poll; `read()` (10-bit), `read_u16()` (0-65535); ATtiny85: PB2/PB3/PB4 |
 | `pymcu.hal.timer` | `Timer(n, prescaler)` | All | Timer0/1/2 unified; `start/stop/clear/overflow`; ATtiny85: Timer0+Timer1 (15 prescaler steps) |
-| `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty` |
+| `pymcu.hal.pwm` | `PWM` | AVR, PIC | Hardware PWM; `start/stop/set_duty/set_freq`. Two channels of the same timer coexist (the COM bits are OR-ed); `set_freq` picks the **nearest** reachable prescaler bucket, which is what keeps `tone()` melodies in tune |
 | `pymcu.hal.spi` | `SPI` | AVR | HW SPI master; `with spi:` context |
 | `pymcu.hal.i2c` | `I2C` | AVR | TWI master; `with i2c:` context; `ping/write/read_*` |
 | `pymcu.hal.eeprom` | `EEPROM` | ATmega328P, ATmega2560, ATmega32U4, ATtiny85/45/25 | `write(addr, val)` / `read(addr)` |
@@ -108,8 +108,8 @@ Everything in this section is shipped and tested in the current alpha build.
 
 | Package | Activation | Coverage |
 |---------|-----------|----------|
-| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `time` |
-| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C), `utime`, `micropython` |
+| `pymcu-circuitpython` | `stdlib = ["circuitpython"]` | `board`, `digitalio`, `busio`, `analogio`, `pwmio`, `time`, `supervisor`, `alarm`, `microcontroller` (`cpu`, `nvm`, `watchdog`, `reset_reason`) |
+| `pymcu-micropython` | `stdlib = ["micropython"]` | `machine` (Pin/UART/ADC/PWM/SPI/I2C/SoftI2C/Timer/WDT), `utime`, `micropython`, `avr` |
 
 ---
 
@@ -311,7 +311,7 @@ firmware.o + sensor.o + ArduinoLib.o → avr-ld → firmware.elf → firmware.he
 
 | Feature | Notes |
 |---------|-------|
-| `millis()` / `micros()` elapsed-time counter | Timer0 overflow ISR at prescaler 64; atomic 32-bit read; 1024 µs / overflow |
+| `millis()` / `micros()` elapsed-time counter | Timer0 overflow ISR at prescaler 64; atomic 32-bit read; 1024 µs / overflow. `millis()` applies the Arduino-style fractional correction (1 ms per overflow plus 3/125 carried in eighths) so it counts real milliseconds instead of running 2.4% slow; `micros()` is monotonic across an overflow |
 | `SoftI2C` bit-bang I2C | GPIO open-drain emulation; `start`, `stop`, `write`, `read`, `write_to`, `write_bytes`, `read_from`, `ping` |
 | `I2C.write_bytes(addr, buf, n)` multi-byte | Sends START + SLA+W + N data bytes + STOP in one call |
 
