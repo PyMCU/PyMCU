@@ -297,8 +297,12 @@ PyMCU accepts Python syntax but enforces a strict compile-time type system.
 **Supported:**
 - Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float` — with
   type inference for unannotated `def` parameters and returns
-- Fixed arrays `buf: uint8[16]`, heap-bounded lists `x: list[uint8] = list()`,
-  equal-length slice assignment
+- Fixed arrays `buf: uint8[16]`, `bytearray`, heap-bounded lists `x: list[uint8] = list()`
+- Slices: equal-length assignment (including through `__setitem__`, so
+  `microcontroller.nvm[0:4] = b"..."` compiles) and iteration with runtime bounds
+  (`for b in buf[0:n]`)
+- `print()` of a `bytearray` or a slice as the CPython repr, and of a `float` with two
+  rounded decimals; `s = "".join([chr(b) for b in buf])` for bytes-to-string
 - `for`, `while`, `if`, `match / case`, `with`, `class`, `@inline`, `lambda`
 - **Generators** (`yield`), **`async` / `await`** with `asyncio.run` / `gather`
 - **`dict` / `set` literals** as closed compile-time lookup tables, plus
@@ -312,8 +316,12 @@ PyMCU accepts Python syntax but enforces a strict compile-time type system.
 - Open-ended `dict` / `set` mutation beyond `FixedDict`'s fixed capacity (no heap hash tables)
 - Closures capturing mutable variables — use explicit parameters
 - `*args` / `**kwargs`, reflection (`getattr` / `setattr` / `eval`)
+- Anything whose *size* is only known at runtime: a slice read bound to a name
+  (`b = buf[0:n]`), a runtime tuple, a comprehension filtered on a runtime condition
 
-The compiler rejects unsupported features with a clear error at compile time.
+The compiler rejects unsupported features with a clear error at compile time — including the
+ones the hardware cannot honour, such as a runtime pin number, an image larger than the
+chip's flash, or static data that does not fit in SRAM.
 See the [Language Limitations](docs/language/limitations.md) page for the full list.
 
 ---

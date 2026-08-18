@@ -143,6 +143,14 @@ raw: uint8 = adc_read()
 result: uint16 = uint16(raw)  # zero-extend to 16 bits
 ```
 
+A cast from `float` truncates toward zero on the **value**, so the usual round-to-integer
+idiom works as written:
+
+```python
+volts: float = 3.256
+centivolts: uint32 = uint32(volts * 100.0 + 0.5)   # 326
+```
+
 ---
 
 (integer-promotion-and-overflow)=
