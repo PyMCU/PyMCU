@@ -995,7 +995,10 @@ public partial class IRGenerator
     // values fold to their interned ids). A constant key folds the whole lookup; a runtime
     // key becomes a compare chain over the keys, raising KeyError on no match -- exactly
     // Python's semantics, riding the existing exception model.
-    private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr)
+    // `defaultExpr` is d.get()'s fallback: with it a missing key yields that value instead of
+    // raising KeyError, at compile time for a constant key and as the compare chain's else for
+    // a runtime one.
+    private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr, Expression? defaultExpr = null)
     {
         var entries = new List<(int Key, int Value, bool StrKey)>();
         foreach (var (kE, vE) in d.Entries)
@@ -1013,6 +1016,7 @@ public partial class IRGenerator
         {
             foreach (var e in entries)
                 if (e.Key == keyC.Value) return new Constant(e.Value);
+            if (defaultExpr != null) return VisitExpression(defaultExpr);
             throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC.Value)} is not a key of " +
                             "this dict literal (checked at compile time)");
         }
@@ -1039,9 +1043,16 @@ public partial class IRGenerator
             Emit(new Jump(endL));
             Emit(new Label(next));
         }
-        // No key matched: raise KeyError (caught by an enclosing try, else propagates).
-        string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
-        Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+        if (defaultExpr != null)
+        {
+            Emit(new Copy(VisitExpression(defaultExpr), result));
+        }
+        else
+        {
+            // No key matched: raise KeyError (caught by an enclosing try, else propagates).
+            string? localCatch = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+            Emit(new SignalError(new Constant(4 /* KeyError */), localCatch));
+        }
         Emit(new Label(endL));
         return result;
     }
