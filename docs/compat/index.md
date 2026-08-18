@@ -70,10 +70,16 @@ import utime
 ---
 
 :::{important} These are shims, not full implementations
-Features that fundamentally require a runtime interpreter — dynamic allocation, `float`
-sleep arguments, `__repr__`, REPL interaction — are not available. (`try / except / finally`
-and `raise` **are** supported on AVR via the zero-cost T-flag model.) See each page for the
-full differences table.
+Features that fundamentally require a runtime interpreter — unbounded allocation, `float`
+sleep arguments, a user `__repr__`, REPL interaction — are not available. (`try / except /
+finally` and `raise` **are** supported on AVR via the zero-cost T-flag model, and `print()`
+does emit the built-in CPython repr for a `bytearray` or an array slice of compile-time
+length.) See each page for the full differences table.
+
+Where the hardware cannot honour an API, the layer raises a `CompileError` naming the
+alternative rather than accepting the argument and quietly doing something else —
+`machine.I2C(scl=...)` on fixed TWI pins, `machine.unique_id()` on a chip with no unique ID,
+`UART.readline()` with no buffer.
 :::
 
 ```{toctree}

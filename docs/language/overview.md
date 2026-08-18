@@ -98,8 +98,11 @@ n = get_size()
 buf: uint8[n] = [0] * n    # cannot allocate variable-size array
 ```
 
-Container types that require heap allocation (`list.append`, `dict`, `set`) are not available.
-See {doc}`limitations` for the full list with alternatives.
+Containers exist, but each one has a footprint fixed at compile time: `list[T]` runs on a
+bounded bump allocator with a GC, `dict` / `set` literals bind read-only compile-time lookup
+tables, and `pymcu.collections.FixedDict` is the mutable fixed-capacity map. What is not
+available is an unbounded container that grows as far as the data takes it. See
+{doc}`limitations` for the full list with alternatives.
 
 ---
 

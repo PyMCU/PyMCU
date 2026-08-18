@@ -10,9 +10,10 @@ Hardware pulse-width modulation. Wraps the Timer/Counter OC channels on AVR.
 
 ## class `PWM`
 
-### `PWM(pin: str, duty: uint8)`
+### `PWM(pin: str, duty: uint8, freq: uint16 = 0)`
 
-Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%).
+Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%). `freq` is
+optional; `0` leaves the timer at its default prescaler.
 
 ### Supported pins (ATmega328P)
 
@@ -32,6 +33,26 @@ Configures hardware PWM on the given pin. `duty` is 8-bit (0 = 0%, 255 = 100%).
 | `start()` | Enable PWM output |
 | `stop()` | Disable PWM output |
 | `set_duty(duty: uint8)` | Update duty cycle while running |
+| `set_freq(freq: uint16)` | Select the prescaler closest to `freq` |
+
+### Reachable frequencies
+
+An AVR timer does not run at an arbitrary frequency — the prescaler picks from a handful of
+buckets. At 16 MHz, Timer0 and Timer1 reach 61, 244, 976, 7812 and 62500 Hz; Timer2 also has
+/32 and /128, so it adds 488 and 1953 Hz.
+
+`set_freq(freq)` chooses the **nearest** reachable bucket, comparing against the geometric
+midpoints between them. Asking for 440 Hz on Timer2 lands on 488 Hz rather than dropping to
+244 Hz — which is what keeps `tone()` melodies recognisably in tune. Read back through the
+compat layer (`machine.PWM.freq()`) and you get the value you asked for, not the bucket; if
+you need the physical frequency, derive it from `__FREQ__` and the prescaler.
+
+### Two channels on one timer
+
+The channels of a single timer (D5+D6 on Timer0, D9+D10 on Timer1, D11+D3 on Timer2) can
+run at the same time: configuring the second OR-s its COM bits into `TCCRxA` instead of
+overwriting the register, so the first channel keeps its output. They do share the
+prescaler, so they cannot have different frequencies.
 
 ---
 

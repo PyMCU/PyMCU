@@ -71,3 +71,9 @@ elapsed: uint32 = millis() - start
 
 These use a Timer0 overflow ISR to maintain a 32-bit counter. They require Timer0 to be
 running with prescaler 64 (the default). The counter is read atomically under `CLI`/`SEI`.
+
+At 16 MHz with prescaler 64 a Timer0 overflow takes **1024 µs**, not 1000 µs. `millis()`
+does not return the raw overflow count: the ISR applies the Arduino-style fractional
+correction — one millisecond per overflow plus 3/125 accumulated in eighths — so `millis()`
+counts real milliseconds. `micros()` reads the raw overflow count together with `TCNT0` and
+is monotonic across an overflow, so a difference of two readings is never negative.
