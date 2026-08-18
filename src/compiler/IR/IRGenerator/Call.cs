@@ -3134,6 +3134,9 @@ public partial class IRGenerator
 
     // compile_isr(handler, vector): register handler at the interrupt vector (or a
     // synthesized ZCA wrapper when a _set_irq_zca_arg binding was recorded).
+    private int IsrCallLine(CallExpr expr) =>
+        expr.Line > 0 ? expr.Line : (currentStmtLine > 0 ? currentStmtLine : lastLine);
+
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
     {
         if (expr.Args.Count != 2)
@@ -3191,12 +3194,14 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(synthName))
             {
                 pendingIsrRegistrations[synthName] = vector;
+                pendingIsrOrigins[synthName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
                 return new NoneVal();
             }
             // Synthesis returned empty -- fall through to original name (will fail if ZCA param)
         }
 
         pendingIsrRegistrations[handlerFuncName] = vector;
+        pendingIsrOrigins[handlerFuncName] = (currentFunction, IsrCallLine(expr), currentModulePrefix);
         return new NoneVal();
     }
 

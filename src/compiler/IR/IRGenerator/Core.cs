@@ -244,6 +244,7 @@ public partial class IRGenerator
         functionsToCompile.Clear();
         intrinsicNames.Clear();
         pendingIsrRegistrations.Clear();
+        pendingIsrOrigins.Clear();
         pendingZcaIsrBindings.Clear();
         zcaHandlerAstNodes.Clear();
         pendingZcaSynthFunctions.Clear();
@@ -721,12 +722,28 @@ public partial class IRGenerator
 
             if (!found)
             {
-                throw new Exception(
-                    $"compile_isr(): function '{bareName}' not found. Ensure the handler is a top-level function defined in the same translation unit.");
+                pendingIsrOrigins.TryGetValue(bareName, out var origin);
+                bool fromModule = !string.IsNullOrEmpty(origin.Module);
+                string where = string.IsNullOrEmpty(origin.Function)
+                    ? ""
+                    : $" inside '{origin.Function}'";
+                string at = fromModule && origin.Line > 0
+                    ? $" The call is at line {origin.Line} of the module that defines it, not of " +
+                      "the file being compiled."
+                    : "";
+                throw new PyMCU.Common.CompilerError("CompileError",
+                    $"compile_isr(){where} could not resolve '{bareName}' to a function. The " +
+                    "handler must be a compile-time function reference: either a top-level " +
+                    "function in this translation unit, or a parameter that folds to one. A " +
+                    "function that calls compile_isr() with a handler parameter must be " +
+                    $"@inline -- without it the parameter stays a run-time value and no " +
+                    $"function can be resolved.{at}",
+                    fromModule || origin.Line <= 0 ? 1 : origin.Line, 1);
             }
         }
 
         pendingIsrRegistrations.Clear();
+        pendingIsrOrigins.Clear();
 
         foreach (var kvp in mutableGlobals)
         {

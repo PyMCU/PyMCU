@@ -331,6 +331,7 @@ public partial class IRGenerator
 
     // compile_isr() registrations: bare function name -> interrupt vector.
     private Dictionary<string, int> pendingIsrRegistrations = new();
+    private Dictionary<string, (string Function, int Line, string Module)> pendingIsrOrigins = new();
 
     // ZCA ISR synthesis: handler name -> root ZCA variable key (set by _set_irq_zca_arg).
     private Dictionary<string, string> pendingZcaIsrBindings = new();
