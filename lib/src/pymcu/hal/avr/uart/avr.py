@@ -26,7 +26,7 @@
 #   19200  -> 51    (0.16% error)
 #   38400  -> 25    (0.16% error)
 #   57600  -> 16    (2.08% error)
-#   115200 -> 8     (3.54% error)
+#   115200 -> 16 with U2X0 (0.64% error; plain UBRR=8 is -3.5% and breaks RX)
 # -----------------------------------------------------------------------------
 
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
@@ -61,7 +61,14 @@ def uart_init(baud: const[uint16]):
         UBRR0L.value = 16
         UBRR0H.value = 0
     elif baud == 115200:
-        UBRR0L.value = 8
+        # U2X0 double-speed with UBRR=16: 115942 baud, +0.64% error. The 16x
+        # setting (UBRR=8) runs at 111111 baud, -3.5%: transmit survives it
+        # because the receiving side resynchronizes on every start bit, but
+        # RECEIVE accumulates the error across the frame and drops bytes on
+        # real silicon. The emulator does not model baud mismatch, so only
+        # hardware shows it.
+        UCSR0A.value = 0x02
+        UBRR0L.value = 16
         UBRR0H.value = 0
 
     # 8N1 frame format (UCSZ01=1, UCSZ00=1, async, no parity, 1 stop)

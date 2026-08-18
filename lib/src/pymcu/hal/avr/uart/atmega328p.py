@@ -18,7 +18,8 @@ def uart_init(baud: uint8):
         UBRR0L.value = 16
         UBRR0H.value = 0
     elif baud == 1152:
-        UBRR0L.value = 8
+        UCSR0A.value = 0x02
+        UBRR0L.value = 16
         UBRR0H.value = 0
     UCSR0C.value = 0x06
     UCSR0B.value = 0x18
