@@ -24,7 +24,8 @@ def timer0_init(prescaler: uint16):
     elif prescaler == 256:
         OPTION.value = OPTION_GPIO_BITS_AT_RESET | 0x07
     else:
-        raise CompileError("PIC10F200 Timer0 divides by a power of two from 2 to 256; any other prescaler would leave the timer at its reset value")
+        raise CompileError("PIC10F200 Timer0 divides by a power of two from 2 to 256; any "
+                           "other prescaler would leave the timer at its reset value")
 
 
 @inline

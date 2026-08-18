@@ -2,6 +2,12 @@ from pymcu.chips.pic10f200 import TRISGPIO, GPIO
 from pymcu.exceptions import CompileError
 from pymcu.types import uint8, inline
 
+UNKNOWN: str = "PIC10F200 has GP0, GP1, GP2 and GP3 only"
+GP3_IN_ONLY: str = "GP3 is input-only on the PIC10F200 and cannot be driven"
+NO_PER_PIN_PULLUP: str = ("the PIC10F200 gates its pull-ups with NOT_GPPU, one bit for the "
+                          "whole port, and OPTION is write-only so it cannot be updated a "
+                          "bit at a time; a per-pin pull-up cannot be expressed on this core")
+
 @inline
 def pin_set_mode(name: str, mode: uint8):
     if name == "GP0":
@@ -12,10 +18,10 @@ def pin_set_mode(name: str, mode: uint8):
         TRISGPIO[2] = mode
     elif name == "GP3":
         if mode == 0:
-            raise CompileError("GP3 is input-only on the PIC10F200 and cannot be driven")
+            raise CompileError(GP3_IN_ONLY)
         TRISGPIO[3] = 1
     else:
-        raise CompileError("PIC10F200 has GP0, GP1, GP2 and GP3 only")
+        raise CompileError(UNKNOWN)
 
 
 @inline
@@ -27,9 +33,9 @@ def pin_high(name: str):
     elif name == "GP2":
         GPIO[2] = 1
     elif name == "GP3":
-        raise CompileError("GP3 is input-only on the PIC10F200 and cannot be driven")
+        raise CompileError(GP3_IN_ONLY)
     else:
-        raise CompileError("PIC10F200 has GP0, GP1, GP2 and GP3 only")
+        raise CompileError(UNKNOWN)
 
 
 @inline
@@ -41,9 +47,9 @@ def pin_low(name: str):
     elif name == "GP2":
         GPIO[2] = 0
     elif name == "GP3":
-        raise CompileError("GP3 is input-only on the PIC10F200 and cannot be driven")
+        raise CompileError(GP3_IN_ONLY)
     else:
-        raise CompileError("PIC10F200 has GP0, GP1, GP2 and GP3 only")
+        raise CompileError(UNKNOWN)
 
 
 @inline
@@ -55,9 +61,9 @@ def pin_toggle(name: str):
     elif name == "GP2":
         GPIO[2] = GPIO[2] ^ 1
     elif name == "GP3":
-        raise CompileError("GP3 is input-only on the PIC10F200 and cannot be driven")
+        raise CompileError(GP3_IN_ONLY)
     else:
-        raise CompileError("PIC10F200 has GP0, GP1, GP2 and GP3 only")
+        raise CompileError(UNKNOWN)
 
 
 @inline
@@ -71,7 +77,7 @@ def pin_read(name: str) -> uint8:
     elif name == "GP3":
         return GPIO[3]
     else:
-        raise CompileError("PIC10F200 has GP0, GP1, GP2 and GP3 only")
+        raise CompileError(UNKNOWN)
 
 
 @inline
@@ -86,9 +92,9 @@ def pin_write(name: str, val: uint8):
 
 @inline
 def pin_pull_up(name: str):
-    raise CompileError("the PIC10F200 gates its pull-ups with NOT_GPPU, one bit for the whole port, and OPTION is write-only so it cannot be updated a bit at a time; a per-pin pull-up cannot be expressed on this core")
+    raise CompileError(NO_PER_PIN_PULLUP)
 
 
 @inline
 def pin_pull_off(name: str):
-    raise CompileError("the PIC10F200 gates its pull-ups with NOT_GPPU, one bit for the whole port, and OPTION is write-only so it cannot be updated a bit at a time; a per-pin pull-up cannot be expressed on this core")
+    raise CompileError(NO_PER_PIN_PULLUP)

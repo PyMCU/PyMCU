@@ -32,7 +32,8 @@ class Timer:
 
     @inline
     def stop(self):
-        raise CompileError("PIC12 Timer0 runs from reset off the instruction clock and has no enable bit; stop() cannot be honoured on this core")
+        raise CompileError("PIC12 Timer0 runs from reset off the instruction clock and has "
+                           "no enable bit; stop() cannot be honoured on this core")
 
     @inline
     def clear(self):
@@ -45,7 +46,8 @@ class Timer:
 
     @inline
     def overflow(self) -> uint8:
-        raise CompileError("PIC12 has no T0IF flag: an overflow is only observable by polling counter() and watching it wrap")
+        raise CompileError("PIC12 has no T0IF flag: an overflow is only observable by "
+                           "polling counter() and watching it wrap")
 
     @inline
     def counter(self) -> uint16:
