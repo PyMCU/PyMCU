@@ -1,6 +1,6 @@
 [project]
 name = "pymcu-stdlib"
-version = "0.1.0a9"
+version = "0.1.0a10"
 description = "Standard Library for the PyMCU compiler"
 readme = "README.md"
 authors = [
