@@ -50,7 +50,8 @@ Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index acce
 | Feature | Why it fails | Alternative |
 |---|---|---|
 | `f"..."` inline in arbitrary expressions | No general runtime string objects | Assign it to a name first (`s = f"..."` builds a fixed buffer), or stream it: `print(f"...")` |
-| `str.split()`, `str.join()`, `str.format()` | Heap strings | Not available |
+| `str.split()`, `str.format()` | Heap strings | Not available |
+| `str.join()` outside an assignment | The result needs a home | `s = sep.join([...])` folds compile-time strings; `s = ''.join([chr(b) for b in buf])` builds a runtime string from a fixed buffer |
 | `len(string_variable)` | Runtime string object required | Use fixed-size buffers |
 | `str + str` concatenation | Heap allocation | Separate `uart.write_str()` calls |
 | `str[i]` on a runtime string | No runtime string object | Use `const[str]` parameters |
