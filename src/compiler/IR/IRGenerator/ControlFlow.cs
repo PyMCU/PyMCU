@@ -39,36 +39,42 @@ public partial class IRGenerator
             {
                 bool isAnd = binExpr.Op == Frontend.BinaryOp.And;
 
-                void EmitSub(Expression sub, string label, bool ifTrue)
+                bool? EmitSub(Expression sub, string label, bool ifTrue)
                 {
                     int r = EmitOptimizedConditionalJump(sub, label, ifTrue);
-                    if (r != 0) return;
+                    if (r == 2) return true;
+                    if (r == -1) return false;
+                    if (r != 0) return null;
                     Val v = VisitExpression(sub);
                     if (v is Constant c)
                     {
                         bool cval = c.Value != 0;
                         if (cval == ifTrue) Emit(new Jump(label));
-                        return;
+                        return cval;
                     }
 
                     if (ifTrue) Emit(new JumpIfNotZero(v, label));
                     else Emit(new JumpIfZero(v, label));
+                    return null;
                 }
 
+                bool? leftTruth;
+                bool? rightTruth;
                 if ((!jumpIfTrue && isAnd) || (jumpIfTrue && !isAnd))
                 {
-                    EmitSub(binExpr.Left, targetLabel, jumpIfTrue);
-                    EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                    leftTruth = EmitSub(binExpr.Left, targetLabel, jumpIfTrue);
+                    rightTruth = EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
                 }
                 else
                 {
                     string skipLabel = MakeLabel();
-                    EmitSub(binExpr.Left, skipLabel, !jumpIfTrue);
-                    EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
+                    leftTruth = EmitSub(binExpr.Left, skipLabel, !jumpIfTrue);
+                    rightTruth = EmitSub(binExpr.Right, targetLabel, jumpIfTrue);
                     Emit(new Label(skipLabel));
                 }
 
-                return 1;
+                if (leftTruth is not { } lt || rightTruth is not { } rt) return 1;
+                return (isAnd ? lt && rt : lt || rt) ? 2 : -1;
             }
 
             if (binExpr.Op == Frontend.BinaryOp.In || binExpr.Op == Frontend.BinaryOp.NotIn ||
@@ -295,6 +301,8 @@ public partial class IRGenerator
         bool skipThen = false;
         bool isRuntimeBranch = false;
 
+        if (optResult == 1) isRuntimeBranch = true;
+
         if (optResult == -1) skipThen = true;
         else if (optResult == 2)
         {
@@ -361,6 +369,8 @@ public partial class IRGenerator
             int elifOpt = EmitOptimizedConditionalJump(elifCond, nextLabel, false);
             bool skipElif = false;
             bool elifIsRuntime = false;
+
+            if (elifOpt == 1) elifIsRuntime = true;
 
             if (elifOpt == -1) skipElif = true;
             else if (elifOpt == 2)
@@ -776,6 +786,14 @@ public partial class IRGenerator
                 $"(line {stmt.Line}): {msg}. " +
                 "Ensure the guarding parameter is declared as const[...] so the branch can be pruned.");
             return;
+        }
+
+        if (!string.IsNullOrEmpty(stmt.ErrorType) && inlineStack.Count > 0 &&
+            tryCatchStack.Count == 0 && _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
+        {
+            string reason = stmt.Message.Length > 0 ? stmt.Message : stmt.ErrorType;
+            int line = currentStmtLine > 0 ? currentStmtLine : stmt.Line;
+            throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0);
         }
 
         // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from
