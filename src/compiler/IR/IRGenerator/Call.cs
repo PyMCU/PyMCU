@@ -386,6 +386,14 @@ public partial class IRGenerator
                 }
                 else
                 {
+                    // str.join used as a bare expression: the supported forms live in the
+                    // assignment lowering (constant fold and the bytes-to-string idiom), so
+                    // point there instead of the generic nested-member message.
+                    if (memC.Member == "join")
+                        throw UserError(
+                            "str.join is supported in assignment form: s = sep.join([...]) with " +
+                            "compile-time strings, or s = ''.join([chr(b) for b in buf]) over a " +
+                            "fixed-size buffer; assign the result to a variable before using it");
                     // Reached when the receiver of a value-returning method is itself a
                     // ZCA field (e.g. `self.pin.pulse_in()` — a Pin stored in a field of
                     // another ZCA). The chained access resolves to a temporary, which the
@@ -2710,7 +2718,11 @@ public partial class IRGenerator
     private string? StaticStringOf(Expression e)
     {
         if (e is StringLiteral sl) return sl.Value;
-        if (e is VariableExpr ve) return ResolveStrConstant(currentInlinePrefix + ve.Name) ?? ResolveStrConstant(ve.Name);
+        if (e is VariableExpr ve)
+            return ResolveStrConstant(currentInlinePrefix + ve.Name)
+                ?? (!string.IsNullOrEmpty(currentFunction)
+                    ? ResolveStrConstant(currentFunction + "." + ve.Name) : null)
+                ?? ResolveStrConstant(ve.Name);
         return null;
     }
 

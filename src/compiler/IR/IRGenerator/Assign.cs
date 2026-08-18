@@ -33,6 +33,11 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
             return;
 
+        // `s = sep.join([...])`: constant fold for all-static strings, and the canonical
+        // bytes-to-string idiom `''.join([chr(b) for b in buf])` as a runtime string.
+        if (stmt.Target is VariableExpr joinTgt && TryEmitJoinAssign(joinTgt.Name, stmt.Value))
+            return;
+
         // `d = {...}` binds a compile-time lookup table (dict) or membership set: register
         // the literal AST against the name; nothing runs at runtime.
         if (stmt.Target is VariableExpr dsTgt && stmt.Value is DictExpr or SetExpr)
@@ -1250,6 +1255,75 @@ public partial class IRGenerator
             Emit(new Copy(srcVal, new Variable(dstElem, srcEdt)));
         }
         return true;
+    }
+
+    // `s = sep.join(<list>)`. Two supported shapes:
+    //   1. Every element is a compile-time string: fold to one constant string.
+    //   2. `''.join([chr(b) for b in buf])` over a known-size byte buffer -- the
+    //      canonical MicroPython/CircuitPython bytes-to-string idiom. Lowered to a
+    //      runtime string: a NUL-capped buffer copy registered in runtimeStrVars, so
+    //      print()/len() treat the result exactly like an f-string-as-value.
+    private bool TryEmitJoinAssign(string target, Expression value)
+    {
+        if (value is not CallExpr { Callee: MemberAccessExpr { Member: "join" } jm } jc) return false;
+        string? sep = StaticStringOf(jm.Object);
+        if (sep == null || jc.Args.Count != 1) return false;
+
+        if (jc.Args[0] is ListExpr jle && jle.Elements.All(e => StaticStringOf(e) != null))
+        {
+            string joined = string.Join(sep, jle.Elements.Select(e => StaticStringOf(e)!));
+            string cq = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + target
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            strConstantVariables[cq] = joined;
+            constantVariables.Remove(cq);
+            variableAliases.Remove(cq);
+            return true;
+        }
+
+        if (sep.Length == 0
+            && jc.Args[0] is ListCompExpr { Filter: null, Iterable2: null } lc
+            && lc.Element is CallExpr { Callee: VariableExpr { Name: "chr" } } chrCall
+            && chrCall.Args is [VariableExpr chrArg] && chrArg.Name == lc.VarName
+            && lc.Iterable is VariableExpr srcVe
+            && ResolveArrayVar(srcVe.Name) is { } srcArr)
+        {
+            int n = srcArr.Size;
+            int bound = n + 1;
+            string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + target
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + target : target);
+            string lenVar = "__jnlen_" + target;
+
+            if (runtimeStrVars.TryGetValue(qualified, out var existing))
+            {
+                if (bound > existing.Capacity)
+                    throw UserError(
+                        $"'{target}' is re-assigned a join result needing {bound} bytes but its " +
+                        $"buffer was sized {existing.Capacity} by an earlier assignment");
+                lenVar = existing.LenVar;
+            }
+            else
+            {
+                VisitStatement(new VarDecl(target, "bytearray",
+                    new CallExpr(new VariableExpr("bytearray"),
+                                 new List<Expression> { new IntegerLiteral(bound) })));
+                VisitStatement(new VarDecl(lenVar, "uint16", new IntegerLiteral(0)));
+                runtimeStrVars[qualified] = (lenVar, bound);
+            }
+
+            for (int i = 0; i < n; i++)
+                VisitStatement(new AssignStmt(
+                    new IndexExpr(new VariableExpr(target), new IntegerLiteral(i)),
+                    new IndexExpr(srcVe, new IntegerLiteral(i))));
+            VisitStatement(new AssignStmt(
+                new IndexExpr(new VariableExpr(target), new IntegerLiteral(n)),
+                new IntegerLiteral(0)));
+            VisitStatement(new AssignStmt(new VariableExpr(lenVar), new IntegerLiteral(n)));
+            return true;
+        }
+
+        return false;
     }
 
     // Compile-time __len__ of a class, when its body is a single constant return
