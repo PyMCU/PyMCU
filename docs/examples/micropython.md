@@ -89,21 +89,20 @@ def main():
 Read a potentiometer (or any 0–5 V analog source) on pin A0 every 200 ms.
 
 ```python
-from machine import UART, ADC
+from machine import UART, ADC, Pin
 from utime import sleep_ms
 from pymcu.types import uint16, uint8
 
 def main():
     uart = UART(0, 9600)
-    adc  = ADC("A0")
+    adc  = ADC(Pin(14))            # A0 = Pin(14) = PC0; ADC(0) is the same converter
 
     uart.println("ADC ready")
 
     while True:
         val: uint16 = adc.read()       # raw 10-bit value, 0–1023
         scaled: uint8 = val >> 2       # 0–255 for single-byte output
-        uart.write_hex(scaled)
-        uart.write('\n')
+        uart.println(f"adc={val} byte=0x{scaled:02X}")
         sleep_ms(200)
 ```
 
@@ -117,8 +116,9 @@ A0 (PC0)   ←→  wiper (center tap)
 GND        ←→  other end
 ```
 
-**Note:** `ADC("A0")` accepts Arduino-style pin aliases. The compiler resolves
-`"A0"` to the ATmega328P ADC channel at compile time.
+**Note:** the converter is selected at compile time. `ADC(Pin(14))` is the MicroPython pin
+form and `ADC(0)` the ESP-style channel form — channels 0–5 are A0–A5 on the Uno, and both
+spellings produce identical firmware. A channel above 5 is a compile error naming the range.
 
 ---
 
@@ -195,9 +195,7 @@ def main():
             busy = busy + 1
         led.low()
         elapsed: uint32 = ticks_diff(ticks_ms(), t0)
-        uart.write_str("ms=")
-        uart.write_hex(elapsed & 0xFF)
-        uart.write('\n')
+        uart.println(f"ms={elapsed}")
 ```
 
 :::{note}

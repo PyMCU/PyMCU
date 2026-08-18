@@ -53,21 +53,24 @@ from pymcu.types import uint8
 
 def main():
     led = DigitalInOut(board.LED)
-    led.set_direction(Direction.OUTPUT)
+    led.direction = Direction.OUTPUT
 
     uart = busio.UART(board.TX, board.RX, baudrate=9600)
 
+    buf: bytearray = bytearray(1)
+
     while True:
-        byte: uint8 = uart.read()
-        led.set_value(1)
-        uart.write(byte)
-        led.set_value(0)
+        uart.readinto(buf)        # blocks until buf is full
+        led.value = True
+        uart.write(buf)
+        led.value = False
 ```
 
 **Differences from CircuitPython:**
-- `uart.read()` takes no size argument — single-byte blocking receive on AVR.
-- `led.direction = ...` property syntax also works; `set_direction()` is the
-  PyMCU canonical form for the compat layer.
+- `uart.read(n)` and `uart.readline()` would have to return a fresh `bytes` object, which
+  needs a heap. They compile to a no-op and warn; use `readinto(buf)` with a `bytearray`
+  you own. `write(buf)` takes the same buffer back.
+- `direction`, `value` and `pull` are properties, exactly as in CircuitPython.
 
 ---
 
@@ -85,19 +88,19 @@ from pymcu.types import uint8
 
 def main():
     led = DigitalInOut(board.LED)
-    led.set_direction(Direction.OUTPUT)
+    led.direction = Direction.OUTPUT
 
     btn = DigitalInOut(board.D2)
-    btn.set_direction(Direction.INPUT)
-    btn.set_pull(Pull.UP)
+    btn.direction = Direction.INPUT
+    btn.pull = Pull.UP
 
     while True:
-        state: uint8 = btn.get_value()
+        state: uint8 = btn.value
         # Button is active-low (pressed = 0)
         if state == 0:
-            led.set_value(1)
+            led.value = True
         else:
-            led.set_value(0)
+            led.value = False
         time.sleep_ms(10)
 ```
 
@@ -116,41 +119,38 @@ D13        ←→  built-in LED
 (cp-dht-sensor)=
 ## DHT11 Sensor
 
-Read temperature and humidity, output over `busio.UART`.
+Read temperature and humidity and print them to the serial monitor.
 
 ```python
 import board
 import time
-import busio
 from digitalio import DigitalInOut, Direction
-from dht11 import DHT11
+from adafruit_dht import DHT11
 
 def main():
-    uart   = busio.UART(board.TX, board.RX, baudrate=9600)
     led    = DigitalInOut(board.LED)
     sensor = DHT11(board.D2)
 
-    led.set_direction(Direction.OUTPUT)
+    led.direction = Direction.OUTPUT
 
-    uart.println("DHT11 ready")
+    print("DHT11 ready")
 
     while True:
-        sensor.measure()
+        try:
+            print(f"H: {sensor.humidity}  T: {sensor.temperature}")
+            led.value = True
+            time.sleep(0.1)
+            led.value = False
+        except ValueError:
+            print("read error")
+            led.value = False
 
-        if sensor.failed:
-            uart.println("read error")
-            led.set_value(0)
-        else:
-            uart.write_str("H: ")
-            uart.print_byte(sensor.humidity)
-            uart.write_str("  T: ")
-            uart.print_byte(sensor.temperature)
-            led.set_value(1)
-            time.sleep_ms(100)
-            led.set_value(0)
-
-        time.sleep_ms(2000)
+        time.sleep(2.0)
 ```
+
+The driver ships in the `pymcu-lib-dht` library rather than the compat layer, so
+`import adafruit_dht` is the same line a real CircuitPython board would run. A failed read
+raises `ValueError`, exactly as `adafruit_dht` does.
 
 **Wiring:**
 
@@ -179,21 +179,21 @@ from pymcu.types import inline
 
 @inline
 def dot(led):
-    led.set_value(1)
+    led.value = True
     time.sleep_ms(200)
-    led.set_value(0)
+    led.value = False
     time.sleep_ms(200)
 
 @inline
 def dash(led):
-    led.set_value(1)
+    led.value = True
     time.sleep_ms(600)
-    led.set_value(0)
+    led.value = False
     time.sleep_ms(200)
 
 def main():
     led = DigitalInOut(board.LED)
-    led.set_direction(Direction.OUTPUT)
+    led.direction = Direction.OUTPUT
 
     while True:
         # S: ...
@@ -238,25 +238,25 @@ def main():
     yellow = DigitalInOut(board.D12)
     green  = DigitalInOut(board.D13)
 
-    red.set_direction(Direction.OUTPUT)
-    yellow.set_direction(Direction.OUTPUT)
-    green.set_direction(Direction.OUTPUT)
+    red.direction = Direction.OUTPUT
+    yellow.direction = Direction.OUTPUT
+    green.direction = Direction.OUTPUT
 
     while True:
         # Red — stop (3 s)
-        red.set_value(1); yellow.set_value(0); green.set_value(0)
+        red.value = True; yellow.value = False; green.value = False
         time.sleep_ms(3000)
 
         # Red + Yellow — prepare to go (500 ms)
-        red.set_value(1); yellow.set_value(1); green.set_value(0)
+        red.value = True; yellow.value = True; green.value = False
         time.sleep_ms(500)
 
         # Green — go (3 s)
-        red.set_value(0); yellow.set_value(0); green.set_value(1)
+        red.value = False; yellow.value = False; green.value = True
         time.sleep_ms(3000)
 
         # Yellow — slow down (1 s)
-        red.set_value(0); yellow.set_value(1); green.set_value(0)
+        red.value = False; yellow.value = True; green.value = False
         time.sleep_ms(1000)
 ```
 
