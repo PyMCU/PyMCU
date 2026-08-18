@@ -242,6 +242,40 @@ def uart_write_float(value: float):
         uart_write(d2 + 48)
 
 
+def uart_write_byte_repr(b: uint8):
+    # One byte of a CPython bytes/bytearray repr: printable ASCII as itself,
+    # backslash and quote escaped, tab/newline/return as \\t \\n \\r, anything
+    # else as \\xNN lowercase. Shared subroutine: print(bytearray) unrolls one
+    # call per byte.
+    if b == 92 or b == 39:
+        uart_write(92)
+        uart_write(b)
+    elif b == 9:
+        uart_write(92)
+        uart_write(116)
+    elif b == 10:
+        uart_write(92)
+        uart_write(110)
+    elif b == 13:
+        uart_write(92)
+        uart_write(114)
+    elif b >= 32 and b <= 126:
+        uart_write(b)
+    else:
+        uart_write(92)
+        uart_write(120)
+        hi: uint8 = b >> 4
+        lo: uint8 = b & 0x0F
+        if hi < 10:
+            uart_write(48 + hi)
+        else:
+            uart_write(87 + hi)
+        if lo < 10:
+            uart_write(48 + lo)
+        else:
+            uart_write(87 + lo)
+
+
 def uart_write_str(s: const[str]):
     # Non-@inline on purpose: as a real subroutine, the compiler passes the string
     # by reference (its flash address) and this single loop is emitted once and

@@ -2714,6 +2714,74 @@ public partial class IRGenerator
         return null;
     }
 
+    private string? ResolveByteReprFn()
+    {
+        string fn = ResolveCallee("uart_write_byte_repr");
+        if (fn == "uart_write_byte_repr")
+        {
+            fn = "";
+            foreach (var k in functionReturnTypes.Keys)
+                if (k.EndsWith("uart_write_byte_repr", StringComparison.Ordinal)) { fn = k; break; }
+        }
+        return string.IsNullOrEmpty(fn) ? null : fn;
+    }
+
+    // print(<bytearray>) / print(arr[a:b]) / print(obj[a:b]) with __getitem__: stream
+    // the CPython repr, one uart_write_byte_repr call per byte at compile-time-known
+    // indices. Returns false (caller falls back) when the size is not statically
+    // known or the target stdlib has no repr helper.
+    private bool TryEmitByteArrayReprArg(string writeStrFn, Expression arg)
+    {
+        List<int>? indices = null;
+        Expression? target = null;
+
+        if (arg is VariableExpr av && ResolveArrayVar(av.Name) is { } arr)
+        {
+            if (arrayElemTypes.TryGetValue(arr.Name, out var et) && et != DataType.UINT8)
+                return false;
+            indices = Enumerable.Range(0, arr.Size).ToList();
+            target = arg;
+        }
+        else if (arg is IndexExpr { Index: SliceExpr sl } ie)
+        {
+            int size = -1;
+            if (ie.Target is VariableExpr sv && ResolveArrayVar(sv.Name) is { } sarr)
+            {
+                if (arrayElemTypes.TryGetValue(sarr.Name, out var set2) && set2 != DataType.UINT8)
+                    return false;
+                size = sarr.Size;
+            }
+            else
+            {
+                Val tv = VisitExpression(ie.Target);
+                string cls = GetValClass(tv);
+                if (!string.IsNullOrEmpty(cls) && inlineFunctions.ContainsKey(cls + "_" + "__getitem__"))
+                    size = DunderConstLen(cls) ?? -1;
+            }
+
+            if (size < 0) return false;
+            try { indices = SliceIndices(sl, size); }
+            catch (Exception) { return false; }
+            target = ie.Target;
+        }
+
+        if (indices == null || target == null) return false;
+        string? reprFn = ResolveByteReprFn();
+        if (reprFn == null) return false;
+
+        EmitStreamStr(writeStrFn, "bytearray(b'");
+        foreach (int i in indices)
+        {
+            Val b = VisitExpression(new IndexExpr(target, new IntegerLiteral(i)));
+            Temporary tmp = MakeTemp(DataType.UINT8);
+            Emit(new Copy(b, tmp));
+            Emit(new Call(reprFn, new List<Val> { tmp }, tmp));
+        }
+
+        EmitStreamStr(writeStrFn, "')");
+        return true;
+    }
+
     private string ResolveFmtFn()
     {
         string fn = ResolveCallee("uart_write_fmt");
@@ -2972,6 +3040,11 @@ public partial class IRGenerator
 
             if (arg is BooleanLiteral pbl) { EmitStreamStr(writeStrFn, pbl.Value ? "True" : "False"); return; }
             if (IsBoolExpr(arg)) { EmitStreamBool(writeStrFn, arg); return; }
+
+            // A whole bytearray, an array slice, or a slice of a __getitem__ object
+            // (microcontroller.nvm[0:4]): CPython-style bytearray(b'...') repr. As a
+            // scalar the array VARIABLE streamed through decimal_u8 and printed garbage.
+            if (TryEmitByteArrayReprArg(writeStrFn, arg)) return;
 
             RejectInstanceInterpolation(arg);
             EmitStreamVal(floatWriteFn, VisitExpression(arg));
