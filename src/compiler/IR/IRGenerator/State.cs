@@ -239,6 +239,17 @@ public partial class IRGenerator
     private List<LoopLabels> loopStack = new();
     private List<InlineContext> inlineStack = new();
 
+    // Module-level globals whose initializer could not be const-evaluated and that
+    // carry no annotation: ScanGlobals had to register them as uint8. The first
+    // top-level assignment may widen them to the RHS's real type (e.g.
+    // `f0 = pwm.freq()` with a uint16 getter -- as uint8 the store wrapped
+    // 1000 to 232 on real hardware).
+    private HashSet<string> widenableGlobals = new();
+
+    // Declared return type of the most recently completed @inline expansion, so an
+    // assignment can recover the width of a call result that folded to a Constant.
+    private DataType lastInlineReturnType = DataType.UNKNOWN;
+
     // Catch-dispatch labels of the `try` blocks whose BODY is currently being
     // lowered (innermost last). A `raise` lexically inside a try body is delivered
     // to the top label instead of propagating to the caller. Pushed/popped by

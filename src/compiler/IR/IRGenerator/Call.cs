@@ -1424,6 +1424,10 @@ public partial class IRGenerator
             lastTupleResults = new List<string>(Enumerable.Last<InlineContext>(inlineStack).ResultVars);
         inlineStack.RemoveAt(inlineStack.Count - 1);
         activeInlineExpansions.Remove(callee);
+        // Nested expansions pop innermost-first, so after the RHS finishes this holds
+        // the OUTERMOST call's declared return type — the width the assignment needs
+        // when the result folded to a bare Constant.
+        lastInlineReturnType = DataTypeExtensions.StringToDataType(func.ReturnType);
 
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;

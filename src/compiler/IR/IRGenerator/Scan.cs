@@ -414,6 +414,8 @@ public partial class IRGenerator
                     DataType t = DataTypeExtensions.StringToDataType(type);
                     mutableGlobals[currentModulePrefix + name] = t;
                     if (scope != null) scope.MutableGlobals[name] = t;
+                    if (string.IsNullOrEmpty(type))
+                        widenableGlobals.Add(currentModulePrefix + name);
                 }
 
                 // Track module-level singleton instances (e.g. `mem8 = _Mem8()`) so

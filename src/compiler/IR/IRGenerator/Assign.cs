@@ -496,6 +496,24 @@ public partial class IRGenerator
                                 "or rename the variable if a local was intended",
                                 stmt.Line > 0 ? stmt.Line : lastLine, 1);
 
+                        // First top-level store into an unannotated global that ScanGlobals
+                        // could not type: adopt the RHS's real width. As uint8, a uint16
+                        // getter result wrapped at the store (pwm.freq() printed 232 for
+                        // 1000 on a real Uno).
+                        if (widenableGlobals.Remove(moduleGlobalName))
+                        {
+                            DataType rhsT = value switch
+                            {
+                                Temporary wt => wt.Type,
+                                Variable wv => wv.Type,
+                                Constant when stmt.Value is CallExpr && lastInlineReturnType != DataType.UNKNOWN
+                                    => lastInlineReturnType,
+                                _ => mutableGlobals[moduleGlobalName]
+                            };
+                            if (rhsT.SizeOf() > mutableGlobals[moduleGlobalName].SizeOf())
+                                mutableGlobals[moduleGlobalName] = rhsT;
+                        }
+
                         target = new Variable(moduleGlobalName, mutableGlobals[moduleGlobalName]);
                     }
                     else
