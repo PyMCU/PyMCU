@@ -15,6 +15,7 @@
 
 from pymcu.types import uint8, uint16, uint32, inline, asm, ptr
 from pymcu.chips import __CHIP__, __FREQ__
+from pymcu.exceptions import CompileError
 
 @inline
 def delay_ms(ms: uint16):
@@ -474,33 +475,43 @@ def millis_init():
 
 @inline
 def millis() -> uint32:
-    """Return elapsed milliseconds since millis_init() was called.
+    """Return elapsed milliseconds since the timebase started.
 
-    Reads a Timer0-overflow counter atomically under CLI/SEI.
-    AVR (ATmega328P) only; returns 0 on unsupported architectures.
+    avr (ATmega): Timer0-overflow counter, read atomically under CLI/SEI;
+      requires millis_init() first.
+    rp2040/rp2350: the hardware microsecond TIMER, divided down.
+    Everything else has no timebase, and a counter frozen at 0 turns every
+    `millis() - last > interval` into a test that never fires, with nothing
+    to tell the user why -- so those targets raise here instead.
     """
-    match __CHIP__.arch:
-        case "avr":
-            from pymcu.hal.avr.timer.atmega328p import millis as _millis_avr
-            return _millis_avr()
-        case _:
-            return 0
-    return 0
+    if __CHIP__.name == "rp2040" or __CHIP__.name == "rp2350":
+        return micros() // 1000
+    elif __CHIP__.arch == "avr":
+        from pymcu.hal.timer import millis as _millis_avr
+        return _millis_avr()
+    else:
+        raise CompileError("millis() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_ms() to pace a loop instead.")
 
 
 @inline
 def micros() -> uint32:
-    """Return elapsed microseconds since millis_init() was called.
+    """Return elapsed microseconds since the timebase started.
 
-    Combines the overflow counter with the current TCNT0 value for
-    4 us resolution at 16 MHz / prescaler 64.
-    AVR (ATmega328P) only; returns 0 on unsupported architectures.
+    avr (ATmega): the overflow counter combined with the current TCNT0, for
+      4 us resolution at 16 MHz / prescaler 64; requires millis_init() first.
+    rp2040/rp2350: TIMERAWL, the raw low 32 bits of the free-running 1 MHz
+      counter -- exact microseconds, and the same counter asyncio reads.
+    Everything else raises, for the reason given in millis().
     """
-    match __CHIP__.arch:
-        case "avr":
-            from pymcu.hal.avr.timer.atmega328p import micros as _micros_avr
-            return _micros_avr()
-        case _:
-            return 0
-    return 0
+    if __CHIP__.name == "rp2040":
+        t: ptr[uint32] = ptr(0x40054028)
+        return t.value
+    elif __CHIP__.name == "rp2350":
+        t2: ptr[uint32] = ptr(0x400B0028)
+        return t2.value
+    elif __CHIP__.arch == "avr":
+        from pymcu.hal.timer import micros as _micros_avr
+        return _micros_avr()
+    else:
+        raise CompileError("micros() needs a timebase; not available on this architecture yet: only ATmega AVR (Timer0) and RP2040/RP2350 (hardware TIMER) have one, so it would be frozen at 0 and every elapsed-time test would silently never fire. Use pymcu.time.delay_us() to pace a loop instead.")
 
