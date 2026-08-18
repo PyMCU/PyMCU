@@ -16,6 +16,7 @@ the chain that belong to the stdlib: vendor against chip file, and chip file
 against the table the backend actually reads.
 """
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -24,7 +25,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 CHIPS = REPO / "lib" / "src" / "pymcu" / "chips"
-DEVICES = REPO.parent / "pymcu-avr" / "src" / "csharp" / "lib" / "Targets" / "AVR" / "AvrDevices.cs"
+BACKEND_BINARY = (REPO.parent / "pymcu-avr" / "src" / "python" / "pymcu"
+                  / "backend" / "avr" / "pymcuc-avr")
 
 _avr_gcc = sorted(Path.home().glob(
     ".cache/uv/archive-v0/*/pymcu_avr_toolchain/bin/avr-gcc"))
@@ -85,40 +87,47 @@ def vendor(chip: str):
 
 
 def backend_table():
-    """The table the AVR backend reads, parsed from its own source.
+    """Ask the backend what it knows, instead of reading what its source looks like.
 
-    Read from the file rather than copied here on purpose: a table transcribed
-    into a test stops being a check of the table and becomes a copy of it.
+    The previous version pattern-matched the C# table. That made a source file
+    somebody else owns into this test's interface: two routine reformats made the
+    pattern match nothing, and every backend check would have skipped with the
+    false reason that the checkout was missing. The subcommand reads the catalogue
+    through the same accessor the code generator calls, so what is checked here is
+    what the compiler uses, not what its text appears to say.
     """
-    if not DEVICES.exists():
-        return {}
-    text = DEVICES.read_text()
-    out = {}
-    for chip, start, size, jmp in re.findall(
-            r'\["(\w+)"\]\s*=\s*new(?:\s+\w+)?\(\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*'
-            r'(0x[0-9A-Fa-f]+|\d+)\s*,\s*(true|false)\s*\)', text):
-        out[chip] = (int(start, 0), int(size, 0), jmp == "true")
-    return out
+    if not BACKEND_BINARY.exists():
+        return None
+    proc = subprocess.run([str(BACKEND_BINARY), "devices"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"{BACKEND_BINARY} devices exited {proc.returncode}: {proc.stderr[:200]}")
+    try:
+        rows = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"{BACKEND_BINARY} devices did not return JSON: {exc}") from exc
+    return {r["Chip"]: (r["RamStart"], r["RamSize"], r["HasJmpCall"], r["RamEnd"])
+            for r in rows}
 
 
 BACKEND = backend_table()
 
 needs_gcc = pytest.mark.skipif(AVR_GCC is None, reason="avr toolchain not installed")
-needs_backend = pytest.mark.skipif(not DEVICES.exists(), reason="pymcu-avr checkout not present")
+needs_backend = pytest.mark.skipif(BACKEND is None, reason="AVR backend binary not present")
 
 
 @needs_backend
-def test_the_device_table_is_readable():
-    """A file that is present but yields nothing is a broken parser, never a skip.
+def test_the_backend_answered_with_a_catalogue():
+    """A binary that is there but says nothing is a broken instrument, never a skip.
 
-    AvrDevices.cs is C# source, not a data format, and its owner may reformat it
-    without knowing this test reads it. Two routine edits -- writing the explicit
-    type, or using a collection initialiser -- make the pattern match nothing.
-    Collapsing that into the same skip as "no checkout" would take every backend
-    check out of service and report the absence as somebody else's missing repo.
+    Only an absent binary is a legitimate skip. Exit codes and unreadable output
+    already raise while the table is being built; an empty catalogue would pass
+    every other check in this file by having nothing to disagree with.
     """
-    assert BACKEND, (f"{DEVICES} exists but no device rows parsed out of it; "
-                     "the table format changed and these checks are not running")
+    assert BACKEND, (f"{BACKEND_BINARY} devices returned an empty catalogue; "
+                     "these checks are not running")
 
 
 @needs_gcc
@@ -151,7 +160,7 @@ def test_the_backend_table_agrees_with_the_chip_file(chip):
     """The ATmega2560 case: a correct chip file the backend was not reading."""
     if chip not in BACKEND:
         pytest.skip(f"the backend table has no entry for {chip}")
-    start, size, _ = BACKEND[chip]
+    start, size, _, _ = BACKEND[chip]
     ours = chip_constants(CHIPS / f"{chip}.py")
     assert (start, size) == (ours["RAM_START"], ours["RAM_SIZE"]), \
         (f"{chip}: backend has 0x{start:04X}/{size}, "
@@ -176,6 +185,17 @@ def test_the_backend_knows_whether_the_core_has_jmp_and_call(chip):
         f"{chip}: backend says HasJmpCall={BACKEND[chip][2]}, avr-gcc says {theirs['HAS_JMP_CALL']}"
 
 
+@needs_backend
+@pytest.mark.parametrize("chip", AVR_CHIPS)
+def test_the_backend_computes_its_own_ram_end(chip):
+    """RamEnd is published, not transcribed; if it stops agreeing there is a third source."""
+    if chip not in BACKEND:
+        pytest.skip(f"the backend catalogue has no entry for {chip}")
+    start, size, _, end = BACKEND[chip]
+    assert end == start + size - 1, \
+        f"{chip}: backend publishes RamEnd={end}, its own start and size give {start + size - 1}"
+
+
 def test_there_are_avr_chips_to_check():
     assert len(AVR_CHIPS) >= 15, f"only {len(AVR_CHIPS)} AVR chip files found"
 
@@ -184,4 +204,38 @@ def test_there_are_avr_chips_to_check():
 def test_every_avr_chip_file_appears_in_the_backend_table():
     """A chip the backend has never heard of gets whatever default it falls back to."""
     missing = [c for c in AVR_CHIPS if c not in BACKEND]
-    assert not missing, f"no entry in AvrDevices.cs for: {missing}"
+    assert not missing, f"the backend catalogue has no entry for: {missing}"
+
+
+def stub_binary(tmp_path, script):
+    fake = tmp_path / "pymcuc-avr"
+    fake.write_text("#!/bin/sh\n" + script)
+    fake.chmod(0o755)
+    return fake
+
+
+def test_an_absent_binary_is_the_only_legitimate_skip(tmp_path, monkeypatch):
+    monkeypatch.setattr(snap_module(), "BACKEND_BINARY", tmp_path / "nope")
+    assert backend_table() is None
+
+
+@pytest.mark.parametrize("script,why", [
+    ("exit 3", "exited non-zero"),
+    ("echo 'not json'", "returned something that is not JSON"),
+])
+def test_a_binary_that_answers_badly_is_a_hard_failure(tmp_path, monkeypatch, script, why):
+    """A broken instrument is never a skip: it would take the checks out of service."""
+    monkeypatch.setattr(snap_module(), "BACKEND_BINARY", stub_binary(tmp_path, script))
+    with pytest.raises(AssertionError):
+        backend_table()
+
+
+def test_an_empty_catalogue_is_caught_by_its_own_check(tmp_path, monkeypatch):
+    """Zero rows parses fine and would silently agree with everything."""
+    monkeypatch.setattr(snap_module(), "BACKEND_BINARY", stub_binary(tmp_path, "echo '[]'"))
+    assert backend_table() == {}
+
+
+def snap_module():
+    import sys
+    return sys.modules[__name__]

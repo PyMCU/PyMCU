@@ -985,14 +985,14 @@
    "status": "ok"
   },
   "call|pic10f200": {
-   "asm": "9999143fb762f014",
-   "asm_from": "debug/firmware.asm",
-   "mir": "d73f657b7b60207d",
-   "pin": "\"GP0\"",
-   "rom": 86,
-   "status": "ok",
-   "warn": 11,
-   "warn_first": "Warning[219] Invalid RAM location specified. 'mix.i' -- 0x020 >"
+   "kind": "sin-clasificar",
+   "proves": "nada: motivo no reconocido por el arnes",
+   "reason": "pin=\"GP0\": PIC12CodeGen: this program needs 18 bytes of data RAM but pic10f200 has 16 (0x10-0x1F). Re",
+   "status": "no-build",
+   "tried": {
+    "\"GP0\"": "PIC12CodeGen: this program needs 18 bytes of data RAM but pic10f200 has 16 (0x10-0x1F). Re",
+    "\"GP1\"": "PIC12CodeGen: this program needs 18 bytes of data RAM but pic10f200 has 16 (0x10-0x1F). Re"
+   }
   },
   "call|pic16f18877": {
    "kind": "sin-facade",
@@ -1013,14 +1013,14 @@
    "status": "ok"
   },
   "call|pic16f84a": {
-   "asm": "85ffe227241c64a9",
+   "asm": "e71dd1bd6722830a",
    "asm_from": "debug/firmware.asm",
    "mir": "6c9cdc804cc461d7",
    "pin": "\"RB3\"",
    "rom": 172,
    "status": "ok",
    "warn": 3,
-   "warn_first": "Warning[219] Invalid RAM location specified. '__ret_hi' -- 0x0079 in"
+   "warn_first": "Warning[219] Invalid RAM location specified. '__ret_hi' -- 0x0051 in"
   },
   "call|pic16f877a": {
    "asm": "8f000ff281578941",
@@ -1461,51 +1461,48 @@
  },
  "provenance": {
   "compiler_tree_dirty": [],
-  "head": "bdce2451",
+  "head": "a9c603ce",
   "toolchain": {
    "pymcuc": {
     "binary": "/Users/begeistert/Repos/PyMCU/build/bin/pymcuc",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "bdce2451",
+    "repo_head": "a9c603ce",
     "scope": "src/compiler",
     "sha": "1a1f13b9490b5951",
+    "stale": "compilado en bdce2451, el repo va por a9c603ce",
     "stamp": "bdce2451"
    },
    "pymcuc-avr": {
     "binary": "/Users/begeistert/Repos/pymcu-avr/src/python/pymcu/backend/avr/pymcuc-avr",
-    "dirty_hash": "38578ad3c4add0b6",
+    "dirty_hash": null,
     "repo": "pymcu-avr",
-    "repo_dirty": [
-     "src/csharp/cli/Program.cs",
-     "src/csharp/lib/Targets/AVR/AvrDevices.cs",
-     "tests/unit/Backend/AvrDeviceDumpTests.cs"
-    ],
-    "repo_head": "0d161f88",
+    "repo_dirty": [],
+    "repo_head": "fe8a5636",
     "scope": ".",
-    "sha": "701a2b65e8eed690",
-    "stamp": "0d161f88"
+    "sha": "a5d541aaa8e5615e",
+    "stamp": "fe8a5636"
    },
    "pymcuc-pic": {
     "binary": "/Users/begeistert/Repos/pymcu-pic/src/python/pymcu/backend/pic/pymcuc-pic",
     "dirty_hash": null,
     "repo": "pymcu-pic",
     "repo_dirty": [],
-    "repo_head": "efda7a02",
+    "repo_head": "73f8f05c",
     "scope": ".",
-    "sha": "02d8c1dbe8e6dcbf",
-    "stamp": "efda7a02"
+    "sha": "4f01cfe5a5a82bf6",
+    "stamp": "73f8f05c"
    },
    "pymcuc-riscv": {
     "binary": "/Users/begeistert/Repos/PyMCU/extensions/pymcu-backend-riscv/src/python/pymcu/backend/riscv/pymcuc-riscv",
     "dirty_hash": null,
     "repo": "PyMCU",
     "repo_dirty": [],
-    "repo_head": "bdce2451",
+    "repo_head": "a9c603ce",
     "scope": "extensions/pymcu-backend-riscv",
     "sha": "51485c05bf94ba74",
-    "stale": "compilado en 92edbb63, el repo va por bdce2451",
+    "stale": "compilado en 92edbb63, el repo va por a9c603ce",
     "stamp": "92edbb63"
    },
    "pymcuc-rp2040": {

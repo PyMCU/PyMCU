@@ -334,6 +334,8 @@ PIN_SHAPED = re.compile(r"Unsupported Pin|Unknown pin|no such pin", re.I)
 
 WARNING = re.compile(r"Warning\[\d+\][^\n]{0,90}")
 
+DOES_NOT_FIT = re.compile(r"needs \d+ bytes|static data needs|does not fit", re.I)
+
 
 def first_that_builds(work, chip, arch, template, candidates, key):
     """Try each pin/channel the architecture might accept, keep the first that builds.
@@ -571,6 +573,10 @@ def main():
             if b.get("warn") and not a.get("warn"):
                 note = f", {b['warn']} AVISOS DEL ENSAMBLADOR nuevos"
             diffs.append((key, f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}{note}", delta))
+        elif (a and b and a.get("status") == "ok" and b.get("status") == "no-build"
+              and a.get("warn") and DOES_NOT_FIT.search(current[key].get("reason", ""))):
+            diffs.append((key, f"ok con {a['warn']} avisos -> no-build honesto: "
+                               "dejo de compilar un binario roto", "mejora"))
         else:
             diffs.append((key, f"{a} -> {b}", None))
     if not diffs:
@@ -587,7 +593,9 @@ def main():
     for key, text, delta in diffs:
         chip = key.split("|", 1)[1]
         backend = ARCH_BACKEND.get(arch_of.get(chip, "?"))
-        if backend in moved or frontend_moved:
+        if delta == "mejora":
+            flag = "  <-- MEJORA"
+        elif backend in moved or frontend_moved:
             flag = f"  <-- NO ES TUYO: se movio {backend if backend in moved else 'el frontend'}"
         elif delta is not None and delta > 0:
             flag = "  <-- ROM SUBE"
