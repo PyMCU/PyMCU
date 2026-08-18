@@ -447,8 +447,15 @@ public partial class IRGenerator
     // `x = value` to a plain (scalar) variable target: type/alias resolution, constant
     // tracking and the Copy. Receives the pre-computed rhs `value`. Terminal for the
     // chain (completes -> VisitAssign returns).
+    private bool IsMemoryAddressGlobal(string name) =>
+        globals.TryGetValue(name, out var sym) && sym.IsMemoryAddress;
+
     private void EmitScalarVarAssign(AssignStmt stmt, VariableExpr varExpr, Val value)
     {
+        if (stmt.AnnotatedType is { Length: > 0 } declared
+            && !declared.Contains("ptr") && !declared.Contains("PIORegister"))
+            RejectBareRegisterRead(stmt.Value);
+
         // Assigning to a name that is a ptr[T] register alias NEVER writes the register:
         // it rebinds the Python name and the store is silently dead-code-eliminated.
         // This broke Timer.set_compare (OCR1AH = hi) in the stdlib itself, so make it
@@ -457,7 +464,12 @@ public partial class IRGenerator
             string q = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + varExpr.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + varExpr.Name : varExpr.Name);
-            if (constantAddressVariables.ContainsKey(varExpr.Name) || constantAddressVariables.ContainsKey(q))
+            bool isRegister = constantAddressVariables.ContainsKey(varExpr.Name)
+                || constantAddressVariables.ContainsKey(q);
+            if (!isRegister && !variableTypes.ContainsKey(q))
+                isRegister = IsMemoryAddressGlobal(varExpr.Name)
+                    || IsMemoryAddressGlobal(currentModulePrefix + varExpr.Name);
+            if (isRegister)
                 throw UserError(
                     $"assigning to '{varExpr.Name}' rebinds the name and never writes the register; " +
                     $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit");
@@ -1976,6 +1988,10 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        if (stmt.Init != null && !stmt.VarType.Contains("ptr")
+            && !stmt.VarType.Contains("PIORegister"))
+            RejectBareRegisterRead(stmt.Init);
+
         // `d: ... = {...}`: dict/set literal binding, same as the unannotated form.
         if (stmt.Init is DictExpr or SetExpr)
         {

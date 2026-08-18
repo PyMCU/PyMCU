@@ -81,6 +81,8 @@ public partial class IRGenerator
                 binExpr.Op == Frontend.BinaryOp.Is || binExpr.Op == Frontend.BinaryOp.IsNot)
                 return 0;
 
+            RejectBareRegisterOperands(binExpr);
+
             Val v1 = VisitExpression(binExpr.Left);
             Val v2 = VisitExpression(binExpr.Right);
 

@@ -49,7 +49,6 @@ public class AsyncTimebaseGuardTests
     [InlineData("pic16f877a", "pic14")]
     [InlineData("pic16f84a", "pic14")]
     [InlineData("pic10f200", "pic12")]
-    [InlineData("pic18f45k50", "pic18")]
     [InlineData("ch32v003", "riscv")]
     public void NoTimebaseArchitecture_TicksRaisesCompileError(string chip, string arch)
     {
@@ -79,6 +78,7 @@ public class AsyncTimebaseGuardTests
     [InlineData("atmega2560", "avr")]
     [InlineData("rp2040", "arm")]
     [InlineData("rp2350", "arm")]
+    [InlineData("pic18f45k50", "pic18")]
     public void TargetWithTimebase_TicksHasNoGuard(string chip, string arch)
     {
         GuardIn(TicksBodyFor(chip, arch)).Should().BeNull(

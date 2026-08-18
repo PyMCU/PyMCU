@@ -383,8 +383,52 @@ public partial class IRGenerator
         return noneValuedNames.Contains(ve.Name);
     }
 
+    private bool IsBareRegisterName(Expression expr)
+    {
+        if (expr is not VariableExpr v) return false;
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + v.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + v.Name : v.Name);
+        if (variableTypes.ContainsKey(q)) return false;
+        return constantAddressVariables.ContainsKey(v.Name)
+            || constantAddressVariables.ContainsKey(q)
+            || IsMemoryAddressGlobal(v.Name)
+            || IsMemoryAddressGlobal(currentModulePrefix + v.Name);
+    }
+
+    private void RejectBareRegisterRead(Expression expr)
+    {
+        if (!IsBareRegisterName(expr)) return;
+        string name = ((VariableExpr)expr).Name;
+        throw UserError(
+            $"'{name}' names a register, not its contents; use {name}.value to read the whole " +
+            $"register, or {name}[bit] for one bit");
+    }
+
+    private void RejectBareRegisterOperands(BinaryExpr expr)
+    {
+        bool arithmetic = expr.Op is AstBinOp.Add or AstBinOp.Sub or AstBinOp.Mul
+            or AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod or AstBinOp.BitAnd
+            or AstBinOp.BitOr or AstBinOp.BitXor or AstBinOp.LShift or AstBinOp.RShift;
+        if (arithmetic)
+        {
+            RejectBareRegisterRead(expr.Left);
+            RejectBareRegisterRead(expr.Right);
+            return;
+        }
+
+        bool relational = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
+            or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
+        if (!relational) return;
+        if (IsBareRegisterName(expr.Left) && IsBareRegisterName(expr.Right)) return;
+        if (expr.Right is IntegerLiteral) RejectBareRegisterRead(expr.Left);
+        if (expr.Left is IntegerLiteral) RejectBareRegisterRead(expr.Right);
+    }
+
     private Val VisitBinary(BinaryExpr expr)
     {
+        RejectBareRegisterOperands(expr);
+
         // Capture and CLEAR any explicit-cast width hint up front: it applies to THIS op only,
         // so operands (visited below) and nested ops promote normally. `uint8(a + b)` then makes
         // the `+` an 8-bit op (wrap + 8-bit flags), the escape hatch from default promotion.
