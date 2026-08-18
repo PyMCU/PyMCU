@@ -1,4 +1,4 @@
-from pymcu.chips.pic16f18877 import TRISA, TRISB, TRISC, TRISD, TRISE, LATA, LATB, LATC, LATD, LATE, PORTA, PORTB, PORTC, PORTD, PORTE, WPUA, WPUB, WPUC, WPUD, WPUE, IOCAP, IOCAN, IOCBP, IOCBN, IOCCP, IOCCN, IOCDP, IOCDN, IOCEP, IOCEN, INTCON, PIE0
+from pymcu.chips.pic16f18877 import TRISA, TRISB, TRISC, TRISD, TRISE, LATA, LATB, LATC, LATD, LATE, PORTA, PORTB, PORTC, PORTD, PORTE, WPUA, WPUB, WPUC, WPUD, WPUE, IOCAP, IOCAN, IOCBP, IOCBN, IOCCP, IOCCN, IOCEP, IOCEN, INTCON, PIE0
 from pymcu.types import uint8, inline
 
 @inline
@@ -874,86 +874,8 @@ def pin_irq_setup(name: str, trigger: uint8):
             IOCCN[7] = 1
         PIE0[4] = 1
         INTCON[7] = 1
-    elif name == "RD0":
-        if trigger == 1:
-            IOCDN[0] = 1
-        elif trigger == 2:
-            IOCDP[0] = 1
-        elif trigger == 3:
-            IOCDP[0] = 1
-            IOCDN[0] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD1":
-        if trigger == 1:
-            IOCDN[1] = 1
-        elif trigger == 2:
-            IOCDP[1] = 1
-        elif trigger == 3:
-            IOCDP[1] = 1
-            IOCDN[1] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD2":
-        if trigger == 1:
-            IOCDN[2] = 1
-        elif trigger == 2:
-            IOCDP[2] = 1
-        elif trigger == 3:
-            IOCDP[2] = 1
-            IOCDN[2] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD3":
-        if trigger == 1:
-            IOCDN[3] = 1
-        elif trigger == 2:
-            IOCDP[3] = 1
-        elif trigger == 3:
-            IOCDP[3] = 1
-            IOCDN[3] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD4":
-        if trigger == 1:
-            IOCDN[4] = 1
-        elif trigger == 2:
-            IOCDP[4] = 1
-        elif trigger == 3:
-            IOCDP[4] = 1
-            IOCDN[4] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD5":
-        if trigger == 1:
-            IOCDN[5] = 1
-        elif trigger == 2:
-            IOCDP[5] = 1
-        elif trigger == 3:
-            IOCDP[5] = 1
-            IOCDN[5] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD6":
-        if trigger == 1:
-            IOCDN[6] = 1
-        elif trigger == 2:
-            IOCDP[6] = 1
-        elif trigger == 3:
-            IOCDP[6] = 1
-            IOCDN[6] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
-    elif name == "RD7":
-        if trigger == 1:
-            IOCDN[7] = 1
-        elif trigger == 2:
-            IOCDP[7] = 1
-        elif trigger == 3:
-            IOCDP[7] = 1
-            IOCDN[7] = 1
-        PIE0[4] = 1
-        INTCON[7] = 1
+    elif name == "RD0" or name == "RD1" or name == "RD2" or name == "RD3" or name == "RD4" or name == "RD5" or name == "RD6" or name == "RD7":
+        raise NotImplementedError("interrupt-on-change is not available on PORTD of the PIC16F18877; only ports A, B, C and E have IOC registers")
     elif name == "RE0":
         if trigger == 1:
             IOCEN[0] = 1

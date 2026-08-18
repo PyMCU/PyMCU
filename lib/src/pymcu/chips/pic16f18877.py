@@ -216,25 +216,23 @@ PIE8:     ptr[uint8] = ptr(0x071E)
 # ==========================================
 #  Weak Pull-Up Registers (Bank 4)
 # ==========================================
-WPUA:     ptr[uint8] = ptr(0x020C)
-WPUB:     ptr[uint8] = ptr(0x020D)
-WPUC:     ptr[uint8] = ptr(0x020E)
-WPUD:     ptr[uint8] = ptr(0x020F)
-WPUE:     ptr[uint8] = ptr(0x0210)
+WPUA:     ptr[uint8] = ptr(0x1F39)
+WPUB:     ptr[uint8] = ptr(0x1F44)
+WPUC:     ptr[uint8] = ptr(0x1F4F)
+WPUD:     ptr[uint8] = ptr(0x1F5A)
+WPUE:     ptr[uint8] = ptr(0x1F65)
 
 # ==========================================
 #  Interrupt-on-Change (IOC) Registers (Bank 7)
 # ==========================================
-IOCAP:    ptr[uint8] = ptr(0x0391)
-IOCAN:    ptr[uint8] = ptr(0x0392)
-IOCBP:    ptr[uint8] = ptr(0x0395)
-IOCBN:    ptr[uint8] = ptr(0x0396)
-IOCCP:    ptr[uint8] = ptr(0x0399)
-IOCCN:    ptr[uint8] = ptr(0x039A)
-IOCDP:    ptr[uint8] = ptr(0x039D)
-IOCDN:    ptr[uint8] = ptr(0x039E)
-IOCEP:    ptr[uint8] = ptr(0x03A1)
-IOCEN:    ptr[uint8] = ptr(0x03A2)
+IOCAP:    ptr[uint8] = ptr(0x1F3D)
+IOCAN:    ptr[uint8] = ptr(0x1F3E)
+IOCBP:    ptr[uint8] = ptr(0x1F48)
+IOCBN:    ptr[uint8] = ptr(0x1F49)
+IOCCP:    ptr[uint8] = ptr(0x1F53)
+IOCCN:    ptr[uint8] = ptr(0x1F54)
+IOCEP:    ptr[uint8] = ptr(0x1F69)
+IOCEN:    ptr[uint8] = ptr(0x1F6A)
 
 # ==========================================
 #  CONSTANTS & BITS
@@ -281,7 +279,8 @@ T1CKPS0: int = 4; T1CKPS1: int = 5
 
 # T2CON Bits
 T2ON:   int = 7
-T2CKPS0: int = 0; T2CKPS1: int = 1; T2CKPS2: int = 2
+T2OUTPS0: int = 0; T2OUTPS1: int = 1; T2OUTPS2: int = 2; T2OUTPS3: int = 3
+T2CKPS0: int = 4; T2CKPS1: int = 5; T2CKPS2: int = 6
 
 # CCP1CON Bits
 CCP1EN:  int = 7
@@ -291,9 +290,12 @@ CCP1MODE0: int = 0; CCP1MODE1: int = 1; CCP1MODE2: int = 2; CCP1MODE3: int = 3
 CCP2EN:  int = 7
 CCP2MODE0: int = 0; CCP2MODE1: int = 1; CCP2MODE2: int = 2; CCP2MODE3: int = 3
 
-# ADC Bits
-ADON: int = 0
+# ADCON0 Bits
+ADGO: int = 0
 GO:   int = 0
+ADCS: int = 4
+ADCONT: int = 6
+ADON: int = 7
 
 # TXSTA Bits
 TXEN: int = 5
