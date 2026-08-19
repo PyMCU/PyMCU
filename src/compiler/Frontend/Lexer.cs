@@ -67,6 +67,7 @@ public ref struct Lexer
 
     private char Peek() => pos >= src.Length ? (char)0 : src[pos];
     private char PeekNext() => pos + 1 >= src.Length ? (char)0 : src[pos + 1];
+    private char PeekAt(int ahead) => pos + ahead >= src.Length ? (char)0 : src[pos + ahead];
 
     private char Advance()
     {
@@ -220,6 +221,21 @@ public ref struct Lexer
             if (char.IsDigit(PeekNext()))
             {
                 text.Append(Advance());
+                while (char.IsDigit(Peek()))
+                {
+                    text.Append(Advance());
+                }
+            }
+        }
+
+        if (b == 10 && (Peek() == 'e' || Peek() == 'E'))
+        {
+            char afterE = PeekNext();
+            bool signed = afterE == '+' || afterE == '-';
+            if (char.IsDigit(afterE) || (signed && char.IsDigit(PeekAt(2))))
+            {
+                text.Append(Advance());
+                if (signed) text.Append(Advance());
                 while (char.IsDigit(Peek()))
                 {
                     text.Append(Advance());

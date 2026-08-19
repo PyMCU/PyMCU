@@ -234,6 +234,8 @@ public class Parser
     // As in Python, `(T)` is just a parenthesized T; only a comma makes it a tuple.
     private string ParseReturnTypeAnnotation()
     {
+        if (Match(TokenType.None)) return "void";
+
         if (!Check(TokenType.LParen)) return ParseTypeAnnotation();
 
         Advance(); // (
@@ -1909,9 +1911,9 @@ public class Parser
 
             try
             {
-                if (b == 10 && text.Contains('.'))
+                if (b == 10 && (text.Contains('.') || text.Contains('e') || text.Contains('E')))
                 {
-                    double valD = double.Parse(text);
+                    double valD = double.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
                     return new FloatLiteral(valD);
                 }
 
