@@ -10,3 +10,9 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/PyMCU/PyMCU/security/advisories/new
     about: Please report security issues privately through GitHub Security Advisories, not as a public issue.
+  - name: PIC backend (generated code for PIC10/12/16/18)
+    url: https://github.com/PyMCU/pymcu-pic/issues/new
+    about: The message carries a PIC12CodeGen/PIC14CodeGen/PIC18CodeGen prefix, or the error comes from gpasm.
+  - name: AVR backend (generated code for ATmega/ATtiny)
+    url: https://github.com/PyMCU/pymcu-avr/issues/new
+    about: The message carries an AvrCodeGen prefix, or the error comes from avr-as, the linker or the WASI toolchain.
