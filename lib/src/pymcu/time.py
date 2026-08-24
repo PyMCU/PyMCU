@@ -13,9 +13,20 @@
 # Accuracy: <0.1% at 1, 8, 12, 16, 20 MHz; defaults to 16 MHz for other
 # AVR frequencies. For precise timing, use hardware timers directly.
 
-from pymcu.types import uint8, uint16, uint32, inline, asm, ptr
+from pymcu.types import uint8, uint16, uint32, const, inline, asm, ptr
 from pymcu.chips import __CHIP__, __FREQ__
 from pymcu.exceptions import CompileError
+
+@inline
+def sleep(seconds: const[float]):
+    """Python's sleep, in seconds, folded to the millisecond delay.
+
+    The argument has to be known at compile time: there is no float
+    arithmetic on the delay path, and the whole point of the fold is that
+    sleep(0.5) costs exactly what delay_ms(500) costs.
+    """
+    delay_ms(uint16(seconds * 1000.0))
+
 
 @inline
 def delay_ms(ms: uint16):
