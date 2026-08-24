@@ -173,6 +173,11 @@ public partial class IRGenerator
             // RFC 0001 Model B (Class[N]): arr[i].method() dispatch.
             if (TryEmitInstanceArrayMethodCall(expr, memC) is { } iaResult) return iaResult;
 
+            // A ZCA instance array indexed with a run-time value: each element is a distinct
+            // compile-time instance, so there is nothing to index. Select among them instead --
+            // exactly the if/elif the compiler tells users to write elsewhere, generated here.
+            if (TryEmitUnrolledInstanceArrayCall(expr, memC) is { } selResult) return selResult;
+
             // self.method(args) inside an outlined method: call the sibling outlined method.
             if (TryEmitSelfOutlinedMethodCall(expr, memC) is { } selfResult) return selfResult;
 
@@ -1802,6 +1807,95 @@ public partial class IRGenerator
     // (base + i*stride) and call the shared slot method with it as the self pointer.
     // Returns the call result when handled; null when the receiver is not an instance
     // array (fall through to normal member-call resolution).
+    /// <summary>
+    /// `pins[i].high()` where `pins` is a list of ZCA instances and `i` varies at run time.
+    /// The elements are separate compile-time instances (there is no array to index), so the
+    /// call is lowered as a selection over the constant indices: the LED chaser, the keypad
+    /// scan and the stepper sequence all have this shape, and `for p in pins` only covers
+    /// "do the same to all of them", not "act on the i-th".
+    /// </summary>
+    private Val? TryEmitUnrolledInstanceArrayCall(CallExpr expr, MemberAccessExpr memC)
+    {
+        if (memC.Object is not IndexExpr { Target: VariableExpr arrVe } idxExpr) return null;
+
+        string q = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + arrVe.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + arrVe.Name : arrVe.Name);
+        if (!instanceClasses.ContainsKey(q + "__0") && instanceClasses.ContainsKey(arrVe.Name + "__0"))
+            q = arrVe.Name;
+        if (!instanceClasses.ContainsKey(q + "__0")) return null;
+
+        // A constant index is already handled by the normal path.
+        if (idxExpr.Index is IntegerLiteral) return null;
+        Val probe = VisitExpression(idxExpr.Index);
+        if (probe is Constant) return null;
+
+        int count = 0;
+        while (instanceClasses.ContainsKey(q + "__" + count)) count++;
+
+        // The selection costs one comparison and one expansion per element, so it is the right
+        // shape for the handful of pins this pattern is about and the wrong one for a big table.
+        const int maxUnrolled = 8;
+        if (count > maxUnrolled)
+            throw UserError(
+                $"'{arrVe.Name}[i].{memC.Member}()' selects among {count} instances at run time, "
+                + $"which is lowered as {count} branches -- past {maxUnrolled} that is more code "
+                + "than it is worth. Iterate with `for p in " + arrVe.Name + ":`, or split the "
+                + "array.");
+
+        string methodName = memC.Member;
+        string endLabel = MakeLabel();
+
+        // The result slot has to exist before the branches so every arm writes the same place.
+        // The method may be overloaded (Pin.value() reads, Pin.value(x) writes), in which case
+        // the bare key is vacated and only the suffixed ones exist. Pick by arity, and treat
+        // "no match" as void: guessing a width here would truncate whatever comes back.
+        string firstClass = instanceClasses[q + "__0"] ?? "";
+        string firstMethod = string.IsNullOrEmpty(firstClass) ? "" : firstClass + "_" + methodName;
+        // Overloads share the bare key, and it holds whichever definition registered LAST
+        // (Pin.value's writing overload, declared after the reading one), so the ASTs are the
+        // reliable source: pick the definition whose parameter count matches this call.
+        string? rtName = null;
+        if (firstMethod.Length > 0)
+        {
+            foreach (var kv in inlineFunctions)
+            {
+                if (kv.Key != firstMethod && !kv.Key.StartsWith(firstMethod + "___", StringComparison.Ordinal))
+                    continue;
+                var def = kv.Value;
+                if (def == null) continue;
+                if (def.Params.Count(pp => pp.Name != "self") != expr.Args.Count) continue;
+                rtName = def.ReturnType;
+                if (rtName is not (null or "" or "void" or "None")) break;
+            }
+
+            rtName ??= functionReturnTypes.GetValueOrDefault(firstMethod);
+        }
+
+        bool hasValue = rtName is not (null or "" or "void" or "None");
+        Temporary? result = hasValue
+            ? MakeTemp(DataTypeExtensions.StringToDataType(rtName!))
+            : null;
+
+        for (int k = 0; k < count; k++)
+        {
+            string nextLabel = MakeLabel();
+            Emit(new JumpIfNotEqual(probe, new Constant(k), nextLabel));
+
+            var armCall = new CallExpr(
+                new MemberAccessExpr(new IndexExpr(arrVe, new IntegerLiteral(k)), methodName),
+                expr.Args) { Line = expr.Line };
+            Val armVal = VisitCall(armCall);
+            if (result != null && armVal is not NoneVal) Emit(new Copy(armVal, result));
+
+            Emit(new Jump(endLabel));
+            Emit(new Label(nextLabel));
+        }
+
+        Emit(new Label(endLabel));
+        return result is not null ? result : new NoneVal();
+    }
+
     private Val? TryEmitInstanceArrayMethodCall(CallExpr expr, MemberAccessExpr memC)
     {
         if (memC.Object is not IndexExpr { Target: VariableExpr iaArr } iaIdx) return null;
