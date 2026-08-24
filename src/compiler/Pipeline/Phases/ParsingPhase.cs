@@ -39,5 +39,12 @@ public class ParsingPhase : CompilerPhaseBase
 
         var parser = new Parser(tokens);
         context.RootAst = parser.ParseProgram();
+
+        // PYMCU_DUMP_AST=<path> writes the tree in the translator's JSON shape, so the two
+        // front ends can be compared node by node instead of only through the firmware they
+        // produce. A divergence in a branch nothing calls never reaches code generation.
+        string? dumpTo = Environment.GetEnvironmentVariable("PYMCU_DUMP_AST");
+        if (!string.IsNullOrEmpty(dumpTo))
+            File.WriteAllText(dumpTo, AstJsonWriter.Write(context.RootAst));
     }
 }

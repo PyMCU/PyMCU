@@ -33,6 +33,11 @@ AUGOP = {
 }
 
 
+# The source of the file being translated, for the few decisions that need the
+# spelling rather than the value (a triple-quoted string drops its leading newline).
+SOURCE = ""
+
+
 class Unsupported(Exception):
     """A construct the PyMCU AST has no shape for. Carries the line so the
     message can point at it the way a parser error would."""
@@ -62,7 +67,11 @@ def annotation_of(node):
         index = node.slice
         elements = index.elts if isinstance(index, ast.Tuple) else [index]
         return "tuple[" + ",".join(annotation_of(e) for e in elements) + "]"
-    return ast.unparse(node).replace(", ", ",")
+    text = ast.unparse(node)
+    # The C# parser builds annotations from tokens, so `uint8[n * 2]` comes out `uint8[n*2]`.
+    for spaced, tight in ((", ", ","), (" * ", "*"), (" + ", "+"), (" - ", "-"), (" // ", "//")):
+        text = text.replace(spaced, tight)
+    return text
 
 
 # ── expressions ──────────────────────────────────────────────────────────────
@@ -101,11 +110,28 @@ def e_constant(node):
     if isinstance(v, float):
         return {"k": "Float", "value": v}
     if isinstance(v, str):
-        return {"k": "Str", "value": v}
+        return {"k": "Str", "value": strip_triple_quote_newline(node, v)}
     if isinstance(v, bytes):
         # What the C# parser produces for b"...": a list of byte values.
         return {"k": "List", "elements": [{"k": "Int", "value": b, "line": line_of(node)} for b in v]}
     raise Unsupported(f"literal of type {type(v).__name__}", node)
+
+
+def strip_triple_quote_newline(node, value):
+    """A triple-quoted literal drops one leading newline. The PyMCU lexer does that on
+    purpose -- so an asm() block reads as the lines it looks like -- and says so in
+    Lexer.cs, which makes it a rule of the language rather than a bug to fix."""
+    if not value.startswith("\n") and not value.startswith("\r\n"):
+        return value
+    segment = ast.get_source_segment(SOURCE, node) if SOURCE else None
+    if segment is None:
+        return value
+    opener = segment.lstrip("rbfRBF")
+    triple_double = chr(34) * 3
+    triple_single = chr(39) * 3
+    if opener.startswith(triple_double) or opener.startswith(triple_single):
+        return value[2:] if value.startswith("\r\n") else value[1:]
+    return value
 
 
 def e_boolop(node):
@@ -210,7 +236,9 @@ def e_listcomp(node):
 
 
 def e_lambda(node):
-    return {"k": "Lambda", "params": params_of(node.args), "body": expr(node.body)}
+    # An unannotated lambda parameter is uint8 in the C# parser, not untyped.
+    return {"k": "Lambda", "params": params_of(node.args, default_type="uint8"),
+            "body": expr(node.body)}
 
 
 EXPR = {
@@ -343,8 +371,13 @@ def s_if(node):
     elifs = []
     else_branch = None
     cursor = node.orelse
+    parent_col = node.col_offset
     while cursor:
-        if len(cursor) == 1 and isinstance(cursor[0], ast.If):
+        # CPython represents `elif` and `else:` + a nested `if` identically; PyMCU does not
+        # (one is a flat elif list, the other an else branch). The column separates them:
+        # an elif starts where its parent does, a nested if is indented past it.
+        if len(cursor) == 1 and isinstance(cursor[0], ast.If) \
+                and cursor[0].col_offset == parent_col:
             inner = cursor[0]
             elifs.append({"condition": expr(inner.test), "body": block(inner.body)})
             cursor = inner.orelse
@@ -405,9 +438,10 @@ def s_with(node):
             if not isinstance(item.optional_vars, ast.Name):
                 raise Unsupported("a with target that is not a plain name", node)
             as_name = item.optional_vars.id
+        # The inner with is the body DIRECTLY, not a block wrapping it: that is the shape
+        # the C# parser builds, and the trees have to match node for node.
         result = {"k": "With", "context": expr(item.context_expr), "asName": as_name,
-                  "body": body if result is None else {"k": "Block", "statements": [result]},
-                  "line": line_of(node)}
+                  "body": body if result is None else result, "line": line_of(node)}
         body = result
     if result is None:
         raise Unsupported("with without a context manager", node)
@@ -568,7 +602,7 @@ STMT = {
 
 # ── functions and classes ────────────────────────────────────────────────────
 
-def params_of(args):
+def params_of(args, default_type=""):
     if args.vararg is not None:
         raise Unsupported("*args", args.vararg)
     if args.kwarg is not None:
@@ -580,10 +614,10 @@ def params_of(args):
     out = []
     for i, a in enumerate(positional):
         default = defaults[i - pad] if i >= pad else None
-        out.append({"name": a.arg, "type": annotation_of(a.annotation),
+        out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
                     "default": expr(default) if default is not None else None})
     for a, d in zip(args.kwonlyargs, args.kw_defaults):
-        out.append({"name": a.arg, "type": annotation_of(a.annotation),
+        out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
                     "default": expr(d) if d is not None else None})
     return out
 
@@ -691,23 +725,23 @@ def class_of(node):
     bases = []
     for b in node.bases:
         bases.append(ast.unparse(b))
+    # IsStatic is not a decorator: the C# parser sets it on every class it builds, and the
+    # only class decorator it accepts is @value.
     cls = {"k": "Class", "name": node.name, "bases": bases, "body": block(node.body),
-           "isStatic": False, "isDataclass": False, "isValue": False, "line": line_of(node)}
+           "isStatic": True, "isDataclass": False, "isValue": False, "line": line_of(node)}
     for dec in node.decorator_list:
         name = dec.id if isinstance(dec, ast.Name) else \
             (dec.func.id if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) else "")
-        if name == "dataclass":
-            cls["isDataclass"] = True
-        elif name == "value":
+        if name == "value":
             cls["isValue"] = True
-        elif name == "staticclass":
-            cls["isStatic"] = True
         else:
             raise Unsupported(f"unknown class decorator @{name or ast.unparse(dec)}", node)
     return cls
 
 
 def translate(source, filename):
+    global SOURCE
+    SOURCE = source
     tree = ast.parse(source, filename=filename)
     program = {"imports": [], "functions": [], "globals": []}
     for node in tree.body:

@@ -40,7 +40,23 @@ exactly or the AST stops being the same tree:
 - A multi-value return annotation canonicalises to `tuple[a,b]`, with no space after the
   comma.
 
+## Two ways to compare, and why both
+
+`PYMCU_DUMP_AST=<path>` writes the C# parser's tree in this same JSON shape, so the two
+front ends can be diffed **node by node** and not only through the firmware they produce.
+Comparing firmware catches a divergence that reaches code generation; comparing trees also
+catches one in a branch nothing calls, in an annotation nobody reads yet, or in a node the
+IR generator happens to ignore today.
+
+That difference is not theoretical: the tree comparison found four divergences the corpus
+firmware did not, including an unannotated lambda parameter (uint8 in the C# parser, empty
+here) and `elif` versus `else:` with a nested `if`, which CPython represents identically
+and PyMCU does not.
+
 ## Status
 
-240 of 240 corpus programs (fixtures and examples) compile to byte-identical firmware
-through either front end. The C# parser remains the default; this one is opt-in.
+240 of 240 corpus programs (fixtures and examples) produce byte-identical firmware AND
+identical trees through either front end. The C# parser remains the default and the one
+that ships: it is the only one that can run inside a .NET app with no Python available,
+which is what embedding in a simulator requires. This front end is a development tool and
+the reference the C# parser is measured against.
