@@ -120,12 +120,16 @@ class Pin:
     def toggle(self):
         self._pin[self._bit] = 1
 
+    # Two overloads instead of one const parameter: a const could only ever be a literal,
+    # so `led.value(state)` with a computed state was rejected -- the canonical way to
+    # drive a pin. Reading keeps its own arity, which is what the const trick was for.
     @inline
-    def value(self, x: const = -1) -> uint8:
-        if x == -1:
-            return self._pin[self._bit]
-        else:
-            self._port[self._bit] = x
+    def value(self) -> uint8:
+        return self._pin[self._bit]
+
+    @inline
+    def value(self, x: uint8):
+        self._port[self._bit] = x
 
     @inline
     def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):

@@ -113,11 +113,16 @@ class Pin:
     def toggle(self):
         self._out.value = self._out.value ^ (1 << self._bit)
 
+    # Two overloads instead of one const parameter: a const could only ever be a literal,
+    # so `pin.value(state)` with a computed state was rejected -- the canonical way to
+    # drive a pin. Reading keeps its own arity, which is what the const trick was for.
     @inline
-    def value(self, x: const = -1) -> uint8:
-        if x == -1:
-            return (self._in.value >> self._bit) & 1
-        elif x == 0:
+    def value(self) -> uint8:
+        return (self._in.value >> self._bit) & 1
+
+    @inline
+    def value(self, x: uint8):
+        if x == 0:
             self.low()
         else:
             self.high()

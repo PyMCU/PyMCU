@@ -108,11 +108,16 @@ class Pin:
         else:            # no pull
             pad.value = 0x40
 
+    # Two overloads instead of one const parameter: a const could only ever be a literal,
+    # so `pin.value(state)` with a computed state was rejected -- the canonical way to
+    # drive a pin. Reading keeps its own arity, which is what the const trick was for.
     @inline
-    def value(self, x: const = -1) -> uint32:
-        if x == -1:
-            return (SIO_GPIO_IN.value >> self._pin) & 1
-        elif x == 0:
+    def value(self) -> uint32:
+        return (SIO_GPIO_IN.value >> self._pin) & 1
+
+    @inline
+    def value(self, x: uint32):
+        if x == 0:
             SIO_GPIO_OUT_CLR.value = 1 << self._pin
         else:
             SIO_GPIO_OUT_SET.value = 1 << self._pin

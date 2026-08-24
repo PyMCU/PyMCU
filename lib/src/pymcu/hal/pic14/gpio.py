@@ -156,48 +156,52 @@ class Pin:
                 from pymcu.hal.pic18.pic18f45k50_gpio import pin_toggle
                 pin_toggle(self.name)
 
+    # Two overloads instead of one const parameter: a const could only ever be a literal,
+    # so `pin.value(state)` with a computed state was rejected -- the canonical way to
+    # drive a pin. Reading keeps its own arity, which is what the const trick was for.
     @inline
-    def value(self, x: const = -1) -> uint8:
-        if x == -1:
-            match __CHIP__.name:
-                case "pic16f18877":
-                    from pymcu.hal.pic14.pic16f18877_gpio import pin_read
-                    return pin_read(self.name)
-                case "pic16f628a":
-                    from pymcu.hal.pic14.pic16f628a_gpio import pin_read
-                    return pin_read(self.name)
-                case "pic16f877a":
-                    from pymcu.hal.pic14.pic16f877a_gpio import pin_read
-                    return pin_read(self.name)
-                case "pic16f84a":
-                    from pymcu.hal.pic14.pic16f84a_gpio import pin_read
-                    return pin_read(self.name)
-                case "pic10f200":
-                    from pymcu.hal.pic12.pic10f200_gpio import pin_read
-                    return pin_read(self.name)
-                case "pic18f45k50":
-                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_read
-                    return pin_read(self.name)
-        else:
-            match __CHIP__.name:
-                case "pic16f18877":
-                    from pymcu.hal.pic14.pic16f18877_gpio import pin_write
-                    pin_write(self.name, x)
-                case "pic16f628a":
-                    from pymcu.hal.pic14.pic16f628a_gpio import pin_write
-                    pin_write(self.name, x)
-                case "pic16f877a":
-                    from pymcu.hal.pic14.pic16f877a_gpio import pin_write
-                    pin_write(self.name, x)
-                case "pic16f84a":
-                    from pymcu.hal.pic14.pic16f84a_gpio import pin_write
-                    pin_write(self.name, x)
-                case "pic10f200":
-                    from pymcu.hal.pic12.pic10f200_gpio import pin_write
-                    pin_write(self.name, x)
-                case "pic18f45k50":
-                    from pymcu.hal.pic18.pic18f45k50_gpio import pin_write
-                    pin_write(self.name, x)
+    def value(self) -> uint8:
+        match __CHIP__.name:
+            case "pic16f18877":
+                from pymcu.hal.pic14.pic16f18877_gpio import pin_read
+                return pin_read(self.name)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_read
+                return pin_read(self.name)
+            case "pic16f877a":
+                from pymcu.hal.pic14.pic16f877a_gpio import pin_read
+                return pin_read(self.name)
+            case "pic16f84a":
+                from pymcu.hal.pic14.pic16f84a_gpio import pin_read
+                return pin_read(self.name)
+            case "pic10f200":
+                from pymcu.hal.pic12.pic10f200_gpio import pin_read
+                return pin_read(self.name)
+            case "pic18f45k50":
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_read
+                return pin_read(self.name)
+
+    @inline
+    def value(self, x: uint8):
+        match __CHIP__.name:
+            case "pic16f18877":
+                from pymcu.hal.pic14.pic16f18877_gpio import pin_write
+                pin_write(self.name, x)
+            case "pic16f628a":
+                from pymcu.hal.pic14.pic16f628a_gpio import pin_write
+                pin_write(self.name, x)
+            case "pic16f877a":
+                from pymcu.hal.pic14.pic16f877a_gpio import pin_write
+                pin_write(self.name, x)
+            case "pic16f84a":
+                from pymcu.hal.pic14.pic16f84a_gpio import pin_write
+                pin_write(self.name, x)
+            case "pic10f200":
+                from pymcu.hal.pic12.pic10f200_gpio import pin_write
+                pin_write(self.name, x)
+            case "pic18f45k50":
+                from pymcu.hal.pic18.pic18f45k50_gpio import pin_write
+                pin_write(self.name, x)
 
     @inline
     def init(self, mode: const = -1, pull: const = -1, value: const = -1, drive: const = 0, alt: const = -1):
