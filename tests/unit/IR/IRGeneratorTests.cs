@@ -1905,4 +1905,63 @@ public class IRGeneratorTests
 
         Assert.Contains("does not fit", ex.Message);
     }
+
+    // ── A dunder PyMCU never calls says so where it is written ─────────────
+    // PyMCU#70: __str__ compiled quietly and then failed at whichever use site the reader
+    // reached first, in three different shapes, none of which mentioned __str__.
+
+    private static string CaptureStderr(Action action)
+    {
+        var original = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        try { action(); }
+        finally { Console.SetError(original); }
+        return captured.ToString();
+    }
+
+    [Fact]
+    public void DunderNeverCalled_WarnsAtTheDefinition()
+    {
+        const string src =
+            "class V:\n" +
+            "    def __init__(self):\n        self.n: uint8 = 5\n" +
+            "    def __str__(self) -> str:\n        return \"V\"\n" +
+            "def main():\n    v = V()\n    x: uint8 = v.n\n";
+
+        var warnings = CaptureStderr(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("V.__str__", warnings);
+        Assert.Contains("never called", warnings);
+        Assert.Contains("no run-time string formatting", warnings);
+    }
+
+    [Fact]
+    public void IteratorDunder_GetsTheIteratorReason()
+    {
+        const string src =
+            "class R:\n" +
+            "    def __init__(self):\n        self.n: uint8 = 0\n" +
+            "    def __iter__(self) -> uint8:\n        return self.n\n" +
+            "def main():\n    r = R()\n    x: uint8 = r.n\n";
+
+        var warnings = CaptureStderr(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("R.__iter__", warnings);
+        Assert.Contains("iterator protocol", warnings);
+    }
+
+    [Fact]
+    public void SupportedDunder_IsNotWarnedAbout()
+    {
+        const string src =
+            "class A:\n" +
+            "    def __init__(self):\n        self.n: uint8 = 1\n" +
+            "    def __add__(self, other: uint8) -> uint8:\n        return self.n + other\n" +
+            "def main():\n    a = A()\n    x: uint8 = a + 2\n";
+
+        var warnings = CaptureStderr(() => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.DoesNotContain("never called", warnings);
+    }
 }

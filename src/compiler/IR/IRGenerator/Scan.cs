@@ -742,6 +742,24 @@ public partial class IRGenerator
                                 // ResolveMROMethod can distinguish "defined here" from "inherited".
                                 classDirectMethods[classKey].Add(func.Name);
 
+                                // A dunder PyMCU never calls compiles quietly and then fails at
+                                // whichever use site the reader reaches first, in a different
+                                // shape each time (print(v), str(v) and f"{v}" gave three
+                                // different messages, none of them mentioning __str__). Say it
+                                // where the method is written.
+                                if (func.Name is "__str__" or "__repr__" or "__format__"
+                                    or "__iter__" or "__next__")
+                                {
+                                    string why = func.Name is "__iter__" or "__next__"
+                                        ? "PyMCU does not run the iterator protocol; iterate the "
+                                          + "underlying array, or give the class a method you call by name"
+                                        : "PyMCU has no run-time string formatting; print the fields "
+                                          + "explicitly, or give the class a method you call by name";
+                                    Console.Error.WriteLine(
+                                        $"[pymcuc] warning: line {func.Line}: '{classDef.Name}.{func.Name}' is "
+                                        + $"defined but never called -- {why}.");
+                                }
+
                                 string fullName = currentModulePrefix + func.Name;
                                 functionReturnTypes[fullName] = func.ReturnType;
                                 var @params = new List<string>();
