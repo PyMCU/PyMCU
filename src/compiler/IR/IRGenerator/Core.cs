@@ -774,6 +774,20 @@ public partial class IRGenerator
             if (seenExtern.Add(kvp.Value))
             {
                 irProgram.ExternSymbols.Add(kvp.Value);
+                // Carry the DECLARED widths across to the backend: an @extern function has no
+                // body, so it never reaches irProgram.Functions, and without this the call site
+                // sizes each argument by the width of the value instead of the parameter --
+                // f(5) to a uint16_t loaded one byte and left the high one undefined.
+                irProgram.ExternSignatures.Add(new ExternSignature
+                {
+                    Symbol = kvp.Value,
+                    ParamTypes = functionParamTypes.TryGetValue(kvp.Key, out var extParamTypes)
+                        ? new List<DataType>(extParamTypes)
+                        : new List<DataType>(),
+                    ReturnType = functionReturnTypes.TryGetValue(kvp.Key, out var extRet)
+                        ? DataTypeExtensions.StringToDataType(extRet ?? "void")
+                        : DataType.VOID,
+                });
             }
         }
 
@@ -836,6 +850,27 @@ public partial class IRGenerator
     private static bool IsEntryPointSelfCall(Statement s)
         => s is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "main" } } call }
            && call.Args.Count == 0;
+
+    /// <summary>
+    /// The diagnostic for indexing an unrolled array with a run-time value. The subscript is
+    /// not the problem -- the same subscript on a declared array compiles -- so a message about
+    /// the subscript sends the reader off trying to make the INDEX constant, which defeats the
+    /// buffer. Name the array and the annotation that makes it indexable.
+    /// </summary>
+    private Exception UnrolledArrayIndexError(string qualified)
+    {
+        int dot = qualified.LastIndexOf('.');
+        string shown = dot >= 0 ? qualified[(dot + 1)..] : qualified;
+        string elem = arrayElemTypes.TryGetValue(qualified, out var et) && et != DataType.UNKNOWN
+            ? et.ToString().ToLowerInvariant()
+            : "uint8";
+        int size = arraySizes.TryGetValue(qualified, out var sz) ? sz : 0;
+        string example = size > 0 ? $"{shown}: {elem}[{size}] = [...]" : $"{shown}: {elem}[N] = [...]";
+        return UserError(
+            $"'{shown}' has no declared array type, so it lives as separate variables and can "
+            + "only be indexed with a constant. Declare it as an array to index it at run time, "
+            + $"e.g. `{example}`");
+    }
 
     private Val ResolveBinding(string name)
     {

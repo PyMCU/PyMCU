@@ -1350,7 +1350,7 @@ public partial class IRGenerator
                 else
                 {
                     if (idxVal is not Constant cc2)
-                        throw UserError("Array subscript must be a compile-time constant");
+                        throw UnrolledArrayIndexError(qualified);
                     int elemIdx = cc2.Value;
                     if (elemIdx < 0 || elemIdx >= sz)
                         throw new IndexError(
