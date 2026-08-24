@@ -824,6 +824,26 @@ public partial class IRGenerator
                                 }
                                 else
                                 {
+                                    // Overloads are a property of @inline methods: the registration
+                                    // that keeps them apart by parameter suffix lives in that branch
+                                    // only. An undecorated method is outlined by default and has no
+                                    // such registration, so a second definition of the same name used
+                                    // to REPLACE the first without a word -- and every caller of the
+                                    // shape that disappeared failed at its own call site, naming a
+                                    // mangled symbol. Say it here, where both definitions are visible.
+                                    if (classDirectMethods[classKey].Contains(func.Name)
+                                        && !func.IsInline
+                                        && (instanceMethodDefs.ContainsKey(fullName)
+                                            || inlineFunctions.ContainsKey(fullName)
+                                            || outlinedMethods.Contains(fullName)))
+                                        throw UserError(
+                                            $"class '{classDef.Name}' defines '{func.Name}' more than "
+                                            + "once, and overloads are only supported on @inline "
+                                            + "methods (an undecorated method is compiled once as a "
+                                            + "shared subroutine, which one name cannot address twice)."
+                                            + $" Mark every '{func.Name}' @inline to overload by "
+                                            + "parameter types, or give them different names.");
+
                                     // RFC 0001 F4: an undecorated method is OUTLINED BY DEFAULT when
                                     // it is outline-safe (touches self only as self.<field>). This is
                                     // why @inline now means something: without it, a representable

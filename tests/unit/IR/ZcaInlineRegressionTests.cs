@@ -237,4 +237,39 @@ public class ZcaInlineRegressionTests
         // read an unbound variable and produced 2.
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 9 } });
     }
+
+    // ── A duplicate method name says so instead of dropping one ─────────────
+    // PyMCU#75: overloads are registered only in the @inline branch, so a second undecorated
+    // definition replaced the first in silence and every caller of the vanished shape failed
+    // at its own call site with a mangled symbol.
+
+    private const string DuplicateUndecorated =
+        "class C:\n" +
+        "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+        "    def get(self) -> uint8:\n        return self.n\n" +
+        "    def get(self, k: uint8) -> uint8:\n        return self.n + k\n" +
+        "def main():\n    c = C(7)\n    x: uint8 = c.get()\n";
+
+    private const string DuplicateInline =
+        "class C:\n" +
+        "    @inline\n    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+        "    @inline\n    def get(self) -> uint8:\n        return self.n\n" +
+        "    @inline\n    def get(self, k: uint8) -> uint8:\n        return self.n + k\n" +
+        "def main():\n    c = C(7)\n    x: uint8 = c.get()\n    y: uint8 = c.get(3)\n";
+
+    [Fact]
+    public void UndecoratedDuplicateMethod_IsRejectedWithBothOptions()
+    {
+        var ex = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => Gen(DuplicateUndecorated));
+
+        Assert.Contains("defines 'get' more than once", ex.Message);
+        Assert.Contains("@inline", ex.Message);
+    }
+
+    [Fact]
+    public void InlineOverloads_StillResolveByParameters()
+    {
+        Assert.NotNull(Gen(DuplicateInline));
+    }
 }
