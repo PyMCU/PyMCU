@@ -625,8 +625,16 @@ public partial class IRGenerator
         // Returning a (multi-char) string from a function declared to return an integer is
         // a type confusion — the string folds to its flash id and would be returned as that
         // numeric id. (A single-char string is its code point, which is a valid integer.)
+        //
+        // The return belongs to whatever function is being lowered right now, which during an
+        // expansion is the INLINE one, not the caller. Reading currentFunction meant an
+        // `@inline ... -> str` returning "PB5" inside a `-> uint8` function was reported as
+        // "cannot return a string from a function declared to return uint8": a mismatch that
+        // exists in neither function, on a line the user cannot act on. When the owner's
+        // declared type is unknown, say nothing -- a wrong answer is worse than none.
+        string returnOwner = inlineStack.Count > 0 ? inlineStack[^1].CalleeName : currentFunction;
         if (stmt.Value is StringLiteral retStr && retStr.Value.Length != 1
-            && functionReturnTypes.TryGetValue(currentFunction, out var retRt) && retRt != null
+            && functionReturnTypes.TryGetValue(returnOwner, out var retRt) && retRt != null
             && retRt is "uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32")
             throw UserError(
                 $"cannot return a string from a function declared to return {retRt}");

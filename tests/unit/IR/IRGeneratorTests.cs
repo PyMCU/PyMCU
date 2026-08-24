@@ -1964,4 +1964,32 @@ public class IRGeneratorTests
 
         Assert.DoesNotContain("never called", warnings);
     }
+
+    // ── A return is checked against ITS OWN function ───────────────────────
+    // PyMCU#48: an @inline returning a string, expanded inside a `-> uint8` function, was
+    // reported as "cannot return a string from a function declared to return uint8" -- a
+    // mismatch present in neither function, which sent the reader rewriting the wrong thing.
+
+    [Fact]
+    public void InlineReturningString_InsideANumericFunction_Compiles()
+    {
+        const string src =
+            "@inline\ndef port_name(k: uint8) -> str:\n" +
+            "    if k == 0:\n        return \"PB5\"\n    return \"PB4\"\n" +
+            "def get(k: uint8) -> uint8:\n" +
+            "    s: str = port_name(k)\n    return 1\n" +
+            "def main():\n    x: uint8 = get(0)\n";
+
+        Assert.NotNull(GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+    }
+
+    [Fact]
+    public void FunctionReturningStringFromItsOwnBody_IsStillRejected()
+    {
+        var ex = Assert.Throws<CompilerError>(() => GenerateIR(
+            "def f() -> uint8:\n    return \"hola\"\ndef main():\n    x: uint8 = f()\n",
+            new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("cannot return a string", ex.Message);
+    }
 }
