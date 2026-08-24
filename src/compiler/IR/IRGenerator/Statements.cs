@@ -129,15 +129,30 @@ public partial class IRGenerator
     /// </summary>
     private void CollectLiteralOnlyLocalWidths(FunctionDef funcNode)
     {
-        literalOnlyLocalWidths.Clear();
+        literalOnlyLocalWidths = CollectLiteralOnlyWidths(
+            new List<Statement> { funcNode.Body }, funcNode.Params.Select(p => p.Name));
+    }
 
+    /// <summary>
+    /// Shared by the local and module-level scans: walks <paramref name="body"/> and returns the
+    /// narrowest type that holds every integer literal assigned to each name, for the names whose
+    /// assignments are ALL plain literals. Names in <paramref name="preDropped"/> never qualify.
+    /// </summary>
+    private static Dictionary<string, DataType> CollectLiteralOnlyWidths(
+        IEnumerable<Statement> body, IEnumerable<string> preDropped)
+    {
+        var result = new Dictionary<string, DataType>();
         var bounds = new Dictionary<string, (long Min, long Max)>();
         var dropped = new HashSet<string>();
 
-        foreach (var p in funcNode.Params) dropped.Add(p.Name);
+        foreach (var p in preDropped) dropped.Add(p);
 
         void Bind(string name, Expression? value)
         {
+            // `-5` parses as a negation over a literal, and it is as much a literal as `5`.
+            if (value is UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: IntegerLiteral neg })
+                value = new IntegerLiteral(-neg.Value);
+
             if (value is IntegerLiteral lit && !dropped.Contains(name))
             {
                 if (bounds.TryGetValue(name, out var b))
@@ -158,6 +173,10 @@ public partial class IRGenerator
                 case Block b: foreach (var s2 in b.Statements) Walk(s2); return;
                 case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); return;
                 case AnnAssign an: dropped.Add(an.Target); return;
+                // An unannotated module-level `b = 5` parses as a VarDecl with an empty type,
+                // which is a literal binding like any other; only a written annotation means
+                // the user has already chosen the width.
+                case VarDecl vd when string.IsNullOrEmpty(vd.VarType): Bind(vd.Name, vd.Init); return;
                 case VarDecl vd: dropped.Add(vd.Name); return;
                 case AugAssignStmt aug when aug.Target is VariableExpr augv: dropped.Add(augv.Name); return;
                 case TupleUnpackStmt tu: foreach (var t in tu.Targets) dropped.Add(t); return;
@@ -194,12 +213,64 @@ public partial class IRGenerator
             }
         }
 
-        Walk(funcNode.Body);
+        foreach (var st in body) Walk(st);
 
         foreach (var kv in bounds)
         {
             if (dropped.Contains(kv.Key)) continue;
-            literalOnlyLocalWidths[kv.Key] = NarrowestTypeFor(kv.Value.Min, kv.Value.Max);
+            result[kv.Key] = NarrowestTypeFor(kv.Value.Min, kv.Value.Max);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Every name a function assigns to, whatever the shape of the assignment. The module-level
+    /// scan uses it to DISQUALIFY: a global written from inside a function is not literal-only,
+    /// and telling a `global x` write apart from a same-named local is not worth the risk here --
+    /// a name dropped by coincidence keeps the width it had.
+    /// </summary>
+    private static void CollectAssignedNames(Statement? st, HashSet<string> into)
+    {
+        switch (st)
+        {
+            case null: return;
+            case Block b: foreach (var s2 in b.Statements) CollectAssignedNames(s2, into); return;
+            case AssignStmt a when a.Target is VariableExpr av: into.Add(av.Name); return;
+            case AnnAssign an: into.Add(an.Target); return;
+            case VarDecl vd: into.Add(vd.Name); return;
+            case AugAssignStmt aug when aug.Target is VariableExpr augv: into.Add(augv.Name); return;
+            case TupleUnpackStmt tu: foreach (var t in tu.Targets) into.Add(t); return;
+            case ForStmt f:
+                into.Add(f.VarName);
+                if (!string.IsNullOrEmpty(f.Var2Name)) into.Add(f.Var2Name);
+                CollectAssignedNames(f.Body, into);
+                return;
+            case WhileStmt w: CollectAssignedNames(w.Body, into); return;
+            case WithStmt wi:
+                if (!string.IsNullOrEmpty(wi.AsName)) into.Add(wi.AsName);
+                CollectAssignedNames(wi.Body, into);
+                return;
+            case IfStmt i:
+                CollectAssignedNames(i.ThenBranch, into);
+                foreach (var (_, bodyStmt) in i.ElifBranches) CollectAssignedNames(bodyStmt, into);
+                CollectAssignedNames(i.ElseBranch, into);
+                return;
+            case MatchStmt m:
+                foreach (var br in m.Branches)
+                {
+                    if (!string.IsNullOrEmpty(br.CaptureName)) into.Add(br.CaptureName);
+                    CollectAssignedNames(br.Body, into);
+                }
+                return;
+            case TryStmt t2:
+                foreach (var s2 in t2.Body) CollectAssignedNames(s2, into);
+                foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) CollectAssignedNames(s2, into);
+                if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) CollectAssignedNames(s2, into);
+                if (t2.Finally != null) foreach (var s2 in t2.Finally) CollectAssignedNames(s2, into);
+                return;
+            case FunctionDef nested: CollectAssignedNames(nested.Body, into); return;
+            default: return;
         }
     }
 

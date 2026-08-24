@@ -2614,6 +2614,15 @@ public partial class IRGenerator
             catch { /* non-constant initializer: keep the uint8 default */ }
         }
 
+        // An unannotated module-level binding reaches here as an AnnAssign with an EMPTY
+        // annotation (the module-init pass rewrites the VarDecl that way), and the uint8
+        // default above is what truncated it: `b = 5` then `b = 300` stored 44. Take the width
+        // the global scan computed from every literal assigned to the name.
+        if (string.IsNullOrEmpty(stmt.Annotation)
+            && mutableGlobals.TryGetValue(currentModulePrefix + stmt.Target, out var scannedWidth)
+            && scannedWidth != DataType.UNKNOWN)
+            type = scannedWidth;
+
         string qualified2 = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);

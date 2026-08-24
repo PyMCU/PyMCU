@@ -446,6 +446,34 @@ public partial class IRGenerator
                 }
             }
         }
+
+        NarrowLiteralOnlyGlobals(ast);
+    }
+
+    /// <summary>
+    /// Gives an unannotated module-level integer the width that holds every literal assigned to
+    /// it. Without this the FIRST store fixed the width and every later value was truncated into
+    /// it, in silence: `b = 5` then `b = 300` stored 44, and printed 44 on the board. Module
+    /// level is the MicroPython and CircuitPython shape -- those programs have no def main() at
+    /// all -- so it was the default spelling for anyone arriving from either port.
+    /// </summary>
+    private void NarrowLiteralOnlyGlobals(ProgramNode ast)
+    {
+        // A global written from inside a function is not literal-only: those assignments are not
+        // in this scan's reach, so the name keeps whatever width it had.
+        var assignedInFunctions = new HashSet<string>();
+        foreach (var fn in ast.Functions) CollectAssignedNames(fn.Body, assignedInFunctions);
+
+        var widths = CollectLiteralOnlyWidths(ast.GlobalStatements, assignedInFunctions);
+        foreach (var kv in widths)
+        {
+            string key = currentModulePrefix + kv.Key;
+            // Only names this module actually holds as a mutable global. A name carrying a
+            // written annotation never reaches here: the scan above drops it.
+            if (!mutableGlobals.ContainsKey(key)) continue;
+            mutableGlobals[key] = kv.Value;
+            widenableGlobals.Remove(key);
+        }
     }
 
     private void ScanFunctions(ProgramNode ast, ModuleScope? scope = null)
