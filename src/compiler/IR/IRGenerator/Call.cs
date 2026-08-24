@@ -403,6 +403,14 @@ public partial class IRGenerator
                 }
                 else
                 {
+                    // `"val {}".format(x)` is the pre-f-string way to build a string and is
+                    // still the common one in MicroPython code. It fell through to the
+                    // nested-ZCA message below, which describes a program with no string in
+                    // it at all. f-strings already work, and this IS an f-string written the
+                    // other way, so it lowers to one.
+                    if (memC.Member == "format" && memC.Object is StringLiteral fmtLit)
+                        return VisitExpression(DesugarStrFormat(fmtLit.Value, expr));
+
                     // str.join used as a bare expression: the supported forms live in the
                     // assignment lowering (constant fold and the bytes-to-string idiom), so
                     // point there instead of the generic nested-member message.
@@ -2652,6 +2660,69 @@ public partial class IRGenerator
         return prev[b.Length];
     }
 
+    /// <summary>
+    /// Rewrites `"text {} more".format(a, b)` into the equivalent f-string. Positional holes
+    /// ({}, {0}) and format specs ({:02x}) map straight across; a named hole is a keyword
+    /// argument, which has no f-string spelling here, and says so.
+    /// </summary>
+    private Expression DesugarStrFormat(string format, CallExpr call)
+    {
+        var args = call.Args;
+        foreach (var a in args)
+            if (a is KeywordArgExpr)
+                throw UserError(
+                    "str.format() with keyword arguments is not supported; use an f-string, "
+                    + "e.g. f\"val {x}\"");
+
+        var parts = new List<FStringPart>();
+        var text = new System.Text.StringBuilder();
+        int nextArg = 0;
+
+        for (int i = 0; i < format.Length; i++)
+        {
+            char c = format[i];
+            if (c == '{' && i + 1 < format.Length && format[i + 1] == '{') { text.Append('{'); i++; continue; }
+            if (c == '}' && i + 1 < format.Length && format[i + 1] == '}') { text.Append('}'); i++; continue; }
+            if (c != '{') { text.Append(c); continue; }
+
+            int close = format.IndexOf('}', i + 1);
+            if (close < 0)
+                throw UserError($"str.format(): unmatched '{{' in \"{format}\"");
+
+            string hole = format.Substring(i + 1, close - i - 1);
+            i = close;
+
+            string spec = "";
+            int colon = hole.IndexOf(':');
+            if (colon >= 0) { spec = hole[(colon + 1)..]; hole = hole[..colon]; }
+
+            int argIndex;
+            if (hole.Length == 0) argIndex = nextArg++;
+            else if (int.TryParse(hole, out int explicitIndex)) argIndex = explicitIndex;
+            else
+                throw UserError(
+                    $"str.format(): named field '{{{hole}}}' is not supported; use an f-string, "
+                    + $"e.g. f\"...{{{hole}}}...\"");
+
+            if (argIndex < 0 || argIndex >= args.Count)
+                throw UserError(
+                    $"str.format(): \"{format}\" needs argument {argIndex}, but "
+                    + $"{args.Count} {(args.Count == 1 ? "was" : "were")} given");
+
+            if (text.Length > 0)
+            {
+                parts.Add(new FStringPart { IsExpr = false, Text = text.ToString() });
+                text.Clear();
+            }
+
+            parts.Add(new FStringPart { IsExpr = true, Expr = args[argIndex], FormatSpec = spec });
+        }
+
+        if (text.Length > 0) parts.Add(new FStringPart { IsExpr = false, Text = text.ToString() });
+
+        return new FStringExpr(parts) { Line = call.Line };
+    }
+
     private Val EmitNumericCastBuiltin(CallExpr expr, string callee)
     {
         DataType dstType = CastTypes[callee];
@@ -3250,7 +3321,12 @@ public partial class IRGenerator
                     else throw UserError($"print() '{kw.Key}' must be a compile-time string literal");
                 }
             }
-            else posArgs.Add(arg);
+            // `print("val {}".format(x))` streams like the f-string it is. Rewritten here
+            // rather than when the call is evaluated, so it takes the streaming path instead
+            // of the "f-string in an unsupported position" one.
+            else posArgs.Add(arg is CallExpr { Callee: MemberAccessExpr { Member: "format", Object: StringLiteral fmtArg } } fmtCall
+                ? DesugarStrFormat(fmtArg.Value, fmtCall)
+                : arg);
         }
 
         // Resolve the target's write helpers once; the lowering itself is the shared, sink-agnostic
