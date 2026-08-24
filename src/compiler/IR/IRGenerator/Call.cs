@@ -2481,14 +2481,91 @@ public partial class IRGenerator
 
     // uint8(x)/int16(x)/… numeric cast: constant- and float-constant-fold, else a
     // width-changing Copy. `callee` is guaranteed to be a key of CastTypes.
+    /// <summary>
+    /// The text of a string argument when the compiler knows it: a literal, or a name bound to
+    /// a compile-time string. Returns null for anything whose contents only exist at run time.
+    /// </summary>
+    private string? TryGetCompileTimeText(Expression arg)
+    {
+        if (arg is StringLiteral lit) return lit.Value;
+        if (arg is not VariableExpr ve) return null;
+
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        return ResolveStrConstant(key) ?? ResolveStrConstant(ve.Name);
+    }
+
+    /// <summary>
+    /// True when the expression names a string whose characters live in RAM -- a buffer filled
+    /// at run time, which no compile-time parse can read.
+    /// </summary>
+    private bool IsRuntimeStringExpr(Expression arg)
+    {
+        if (arg is not VariableExpr ve) return false;
+        string key = !string.IsNullOrEmpty(currentInlinePrefix)
+            ? currentInlinePrefix + ve.Name
+            : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+        return runtimeStrVars.ContainsKey(key) || runtimeStrVars.ContainsKey(ve.Name);
+    }
+
+    /// <summary>
+    /// Parses the text of a compile-time string into the cast's target type, the way Python's
+    /// int()/float() would, and refuses text that is not a number instead of yielding one.
+    /// </summary>
+    private Val ParseTextAsNumber(string text, string callee, DataType dstType)
+    {
+        string t = text.Trim();
+        if (dstType == DataType.FLOAT)
+        {
+            if (!double.TryParse(t, System.Globalization.NumberStyles.Float,
+                                 System.Globalization.CultureInfo.InvariantCulture, out double d))
+                throw UserError($"{callee}(\"{text}\"): not a number");
+            return new FloatConstant((float)d);
+        }
+
+        if (!long.TryParse(t, System.Globalization.NumberStyles.Integer,
+                           System.Globalization.CultureInfo.InvariantCulture, out long n))
+            throw UserError($"{callee}(\"{text}\"): not a whole number");
+
+        long lo = dstType switch
+        {
+            DataType.UINT8 => 0, DataType.UINT16 => 0, DataType.UINT32 => 0,
+            DataType.INT8 => sbyte.MinValue, DataType.INT16 => short.MinValue,
+            _ => int.MinValue,
+        };
+        long hi = dstType switch
+        {
+            DataType.UINT8 => byte.MaxValue, DataType.UINT16 => ushort.MaxValue,
+            DataType.UINT32 => uint.MaxValue,
+            DataType.INT8 => sbyte.MaxValue, DataType.INT16 => short.MaxValue,
+            _ => int.MaxValue,
+        };
+        if (n < lo || n > hi)
+            throw UserError($"{callee}(\"{text}\"): {n} does not fit in {callee} ({lo}..{hi})");
+
+        return new Constant((int)n);
+    }
+
     private Val EmitNumericCastBuiltin(CallExpr expr, string callee)
     {
         DataType dstType = CastTypes[callee];
         if (expr.Args.Count != 1) throw UserError(callee + "() expects exactly one argument");
-        // A string/f-string argument would otherwise fold to its flash string-id and be
-        // silently used as that (wrong) integer; the whole assignment then gets dropped.
-        if (expr.Args[0] is StringLiteral or FStringExpr)
-            throw UserError($"{callee}() argument must be numeric, not a string");
+        // A string argument used to fold to its flash string-id, or to a plain zero when it
+        // came through a variable -- `s: str = "42"; uint8(s)` printed 0 and said nothing.
+        // A string whose text is known at compile time is parsed here, which is what Python
+        // does; anything else is refused by name rather than becoming a number nobody wrote.
+        if (TryGetCompileTimeText(expr.Args[0]) is { } text)
+            return ParseTextAsNumber(text, callee, dstType);
+        if (expr.Args[0] is FStringExpr)
+            throw UserError(
+                $"{callee}() cannot convert an f-string: its text is only assembled at run time. " +
+                "Convert the value before formatting it.");
+        if (IsRuntimeStringExpr(expr.Args[0]))
+            throw UserError(
+                $"{callee}() cannot parse a string that is only known at run time. " +
+                "PyMCU has no run-time string-to-number conversion; read the digits and " +
+                "accumulate them (d = c - 48), or keep the value numeric end to end.");
         // Casting an arithmetic expression to an integer width is the explicit "compute at this
         // width" signal (fixed-width wrap + flags) -- the escape hatch from arithmetic promotion.
         // Hint the immediate binary op via castWidthHint (VisitBinary consumes/clears it).

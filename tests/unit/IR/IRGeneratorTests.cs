@@ -1868,8 +1868,41 @@ public class IRGeneratorTests
     public void NameBoundByAnEarlierStatement_StillResolves()
     {
         var body = GenerateIR("def main():\n    number: uint8 = 7\n    x: uint8 = number + 1\n",
-            new DeviceConfig { Arch = "avr" });
+            new DeviceConfig { Arch = "avr" }).Functions.First(f => f.Name == "main").Body;
 
         Assert.NotNull(body);
+    }
+
+    // ── A string converted to a number is parsed, or refused by name ────────
+    // PyMCU#61: `s: str = "42"; uint8(s)` folded to a constant zero and the firmware
+    // printed 0, with no diagnostic at any stage.
+
+    [Fact]
+    public void CompileTimeString_ConvertsToItsNumber()
+    {
+        var body = GenerateIR("def main():\n    s: str = \"42\"\n    n: uint8 = uint8(s)\n    p: uint8 = n + 0\n",
+            new DeviceConfig { Arch = "avr" }).Functions.First(f => f.Name == "main").Body;
+
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 42 } });
+        Assert.DoesNotContain(body, i => i is Copy { Src: Constant { Value: 0 }, Dst: Variable { Name: "main.n" } });
+    }
+
+    [Fact]
+    public void StringThatIsNotANumber_IsRejected()
+    {
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR("def main():\n    s: str = \"hola\"\n    n: uint8 = uint8(s)\n",
+                new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("not a whole number", ex.Message);
+    }
+
+    [Fact]
+    public void NumberThatDoesNotFitTheCast_IsRejected()
+    {
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR("def main():\n    n: uint8 = uint8(\"300\")\n", new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("does not fit", ex.Message);
     }
 }
