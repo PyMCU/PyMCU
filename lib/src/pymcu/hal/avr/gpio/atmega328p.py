@@ -1,5 +1,6 @@
 from pymcu.chips.atmega328p import DDRB, DDRC, DDRD, PORTB, PORTC, PORTD, PINB, PINC, PIND, EICRA, EIMSK, PCICR, PCMSK0, PCMSK1, PCMSK2, SREG
 from pymcu.types import uint8, uint16, inline, ptr, compile_isr, const, asm
+from pymcu.exceptions import CompileError
 
 class _PinRegs:
     @inline
@@ -18,7 +19,11 @@ class _PinRegs:
                 self._ddr  = DDRD
                 self._pin  = PIND
             case _:
-                raise NotImplementedError('Unsupported Pin')
+                raise CompileError(
+                    "unknown pin on this chip. The AVR HAL takes a PORT NAME: PB0-PB5, "
+                    "PC0-PC5 or PD0-PD7. Board numbering lives elsewhere -- "
+                    "`from pymcu.boards.arduino_uno import D13` then Pin(D13, Pin.OUT), "
+                    "or `from machine import Pin` for the MicroPython form Pin(13, Pin.OUT).")
         match name:
             case 'PB0' | 'PC0' | 'PD0': self._bit = 0
             case 'PB1' | 'PC1' | 'PD1': self._bit = 1
@@ -28,7 +33,12 @@ class _PinRegs:
             case 'PB5' | 'PC5' | 'PD5': self._bit = 5
             case 'PD6':                  self._bit = 6
             case 'PD7':                  self._bit = 7
-            case _:                      raise NotImplementedError('Unsupported Pin')
+            case _:
+                raise CompileError(
+                    "unknown pin on this chip. The AVR HAL takes a PORT NAME: PB0-PB5, "
+                    "PC0-PC5 or PD0-PD7. Board numbering lives elsewhere -- "
+                    "`from pymcu.boards.arduino_uno import D13` then Pin(D13, Pin.OUT), "
+                    "or `from machine import Pin` for the MicroPython form Pin(13, Pin.OUT).")
 
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
