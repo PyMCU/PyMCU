@@ -558,6 +558,15 @@ public partial class IRGenerator
                 foreach (var s in mainAst.GlobalStatements)
                 {
                     if (IsTopLevelPureDeclaration(s)) continue;
+
+                    // `if __name__ == "__main__": main()` -- the guard is true here (the entry
+                    // file IS __main__, so the condition already folded away), and its body
+                    // calls the entry point PyMCU calls itself. Inserting that call into main's
+                    // own body made the cycle detector report `main -> main`, a recursion the
+                    // user never wrote, for the most universal idiom in Python. The call is
+                    // redundant, not wrong: drop it and let the entry point run once.
+                    if (IsEntryPointSelfCall(s)) continue;
+
                     if (s is VarDecl d)
                     {
                         if (d.Init != null
@@ -819,6 +828,14 @@ public partial class IRGenerator
             || floatConstantVariables.ContainsKey(k) || variableAliases.ContainsKey(k)
             || constantAddressVariables.ContainsKey(k) || variableTypes.ContainsKey(k);
     }
+
+    /// <summary>
+    /// A module-level `main()` with no arguments: the call the runtime already makes. Written
+    /// by hand or left by the `if __name__ == "__main__":` guard, it means the same thing.
+    /// </summary>
+    private static bool IsEntryPointSelfCall(Statement s)
+        => s is ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "main" } } call }
+           && call.Args.Count == 0;
 
     private Val ResolveBinding(string name)
     {
