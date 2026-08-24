@@ -2159,7 +2159,11 @@ public partial class IRGenerator
 
         CheckIntLiteralRange(stmt.Init, declType, stmt.Line);
 
-        if (stmt.VarType == "bytearray")
+        // `bytes` is the immutable spelling of the same fixed buffer, and a b"..." literal
+        // reaches the IR as a list of byte values. Both used to fall through to the scalar
+        // path and die as "Unknown Expression type: ListExpr" -- a phase name and an AST class
+        // name, about the way protocol constants are written on an MCU.
+        if (stmt.VarType == "bytearray" || stmt.VarType == "bytes")
         {
             int count = 0;
             var initVals = new List<int>();
@@ -2169,7 +2173,14 @@ public partial class IRGenerator
 
             if (stmt.Init != null)
             {
-                if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee)
+                // A bytes literal carries its own size: b"ab" is two bytes.
+                if (stmt.Init is ListExpr bytesLit)
+                {
+                    count = bytesLit.Elements.Count;
+                    foreach (var e in bytesLit.Elements)
+                        initVals.Add(TryEvalElemConst(e, out int bv) ? bv : 0);
+                }
+                else if (stmt.Init is CallExpr call && call.Callee is VariableExpr callee)
                 {
                     if (callee.Name == "bytearray" && call.Args.Count > 0)
                     {
