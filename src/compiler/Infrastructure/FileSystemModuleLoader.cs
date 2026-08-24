@@ -119,6 +119,17 @@ public class FileSystemModuleLoader : IModuleLoader
             }
         }
 
+        // `board` is not shipped by any package: the driver GENERATES it from the board the
+        // project declares. Sending the reader to check the compat package and the stdlib list
+        // is advice they have already followed -- both are usually right, and the missing piece
+        // is the board line.
+        if (moduleName == "board")
+            throw new Exception(
+                "Module not found: board -- it is generated from the board this project " +
+                "declares, not shipped by a package. Set board = \"arduino_uno\" (or your " +
+                "board) under [tool.pymcu] in pyproject.toml; with only target = \"...\" there " +
+                "is no board to generate it from.");
+
         // Compat-flavor modules: point at the fix instead of a bare not-found.
         var flavorHint = moduleName switch
         {
