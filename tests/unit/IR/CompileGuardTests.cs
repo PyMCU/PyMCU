@@ -84,6 +84,41 @@ public class CompileGuardTests
         Assert.Contains(body, i => i is Copy { Src: Constant { Value: 2 } });
     }
 
+    // A lookup: probe a table, and raise when the search runs out. The trailing raise sits at
+    // the expansion's entry depth, which is what the abort rule reads as "always reached" --
+    // and it is not: the loop exits on data the compiler cannot see. Regression for PyMCU#73,
+    // where this shape stopped FixedDict from compiling at all.
+    private const string SearchThenRaise =
+        "@inline\ndef find(table: bytearray, key: uint8) -> uint8:\n" +
+        "    n: uint8 = 0\n" +
+        "    while n < 4:\n" +
+        "        if table[n] == key:\n" +
+        "            return n\n" +
+        "        n = n + 1\n" +
+        "    raise KeyError\n";
+
+    [Fact]
+    public void RaiseAfterASearchLoop_InsideAnInline_DoesNotAbortCompilation()
+    {
+        var ir = Gen(SearchThenRaise +
+            "def main():\n    t: uint8[4] = [1, 2, 3, 4]\n    i: uint8 = find(t, 3)\n");
+
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void RaiseWithNoLoopBefore_InsideAnInline_StillAbortsCompilation()
+    {
+        var src =
+            "@inline\ndef nope(x: uint8) -> uint8:\n" +
+            "    raise KeyError\n" +
+            "def main():\n    y: uint8 = nope(1)\n";
+
+        var ex = Assert.Throws<ArchitectureError>(() => Gen(src));
+
+        Assert.Contains("KeyError", ex.Message);
+    }
+
     [Fact]
     public void RuntimeConditionalGuard_DoesNotFireAtCompileTime()
     {

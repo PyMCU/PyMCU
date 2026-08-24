@@ -38,6 +38,12 @@ public class InlineContext
     // opened INSIDE the expansion — user control flow around the call site
     // (a while/if wrapping the call) does not make the raise conditional.
     public int EntryBranchDepth { get; set; } = 0;
+
+    // Set once this expansion has visited a loop whose trip count is not known at compile
+    // time. A `raise` AFTER such a loop is the search-failed arm of a lookup ("probe the
+    // table, and if the key is not there, raise") -- reached only for data the compiler
+    // cannot see, so it is not the unconditional raise the abort rule is looking for.
+    public bool SawDynamicLoop { get; set; } = false;
 }
 
 public class ModuleScope

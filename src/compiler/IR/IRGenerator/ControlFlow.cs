@@ -734,6 +734,12 @@ public partial class IRGenerator
             }
         }
 
+        // Inside an @inline expansion, a loop whose exit the compiler cannot predict makes
+        // everything after it conditional on run-time data. `raise` uses that: the abort rule
+        // in VisitRaise must not treat the "not found" arm of a search loop as an
+        // unconditional raise (FixedDict's `while ...: probe` followed by `raise KeyError`).
+        if (inlineStack.Count > 0) inlineStack[^1].SawDynamicLoop = true;
+
         if (isRuntimeLoop) _runtimeBranchDepth++;
         VisitStatement(stmt.Body);
         if (isRuntimeLoop) _runtimeBranchDepth--;
@@ -810,8 +816,13 @@ public partial class IRGenerator
             return;
         }
 
+        // A runtime exception raised at a point the expansion always reaches has no handler and
+        // no diagnostic, so it aborts compilation. `SawDynamicLoop` is what keeps that rule off
+        // the shape it does not mean: a lookup that probes a table and raises when the search
+        // runs out reaches its raise only for data the compiler cannot see.
         if (!string.IsNullOrEmpty(stmt.ErrorType) && inlineStack.Count > 0 &&
-            tryCatchStack.Count == 0 && _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
+            tryCatchStack.Count == 0 && !inlineStack[^1].SawDynamicLoop &&
+            _runtimeBranchDepth <= inlineStack[^1].EntryBranchDepth)
         {
             string reason = resolvedMessage.Length > 0 ? resolvedMessage : stmt.ErrorType;
             int line = currentStmtLine > 0 ? currentStmtLine : stmt.Line;
