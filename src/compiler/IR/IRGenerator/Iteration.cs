@@ -100,6 +100,19 @@ public partial class IRGenerator
 
     private void VisitFor(ForStmt stmt)
     {
+        // The loop variable (and enumerate's index) is a binding even when no type is filed for
+        // it -- a range loop and a runtime-bounded slice both bind a name that never enters
+        // variableTypes. Recorded before any lowering decision, because `for i in range(...)`
+        // carries no Iterable at all and would otherwise miss the shape below.
+        {
+            string loopKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+            boundNames.Add(loopKey);
+            if (!string.IsNullOrEmpty(stmt.Var2Name))
+                boundNames.Add(loopKey[..^stmt.VarName.Length] + stmt.Var2Name);
+        }
+
         if (stmt.Iterable != null)
         {
             var iter = stmt.Iterable;
@@ -110,6 +123,7 @@ public partial class IRGenerator
             string varKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.VarName
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+
 
             string? GetStr(Expression e)
             {

@@ -1850,4 +1850,26 @@ public class IRGeneratorTests
         Assert.Contains(body, i =>
             i is Copy { Dst: Variable v } && v.Name.EndsWith("iret_1_0") && v.Type == DataType.UINT8);
     }
+
+    // ── An undefined name is an error, not a read of whatever the RAM held ──
+    // PyMCU#41: the last fallback in ResolveBinding invented a local for any name nothing
+    // knew, so a typo compiled into firmware with no diagnostic at any stage.
+
+    [Fact]
+    public void UndefinedName_IsRejected_InsteadOfBecomingAnUnwrittenSlot()
+    {
+        var ex = Assert.Throws<CompilerError>(
+            () => GenerateIR("def main():\n    x: uint8 = number + 1\n", new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("'number' is not defined", ex.Message);
+    }
+
+    [Fact]
+    public void NameBoundByAnEarlierStatement_StillResolves()
+    {
+        var body = GenerateIR("def main():\n    number: uint8 = 7\n    x: uint8 = number + 1\n",
+            new DeviceConfig { Arch = "avr" });
+
+        Assert.NotNull(body);
+    }
 }

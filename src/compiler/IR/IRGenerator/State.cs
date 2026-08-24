@@ -170,6 +170,11 @@ public partial class IRGenerator
     // to constantVariables, preventing incorrect DCE of branches like
     // "if sensor.failed:".
     private HashSet<string> killedConstants = new();
+    // Names the program binds through a path that files no type: a loop variable, a
+    // multi-return unpack target. Read only by the undefined-name check, which must not
+    // mistake "bound elsewhere" for "never defined".
+    private HashSet<string> boundNames = new();
+
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties
 
     // variableAliases keys that are WRITE-THROUGH (nonlocal: the alias IS the variable's

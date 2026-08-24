@@ -1058,7 +1058,97 @@ public partial class IRGenerator
             }
         }
 
+        // Nothing above resolved the name, and two very different situations reach this line.
+        // One is a binding this generator holds under some other key: an inline handler's
+        // parameter, a type-annotated instance, a tuple result slot, a runtime-bounded slice.
+        // The other is a name the program never defines -- a typo, which used to become a read
+        // of a slot nobody ever wrote, so the firmware shipped with whatever the RAM held and
+        // no diagnostic said a word. Invent the local only for the first.
+        if (!IsNameKnownSomewhere(finalLocalName, name))
+            throw UserError(
+                $"name '{name}' is not defined -- it is read here but never assigned, " +
+                "imported, or received as a parameter");
+
         return new Variable(finalLocalName, type);
+    }
+
+    /// <summary>
+    /// True when some table in this generator knows <paramref name="qualified"/> or the bare
+    /// <paramref name="name"/>, under any of the prefixes a binding can be filed by. Used at the
+    /// end of <see cref="ResolveBinding"/> to tell "bound through another path" apart from
+    /// "never defined": the question is deliberately asked of every table rather than of
+    /// variableTypes alone, because the paths that legitimately reach the fallback file their
+    /// bindings elsewhere (aliases, instance classes, arrays, literal params).
+    /// </summary>
+    private bool IsNameKnownSomewhere(string qualified, string name)
+    {
+        // Compiler-generated names (temporaries, anonymous constructor targets, inline result
+        // slots) are never user-written, so they can never be a typo.
+        if (name.StartsWith("tmp_") || name.StartsWith("__c") || name.StartsWith("__slc")
+            || name.StartsWith("__unpack") || name.StartsWith("_irq_synth_"))
+            return true;
+
+        // `self` is bound by the expansion machinery, not by any statement in the source.
+        if (name == "self") return true;
+
+        // A builtin the compiler knows about: whatever is wrong with the call, the diagnostic
+        // that names the builtin is better than "not defined".
+        if (name is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec"
+            or "vars" or "dir" or "globals" or "locals" or "print" or "len" or "range"
+            or "abs" or "min" or "max" or "sum" or "ord" or "chr" or "hex" or "bin"
+            or "int" or "float" or "str" or "bool" or "bytes" or "bytearray" or "enumerate"
+            or "zip" or "isinstance" or "type" or "input" or "round" or "any" or "all"
+            or "next" or "iter" or "repr" or "super")
+            return true;
+
+        var keys = new List<string> { qualified, name };
+        if (!string.IsNullOrEmpty(currentFunction)) keys.Add(currentFunction + "." + name);
+        if (!string.IsNullOrEmpty(currentModulePrefix)) keys.Add(currentModulePrefix + name);
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) keys.Add(currentInlinePrefix + name);
+        foreach (var frame in inlineStack)
+            if (!string.IsNullOrEmpty(frame.Prefix)) keys.Add(frame.Prefix + name);
+
+        foreach (var key in keys)
+        {
+            if (variableTypes.ContainsKey(key)) return true;
+            if (constantVariables.ContainsKey(key)) return true;
+            if (constantAddressVariables.ContainsKey(key)) return true;
+            if (strConstantVariables.ContainsKey(key)) return true;
+            if (mutableGlobals.ContainsKey(key)) return true;
+            if (globals.ContainsKey(key)) return true;
+            if (variableAliases.ContainsKey(key)) return true;
+            if (instanceClasses.ContainsKey(key)) return true;
+            if (listLiteralParams.ContainsKey(key)) return true;
+            if (dictLiteralBindings.ContainsKey(key)) return true;
+            if (setLiteralBindings.ContainsKey(key)) return true;
+            if (runtimeStrVars.ContainsKey(key)) return true;
+            if (funcrefReturnTypes.ContainsKey(key)) return true;
+            if (loopFunctionAliases.ContainsKey(key)) return true;
+            if (noneValuedNames.Contains(key)) return true;
+            if (declaredConstants.Contains(key)) return true;
+            if (bytearrayParams.Contains(key)) return true;
+            if (arraysWithVariableIndex.Contains(key)) return true;
+            if (moduleSramArrays.Contains(key)) return true;
+            if (boundNames.Contains(key)) return true;
+        }
+
+        // A name that denotes something other than a variable: a class, a function, an import.
+        if (classNames.Contains(name) || importedAliases.ContainsKey(name)
+            || aliasToOriginal.ContainsKey(name) || inlineFunctions.ContainsKey(name)
+            || functionParams.ContainsKey(name) || functionReturnTypes.ContainsKey(name)
+            || externFunctionMap.ContainsKey(name))
+            return true;
+
+        // Filed under a module prefix by whichever module declared it.
+        foreach (var mod in modules)
+        {
+            string modKey = mod.Key.Replace('.', '_') + "_" + name;
+            if (globals.ContainsKey(modKey) || mutableGlobals.ContainsKey(modKey)
+                || variableTypes.ContainsKey(modKey) || constantVariables.ContainsKey(modKey))
+                return true;
+        }
+
+        return false;
     }
 
     // Resolve a variable name used as an asm() constraint operand.

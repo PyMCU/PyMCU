@@ -24,6 +24,17 @@ public partial class IRGenerator
 {
     private void VisitAssign(AssignStmt stmt)
     {
+        // Assigning to a plain name binds it, whatever the right-hand side turns out to be and
+        // whichever of the shapes below claims the statement. The undefined-name check reads
+        // this: an unannotated `x = f()` files no type anywhere, and without the record a later
+        // read of `x` would look exactly like a typo.
+        if (stmt.Target is VariableExpr bindTgt)
+            boundNames.Add(!string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + bindTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + bindTgt.Name
+                    : bindTgt.Name));
+
         // A name declared with a `const[...]` annotation is immutable; reassigning it is a
         // user error (previously this was silently accepted, overwriting the constant).
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
@@ -3478,6 +3489,10 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(currentFunction)) return currentFunction + "." + name;
             return name;
         }
+
+        // Every target is bound here, whichever shape the right-hand side takes; the
+        // undefined-name check reads this and nothing else about tuple targets.
+        foreach (var t in stmt.Targets) boundNames.Add(QualifyTarget(t));
 
         if (stmt.Value is TupleExpr tup)
         {
