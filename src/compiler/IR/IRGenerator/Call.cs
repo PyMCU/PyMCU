@@ -1210,9 +1210,11 @@ public partial class IRGenerator
                         throw UserError(
                             $"Parameter '{func.Params[paramIdx].Name}' is declared as " +
                             $"{func.Params[paramIdx].Type} and requires a compile-time constant; " +
-                            $"'{bare}' varies at runtime. A loop variable only qualifies when " +
-                            "the loop unrolls (small constant range with a simple body); " +
-                            "otherwise select with explicit constants (if/elif or match)");
+                            $"'{bare}' varies at runtime. A loop variable qualifies when the " +
+                            "loop unrolls, which a `for` over a short constant list or tuple " +
+                            "does -- `pins = [11, 12, 13]` then `for p in pins:` -- while " +
+                            "`for p in range(...)` compiles to a real loop and does not. " +
+                            "Otherwise select with explicit constants (if/elif or match)");
                 }
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);

@@ -93,6 +93,33 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr joinTgt && TryEmitJoinAssign(joinTgt.Name, stmt.Value))
             return;
 
+        // `pins = [11, 12, 13]` / `(11, 12, 13)`: remember the elements against the name so a
+        // later `for p in pins:` unrolls, which is what the same literal written inline at the
+        // `for` already does. Only short, all-constant sequences qualify -- past that the loop
+        // is better off as a loop, and a non-constant element has no compile-time value to bind.
+        if (stmt.Target is VariableExpr seqTgt && stmt.Value is ListExpr or TupleExpr)
+        {
+            var seqElements = stmt.Value is ListExpr sl ? sl.Elements : ((TupleExpr)stmt.Value).Elements;
+            string seqKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + seqTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + seqTgt.Name : seqTgt.Name);
+            if (seqElements.Count is > 0 and <= ConstSequenceUnrollLimit
+                && seqElements.All(e => TryEvalConstElement(e, out _)))
+            {
+                constSequenceBindings[seqKey] = seqElements;
+
+                // A tuple has no run-time value on this target, so evaluating the right-hand
+                // side would reject the program ("tuples are not supported as runtime
+                // values"). The binding IS the whole meaning of the statement: record it and
+                // emit nothing, the way a dict or set literal binding does.
+                if (stmt.Value is TupleExpr) return;
+            }
+            else
+            {
+                constSequenceBindings.Remove(seqKey);
+            }
+        }
+
         // `d = {...}` binds a compile-time lookup table (dict) or membership set: register
         // the literal AST against the name; nothing runs at runtime.
         if (stmt.Target is VariableExpr dsTgt && stmt.Value is DictExpr or SetExpr)

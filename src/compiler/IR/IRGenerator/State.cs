@@ -385,6 +385,10 @@ public partial class IRGenerator
     // Tracks inline-function parameters bound to a bytes/list literal argument
     // (e.g. uart.write(b"Hi")). Lets the param be iterated via for-in and
     // unrolled at compile time, mirroring a direct `for b in b"Hi"` loop.
+    // A name bound to a short list/tuple of integer constants (`pins = [11, 12, 13]`), so a
+    // `for` over the NAME unrolls the way the same literal written inline already does.
+    private Dictionary<string, List<Frontend.Expression>> constSequenceBindings = new();
+
     private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
 
     // Functions already reported via the @warning informational diagnostic, so

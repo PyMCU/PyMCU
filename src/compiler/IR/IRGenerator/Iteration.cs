@@ -43,6 +43,11 @@ public partial class IRGenerator
     // body is not duplicated per character.
     private const int StringForLoopUnrollLimit = 8;
 
+    // A named list/tuple unrolls up to this length; past it the loop stays a loop.
+    internal const int ConstSequenceUnrollLimit = 8;
+
+
+
     // True if `s` has a break/continue that targets the *enclosing* loop — i.e. one not nested
     // inside its own for/while (which owns its break/continue). A compile-time-unrolled loop
     // must, only when this holds, bracket each iteration with a continue label and share a break
@@ -86,6 +91,34 @@ public partial class IRGenerator
             case UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }: value = -n.Value; return true;
             default: value = 0; return false;
         }
+    }
+
+    /// <summary>
+    /// The elements of a name bound to a short all-constant list/tuple, following aliases the
+    /// way the parameter lookup does. Null when the name is not such a binding.
+    /// </summary>
+    private List<Expression>? ResolveConstSequence(string name)
+    {
+        string?[] candidates =
+        {
+            !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+            !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+            !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
+            name,
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate == null) continue;
+            string? key = candidate;
+            for (int depth = 0; depth < 20 && key != null; depth++)
+            {
+                if (constSequenceBindings.TryGetValue(key, out var elements)) return elements;
+                if (!variableAliases.TryGetValue(key, out key)) break;
+            }
+        }
+
+        return null;
     }
 
     private void EmitUnrolledIteration(Statement body, string breakLabel)
@@ -215,6 +248,26 @@ public partial class IRGenerator
                 return;
             }
 
+            // The same unrolling when the sequence was bound to a name first. `for p in pins:`
+            // is the shape every "declare the pins, then walk them" program has, and without
+            // this it fell through to a run-time loop whose variable is not a constant -- so
+            // Pin(p) rejected it while `for p in (11, 12, 13):` compiled.
+            if (iter is VariableExpr seqVar && ResolveConstSequence(seqVar.Name) is { } boundSeq)
+            {
+                string sqBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                foreach (var elem in boundSeq)
+                {
+                    if (!TryEvalConstElement(elem, out int sv))
+                        throw UserError("for-in over a named sequence needs compile-time integer elements.");
+                    constantVariables[varKey] = sv;
+                    EmitUnrolledIteration(stmt.Body, sqBrk);
+                }
+                if (sqBrk.Length > 0) Emit(new Label(sqBrk));
+
+                constantVariables.Remove(varKey);
+                return;
+            }
+
             if (iter is ListExpr or TupleExpr)
             {
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
@@ -302,6 +355,10 @@ public partial class IRGenerator
                     {
                         ListExpr le  => le.Elements,
                         TupleExpr te => te.Elements,
+                        // A name bound to a short constant sequence enumerates like the literal
+                        // it stands for; `for i, p in enumerate(pins)` is the same program as
+                        // enumerating the list written at the call.
+                        VariableExpr ev2 => ResolveConstSequence(ev2.Name),
                         _ => null,
                     };
                     if (seqElems != null)
