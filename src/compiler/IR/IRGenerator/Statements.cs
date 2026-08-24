@@ -120,6 +120,104 @@ public partial class IRGenerator
         throw UserError("Not a constant expression");
     }
 
+    /// <summary>
+    /// Records, for the function about to be lowered, the narrowest type that holds every
+    /// integer literal assigned to each unannotated local. A name is recorded ONLY when the
+    /// compiler can see all of its assignments and all of them are plain integer literals:
+    /// one augmented assignment, one call, one loop variable or one unpack target and the name
+    /// is dropped, because then the width depends on something this scan does not evaluate.
+    /// </summary>
+    private void CollectLiteralOnlyLocalWidths(FunctionDef funcNode)
+    {
+        literalOnlyLocalWidths.Clear();
+
+        var bounds = new Dictionary<string, (long Min, long Max)>();
+        var dropped = new HashSet<string>();
+
+        foreach (var p in funcNode.Params) dropped.Add(p.Name);
+
+        void Bind(string name, Expression? value)
+        {
+            if (value is IntegerLiteral lit && !dropped.Contains(name))
+            {
+                if (bounds.TryGetValue(name, out var b))
+                    bounds[name] = (Math.Min(b.Min, lit.Value), Math.Max(b.Max, lit.Value));
+                else
+                    bounds[name] = (lit.Value, lit.Value);
+                return;
+            }
+
+            dropped.Add(name);
+        }
+
+        void Walk(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return;
+                case Block b: foreach (var s2 in b.Statements) Walk(s2); return;
+                case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); return;
+                case AnnAssign an: dropped.Add(an.Target); return;
+                case VarDecl vd: dropped.Add(vd.Name); return;
+                case AugAssignStmt aug when aug.Target is VariableExpr augv: dropped.Add(augv.Name); return;
+                case TupleUnpackStmt tu: foreach (var t in tu.Targets) dropped.Add(t); return;
+                case ForStmt f:
+                    dropped.Add(f.VarName);
+                    if (!string.IsNullOrEmpty(f.Var2Name)) dropped.Add(f.Var2Name);
+                    Walk(f.Body);
+                    return;
+                case WhileStmt w: Walk(w.Body); return;
+                case WithStmt wi:
+                    if (!string.IsNullOrEmpty(wi.AsName)) dropped.Add(wi.AsName);
+                    Walk(wi.Body);
+                    return;
+                case IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var (_, body) in i.ElifBranches) Walk(body);
+                    Walk(i.ElseBranch);
+                    return;
+                case MatchStmt m:
+                    foreach (var br in m.Branches)
+                    {
+                        if (!string.IsNullOrEmpty(br.CaptureName)) dropped.Add(br.CaptureName);
+                        Walk(br.Body);
+                    }
+                    return;
+                case TryStmt t2:
+                    foreach (var s2 in t2.Body) Walk(s2);
+                    foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) Walk(s2);
+                    if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) Walk(s2);
+                    if (t2.Finally != null) foreach (var s2 in t2.Finally) Walk(s2);
+                    return;
+                case FunctionDef nested: Walk(nested.Body); return;
+                default: return;
+            }
+        }
+
+        Walk(funcNode.Body);
+
+        foreach (var kv in bounds)
+        {
+            if (dropped.Contains(kv.Key)) continue;
+            literalOnlyLocalWidths[kv.Key] = NarrowestTypeFor(kv.Value.Min, kv.Value.Max);
+        }
+    }
+
+    /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>
+    private static DataType NarrowestTypeFor(long min, long max)
+    {
+        if (min >= 0)
+        {
+            if (max <= byte.MaxValue) return DataType.UINT8;
+            if (max <= ushort.MaxValue) return DataType.UINT16;
+            return DataType.UINT32;
+        }
+
+        if (min >= sbyte.MinValue && max <= sbyte.MaxValue) return DataType.INT8;
+        if (min >= short.MinValue && max <= short.MaxValue) return DataType.INT16;
+        return DataType.INT32;
+    }
+
     private Function VisitFunction(FunctionDef funcNode)
     {
         if (funcNode.IsAsync)
@@ -164,6 +262,13 @@ public partial class IRGenerator
         currentInstructions.Clear();
         loopStack.Clear();
         lastLine = -1;
+
+        // Width of the unannotated locals whose every assignment is an integer literal, so
+        // `n = 200` costs what `n: uint8 = 200` costs. Collected BEFORE the body is visited:
+        // the first store used to fix the type at int32 with no idea what the rest of the
+        // function did, and pulled in the 32-bit decimal writer -- 756 bytes on atmega328p,
+        // 37% of an attiny2313's flash, for a choice the user did not know they were making.
+        CollectLiteralOnlyLocalWidths(funcNode);
 
         // RFC 0001 Model B (sret): a factory `-> C` for a MULTI-field (slot) ZCA gets a hidden
         // leading `__self` pointer param. The caller allocates the slot and passes its address;

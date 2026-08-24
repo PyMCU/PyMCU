@@ -173,6 +173,11 @@ public partial class IRGenerator
     // Names the program binds through a path that files no type: a loop variable, a
     // multi-return unpack target. Read only by the undefined-name check, which must not
     // mistake "bound elsewhere" for "never defined".
+    // Per-function widths for unannotated locals assigned only integer literals; see
+    // CollectLiteralOnlyLocalWidths. Keyed by the bare name, valid for the function being
+    // lowered only.
+    private Dictionary<string, DataType> literalOnlyLocalWidths = new();
+
     private HashSet<string> boundNames = new();
 
     private Dictionary<string, string?> variableAliases = new(); // Tracks param -> arg mappings for properties

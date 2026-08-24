@@ -553,7 +553,10 @@ public partial class IRGenerator
                         {
                             if (value is Temporary tmp) type = tmp.Type;
                             else if (value is Variable vv) type = vv.Type;
-                            else if (stmt.Value is IntegerLiteral) type = DataType.INT32;
+                            else if (stmt.Value is IntegerLiteral)
+                                type = literalOnlyLocalWidths.TryGetValue(varExpr.Name, out var litW)
+                                    ? litW
+                                    : DataType.INT32;
                             else if (value is Constant
                                      && stmt.Value is CallExpr { Callee: VariableExpr castFn }
                                      && CastTypes.TryGetValue(castFn.Name, out var castDt))
