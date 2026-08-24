@@ -239,6 +239,11 @@ is a `CompileError`; a true or runtime assertion is stripped.
 | Unbounded recursion | Stack overflow on MCU | Iterative equivalent |
 
 **Supported:** `@inline` functions expand at call sites — zero call overhead, zero stack.
+
+A **free function that takes a class instance** (`def blink_twice(led: Pin)`) is supported and
+expands at the call site, the way an explicit `@inline` of the same shape does: the instance
+fields live in the caller's frame, so there is no subroutine to call. The parameter must be
+annotated with the class name; an unannotated one is not an instance parameter.
 Non-`@inline` functions use a conventional call/ret ABI and can recurse to a fixed depth
 (~80 frames on ATmega328P with 2 KB SRAM). `lambda x: expr` (no closure capture) is inlined
 at the call site. `nonlocal` is supported inside nested `@inline` functions.
