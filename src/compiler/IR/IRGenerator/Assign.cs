@@ -2693,6 +2693,22 @@ public partial class IRGenerator
         DataType elemDt = DataTypeExtensions.StringToDataType(elemTypeName);
         int elemSize = elemDt.SizeOf();
 
+        // A growable list is heap-allocated and only the AVR backend has the collector. Said
+        // at the declaration, with the program's own words: the phase that used to catch this
+        // ran much later and answered in terms of GC_REF and gc_alloc, which mean nothing from
+        // the program's side, without naming the variable or the line. A fixed array is the
+        // shape that works everywhere, and it is what the reader wanted here anyway.
+        string arch = deviceConfig?.Arch ?? "";
+        if (arch != "avr" && arch != "")
+        {
+            int knownSize = stmt.Value is ListExpr initList ? initList.Elements.Count : 0;
+            string sizeShown = knownSize > 0 ? knownSize.ToString() : "N";
+            throw UserError(
+                $"'{stmt.Target}: {stmt.Annotation}' needs a growable list, which is "
+                + $"heap-allocated and only implemented on AVR (this target is {arch}). "
+                + $"Use a fixed array instead: `{stmt.Target}: {elemTypeName}[{sizeShown}] = [...]`");
+        }
+
         string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
             ? currentInlinePrefix + stmt.Target
             : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Target : stmt.Target);
