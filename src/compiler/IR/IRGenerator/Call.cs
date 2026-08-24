@@ -2757,6 +2757,60 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// Rewrites the two pre-f-string ways of building a message into the f-string they mean:
+    /// `"...".format(x)` and `"text " + str(x)`. Both are what a Python programmer reaches
+    /// for first, both were refused, and the machinery to stream them already exists.
+    /// </summary>
+    private Expression RewriteStringBuilding(Expression arg)
+    {
+        if (arg is CallExpr { Callee: MemberAccessExpr { Member: "format", Object: StringLiteral fmt } } fmtCall)
+            return DesugarStrFormat(fmt.Value, fmtCall);
+
+        return TryFlattenStringConcat(arg) ?? arg;
+    }
+
+    /// <summary>
+    /// `"a " + str(x) + " b"` as an f-string, or null when the expression is not a string
+    /// concatenation of literals and str() calls -- in which case it is left alone and
+    /// whatever diagnostic it would have produced still applies.
+    /// </summary>
+    private FStringExpr? TryFlattenStringConcat(Expression arg)
+    {
+        if (arg is not BinaryExpr { Op: Frontend.BinaryOp.Add }) return null;
+
+        var parts = new List<FStringPart>();
+        bool sawStrCall = false;
+
+        bool Collect(Expression e)
+        {
+            switch (e)
+            {
+                case BinaryExpr { Op: Frontend.BinaryOp.Add } add:
+                    return Collect(add.Left) && Collect(add.Right);
+                case StringLiteral lit:
+                    parts.Add(new FStringPart { IsExpr = false, Text = lit.Value });
+                    return true;
+                case CallExpr { Callee: VariableExpr { Name: "str" }, Args.Count: 1 } strCall:
+                    sawStrCall = true;
+                    parts.Add(new FStringPart { IsExpr = true, Expr = strCall.Args[0] });
+                    return true;
+                default:
+                    // A bare name may hold a compile-time string, which concatenates fine
+                    // today; anything else is not this shape.
+                    if (e is VariableExpr v && StaticStringOf(v) is { } bound)
+                    {
+                        parts.Add(new FStringPart { IsExpr = false, Text = bound });
+                        return true;
+                    }
+                    return false;
+            }
+        }
+
+        if (!Collect(arg) || !sawStrCall) return null;
+        return new FStringExpr(parts) { Line = arg.Line };
+    }
+
+    /// <summary>
     /// Rewrites `"text {} more".format(a, b)` into the equivalent f-string. Positional holes
     /// ({}, {0}) and format specs ({:02x}) map straight across; a named hole is a keyword
     /// argument, which has no f-string spelling here, and says so.
@@ -3420,9 +3474,7 @@ public partial class IRGenerator
             // `print("val {}".format(x))` streams like the f-string it is. Rewritten here
             // rather than when the call is evaluated, so it takes the streaming path instead
             // of the "f-string in an unsupported position" one.
-            else posArgs.Add(arg is CallExpr { Callee: MemberAccessExpr { Member: "format", Object: StringLiteral fmtArg } } fmtCall
-                ? DesugarStrFormat(fmtArg.Value, fmtCall)
-                : arg);
+            else posArgs.Add(RewriteStringBuilding(arg));
         }
 
         // Resolve the target's write helpers once; the lowering itself is the shared, sink-agnostic
