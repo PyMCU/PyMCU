@@ -1278,6 +1278,15 @@ public partial class IRGenerator
         {
             string mod = name.Substring(0, dotPos);
             string func = name.Substring(dotPos + 1);
+            // `import pymcu.hal.console as c` then `c.print(1)`: print is a builtin this
+            // compiler lowers itself, and the module qualifier only says where the name came
+            // from. Without this the call went looking for `c_print`, a symbol nothing emits.
+            int lastDot = name.LastIndexOf('.');
+            string qualifier = name[..lastDot];
+            string member = name[(lastDot + 1)..];
+            if (intrinsicNames.Contains(member)
+                && (importedAliases.ContainsKey(qualifier) || modules.ContainsKey(qualifier)))
+                return member;
             return mod + "_" + func;
         }
 
@@ -1287,6 +1296,11 @@ public partial class IRGenerator
         {
             var mangledMod = modName?.Replace('.', '_');
             var original = aliasToOriginal.GetValueOrDefault(name, name);
+            // `from pymcu.hal.console import print as p`: the alias renames a builtin, so the
+            // call must reach the builtin. Mangling it to `pymcu_hal_console_print` named a
+            // function that is never emitted, and the error blamed the module rather than
+            // saying the alias had been dropped.
+            if (intrinsicNames.Contains(original)) return original;
             return mangledMod + "_" + original;
         }
 

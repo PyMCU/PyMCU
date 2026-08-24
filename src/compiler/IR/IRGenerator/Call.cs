@@ -174,12 +174,23 @@ public partial class IRGenerator
             {
                 if (modules.ContainsKey(ve.Name))
                 {
-                    // Mangle with the real module name, not the alias: `import time as t`
-                    // registers modules["t"] but compiles functions as time_sleep_ms.
-                    string realMod = importedAliases.TryGetValue(ve.Name, out var rm) && rm != null ? rm : ve.Name;
-                    string mangledMod = realMod.Replace('.', '_');
-                    callee = mangledMod + "_" + memC.Member;
-                    resolvedAsModule = true;
+                    // A builtin reached through its module (`import pymcu.hal.console as c`
+                    // then `c.print(1)`) is still the builtin this compiler lowers itself;
+                    // mangling it named `pymcu_hal_console_print`, which nothing emits.
+                    if (intrinsicNames.Contains(memC.Member))
+                    {
+                        callee = memC.Member;
+                        resolvedAsModule = true;
+                    }
+                    else
+                    {
+                        // Mangle with the real module name, not the alias: `import time as t`
+                        // registers modules["t"] but compiles functions as time_sleep_ms.
+                        string realMod = importedAliases.TryGetValue(ve.Name, out var rm) && rm != null ? rm : ve.Name;
+                        string mangledMod = realMod.Replace('.', '_');
+                        callee = mangledMod + "_" + memC.Member;
+                        resolvedAsModule = true;
+                    }
                 }
                 else if (classNames.Contains(ve.Name))
                 {
