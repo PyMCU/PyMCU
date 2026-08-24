@@ -39,6 +39,12 @@ class Pin:
     OUT = 0
     OPEN_DRAIN = 2
 
+    # Arduino spells this INPUT_PULLUP and MicroPython spells it `Pin.IN, Pin.PULL_UP`.
+    # The capability was always here; only the combined name was missing, and it is the
+    # second line of every button program (an internal pull-up is what lets a button work
+    # without an external resistor).
+    IN_PULLUP = 3
+
     PULL_UP   = 1
     PULL_DOWN = 2
 
@@ -92,7 +98,12 @@ class Pin:
                 self._pin = select_pin(name)
                 self._bit = select_bit(name)
 
-        self._ddr[self._bit] = mode ^ 1
+        if mode == 3:
+            # IN_PULLUP: input direction, pull-up on.
+            self._ddr[self._bit] = 0
+            self._port[self._bit] = 1
+        else:
+            self._ddr[self._bit] = mode ^ 1
         if pull != -1:
             if pull == 2:
                 raise CompileError("Pull-down resistor not supported on AVR")

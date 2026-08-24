@@ -133,6 +133,12 @@ class UART:
     def available(self) -> uint8:
         return uart_available()
 
+    # MicroPython's name for the same question. The capability was here under a name the
+    # user's previous platform does not use, and the error only said the method did not exist.
+    @inline
+    def any(self) -> uint8:
+        return uart_available()
+
     @inline
     def read_nb(self) -> uint8:
         return uart_read_nb()
