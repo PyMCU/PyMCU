@@ -46,3 +46,17 @@ def random(n: uint16) -> uint16:
 def random2(lo: uint16, hi: uint16) -> uint16:
     """Return a pseudo-random integer in [lo, hi).  hi must be > lo."""
     return lo + random(hi - lo)
+
+
+def randint(a: uint16, b: uint16) -> uint16:
+    """Return a pseudo-random integer in [a, b], both ends included.
+
+    The name and the inclusive range are Python's; random2 keeps the
+    half-open Arduino form it already had.
+    """
+    return a + random(b - a + 1)
+
+
+def seed(s: uint32):
+    """Python's name for randomSeed."""
+    randomSeed(s)

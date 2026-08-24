@@ -75,11 +75,12 @@ public class FileSystemModuleLoader : IModuleLoader
 
     private static string ResolveModulePath(string moduleName, List<string> includePaths, string currentFilePath, int relativeLevel)
     {
-        // Builtin module aliases: bare `import asyncio` resolves to the pymcu stdlib file.
-        // The module still registers under the bare name (its symbols mangle as asyncio_*),
-        // only the FILE lookup is redirected.
-        string pathName = moduleName == "asyncio" ? "pymcu.asyncio" : moduleName;
-        var pathRel = pathName.Replace('.', Path.DirectorySeparatorChar);
+        // Builtin module aliases: bare `import asyncio` / `math` / `random` / `time` resolve
+        // to the pymcu stdlib file of the same name. The module still registers under the bare
+        // name (its symbols mangle as asyncio_*), only the FILE lookup is redirected -- and the
+        // redirect is a FALLBACK, tried after the project's own files, so a local math.py still
+        // wins the way it does in Python.
+        var pathRel = moduleName.Replace('.', Path.DirectorySeparatorChar);
 
         if (relativeLevel > 0)
         {
@@ -100,6 +101,22 @@ public class FileSystemModuleLoader : IModuleLoader
 
             fullPath = Path.Combine(baseDir, pathRel, "__init__.py");
             if (File.Exists(fullPath)) return fullPath;
+        }
+
+        // The same module under the name every Python program types. `import math` used to
+        // report "Module not found: math -- install it with `pymcu install math`", advice
+        // nobody could follow: math is not a library, it is the stdlib under another name.
+        if (!moduleName.Contains('.'))
+        {
+            var stdlibRel = Path.Combine("pymcu", pathRel);
+            foreach (var baseDir in includePaths)
+            {
+                var fullPath = Path.Combine(baseDir, stdlibRel + ".py");
+                if (File.Exists(fullPath)) return fullPath;
+
+                fullPath = Path.Combine(baseDir, stdlibRel, "__init__.py");
+                if (File.Exists(fullPath)) return fullPath;
+            }
         }
 
         // Compat-flavor modules: point at the fix instead of a bare not-found.
