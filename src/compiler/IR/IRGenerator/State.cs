@@ -176,6 +176,9 @@ public partial class IRGenerator
     // Per-function widths for unannotated locals assigned only integer literals; see
     // CollectLiteralOnlyLocalWidths. Keyed by the bare name, valid for the function being
     // lowered only.
+    // Counter for the buffer a `uint8(input(...))` desugars into.
+    private int inputDesugarId = 0;
+
     private Dictionary<string, DataType> literalOnlyLocalWidths = new();
 
     private HashSet<string> boundNames = new();

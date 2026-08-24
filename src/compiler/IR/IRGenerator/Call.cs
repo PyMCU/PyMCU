@@ -2650,6 +2650,20 @@ public partial class IRGenerator
     {
         DataType dstType = CastTypes[callee];
         if (expr.Args.Count != 1) throw UserError(callee + "() expects exactly one argument");
+
+        // `uint8(input("n: "))` is the one-line way to read a number, and it is exactly the two
+        // statements the user would otherwise write -- both of which already work. Only the
+        // composition failed, reported as "call to undefined function 'input'", which sends the
+        // reader hunting for an import while the same call one line up compiles. Desugar it into
+        // the buffer declaration plus the cast.
+        if (expr.Args[0] is CallExpr { Callee: VariableExpr { Name: "input" } } inputCall)
+        {
+            string bufName = "__input" + (++inputDesugarId);
+            VisitStatement(new VarDecl(bufName, "bytearray", inputCall) { Line = expr.Line });
+            return EmitNumericCastBuiltin(
+                new CallExpr(expr.Callee, new List<Expression> { new VariableExpr(bufName) }) { Line = expr.Line },
+                callee);
+        }
         // A string argument used to fold to its flash string-id, or to a plain zero when it
         // came through a variable -- `s: str = "42"; uint8(s)` printed 0 and said nothing.
         // A string whose text is known at compile time is parsed here, which is what Python
