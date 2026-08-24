@@ -170,4 +170,38 @@ public class ZcaInlineRegressionTests
         }
         Assert.True(backEdges >= 2, $"expected >=2 loop back-edges (one per expansion), got {backEdges}");
     }
+
+    // ── A free function that takes a class instance ─────────────────────────
+    // The instance has no subroutine ABI, so the function is expanded at the call site.
+    // Before, the first-parameter form was never emitted (PyMCU#71: `undefined reference`
+    // from the linker) and any other position was lowered as an ordinary function whose
+    // field reads were never bound (PyMCU#72: the field read as zero).
+
+    private const string FreeFunctionsOverAnInstance =
+        "class C:\n" +
+        "    @inline\n    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+        "def leer(o: C) -> uint8:\n    return o.n\n" +
+        "def leer_k(k: uint8, o: C) -> uint8:\n    return o.n + k\n";
+
+    [Fact]
+    public void FunctionTakingAnInstance_IsExpanded_NotLeftAsAnUndefinedCall()
+    {
+        var ir = Gen(FreeFunctionsOverAnInstance +
+            "def main():\n    c = C(7)\n    a: uint8 = leer(c)\n    b: uint8 = leer_k(2, c)\n");
+
+        var emitted = ir.Functions.Select(f => f.Name).ToHashSet();
+        Assert.DoesNotContain(MainBody(ir),
+            i => i is Call call && !emitted.Contains(call.FunctionName));
+    }
+
+    [Fact]
+    public void FunctionTakingAnInstance_ReadsTheFieldItWasGiven()
+    {
+        var body = MainBody(Gen(FreeFunctionsOverAnInstance +
+            "def main():\n    c = C(7)\n    b: uint8 = leer_k(2, c)\n"));
+
+        // 7 + 2 folds only if the field actually reached the expansion; the old lowering
+        // read an unbound variable and produced 2.
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 9 } });
+    }
 }

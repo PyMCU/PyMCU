@@ -514,29 +514,7 @@ public partial class IRGenerator
             }
             else if (func.IsInline)
             {
-                // `|| overloadedFunctions.Contains` so that once a name is overloaded (its
-                // bare key removed below), a later same-named overload registers under its
-                // suffixed key instead of re-occupying the vacated bare key, where it would
-                // be invisible to suffix-based overload resolution.
-                if (inlineFunctions.ContainsKey(fullName) || overloadedFunctions.Contains(fullName))
-                {
-                    if (!overloadedFunctions.Contains(fullName))
-                    {
-                        var existing = inlineFunctions[fullName];
-                        string existingSfx = BuildOverloadSuffix(existing.Params);
-                        inlineFunctions[fullName + "___" + existingSfx] = existing;
-                        inlineFunctions.Remove(fullName);
-                        overloadedFunctions.Add(fullName);
-                    }
-
-                    string newSfx = BuildOverloadSuffix(func.Params);
-                    inlineFunctions[fullName + "___" + newSfx] = func;
-                }
-                else
-                {
-                    inlineFunctions[fullName] = func;
-                    if (scope != null) scope.InlineFunctions[func.Name] = func;
-                }
+                RegisterInlineFunction(func, fullName, scope);
             }
             else
             {
@@ -551,20 +529,35 @@ public partial class IRGenerator
                         "list parameters are not supported (the function would be silently " +
                         "dropped and fail at link time). Use 'bytearray' for byte buffers, or " +
                         "mark the function @inline so the list resolves at the call site");
-                bool hasZcaFirstParam = func.Params.Count > 0 &&
-                    DataTypeExtensions.StringToDataType(func.Params[0].Type) == DataType.UNKNOWN &&
-                    func.Params[0].Type != "bytearray" &&
-                    !func.Params[0].Type.StartsWith("ptr") &&
-                    func.Params[0].Type != "const[str]" && func.Params[0].Type != "str";
+                // A parameter annotated with a class type carries a ZCA instance, which has no
+                // subroutine ABI: the fields live in the caller's frame, so the body only has
+                // meaning expanded at the call site. That is what @inline already does for the
+                // same shape, so register these the same way and let the call site expand them.
+                // Without it the two positions failed differently and both badly: a class in the
+                // first parameter was kept only for on-demand ISR synthesis and never emitted
+                // (`undefined reference` from the linker), and a class in any other position was
+                // lowered as an ordinary function whose field reads were never bound, so it
+                // silently computed on whatever the RAM held.
+                bool hasZcaFirstParam = func.Params.Count > 0 && IsZcaHandlerParamType(func.Params[0].Type);
+                bool hasZcaParam = func.Params.Any(p => IsZcaInstanceParamType(p.Type));
+
+                // The first-position form is also the ISR handler shape (`def on_irq(pin: Pin)`),
+                // which is synthesized separately from the AST when the handler is registered.
                 if (hasZcaFirstParam)
-                {
                     zcaHandlerAstNodes[fullName] = (func, currentModulePrefix ?? "");
+
+                if (hasZcaParam)
+                {
+                    RegisterInlineFunction(func, fullName, scope);
                 }
-                else
+                else if (!hasZcaFirstParam)
                 {
                     functionsToCompile.Add(new FunctionEntry
                         { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
                 }
+                // An UNANNOTATED first parameter lands in neither: it is the decorator shape the
+                // stdlib uses (`def inline(f): return f`), which has never been lowered and must
+                // not start being lowered here.
             }
         }
 
@@ -1450,6 +1443,58 @@ public partial class IRGenerator
     // Mirrors the per-method registration done for top-level classes, prefixing
     // symbols with the enclosing class path. Recurses for further nesting. Bases
     // (inheritance) on nested classes are not handled here -- none use it today.
+    /// <summary>
+    /// True when a parameter type is not one the backend can pass in registers: the shape an
+    /// ISR handler takes (`def on_irq(pin: Pin)`). An UNANNOTATED parameter counts here, which
+    /// is what keeps decorator-style stdlib helpers (`def inline(f)`) out of normal lowering.
+    /// </summary>
+    private static bool IsZcaHandlerParamType(string type)
+        => DataTypeExtensions.StringToDataType(type) == DataType.UNKNOWN
+           && type != "bytearray"
+           && !type.StartsWith("ptr")
+           && type != "const[str]" && type != "str";
+
+    /// <summary>
+    /// True when a parameter annotation NAMES a class, so the argument is a ZCA instance.
+    /// Narrower than <see cref="IsZcaHandlerParamType"/> on purpose: an unannotated parameter
+    /// is not an instance, and force-inlining those would swallow the stdlib's decorator
+    /// helpers (`def inline(f)`, `def used(f)`) whose bodies must never be expanded.
+    /// </summary>
+    private static bool IsZcaInstanceParamType(string type)
+        => !string.IsNullOrEmpty(type) && IsZcaHandlerParamType(type);
+
+    /// <summary>
+    /// Registers a function for call-site expansion (what `@inline` means). Shared by the
+    /// explicit `@inline` decorator and by functions that take a class instance, which have
+    /// no other lowering.
+    /// </summary>
+    private void RegisterInlineFunction(FunctionDef func, string fullName, ModuleScope? scope)
+    {
+        // `|| overloadedFunctions.Contains` so that once a name is overloaded (its
+        // bare key removed below), a later same-named overload registers under its
+        // suffixed key instead of re-occupying the vacated bare key, where it would
+        // be invisible to suffix-based overload resolution.
+        if (inlineFunctions.ContainsKey(fullName) || overloadedFunctions.Contains(fullName))
+        {
+            if (!overloadedFunctions.Contains(fullName))
+            {
+                var existing = inlineFunctions[fullName];
+                string existingSfx = BuildOverloadSuffix(existing.Params);
+                inlineFunctions[fullName + "___" + existingSfx] = existing;
+                inlineFunctions.Remove(fullName);
+                overloadedFunctions.Add(fullName);
+            }
+
+            string newSfx = BuildOverloadSuffix(func.Params);
+            inlineFunctions[fullName + "___" + newSfx] = func;
+        }
+        else
+        {
+            inlineFunctions[fullName] = func;
+            if (scope != null) scope.InlineFunctions[func.Name] = func;
+        }
+    }
+
     private void ScanNestedClassMembers(ClassDef nested, string outerPrefix)
     {
         if (nested.Bases.Contains("Enum") || nested.Bases.Contains("IntEnum")) return;
