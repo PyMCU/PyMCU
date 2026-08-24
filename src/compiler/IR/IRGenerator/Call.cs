@@ -158,7 +158,13 @@ public partial class IRGenerator
         string callee = "";
         if (expr.Callee is VariableExpr varE)
         {
-            callee = ResolveCallee(varE.Name);
+            // A name bound to a function by `f = a` calls that function directly.
+            string fnAliasKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + varE.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + varE.Name : varE.Name);
+            callee = loopFunctionAliases.TryGetValue(fnAliasKey, out var boundFn)
+                ? boundFn
+                : ResolveCallee(varE.Name);
         }
         else if (expr.Callee is MemberAccessExpr memC)
         {

@@ -35,6 +35,50 @@ public partial class IRGenerator
                     ? currentFunction + "." + bindTgt.Name
                     : bindTgt.Name));
 
+        // `f = a` where `a` is a function: bind the NAME, do not evaluate it as a value. A
+        // function could be passed as a Callable argument but not stored, and `f()` then said
+        // "'f' is not callable (it is a value, not a function)" -- which is what the compiler
+        // had made of it. The binding is compile-time, so the later call is direct and costs
+        // nothing; a run-time function pointer is what funcref() is for.
+        if (stmt.Target is VariableExpr fnTgt && stmt.Value is VariableExpr fnSrc)
+        {
+            string srcKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + fnSrc.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fnSrc.Name : fnSrc.Name);
+            bool srcIsVariable = variableTypes.ContainsKey(srcKey) || variableTypes.ContainsKey(fnSrc.Name)
+                || mutableGlobals.ContainsKey(currentModulePrefix + fnSrc.Name)
+                || constantVariables.ContainsKey(srcKey);
+            if (!srcIsVariable)
+            {
+                string resolvedFn = ResolveCallee(fnSrc.Name);
+                if (functionParams.ContainsKey(resolvedFn) || inlineFunctions.ContainsKey(resolvedFn))
+                {
+                    string tgtKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + fnTgt.Name
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fnTgt.Name : fnTgt.Name);
+
+                    // The binding is compile-time, so it can only mean ONE function. Rebinding
+                    // the name to a different one, or binding it inside a runtime branch, is a
+                    // dispatch table: taking the last binding seen would compile a program that
+                    // silently ignores the condition, which is worse than refusing it.
+                    bool rebound = loopFunctionAliases.TryGetValue(tgtKey, out var already)
+                                   && already != resolvedFn;
+                    if (rebound || _runtimeBranchDepth > 0)
+                        throw UserError(
+                            $"'{fnTgt.Name}' is bound to a function at compile time, so it cannot "
+                            + (rebound
+                                ? $"be rebound to a different one ('{already}' then '{resolvedFn}')."
+                                : "be bound inside a run-time branch.")
+                            + " For a dispatch table, declare the parameter or array as Callable "
+                            + "and pass the function, or take its address with funcref().");
+
+                    loopFunctionAliases[tgtKey] = resolvedFn;
+                    boundNames.Add(tgtKey);
+                    return;
+                }
+            }
+        }
+
         // A name declared with a `const[...]` annotation is immutable; reassigning it is a
         // user error (previously this was silently accepted, overwriting the constant).
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
