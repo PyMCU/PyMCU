@@ -1573,7 +1573,26 @@ public partial class IRGenerator
                 //    alone used to be enough, which handed the call to whichever overload was
                 //    declared first: Pin("RA4", Pin.OUT) picked the const[uint8] overload and
                 //    died advising the caller to pass a port name -- which is what it had passed.
+                // An argument that IS an instance must never bind to a numeric parameter. The
+                // suffix of an instance argument is its class name, so "is this a class?" is the
+                // same question on both sides -- and asking it keeps ADC(<an instance>) off the
+                // ADC(channel: const[uint8]) overload, where it landed as "'__c3' varies at run
+                // time", a message about a temporary the program never mentions.
+                bool IsInstanceType(string t) => classNames.Contains(t);
+                var argSuffixes = suffix == "void"
+                    ? new List<string>()
+                    : suffix.Split('_').ToList();
+                bool SameShape(List<Param> ps)
+                {
+                    if (ps.Count != argSuffixes.Count) return false;
+                    for (int i = 0; i < ps.Count; i++)
+                        if (IsInstanceType(NormType(ps[i].Type)) != IsInstanceType(argSuffixes[i]))
+                            return false;
+                    return true;
+                }
+
                 string? pick = null;
+                string? sameShape = null;
                 string? arityOnly = null;
                 foreach (var kvp in inlineFunctions)
                 {
@@ -1581,6 +1600,7 @@ public partial class IRGenerator
                     var ps = kvp.Value.Params.Where(p => p.Name != "self").ToList();
                     if (ps.Count != argCount) continue;
                     arityOnly ??= kvp.Key;
+                    if (sameShape is null && SameShape(ps)) sameShape = kvp.Key;
                     if (argCount == 0
                         || string.Join("_", ps.Select(p => NormType(p.Type))) == suffix)
                     {
@@ -1588,6 +1608,12 @@ public partial class IRGenerator
                         break;
                     }
                 }
+
+                // An exact-arity overload that agrees on which arguments are instances beats
+                // anything the default-aware step below can offer, and it must be taken BEFORE
+                // that step: the step fills `pick` with the first arity-compatible overload it
+                // finds, after which no later preference can be applied.
+                pick ??= sameShape;
 
                 // 2) Default-aware fallback. When no exact-arity overload exists — e.g. a
                 //    one-arg Pin(14) against overloads whose trailing params have defaults —

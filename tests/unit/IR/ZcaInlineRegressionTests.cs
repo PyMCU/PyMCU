@@ -171,6 +171,39 @@ public class ZcaInlineRegressionTests
         Assert.True(backEdges >= 2, $"expected >=2 loop back-edges (one per expansion), got {backEdges}");
     }
 
+    // ── Overload resolution: an instance never binds to a numeric parameter ──
+    // Two @inline __init__ overloads, one taking an instance and one a number. When the
+    // argument reaches the call one level in (as a compiler temporary), no overload matches
+    // the suffix exactly, and resolution used to fall through to "the first overload with the
+    // right arity" -- the numeric one, which then complained about a temporary the program
+    // never wrote. Regression for PyMCU#74 (measured shape: machine.ADC's Pin/channel pair).
+
+    private const string TwoOverloads =
+        "class P:\n" +
+        "    @inline\n    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+        "class A:\n" +
+        "    @inline\n    def __init__(self, p: P):\n        self.v: uint8 = p.n\n" +
+        "    @inline\n    def __init__(self, ch: const[uint8]):\n        self.v: uint8 = ch + 100\n" +
+        "class W:\n" +
+        "    @inline\n    def __init__(self, thing):\n        self._a = A(thing)\n" +
+        "    @inline\n    def read(self) -> uint8:\n        return self._a.v\n";
+
+    [Fact]
+    public void InstanceArgument_OneLevelIn_DoesNotBindToTheNumericOverload()
+    {
+        var ir = Gen(TwoOverloads + "def main():\n    w = W(A(P(7)))\n    r: uint8 = w.read()\n");
+
+        Assert.NotNull(ir);
+    }
+
+    [Fact]
+    public void NumericArgument_StillSelectsTheNumericOverload()
+    {
+        var body = MainBody(Gen(TwoOverloads + "def main():\n    a = A(5)\n    r: uint8 = a.v\n"));
+
+        Assert.Contains(body, i => i is Copy { Src: Constant { Value: 105 } });
+    }
+
     // ── A free function that takes a class instance ─────────────────────────
     // The instance has no subroutine ABI, so the function is expanded at the call site.
     // Before, the first-parameter form was never emitted (PyMCU#71: `undefined reference`
