@@ -681,6 +681,26 @@ public partial class IRGenerator
                                 "(attributes are resolved at compile time); access the attribute directly, " +
                                 "or dispatch on an explicit type-tag field");
 
+            // The name came from an import, so the module is known and so are its exports:
+            // "(typo, or a missing import?)" sends the reader to check an import that is right
+            // there, and the mangled symbol (pymcu_hal_adc_ADC) is internal name construction
+            // leaking into a user-facing message. Say which module does not export it, and
+            // offer the near miss.
+            if (expr.Callee is VariableExpr impVe && importedAliases.TryGetValue(impVe.Name, out var impMod)
+                && !string.IsNullOrEmpty(impMod))
+            {
+                string wanted = aliasToOriginal.GetValueOrDefault(impVe.Name, impVe.Name) ?? impVe.Name;
+                var exports = ExportedNames(impMod);
+                string near = NearestExportedName(exports, wanted);
+                string tail = near.Length > 0
+                    ? $". Did you mean '{near}'?"
+                    : exports.Count > 0
+                        ? $". It exports {string.Join(", ", exports.OrderBy(n => n).Take(8))}"
+                          + (exports.Count > 8 ? ", ..." : "")
+                        : "";
+                throw UserError($"'{wanted}' is not exported by {impMod}{tail}");
+            }
+
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
         }
 
@@ -2547,6 +2567,85 @@ public partial class IRGenerator
         return new Constant((int)n);
     }
 
+    /// <summary>
+    /// The exported name of <paramref name="moduleName"/> closest to <paramref name="wanted"/>,
+    /// or "" when nothing is close enough to be worth suggesting. Exports are the functions and
+    /// classes this generator has registered under the module's mangled prefix.
+    /// </summary>
+    private static string NearestExportedName(IReadOnlyCollection<string> exported, string wanted)
+    {
+        string best = "";
+        int bestDistance = int.MaxValue;
+        foreach (var name in exported)
+        {
+            int d = string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase)
+                ? 0
+                : EditDistance(name, wanted);
+            if (d < bestDistance) { bestDistance = d; best = name; }
+        }
+
+        // Two edits on a short name is already a different word; suggesting it would be noise.
+        int allowed = Math.Max(2, wanted.Length / 3);
+        return bestDistance <= allowed ? best : "";
+    }
+
+    /// <summary>
+    /// The names a module exports, as this generator has them: the functions and classes
+    /// registered under the module's mangled prefix.
+    /// </summary>
+    private HashSet<string> ExportedNames(string moduleName)
+    {
+        string prefix = moduleName.Replace('.', '_') + "_";
+        var exported = new HashSet<string>(StringComparer.Ordinal);
+
+        void Collect(IEnumerable<string> keys)
+        {
+            foreach (var k in keys)
+            {
+                if (!k.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                string name = k.Substring(prefix.Length);
+                int sep = name.IndexOf("___", StringComparison.Ordinal);
+                if (sep > 0) name = name.Substring(0, sep);
+                if (name.Length > 0 && !name.Contains('.')) exported.Add(name);
+            }
+        }
+
+        Collect(inlineFunctions.Keys);
+        Collect(functionParams.Keys);
+        Collect(classNames);
+        Collect(mutableGlobals.Keys);
+        Collect(globals.Keys);
+
+        // A class's methods are registered as `Class_method`, which is not a name anyone can
+        // import; listing them would bury the exports the reader is looking for.
+        exported.RemoveWhere(name =>
+        {
+            int cut = name.IndexOf('_');
+            return cut > 0 && exported.Contains(name.Substring(0, cut));
+        });
+
+        return exported;
+    }
+
+    private static int EditDistance(string a, string b)
+    {
+        var prev = new int[b.Length + 1];
+        var cur = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) prev[j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            cur[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            (prev, cur) = (cur, prev);
+        }
+
+        return prev[b.Length];
+    }
+
     private Val EmitNumericCastBuiltin(CallExpr expr, string callee)
     {
         DataType dstType = CastTypes[callee];
@@ -3323,14 +3422,31 @@ public partial class IRGenerator
     // and emit a direct Call to the resolved C symbol.
     private Val EmitExternCall(CallExpr expr, string callee, string cSym)
     {
+        // The declared parameter decides what crosses: a float literal passed to a `float`
+        // parameter used to be rounded to an int here, so C read the integer bit pattern as a
+        // float. Only a parameter that is not a float still collapses a compile-time float.
+        functionParamTypes.TryGetValue(callee, out var extParamTypes);
         var extArgs = new List<Val>();
-        foreach (var arg in expr.Args)
+        for (int ai = 0; ai < expr.Args.Count; ai++)
         {
-            Val av = VisitExpression(arg);
-            if (av is FloatConstant avFc)
+            Val av = VisitExpression(expr.Args[ai]);
+            DataType pType = extParamTypes != null && ai < extParamTypes.Count
+                ? extParamTypes[ai]
+                : DataType.UNKNOWN;
+
+            if (pType == DataType.FLOAT)
+            {
+                // An integer literal in a float position is the C promotion, done here so the
+                // backend stages it through the float argument registers.
+                if (av is Constant ic) av = new FloatConstant(ic.Value);
+                else if (av is Variable fv2 && floatConstantVariables.TryGetValue(fv2.Name, out double fvv))
+                    av = new FloatConstant(fvv);
+            }
+            else if (av is FloatConstant avFc)
                 av = new Constant((int)Math.Round(avFc.Value));
             else if (av is Variable v && floatConstantVariables.TryGetValue(v.Name, out double fv))
                 av = new Constant((int)Math.Round(fv));
+
             extArgs.Add(av);
         }
 
