@@ -22,6 +22,15 @@
   </ItemGroup>
 
   <!--
+    The Python front end (PYMCU_PY_PARSER=1) is a script the compiler runs, so it has to
+    travel with the binary: PythonAstReader looks for it next to the executable first.
+  -->
+  <ItemGroup>
+    <None Include="Frontend\PyParser\pymcu_translate.py"
+          CopyToOutputDirectory="PreserveNewest" Link="pymcu_translate.py" />
+  </ItemGroup>
+
+  <!--
     WriteVersionInfo — AOT-safe version stamping.
     Overwrites Common/CompilerInfo.cs with a const string derived from $(Version).
     No runtime reflection required — the value is a compile-time constant.

@@ -25,6 +25,15 @@ public class ParsingPhase : CompilerPhaseBase
 
     protected override void Run(CompilationContext context)
     {
+        // PYMCU_PY_PARSER=1 routes the entry file through CPython's parser. The AST is the
+        // contract, so everything after this phase is identical either way -- which is what
+        // makes the two comparable by building the corpus both ways.
+        if (PythonAstReader.Enabled)
+        {
+            context.RootAst = PythonAstReader.ParseSource(context.SourceCode, context.Options.FilePath);
+            return;
+        }
+
         var lexer = new Lexer(context.SourceCode);
         var tokens = lexer.Tokenize();
 

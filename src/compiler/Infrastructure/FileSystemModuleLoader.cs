@@ -62,9 +62,18 @@ public class FileSystemModuleLoader : IModuleLoader
         var src = File.ReadAllText(path);
         context.ModuleSourceLines[moduleName] = new List<string>(File.ReadAllLines(path));
 
-        var lexer = new Lexer(src);
-        var parser = new Parser(lexer.Tokenize());
-        var modAst = parser.ParseProgram();
+        // PYMCU_PY_PARSER=1 builds the same AST with CPython's parser instead of ours.
+        ProgramNode modAst;
+        if (PythonAstReader.Enabled)
+        {
+            modAst = PythonAstReader.ParseFile(path);
+        }
+        else
+        {
+            var lexer = new Lexer(src);
+            var parser = new Parser(lexer.Tokenize());
+            modAst = parser.ParseProgram();
+        }
 
         context.ModuleCache[path] = modAst;
         context.NamedModules[moduleName] = modAst;
