@@ -762,6 +762,8 @@ public partial class IRGenerator
         }
         currentModulePrefix = "";
 
+        ForceInlineClassReturningFactories();
+
         foreach (var entry in functionsToCompile)
         {
             currentModulePrefix = entry.Prefix;
@@ -1598,6 +1600,67 @@ public partial class IRGenerator
         int at = 0;
         while (at < mainBody.Count && IsInjectedPreamble(mainBody[at])) at++;
         for (int i = calls.Count - 1; i >= 0; i--) mainBody.Insert(at, calls[i]);
+    }
+
+
+    /// <summary>
+    /// A function whose declared return type is a CLASS with no representable handle has no
+    /// standalone form, so it must be expanded at its call sites.
+    ///
+    /// A single-field class travels back in a register (RFC 0001 Model B) and a slot class
+    /// travels as a pointer to its SRAM slot. Everything else, which is every multi-field HAL
+    /// class, has neither: the call returned a scalar, the name it was assigned to never
+    /// learned its class, and the next method call on it became a call to a symbol nobody
+    /// defines. `def create_out(i) -> Pin` followed by `led.value(1)` reported
+    /// "call to undefined function 'led_value'", naming a function the program never wrote.
+    ///
+    /// Registered in inlineFunctions and REMOVED from functionsToCompile, the same shape
+    /// force-inlining already takes for a single-field mutator that also returns a value.
+    ///
+    /// This runs after every module has been scanned rather than at registration time, because
+    /// whether a class is a slot class or a factory class is decided while scanning classes,
+    /// in the same pass that registers functions: at registration the answer is not known yet.
+    /// </summary>
+    private void ForceInlineClassReturningFactories()
+    {
+        var moved = new List<FunctionEntry>();
+        foreach (var entry in functionsToCompile)
+        {
+            var rt = entry.Func.ReturnType;
+            if (string.IsNullOrEmpty(rt) || rt == "None") continue;
+
+            string? classKey = ResolveClassKey(rt, entry.Prefix ?? "");
+            if (classKey == null) continue;
+            if (slotClasses.Contains(classKey) || zcaFactoryClasses.ContainsKey(classKey)) continue;
+
+            string fullName = (entry.Prefix ?? "") + entry.Func.Name;
+            if (inlineFunctions.ContainsKey(fullName)) continue;
+            inlineFunctions[fullName] = entry.Func;
+            moved.Add(entry);
+        }
+        foreach (var m in moved) functionsToCompile.Remove(m);
+    }
+
+    /// <summary>
+    /// The class a declared type name refers to, or null when it names no class. Tries the name
+    /// as written, then under the defining module's prefix, then any known class whose key ends
+    /// in it: a return type is spelled the way the user imported it, not the way it is mangled.
+    /// </summary>
+    private string? ResolveClassKey(string typeName, string prefix)
+    {
+        if (classFieldLayout.ContainsKey(typeName) || classDirectMethods.ContainsKey(typeName))
+            return typeName;
+
+        string prefixed = prefix + typeName;
+        if (classFieldLayout.ContainsKey(prefixed) || classDirectMethods.ContainsKey(prefixed))
+            return prefixed;
+
+        string suffix = "_" + typeName;
+        foreach (var k in classDirectMethods.Keys)
+            if (k.EndsWith(suffix, StringComparison.Ordinal)) return k;
+        foreach (var k in classFieldLayout.Keys)
+            if (k.EndsWith(suffix, StringComparison.Ordinal)) return k;
+        return null;
     }
 
 }
