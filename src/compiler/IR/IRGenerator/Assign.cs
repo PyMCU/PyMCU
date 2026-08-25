@@ -93,6 +93,21 @@ public partial class IRGenerator
         if (stmt.Target is VariableExpr joinTgt && TryEmitJoinAssign(joinTgt.Name, stmt.Value))
             return;
 
+        // `msg = "hello"`: remember the text against the name. Only the ANNOTATED form
+        // (`msg: str = "hello"`) recorded it, so print(msg) could not tell this was a string
+        // and streamed the flash id as a decimal number: the program printed 256 for "hello",
+        // clean build, no diagnostic. Re-binding the name to anything else clears it.
+        if (stmt.Target is VariableExpr strTgt)
+        {
+            string strKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + strTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + strTgt.Name : strTgt.Name);
+            if (stmt.Value is StringLiteral strLit)
+                strConstantVariables[strKey] = strLit.Value;
+            else
+                strConstantVariables.Remove(strKey);
+        }
+
         // `pins = [11, 12, 13]` / `(11, 12, 13)`: remember the elements against the name so a
         // later `for p in pins:` unrolls, which is what the same literal written inline at the
         // `for` already does. Only short, all-constant sequences qualify -- past that the loop

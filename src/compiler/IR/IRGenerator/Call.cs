@@ -3410,6 +3410,13 @@ public partial class IRGenerator
         return runtimeStrVars.TryGetValue(name, out info);
     }
 
+    /// <summary>Streams one byte that is only known at run time, as a character.</summary>
+    private void EmitStreamCharExpr(Expression code)
+    {
+        VisitCall(new CallExpr(new VariableExpr(ResolveByteWriteFn()),
+            new List<Expression> { code }));
+    }
+
     // The per-byte UART writer (free `uart_write(b)` in every arch HAL), resolved like the
     // other streaming helpers: direct name, then suffix match over known functions.
     private string ResolveByteWriteFn()
@@ -3522,6 +3529,25 @@ public partial class IRGenerator
 
         void EmitPrintArg(Expression arg)
         {
+            // `print(chr(n))` is a character, not the number n. chr() yields the byte itself
+            // (a char IS its byte on this target), which is right internally and wrong here:
+            // the value went to the decimal writer, so print(chr(65)) sent "65" instead of "A".
+            if (arg is CallExpr { Callee: VariableExpr { Name: "chr" }, Args.Count: 1 } chrCall)
+            {
+                if (TryEvalConstElement(chrCall.Args[0], out int chrConst)
+                    && chrConst is >= 0 and <= 255)
+                {
+                    EmitStreamStr(writeStrFn, ((char)chrConst).ToString());
+                    return;
+                }
+
+                // A run-time code point: one raw byte. Routed through VisitCall with the
+                // original expression, because the writer is @inline and a direct Call
+                // instruction to it would reference a symbol nobody emits.
+                EmitStreamCharExpr(chrCall.Args[0]);
+                return;
+            }
+
             // f-string -> stream: lower each part to a direct write.
             if (arg is FStringExpr fs)
             {
