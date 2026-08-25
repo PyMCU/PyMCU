@@ -2114,6 +2114,8 @@ public partial class IRGenerator
 
     private void VisitVarDecl(VarDecl stmt)
     {
+        CheckAnnotationNames(stmt.VarType);
+
         if (stmt.Init != null && !stmt.VarType.Contains("ptr")
             && !stmt.VarType.Contains("PIORegister"))
             RejectBareRegisterRead(stmt.Init);
@@ -2572,8 +2574,40 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Reject an annotation that names no type this compiler knows. An unknown name used to
+    /// fall back to uint8 without a word, so `x: unit8 = a * 300` truncated to 8 bits and
+    /// printed 96 where the same line without an annotation printed 60000 -- a typo in one
+    /// character silently changed the arithmetic. Only bare identifiers are checked: anything
+    /// with brackets is a form (`uint8[4]`, `const[uint8]`, `list[uint8]`) whose own handling
+    /// reports what it cannot make sense of.
+    /// </summary>
+    private void CheckAnnotationNames(string annotation)
+    {
+        if (string.IsNullOrEmpty(annotation) || annotation.IndexOf('[') >= 0) return;
+        if (ScalarTypeNames.Contains(annotation)) return;
+        if (annotation is "ptr" or "object" or "self") return;
+        if (classNames.Contains(annotation) || classFieldLayout.ContainsKey(annotation)) return;
+        if (importedAliases.ContainsKey(annotation) || aliasToOriginal.ContainsKey(annotation)) return;
+        if (classNames.Any(c => c.EndsWith("." + annotation, StringComparison.Ordinal)
+                                || c.EndsWith("_" + annotation, StringComparison.Ordinal))) return;
+        if (ResolveCallee(annotation) is { } resolved
+            && (classNames.Contains(resolved) || classFieldLayout.ContainsKey(resolved))) return;
+
+        string? near = ScalarTypeNames.Concat(classNames)
+            .Where(n => EditDistance(n, annotation) <= 2)
+            .OrderBy(n => EditDistance(n, annotation))
+            .FirstOrDefault();
+        throw UserError($"unknown type '{annotation}' in the annotation"
+            + (near != null ? $" (did you mean '{near}'?)" : "")
+            + ". An unrecognized annotation used to be read as uint8, which changed the "
+            + "arithmetic without saying so.");
+    }
+
     private void VisitAnnAssign(AnnAssign stmt)
     {
+        CheckAnnotationNames(stmt.Annotation);
+
         // A `const[...]` annotation marks the name immutable; record it so a later
         // assignment to it is rejected (see VisitAssign's reassignment guard).
         if (!stmt.Target.Contains('.') && IsConstType(stmt.Annotation))
