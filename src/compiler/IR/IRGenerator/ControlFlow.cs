@@ -94,7 +94,18 @@ public partial class IRGenerator
             Val v1 = VisitExpression(binExpr.Left);
             Val v2 = VisitExpression(binExpr.Right);
 
-            if (v1 is Constant c1 && v2 is Constant c2)
+            // ONLY a comparison can be decided here. The switch below covers the six
+            // comparison operators and nothing else, so a folded `3 & 1` or `3 + 1` used bare
+            // as a condition fell through every case and kept `condResult`'s initial false:
+            // `if 3 & 1:` took the else branch, and the LCD driver never sent its 4-bit init
+            // handshake because its four datasheet nibbles are written that way. Anything else
+            // falls through to the generic path, which folds the arithmetic and tests the
+            // value's truthiness.
+            bool isComparison = binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
+                or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq;
+
+            if (v1 is Constant c1 && v2 is Constant c2 && isComparison)
             {
                 bool condResult = false;
                 switch (binExpr.Op)

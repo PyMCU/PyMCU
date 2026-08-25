@@ -109,6 +109,18 @@ public static class Optimizer
                         else if (val is ArrayBase ab && globalVarNames.Contains(ab.ArrayName))
                             referencedGlobals.Add(ab.ArrayName);
                     });
+                    // An array reached only through a SUBSCRIPT is referenced by name on the
+                    // load and store instructions, not by any Variable or ArrayBase operand.
+                    // Without this it looked unreferenced and dead-global elimination removed
+                    // its reservation while leaving the loads and stores in place, so the
+                    // program kept using bytes that were no longer reserved and the allocator
+                    // handed them to other slots: a module-level `buf: uint8[8]` was silently
+                    // overwritten by a temporary and an outlined call's parameter.
+                    if (instr is ArrayLoad al && globalVarNames.Contains(al.ArrayName))
+                        referencedGlobals.Add(al.ArrayName);
+                    if (instr is ArrayStore ast && globalVarNames.Contains(ast.ArrayName))
+                        referencedGlobals.Add(ast.ArrayName);
+
                     // Also capture write destinations (Copy, AugAssign, etc.)
                     var dst = GetDst(instr);
                     if (dst is Variable vDst && globalVarNames.Contains(vDst.Name))
