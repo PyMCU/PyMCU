@@ -705,6 +705,25 @@ public partial class IRGenerator
                         if (methodInstanceTypes.TryGetValue(srcKey, out var mit)) methodInstanceTypes[newKey] = mit;
                     }
 
+                    // Carry the OVERLOAD REGISTRY across the re-export as well. Once a name is
+                    // overloaded its bare key is deliberately vacated in inlineFunctions so that
+                    // suffix resolution can work, so copying inlineFunctions alone gives the
+                    // facade the suffixed keys and nothing that records the name as overloaded.
+                    // Constructor resolution asks exactly that question, so an overloaded
+                    // __init__ reached through a facade was found under neither the bare key nor
+                    // the overload set, and the call site reported the class as not exported --
+                    // naming, as the near miss, the name it had just refused.
+                    var ovlAdds = new List<string>();
+                    foreach (var ovl in overloadedFunctions)
+                    {
+                        if (ovl == srcExact)
+                            ovlAdds.Add(dstExact);
+                        else if (ovl.StartsWith(srcClassPrefix))
+                            ovlAdds.Add(dstClassPrefix + ovl.Substring(srcClassPrefix.Length));
+                    }
+                    foreach (var add in ovlAdds)
+                        overloadedFunctions.Add(add);
+
                     foreach (var globKvp in Enumerable.ToList<KeyValuePair<string, SymbolInfo>>(globals))
                     {
                         if (globKvp.Key.StartsWith(srcClassPrefix))

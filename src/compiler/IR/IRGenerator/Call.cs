@@ -1644,6 +1644,28 @@ public partial class IRGenerator
                         return "bytearray";
                 }
 
+                // A FIELD argument (`self._name`) was typed by InferExprType alone, which has no
+                // string to report, so a const[str] field bound to the numeric overload: the
+                // MicroPython layer stores the port name in `self._name` and hands it to the HAL
+                // as `_Pin(self._name, mode)`, and every pin came out as whichever overload was
+                // declared first. Fields flatten to `<base>_<member>`, so resolve that name the
+                // same way a plain variable is resolved.
+                if (arg is MemberAccessExpr fieldArg && fieldArg.Object is VariableExpr fieldBase)
+                {
+                    string b = !string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + fieldBase.Name
+                        : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + fieldBase.Name : fieldBase.Name);
+                    for (int d = 0; d < 20 && variableAliases.TryGetValue(b, out var ba); d++) b = ba;
+                    string flat = b + "_" + fieldArg.Member;
+                    for (int depth = 0; depth < 20; depth++)
+                    {
+                        if (instanceClasses.TryGetValue(flat, out string fic)) return ShortClassName(fic);
+                        if (strConstantVariables.ContainsKey(flat)) return "str";
+                        if (variableAliases.TryGetValue(flat, out string fak)) flat = fak;
+                        else break;
+                    }
+                }
+
                 return IRGenerator.DataTypeToSuffixStr(InferExprType(arg));
             }
 
