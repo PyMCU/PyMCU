@@ -2890,7 +2890,23 @@ public partial class IRGenerator
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;
             // Synthesized main: fall back to the module-level name registered by ScanGlobals.
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+            // Only where the module level is being REPLAYED, which is the entry point and a
+            // module's synthesized __module_init. It used to fire in ANY function, so a
+            // function's own local array overwrote a module-level array of the same name under
+            // the shared bare key. A local declaration is a NEW binding that shadows; it is not
+            // the module-level one being lowered again.
+            //
+            // What it cost, and the name makes it likely rather than exotic: the AVR UART HAL
+            // declares `buf: uint8[32]` inside uart_write_fmt, so a user's module-level
+            // `buf: uint8[300]` had its size replaced by 32. A store from a third function then
+            // carried count 32, took the narrow 8-bit index path, and every write past index 255
+            // wrapped into the low bytes. Measured: writing 99 at index 257 and reading it back
+            // printed 0, on a clean build with no diagnostic. Renaming the array to a name the
+            // stdlib does not use made it correct, which is what pinned it to the collision.
+            bool replayingModuleLevel = currentFunction == "main"
+                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+            if (replayingModuleLevel
+                && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
             arraySizes[qualified] = count;
             arrayElemTypes[qualified] = DataType.UINT8;
@@ -3144,7 +3160,23 @@ public partial class IRGenerator
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;
             // Synthesized main: fall back to the module-level name registered by ScanGlobals.
-            if (!arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
+            // Only where the module level is being REPLAYED, which is the entry point and a
+            // module's synthesized __module_init. It used to fire in ANY function, so a
+            // function's own local array overwrote a module-level array of the same name under
+            // the shared bare key. A local declaration is a NEW binding that shadows; it is not
+            // the module-level one being lowered again.
+            //
+            // What it cost, and the name makes it likely rather than exotic: the AVR UART HAL
+            // declares `buf: uint8[32]` inside uart_write_fmt, so a user's module-level
+            // `buf: uint8[300]` had its size replaced by 32. A store from a third function then
+            // carried count 32, took the narrow 8-bit index path, and every write past index 255
+            // wrapped into the low bytes. Measured: writing 99 at index 257 and reading it back
+            // printed 0, on a clean build with no diagnostic. Renaming the array to a name the
+            // stdlib does not use made it correct, which is what pinned it to the collision.
+            bool replayingModuleLevel = currentFunction == "main"
+                || currentFunction.EndsWith("___module_init", StringComparison.Ordinal);
+            if (replayingModuleLevel
+                && !arraySizes.ContainsKey(qualified) && arraySizes.ContainsKey(stmt.Target))
                 qualified = stmt.Target;
             arraySizes[qualified] = count;
             arrayElemTypes[qualified] = elemDt;
