@@ -1197,6 +1197,41 @@ public partial class IRGenerator
 
         var boundParams = new HashSet<int>();
 
+        // Too MANY positional arguments used to be dropped on the floor: the loop below simply
+        // stopped at the end of the parameter list. A free function has always rejected this
+        // ("Function 'sink' expects 3 arguments, but 5 were provided"); an @inline function and
+        // a constructor did not, so `Box(3, 99)` for `__init__(self, a)` built clean and the 99
+        // vanished. What it cost: `UART(0, 9600)`, the MicroPython spelling, bound baud to 0 and
+        // dropped the 9600, and a divisor of 0 is 1 Mbaud on a 16 MHz part. The too-FEW case was
+        // already reported below, with the same phrasing this borrows.
+        // The name the USER wrote, for diagnostics. The mangled callee carries the module prefix
+        // (pymcu_hal_avr_uart_UART), which is not a name anyone typed and not one they can search
+        // for in their own file.
+        string SourceCalleeName() => expr.Callee switch
+        {
+            VariableExpr cv => cv.Name,
+            MemberAccessExpr cm => cm.Member,
+            _ => func.Name,
+        };
+
+        // Enforced only when the receiver assumption matches the definition: paramOffset 1 means
+        // the callee is expected to take `self`. A module function reached through a dotted name
+        // can be given that offset without having one, and counting against it would invent an
+        // error on a call that is correct (`time.monotonic()` reported "expects -1 arguments").
+        bool offsetMatchesSelf = paramOffset == 0
+            || (func.Params.Count > 0 && func.Params[0].Name == "self");
+        int declaredArgs = func.Params.Count - paramOffset;
+        if (offsetMatchesSelf && declaredArgs >= 0 && argValues.Count > declaredArgs)
+        {
+            bool isCtorX = callee.Contains("___init__", StringComparison.Ordinal);
+            string whatX = isCtorX
+                ? $"constructor of '{SourceCalleeName()}'"
+                : $"'{SourceCalleeName()}'";
+            throw UserError(
+                $"too many arguments in call to {whatX}: it expects {declaredArgs} " +
+                $"argument(s), but {argValues.Count} were provided");
+        }
+
         for (int i = 0; i < argValues.Count; ++i)
         {
             int paramIdx = i + paramOffset;
@@ -1574,10 +1609,9 @@ public partial class IRGenerator
                 // Required parameter with no argument and no default. Python raises TypeError;
                 // reject clearly instead of leaving it uninitialised (read as 0) -- e.g. P(5)
                 // for __init__(self, x, y) silently set y = 0.
-                int initPos2 = callee.IndexOf("___init__", StringComparison.Ordinal);
-                string what = initPos2 > 0
-                    ? $"constructor of '{callee[..initPos2]}'"
-                    : $"'{func.Name}'";
+                string what = callee.Contains("___init__", StringComparison.Ordinal)
+                    ? $"constructor of '{SourceCalleeName()}'"
+                    : $"'{SourceCalleeName()}'";
                 throw UserError(
                     $"missing required argument '{func.Params[i].Name}' in call to {what} " +
                     $"(expects {func.Params.Count - paramOffset} argument(s))");
