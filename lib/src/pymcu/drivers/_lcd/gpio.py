@@ -2,6 +2,7 @@
 # All operations are @inline with direct match/case dispatch on pin names.
 # Generates SBI/CBI instructions without any SRAM allocation.
 from pymcu.chips.atmega328p import DDRB, DDRC, DDRD, PORTB, PORTC, PORTD
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, inline, const
 from pymcu.time import delay_ms, delay_us
 
@@ -50,6 +51,8 @@ def _bit_set(name: const[str]):
             PORTD[6] = 1
         case 'PD7':
             PORTD[7] = 1
+        case _:
+            raise CompileError("LCD: unsupported pin -- use PB0-PB5, PC0-PC5 or PD0-PD7")
 
 
 @inline
@@ -96,6 +99,8 @@ def _bit_clr(name: const[str]):
             PORTD[6] = 0
         case 'PD7':
             PORTD[7] = 0
+        case _:
+            raise CompileError("LCD: unsupported pin -- use PB0-PB5, PC0-PC5 or PD0-PD7")
 
 
 @inline
@@ -142,6 +147,8 @@ def _bit_set_ddr(name: const[str]):
             DDRD[6] = 1
         case 'PD7':
             DDRD[7] = 1
+        case _:
+            raise CompileError("LCD: unsupported pin -- use PB0-PB5, PC0-PC5 or PD0-PD7")
 
 
 @inline

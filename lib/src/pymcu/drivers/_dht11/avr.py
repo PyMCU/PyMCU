@@ -1,6 +1,7 @@
 # DHT11 AVR implementation -- loaded by dht11.py via:
 #   from pymcu.drivers._dht11.avr import _avr_read
 # Pattern mirrors _gpio/atmega328p.py
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline
 from pymcu.chips.atmega328p import DDRD, PORTD, PIND
 from pymcu.time import delay_ms, delay_us
@@ -23,7 +24,11 @@ def _avr_read(pin_name: str) -> uint16:
         return _pd_read(6)
     elif pin_name == "PD7":
         return _pd_read(7)
-    return 0xFFFF
+    else:
+        # This used to return the driver's "no sensor" sentinel, so a pin the
+        # driver cannot drive built a program with no protocol in it at all and
+        # printed the value a disconnected sensor prints.
+        raise CompileError("DHT11: unsupported data pin -- use PD2-PD7")
 
 
 def _pd_read(bit: uint8) -> uint16:

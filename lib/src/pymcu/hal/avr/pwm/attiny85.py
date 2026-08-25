@@ -1,4 +1,5 @@
 from pymcu.chips.attiny85 import DDRB, PORTB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline, ptr
 
 # ATtiny85/45/25 PWM HAL
@@ -31,6 +32,8 @@ def pwm_select_ocr(pin: str) -> ptr[uint8]:
         case "PB4":
             # OCR1B shares the physical register with OCR0A (data 0x49).
             return OCR0A
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 @inline
 def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
@@ -39,6 +42,8 @@ def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
             return TCCR0B
         case "PB4":
             return TCCR1
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 @inline
 def pwm_select_start_val(pin: str) -> uint8:
@@ -47,6 +52,8 @@ def pwm_select_start_val(pin: str) -> uint8:
             return 0x03   # Timer0 prescaler 64
         case "PB4":
             return 0x67   # Timer1 PWM1B|COM1B1|prescaler 64
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 
 # ATtiny85 prescaler lookup (8 MHz internal oscillator assumed).
@@ -108,6 +115,8 @@ def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
                 return 0x6A
             else:
                 return 0x6B
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 
 @inline
@@ -133,6 +142,8 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
             DDRB[4] = 1
             OCR0A.value = duty   # OCR1B shares physical register with OCR0A
             TCCR1.value = prescaler
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
     if duty == 0:
         pwm_disconnect(pin)
 
@@ -157,6 +168,8 @@ def pwm_disconnect(pin: str):
         case "PB4":
             TCCR1.value = TCCR1.value & 0xCF
             PORTB[4] = 0
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 
 @inline
@@ -168,3 +181,5 @@ def pwm_connect(pin: str):
             TCCR0A.value = TCCR0A.value | 0x20
         case "PB4":
             TCCR1.value = TCCR1.value | 0x20
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")

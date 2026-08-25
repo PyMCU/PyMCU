@@ -10,6 +10,7 @@
 #
 # References: DS18B20 datasheet Rev 3, Maxim AN27
 from pymcu.chips.atmega328p import DDRD, PORTD, PIND
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, int16, inline
 from pymcu.time import delay_us, delay_ms
 
@@ -133,4 +134,8 @@ def _avr_read(pin_name: str) -> int16:
         return _ow_read(6)
     elif pin_name == "PD7":
         return _ow_read(7)
-    return -32768
+    else:
+        # This used to return the driver's bus-error sentinel, so a pin the driver
+        # cannot drive built a program with no 1-Wire protocol in it and reported
+        # the value a missing sensor reports.
+        raise CompileError("DS18B20: unsupported data pin -- use PD2-PD7")

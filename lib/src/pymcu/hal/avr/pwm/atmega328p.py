@@ -2,6 +2,7 @@ from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
+from pymcu.exceptions import CompileError
 from pymcu.types import uint8, uint16, inline, ptr
 
 
@@ -61,6 +62,8 @@ def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
                 return 0x06
             else:
                 return 0x07
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
 
 # Compile-time pin -> OCR register pointer.
@@ -80,6 +83,8 @@ def pwm_select_ocr(pin: str) -> ptr[uint8]:
             return OCR2A
         case "PD3":
             return OCR2B
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
 
 # Compile-time pin -> TCCRxB register pointer (for start/stop).
@@ -92,6 +97,8 @@ def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
             return TCCR1B
         case "PB3" | "PD3":
             return TCCR2B
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
 
 # Compile-time pin -> TCCRxB value that starts (enables) the PWM.
@@ -104,6 +111,8 @@ def pwm_select_start_val(pin: str) -> uint8:
             return 0x0A
         case "PB3" | "PD3":
             return 0x04
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
 
 @inline
@@ -149,6 +158,8 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
             OCR2B.value = duty
             TCCR2A.value = TCCR2A.value | 0x23
             TCCR2B.value = prescaler
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
     if duty == 0:
         pwm_disconnect(pin)
 
@@ -183,6 +194,8 @@ def pwm_disconnect(pin: str):
         case "PD3":
             TCCR2A.value = TCCR2A.value & 0xCF
             PORTD[3] = 0
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
 
 
 # Reconnect the compare output after a duty of 0 disconnected it. Non-inverting
@@ -202,3 +215,5 @@ def pwm_connect(pin: str):
             TCCR2A.value = TCCR2A.value | 0x80
         case "PD3":
             TCCR2A.value = TCCR2A.value | 0x20
+        case _:
+            raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
