@@ -39,7 +39,7 @@ public abstract class CompilerPhaseBase : ICompilerPhase
         }
         catch (Exception e)
         {
-            Diagnostic.ReportInternal(e.Message, context.Options.FilePath);
+            Diagnostic.ReportInternal(e, context.Options.FilePath);
             context.HasErrors = true;
         }
     }

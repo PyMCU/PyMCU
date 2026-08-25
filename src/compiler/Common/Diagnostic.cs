@@ -78,6 +78,24 @@ public static class Diagnostic
     }
 
     /// Overload for internal compiler errors (no source location).
+    ///
+    /// An InternalCompilerError is by definition a compiler bug, and its message alone is
+    /// often the least informative part of it: "Unable to find the specified file" is what
+    /// .NET says both for a source file that is not there and for a Process.Start whose
+    /// executable is not there, and the two are not the same problem. The exception TYPE
+    /// separates them in one token and costs nothing, so it is always printed; the stack,
+    /// which says WHICH call it was, follows under PYMCU_VERBOSE=1 rather than in every
+    /// user's face.
+    public static void ReportInternal(Exception e, string filename)
+    {
+        Console.Error.WriteLine(
+            $"{filename}:1:1: error: InternalCompilerError: {e.GetType().Name}: {e.Message}");
+
+        if (Environment.GetEnvironmentVariable("PYMCU_VERBOSE") == "1" && e.StackTrace is { } st)
+            Console.Error.WriteLine(st);
+    }
+
+    /// Overload for a bare message, where no exception was caught.
     public static void ReportInternal(string message, string filename)
     {
         Console.Error.WriteLine($"{filename}:1:1: error: InternalCompilerError: {message}");
