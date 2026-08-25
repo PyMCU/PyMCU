@@ -205,4 +205,41 @@ public class UnboundBaseCallTests
         Assert.Contains(ir.Functions.SelectMany(f => f.Body),
             i => i is Copy { Dst: Variable { Name: "Util_twice.x" } });
     }
+
+    // Deciding whether the receiver names an instance must EMIT NOTHING, because that decision
+    // can come out no. When it does, the call falls through to the ordinary path, which
+    // evaluates the receiver itself -- so a receiver evaluated by the test AND by the path that
+    // handles it runs TWICE. `Base.read(r.probe(), x)` emitted two calls to probe(), and a
+    // receiver expression with a side effect performed it twice with nothing reported.
+    //
+    // Counting the emitted calls is the whole assertion: the program is correct either way if
+    // you only look at the value, which is why this went unnoticed.
+    [Fact]
+    public void ReceiverThatIsACall_IsEvaluatedExactlyOnce()
+    {
+        var ir = Gen(
+            Preamble +
+            "class Base:\n" +
+            "    def __init__(self, offset: uint16):\n" +
+            "        self.offset: uint16 = offset\n" +
+            "    def read(self, raw: uint16) -> uint16:\n" +
+            "        return raw + self.offset\n" +
+            "class Child(Base):\n" +
+            "    def __init__(self, offset: uint16):\n" +
+            "        Base.__init__(self, offset)\n" +
+            "class Registry:\n" +
+            "    def __init__(self, offset: uint16):\n" +
+            "        self._probe = Child(offset)\n" +
+            "    def probe(self) -> Child:\n" +
+            "        return self._probe\n" +
+            "def main():\n" +
+            "    seed: uint8 = G.value\n" +
+            "    r = Registry(10)\n" +
+            "    G.value = uint8(Base.read(r.probe(), uint16(seed) + 5))\n");
+
+        int probeCalls = ir.Functions
+            .SelectMany(f => f.Body)
+            .Count(i => i is Call { FunctionName: "Registry_probe" });
+        Assert.Equal(1, probeCalls);
+    }
 }

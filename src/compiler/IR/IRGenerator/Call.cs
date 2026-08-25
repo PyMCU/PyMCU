@@ -1991,26 +1991,44 @@ public partial class IRGenerator
         // through the current inline frame exactly as the super() path resolves it; any other
         // spelling has to be a name already known to carry a class, otherwise this is not the
         // construct it looks like and the ordinary path keeps its own diagnostics.
+        // This test must not EMIT anything. It can still fail, and on failure the call falls
+        // through to the ordinary path, which evaluates the receiver itself: a receiver
+        // evaluated here and again there RUNS TWICE. Visiting it cost exactly that --
+        // `Base.read(r.probe(), x)` emitted two calls to probe(), so a receiver expression
+        // with a side effect performed it twice with nothing reported.
+        //
+        // So the receiver is resolved from the AST, by name. That is no loss of reach: the
+        // instance has to be keyed by name here anyway, and a receiver that is not a name has
+        // no key. Anything else returns null before a single instruction is emitted, and the
+        // ordinary path keeps its own diagnostics.
+        if (expr.Args[0] is not VariableExpr recvVe) return null;
+
         string selfKey;
-        if (expr.Args[0] is VariableExpr { Name: "self" })
+        if (recvVe.Name == "self")
         {
             selfKey = currentInlinePrefix + "self";
         }
         else
         {
-            var recv = VisitExpression(expr.Args[0]);
-            string? recvName = recv switch
+            // Same qualification order the read side uses: inline prefix, then the enclosing
+            // function, then the bare name.
+            string? found = null;
+            foreach (var key in new[]
             {
-                Variable rv => rv.Name,
-                Temporary rt => rt.Name,
-                _ => null,
-            };
-            if (recvName == null) return null;
-            string chased = recvName;
-            for (int hop = 0; hop < 20 && !instanceClasses.ContainsKey(chased); ++hop)
-                if (!variableAliases.TryGetValue(chased, out chased!)) return null;
-            if (!instanceClasses.ContainsKey(chased)) return null;
-            selfKey = recvName;
+                string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + recvVe.Name,
+                string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + recvVe.Name,
+                recvVe.Name,
+            })
+            {
+                if (key == null) continue;
+                string? chased = key;
+                for (int hop = 0; hop < 20 && chased != null && !instanceClasses.ContainsKey(chased); ++hop)
+                    chased = variableAliases.TryGetValue(chased, out var next) ? next : null;
+                if (chased != null && instanceClasses.ContainsKey(chased)) { found = key; break; }
+            }
+
+            if (found == null) return null;
+            selfKey = found;
         }
 
         return EmitUnboundMethodBody(cls + "_", func, selfKey, expr.Args.Skip(1).ToList(),
