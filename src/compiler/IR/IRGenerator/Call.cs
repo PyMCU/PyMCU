@@ -2716,6 +2716,22 @@ public partial class IRGenerator
     private string? TryGetCompileTimeText(Expression arg)
     {
         if (arg is StringLiteral lit) return lit.Value;
+
+        // A string held in a FIELD (`self.n`, `o.n`). The characters live in flash exactly as
+        // they do for a plain name; only the key differs, since a field is stored under the
+        // flattened `<instance>_<field>`. Without this the read fell through to the numeric
+        // writer and printed the string's interned id: `print(o.n)` sent 256.
+        if (arg is MemberAccessExpr { Object: VariableExpr recv } ma)
+        {
+            Val objVal = VisitExpression(recv);
+            string bse = objVal is Variable ov ? ov.Name : recv.Name;
+            while (variableAliases.TryGetValue(bse, out var alias) && alias != null) bse = alias;
+
+            foreach (var flat in new[] { bse + "_" + ma.Member, bse + "." + ma.Member })
+                if (ResolveStrConstant(flat) is { } fieldText) return fieldText;
+            return null;
+        }
+
         if (arg is not VariableExpr ve) return null;
 
         string key = !string.IsNullOrEmpty(currentInlinePrefix)
@@ -3621,6 +3637,15 @@ public partial class IRGenerator
                 }
 
                 EmitStreamCharExpr(strIx);
+                return;
+            }
+
+            // A string held in a FIELD. `print(o.n)` and `print(self.n)` sent 256, the string's
+            // interned id, because the read fell through to the numeric writer: the plain-name
+            // case knew about string constants and the field case did not.
+            if (arg is MemberAccessExpr && TryGetCompileTimeText(arg) is { } fieldText)
+            {
+                EmitStreamStr(writeStrFn, fieldText);
                 return;
             }
 

@@ -37,6 +37,22 @@ public static class AsyncTransform
         // PENDING). Generators need no asyncio (no time source involved).
         var genFns = prog.Functions
             .Where(f => !f.IsAsync && !f.IsInline && ContainsYield(f.Body)).ToList();
+        // A `yield from` in a function that is NOT a generator or a coroutine will never reach
+        // the expansion, so it has to be named here. It happens more easily than it sounds:
+        // `ContainsYield` only counts a `yield` that is a statement of its own, so
+        // `x = yield from inner()`, `return (yield from inner())` and `1 + (yield from ...)`
+        // leave their function unclassified and the node travelled untouched to the IR, which
+        // answered with a message about @inline functions and class methods.
+        foreach (var fn in prog.Functions)
+        {
+            if (asyncFns.Contains(fn) || genFns.Contains(fn)) continue;
+            if (DelegateYieldPosition(fn.Body.Statements) is { } stray)
+                throw new SyntaxError(
+                    $"`yield from` {stray}. It is supported as a statement of its own, "
+                    + "delegating to a generator defined in this module and called by name: "
+                    + "`yield from inner(a)`.", 0, 0);
+        }
+
         if (asyncFns.Count == 0 && genFns.Count == 0) return;
 
         string? alias = null;
@@ -1203,6 +1219,32 @@ public static class AsyncTransform
     {
         static bool IsDelegate(Expression? e) => e is YieldExpr { IsDelegate: true };
 
+        // A delegation nested inside a larger expression (`1 + (yield from g())`) is the same
+        // unsupported thing as one on the right of an assignment, and it used to slip past a
+        // check that only looked at the outermost node.
+        static bool HasNestedDelegate(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return false;
+                case YieldExpr { IsDelegate: true }: return true;
+                case YieldExpr y: return HasNestedDelegate(y.Value);
+                case BinaryExpr b: return HasNestedDelegate(b.Left) || HasNestedDelegate(b.Right);
+                case UnaryExpr u: return HasNestedDelegate(u.Operand);
+                case CallExpr c:
+                    return HasNestedDelegate(c.Callee) || c.Args.Any(HasNestedDelegate);
+                case MemberAccessExpr m: return HasNestedDelegate(m.Object);
+                case IndexExpr ix: return HasNestedDelegate(ix.Target) || HasNestedDelegate(ix.Index);
+                case TernaryExpr t:
+                    return HasNestedDelegate(t.Condition) || HasNestedDelegate(t.TrueVal)
+                           || HasNestedDelegate(t.FalseVal);
+                case KeywordArgExpr kw: return HasNestedDelegate(kw.Value);
+                case TupleExpr tu: return tu.Elements.Any(HasNestedDelegate);
+                case ListExpr le: return le.Elements.Any(HasNestedDelegate);
+                default: return false;
+            }
+        }
+
         string? Walk(Statement? st)
         {
             switch (st)
@@ -1220,6 +1262,13 @@ public static class AsyncTransform
                            + "return value, which PyMCU generators do not carry";
                 case ReturnStmt r when IsDelegate(r.Value):
                     return "cannot be returned";
+                case AssignStmt a2 when HasNestedDelegate(a2.Value):
+                case VarDecl vd2 when HasNestedDelegate(vd2.Init):
+                case AnnAssign an2 when HasNestedDelegate(an2.Value):
+                case ReturnStmt r2 when HasNestedDelegate(r2.Value):
+                case ExprStmt es2 when HasNestedDelegate(es2.Expr):
+                    return "cannot be used inside a larger expression: it delegates, it does not "
+                           + "produce a value to combine with";
                 case IfStmt i:
                     return Walk(i.ThenBranch)
                            ?? i.ElifBranches.Select(br => Walk(br.Item2)).FirstOrDefault(x => x != null)
