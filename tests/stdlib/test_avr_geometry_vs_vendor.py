@@ -63,7 +63,7 @@ def vendor(chip: str):
     own preprocessor expand it keeps the vendor as the authority.
     """
     probe = ("#include <avr/io.h>\n"
-             "__pymcu RAMSTART | RAMEND | 1\n")
+             "__pymcu RAMSTART | RAMEND | FLASHEND\n")
     proc = subprocess.run(
         [str(AVR_GCC), f"-mmcu={chip}", "-E", "-P", "-x", "c", "-"],
         input=probe, capture_output=True, text=True)
@@ -83,6 +83,7 @@ def vendor(chip: str):
         [str(AVR_GCC), f"-mmcu={chip}", "-dM", "-E", "-x", "c", "-"],
         input="#include <avr/io.h>\n", capture_output=True, text=True).stdout
     return {"RAMSTART": number(parts[0]), "RAMEND": number(parts[1]),
+            "FLASHEND": number(parts[2]),
             "HAS_JMP_CALL": "__AVR_HAVE_JMP_CALL__" in macros}
 
 
@@ -108,9 +109,7 @@ def backend_table():
     except json.JSONDecodeError as exc:
         raise AssertionError(
             f"{BACKEND_BINARY} devices did not return JSON: {exc}") from exc
-    return {r["Chip"]: (r["RamStart"], r["RamSize"], r["HasJmpCall"], r["RamEnd"],
-                        r.get("FlashSize"))
-            for r in rows}
+    return {r["Chip"]: (r["RamStart"], r["HasJmpCall"]) for r in rows}
 
 
 BACKEND = backend_table()
@@ -158,14 +157,21 @@ def test_ram_size_matches_the_vendor(chip):
 @needs_backend
 @pytest.mark.parametrize("chip", AVR_CHIPS)
 def test_the_backend_table_agrees_with_the_chip_file(chip):
-    """The ATmega2560 case: a correct chip file the backend was not reading."""
+    """The ATmega2560 case: a correct chip file the backend was not reading.
+
+    Only RAM_START is compared. The backend catalogue used to carry the SRAM and
+    flash sizes too, and comparing them here was comparing two copies of one fact;
+    it now carries neither, and the sizes travel to it in the .mir. What is left
+    in the catalogue is what device_info() does not declare, and RAM_START is the
+    one of those the chip file also states.
+    """
     if chip not in BACKEND:
         pytest.skip(f"the backend table has no entry for {chip}")
-    start, size, _, _, _ = BACKEND[chip]
+    start, _ = BACKEND[chip]
     ours = chip_constants(CHIPS / f"{chip}.py")
-    assert (start, size) == (ours["RAM_START"], ours["RAM_SIZE"]), \
-        (f"{chip}: backend has 0x{start:04X}/{size}, "
-         f"chip file has 0x{ours['RAM_START']:04X}/{ours['RAM_SIZE']}")
+    assert start == ours["RAM_START"], \
+        (f"{chip}: backend has 0x{start:04X}, "
+         f"chip file has 0x{ours['RAM_START']:04X}")
 
 
 @needs_gcc
@@ -182,39 +188,50 @@ def test_the_backend_knows_whether_the_core_has_jmp_and_call(chip):
     theirs = vendor(chip)
     if theirs is None:
         pytest.skip(f"avr-gcc does not know {chip}")
-    assert BACKEND[chip][2] == theirs["HAS_JMP_CALL"], \
-        f"{chip}: backend says HasJmpCall={BACKEND[chip][2]}, avr-gcc says {theirs['HAS_JMP_CALL']}"
+    assert BACKEND[chip][1] == theirs["HAS_JMP_CALL"], \
+        f"{chip}: backend says HasJmpCall={BACKEND[chip][1]}, avr-gcc says {theirs['HAS_JMP_CALL']}"
 
 
 @needs_backend
 @pytest.mark.parametrize("chip", AVR_CHIPS)
-def test_the_backend_computes_its_own_ram_end(chip):
-    """RamEnd is published, not transcribed; if it stops agreeing there is a third source."""
-    if chip not in BACKEND:
-        pytest.skip(f"the backend catalogue has no entry for {chip}")
-    start, size, _, end, _ = BACKEND[chip]
-    assert end == start + size - 1, \
-        f"{chip}: backend publishes RamEnd={end}, its own start and size give {start + size - 1}"
+def test_the_backend_publishes_no_geometry_of_its_own(chip):
+    """The catalogue must not grow a second copy of a size the chip file declares.
+
+    That is how this started: the sizes were in the backend because nothing carried
+    them there, and the ATmega2560 then chose LPM over ELPM from a list of chip
+    names. They now travel in the .mir, so a size reappearing here means there are
+    two answers to one question again.
+    """
+    proc = subprocess.run([str(BACKEND_BINARY), "devices"],
+                          capture_output=True, text=True)
+    row = next(r for r in json.loads(proc.stdout) if r["Chip"] == chip)
+
+    assert "RamSize" not in row, f"{chip}: the backend catalogue carries an SRAM size again"
+    assert "FlashSize" not in row, f"{chip}: the backend catalogue carries a flash size again"
 
 
 def test_there_are_avr_chips_to_check():
     assert len(AVR_CHIPS) >= 15, f"only {len(AVR_CHIPS)} AVR chip files found"
 
 
-@needs_backend
+@needs_gcc
 @pytest.mark.parametrize("chip", AVR_CHIPS)
-def test_flash_size_matches_the_backend_catalogue(chip):
+def test_flash_size_matches_the_vendor(chip):
     """Program storage, in the bytes the programmer and the hex file address.
 
-    It decides which parts can afford the full float writer, so a wrong value
-    here does not misprint a number -- it silently picks the wrong writer for a
-    chip, or overflows one that could not afford it.
+    It decides which parts can afford the full float writer, and on the AVR it
+    decides LPM against ELPM: a chip file that understates it emits an LPM that
+    cannot reach the table it was pointed at. The authority is avr-gcc's FLASHEND,
+    not another table of ours -- comparing our flash size against the backend's
+    copy of our flash size proved nothing about either.
     """
-    if chip not in BACKEND:
-        pytest.skip(f"the backend catalogue has no entry for {chip}")
     ours = chip_constants(CHIPS / f"{chip}.py").get("FLASH_SIZE")
-    assert ours == BACKEND[chip][4], \
-        f"{chip}: chip file says {ours}, the backend catalogue says {BACKEND[chip][4]}"
+    assert ours is not None, f"{chip}.py declares no FLASH_SIZE"
+    theirs = vendor(chip)
+    if theirs is None or theirs["FLASHEND"] is None:
+        pytest.skip(f"avr-gcc does not know {chip}")
+    assert ours == theirs["FLASHEND"] + 1, \
+        f"{chip}: chip file says {ours} bytes, avr-gcc says {theirs['FLASHEND'] + 1}"
 
 
 @needs_backend
