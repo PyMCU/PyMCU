@@ -322,7 +322,7 @@ public partial class IRGenerator
         if (multiStrHandleReads == 0 && TryGetMultiStr(expr.Name, out _, out var vals, out _))
             throw MultiStrUseError(expr.Name, vals);
 
-        return ResolveBinding(expr.Name);
+        return ResolveBinding(expr.Name, expr);
     }
 
     private static string BinaryOpSymbol(AstBinOp op) => op switch
@@ -1750,9 +1750,19 @@ public partial class IRGenerator
 
     // The class a plain name is an instance of, or null when the name is not an instance.
     // Pure lookup: it emits no IR, so it is safe to ask before deciding how to lower an access.
+    //
+    // "Pure" has to include not throwing. Fourteen call sites ask this question speculatively,
+    // to choose how to lower something, and ResolveBinding answers an unknown name by throwing
+    // the user-facing "name is not defined". That error escaped the probe and became the
+    // reported diagnostic, which had two consequences: `no_such_func(1)` was reported as a name
+    // read rather than as the call it plainly is, never reaching the message written for that
+    // case, and it arrived from a helper that has only a bare string, so it carried no column
+    // and could not be pointed at. ProbeBinding answers null for a name that is merely unknown,
+    // so the caller reaches its own diagnostic with the node still in hand -- while a module
+    // guard's refusal still throws, because that one is an answer worth keeping.
     private string? InstanceClassOfName(string recvName)
     {
-        if (ResolveBinding(recvName) is not Variable rv) return null;
+        if (ProbeBinding(recvName) is not Variable rv) return null;
         string name = rv.Name;
         for (int depth = 0; depth < 20; depth++)
         {

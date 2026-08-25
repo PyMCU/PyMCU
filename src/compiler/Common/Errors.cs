@@ -16,13 +16,29 @@
 
 namespace PyMCU.Common;
 
-public class CompilerError(string typeName, string message, int line, int column, int length = 1)
+// The `column = 0` default is CompilerError.Unlocated, spelled as a literal because a primary
+// constructor's parameter default cannot name a member of the type it is declaring.
+public class CompilerError(string typeName, string message, int line, int column = 0, int length = 1)
     : Exception(message)
 {
+    /// The column of an error whose position within the line is not known. Most diagnostics
+    /// are raised well after parsing, from a phase that holds the statement's line and nothing
+    /// finer, and there is no honest answer for them to give. Saying so is the point: a caret
+    /// is an arrow drawn under one character, a reader takes it as a claim about THAT
+    /// character, and the compiler that draws it under an innocent one has told a lie that
+    /// costs more than the silence would have. Diagnostic.Report prints no caret for this.
+    ///
+    /// Prefer passing a real column wherever a token or an AST node is in hand. Never pass 1
+    /// to mean "no idea": that is the value this constant exists to replace.
+    public const int Unlocated = 0;
+
     public int Line { get; } = line;
     public int Column { get; } = column;
     public int Length { get; } = length;
     public string TypeName { get; } = typeName;
+
+    /// True when <see cref="Column"/> is a measurement rather than a placeholder.
+    public bool HasColumn => Column > 0;
 
     /// The file the error is IN, when that is not the entry file. Diagnostics are printed
     /// against the entry file by default, which is right for everything the entry file
@@ -31,29 +47,29 @@ public class CompilerError(string typeName, string message, int line, int column
     public string? File { get; init; }
 }
 
-public class SyntaxError(string message, int line, int column, int length = 1)
+public class SyntaxError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("SyntaxError", message, line, column, length);
 
-public class IndentationError(string message, int line, int column, int length = 1)
+public class IndentationError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("IndentationError", message, line, column, length);
 
-public class LexicalError(string message, int line, int column, int length = 1)
+public class LexicalError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("LexicalError", message, line, column, length);
 
-public class ArchitectureError(string message, int line, int column, int length = 1)
+public class ArchitectureError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("CompileError", message, line, column, length);
 
-public class ValueError(string message, int line, int column, int length = 1)
+public class ValueError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("ValueError", message, line, column, length);
 
-public class TypeError(string message, int line, int column, int length = 1)
+public class TypeError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("TypeError", message, line, column, length);
 
-public class RecursionError(string message, int line, int column, int length = 1)
+public class RecursionError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("RecursionError", message, line, column, length);
 
-public class NameError(string message, int line, int column, int length = 1)
+public class NameError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("NameError", message, line, column, length);
 
-public class IndexError(string message, int line, int column, int length = 1)
+public class IndexError(string message, int line, int column = CompilerError.Unlocated, int length = 1)
     : CompilerError("IndexError", message, line, column, length);

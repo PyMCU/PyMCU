@@ -659,11 +659,11 @@ public partial class IRGenerator
         {
             if (currentFunctionGlobals.Contains(varExpr.Name))
             {
-                target = ResolveBinding(varExpr.Name);
+                target = ResolveBinding(varExpr.Name, varExpr);
             }
             else
             {
-                if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name);
+                if (!string.IsNullOrEmpty(currentInlinePrefix)) target = ResolveBinding(varExpr.Name, varExpr);
                 else
                 {
                     // Check if the variable is a module-level mutable global.
@@ -735,7 +735,7 @@ public partial class IRGenerator
         }
         else
         {
-            target = ResolveBinding(varExpr.Name);
+            target = ResolveBinding(varExpr.Name, varExpr);
         }
 
         if (!(value is NoneVal)) Emit(new Copy(value, target));
@@ -3730,7 +3730,7 @@ public partial class IRGenerator
 
         if (stmt.Target is VariableExpr ve)
         {
-            Val target = ResolveBinding(ve.Name);
+            Val target = ResolveBinding(ve.Name, ve);
             if (target is Constant)
             {
                 string q = !string.IsNullOrEmpty(currentInlinePrefix)

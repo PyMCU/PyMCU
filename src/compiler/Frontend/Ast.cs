@@ -55,6 +55,21 @@ public enum UnaryOp
 public abstract class ASTNode
 {
     public int Line { get; set; } = 0;
+
+    /// 1-based column of the node's first character, or CompilerError.Unlocated (0) when the
+    /// node was not built straight from a token: desugaring, the async transform and the
+    /// compile-time evaluator all synthesise nodes that correspond to no text the user wrote.
+    ///
+    /// The lexer has recorded a column on every token since the beginning; what was missing was
+    /// anything carrying it past the parser. A node that has one lets a diagnostic point at the
+    /// name it is complaining about instead of at the start of the statement that contains it.
+    /// A node that does not must leave it 0, so the caret is withheld rather than aimed at a
+    /// character picked because it was the only one the compiler could name.
+    public int Column { get; set; } = 0;
+
+    /// Length in characters of the node's own token, for the underline under the caret. 0 means
+    /// unknown and renders as a bare caret.
+    public int Length { get; set; } = 0;
 }
 
 public abstract class Statement : ASTNode

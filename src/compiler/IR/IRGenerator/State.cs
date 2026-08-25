@@ -343,8 +343,32 @@ public partial class IRGenerator
     // `file:line: error: CompileError: ...` diagnostic (with the current source line and
     // a caret) rather than a location-less "InternalCompilerError" that looks like a
     // compiler bug. For genuine compiler-invariant violations keep `throw new Exception`.
+    ///
+    /// The column is deliberately left unset. IR generation runs long after the tokens are
+    /// gone, and what it holds is the current STATEMENT's line: the start of the statement is
+    /// not where the problem is, so pointing a caret there would be a confident lie about a
+    /// character chosen only because it was the one position available. Use the overload below
+    /// wherever the offending AST node is in hand; that node knows its own column.
     private PyMCU.Common.CompilerError UserError(string message) =>
-        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1), 1);
+        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
+
+    /// Builds the same error, located at the node the message is about.
+    ///
+    /// A node the parser built from a token carries that token's line, column and length; one
+    /// synthesised by a desugaring carries none, and then this degrades to exactly the
+    /// statement-level location the overload above produces. Passing a node is therefore always
+    /// at least as good as not passing one, and never invents a position that was not measured.
+    private PyMCU.Common.CompilerError UserError(string message, PyMCU.Frontend.ASTNode? at)
+    {
+        if (at is null || at.Column <= 0)
+            return UserError(message);
+
+        int line = at.Line > 0
+            ? at.Line
+            : (currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
+        return new PyMCU.Common.CompilerError(
+            "CompileError", message, line, at.Column, at.Length > 0 ? at.Length : 1);
+    }
 
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();

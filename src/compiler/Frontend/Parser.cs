@@ -1844,7 +1844,10 @@ public class Parser
                 return new WalrusExpr(t.Value, val);
             }
 
-            return new VariableExpr(t.Value);
+            // Every bare-name expression in the language is built here, from a token that has
+            // carried a line, a column and a length all along. Stamping them is what lets
+            // "name 'x' is not defined" point at x rather than at column 1 of the statement.
+            return new VariableExpr(t.Value) { Line = t.Line, Column = t.Column, Length = t.Length };
         }
 
         if (Match(TokenType.BytesLiteral))

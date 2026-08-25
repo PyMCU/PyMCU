@@ -92,6 +92,14 @@ src/main.py:12:9: error: TypeError: cannot assign float to uint8
   problem matcher pattern — errors appear inline in the editor.
 - Lines N−1 and N+1 are shown as context (dimmed).
 - The `^` points to the start of the token; `~` spans the rest of its length.
+- **No caret is drawn when the compiler does not know the column.** Many checks run long
+  after parsing and know only which statement is at fault, not which character. Those
+  diagnostics print the header and the source context and stop, rather than aim the caret
+  at column 1: an arrow under a character is read as a claim about that character, and a
+  wrong one costs the reader more than its absence. The header keeps a column field in
+  every case, because the editor integrations require one to match.
+- Where the line is indented with tabs, the caret line is padded with the same tabs, so it
+  lands under the right character whatever tab width the terminal uses.
 - All formatting uses ANSI colour when stderr is a TTY (red header and underline, dim
   context lines). Plain text is output when stderr is redirected (e.g. in CI logs).
 

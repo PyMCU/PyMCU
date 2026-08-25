@@ -1024,7 +1024,28 @@ public partial class IRGenerator
             + $"e.g. `{example}`");
     }
 
-    private Val ResolveBinding(string name)
+    /// <param name="at">
+    /// The expression node the name was read from, when the caller has it. Only used to locate
+    /// the "not defined" diagnostic: a name is a token, so it has a column, and the caret
+    /// belongs under the name rather than under the first character of the statement. Callers
+    /// that hold no node pass none and get a statement-level location with no caret.
+    /// </param>
+    private Val ResolveBinding(string name, PyMCU.Frontend.ASTNode? at = null)
+        => ResolveBindingCore(name, at, probe: false)!;
+
+    /// Resolves <paramref name="name"/> for a caller that is ASKING rather than lowering, and
+    /// answers null instead of throwing when the name is simply not defined.
+    ///
+    /// The distinction that matters is between "I do not know this name" and "this name is
+    /// refused". A module-level `raise CompileError(...)` guard that folded away -- the HAL
+    /// saying this part has no hardware UART, say -- is a definite answer with a written reason,
+    /// and it keeps throwing even here: swallowing it would replace one good sentence with the
+    /// generic "call to undefined function 'uart_init'". Only the plain never-defined case is
+    /// downgraded to null, because that is the one where the asker has a better message of its
+    /// own to reach.
+    private Val? ProbeBinding(string name) => ResolveBindingCore(name, null, probe: true);
+
+    private Val? ResolveBindingCore(string name, PyMCU.Frontend.ASTNode? at, bool probe)
     {
         if (globals.TryGetValue(name, out var symInfo))
         {
@@ -1281,9 +1302,13 @@ public partial class IRGenerator
                     || currentModulePrefix.StartsWith(g.Key, StringComparison.Ordinal))
                     throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})");
 
+            // A probing caller gets null and reaches its own, more specific diagnostic. Note
+            // this sits AFTER the module-guard check above, which throws for everyone.
+            if (probe) return null;
+
             throw UserError(
                 $"name '{name}' is not defined -- it is read here but never assigned, " +
-                "imported, or received as a parameter" + StarImportHint(name));
+                "imported, or received as a parameter" + StarImportHint(name), at);
         }
 
         return new Variable(finalLocalName, type);

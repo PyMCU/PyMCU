@@ -87,10 +87,16 @@ public class BuiltinDiagnosticTests
     {
         // Only names in the builtins namespace are exempted from the undefined-name path; a
         // user-defined name that really was never declared must keep its own diagnostic.
+        //
+        // That diagnostic is now the CALL one rather than the bare-name one. `my_helper(1)` is
+        // a call, and it used to be reported as a name read because InstanceClassOfName probed
+        // the name speculatively and let ResolveBinding's throw escape, so the call path never
+        // reached its own message. This is the same complaint the sorted() test above makes:
+        // the undefined-NAME wording is the wrong one when the thing is being called.
         var msg = ErrorFor("    a = my_helper(1)\n");
 
         Assert.Contains("my_helper", msg);
-        Assert.Contains("not defined", msg);
+        Assert.Contains("undefined function", msg);
         Assert.DoesNotContain("builtin", msg);
     }
 

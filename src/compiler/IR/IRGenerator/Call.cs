@@ -745,14 +745,14 @@ public partial class IRGenerator
                     : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + cv.Name : cv.Name);
                 if (variableTypes.ContainsKey(vq) || variableTypes.ContainsKey(cv.Name)
                     || mutableGlobals.ContainsKey(currentModulePrefix + cv.Name) || mutableGlobals.ContainsKey(cv.Name))
-                    throw UserError($"'{shown}' is not callable (it is a value, not a function)");
+                    throw UserError($"'{shown}' is not callable (it is a value, not a function)", cv);
             }
 
             // Reflection builtins: name the real reason instead of "undefined function".
             if (shown is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec" or "vars" or "dir" or "globals" or "locals")
                 throw UserError($"'{shown}' is runtime reflection, which PyMCU does not support " +
                                 "(attributes are resolved at compile time); access the attribute directly, " +
-                                "or dispatch on an explicit type-tag field");
+                                "or dispatch on an explicit type-tag field", expr.Callee);
 
             // The name came from an import, so the module is known and so are its exports:
             // "(typo, or a missing import?)" sends the reader to check an import that is right
@@ -771,7 +771,7 @@ public partial class IRGenerator
                         ? $". It exports {string.Join(", ", exports.OrderBy(n => n).Take(8))}"
                           + (exports.Count > 8 ? ", ..." : "")
                         : "";
-                throw UserError($"'{wanted}' is not exported by {impMod}{tail}");
+                throw UserError($"'{wanted}' is not exported by {impMod}{tail}", impVe);
             }
 
             // A Python builtin is in scope in every module and needs no import, so neither half
@@ -786,9 +786,10 @@ public partial class IRGenerator
                           + "import that adds it -- the supported builtins are len, abs, min, max, "
                           + "sum, any, all, bool, ord, chr, hex, bin, str, pow, divmod, print, "
                           + "range, enumerate and zip, plus the numeric casts int/float/uint8/"
-                          + "int8/uint16/int16/uint32/int32.");
+                          + "int8/uint16/int16/uint32/int32.", expr.Callee);
 
-            throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
+            throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)",
+                            expr.Callee);
         }
 
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
