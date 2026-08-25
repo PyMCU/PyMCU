@@ -798,11 +798,25 @@ public partial class IRGenerator
         var lowerOrder = new List<int>(functionsToCompile.Count);
         var initFirst = new List<int>();
 
+        // The ENTRY file has no `__module_init` of its own: its module level is injected into
+        // main's body, so lowering MAIN is what binds an object built there. Any other function
+        // of the entry file was lowered first and read the instance's fields as run-time values,
+        // which the backend reported as a bit index through a runtime pointer, at a line the
+        // file does not have. Same binding, same remedy, same scope: only a file that builds an
+        // instance at its module level moves, so every other program lowers as it always did.
+        var mainFirst = new List<int>();
+        bool hoistEntryMain = EntryModuleLevelBuildsInstance(mainAst);
+        if (hoistEntryMain)
+            Logger.Verbose("IRGen", "entry file builds an instance at module level; lowering main first");
+
         for (int i = 0; i < functionsToCompile.Count; i++)
         {
             if (functionsToCompile[i].Func.Name == "__module_init") initFirst.Add(i);
+            else if (hoistEntryMain && string.IsNullOrEmpty(functionsToCompile[i].Prefix)
+                     && functionsToCompile[i].Func.Name == "main") mainFirst.Add(i);
             else lowerOrder.Add(i);
         }
+        lowerOrder.InsertRange(0, mainFirst);
         lowerOrder.InsertRange(0, initFirst);
 
         foreach (int i in lowerOrder)
@@ -1638,6 +1652,43 @@ public partial class IRGenerator
                 found = k;
             }
         return found;
+    }
+
+    /// <summary>
+    /// True when the entry file builds a CLASS INSTANCE at its module level (`led = Pin(...)`,
+    /// annotated or not). Only those files need main lowered before their other functions, and
+    /// asking the question this narrowly is what keeps every other program on its exact current
+    /// path: lowering order advances the shared label, temporary and string-literal counters,
+    /// so a hoist nobody needs renumbers a program for nothing.
+    /// </summary>
+    private bool EntryModuleLevelBuildsInstance(ProgramNode mainAst)
+    {
+        foreach (var stmt in mainAst.GlobalStatements)
+        {
+            Expression? value = stmt switch
+            {
+                AssignStmt { Target: VariableExpr } a => a.Value,
+                VarDecl vd => vd.Init,
+                AnnAssign an => an.Value,
+                _ => null,
+            };
+
+            if (value is not CallExpr call) continue;
+            string cls = call.Callee switch
+            {
+                VariableExpr cv => ResolveCallee(cv.Name),
+                MemberAccessExpr { Object: VariableExpr mo } ma when modules.ContainsKey(mo.Name)
+                    => (importedAliases.TryGetValue(mo.Name, out var real) && real != null ? real : mo.Name)
+                       .Replace('.', '_') + "_" + ma.Member,
+                _ => "",
+            };
+
+            if (string.IsNullOrEmpty(cls)) continue;
+            if (inlineFunctions.ContainsKey(cls + "___init__")
+                || overloadedFunctions.Contains(cls + "___init__")) return true;
+        }
+
+        return false;
     }
 
     private string ResolveCallee(string name)
