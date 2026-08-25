@@ -9,6 +9,7 @@ using IrUnaryOp = PyMCU.IR.UnaryOp;
 
 namespace PyMCU.UnitTests;
 
+[Collection(ConsoleCaptureCollection.Name)]
 public class IRGeneratorTests
 {
     private static ProgramIR GenerateIR(string source, DeviceConfig? config = null)

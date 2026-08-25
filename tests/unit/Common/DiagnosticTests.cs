@@ -20,6 +20,7 @@ using PyMCU.Common;
 
 namespace PyMCU.UnitTests;
 
+[Collection(ConsoleCaptureCollection.Name)]
 public class DiagnosticTests
 {
     private static string CaptureReport(CompilerError err, string source)
@@ -104,6 +105,7 @@ public class DiagnosticTests
 /// This was written after an AVR suite flake reported exactly that message with nothing else
 /// to go on, twice, to two different readers.
 /// </summary>
+[Collection(ConsoleCaptureCollection.Name)]
 public class InternalErrorReportTests
 {
     private static string Capture(Action a)
