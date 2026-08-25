@@ -47,10 +47,7 @@ public static class AsyncTransform
         {
             if (asyncFns.Contains(fn) || genFns.Contains(fn)) continue;
             if (DelegateYieldPosition(fn.Body.Statements) is { } stray)
-                throw new SyntaxError(
-                    $"`yield from` {stray}. It is supported as a statement of its own, "
-                    + "delegating to a generator defined in this module and called by name: "
-                    + "`yield from inner(a)`.", 0, 0);
+                throw new SyntaxError(stray, 0, 0);
         }
 
         if (asyncFns.Count == 0 && genFns.Count == 0) return;
@@ -104,10 +101,7 @@ public static class AsyncTransform
             // functions and class methods and names neither `yield` nor `from`.
             foreach (var g in genFns)
                 if (DelegateYieldPosition(g.Body.Statements) is { } where)
-                    throw new SyntaxError(
-                        $"`yield from` {where}. It is supported as a statement of its own, "
-                        + "delegating to a generator defined in this module and called by name: "
-                        + "`yield from inner(a)`.", 0, 0);
+                    throw new SyntaxError(where, 0, 0);
         }
         var genNames = new HashSet<string>();
         foreach (var fn in genFns)
@@ -1226,29 +1220,48 @@ public static class AsyncTransform
     private static string? DelegateYieldPosition(List<Statement> stmts)
     {
         static bool IsDelegate(Expression? e) => e is YieldExpr { IsDelegate: true };
+        static bool IsYield(Expression? e) => e is YieldExpr;
+        static string What(Expression? e) => e is YieldExpr { IsDelegate: true } ? "`yield from`" : "`yield`";
+
+        // The two constructs are refused for different reasons and the advice has to say which.
+        // `yield from` has a supported spelling; a `yield` whose value is consumed is asking for
+        // what CPython's send() hands back, and PyMCU has no send() at all (see #46), so no
+        // spelling of it can work.
+        static string Advice(Expression? e) => e is YieldExpr { IsDelegate: true }
+            ? "It is supported as a statement of its own, delegating to a generator defined in "
+              + "this module and called by name: `yield from inner(a)`."
+            : "The value a `yield` produces is what CPython's send() hands back, and PyMCU "
+              + "generators have no send(): `yield` is a statement here, not an expression.";
+
+        static string NoValue(Expression? e) =>
+            What(e) + " has no value to assign. " + Advice(e);
+
+        static string Nested(Expression? e) =>
+            "`yield` (or `yield from`) cannot be used inside a larger expression. In PyMCU a "
+            + "yield is a statement, not an expression: the value it would produce is what "
+            + "CPython's send() hands back, and PyMCU generators have no send().";
 
         // A delegation nested inside a larger expression (`1 + (yield from g())`) is the same
         // unsupported thing as one on the right of an assignment, and it used to slip past a
         // check that only looked at the outermost node.
-        static bool HasNestedDelegate(Expression? e)
+        static bool HasNestedYield(Expression? e)
         {
             switch (e)
             {
                 case null: return false;
-                case YieldExpr { IsDelegate: true }: return true;
-                case YieldExpr y: return HasNestedDelegate(y.Value);
-                case BinaryExpr b: return HasNestedDelegate(b.Left) || HasNestedDelegate(b.Right);
-                case UnaryExpr u: return HasNestedDelegate(u.Operand);
+                case YieldExpr: return true;
+                case BinaryExpr b: return HasNestedYield(b.Left) || HasNestedYield(b.Right);
+                case UnaryExpr u: return HasNestedYield(u.Operand);
                 case CallExpr c:
-                    return HasNestedDelegate(c.Callee) || c.Args.Any(HasNestedDelegate);
-                case MemberAccessExpr m: return HasNestedDelegate(m.Object);
-                case IndexExpr ix: return HasNestedDelegate(ix.Target) || HasNestedDelegate(ix.Index);
+                    return HasNestedYield(c.Callee) || c.Args.Any(HasNestedYield);
+                case MemberAccessExpr m: return HasNestedYield(m.Object);
+                case IndexExpr ix: return HasNestedYield(ix.Target) || HasNestedYield(ix.Index);
                 case TernaryExpr t:
-                    return HasNestedDelegate(t.Condition) || HasNestedDelegate(t.TrueVal)
-                           || HasNestedDelegate(t.FalseVal);
-                case KeywordArgExpr kw: return HasNestedDelegate(kw.Value);
-                case TupleExpr tu: return tu.Elements.Any(HasNestedDelegate);
-                case ListExpr le: return le.Elements.Any(HasNestedDelegate);
+                    return HasNestedYield(t.Condition) || HasNestedYield(t.TrueVal)
+                           || HasNestedYield(t.FalseVal);
+                case KeywordArgExpr kw: return HasNestedYield(kw.Value);
+                case TupleExpr tu: return tu.Elements.Any(HasNestedYield);
+                case ListExpr le: return le.Elements.Any(HasNestedYield);
                 default: return false;
             }
         }
@@ -1260,23 +1273,22 @@ public static class AsyncTransform
                 case null: return null;
                 case Block b: return b.Statements.Select(Walk).FirstOrDefault(x => x != null);
                 case ExprStmt es when IsDelegate(es.Expr):
-                    return "delegates to something this compiler cannot expand: the target must "
-                           + "be a direct call to a generator defined in this module, and it must "
-                           + "not be recursive";
-                case AssignStmt a when IsDelegate(a.Value):
-                case VarDecl vd when IsDelegate(vd.Init):
-                case AnnAssign an when IsDelegate(an.Value):
-                    return "has no value to assign: what CPython returns there is the delegate's "
-                           + "return value, which PyMCU generators do not carry";
-                case ReturnStmt r when IsDelegate(r.Value):
-                    return "cannot be returned";
-                case AssignStmt a2 when HasNestedDelegate(a2.Value):
-                case VarDecl vd2 when HasNestedDelegate(vd2.Init):
-                case AnnAssign an2 when HasNestedDelegate(an2.Value):
-                case ReturnStmt r2 when HasNestedDelegate(r2.Value):
-                case ExprStmt es2 when HasNestedDelegate(es2.Expr):
-                    return "cannot be used inside a larger expression: it delegates, it does not "
-                           + "produce a value to combine with";
+                    return "`yield from` delegates to something this compiler cannot expand: the "
+                           + "target must be a direct call to a generator defined in this module, "
+                           + "called by name, and it must not be recursive.";
+                case AssignStmt a when IsYield(a.Value): return NoValue(a.Value);
+                case VarDecl vd when IsYield(vd.Init): return NoValue(vd.Init);
+                case AnnAssign an when IsYield(an.Value): return NoValue(an.Value);
+                case ReturnStmt r when IsYield(r.Value):
+                    return What(r.Value) + " cannot be returned. " + Advice(r.Value);
+                case AssignStmt a2 when HasNestedYield(a2.Value): return Nested(a2.Value);
+                case VarDecl vd2 when HasNestedYield(vd2.Init): return Nested(vd2.Init);
+                case AnnAssign an2 when HasNestedYield(an2.Value): return Nested(an2.Value);
+                case ReturnStmt r2 when HasNestedYield(r2.Value): return Nested(r2.Value);
+                // A `yield v` that IS the statement is the supported form; only a yield buried
+                // inside a larger expression is refused here.
+                case ExprStmt es2 when es2.Expr is not YieldExpr && HasNestedYield(es2.Expr):
+                    return Nested(es2.Expr);
                 case IfStmt i:
                     return Walk(i.ThenBranch)
                            ?? i.ElifBranches.Select(br => Walk(br.Item2)).FirstOrDefault(x => x != null)
