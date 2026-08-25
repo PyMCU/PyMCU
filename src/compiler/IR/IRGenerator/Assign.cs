@@ -3800,7 +3800,14 @@ public partial class IRGenerator
 
             if (stmt.StarredIndex < 0)
             {
-                if (nTup != nTgt) throw UserError($"Tuple size mismatch");
+                // "Tuple size mismatch" states that the two sides differ without saying what
+                // either side is, so the reader has to count the program back. Print both
+                // counts and which side is which.
+                if (nTup != nTgt)
+                    throw UserError(
+                        $"tuple unpacking size mismatch: {nTgt} target{(nTgt == 1 ? "" : "s")} on the "
+                        + $"left ({string.Join(", ", stmt.Targets)}), {nTup} "
+                        + $"value{(nTup == 1 ? "" : "s")} on the right");
                 // Python evaluates the whole RHS tuple before assigning, so snapshot
                 // each runtime value first. Otherwise `a, b = b, a` would assign a = b and
                 // then read the already-overwritten a. The snapshot must be a named Variable,
@@ -3899,8 +3906,28 @@ public partial class IRGenerator
             }
         }
         else
+        {
+            // A starred target is the construct that is missing here, and it is on the LEFT.
+            // Blaming the right-hand side sent the reader to change a value that was fine
+            // (`first, *rest = data`, with data a declared fixed-size array). Name the star.
+            if (stmt.StarredIndex >= 0)
+            {
+                string plain = stmt.Targets.Count > 1
+                    ? stmt.Targets[stmt.StarredIndex == 0 ? 1 : 0]
+                    : "first";
+                throw UserError(
+                    $"starred unpacking target '*{stmt.Targets[stmt.StarredIndex]}' is only supported "
+                    + "when the right-hand side is a tuple literal, because '*' collects a "
+                    + "variable number of values and there is no run-time list to collect them "
+                    + $"into. Take the elements you need by index instead (`{plain} = <sequence>[0]`, "
+                    + "and so on).");
+            }
+
             throw UserError(
-                "Tuple unpacking RHS must be a tuple literal or an inline function call returning a tuple.");
+                "Tuple unpacking RHS must be a tuple literal or an inline function call returning "
+                + "a tuple; unpacking an array or another sequence by name is not supported. "
+                + "Assign each target from its index instead.");
+        }
     }
 
     private void VisitClassDef(ClassDef classNode)
