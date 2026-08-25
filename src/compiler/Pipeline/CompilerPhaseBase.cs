@@ -34,7 +34,23 @@ public abstract class CompilerPhaseBase : ICompilerPhase
         }
         catch (CompilerError e)
         {
-            Diagnostic.Report(e, context.SourceCode, context.Options.FilePath);
+            // An error carrying its own File is IN another module (an import, most often).
+            // Report it against that file so the caret lands on the line that has to change,
+            // and fall back to the entry file if the source cannot be read.
+            string file = context.Options.FilePath;
+            string source = context.SourceCode;
+            if (!string.IsNullOrEmpty(e.File) && e.File != file)
+            {
+                try
+                {
+                    source = System.IO.File.ReadAllText(e.File);
+                    file = e.File;
+                }
+                catch (IOException) { /* keep the entry file's source */ }
+                catch (UnauthorizedAccessException) { /* keep the entry file's source */ }
+            }
+
+            Diagnostic.Report(e, source, file);
             context.HasErrors = true;
         }
         catch (Exception e)

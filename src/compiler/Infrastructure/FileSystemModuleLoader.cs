@@ -79,6 +79,15 @@ public class FileSystemModuleLoader : IModuleLoader
             modAst = parser.ParseProgram();
         }
 
+        // A relative import is resolved against the file it is WRITTEN in, so it has to be
+        // rewritten here, once, while that file is still the subject. Later phases call the
+        // loader with the entry file as `currentFilePath`, which is the wrong package.
+        RelativeImportResolver.Rewrite(modAst, path, context.IncludePaths);
+
+        // Same check the entry file gets. It used to be a post-hoc collision test on emitted
+        // IR functions, which an imported module's @inline/plain pair never reached.
+        DuplicateDefinitionCheck.Check(modAst, path);
+
         context.ModuleCache[path] = modAst;
         context.NamedModules[moduleName] = modAst;
         context.LoadingModules.Remove(path);

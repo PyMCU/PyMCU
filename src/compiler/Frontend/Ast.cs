@@ -693,11 +693,20 @@ public class FunctionDef : Statement
 
 public class ImportStmt : Statement
 {
-    public string ModuleName { get; }
+    // Settable because a relative import is rewritten to its absolute dotted name before
+    // the dependency graph is built (RelativeImportResolver). Everything downstream keys
+    // modules and mangles symbols by this name, so the two spellings of the same import
+    // must arrive there identical.
+    public string ModuleName { get; set; }
     public List<string> Symbols { get; }
-    public int RelativeLevel { get; }
+    public int RelativeLevel { get; set; }
     public Dictionary<string, string> Aliases { get; set; } = new();
     public string ModuleAlias { get; set; } = "";
+
+    // True once StarImportExpander has replaced a `*` with the module's export list. Kept so
+    // a later "name is not defined" can say that a star import is in scope and which names
+    // it actually brought in.
+    public bool WasStarImport { get; set; }
 
     public ImportStmt(string modName, List<string> symbols, int level = 0)
     {

@@ -131,6 +131,8 @@ public class ConditionalCompilator(DeviceConfig config)
         {
             ModuleAlias = src.ModuleAlias,
             Aliases = new Dictionary<string, string>(src.Aliases),
+            WasStarImport = src.WasStarImport,
+            Line = src.Line,
         };
 
     // Returns the winning branch body for a compile-time if/elif/else.

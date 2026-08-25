@@ -55,8 +55,26 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
             {
                 if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
 
-                var importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context, imp.Symbols);
-                var importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context, imp.Symbols);
+                ProgramNode importedAst;
+                string importedPath;
+                try
+                {
+                    importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context, imp.Symbols);
+                    importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context, imp.Symbols);
+                }
+                catch (CompilerError e) when (e.File == null)
+                {
+                    // The loader knows what failed; only the caller knows WHERE it was
+                    // written. A failed import in a module used to be printed against the
+                    // entry file's line 1, a line that does not mention the module named.
+                    throw new CompilerError(e.TypeName, e.Message,
+                        imp.Line > 0 ? imp.Line : 1, 1) { File = currentPath };
+                }
+
+                // `from m import *`: replace the star with the names m exports, now that m's
+                // AST is in hand. Everything downstream binds a symbol LIST, so a star left
+                // in place imported nothing at all.
+                StarImportExpander.Expand(imp, importedAst);
 
                 graph.AddDependencyEdge(importedAst, currentAst);
 

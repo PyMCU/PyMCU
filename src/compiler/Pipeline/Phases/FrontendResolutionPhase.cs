@@ -36,6 +36,10 @@ public class FrontendResolutionPhase(
 
     protected override void Run(CompilationContext context)
     {
+        // The entry file is parsed by ParsingPhase, not by the module loader, so its own
+        // relative imports are rewritten here before anything walks them.
+        RelativeImportResolver.Rewrite(context.RootAst!, context.Options.FilePath, context.IncludePaths);
+
         var resolutionOrder = graphBuilder
             .Build(context.RootAst!, context.Options.FilePath, context)
             .GetTopologicalSort();
@@ -89,6 +93,13 @@ public class FrontendResolutionPhase(
                 foreach (var imp in item.Node.Imports)
                 {
                     if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
+
+                    // A star promoted out of a compile-time branch reaches this loop with its
+                    // module already loaded, so expand it before the already-processed skip.
+                    if (StarImportExpander.IsStar(imp)
+                        && context.NamedModules.TryGetValue(imp.ModuleName, out var loaded))
+                        StarImportExpander.Expand(imp, loaded);
+
                     if (processedModules.Contains(imp.ModuleName)) continue;
 
                     Logger.Verbose("FrontendResolution",
@@ -99,6 +110,7 @@ public class FrontendResolutionPhase(
                         moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context, imp.Symbols);
 
                     var importedModule = context.NamedModules[imp.ModuleName];
+                    StarImportExpander.Expand(imp, importedModule);
                     if (processedModules.Add(imp.ModuleName))
                         newModules.Add(importedModule);
                 }

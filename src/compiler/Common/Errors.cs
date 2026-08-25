@@ -23,6 +23,12 @@ public class CompilerError(string typeName, string message, int line, int column
     public int Column { get; } = column;
     public int Length { get; } = length;
     public string TypeName { get; } = typeName;
+
+    /// The file the error is IN, when that is not the entry file. Diagnostics are printed
+    /// against the entry file by default, which is right for everything the entry file
+    /// contains and wrong for an import that lives in another module: the reader was sent
+    /// to a line of main.py that never mentioned the name in the message.
+    public string? File { get; init; }
 }
 
 public class SyntaxError(string message, int line, int column, int length = 1)

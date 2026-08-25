@@ -879,12 +879,22 @@ public class Parser
 
     private ImportStmt ParseImportStatement()
     {
+        // The line the import is WRITTEN on. Import diagnostics used to carry no location at
+        // all and were printed against the entry file's line 1, which is where a reader was
+        // sent for an import that lives in another file entirely.
+        int importLine = Peek().Line;
+
         if (Match(TokenType.Import))
         {
             var first = ParseModuleImportSpec();
+            first.Line = importLine;
             // `import a, b, c`: queue the additional modules for the caller to drain.
             while (Match(TokenType.Comma))
-                pendingImports.Enqueue(ParseModuleImportSpec());
+            {
+                var extra = ParseModuleImportSpec();
+                extra.Line = importLine;
+                pendingImports.Enqueue(extra);
+            }
             return first;
         }
 
@@ -942,7 +952,7 @@ public class Parser
         }
 
         ConsumeStatementEnd();
-        return new ImportStmt(modNameStr, symbols, relativeLevel) { Aliases = symAliases };
+        return new ImportStmt(modNameStr, symbols, relativeLevel) { Aliases = symAliases, Line = importLine };
     }
 
     private Statement ParseGlobalStatement()

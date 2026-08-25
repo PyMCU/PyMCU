@@ -31,6 +31,7 @@ public class ParsingPhase : CompilerPhaseBase
         if (PythonAstReader.Enabled)
         {
             context.RootAst = PythonAstReader.ParseSource(context.SourceCode, context.Options.FilePath);
+            DuplicateDefinitionCheck.Check(context.RootAst, context.Options.FilePath);
             return;
         }
 
@@ -39,6 +40,7 @@ public class ParsingPhase : CompilerPhaseBase
 
         var parser = new Parser(tokens);
         context.RootAst = parser.ParseProgram();
+        DuplicateDefinitionCheck.Check(context.RootAst, context.Options.FilePath);
 
         // PYMCU_DUMP_AST=<path> writes the tree in the translator's JSON shape, so the two
         // front ends can be compared node by node instead of only through the firmware they
