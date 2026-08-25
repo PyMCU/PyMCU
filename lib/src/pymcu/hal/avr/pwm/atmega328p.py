@@ -1,5 +1,5 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
-from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL
+from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1BH
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
 from pymcu.exceptions import CompileError
@@ -64,6 +64,30 @@ def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
                 return 0x07
         case _:
             raise CompileError("PWM: unsupported pin -- use PD6, PD5 (Timer0), PB1, PB2 (Timer1) or PB3, PD3 (Timer2)")
+
+
+# OCR1A and OCR1B are 16-bit, and every 16-bit timer register on this chip shares
+# one TEMP byte: writing the low byte commits TEMP as the high byte. Writing only
+# OCR1AL therefore commits whatever the last 16-bit write on Timer1 left in TEMP,
+# so a program that also drives Timer1 through the timer or servo HAL lands a duty
+# far above TOP, the compare never matches, and the pin stays driven for the whole
+# period. Measured: after a servo pulse leaves 0x0B in TEMP, PWM("PB1", 128) reads
+# back OCR1A = 2944 and sits at 256/256 ticks high instead of 128/256.
+#
+# Clearing the high byte immediately before the low one makes the committed value
+# 0x00:duty whatever TEMP held. Timer0 and Timer2 have 8-bit compare registers with
+# no TEMP in the path, so this folds away entirely on their four channels.
+#
+# The two stores have to stay adjacent: a 16-bit timer access between them (from an
+# ISR, say) would clobber TEMP again. That hazard is shared with _write16 in the
+# servo HAL and is not addressed here.
+@inline
+def pwm_clear_ocr_high(pin: str):
+    match pin:
+        case "PB1":
+            OCR1AH.value = 0
+        case "PB2":
+            OCR1BH.value = 0
 
 
 # Compile-time pin -> OCR register pointer.
@@ -137,12 +161,14 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
         case "PB1":
             # Timer1 OC1A: Fast PWM 8-bit (WGM=0101), COM1A1=1
             DDRB[1] = 1
+            OCR1AH.value = 0          # see pwm_clear_ocr_high: TEMP commits with the low byte
             OCR1AL.value = duty
             TCCR1A.value = TCCR1A.value | 0x81
             TCCR1B.value = prescaler
         case "PB2":
             # Timer1 OC1B: Fast PWM 8-bit, COM1B1=1
             DDRB[2] = 1
+            OCR1BH.value = 0          # see pwm_clear_ocr_high: TEMP commits with the low byte
             OCR1BL.value = duty
             TCCR1A.value = TCCR1A.value | 0x21
             TCCR1B.value = prescaler

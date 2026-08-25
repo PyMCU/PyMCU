@@ -17,13 +17,13 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
     from pymcu.hal.avr.pwm.attiny85 import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
-        pwm_connect, pwm_disconnect,
+        pwm_connect, pwm_disconnect, pwm_clear_ocr_high,
     )
 else:
     from pymcu.hal.avr.pwm.atmega328p import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
-        pwm_connect, pwm_disconnect,
+        pwm_connect, pwm_disconnect, pwm_clear_ocr_high,
     )
 
 
@@ -51,6 +51,10 @@ class PWM:
         if duty == 0:
             pwm_disconnect(self._pin)
         else:
+            # Timer1's compare registers are 16-bit and commit through a shared TEMP
+            # byte, so the high byte has to be cleared immediately before the low one.
+            # Folds to nothing on the 8-bit channels.
+            pwm_clear_ocr_high(self._pin)
             self._ocr.value = duty
             pwm_connect(self._pin)
 

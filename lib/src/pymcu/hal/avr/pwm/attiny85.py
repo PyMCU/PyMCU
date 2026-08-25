@@ -35,6 +35,18 @@ def pwm_select_ocr(pin: str) -> ptr[uint8]:
         case _:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
+
+# Every compare register this chip exposes for PWM is 8 bits (OCR0A, OCR0B, and
+# OCR1B which shares OCR0A's address), so there is no TEMP byte in the write path
+# and nothing to clear. Defined so the shared PWM class can call it unconditionally;
+# it folds to nothing.
+@inline
+def pwm_clear_ocr_high(pin: str):
+    match pin:
+        case _:
+            pass
+
+
 @inline
 def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
     match pin:
