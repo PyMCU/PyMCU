@@ -362,6 +362,12 @@ def s_annassign(node):
 
 
 def s_augassign(node):
+    # `a **= 2` is rewritten into `a = a ** 2`, the same shape the C# parser produces:
+    # the binary operator already lowers, so there is no AugOp for Pow to lower as well.
+    if isinstance(node.op, ast.Pow):
+        return {"k": "Assign", "target": expr(node.target),
+                "value": {"k": "Binary", "left": expr(node.target), "op": "Pow",
+                          "right": expr(node.value), "line": line_of(node)}}
     op = AUGOP.get(type(node.op))
     if op is None:
         raise Unsupported(f"augmented operator {type(node.op).__name__}", node)

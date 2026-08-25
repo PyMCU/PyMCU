@@ -549,7 +549,13 @@ public ref struct Lexer
                 if (Match('=')) return new Token(TokenType.PlusEqual, "+=", line, startCol, column - startCol);
                 return new Token(TokenType.Plus, "+", line, startCol, column - startCol);
             case '*':
-                if (Match('*')) return new Token(TokenType.DoubleStar, "**", line, startCol, column - startCol);
+                if (Match('*'))
+                {
+                    // `**=` before `**`, or the augmented form lexes as `**` followed by a
+                    // stray `=` and dies as "Expected expression".
+                    if (Match('=')) return new Token(TokenType.DoubleStarEqual, "**=", line, startCol, column - startCol);
+                    return new Token(TokenType.DoubleStar, "**", line, startCol, column - startCol);
+                }
                 if (Match('=')) return new Token(TokenType.StarEqual, "*=", line, startCol, column - startCol);
                 return new Token(TokenType.Star, "*", line, startCol, column - startCol);
             case '/':

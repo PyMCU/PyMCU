@@ -105,6 +105,7 @@ public enum TokenType
     PlusEqual,
     MinusEqual,
     StarEqual,
+    DoubleStarEqual,
     SlashEqual,
     FloorDivEqual,
     PercentEqual,

@@ -1094,6 +1094,19 @@ public class Parser
         return new MatchStmt(target, branches);
     }
 
+    // `[i + v for i, v in enumerate(base)]`: a comprehension binds ONE name, so the comma
+    // dies on the next token as "Expected 'in'" -- and `in` is right there, one word away,
+    // which makes that message doubly confusing when the identical target is accepted by a
+    // plain `for` statement. Say which of the two accepts it.
+    private void RejectComprehensionTupleTarget()
+    {
+        if (Check(TokenType.Comma))
+            Error("a tuple target in a comprehension (`for i, v in ...`) is not supported; a "
+                  + "comprehension binds a single name. The same target works in a `for` "
+                  + "statement (`for i, v in enumerate(xs):`), so write the loop and fill a "
+                  + "fixed-size array in it.");
+    }
+
     // The `else` clause of a loop, or null when there is none. The clause runs only when the
     // loop finished WITHOUT a `break`; LoopElseDesugar lowers that, shared with the CPython-AST
     // front end so the two produce the same nodes.
@@ -1257,6 +1270,14 @@ public class Parser
                 ConsumeStatementEnd();
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
             }
+
+            // `(a, b), c = ...`: a nested target. Every unpack target here is one name, so
+            // this dies two tokens later as "Expected newline or end of block", which names
+            // nothing. Say what the shape is and how to write it flat.
+            if (expr is TupleExpr or ListExpr)
+                Error("a nested unpacking target such as `(a, b), c = ...` is not supported; "
+                      + "each target must be a plain name. Unpack in two steps (`pair, c = ...` "
+                      + "then `a, b = pair`), or assign each name from its own value.");
         }
 
         if (Match(TokenType.Colon))
@@ -1344,6 +1365,18 @@ public class Parser
 
             ConsumeStatementEnd();
             return new AssignStmt(expr, value) { Line = line };
+        }
+
+        // `a **= 2`. The binary `**` already compiles, so this is the spelling that was
+        // missing, not the operator; it is rewritten into the expression that works rather
+        // than given an AugOp of its own, which would need lowering everywhere AugAssign is
+        // handled for no gain.
+        if (Match(TokenType.DoubleStarEqual))
+        {
+            var powValue = ParseExpression();
+            ConsumeStatementEnd();
+            return new AssignStmt(expr, new BinaryExpr(expr, BinaryOp.Pow, powValue) { Line = line })
+                { Line = line };
         }
 
         AugOp? augOp = null;
@@ -2061,6 +2094,7 @@ public class Parser
             if (Match(TokenType.For))
             {
                 var varTok = Consume(TokenType.Identifier, "Expected loop variable");
+                RejectComprehensionTupleTarget();
                 Consume(TokenType.In, "Expected 'in'");
                 var iterable = ParseLogicalOr();
 
@@ -2069,6 +2103,7 @@ public class Parser
                 if (Match(TokenType.For))
                 {
                     var var2Tok = Consume(TokenType.Identifier, "Expected loop variable");
+                    RejectComprehensionTupleTarget();
                     Consume(TokenType.In, "Expected 'in'");
                     iterable2 = ParseLogicalOr();
                     var2Name = var2Tok.Value;
