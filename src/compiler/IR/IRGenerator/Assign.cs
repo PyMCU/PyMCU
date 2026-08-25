@@ -1037,6 +1037,18 @@ public partial class IRGenerator
             }
             noneValuedNames.Remove(flattenedName);
 
+            // This write supersedes whatever the field was tracked as, so drop its compile-time
+            // STRING identity up front; the paths below that do have a string set it again.
+            //
+            // Clearing has to happen here rather than in any one of those paths, because the key
+            // is reused across call sites: a field of an instance built inside an @inline
+            // flattens under that expansion's own prefix (`inline1.build.r__x`), so a later call
+            // to the same @inline lands on exactly the same name. Whichever path this site takes,
+            // the previous site's string must not survive into it -- a numeric field wearing the
+            // earlier call's string selected the const[str] overload, which then rejected the
+            // call outright. Same hazard the binder documents for the other maps (#144).
+            strConstantVariables.Remove(flattenedName);
+
             // RFC 0001 (write-back): a field mutated by a write-back method needs a real runtime
             // home, not a folded compile-time constant -- otherwise the write-back copy has
             // nowhere to land and later reads (including loop iterations) would see the stale
@@ -1200,6 +1212,15 @@ public partial class IRGenerator
 
                 if (!constantVariables.TryGetValue(tname, out int cv2)) return false;
                 constantVariables[flattenedName] = cv2;
+                // A compile-time STRING travels as its interned id, so the id alone lands on the
+                // field and the string itself is lost. Every use site that asks what the field
+                // holds -- overload selection above all -- then types it numerically:
+                // `self._name = name_for(n)` followed by `Low(self._name, k)` picked the numeric
+                // overload with nothing reported. A string LITERAL assigned to the field already
+                // took the Constant path above, which does carry it.
+                string? tstr = ResolveStrConstant(tname)
+                    ?? (stringIdToStr.TryGetValue(cv2, out var sidStr) ? sidStr : null);
+                if (tstr != null) strConstantVariables[flattenedName] = tstr;
                 return true;
             }
         }

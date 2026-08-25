@@ -1733,6 +1733,16 @@ public partial class IRGenerator
                     if (classNames.Contains(ctorName)) return ctorName;
                     string shortCtor = ShortClassName(ctorName);
                     if (classNames.Contains(shortCtor)) return shortCtor;
+
+                    // A call to a FUNCTION declared to return a compile-time string --
+                    // `Low(name_for(n), k)`. InferExprType below has no string to report, so the
+                    // argument typed numerically and the call bound to the numeric overload with
+                    // nothing said. The declared return type answers it without evaluating the
+                    // argument, which has not been visited at this point.
+                    foreach (var fnKey in new[] { ResolveCallee(ctor.Name), ctorName, shortCtor })
+                        if (functionReturnTypes.TryGetValue(fnKey, out var frt)
+                            && frt is "str" or "const[str]")
+                            return "str";
                 }
                 if (arg is VariableExpr v)
                 {
