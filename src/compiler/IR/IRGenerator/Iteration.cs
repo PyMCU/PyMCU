@@ -1162,8 +1162,21 @@ public partial class IRGenerator
         loopStack.RemoveAt(loopStack.Count - 1);
     }
 
+    private int _withManagerCounter;
+
     private void VisitWith(WithStmt stmt)
     {
+        // `with C(x) as v:` -- give the manager a name of its own and carry on as if the
+        // program had written `m = C(x)` first. Without this the statement fell through to
+        // "just run the body": nothing constructed the manager, nothing bound v, and the
+        // program was rejected for using a name that is assigned right there in its header.
+        if (stmt.ContextExpr is not VariableExpr && !string.IsNullOrEmpty(stmt.AsName))
+        {
+            string managerName = "__with_manager_" + (_withManagerCounter++);
+            VisitStatement(new AssignStmt(new VariableExpr(managerName), stmt.ContextExpr));
+            stmt = new WithStmt(new VariableExpr(managerName), stmt.AsName, stmt.Body);
+        }
+
         if (stmt.ContextExpr is VariableExpr varExpr)
         {
             string objName = varExpr.Name;
@@ -1191,8 +1204,16 @@ public partial class IRGenerator
                     ? stmt.AsName
                     : currentFunction + "." + stmt.AsName;
                 string qualifiedObj = string.IsNullOrEmpty(currentFunction) ? objName : currentFunction + "." + objName;
+                // A ZCA `__enter__` whose body is `return self` hands back the instance, but the
+                // instance has no single runtime value to hand back: the expansion yields a
+                // temporary that stands for nothing. Reading the AST settles it -- when the
+                // method returns bare self, v IS obj, and the alias must stay. Without this the
+                // alias was dropped and v read whatever the temporary happened to hold, which
+                // was every field zero.
                 bool entersSelf = entered is NoneVal
-                                  || (entered is Variable ev && (ev.Name == qualifiedObj || ev.Name == objName));
+                                  || (entered is Variable ev && (ev.Name == qualifiedObj || ev.Name == objName))
+                                  || (TryResolveInstanceMethodAst(objName, "__enter__") is { } enterDef
+                                      && MethodReturnsBareSelf(enterDef));
                 if (!entersSelf)
                 {
                     variableAliases.Remove(qualified);
@@ -1241,4 +1262,39 @@ public partial class IRGenerator
             if (e.Message.StartsWith("AssertionError")) throw;
         }
     }
+
+    /// <summary>True when every return in the method hands back bare `self`.</summary>
+    private static bool MethodReturnsBareSelf(FunctionDef method)
+    {
+        bool sawReturn = false, allSelf = true;
+        void S(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return;
+                case Block b: foreach (var cs in b.Statements) S(cs); return;
+                case ReturnStmt r:
+                    sawReturn = true;
+                    if (r.Value is not VariableExpr { Name: "self" }) allSelf = false;
+                    return;
+                case IfStmt i:
+                    S(i.ThenBranch);
+                    foreach (var (_, br) in i.ElifBranches) S(br);
+                    S(i.ElseBranch);
+                    return;
+                case WhileStmt w: S(w.Body); return;
+                case ForStmt f: S(f.Body); return;
+                case WithStmt wi: S(wi.Body); return;
+                case TryStmt t:
+                    foreach (var cs in t.Body) S(cs);
+                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
+                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
+                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
+                    return;
+            }
+        }
+        S(method.Body);
+        return sawReturn && allSelf;
+    }
+
 }
