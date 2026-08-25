@@ -31,6 +31,8 @@ public static class AsyncTransform
 {
     public static void TransformProgram(ProgramNode prog)
     {
+        RejectCoroutineMethods(prog);
+
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
         // A plain function containing `yield` is a GENERATOR: same state-machine
         // lowering, with `yield v` as the suspension point (sets self._value, returns
@@ -136,6 +138,45 @@ public static class AsyncTransform
 
         if (tasks.Count > 0) EmitTaskSet(prog, alias!, tasks);
     }
+
+    // `async def` as a METHOD is refused here, by name, rather than reaching the IR generator
+    // and coming back as "`await` is only valid inside an `async def`" -- which is a message
+    // about a rule the program already obeys.
+    //
+    // Lowering it would mean a state-machine class holding the instance the method was called
+    // on. Two things block that today, both measured:
+    //
+    //  * The call site carries no type. This runs before any scanning (see the call in
+    //    IRGenerator/Core.cs), so `obj.run()` cannot say which class `obj` is, and the machine
+    //    to construct could only be guessed from the method's name being unique in the program.
+    //  * A machine holding an outer instance READS its fields correctly, but a call to a
+    //    MUTATING method on that instance does not always stick: in the shape this lowering
+    //    would produce, a counter incremented through the held instance reported its first
+    //    value three times. Simpler arrangements of the same call are correct, so the boundary
+    //    is not yet known. Building on it would emit silently wrong programs.
+    //
+    // See PyMCU/PyMCU#110 for the measurements.
+    private static void RejectCoroutineMethods(ProgramNode prog)
+    {
+        foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())
+        {
+            if (cls.Body is not Block body) continue;
+            foreach (var m in body.Statements.OfType<FunctionDef>())
+            {
+                if (!m.IsAsync) continue;
+                throw new SyntaxError(
+                    $"`async def {m.Name}` is a method of class '{cls.Name}', and a coroutine has "
+                    + "to be a module-level function today. Move it out of the class and pass what "
+                    + "it needs as arguments: `async def "
+                    + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
+                        .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
+                    m.Line, 1);
+            }
+        }
+    }
+
+    private static string LowerFirst(string n) =>
+        string.IsNullOrEmpty(n) ? n : char.ToLowerInvariant(n[0]) + n[1..];
 
     // One create_task call site: the global holding its coroutine, and the flag saying
     // whether that coroutine is still running.
