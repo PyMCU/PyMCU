@@ -27,5 +27,12 @@ public sealed record CompilerOptions(
     int ResetVector,
     int InterruptVector,
     bool Verbose,
-    string? EmitIrPath = null
+    string? EmitIrPath = null,
+    // The project's own source directory. Modules loaded from inside it are the USER's, and
+    // only those have their module level executed on import; everything else is an installed
+    // distribution (the pymcu stdlib, the MicroPython and CircuitPython compat layers), which
+    // is written knowing that only the entry file's top level runs. The driver stages the entry
+    // file into dist/_generated while the imports still resolve out of src/, so the entry
+    // file's own directory is not enough on its own. Absent, the entry file's directory is used.
+    string? ProjectRoot = null
 );

@@ -258,8 +258,13 @@ public partial class IRGenerator
         Dictionary<string, ProgramNode> importedModules,
         DeviceConfig config,
         List<string>? sourceLines = null,
-        Dictionary<string, List<string>>? moduleSourceLines = null)
+        Dictionary<string, List<string>>? moduleSourceLines = null,
+        HashSet<string>? projectModules = null)
     {
+        // Assign the PARAMETER, not only the field: inside this method the parameter shadows
+        // the field, so every later use of the bare name saw the caller's null.
+        projectModules ??= new HashSet<string>();
+        this.projectModules = projectModules;
         this.deviceConfig = config;
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
@@ -618,6 +623,10 @@ public partial class IRGenerator
                 while (at < body.Count && IsInjectedPreamble(body[at])) at++;
                 for (int i = moduleInit.Count - 1; i >= 0; i--)
                     body.Insert(at, moduleInit[i]);
+
+                // An import runs before the file that imports it, so this goes in AFTER the
+                // entry module's own init and therefore ends up ahead of it.
+                EmitImportedModuleInit(mainFuncDef, importedModules, astToCanonicalPrefix);
             }
         }
 
@@ -740,6 +749,18 @@ public partial class IRGenerator
         // map, and both are only complete once every module has been scanned.
         currentModulePrefix = "";
         MarkModuleInstanceFields(mainAst);
+
+        // Every imported module too, under its own prefix. The stdlib is deliberately out of
+        // scope here, for the same reason EmitImportedModuleInit leaves it out: its modules are
+        // written knowing that only the entry file's top level runs.
+        foreach (var modKvp in importedModules)
+        {
+            if (!astToCanonicalPrefix.TryGetValue(modKvp.Value, out var markPrefix)) continue;
+            if (!projectModules.Contains(modKvp.Key)) continue;
+            currentModulePrefix = markPrefix;
+            MarkModuleInstanceFields(modKvp.Value);
+        }
+        currentModulePrefix = "";
 
         foreach (var entry in functionsToCompile)
         {
@@ -1491,4 +1512,92 @@ public partial class IRGenerator
         s is PassStmt
         || (s is ExprStmt es && es.Expr is CallExpr ce
             && ce.Callee is VariableExpr ve && ve.Name.StartsWith("_pymcu_"));
+    /// <summary>
+    /// Run the module-level statements of every IMPORTED module before main's own body.
+    ///
+    /// Only the entry file's module level was executed, so an imported module's state started
+    /// at zero however it was written: `n: uint16 = 5` in cfg.py, or `c = C(5)` at module
+    /// level, both arrived as zero. The storage and the writes were real -- a counter in an
+    /// imported module counted 0, 1, 2 instead of 5, 6, 7 -- only the initial value was lost,
+    /// which is why it compiles, runs, and is wrong by a constant.
+    ///
+    /// Each module's statements become a synthesized `__module_init` compiled under that
+    /// module's own prefix, so its names resolve exactly as the rest of that module does, and
+    /// main calls them in import order before anything else the user wrote.
+    /// </summary>
+    private void EmitImportedModuleInit(FunctionDef? mainFuncDef,
+                                        Dictionary<string, ProgramNode> importedModules,
+                                        Dictionary<ProgramNode, string> astToCanonicalPrefix)
+    {
+        if (mainFuncDef == null || importedModules.Count == 0) return;
+
+        var calls = new List<Statement>();
+        foreach (var kvp in importedModules)
+        {
+            var modAst = kvp.Value;
+            if (!astToCanonicalPrefix.TryGetValue(modAst, out var prefix)) continue;
+
+            // Only the USER's own modules. An installed distribution (the pymcu stdlib, and
+            // the compat layers that provide `machine`, `board` and `busio`) is written knowing
+            // that only the entry file's module level runs: several guard their top level on
+            // the target chip, and running that as a function reaches code the import machinery
+            // never intended to compile. Measured, not assumed: doing it for all of them turns
+            // 129 tests red, `machine`'s own `mem8 = _Mem8()` first. Extending it to the
+            // installed layers is a separate question with its own measurements.
+            if (!projectModules.Contains(kvp.Key)) continue;
+
+            var body = new Block();
+            foreach (var st in modAst.GlobalStatements)
+            {
+                if (IsTopLevelPureDeclaration(st)) continue;
+                if (st is VarDecl d)
+                {
+                    // A declaration with an initializer is the whole point here: without the
+                    // rewrite the value never reaches the global it declares.
+                    if (d.Init != null && mutableGlobals.ContainsKey(prefix + d.Name)
+                        && !globals.ContainsKey(prefix + d.Name))
+                        body.Statements.Add(new AnnAssign(d.Name, d.VarType, d.Init));
+                    continue;
+                }
+                body.Statements.Add(st);
+            }
+
+            if (body.Statements.Count == 0) continue;
+
+            // The synthesized function IS the module level, so every name it assigns is a
+            // module global by definition. Without saying so it hits the ordinary rule and
+            // reports "'c' is a module-level global; to assign it inside
+            // 'counter___module_init' add a 'global c'" -- naming a function nobody wrote.
+            var globalNames = new List<string>();
+            foreach (var st in body.Statements)
+            {
+                string? target = st switch
+                {
+                    AnnAssign aa => aa.Target,
+                    AssignStmt { Target: VariableExpr tv } => tv.Name,
+                    _ => null,
+                };
+                if (target != null && !globalNames.Contains(target)) globalNames.Add(target);
+            }
+            if (globalNames.Count > 0)
+                body.Statements.Insert(0, new GlobalStmt(globalNames));
+
+            string initName = prefix + "__module_init";
+            var initFn = new FunctionDef("__module_init", new List<Param>(), "None", body);
+            functionsToCompile.Add(new FunctionEntry
+                { Prefix = prefix, Func = initFn, SourceFile = kvp.Key + ".py" });
+            functionReturnTypes[initName] = "None";
+            calls.Add(new ExprStmt(new CallExpr(new VariableExpr(initName), new List<Expression>())));
+        }
+
+        if (calls.Count == 0) return;
+
+        // After the build's auto-injected preamble, before the entry module's own init and
+        // before the user's body: an import runs before the file that imports it.
+        var mainBody = mainFuncDef.Body.Statements;
+        int at = 0;
+        while (at < mainBody.Count && IsInjectedPreamble(mainBody[at])) at++;
+        for (int i = calls.Count - 1; i >= 0; i--) mainBody.Insert(at, calls[i]);
+    }
+
 }

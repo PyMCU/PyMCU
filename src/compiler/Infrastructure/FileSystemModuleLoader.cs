@@ -41,6 +41,8 @@ public class FileSystemModuleLoader : IModuleLoader
             throw new CompilerError("ImportError", ex.Message, 0, 0);
         }
 
+        RecordProjectModule(moduleName, path, context);
+
         if (context.ModuleCache.TryGetValue(path, out var cachedAst))
         {
             // Register the module under the requested name even on a cache hit.
@@ -82,6 +84,34 @@ public class FileSystemModuleLoader : IModuleLoader
         context.LoadingModules.Remove(path);
 
         return modAst;
+    }
+
+    /// <summary>
+    /// Record a module as the user's own when its file sits in the project's own source tree.
+    /// Everything else is an installed distribution: the pymcu stdlib, and the compat layers
+    /// that provide `machine`, `board` and `busio`.
+    ///
+    /// Two roots, because the driver stages the entry file: it compiles `dist/_generated/main.py`
+    /// while the imports still resolve out of `src/`, so the entry file's own directory does not
+    /// cover both layouts. The driver names the second one with --project-root. Guessing it from
+    /// the include paths instead does not work: a direct pymcuc invocation orders -I however it
+    /// likes, and taking the first one made the STDLIB the project and ran its module level.
+    /// </summary>
+    private static void RecordProjectModule(string moduleName, string path, CompilationContext context)
+    {
+        var full = Path.GetFullPath(path);
+        foreach (var root in new[] { Path.GetDirectoryName(Path.GetFullPath(context.Options.FilePath)),
+                                     string.IsNullOrEmpty(context.Options.ProjectRoot)
+                                         ? null
+                                         : Path.GetFullPath(context.Options.ProjectRoot) })
+        {
+            if (string.IsNullOrEmpty(root)) continue;
+            if (full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            {
+                context.ProjectModules.Add(moduleName);
+                return;
+            }
+        }
     }
 
     private static string ResolveModulePath(string moduleName, List<string> includePaths, string currentFilePath,

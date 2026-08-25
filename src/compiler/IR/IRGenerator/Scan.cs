@@ -515,6 +515,14 @@ public partial class IRGenerator
     /// </summary>
     private void MarkModuleInstanceFields(ProgramNode ast)
     {
+        // The instances this module builds at its top level. Collected from the AST being
+        // marked, not only from the entry file: an instance built at the top level of an
+        // IMPORTED module needs the same storage, and without this its fields were marked for
+        // nobody, so the reader loaded a name that was never a global.
+        foreach (var st0 in ast.GlobalStatements)
+            if (st0 is AssignStmt { Target: VariableExpr tv0, Value: CallExpr })
+                topLevelInstanceTargets.Add(tv0.Name);
+
         if (topLevelInstanceTargets.Count == 0) return;
 
         // The class each module-level instance is built from, read off the source. The
@@ -542,8 +550,14 @@ public partial class IRGenerator
             if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
             foreach (var (f, ftype, _) in layout)
                 if (f == field)
-                    mutableGlobals[instance + "_" + field] =
-                        DataTypeExtensions.StringToDataType(ftype);
+                {
+                    // Under the module's own prefix: a field of an instance in an imported
+                    // module is read as `counter_c_v`. Only the bare key used to be registered,
+                    // which is right for the entry module and names nothing for any other.
+                    // Registering both would give the field two homes and waste the SRAM.
+                    var dt = DataTypeExtensions.StringToDataType(ftype);
+                    mutableGlobals[currentModulePrefix + instance + "_" + field] = dt;
+                }
         }
 
         void MarkEveryField(string instance)

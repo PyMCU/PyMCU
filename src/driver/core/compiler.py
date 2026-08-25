@@ -137,6 +137,11 @@ class PyMCUCompiler:
 
         working_dir = search_path if search_path else input_path.parent
         cmd.extend(["-I", str(working_dir.absolute())])
+        # The project's own source directory. Modules loaded from inside it are the user's, and
+        # only those have their module level executed on import. It is passed explicitly rather
+        # than inferred, because the entry file is staged into dist/_generated while the imports
+        # still resolve out of the original source tree.
+        cmd.extend(["--project-root", str(working_dir.absolute())])
 
         # Extra include paths (generated board shim, extension packages) — prepended
         # before stdlib so they shadow any same-named modules in the vanilla stdlib.

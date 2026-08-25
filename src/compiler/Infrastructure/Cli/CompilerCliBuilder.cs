@@ -89,6 +89,13 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => null
         };
 
+        Option<string?> projectRootOption = new("--project-root")
+        {
+            Description = "The project's own source directory; modules loaded from inside it "
+                        + "have their module level executed on import",
+            DefaultValueFactory = parseResult => null
+        };
+
         RootCommand rootCommand = new("PyMCU Compiler (pymcuc)");
 
         rootCommand.Arguments.Add(fileArgument);
@@ -102,6 +109,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(interruptVectorOption);
         rootCommand.Options.Add(verboseOption);
         rootCommand.Options.Add(emitIrOption);
+        rootCommand.Options.Add(projectRootOption);
 
         rootCommand.SetAction(parseResult =>
         {
@@ -124,7 +132,8 @@ public static class CompilerCliBuilder
                 ResetVector: parseResult.GetValue(resetVectorOption),
                 InterruptVector: parseResult.GetValue(interruptVectorOption),
                 Verbose: parseResult.GetValue(verboseOption),
-                EmitIrPath: parseResult.GetValue(emitIrOption)
+                EmitIrPath: parseResult.GetValue(emitIrOption),
+                ProjectRoot: parseResult.GetValue(projectRootOption)
             );
 
             // Return the exit code so Invoke() (and thus the process) actually fails

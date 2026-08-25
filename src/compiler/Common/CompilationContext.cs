@@ -33,6 +33,13 @@ public class CompilationContext(CompilerOptions options)
     // AST and Module State
     public Dictionary<string, ProgramNode> ModuleCache { get; } = new();
     public Dictionary<string, ProgramNode> NamedModules { get; } = new();
+
+    // Module names whose file lives inside the ENTRY file's own directory tree, so the user's
+    // own modules as opposed to an installed distribution (the pymcu stdlib, the MicroPython
+    // and CircuitPython compat layers). Only these have their module level executed on import:
+    // the installed layers are written knowing that only the entry file's top level runs, and
+    // several of them guard their top level on the target chip.
+    public HashSet<string> ProjectModules { get; } = new();
     public Dictionary<string, List<string>> ModuleSourceLines { get; } = new();
     public HashSet<string> LoadingModules { get; } = [];
     public ProgramNode? RootAst { get; set; }

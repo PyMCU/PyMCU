@@ -318,6 +318,10 @@ public partial class IRGenerator
     // SlotInstanceKey uses this to register the boxed instance under its module key.
     private readonly HashSet<string> topLevelInstanceTargets = new();
 
+    // Module names whose file lives inside the entry file's own directory tree: the user's own
+    // modules, as opposed to an installed distribution. Only these have their module level run.
+    private HashSet<string> projectModules = new();
+
     // The declared element type of a runtime ptr[T] value, or UINT8 when untyped/unknown.
     // Passed as the Elem of Load/StoreIndirect so the access width survives the optimizer
     // collapsing typed temporaries into raw constants.
