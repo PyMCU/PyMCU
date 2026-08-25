@@ -797,7 +797,8 @@ public static class AsyncTransform
             int step = 1;
             if (f.RangeStep != null)
             {
-                if (f.RangeStep is IntegerLiteral stepLit && stepLit.Value > 0) step = stepLit.Value;
+                if (ConstantInt(f.RangeStep) is { } stepVal && stepVal > 0 && stepVal <= int.MaxValue)
+                    step = (int)stepVal;
                 else throw new SyntaxError(
                     $"async def '{_fnName}': for-range with `await` needs a positive constant step.", 0, 0);
             }
@@ -1047,7 +1048,7 @@ public static class AsyncTransform
             // point where the duration can be range-checked before it silently wraps.
             durUsExpr = new BinaryExpr(c.Args[0], BinaryOp.Mul, new IntegerLiteral(scale));
             // `-5` reaches here as a negation around the literal, not as a negative one.
-            if (ConstantMillis(c.Args[0]) is { } lit)
+            if (ConstantInt(c.Args[0]) is { } lit)
             {
                 long us = lit * scale;
                 if (us < 0)
@@ -1072,12 +1073,19 @@ public static class AsyncTransform
         return false;
     }
 
-    // The compile-time value of a sleep argument, or null when it is a run-time
-    // expression. A negated literal is a UnaryExpr, which is how `sleep_ms(-5)` arrives.
-    private static long? ConstantMillis(Expression e) => e switch
+    // The compile-time value of an integer expression, or null when it is a run-time one.
+    // Matching IntegerLiteral alone is not enough: `-5` arrives as a negation around the
+    // literal, and `1 + 1` as a BinaryExpr, so a check written against the bare literal
+    // silently lets the first through and needlessly refuses the second. Mirrors
+    // IRGenerator.TryLiteralInt, which is the same folding the rest of the compiler does.
+    private static long? ConstantInt(Expression e) => e switch
     {
         IntegerLiteral i => i.Value,
-        UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteral n } => -(long)n.Value,
+        BooleanLiteral b => b.Value ? 1 : 0,
+        UnaryExpr { Op: UnaryOp.Negate } u when ConstantInt(u.Operand) is { } v => -v,
+        BinaryExpr { Op: BinaryOp.Add } a when ConstantInt(a.Left) is { } l && ConstantInt(a.Right) is { } r => l + r,
+        BinaryExpr { Op: BinaryOp.Sub } a when ConstantInt(a.Left) is { } l && ConstantInt(a.Right) is { } r => l - r,
+        BinaryExpr { Op: BinaryOp.Mul } a when ConstantInt(a.Left) is { } l && ConstantInt(a.Right) is { } r => l * r,
         _ => null,
     };
 

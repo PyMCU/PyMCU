@@ -149,6 +149,54 @@ public class AsyncAwaitStateTests
         negative.Should().Throw<SyntaxError>().WithMessage("*cannot be negative*");
     }
 
+
+    [Fact]
+    public void AConstantStepThatIsNotABareLiteralIsAccepted()
+    {
+        // The step check used to match IntegerLiteral directly, so `1 + 1` was refused by
+        // a message saying a positive constant step was required, which is what it is.
+        var folded = Lower("""
+            import asyncio
+
+            async def job():
+                for i in range(0, 4, 1 + 1):
+                    await asyncio.sleep_ms(1)
+            """);
+
+        FieldNames(folded).Should().Contain("_start");
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("0")]
+    [InlineData("-(1 + 1)")]
+    public void ANonPositiveStepIsStillRefused(string step)
+    {
+        var bad = () => Lower($"""
+            import asyncio
+
+            async def job():
+                for i in range(0, 4, {step}):
+                    await asyncio.sleep_ms(1)
+            """);
+
+        bad.Should().Throw<SyntaxError>().WithMessage("*positive constant step*");
+    }
+
+    [Fact]
+    public void AFoldedDurationIsRangeCheckedToo()
+    {
+        // `2 * 3600` seconds is past the counter, and folding is what lets the guard see it.
+        var tooLong = () => Lower("""
+            import asyncio
+
+            async def job():
+                await asyncio.sleep(2 * 3600)
+            """);
+
+        tooLong.Should().Throw<SyntaxError>().WithMessage("*4294 seconds*");
+    }
+
     // The `<something> < <duration>` test each wait state is built around.
     private static List<BinaryExpr> WaitComparisons(ClassDef cls) =>
         AllStatements(cls).OfType<IfStmt>()
