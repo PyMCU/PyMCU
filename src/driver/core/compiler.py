@@ -184,13 +184,19 @@ class PyMCUCompiler:
             # stderr is left to pass through directly so VS Code's problem matcher
             # can parse diagnostic lines (file:line:col: severity: msg).
             #
-            # returncode == -9 means the frontend was SIGKILL'd by the OS (jetsam under
-            # heavy parallel-build load) -- transient and never a real result, so retry a
-            # few times. This only happens on POSIX; on Windows negative return codes do
-            # not map to signals, so the retry is simply inert there. Other signals
-            # (crashes) and positive exit codes fail on the first attempt. Output is
-            # buffered and only emitted for the attempt we keep.
-            SIGKILL_RETURNCODE = -9
+            # A NEGATIVE returncode means the frontend died on a signal, which is never a
+            # statement about the program: -9 is jetsam killing it under heavy parallel-build
+            # load, and the others are the compiler crashing. Neither produces a diagnostic,
+            # so both used to surface as "Compilation failed (see diagnostics above)" with
+            # nothing above -- a message that reads as a rejected program and sends the
+            # reader looking for an error that was never printed.
+            #
+            # Retrying is right for any of them: a signal death is not reproducible from the
+            # program's side, and a crash that survives four attempts is a real crash. Only
+            # -9 was retried before, so a jetsam kill delivered as anything else fell straight
+            # through. This is POSIX-only; on Windows negative return codes do not map to
+            # signals, so the retry is inert there. Output is buffered and only emitted for
+            # the attempt we keep.
             max_signal_retries = 3
             for attempt in range(max_signal_retries + 1):
                 buffered: list[str] = []
@@ -222,7 +228,7 @@ class PyMCUCompiler:
                     sys.stderr.write(_remap_diagnostics(err_text, diagnostic_source))
                     sys.stderr.flush()
 
-                if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
+                if proc.returncode < 0 and attempt < max_signal_retries:
                     time.sleep(0.25 * (attempt + 1))
                     continue
                 break
@@ -230,6 +236,21 @@ class PyMCUCompiler:
             if on_output:
                 for line in buffered:
                     on_output(line)
+
+            if proc.returncode < 0:
+                # Still dead on a signal after every retry. Say what happened: the compiler
+                # was killed, the program was never judged, and "see diagnostics above" would
+                # be pointing at an empty screen.
+                import signal as _signal
+                try:
+                    signame = _signal.Signals(-proc.returncode).name
+                except ValueError:
+                    signame = f"signal {-proc.returncode}"
+                raise RuntimeError(
+                    f"the compiler was killed by {signame} after {max_signal_retries + 1} "
+                    "attempts, so it never reported on this program. On macOS this is "
+                    "usually the OS reclaiming memory from parallel builds; build fewer "
+                    "projects at once, or re-run. It is not an error in your code.")
 
             if proc.returncode != 0:
                 raise RuntimeError("Compilation failed (see diagnostics above)")
