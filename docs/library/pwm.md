@@ -47,6 +47,20 @@ midpoints between them. Asking for 440 Hz on Timer2 lands on 488 Hz rather than 
 compat layer (`machine.PWM.freq()`) and you get the value you asked for, not the bucket; if
 you need the physical frequency, derive it from `__FREQ__` and the prescaler.
 
+### Duty at the extremes
+
+`duty = 255` is 100% because fast PWM with the compare register at MAX holds the output
+constantly high. `duty = 0` is not 0% for the same reason in reverse: the output is set at
+BOTTOM and cleared on compare match, so a compare register of 0 would leave a
+one-prescaled-clock pulse in every 256 -- about 0.4%, enough to keep an LED visibly lit
+(ATmega328P section 15.7.3, "Fast PWM Mode").
+
+So `duty = 0` does not write 0 to the compare register. It clears the channel's COM bits in
+`TCCRxA`, which returns the pin to normal port operation, and drives it low; the next
+non-zero duty writes the compare register and sets the COM bits back. The pin stays an
+output throughout. A duty that is a compile-time constant folds to one path or the other
+with no runtime branch; a duty computed at run time costs one compare.
+
 ### Two channels on one timer
 
 The channels of a single timer (D5+D6 on Timer0, D9+D10 on Timer1, D11+D3 on Timer2) can

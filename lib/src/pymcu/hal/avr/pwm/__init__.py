@@ -17,11 +17,13 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
     from pymcu.hal.avr.pwm.attiny85 import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
+        pwm_connect, pwm_disconnect,
     )
 else:
     from pymcu.hal.avr.pwm.atmega328p import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
         pwm_select_start_val, pwm_prescaler_for_freq,
+        pwm_connect, pwm_disconnect,
     )
 
 
@@ -42,7 +44,15 @@ class PWM:
 
     @inline
     def set_duty(self, duty: uint8):
-        self._ocr.value = duty
+        # 0 is off, not OCRx = 0: fast PWM with the compare register at BOTTOM
+        # still emits a one-clock pulse every period. Disconnect the compare
+        # output and drive the pin low instead, and reconnect it on the next
+        # non-zero duty. A constant duty folds this to one path with no branch.
+        if duty == 0:
+            pwm_disconnect(self._pin)
+        else:
+            self._ocr.value = duty
+            pwm_connect(self._pin)
 
     @inline
     def start(self):

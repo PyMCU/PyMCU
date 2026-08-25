@@ -1,7 +1,7 @@
 from pymcu.chips.atmega328p import TCCR0A, TCCR0B, OCR0A, OCR0B
 from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
-from pymcu.chips.atmega328p import DDRD, DDRB
+from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
 from pymcu.types import uint8, uint16, inline, ptr
 
 
@@ -149,3 +149,56 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
             OCR2B.value = duty
             TCCR2A.value = TCCR2A.value | 0x23
             TCCR2B.value = prescaler
+    if duty == 0:
+        pwm_disconnect(pin)
+
+
+# duty 0 means off, and OCRx = BOTTOM is not off. In fast PWM the output is set
+# at BOTTOM and cleared on compare match, so OCRx = 0 leaves a one-prescaled-clock
+# pulse in every 256 -- about 0.4%, a visibly dim LED (ATmega328P 15.7.3). Off is
+# the compare output disconnected and the pin driven low, which is also what
+# Arduino's analogWrite(pin, 0) does. The other extreme needs nothing: OCRx = MAX
+# holds the output constantly high, so duty 255 is already 100%.
+#
+# The COM bits live in TCCRxA, which the two channels of a timer share, so only
+# this channel's pair is touched: OCxA is bits 7:6, OCxB is bits 5:4.
+@inline
+def pwm_disconnect(pin: str):
+    match pin:
+        case "PD6":
+            TCCR0A.value = TCCR0A.value & 0x3F
+            PORTD[6] = 0
+        case "PD5":
+            TCCR0A.value = TCCR0A.value & 0xCF
+            PORTD[5] = 0
+        case "PB1":
+            TCCR1A.value = TCCR1A.value & 0x3F
+            PORTB[1] = 0
+        case "PB2":
+            TCCR1A.value = TCCR1A.value & 0xCF
+            PORTB[2] = 0
+        case "PB3":
+            TCCR2A.value = TCCR2A.value & 0x3F
+            PORTB[3] = 0
+        case "PD3":
+            TCCR2A.value = TCCR2A.value & 0xCF
+            PORTD[3] = 0
+
+
+# Reconnect the compare output after a duty of 0 disconnected it. Non-inverting
+# fast PWM is COMxA1 (bit 7) or COMxB1 (bit 5) with the low COM bit clear.
+@inline
+def pwm_connect(pin: str):
+    match pin:
+        case "PD6":
+            TCCR0A.value = TCCR0A.value | 0x80
+        case "PD5":
+            TCCR0A.value = TCCR0A.value | 0x20
+        case "PB1":
+            TCCR1A.value = TCCR1A.value | 0x80
+        case "PB2":
+            TCCR1A.value = TCCR1A.value | 0x20
+        case "PB3":
+            TCCR2A.value = TCCR2A.value | 0x80
+        case "PD3":
+            TCCR2A.value = TCCR2A.value | 0x20

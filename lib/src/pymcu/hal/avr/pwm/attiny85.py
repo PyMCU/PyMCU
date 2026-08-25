@@ -1,4 +1,4 @@
-from pymcu.chips.attiny85 import DDRB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
+from pymcu.chips.attiny85 import DDRB, PORTB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
 from pymcu.types import uint8, uint16, inline, ptr
 
 # ATtiny85/45/25 PWM HAL
@@ -133,3 +133,38 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
             DDRB[4] = 1
             OCR0A.value = duty   # OCR1B shares physical register with OCR0A
             TCCR1.value = prescaler
+    if duty == 0:
+        pwm_disconnect(pin)
+
+
+# duty 0 means off, and OCRx = BOTTOM is not off: in fast PWM the output is set at
+# BOTTOM and cleared on compare match, so OCRx = 0 leaves a one-prescaled-clock
+# pulse in every 256. Off is the compare output disconnected and the pin driven
+# low. duty 255 needs nothing: OCRx = MAX holds the output constantly high.
+#
+# Timer0 keeps its COM bits in TCCR0A (OC0A bits 7:6, OC0B bits 5:4); Timer1 keeps
+# COM1B1:0 in TCCR1 bits 5:4, the same register as its prescaler, so start() after
+# a stop() reconnects OC1B -- call set_duty() again to leave it off.
+@inline
+def pwm_disconnect(pin: str):
+    match pin:
+        case "PB0":
+            TCCR0A.value = TCCR0A.value & 0x3F
+            PORTB[0] = 0
+        case "PB1":
+            TCCR0A.value = TCCR0A.value & 0xCF
+            PORTB[1] = 0
+        case "PB4":
+            TCCR1.value = TCCR1.value & 0xCF
+            PORTB[4] = 0
+
+
+@inline
+def pwm_connect(pin: str):
+    match pin:
+        case "PB0":
+            TCCR0A.value = TCCR0A.value | 0x80
+        case "PB1":
+            TCCR0A.value = TCCR0A.value | 0x20
+        case "PB4":
+            TCCR1.value = TCCR1.value | 0x20
