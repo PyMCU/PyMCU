@@ -97,12 +97,21 @@ class const(Generic[T]):
         )
 
 
-def device_info(arch: str, chip: str = "", ram_size: int = 0, flash_size: int = 0):
+def device_info(arch: str, chip: str = "", ram_size: int = 0, flash_size: int = 0,
+                eeprom_size: int = 0):
     # flash_size is program storage in BYTES as the programmer and the hex file
     # address it: native bytes on AVR and PIC18, words x2 on PIC12 and PIC14,
     # whose hex format is byte-doubled. Left at 0 where it is not a property of
     # the chip -- the RP parts execute from a board's external flash through the
     # XIP window -- and 0 there means "does not apply", never "tiny".
+    #
+    # These three sizes are the chip's memory geometry, and this call is the only
+    # place they are declared. The compiler carries them to the backend in the
+    # .mir, where the AVR backend reads flash_size to choose LPM or ELPM and
+    # ram_size to place RAMEND. Omitting one is "not declared", not zero: a
+    # backend that needs a size it was not given stops the build and names this
+    # chip and this field. Each argument must be an integer literal or a
+    # module-level integer constant of the same file.
     pass
 
 
