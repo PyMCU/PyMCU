@@ -1184,6 +1184,17 @@ public partial class IRGenerator
             string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
             boundParams.Add(paramIdx);
 
+            // A register alias bound at an EARLIER call site to the same @inline function
+            // survives in constantAddressVariables unless it is cleared here. The parameter key
+            // is the inline prefix plus the name, and that key is reused across call sites at
+            // the same depth. Reads of a parameter consult this map BEFORE variableTypes, so a
+            // second expansion re-read the first call's register and ignored its own argument:
+            // `print_byte(GPIOR0.value)` followed by `print_byte(x)` printed the register twice.
+            // Only the MemoryAddress branch below re-establishes the alias, and only when this
+            // call site actually passes one.
+            constantAddressVariables.Remove(paramName);
+            constantAddressVariables.Remove(paramName + "_type");
+
             if (i < rawListArgs.Count && rawListArgs[i] != null)
             {
                 // Bytes/list/tuple literal bound to this parameter: record the raw AST
@@ -1387,6 +1398,24 @@ public partial class IRGenerator
             }
             if (argValues[i] is MemoryAddress mArg)
             {
+                // Aliasing the parameter to the address is for a parameter that names a
+                // REGISTER (a `ptr`, as the GPIO HAL passes pin_reg). A parameter declared with
+                // a numeric width receives the CONTENTS, so it must be copied like any other
+                // run-time value: aliasing it made the body see a register where the program
+                // declared a uint8, and arithmetic on it was rejected with a message describing
+                // the argument rather than the parameter.
+                string mPType = func.Params[paramIdx].Type;
+                bool mIsNumeric = mPType is "uint8" or "uint16" or "uint32"
+                    or "int8" or "int16" or "int32" or "int" or "bool";
+                if (mIsNumeric)
+                {
+                    constantVariables.Remove(paramName);
+                    strConstantVariables.Remove(paramName);
+                    variableAliases.Remove(paramName);
+                    variableTypes[paramName] = DataTypeExtensions.StringToDataType(mPType);
+                    Emit(new Copy(argValues[i], new Variable(paramName, variableTypes[paramName])));
+                    continue;
+                }
                 constantAddressVariables[paramName] = mArg.Address;
                 constantAddressVariables.Remove(paramName + "_type");
                 constantVariables.Remove(paramName);
@@ -1413,6 +1442,17 @@ public partial class IRGenerator
                     string paramName = currentInlinePrefix + func.Params[pi].Name;
                     boundParams.Add(pi);
                     found = true;
+
+                    // A register alias bound at an EARLIER call site to the same @inline function
+                    // survives in constantAddressVariables unless it is cleared here. The parameter key
+                    // is the inline prefix plus the name, and that key is reused across call sites at
+                    // the same depth. Reads of a parameter consult this map BEFORE variableTypes, so a
+                    // second expansion re-read the first call's register and ignored its own argument:
+                    // `print_byte(GPIOR0.value)` followed by `print_byte(x)` printed the register twice.
+                    // Only the MemoryAddress branch below re-establishes the alias, and only when this
+                    // call site actually passes one.
+                    constantAddressVariables.Remove(paramName);
+                    constantAddressVariables.Remove(paramName + "_type");
 
                     if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
 
