@@ -377,6 +377,27 @@ public partial class IRGenerator
 
         VisitBlock(funcNode.Body);
 
+        // A function that promises a value must produce one on every path. Falling off the end
+        // emitted `ret` with nothing in the return register, and the caller printed whatever
+        // it happened to hold -- on a clean build, with the missing `return` in plain sight.
+        // Python answers None here, which PyMCU has no room for in a typed return.
+        // Both the source and what was emitted have to agree that the end is reachable. The
+        // HAL is full of if/elif dispatch over compile-time constants where the source falls
+        // through on paper and the folded body cannot: judging on the source alone rejected
+        // 464 programs that are perfectly well formed.
+        bool emittedFallsThrough = currentInstructions.Count == 0
+                                   || currentInstructions[^1] is not Return;
+        if (funcNode.ReturnType is not (null or "" or "void" or "None")
+            && !funcNode.IsExtern && !funcNode.IsNaked
+            && emittedFallsThrough
+            && !FunctionHasYield(funcNode)
+            && !FunctionUsesInlineAsm(funcNode)
+            && !AlwaysReturns(funcNode.Body))
+            throw UserError(
+                $"'{funcNode.Name}' is declared to return {funcNode.ReturnType}, but it can reach "
+                + "the end of its body without a return. Python would answer None there, which a "
+                + $"{funcNode.ReturnType} has no room for -- add a return on the remaining path.");
+
         if (currentInstructions.Count == 0 || !(currentInstructions.Last() is Return))
         {
             Emit(new Return(new NoneVal()));
@@ -862,4 +883,137 @@ public partial class IRGenerator
             Emit(new Return(val));
         }
     }
+
+    /// <summary>
+    /// True when control cannot reach the end of <paramref name="st"/>: every path leaves
+    /// through a return or a raise. Deliberately conservative -- an unrecognized shape counts
+    /// as falling through, so the check never invents a diagnostic for a program it does not
+    /// understand.
+    /// </summary>
+    private static bool AlwaysReturns(Statement? st)
+    {
+        switch (st)
+        {
+            case null: return false;
+            case ReturnStmt: return true;
+            case RaiseStmt: return true;
+            case Block b: return b.Statements.Any(AlwaysReturns);
+            case IfStmt i:
+                if (i.ElseBranch == null) return false;
+                if (!AlwaysReturns(i.ThenBranch)) return false;
+                foreach (var (_, br) in i.ElifBranches)
+                    if (!AlwaysReturns(br)) return false;
+                return AlwaysReturns(i.ElseBranch);
+            case WhileStmt w:
+                // `while True:` with no way out is an endless loop: the end of the body is
+                // never reached, so neither is the end of the function.
+                return w.Condition is BooleanLiteral { Value: true }
+                       or IntegerLiteral { Value: not 0 }
+                       && !LoopBodyHasBreakOrContinue(w.Body);
+            case TryStmt t:
+                if (t.Finally != null && t.Finally.Any(AlwaysReturns)) return true;
+                if (!t.Body.Any(AlwaysReturns)) return false;
+                foreach (var (_, h) in t.Handlers)
+                    if (!h.Any(AlwaysReturns)) return false;
+                return true;
+            case WithStmt wi: return AlwaysReturns(wi.Body);
+            case MatchStmt m:
+                // Only a match with a catch-all (`case _:`) covers every value; without one
+                // there is a path that matches nothing and falls out the bottom. An unguarded
+                // capture is a catch-all too (`case _ as x:`).
+                bool hasCatchAll = m.Branches.Any(
+                    br => br.Guard == null && (br.Pattern == null || !string.IsNullOrEmpty(br.CaptureName)));
+                return hasCatchAll && m.Branches.All(br => AlwaysReturns(br.Body));
+            default: return false;
+        }
+    }
+
+    /// <summary>True when the function body contains a yield, making it a generator.</summary>
+    private static bool FunctionHasYield(FunctionDef func)
+    {
+        bool found = false;
+        void E(Expression? e)
+        {
+            if (found || e == null) return;
+            switch (e)
+            {
+                case YieldExpr: found = true; return;
+                case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case MemberAccessExpr m: E(m.Object); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+            }
+        }
+        void S(Statement? st)
+        {
+            if (found || st == null) return;
+            switch (st)
+            {
+                case Block b: foreach (var cs in b.Statements) S(cs); return;
+                case ExprStmt es: E(es.Expr); return;
+                case AssignStmt a: E(a.Value); return;
+                case AugAssignStmt aug: E(aug.Value); return;
+                case AnnAssign an: E(an.Value); return;
+                case VarDecl vd: E(vd.Init); return;
+                case ReturnStmt r: E(r.Value); return;
+                case IfStmt i:
+                    S(i.ThenBranch);
+                    foreach (var (_, br) in i.ElifBranches) S(br);
+                    S(i.ElseBranch);
+                    return;
+                case WhileStmt w: S(w.Body); return;
+                case ForStmt f: S(f.Body); return;
+                case WithStmt wi: S(wi.Body); return;
+                case TryStmt t:
+                    foreach (var cs in t.Body) S(cs);
+                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
+                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
+                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
+                    return;
+                case MatchStmt m: foreach (var br in m.Branches) S(br.Body); return;
+            }
+        }
+        S(func.Body);
+        return found;
+    }
+
+
+    /// <summary>
+    /// True when the body contains an `asm(...)`. Such a function returns through the assembly
+    /// it wrote -- the HAL's pulse-in helpers are nothing but `asm` lines ending in RET -- so
+    /// there is no Python return for the fall-through check to find, and none is missing.
+    /// </summary>
+    private static bool FunctionUsesInlineAsm(FunctionDef func)
+    {
+        bool found = false;
+        void S(Statement? st)
+        {
+            if (found || st == null) return;
+            switch (st)
+            {
+                case Block b: foreach (var cs in b.Statements) S(cs); return;
+                case ExprStmt { Expr: CallExpr { Callee: VariableExpr { Name: "asm" } } }: found = true; return;
+                case IfStmt i:
+                    S(i.ThenBranch);
+                    foreach (var (_, br) in i.ElifBranches) S(br);
+                    S(i.ElseBranch);
+                    return;
+                case WhileStmt w: S(w.Body); return;
+                case ForStmt f: S(f.Body); return;
+                case WithStmt wi: S(wi.Body); return;
+                case TryStmt t:
+                    foreach (var cs in t.Body) S(cs);
+                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
+                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
+                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
+                    return;
+                case MatchStmt m: foreach (var br in m.Branches) S(br.Body); return;
+            }
+        }
+        S(func.Body);
+        return found;
+    }
+
 }
