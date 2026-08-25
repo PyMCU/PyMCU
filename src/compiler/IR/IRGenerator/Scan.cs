@@ -795,13 +795,29 @@ public partial class IRGenerator
                                     string className = classPrefix.Substring(0, classPrefix.Length - 1);
                                     propertySetters[className + "." + func.PropertyName] = setterKey;
                                 }
-                                else if (func.IsOutline)
+                                else if (func.IsOutline && func.Name != "__init__")
                                 {
                                     // RFC 0001: explicit @outline -- compile this method ONCE as a
                                     // shared subroutine (Model A field-params, or Model B SRAM slot
                                     // for >= 2 fields). After F4 this is redundant with the default
                                     // for outline-safe methods; kept as an explicit request.
-                                    RegisterOutlinedMethod(func, classKey, clsLayout, fullName, classMethods);
+                                    //
+                                    // @outline on __init__ is not handled here at all: a constructor
+                                    // establishes the instance and cannot be shared, and taking it out
+                                    // of the ordinary path left `A(s)` unable to find the class, which
+                                    // was then reported as the class having no __init__ -- on a file
+                                    // whose next line defines one. It takes the undecorated path.
+                                    //
+                                    // The safety check applies here too. @outline asks for a shared
+                                    // body wherever one is possible; it cannot make an unshareable
+                                    // one shareable. A body that reaches THROUGH a field
+                                    // (`self.inner.get()`) has no standalone form: outlining it
+                                    // anyway mangled the call into `self_inner_get` and failed the
+                                    // build over a method the program may never call.
+                                    if (IsOutlineSafe(func, clsLayout))
+                                        RegisterOutlinedMethod(func, classKey, clsLayout, fullName, classMethods);
+                                    else
+                                        instanceMethodDefs[fullName] = func;
                                 }
                                 else if (func.IsInline)
                                 {
