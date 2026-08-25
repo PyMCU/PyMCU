@@ -799,6 +799,14 @@ public partial class IRGenerator
 
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
+
+            // Dividing by a literal zero is an error whatever the dividend is, exactly as on
+            // the integer path. The fold below used to answer 0.0 for it, so `p / 0.0` compiled
+            // clean and put a plausible zero on the port.
+            if (f2 is 0.0 && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
+                throw new ValueError("float division by zero",
+                    expr.Line > 0 ? expr.Line : lastLine, 1);
+
             if (f1.HasValue && f2.HasValue)
             {
                 // Compile-time fold: both operands are known constants.
@@ -836,6 +844,27 @@ public partial class IRGenerator
             };
             bool isCompare = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
                 or AstBinOp.Less or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq;
+
+            // Run-time float divide/modulo by zero raises ZeroDivisionError, matching Python and
+            // matching what the INTEGER path has always done. Without this the division produced
+            // an infinity, and print() renders an infinity as 0.0, so the one value a reader
+            // would take as a legitimate result is what reached the port.
+            //
+            // The test is a float EQUALITY against zero rather than a test of the four bytes,
+            // because negative zero has its sign bit set: `p / -0.0` raises in Python too, and a
+            // bit test would let it through. Only a divisor the compiler cannot see pays for it.
+            if (expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod
+                && AsFloatCt(v2) is null)
+            {
+                Temporary isZero = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.Equal, v2, new FloatConstant(0.0), isZero));
+                string divOk = MakeLabel();
+                Emit(new JumpIfZero(isZero, divOk));
+                string? localCatchF = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+                Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatchF));
+                Emit(new Label(divOk));
+            }
+
             Temporary floatDst = MakeTemp(isCompare ? DataType.UINT8 : DataType.FLOAT);
             Emit(new Binary(MapOp(expr.Op), v1, v2, floatDst));
             return floatDst;
@@ -866,7 +895,22 @@ public partial class IRGenerator
             Val fa = ToFloatVal(v1);
             Val fb = ToFloatVal(v2);
             if (fa is FloatConstant fca && fb is FloatConstant fcb)
-                return new FloatConstant(fcb.Value != 0.0 ? fca.Value / fcb.Value : 0.0);
+            {
+                // Same rule as everywhere else: a literal zero divisor is the error, not 0.0.
+                if (fcb.Value == 0.0)
+                    throw new ValueError("division by zero", dline, 1);
+                return new FloatConstant(fca.Value / fcb.Value);
+            }
+            if (fb is not FloatConstant)
+            {
+                Temporary isZeroI = MakeTemp(DataType.UINT8);
+                Emit(new Binary(BinaryOp.Equal, fb, new FloatConstant(0.0), isZeroI));
+                string divOkI = MakeLabel();
+                Emit(new JumpIfZero(isZeroI, divOkI));
+                string? localCatchI = tryCatchStack.Count > 0 ? tryCatchStack[^1] : null;
+                Emit(new SignalError(new Constant(6 /* ZeroDivisionError */), localCatchI));
+                Emit(new Label(divOkI));
+            }
             Temporary fdst = MakeTemp(DataType.FLOAT);
             Emit(new Binary(BinaryOp.Div, fa, fb, fdst));
             return fdst;
