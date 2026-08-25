@@ -20,6 +20,13 @@ namespace PyMCU.Common.Abstractions;
 
 public interface IModuleLoader
 {
-    ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context);
-    string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context);
+    /// <param name="importedSymbols">
+    /// The names of a `from &lt;module&gt; import a, b` — used only to word the not-found error,
+    /// so that importing a name from a package that exists can say where the name really lives
+    /// instead of claiming the package is missing.
+    /// </param>
+    ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context,
+                           IReadOnlyList<string>? importedSymbols = null);
+    string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context,
+                             IReadOnlyList<string>? importedSymbols = null);
 }

@@ -55,8 +55,8 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
             {
                 if (BuiltinModuleNames.IsBuiltin(imp.ModuleName)) continue;
 
-                var importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context);
-                var importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context);
+                var importedAst  = moduleLoader.LoadModule(imp.ModuleName, currentPath, context, imp.Symbols);
+                var importedPath = moduleLoader.ResolveModulePath(imp.ModuleName, currentPath, context, imp.Symbols);
 
                 graph.AddDependencyEdge(importedAst, currentAst);
 

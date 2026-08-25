@@ -22,17 +22,19 @@ namespace PyMCU.Infrastructure;
 
 public class FileSystemModuleLoader : IModuleLoader
 {
-    public string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context)
+    public string ResolveModulePath(string moduleName, string currentFilePath, CompilationContext context,
+                                    IReadOnlyList<string>? importedSymbols = null)
     {
-        return ResolveModulePath(moduleName, context.IncludePaths, currentFilePath, 0);
+        return ResolveModulePath(moduleName, context.IncludePaths, currentFilePath, 0, importedSymbols);
     }
 
-    public ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context)
+    public ProgramNode LoadModule(string moduleName, string currentFilePath, CompilationContext context,
+                                  IReadOnlyList<string>? importedSymbols = null)
     {
         string path;
         try
         {
-            path = ResolveModulePath(moduleName, context.IncludePaths, currentFilePath, 0);
+            path = ResolveModulePath(moduleName, context.IncludePaths, currentFilePath, 0, importedSymbols);
         }
         catch (Exception ex)
         {
@@ -82,7 +84,8 @@ public class FileSystemModuleLoader : IModuleLoader
         return modAst;
     }
 
-    private static string ResolveModulePath(string moduleName, List<string> includePaths, string currentFilePath, int relativeLevel)
+    private static string ResolveModulePath(string moduleName, List<string> includePaths, string currentFilePath,
+                                            int relativeLevel, IReadOnlyList<string>? importedSymbols = null)
     {
         // Builtin module aliases: bare `import asyncio` / `math` / `random` / `time` resolve
         // to the pymcu stdlib file of the same name. The module still registers under the bare
@@ -164,6 +167,43 @@ public class FileSystemModuleLoader : IModuleLoader
                 $"[tool.pymcu] in pyproject.toml, and that pymcu-{flavorHint} is installed " +
                 $"in the project's environment (uv sync, or pip install -r requirements.txt)");
 
+        // The name resolves to a DIRECTORY with no __init__.py — a namespace package, which
+        // `pymcu` itself is. It is present, so "Module not found" contradicts the imports of
+        // its submodules two lines above, and `pymcu install pymcu` names a command that
+        // leads nowhere. Say the package is there and where the name being imported lives.
+        {
+            var pkgDir = includePaths
+                .Select(baseDir => Path.Combine(baseDir, pathRel))
+                .FirstOrDefault(Directory.Exists);
+
+            if (pkgDir != null)
+            {
+                string want = importedSymbols is { Count: > 0 } ? importedSymbols[0] : "";
+                string where = want.Length > 0 ? FindSubmoduleDefining(pkgDir, moduleName, want) : "";
+
+                if (where.Length > 0)
+                    throw new Exception(
+                        $"cannot import '{want}' from '{moduleName}': '{moduleName}' is a package "
+                        + $"with no module of its own, and its names live in its submodules. "
+                        + $"'{want}' is defined in '{where}' -- write "
+                        + $"`from {where} import {want}`.");
+
+                var subs = SubmoduleNames(pkgDir, moduleName);
+                string list = subs.Count > 0
+                    ? $" Its submodules are {string.Join(", ", subs.Take(8))}"
+                      + (subs.Count > 8 ? ", ..." : "") + "."
+                    : "";
+                throw new Exception(
+                    (want.Length > 0
+                        ? $"cannot import '{want}' from '{moduleName}': no submodule of "
+                          + $"'{moduleName}' defines it. "
+                        : "")
+                    + $"'{moduleName}' is a package with no module of its own, so an import must "
+                    + $"name a submodule (`from {moduleName}.<submodule> import ...`)."
+                    + list);
+            }
+        }
+
         // Anything else with no dots is a plain top-level import, which is what a
         // third-party library provides. The name is the one people type.
         if (!moduleName.Contains('.'))
@@ -172,5 +212,60 @@ public class FileSystemModuleLoader : IModuleLoader
                 $"into this project with `pymcu install {moduleName}`");
 
         throw new Exception($"Module not found: {moduleName}");
+    }
+
+    /// <summary>
+    /// The dotted name of the submodule of <paramref name="pkgDir"/> that defines
+    /// <paramref name="symbol"/> at top level, or "" when none does. Only ever called on the
+    /// import-failed path, so a plain textual scan is cheap enough and needs no parser.
+    /// </summary>
+    private static string FindSubmoduleDefining(string pkgDir, string packageName, string symbol)
+    {
+        foreach (var file in Directory.EnumerateFiles(pkgDir, "*.py").OrderBy(f => f))
+        {
+            string stem = Path.GetFileNameWithoutExtension(file);
+            if (stem == "__init__") continue;
+
+            string[] lines;
+            try { lines = File.ReadAllLines(file); }
+            catch { continue; }
+
+            foreach (var raw in lines)
+            {
+                // Top-level only: an indented `def` is a method, not an export.
+                if (raw.Length == 0 || char.IsWhiteSpace(raw[0])) continue;
+                var line = raw.TrimEnd();
+                if (line.StartsWith($"def {symbol}(", StringComparison.Ordinal)
+                    || line.StartsWith($"class {symbol}(", StringComparison.Ordinal)
+                    || line.StartsWith($"class {symbol}:", StringComparison.Ordinal)
+                    || line.StartsWith($"{symbol} =", StringComparison.Ordinal)
+                    || line.StartsWith($"{symbol}:", StringComparison.Ordinal)
+                    || line.StartsWith($"{symbol}=", StringComparison.Ordinal))
+                    return $"{packageName}.{stem}";
+            }
+        }
+
+        return "";
+    }
+
+    /// <summary>The importable submodule names directly inside a package directory.</summary>
+    private static List<string> SubmoduleNames(string pkgDir, string packageName)
+    {
+        var names = new List<string>();
+
+        foreach (var file in Directory.EnumerateFiles(pkgDir, "*.py"))
+        {
+            string stem = Path.GetFileNameWithoutExtension(file);
+            if (stem != "__init__") names.Add($"{packageName}.{stem}");
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(pkgDir))
+        {
+            string stem = Path.GetFileName(dir);
+            if (!stem.StartsWith("__", StringComparison.Ordinal)) names.Add($"{packageName}.{stem}");
+        }
+
+        names.Sort(StringComparer.Ordinal);
+        return names;
     }
 }

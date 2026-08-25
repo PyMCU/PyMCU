@@ -96,7 +96,7 @@ public class FrontendResolutionPhase(
 
                     // Load the module if not yet loaded
                     if (!context.NamedModules.ContainsKey(imp.ModuleName))
-                        moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context);
+                        moduleLoader.LoadModule(imp.ModuleName, context.Options.FilePath, context, imp.Symbols);
 
                     var importedModule = context.NamedModules[imp.ModuleName];
                     if (processedModules.Add(imp.ModuleName))
