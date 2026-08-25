@@ -1381,7 +1381,13 @@ public partial class IRGenerator
         while (!string.IsNullOrEmpty(prefixTry))
         {
             var candidate = prefixTry + name;
-            if (inlineFunctions.ContainsKey(candidate) || functionParams.ContainsKey(candidate))
+            // Classes are looked up here too, not just functions: a class defined in an
+            // imported module is registered under that module's prefix, and without this
+            // `C(5)` resolved to the bare `C`, found no `C___init__`, and was reported as a
+            // class with no __init__ on a file that defines one -- from the importing file AND
+            // from a plain function inside the module that defines the class.
+            if (inlineFunctions.ContainsKey(candidate) || functionParams.ContainsKey(candidate)
+                || classFieldLayout.ContainsKey(candidate) || classDirectMethods.ContainsKey(candidate))
             {
                 return candidate;
             }
