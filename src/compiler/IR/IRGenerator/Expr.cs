@@ -609,7 +609,9 @@ public partial class IRGenerator
             // Python `a and b` evaluates to the OPERAND, not a bool: falsy a -> a,
             // otherwise b. Short-circuits b. (`if a and b:` is unaffected since it
             // only tests truthiness; the difference shows in `x = a and b`.)
-            Val v1a = VisitExpression(expr.Left);
+            // Deciding which operand to keep IS a truth test, so an instance operand goes
+            // through its __bool__ here too.
+            Val v1a = VisitExpression(LowerInstanceTruthiness(expr.Left));
             if (v1a is Constant c1a)
                 return c1a.Value == 0 ? c1a : VisitExpression(expr.Right);
 
@@ -625,8 +627,9 @@ public partial class IRGenerator
 
         if (expr.Op == AstBinOp.Or)
         {
-            // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b.
-            Val v1a = VisitExpression(expr.Left);
+            // Python `a or b`: truthy a -> a, otherwise b. Short-circuits b. Choosing between
+            // them is a truth test, so an instance operand goes through its __bool__.
+            Val v1a = VisitExpression(LowerInstanceTruthiness(expr.Left));
             if (v1a is Constant c1a)
                 return c1a.Value != 0 ? c1a : VisitExpression(expr.Right);
 
@@ -1074,7 +1077,10 @@ public partial class IRGenerator
 
     private Val VisitTernary(TernaryExpr expr)
     {
-        Val cond = VisitExpression(expr.Condition);
+        // `1 if obj else 0` asks for the object's truth value exactly as `if obj:` does, and
+        // only the statement forms were routed through the protocol. Here the raw handle was
+        // tested instead, so an instance whose __bool__ says true came out false.
+        Val cond = VisitExpression(LowerInstanceTruthiness(expr.Condition));
         if (cond is Constant c)
         {
             if (c.Value != 0) return VisitExpression(expr.TrueVal);
@@ -1107,7 +1113,12 @@ public partial class IRGenerator
 
     private Val VisitUnary(UnaryExpr expr)
     {
-        Val operand = VisitExpression(expr.Operand);
+        // `not obj` is a truth test like `if obj:`, and only the statement forms went through
+        // the protocol: the raw handle was negated instead, so `not x` answered true for an
+        // instance whose __bool__ says true. The other unary operators take a number, not a
+        // truth value, and are left alone.
+        Val operand = VisitExpression(
+            expr.Op == AstUnOp.Not ? LowerInstanceTruthiness(expr.Operand) : expr.Operand);
 
         string cls = GetValClass(operand);
         if (!string.IsNullOrEmpty(cls))

@@ -25,6 +25,11 @@ public partial class IRGenerator
 {
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
     {
+        // Every condition that reaches here is a truth test, including each operand of an
+        // `and` / `or`, which recurses into this method. `if x and True:` tested the raw
+        // instance handle for x and answered false for an object whose __bool__ says true.
+        cond = LowerInstanceTruthiness(cond);
+
         int? ResolveInt(Expression expr)
         {
             if (expr is IntegerLiteral num) return num.Value;
@@ -45,7 +50,10 @@ public partial class IRGenerator
                     if (r == 2) return true;
                     if (r == -1) return false;
                     if (r != 0) return null;
-                    Val v = VisitExpression(sub);
+                    // The recursive call lowered its own copy; this fallback path evaluates the
+                    // operand as a value and has to lower it too, or an instance operand is
+                    // tested as its raw handle after all.
+                    Val v = VisitExpression(LowerInstanceTruthiness(sub));
                     if (v is Constant c)
                     {
                         bool cval = c.Value != 0;
