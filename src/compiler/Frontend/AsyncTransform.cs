@@ -483,8 +483,10 @@ public static class AsyncTransform
             if (fields.Contains(l))
                 initBody.Statements.Add(SelfDecl(l,
                     localTypes.TryGetValue(l, out var lt) ? ScalarType(lt) : "uint32", Int(0)));
-        foreach (var sf in b.StartFields)
-            initBody.Statements.Add(SelfDecl(sf, "uint32", Int(0)));
+        if (b.NeedsStart)
+            initBody.Statements.Add(SelfDecl(StartField, "uint32", Int(0)));
+        if (b.NeedsDuration)
+            initBody.Statements.Add(SelfDecl(DurationField, "uint32", Int(0)));
         if (b.NeedsValue)
             initBody.Statements.Add(SelfDecl("_value",
                 InferValueFieldType(b, localTypes, fn.Params), Int(0)));
@@ -526,11 +528,11 @@ public static class AsyncTransform
         private readonly string? _aio;
         private readonly string _fnName;
         public readonly List<State> States = new();
-        public readonly List<string> StartFields = new();
+        public bool NeedsStart;
+        public bool NeedsDuration;
         public bool NeedsValue;
         private State _cur = null!;
         private int _nextId;
-        private int _awaitCounter;
         // Flattened-loop context for break/continue rewriting: (headId, afterId).
         private readonly Stack<(int Head, int After)> _loops = new();
         private const int Terminal = 0x7FFF;   // never emitted as a state -> poll returns 0
@@ -651,24 +653,54 @@ public static class AsyncTransform
         }
 
         // ── await asyncio.sleep[_ms](n) ─────────────────────────────────────────
+        // One `_deadline` field serves every await in the coroutine, because only one
+        // of them can be suspended at a time. Storing the wake-up time rather than the
+        // start timestamp is what makes that sharing possible: a start timestamp is only
+        // meaningful next to its own duration, so it needed a field per await site (4
+        // bytes each on top of the 2 for _state), while a deadline is self-contained.
+        // It also moves the duration out of the hot path -- `ms * 1000` with a run-time
+        // `ms` is a __mul32 call, and the old wait state paid for it on every single
+        // poll instead of once when the await was armed.
         private void EmitAwaitSleep(Expression durUsExpr)
         {
-            string sf = "_start" + _awaitCounter++;
-            StartFields.Add(sf);
+            NeedsStart = true;
 
-            // Arm: record the start timestamp (asyncio.ticks(), microseconds).
-            _cur.Raw.Add(SelfAssign(sf, AioCall("ticks")));
+            // One `_start` serves every await in the coroutine: only one of them can be
+            // suspended at a time, so the timestamp of whichever armed last is the only
+            // one that means anything. The earlier shape gave each site its own `_startN`,
+            // which cost 4 bytes of state per await for no gain.
+            //
+            // A literal duration stays inline in the comparison, exactly as before, so the
+            // wait state is unchanged and the whole 2^32 us range the counter can express
+            // is still available. Only a run-time duration needs storing, and storing it
+            // is itself a win: `ms * 1000` is a __mul32 call, and leaving it in the wait
+            // state paid for it on every poll instead of once when the await was armed.
+            _cur.Raw.Add(SelfAssign(StartField, AioCall("ticks")));
+
+            Expression waitAgainst;
+            if (durUsExpr is IntegerLiteral)
+            {
+                waitAgainst = durUsExpr;
+            }
+            else
+            {
+                NeedsDuration = true;
+                _cur.Raw.Add(SelfAssign(DurationField, durUsExpr));
+                waitAgainst = SelfRef(DurationField);
+            }
+
             int waitId = NewState();
             int afterId = NewState();
             Goto(waitId);
 
-            // Wait state: stay PENDING until `asyncio.ticks() - start >= duration_us`.
+            // Wait state: stay PENDING until `ticks() - start >= duration`, in wrapping
+            // uint32 arithmetic so a counter roll-over during the wait is handled.
             SwitchTo(waitId);
             _cur.Raw.Add(new IfStmt(
                 new BinaryExpr(
-                    new BinaryExpr(AioCall("ticks"), BinaryOp.Sub, SelfRef(sf)),
+                    new BinaryExpr(AioCall("ticks"), BinaryOp.Sub, SelfRef(StartField)),
                     BinaryOp.Less,
-                    durUsExpr),
+                    waitAgainst),
                 ReturnBlock(1)));
             Goto(afterId);
 
@@ -994,11 +1026,44 @@ public static class AsyncTransform
             && (m.Member == "sleep" || m.Member == "sleep_ms"))
         {
             int scale = m.Member == "sleep" ? 1_000_000 : 1000;
+            // A literal duration is folded here rather than left for the optimizer: it
+            // keeps a __mul32 out of the arm state on 8-bit targets, and it is the only
+            // point where the duration can be range-checked before it silently wraps.
             durUsExpr = new BinaryExpr(c.Args[0], BinaryOp.Mul, new IntegerLiteral(scale));
+            // `-5` reaches here as a negation around the literal, not as a negative one.
+            if (ConstantMillis(c.Args[0]) is { } lit)
+            {
+                long us = lit * scale;
+                if (us < 0)
+                    throw new SyntaxError(
+                        $"`await {aio}.{m.Member}({lit})`: the duration cannot be negative.", 0, 0);
+                // The wait compares `ticks() - start` against the duration in wrapping
+                // uint32 arithmetic, so the whole 2^32 us range is usable, about 71
+                // minutes. Past that the subtraction lands back inside the window and the
+                // await would return immediately instead of waiting.
+                if (us > uint.MaxValue)
+                    throw new SyntaxError(
+                        $"`await {aio}.{m.Member}({lit})` is longer than a single await can wait " +
+                        "(the limit is 4294 seconds, about 71 minutes). Split it into shorter sleeps, " +
+                        "or count them in a loop.", 0, 0);
+                // IntegerLiteral is 32-bit signed, so only the lower half can be folded
+                // here; the rest keeps the multiply, which the backend widens correctly.
+                if (us > int.MaxValue) return true;
+                durUsExpr = new IntegerLiteral((int)us);
+            }
             return true;
         }
         return false;
     }
+
+    // The compile-time value of a sleep argument, or null when it is a run-time
+    // expression. A negated literal is a UnaryExpr, which is how `sleep_ms(-5)` arrives.
+    private static long? ConstantMillis(Expression e) => e switch
+    {
+        IntegerLiteral i => i.Value,
+        UnaryExpr { Op: UnaryOp.Negate, Operand: IntegerLiteral n } => -(long)n.Value,
+        _ => null,
+    };
 
     private static bool ContainsAwait(Statement s)
     {
@@ -1105,6 +1170,11 @@ public static class AsyncTransform
         if (signed) return rank == 1 ? "int8" : "int16";
         return rank == 1 ? "uint8" : "uint16";
     }
+
+    // The single uint32 every `await asyncio.sleep(...)` in a coroutine shares. See
+    // Builder.EmitAwaitSleep for why one pair is enough for any number of await sites.
+    private const string StartField = "_start";
+    private const string DurationField = "_duration";
 
     private static string ScalarType(string t) => string.IsNullOrEmpty(t) ? "uint32" : t;
 
