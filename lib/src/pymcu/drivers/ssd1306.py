@@ -11,14 +11,14 @@
 #   oled.clear()
 #   oled.pixel(x, y, color)
 #   oled.show()
-#   oled.print_str(x, y, "Hi!")
+#   oled.print_str(x, y, "Hi!")   # the text is a compile-time literal
 #
 # Internal: 1024-byte SRAM framebuffer (128*64/8) for pixel-level access.
 # show() flushes the buffer to GDDRAM via I2C, one byte at a time.
 #
 # Architecture dispatch: _ssd1306/i2c.py (I2C command/data helpers)
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, inline
+from pymcu.types import uint8, uint16, const, inline
 
 
 # Module-level framebuffer: 1024 bytes of SRAM (128 columns * 8 pages).
@@ -87,13 +87,16 @@ class SSD1306:
                 i2c_stop()
 
     @inline
-    def print_str(self, x: uint8, y: uint8, s: str):
+    def print_str(self, x: uint8, y: uint8, s: const[str]):
         # Write the raw character codes of `s` into the framebuffer starting at
         # (x, y): one byte per character, at column x+i of page row y / 8.
         # This is NOT text rendering -- each byte lands in GDDRAM as an 8-pixel
         # column pattern, so what shows up is the bit pattern of the ASCII code,
         # not a glyph. There is no font table in this driver yet.
-        # for-in over const[str] is compile-time unrolled by the IR generator.
+        #
+        # `s` has to be const[str]: the loop below is unrolled at compile time, one
+        # store per character, and a plain `str` parameter is not something the
+        # unroller can walk -- the call failed to build wherever it was written.
         page: uint8 = y >> 3
         col: uint8 = x
         for c in s:
