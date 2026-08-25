@@ -29,9 +29,17 @@ elif __CHIP__.name == "attiny84" or __CHIP__.name == "attiny44" or __CHIP__.name
 elif __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
     from pymcu.hal.avr.gpio.attiny2313 import select_port, select_ddr, select_pin, select_bit
 elif __CHIP__.name == "atmega2560":
-    from pymcu.hal.avr.gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit
+    # pin_irq_setup is imported here because Pin.irq() dispatches to it for this
+    # chip. Without it every irq() call failed as "name 'pin_irq_setup' is not
+    # defined" -- an internal helper the user never wrote -- while the chip's own
+    # implementation sat in atmega2560.py, complete and unreachable through the facade.
+    from pymcu.hal.avr.gpio.atmega2560 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup
 elif __CHIP__.name == "atmega32u4":
-    from pymcu.hal.avr.gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit
+    # pin_irq_setup is imported here because Pin.irq() dispatches to it for this
+    # chip. Without it every irq() call failed as "name 'pin_irq_setup' is not
+    # defined" -- an internal helper the user never wrote -- while the chip's own
+    # implementation sat in atmega32u4.py, complete and unreachable through the facade.
+    from pymcu.hal.avr.gpio.atmega32u4 import select_port, select_ddr, select_pin, select_bit, pin_irq_setup
 
 
 class Pin:
@@ -53,7 +61,14 @@ class Pin:
 
     IRQ_FALLING    = 1
     IRQ_RISING     = 2
+    # Any edge. pin_irq_setup has always implemented trigger 3 and irq() has always
+    # defaulted to it; the capability was reachable only as `IRQ_FALLING | IRQ_RISING`,
+    # which is 3 by arithmetic rather than by name.
+    IRQ_CHANGE     = 3
     IRQ_LOW_LEVEL  = 4
+    # Kept so the rejection can name what was asked for: the AVR external interrupts
+    # encode low level, any edge, falling and rising, and nothing else. pin_irq_setup
+    # raises on it.
     IRQ_HIGH_LEVEL = 8
 
     def __init__(self, name: str, mode: const[uint8], pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):

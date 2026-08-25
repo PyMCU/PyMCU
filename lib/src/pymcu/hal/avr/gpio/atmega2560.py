@@ -164,8 +164,28 @@ def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
     # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA/EICRB ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
     # INT0-INT3 on PD0-PD3 (EICRA), INT4-INT7 on PE4-PE7 (EICRB)
-    # A port name ('PD2') or an Arduino board number (2) -- the same two
-    # spellings Pin() takes, matched together so both fold to one branch.
+    #
+    # Checked BEFORE any register is touched, and once for every pin: a trigger that
+    # matched no arm below used to fall off the end of the if/elif chain with the ISCn
+    # bits left at their reset value 0 -- which is LOW LEVEL -- and EIMSK enabled anyway.
+    # The pin the user asked about never fired, and its complement re-asserted the
+    # interrupt for as long as it stayed low, which wedges the part in an ISR that never
+    # returns.
+    if trigger == 8:
+        raise CompileError(
+            "Pin.IRQ_HIGH_LEVEL is not supported on this chip. The external interrupts "
+            "encode only four triggers in ISCn1:ISCn0 -- low level, any edge, falling and "
+            "rising -- and high level is not one of them. Use Pin.IRQ_RISING for the "
+            "moment the pin goes high, or read the pin in your loop.")
+    if trigger != 1 and trigger != 2 and trigger != 3 and trigger != 4:
+        raise CompileError(
+            "unknown irq trigger. Pin.irq() takes ONE of Pin.IRQ_FALLING, Pin.IRQ_RISING, "
+            "Pin.IRQ_CHANGE or Pin.IRQ_LOW_LEVEL. The four are not a bit mask that can be "
+            "combined freely: `Pin.IRQ_FALLING | Pin.IRQ_RISING` is 3, which is exactly "
+            "Pin.IRQ_CHANGE, and no other combination names a trigger the hardware has.")
+
+    # A port name ('PD0') or a Mega board number (21) -- the same two spellings
+    # Pin() takes, matched together so both fold to one branch.
     match name:
         case 'PD0' | 21:
             # INT0: EICRA bits 1:0
