@@ -52,10 +52,46 @@ public static class AsyncTransform
                     "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.", 0, 0);
         }
 
+        // `yield from` in a coroutine is not the same construct: it would have to drive the
+        // delegate between awaits, and the expansion below only walks generators. Left alone
+        // it reached the state splitter as an ordinary yield and published the CALL as the
+        // yielded value, which builds and is wrong without a word.
+        foreach (var fn in asyncFns)
+            if (DelegateYieldPosition(fn.Body.Statements) != null)
+                throw new SyntaxError(
+                    $"`yield from` is not supported inside `async def {fn.Name}`. It is available "
+                    + "in a plain generator (a `def` whose body yields); a coroutine has no "
+                    + "delegation form yet.", 0, 0);
+
         foreach (var fn in asyncFns)
         {
             prog.Functions.Remove(fn);
             prog.GlobalStatements.Add(TransformFunction(fn, alias!));
+        }
+
+        // `yield from inner()` is expanded into inner's own body, with its locals renamed,
+        // BEFORE the state split: one generator delegating to another would otherwise need
+        // to hold the delegate's state machine as a field and drive it, and a nested ZCA
+        // instance has no address to poll through. Expanding keeps a single flat state
+        // machine -- the same thing @inline does everywhere else in this compiler.
+        if (genFns.Count > 0)
+        {
+            var genByName = new Dictionary<string, FunctionDef>();
+            foreach (var g in genFns) genByName[g.Name] = g;
+            int yfCounter = 0;
+            foreach (var g in genFns)
+                ExpandYieldFrom(g.Body.Statements, genByName,
+                    new HashSet<string> { g.Name }, ref yfCounter);
+
+            // Anything the expansion did not consume is a form it cannot express. Saying so
+            // here beats the message the splitter would give, which talks about @inline
+            // functions and class methods and names neither `yield` nor `from`.
+            foreach (var g in genFns)
+                if (DelegateYieldPosition(g.Body.Statements) is { } where)
+                    throw new SyntaxError(
+                        $"`yield from` {where}. It is supported as a statement of its own, "
+                        + "delegating to a generator defined in this module and called by name: "
+                        + "`yield from inner(a)`.", 0, 0);
         }
         var genNames = new HashSet<string>();
         foreach (var fn in genFns)
@@ -140,6 +176,219 @@ public static class AsyncTransform
     private static void RewriteGenForsIn(Statement s, HashSet<string> genNames, ref int counter)
     {
         if (s is Block b) RewriteGenFors(b.Statements, genNames, ref counter);
+    }
+
+    // ── `yield from` expansion ──────────────────────────────────────────────────
+    // `yield from inner(a)` becomes inner's body spliced in place: the parameters are
+    // bound to the call's arguments as declared locals, and every name inner owns (its
+    // params and its own locals) is renamed with a per-site prefix so it cannot collide
+    // with the delegating generator's. The result is ordinary generator source, so every
+    // shape the state splitter already handles (yield in a while, in an if, break /
+    // continue) keeps working with no change to the splitter.
+    private static void ExpandYieldFrom(List<Statement> stmts,
+        Dictionary<string, FunctionDef> genByName, HashSet<string> active, ref int counter)
+    {
+        for (int i = 0; i < stmts.Count; i++)
+        {
+            if (stmts[i] is ExprStmt { Expr: YieldExpr { IsDelegate: true } yf })
+            {
+                stmts[i] = ExpandOne(yf, genByName, active, ref counter);
+                continue;
+            }
+            switch (stmts[i])
+            {
+                case Block b: ExpandYieldFrom(b.Statements, genByName, active, ref counter); break;
+                case IfStmt iff:
+                    ExpandIn(iff.ThenBranch, genByName, active, ref counter);
+                    foreach (var (_, eb) in iff.ElifBranches) ExpandIn(eb, genByName, active, ref counter);
+                    if (iff.ElseBranch != null) ExpandIn(iff.ElseBranch, genByName, active, ref counter);
+                    break;
+                case WhileStmt w: ExpandIn(w.Body, genByName, active, ref counter); break;
+                case ForStmt f: ExpandIn(f.Body, genByName, active, ref counter); break;
+            }
+        }
+    }
+
+    private static void ExpandIn(Statement s, Dictionary<string, FunctionDef> genByName,
+        HashSet<string> active, ref int counter)
+    {
+        if (s is Block b) ExpandYieldFrom(b.Statements, genByName, active, ref counter);
+    }
+
+    private static Statement ExpandOne(YieldExpr yf, Dictionary<string, FunctionDef> genByName,
+        HashSet<string> active, ref int counter)
+    {
+        // The delegate has to be named at the call: there is no generator object to pass
+        // around at run time, so `yield from x` where x is a variable cannot be resolved.
+        if (yf.Value is not CallExpr { Callee: VariableExpr callee } call
+            || !genByName.TryGetValue(callee.Name, out var inner))
+            throw new SyntaxError(
+                "`yield from` needs a direct call to a generator function defined in this " +
+                "module (`yield from inner(...)`): the delegate is expanded at compile time, " +
+                "so there is no generator object to take from a variable or another module.",
+                0, 0);
+
+        if (!active.Add(inner.Name))
+            throw new SyntaxError(
+                $"`yield from {inner.Name}(...)` is recursive (directly or through another " +
+                "generator). Delegation is expanded inline, so a cycle has no finite " +
+                "expansion; rewrite the generator as a loop.", 0, 0);
+
+        // `return` inside a delegated generator ends the DELEGATION, not the delegating
+        // generator -- a different jump target than the one the splitter emits for a
+        // `return`. Refused rather than silently ending the outer generator early.
+        if (ContainsReturn(inner.Body))
+        {
+            active.Remove(inner.Name);
+            throw new SyntaxError(
+                $"`yield from {inner.Name}(...)`: '{inner.Name}' contains a `return`, which " +
+                "ends the delegation and not the delegating generator. That distinction is " +
+                "not implemented yet -- let the delegate fall off the end of its body, or " +
+                "consume it with `for v in " + inner.Name + "(...): yield v` in a plain loop.",
+                0, 0);
+        }
+
+        string prefix = "__yf" + counter++ + "_";
+
+        var owned = new List<string>();
+        foreach (var p in inner.Params) owned.Add(p.Name);
+        CollectAssignedLocals(inner.Body, new HashSet<string>(), owned);
+        var renames = new Dictionary<string, string>();
+        foreach (var n in owned) renames[n] = prefix + n;
+
+        var repl = new Block { Line = inner.Line };
+        for (int pi = 0; pi < inner.Params.Count; pi++)
+        {
+            var p = inner.Params[pi];
+            Expression? arg = pi < call.Args.Count ? call.Args[pi]
+                : p.DefaultValue;
+            if (arg == null)
+                throw new SyntaxError(
+                    $"`yield from {inner.Name}(...)`: no argument for parameter '{p.Name}' " +
+                    "and it has no default.", 0, 0);
+            repl.Statements.Add(new VarDecl(renames[p.Name], p.Type, arg));
+        }
+
+        var renamer = new Renamer(renames);
+        var body = new List<Statement>();
+        foreach (var st in inner.Body.Statements) body.Add(renamer.Stmt(st));
+
+        // The delegate may itself delegate.
+        ExpandYieldFrom(body, genByName, active, ref counter);
+        repl.Statements.AddRange(body);
+
+        active.Remove(inner.Name);
+        return repl;
+    }
+
+    private static bool ContainsReturn(Statement s)
+    {
+        switch (s)
+        {
+            case ReturnStmt: return true;
+            case Block b: return b.Statements.Any(ContainsReturn);
+            case IfStmt iff:
+                return ContainsReturn(iff.ThenBranch)
+                    || (iff.ElseBranch != null && ContainsReturn(iff.ElseBranch))
+                    || iff.ElifBranches.Any(e => ContainsReturn(e.Item2));
+            case WhileStmt w: return ContainsReturn(w.Body);
+            case ForStmt f: return ContainsReturn(f.Body);
+            case TryStmt t:
+                return t.Body.Any(ContainsReturn)
+                    || t.Handlers.Any(h => h.Handler.Any(ContainsReturn))
+                    || (t.Finally != null && t.Finally.Any(ContainsReturn))
+                    || (t.ElseBody != null && t.ElseBody.Any(ContainsReturn));
+            case WithStmt ws: return ContainsReturn(ws.Body);
+            default: return false;
+        }
+    }
+
+    // Copies a delegated generator's body, renaming the names it owns. Anything this does
+    // not know how to copy is refused rather than passed through unrenamed: a missed name
+    // would silently bind to the delegating generator's variable of the same name.
+    private sealed class Renamer
+    {
+        private readonly Dictionary<string, string> _map;
+        public Renamer(Dictionary<string, string> map) => _map = map;
+
+        private string N(string n) => _map.TryGetValue(n, out var r) ? r : n;
+
+        public Statement Stmt(Statement s)
+        {
+            switch (s)
+            {
+                case ExprStmt es: return new ExprStmt(E(es.Expr)) { Line = es.Line };
+                case AssignStmt a:
+                    return new AssignStmt(E(a.Target), E(a.Value))
+                        { Line = a.Line, AnnotatedType = a.AnnotatedType };
+                case AugAssignStmt ag:
+                    return new AugAssignStmt(E(ag.Target), ag.Op, E(ag.Value)) { Line = ag.Line };
+                case VarDecl vd:
+                    return new VarDecl(N(vd.Name), vd.VarType, vd.Init == null ? null : E(vd.Init))
+                        { Line = vd.Line };
+                case AnnAssign aa:
+                    return new AnnAssign(N(aa.Target), aa.Annotation,
+                        aa.Value == null ? null : E(aa.Value)) { Line = aa.Line };
+                case IfStmt iff:
+                    return new IfStmt(E(iff.Condition), Stmt(iff.ThenBranch),
+                        iff.ElifBranches.Select(e => (E(e.Condition), Stmt(e.Body))).ToList(),
+                        iff.ElseBranch == null ? null : Stmt(iff.ElseBranch)) { Line = iff.Line };
+                case WhileStmt w:
+                    return new WhileStmt(E(w.Condition), Stmt(w.Body)) { Line = w.Line };
+                case ForStmt f:
+                {
+                    var nf = new ForStmt(N(f.VarName),
+                        f.RangeStart == null ? null : E(f.RangeStart),
+                        f.RangeStop == null ? null : E(f.RangeStop),
+                        f.RangeStep == null ? null : E(f.RangeStep),
+                        Stmt(f.Body)) { Line = f.Line, Var2Name = f.Var2Name };
+                    if (f.Iterable != null)
+                        throw new SyntaxError(
+                            "`yield from`: the delegated generator iterates something other " +
+                            "than range(...), which the delegation expansion cannot copy yet.",
+                            0, 0);
+                    return nf;
+                }
+                case Block b:
+                {
+                    var nb = new Block { Line = b.Line };
+                    foreach (var st in b.Statements) nb.Statements.Add(Stmt(st));
+                    return nb;
+                }
+                case BreakStmt: return new BreakStmt { Line = s.Line };
+                case ContinueStmt: return new ContinueStmt { Line = s.Line };
+                case PassStmt: return new PassStmt { Line = s.Line };
+                default:
+                    throw new SyntaxError(
+                        $"`yield from`: the delegated generator uses a {s.GetType().Name}, " +
+                        "which the delegation expansion cannot copy yet.", 0, 0);
+            }
+        }
+
+        private Expression E(Expression e)
+        {
+            switch (e)
+            {
+                case VariableExpr v: return new VariableExpr(N(v.Name)) { Line = v.Line };
+                case BinaryExpr b: return new BinaryExpr(E(b.Left), b.Op, E(b.Right)) { Line = b.Line };
+                case UnaryExpr u: return new UnaryExpr(u.Op, E(u.Operand)) { Line = u.Line };
+                case YieldExpr y:
+                    return new YieldExpr(y.Value == null ? null : E(y.Value), y.IsDelegate) { Line = y.Line };
+                case CallExpr c:
+                    return new CallExpr(E(c.Callee), c.Args.Select(E).ToList()) { Line = c.Line };
+                case MemberAccessExpr m: return new MemberAccessExpr(E(m.Object), m.Member) { Line = m.Line };
+                case IndexExpr ix: return new IndexExpr(E(ix.Target), E(ix.Index)) { Line = ix.Line };
+                case TernaryExpr t:
+                    return new TernaryExpr(E(t.TrueVal), E(t.Condition), E(t.FalseVal)) { Line = t.Line };
+                case KeywordArgExpr kw: return new KeywordArgExpr(kw.Key, E(kw.Value)) { Line = kw.Line };
+                case IntegerLiteral or FloatLiteral or BooleanLiteral or StringLiteral or NoneLiteral:
+                    return e;
+                default:
+                    throw new SyntaxError(
+                        $"`yield from`: the delegated generator uses a {e.GetType().Name}, " +
+                        "which the delegation expansion cannot copy yet.", 0, 0);
+            }
+        }
     }
 
     internal static bool ContainsYieldStatic(Statement s) => ContainsYield(s);
@@ -367,6 +616,13 @@ public static class AsyncTransform
             {
                 case ExprStmt or AssignStmt when _aio != null && TryGetAwaitSleep(s, _aio, out var durUs):
                     EmitAwaitSleep(durUs);
+                    return;
+
+                // A bare block carrying suspension points: the `yield from` expansion
+                // splices the delegate's body in as one, and there is no scope to open --
+                // the statements belong to the enclosing state sequence.
+                case Block blk:
+                    EmitSeq(blk.Statements);
                     return;
 
                 case IfStmt iff:
@@ -845,4 +1101,49 @@ public static class AsyncTransform
         b.Statements.Add(new ReturnStmt(Int(v)));
         return b;
     }
+
+    /// <summary>
+    /// Describes where a `yield from` that the expansion did not consume sits, or null when
+    /// there is none left. The phrasing completes the sentence "`yield from` ...".
+    /// </summary>
+    private static string? DelegateYieldPosition(List<Statement> stmts)
+    {
+        static bool IsDelegate(Expression? e) => e is YieldExpr { IsDelegate: true };
+
+        string? Walk(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return null;
+                case Block b: return b.Statements.Select(Walk).FirstOrDefault(x => x != null);
+                case ExprStmt es when IsDelegate(es.Expr):
+                    return "delegates to something this compiler cannot expand: the target must "
+                           + "be a direct call to a generator defined in this module, and it must "
+                           + "not be recursive";
+                case AssignStmt a when IsDelegate(a.Value):
+                case VarDecl vd when IsDelegate(vd.Init):
+                case AnnAssign an when IsDelegate(an.Value):
+                    return "has no value to assign: what CPython returns there is the delegate's "
+                           + "return value, which PyMCU generators do not carry";
+                case ReturnStmt r when IsDelegate(r.Value):
+                    return "cannot be returned";
+                case IfStmt i:
+                    return Walk(i.ThenBranch)
+                           ?? i.ElifBranches.Select(br => Walk(br.Item2)).FirstOrDefault(x => x != null)
+                           ?? Walk(i.ElseBranch);
+                case WhileStmt w: return Walk(w.Body);
+                case ForStmt f: return Walk(f.Body);
+                case WithStmt wi: return Walk(wi.Body);
+                case TryStmt t:
+                    return t.Body.Select(Walk).FirstOrDefault(x => x != null)
+                           ?? t.Handlers.SelectMany(h => h.Item2).Select(Walk).FirstOrDefault(x => x != null)
+                           ?? (t.ElseBody?.Select(Walk).FirstOrDefault(x => x != null))
+                           ?? (t.Finally?.Select(Walk).FirstOrDefault(x => x != null));
+                default: return null;
+            }
+        }
+
+        return stmts.Select(Walk).FirstOrDefault(x => x != null);
+    }
+
 }

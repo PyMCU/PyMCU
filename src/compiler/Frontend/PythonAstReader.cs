@@ -438,6 +438,8 @@ public static class PythonAstReader
             case "Await": return Located(new AwaitExpr(ReadExpr(e.GetProperty("operand"))!), e);
             case "Yield":
                 return Located(new YieldExpr(Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null), e);
+            case "YieldFrom":
+                return Located(new YieldExpr(ReadExpr(e.GetProperty("value")), isDelegate: true), e);
             default:
                 throw new CompilerError("PyParser", $"unknown expression kind '{kind}' from the translator",
                     Int(e, "line"), 0);

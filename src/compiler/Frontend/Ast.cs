@@ -265,7 +265,15 @@ public class BinaryExpr : Expression
 public class YieldExpr : Expression
 {
     public Expression? Value { get; }
-    public YieldExpr(Expression? value) => Value = value;
+    // `yield from g()`: delegation, not a value. The AsyncTransform expands it into the
+    // delegated generator's own body before the state split, so nothing downstream of the
+    // front end ever sees the distinction.
+    public bool IsDelegate { get; }
+    public YieldExpr(Expression? value, bool isDelegate = false)
+    {
+        Value = value;
+        IsDelegate = isDelegate;
+    }
 }
 
 public class UnaryExpr : Expression

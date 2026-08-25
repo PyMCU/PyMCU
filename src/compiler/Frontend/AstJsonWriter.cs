@@ -594,7 +594,7 @@ public static class AstJsonWriter
 
             case YieldExpr y:
                 w.WriteStartObject();
-                w.WriteString("k", "Yield");
+                w.WriteString("k", y.IsDelegate ? "YieldFrom" : "Yield");
                 w.WritePropertyName("value"); WriteExpr(w, y.Value);
                 w.WriteNumber("line", y.Line);
                 w.WriteEndObject();

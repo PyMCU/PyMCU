@@ -1189,16 +1189,6 @@ public class Parser
         int line = Peek().Line;
         if (Check(TokenType.Return)) return ParseReturnStatement();
 
-        // `yield from g()` means "for v in g(): yield v", and that shape does not compile
-        // either: the generator lowering cannot consume another generator from inside a
-        // generator. So this is not a parser gap to desugar away, and saying "Expected
-        // expression" hid which construct was refused and why.
-        if (Check(TokenType.Yield) && PeekNext().Type == TokenType.From)
-            Error("'yield from' is not supported: delegating means consuming one generator "
-                  + "from inside another, and the generator lowering does not do that yet "
-                  + "(the hand-written `for v in inner(): yield v` fails the same way). "
-                  + "Consume the inner generator directly where the values are used.");
-
         if (Match(TokenType.Pass))
         {
             ConsumeStatementEnd();
@@ -1384,6 +1374,11 @@ public class Parser
     {
         if (Match(TokenType.Yield))
         {
+            // `yield from g()` delegates to another generator: every value g yields is
+            // yielded again here. Marked on the node; AsyncTransform expands it.
+            if (Match(TokenType.From))
+                return new YieldExpr(ParseExpression(), isDelegate: true);
+
             // A bare `yield` suspends without producing a value, which the generator
             // lowering already handles (it publishes 0). Only the parser insisted on an
             // expression, and reported the absence as "Expected expression".
