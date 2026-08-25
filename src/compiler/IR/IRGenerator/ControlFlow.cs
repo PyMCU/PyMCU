@@ -741,21 +741,123 @@ public partial class IRGenerator
     private IEnumerable<string> FieldsMutatedBy(string instance, string method)
     {
         string? cls = InstanceClassOfName(instance);
-        if (cls == null) yield break;
+        return cls == null ? Enumerable.Empty<string>() : FieldsWrittenBy(cls + "_" + method);
+    }
 
-        if (!classFieldLayout.TryGetValue(cls, out var layout)) yield break;
+    /// <summary>
+    /// The fields the method compiled under <paramref name="callee"/> (`Class_method`) can
+    /// assign to, following the methods it calls on itself. Empty when the class or the method
+    /// cannot be resolved, which leaves the folds in place: this runs to prevent a stale value,
+    /// and a method nobody can find writes nothing the caller will observe.
+    /// </summary>
+    private IEnumerable<string> FieldsWrittenBy(string callee)
+    {
+        var paths = new List<string>();
+        CollectFieldsWrittenBy(callee, "", paths, new HashSet<string>());
+        return paths;
+    }
 
-        string key = cls + "_" + method;
+    /// <summary>
+    /// Accumulate into <paramref name="paths"/> the flattened field paths the method writes,
+    /// relative to its receiver: `_value` for its own field, `inner__state` for a field of an
+    /// instance it holds. A nested instance is reached through a call, so the recursion follows
+    /// `self.&lt;field&gt;.&lt;method&gt;()` -- an Outer that only forwards to its Inner still
+    /// leaves the Inner's state changed.
+    /// </summary>
+    private void CollectFieldsWrittenBy(string callee, string prefix, List<string> paths,
+                                        HashSet<string> visiting)
+    {
+        if (!visiting.Add(callee) || visiting.Count > 8) return;
+
+        string? cls = OwningClassOf(callee);
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return;
+
         FunctionDef? def = null;
-        if (!instanceMethodDefs.TryGetValue(key, out def)
-            && !methodAstByName.TryGetValue(key, out def)
-            && !(inlineFunctions.TryGetValue(key, out var inlineDef) && (def = inlineDef) != null))
-            yield break;
-        if (def == null) yield break;
+        if (!instanceMethodDefs.TryGetValue(callee, out def)
+            && !methodAstByName.TryGetValue(callee, out def)
+            && !inlineFunctions.TryGetValue(callee, out def)) return;
+        if (def == null) return;
 
-        foreach (var (field, _, _) in layout)
-            if (MethodMutatesFieldPublic(def, field))
-                yield return field;
+        foreach (var (field, type, _) in layout)
+        {
+            if (MethodMutatesFieldPublic(def, field)) paths.Add(prefix + field);
+
+            // `self.<field>.<method>()` where <field> holds an instance: what that method
+            // writes lives under the flattened `<field>_<its field>` name.
+            if (!classFieldLayout.ContainsKey(type)) continue;
+            foreach (string inner in NestedMethodsCalledOn(def, field))
+                CollectFieldsWrittenBy(type + "_" + inner, prefix + field + "_", paths, visiting);
+        }
+    }
+
+    /// <summary>The methods `<paramref name="method"/>` calls on `self.<paramref name="field"/>`.</summary>
+    private static IEnumerable<string> NestedMethodsCalledOn(FunctionDef method, string field)
+    {
+        var found = new HashSet<string>();
+        void E(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return;
+                case CallExpr { Callee: MemberAccessExpr { Object: MemberAccessExpr
+                        { Object: VariableExpr { Name: "self" }, Member: var f } } m } c when f == field:
+                    found.Add(m.Member);
+                    foreach (var a in c.Args) E(a);
+                    return;
+                case CallExpr c2: E(c2.Callee); foreach (var a in c2.Args) E(a); return;
+                case MemberAccessExpr ma: E(ma.Object); return;
+                case BinaryExpr b: E(b.Left); E(b.Right); return;
+                case UnaryExpr u: E(u.Operand); return;
+                case KeywordArgExpr kw: E(kw.Value); return;
+                case IndexExpr ix: E(ix.Target); E(ix.Index); return;
+                case TernaryExpr t: E(t.Condition); E(t.TrueVal); E(t.FalseVal); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) E(el); return;
+                case ListExpr le: foreach (var el in le.Elements) E(el); return;
+            }
+        }
+        void S(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return;
+                case Block bl: foreach (var cs in bl.Statements) S(cs); return;
+                case AssignStmt a: E(a.Value); return;
+                case AugAssignStmt aug: E(aug.Value); return;
+                case AnnAssign an: E(an.Value); return;
+                case VarDecl vd: E(vd.Init); return;
+                case ExprStmt es: E(es.Expr); return;
+                case ReturnStmt r: E(r.Value); return;
+                case IfStmt i:
+                    E(i.Condition); S(i.ThenBranch);
+                    foreach (var (c, br) in i.ElifBranches) { E(c); S(br); }
+                    S(i.ElseBranch);
+                    return;
+                case WhileStmt w: E(w.Condition); S(w.Body); return;
+                case ForStmt f: S(f.Body); return;
+                case WithStmt wi: S(wi.Body); return;
+                case TryStmt t:
+                    foreach (var cs in t.Body) S(cs);
+                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) S(cs);
+                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) S(cs);
+                    if (t.Finally != null) foreach (var cs in t.Finally) S(cs);
+                    return;
+            }
+        }
+        S(method.Body);
+        return found;
+    }
+
+    /// <summary>The class a `Class_method` symbol belongs to, or null when there is no such class.</summary>
+    private string? OwningClassOf(string callee)
+    {
+        int cut = callee.LastIndexOf('_');
+        while (cut > 0)
+        {
+            string cls = callee.Substring(0, cut);
+            if (classFieldLayout.ContainsKey(cls)) return cls;
+            cut = callee.LastIndexOf('_', cut - 1);
+        }
+        return null;
     }
 
     private IEnumerable<string> CandidateKeys(string name)

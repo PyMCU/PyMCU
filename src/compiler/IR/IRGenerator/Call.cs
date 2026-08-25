@@ -307,10 +307,27 @@ public partial class IRGenerator
                         // inlined. Pass the instance's runtime field values as leading args
                         // (self_<field>), then the user args, and emit a real Call. One body,
                         // N call sites -- no per-instance bloat.
-                        if (outlinedMethods.Contains(callee) && !needsVirtualInline)
+                        // A slot method reads and writes its fields through a `self` POINTER, so
+                        // it can only be called on an instance that has a slot. A nested instance
+                        // (`self.inner = Inner()`) is built flattened, field by field, and has
+                        // none: the call site passed the field VALUES where the body expected the
+                        // address and the callee wrote its state through a null pointer, with no
+                        // diagnostic. Fall through to the force-inline path, which expands the
+                        // body against the flattened fields.
+                        string outlinedInst = objVal is Variable ivName ? ivName.Name : "";
+                        bool slotAbiUnavailable = slotMethods.Contains(callee)
+                            && !slotInstances.ContainsKey(outlinedInst)
+                            && !factoryHandleInstances.Contains(outlinedInst);
+                        if (slotAbiUnavailable && !inlineFunctions.ContainsKey(callee)
+                            && (instanceMethodDefs.TryGetValue(callee, out var slotImpl)
+                                || methodAstByName.TryGetValue(callee, out slotImpl)))
+                            inlineFunctions[callee] = slotImpl;
+
+                        if (outlinedMethods.Contains(callee) && !needsVirtualInline
+                            && !slotAbiUnavailable)
                         {
                             var oArgs = new List<Val>();
-                            string instName = objVal is Variable iv ? iv.Name : "";
+                            string instName = outlinedInst;
                             if (slotMethods.Contains(callee)
                                 && slotInstances.TryGetValue(instName, out var slotName))
                             {
@@ -378,6 +395,7 @@ public partial class IRGenerator
                                 constantVariables.Remove(fieldVar);
                                 killedConstants.Add(fieldVar);
                                 variableTypes[fieldVar] = wb.Type;
+                                InvalidateFieldsWrittenByCall(callee, instName);
                                 return new NoneVal();
                             }
 
@@ -386,12 +404,14 @@ public partial class IRGenerator
                             if (rVoid)
                             {
                                 Emit(new Call(callee, oArgs, new NoneVal()));
+                                InvalidateFieldsWrittenByCall(callee, instName);
                                 return new NoneVal();
                             }
 
                             Temporary oDst = MakeTemp(DataTypeExtensions.StringToDataType(
                                 functionReturnTypes[callee]));
                             Emit(new Call(callee, oArgs, oDst));
+                            InvalidateFieldsWrittenByCall(callee, instName);
                             return oDst;
                         }
 
@@ -4166,4 +4186,26 @@ public partial class IRGenerator
 
         return synthName;
     }
+
+    /// <summary>
+    /// Forget the folded value of every field the called method assigns to. A Model B method
+    /// writes its fields through a pointer into the instance's memory, so after the call the
+    /// caller's compile-time copy is stale: `self.inner.poll()` stored 7 in `_value` and the
+    /// read on the next line still folded the 0 that `__init__` put there, leaving the outer
+    /// object at its initial value with no diagnostic.
+    /// </summary>
+    private void InvalidateFieldsWrittenByCall(string callee, string instName)
+    {
+        if (string.IsNullOrEmpty(instName)) return;
+
+        string bse = instName;
+        while (variableAliases.TryGetValue(bse, out var alias)) bse = alias;
+
+        foreach (var field in FieldsWrittenBy(callee))
+        {
+            constantVariables.Remove(bse + "_" + field);
+            strConstantVariables.Remove(bse + "_" + field);
+        }
+    }
+
 }
