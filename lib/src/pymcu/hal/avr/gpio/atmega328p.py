@@ -3,42 +3,45 @@ from pymcu.types import uint8, uint16, inline, ptr, compile_isr, const, asm
 from pymcu.exceptions import CompileError
 
 class _PinRegs:
+    # `name` is a port name ('PB5') or an Arduino Uno/Nano board number (13). Both
+    # spellings sit in the same match because the number on the silkscreen is the
+    # first one anyone writes, and matching them together keeps the whole thing a
+    # compile-time fold: Pin(13, Pin.OUT) and Pin("PB5", Pin.OUT) emit the same
+    # bytes. D0-D7 -> PORTD, D8-D13 -> PORTB, D14-D19 (A0-A5) -> PORTC.
     @inline
     def __init__(self, name: str):
         match name:
-            case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5':
+            case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 8 | 9 | 10 | 11 | 12 | 13:
                 self._port = PORTB
                 self._ddr  = DDRB
                 self._pin  = PINB
-            case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5':
+            case 'PC0' | 'PC1' | 'PC2' | 'PC3' | 'PC4' | 'PC5' | 14 | 15 | 16 | 17 | 18 | 19:
                 self._port = PORTC
                 self._ddr  = DDRC
                 self._pin  = PINC
-            case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7':
+            case 'PD0' | 'PD1' | 'PD2' | 'PD3' | 'PD4' | 'PD5' | 'PD6' | 'PD7' | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7:
                 self._port = PORTD
                 self._ddr  = DDRD
                 self._pin  = PIND
             case _:
                 raise CompileError(
-                    "unknown pin on this chip. The AVR HAL takes a PORT NAME: PB0-PB5, "
-                    "PC0-PC5 or PD0-PD7. Board numbering lives elsewhere -- "
-                    "`from pymcu.boards.arduino_uno import D13` then Pin(D13, Pin.OUT), "
-                    "or `from machine import Pin` for the MicroPython form Pin(13, Pin.OUT).")
+                    "unknown pin on this chip. Give a PORT NAME (PB0-PB5, PC0-PC5, "
+                    "PD0-PD7) or an Arduino Uno/Nano board number (0-19; 13 is the "
+                    "built-in LED and 14-19 are A0-A5).")
         match name:
-            case 'PB0' | 'PC0' | 'PD0': self._bit = 0
-            case 'PB1' | 'PC1' | 'PD1': self._bit = 1
-            case 'PB2' | 'PC2' | 'PD2': self._bit = 2
-            case 'PB3' | 'PC3' | 'PD3': self._bit = 3
-            case 'PB4' | 'PC4' | 'PD4': self._bit = 4
-            case 'PB5' | 'PC5' | 'PD5': self._bit = 5
-            case 'PD6':                  self._bit = 6
-            case 'PD7':                  self._bit = 7
+            case 'PB0' | 'PC0' | 'PD0' | 0 | 8 | 14: self._bit = 0
+            case 'PB1' | 'PC1' | 'PD1' | 1 | 9 | 15: self._bit = 1
+            case 'PB2' | 'PC2' | 'PD2' | 2 | 10 | 16: self._bit = 2
+            case 'PB3' | 'PC3' | 'PD3' | 3 | 11 | 17: self._bit = 3
+            case 'PB4' | 'PC4' | 'PD4' | 4 | 12 | 18: self._bit = 4
+            case 'PB5' | 'PC5' | 'PD5' | 5 | 13 | 19: self._bit = 5
+            case 'PD6' | 6:                  self._bit = 6
+            case 'PD7' | 7:                  self._bit = 7
             case _:
                 raise CompileError(
-                    "unknown pin on this chip. The AVR HAL takes a PORT NAME: PB0-PB5, "
-                    "PC0-PC5 or PD0-PD7. Board numbering lives elsewhere -- "
-                    "`from pymcu.boards.arduino_uno import D13` then Pin(D13, Pin.OUT), "
-                    "or `from machine import Pin` for the MicroPython form Pin(13, Pin.OUT).")
+                    "unknown pin on this chip. Give a PORT NAME (PB0-PB5, PC0-PC5, "
+                    "PD0-PD7) or an Arduino Uno/Nano board number (0-19; 13 is the "
+                    "built-in LED and 14-19 are A0-A5).")
 
 @inline
 def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
@@ -46,136 +49,139 @@ def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
     # EICRA ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
     # handler: compile-time function reference; compile_isr() registers it at the
     # correct vector so the @interrupt decorator is not needed on the handler.
-    if name == "PD2":
-        if trigger == 1:
-            # falling edge: ISC01=1, ISC00=0
-            EICRA[0] = 0
-            EICRA[1] = 1
-        elif trigger == 2:
-            # rising edge: ISC01=1, ISC00=1
-            EICRA[0] = 1
-            EICRA[1] = 1
-        elif trigger == 3:
-            # any edge (change): ISC01=0, ISC00=1
-            EICRA[0] = 1
-            EICRA[1] = 0
-        elif trigger == 4:
-            # low level: ISC01=0, ISC00=0
-            EICRA[0] = 0
-            EICRA[1] = 0
-        EIMSK[0] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0002)
-    elif name == "PD3":
-        if trigger == 1:
-            # falling edge: ISC11=1, ISC10=0
-            EICRA[2] = 0
-            EICRA[3] = 1
-        elif trigger == 2:
-            # rising edge: ISC11=1, ISC10=1
-            EICRA[2] = 1
-            EICRA[3] = 1
-        elif trigger == 3:
-            # any edge (change): ISC11=0, ISC10=1
-            EICRA[2] = 1
-            EICRA[3] = 0
-        elif trigger == 4:
-            # low level: ISC11=0, ISC10=0
-            EICRA[2] = 0
-            EICRA[3] = 0
-        EIMSK[1] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0004)
-    elif name == "PB0":
-        PCICR[0] = 1
-        PCMSK0[0] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PB1":
-        PCICR[0] = 1
-        PCMSK0[1] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PB2":
-        PCICR[0] = 1
-        PCMSK0[2] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PB3":
-        PCICR[0] = 1
-        PCMSK0[3] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PB4":
-        PCICR[0] = 1
-        PCMSK0[4] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PB5":
-        PCICR[0] = 1
-        PCMSK0[5] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0006)
-    elif name == "PC0":
-        PCICR[1] = 1
-        PCMSK1[0] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PC1":
-        PCICR[1] = 1
-        PCMSK1[1] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PC2":
-        PCICR[1] = 1
-        PCMSK1[2] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PC3":
-        PCICR[1] = 1
-        PCMSK1[3] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PC4":
-        PCICR[1] = 1
-        PCMSK1[4] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PC5":
-        PCICR[1] = 1
-        PCMSK1[5] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x0008)
-    elif name == "PD0":
-        PCICR[2] = 1
-        PCMSK2[0] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
-    elif name == "PD1":
-        PCICR[2] = 1
-        PCMSK2[1] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
-    elif name == "PD4":
-        PCICR[2] = 1
-        PCMSK2[4] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
-    elif name == "PD5":
-        PCICR[2] = 1
-        PCMSK2[5] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
-    elif name == "PD6":
-        PCICR[2] = 1
-        PCMSK2[6] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
-    elif name == "PD7":
-        PCICR[2] = 1
-        PCMSK2[7] = 1
-        SREG[7] = 1
-        compile_isr(handler, 0x000A)
+    # A port name ('PD2') or an Arduino board number (2) -- the same two
+    # spellings Pin() takes, matched together so both fold to one branch.
+    match name:
+        case 'PD2' | 2:
+            if trigger == 1:
+                # falling edge: ISC01=1, ISC00=0
+                EICRA[0] = 0
+                EICRA[1] = 1
+            elif trigger == 2:
+                # rising edge: ISC01=1, ISC00=1
+                EICRA[0] = 1
+                EICRA[1] = 1
+            elif trigger == 3:
+                # any edge (change): ISC01=0, ISC00=1
+                EICRA[0] = 1
+                EICRA[1] = 0
+            elif trigger == 4:
+                # low level: ISC01=0, ISC00=0
+                EICRA[0] = 0
+                EICRA[1] = 0
+            EIMSK[0] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0002)
+        case 'PD3' | 3:
+            if trigger == 1:
+                # falling edge: ISC11=1, ISC10=0
+                EICRA[2] = 0
+                EICRA[3] = 1
+            elif trigger == 2:
+                # rising edge: ISC11=1, ISC10=1
+                EICRA[2] = 1
+                EICRA[3] = 1
+            elif trigger == 3:
+                # any edge (change): ISC11=0, ISC10=1
+                EICRA[2] = 1
+                EICRA[3] = 0
+            elif trigger == 4:
+                # low level: ISC11=0, ISC10=0
+                EICRA[2] = 0
+                EICRA[3] = 0
+            EIMSK[1] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0004)
+        case 'PB0' | 8:
+            PCICR[0] = 1
+            PCMSK0[0] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PB1' | 9:
+            PCICR[0] = 1
+            PCMSK0[1] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PB2' | 10:
+            PCICR[0] = 1
+            PCMSK0[2] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PB3' | 11:
+            PCICR[0] = 1
+            PCMSK0[3] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PB4' | 12:
+            PCICR[0] = 1
+            PCMSK0[4] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PB5' | 13:
+            PCICR[0] = 1
+            PCMSK0[5] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0006)
+        case 'PC0' | 14:
+            PCICR[1] = 1
+            PCMSK1[0] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PC1' | 15:
+            PCICR[1] = 1
+            PCMSK1[1] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PC2' | 16:
+            PCICR[1] = 1
+            PCMSK1[2] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PC3' | 17:
+            PCICR[1] = 1
+            PCMSK1[3] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PC4' | 18:
+            PCICR[1] = 1
+            PCMSK1[4] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PC5' | 19:
+            PCICR[1] = 1
+            PCMSK1[5] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x0008)
+        case 'PD0' | 0:
+            PCICR[2] = 1
+            PCMSK2[0] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
+        case 'PD1' | 1:
+            PCICR[2] = 1
+            PCMSK2[1] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
+        case 'PD4' | 4:
+            PCICR[2] = 1
+            PCMSK2[4] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
+        case 'PD5' | 5:
+            PCICR[2] = 1
+            PCMSK2[5] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
+        case 'PD6' | 6:
+            PCICR[2] = 1
+            PCMSK2[6] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
+        case 'PD7' | 7:
+            PCICR[2] = 1
+            PCMSK2[7] = 1
+            SREG[7] = 1
+            compile_isr(handler, 0x000A)
 
 
 # ---- pulse_in timing helpers -----------------------------------------------
