@@ -392,6 +392,13 @@ public partial class IRGenerator
                                 Temporary wDst = MakeTemp(wb.Type);
                                 Emit(new Call(callee, oArgs, wDst));
                                 Emit(new Copy(wDst, new Variable(fieldVar, wb.Type)));
+                                // A module-level instance whose field is written through this
+                                // write-back needs the same real storage a syntactic
+                                // `obj.n = ...` gets: there is no assignment anywhere in the
+                                // source for the marking pass to have seen, so the reader in
+                                // another function folded the constructor's value.
+                                if (moduleInstanceMutableFields.Contains(fieldVar))
+                                    mutableGlobals[fieldVar] = wb.Type;
                                 constantVariables.Remove(fieldVar);
                                 killedConstants.Add(fieldVar);
                                 variableTypes[fieldVar] = wb.Type;

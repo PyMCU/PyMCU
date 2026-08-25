@@ -477,26 +477,90 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// Mark every field of a MODULE-LEVEL instance that some function assigns to, so it is
-    /// never tracked as a compile-time constant.
+    /// Give every field of a MODULE-LEVEL instance real storage when any function touches it.
     ///
     /// Functions are lowered in an order the program does not control, so a read in one
     /// function could be folded against the constructor's value while the write that changes
-    /// it lives in a function lowered later: `obj = Box(0)` at module level, `obj.n = 77` in
-    /// setup(), and main() printing obj.n answered 0, with the store dead and eliminated
-    /// because nothing read the name. Writing and reading in the SAME function worked, which
-    /// is what made it look like an ISR problem rather than an ordering one.
+    /// it lives in a function lowered later, or -- worse -- read a name nobody ever wrote
+    /// because the construction folded to a constant and emitted no store. `obj = Box(5)` with
+    /// `def peek(): return obj.n` answered 0, and `obj.n = 77` in another function was lost.
+    /// Touching the field in the SAME function that constructs always worked, which is what
+    /// made both look like interrupt problems when they were found.
     ///
-    /// Only a field assigned OUTSIDE the constructor is marked. A Pin's `_bit` is written once
-    /// in __init__ and read as a compile-time constant forever after, and must stay that way.
+    /// Reached through a METHOD too: `obj.mark()` writes the field through the outline
+    /// write-back convention, and no `obj.n = ...` appears anywhere in the source.
+    ///
+    /// Only an instance named at module level is affected. A Pin's `_bit` is read as
+    /// `self._bit` inside its own methods, never as `led._bit`, so it stays compile-time.
     /// </summary>
-    private void MarkModuleInstanceMutableFields(ProgramNode ast)
+    private void MarkModuleInstanceFields(ProgramNode ast)
     {
-        // topLevelInstanceTargets is the set the entry file already records for exactly this
-        // shape, `name = Ctor(...)` at module level, and it is filled before the class scan,
-        // which classFieldLayout is not.
-        var moduleInstances = topLevelInstanceTargets;
-        if (moduleInstances.Count == 0) return;
+        if (topLevelInstanceTargets.Count == 0) return;
+
+        // The class each module-level instance is built from, read off the source. The
+        // instance-to-class map is only filled when the construction is LOWERED, which
+        // happens inside main and therefore after this pass.
+        var ctorClass = new Dictionary<string, string>();
+        foreach (var st in ast.GlobalStatements)
+            if (st is AssignStmt { Target: VariableExpr tv, Value: CallExpr { Callee: VariableExpr cv } })
+                ctorClass[tv.Name] = ResolveCallee(cv.Name);
+
+        void Mark(string instance, string field)
+        {
+            foreach (var key in new[] { currentModulePrefix + instance + "_" + field,
+                                        instance + "_" + field })
+            {
+                killedConstants.Add(key);
+                moduleInstanceMutableFields.Add(key);
+            }
+
+            // Give it storage here rather than at the store: the field is written from more
+            // than one path (the constructor, a plain assignment, the outline write-back) and
+            // only one of them was registering it, so a field that is only ever READ never
+            // became a global at all and its reader loaded a register nobody had filled.
+            if (!ctorClass.TryGetValue(instance, out var cls)) return;
+            if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+            foreach (var (f, ftype, _) in layout)
+                if (f == field)
+                    mutableGlobals[instance + "_" + field] =
+                        DataTypeExtensions.StringToDataType(ftype);
+        }
+
+        void MarkEveryField(string instance)
+        {
+            if (!ctorClass.TryGetValue(instance, out var cls)) return;
+            if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+            foreach (var (field, _, _) in layout) Mark(instance, field);
+        }
+
+        void Expr(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return;
+                // `obj.m(...)`: the method may write any of obj's fields, and through the
+                // write-back convention it does so without an assignment anywhere in sight.
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr recv } } c
+                    when topLevelInstanceTargets.Contains(recv.Name):
+                    MarkEveryField(recv.Name);
+                    foreach (var a in c.Args) Expr(a);
+                    return;
+                case MemberAccessExpr { Object: VariableExpr ov } ma
+                    when topLevelInstanceTargets.Contains(ov.Name):
+                    Mark(ov.Name, ma.Member);
+                    return;
+                case CallExpr c2: Expr(c2.Callee); foreach (var a in c2.Args) Expr(a); return;
+                case MemberAccessExpr m: Expr(m.Object); return;
+                case BinaryExpr b: Expr(b.Left); Expr(b.Right); return;
+                case UnaryExpr u: Expr(u.Operand); return;
+                case IndexExpr ix: Expr(ix.Target); Expr(ix.Index); return;
+                case TernaryExpr t: Expr(t.Condition); Expr(t.TrueVal); Expr(t.FalseVal); return;
+                case KeywordArgExpr kw: Expr(kw.Value); return;
+                case TupleExpr tu: foreach (var el in tu.Elements) Expr(el); return;
+                case ListExpr le: foreach (var el in le.Elements) Expr(el); return;
+                case FStringExpr fs: foreach (var part in fs.Parts) Expr(part.Expr); return;
+            }
+        }
 
         void Walk(Statement? st)
         {
@@ -504,33 +568,22 @@ public partial class IRGenerator
             {
                 case null: return;
                 case Block b: foreach (var cs in b.Statements) Walk(cs); return;
-                case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr ov } ma }
-                    when moduleInstances.Contains(ov.Name):
-                    foreach (var key in new[] { currentModulePrefix + ov.Name + "_" + ma.Member,
-                                                ov.Name + "_" + ma.Member })
-                    {
-                        killedConstants.Add(key);
-                        moduleInstanceMutableFields.Add(key);
-                    }
-                    return;
-                case AugAssignStmt { Target: MemberAccessExpr { Object: VariableExpr ov2 } ma2 }
-                    when moduleInstances.Contains(ov2.Name):
-                    foreach (var key in new[] { currentModulePrefix + ov2.Name + "_" + ma2.Member,
-                                                ov2.Name + "_" + ma2.Member })
-                    {
-                        killedConstants.Add(key);
-                        moduleInstanceMutableFields.Add(key);
-                    }
-                    return;
+                case AssignStmt a: Expr(a.Target); Expr(a.Value); return;
+                case AugAssignStmt ag: Expr(ag.Target); Expr(ag.Value); return;
+                case AnnAssign an: Expr(an.Value); return;
+                case VarDecl vd: Expr(vd.Init); return;
+                case ExprStmt es: Expr(es.Expr); return;
+                case ReturnStmt r: Expr(r.Value); return;
                 case IfStmt i:
+                    Expr(i.Condition);
                     Walk(i.ThenBranch);
-                    foreach (var (_, br) in i.ElifBranches) Walk(br);
+                    foreach (var (c, br) in i.ElifBranches) { Expr(c); Walk(br); }
                     Walk(i.ElseBranch);
                     return;
-                case WhileStmt w: Walk(w.Body); return;
-                case ForStmt f: Walk(f.Body); return;
+                case WhileStmt w: Expr(w.Condition); Walk(w.Body); return;
+                case ForStmt f: Expr(f.Iterable); Walk(f.Body); return;
                 case WithStmt wi: Walk(wi.Body); return;
-                case MatchStmt m: foreach (var br in m.Branches) Walk(br.Body); return;
+                case MatchStmt m: Expr(m.Target); foreach (var br in m.Branches) Walk(br.Body); return;
                 case TryStmt t:
                     foreach (var cs in t.Body) Walk(cs);
                     foreach (var (_, h) in t.Handlers) foreach (var cs in h) Walk(cs);
@@ -545,8 +598,6 @@ public partial class IRGenerator
 
     private void ScanFunctions(ProgramNode ast, ModuleScope? scope = null)
     {
-        MarkModuleInstanceMutableFields(ast);
-
         foreach (var func in ast.Functions)
         {
             string fullName = currentModulePrefix + func.Name;

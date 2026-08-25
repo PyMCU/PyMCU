@@ -717,6 +717,11 @@ public partial class IRGenerator
             }
         }
 
+        // Runs here, not during the scan: it needs the class layouts and the instance-to-class
+        // map, and both are only complete once every module has been scanned.
+        currentModulePrefix = "";
+        MarkModuleInstanceFields(mainAst);
+
         foreach (var entry in functionsToCompile)
         {
             currentModulePrefix = entry.Prefix;
