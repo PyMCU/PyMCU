@@ -1952,6 +1952,78 @@ public class IRGeneratorTests
         Assert.Contains("iterator protocol", warnings);
     }
 
+    // ── The sequence protocol iterates when __len__ is a constant ──────────
+    // PyMCU#166: a class with __len__ and __getitem__ is what a table looks like, and
+    // `for v in t` met a message listing seven other iterables without mentioning it.
+    // CPython's old iteration protocol is __getitem__(0), __getitem__(1), ...; with a
+    // constant __len__ the trip count is known, so it unrolls with no IndexError needed.
+    [Fact]
+    public void SequenceDunder_ForOverGetitem_UnrollsOncePerElement()
+    {
+        const string src =
+            "class Table:\n" +
+            "    @inline\n" +
+            "    def __init__(self):\n" +
+            "        pass\n" +
+            "    @inline\n" +
+            "    def __len__(self) -> uint8:\n" +
+            "        return 3\n" +
+            "    @inline\n" +
+            "    def __getitem__(self, index: uint8) -> uint8:\n" +
+            "        PORTB: ptr[uint8] = ptr(0x25)\n" +
+            "        PORTB.value = index\n" +
+            "        return index\n" +
+            "table = Table()\n" +
+            "def main():\n" +
+            "    for v in table:\n" +
+            "        pass\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        var reads = ir.Functions.SelectMany(f => f.Body).OfType<StoreIndirect>().Count();
+        Assert.Equal(3, reads);
+    }
+
+    [Fact]
+    public void SequenceDunder_NonConstantLen_NamesGetitemAndTheTripCount()
+    {
+        const string src =
+            "class Table:\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "    def __len__(self) -> uint8:\n        return self.n\n" +
+            "    def __getitem__(self, index: uint8) -> uint8:\n        return index\n" +
+            "def main():\n" +
+            "    GPIOR0: ptr[uint8] = ptr(0x3E)\n" +
+            "    t = Table(GPIOR0.value)\n" +
+            "    for v in t:\n        pass\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("__getitem__", err.Message);
+        Assert.Contains("not a compile-time constant", err.Message);
+    }
+
+    // The two fallbacks are worded apart on purpose: a class with no __len__ at all must
+    // not be told that its __len__ is not constant, which describes a program nobody wrote.
+    [Fact]
+    public void SequenceDunder_NoLen_SaysNoLenRatherThanNotConstant()
+    {
+        const string src =
+            "class Table:\n" +
+            "    def __init__(self, n: uint8):\n        self.n: uint8 = n\n" +
+            "    def __getitem__(self, index: uint8) -> uint8:\n        return index\n" +
+            "def main():\n" +
+            "    t = Table(1)\n" +
+            "    for v in t:\n        pass\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("no __len__", err.Message);
+        Assert.DoesNotContain("not a compile-time constant", err.Message);
+    }
+
     [Fact]
     public void SupportedDunder_IsNotWarnedAbout()
     {

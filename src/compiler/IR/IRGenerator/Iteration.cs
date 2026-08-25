@@ -1137,6 +1137,36 @@ public partial class IRGenerator
                 }
             }
 
+            // CPython's OLD iteration protocol is __getitem__(0), __getitem__(1), ... until
+            // IndexError. PyMCU cannot stop on the exception, for the same reason it cannot run
+            // __iter__/__next__ below, but it does not need to: when __len__ is a compile-time
+            // constant the trip count is known, so this rewrites to `for __sqi in range(0, N):
+            // v = obj[__sqi]` and the range machinery unrolls it into the code the author would
+            // have written by hand. Each obj[__sqi] dispatches __getitem__ the way a direct
+            // subscript already does.
+            if (stmt.Iterable is VariableExpr sqVe
+                && TryResolveInstanceMethodAst(sqVe.Name, "__getitem__") != null
+                && InstanceClassOfName(sqVe.Name) is { } sqCls
+                && DunderConstLen(sqCls) is { } sqLen)
+            {
+                if (sqLen < 0)
+                    throw UserError(
+                        $"'{sqVe.Name}' has a negative __len__ ({sqLen}), so the loop has no trip count.");
+                if (sqLen > 0)
+                {
+                    string sqIdx = "__sqi" + (++sliceLoopId);
+                    var sqBody = new Block();
+                    sqBody.Statements.Add(new AssignStmt(
+                        new VariableExpr(stmt.VarName),
+                        new IndexExpr(new VariableExpr(sqVe.Name), new VariableExpr(sqIdx))));
+                    if (stmt.Body is Block sqOb) sqBody.Statements.AddRange(sqOb.Statements);
+                    else sqBody.Statements.Add(stmt.Body);
+                    VisitStatement(new ForStmt(sqIdx,
+                        new IntegerLiteral(0), new IntegerLiteral(sqLen), null, sqBody));
+                }
+                return;
+            }
+
             // An instance of a class defining __iter__/__next__ is the one shape worth naming
             // separately: it looks like it should work, and the generic list would leave the
             // author guessing why their iterator protocol is ignored.
@@ -1147,6 +1177,23 @@ public partial class IRGenerator
                     "protocol: there is no exception to stop on, so the loop could never end. " +
                     "Write the loop explicitly (`while <cond>: v = obj.next()`), or iterate a " +
                     "range/fixed array instead. A `yield` generator function IS supported.");
+
+            // __getitem__ without a compile-time __len__: the sequence protocol is the right
+            // shape, but the trip count is only known at run time and there is no IndexError to
+            // stop on, so unrolling is not available. Name that rather than listing the forms
+            // this object is not.
+            if (stmt.Iterable is VariableExpr sqBadVe
+                && TryResolveInstanceMethodAst(sqBadVe.Name, "__getitem__") != null)
+                throw UserError(
+                    $"'{sqBadVe.Name}' defines __getitem__, but " +
+                    (TryResolveInstanceMethodAst(sqBadVe.Name, "__len__") == null
+                        ? "no __len__, so the loop has no trip count"
+                        : "its __len__ is not a compile-time constant, so the trip count is only " +
+                          "known at run time") +
+                    " and PyMCU has no IndexError to stop on. Give the class a __len__ with a " +
+                    "constant return (`def __len__(self) -> uint8: return 4`) to iterate it " +
+                    $"directly, or write the loop over the length you have (`for i in range(n): " +
+                    $"v = {sqBadVe.Name}[i]`).");
 
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
