@@ -47,7 +47,7 @@ public static class AsyncTransform
         {
             if (asyncFns.Contains(fn) || genFns.Contains(fn)) continue;
             if (DelegateYieldPosition(fn.Body.Statements) is { } stray)
-                throw new SyntaxError(stray, 0, 0);
+                throw new SyntaxError(stray.Message, stray.Line, 1);
         }
 
         if (asyncFns.Count == 0 && genFns.Count == 0) return;
@@ -62,7 +62,8 @@ public static class AsyncTransform
             if (alias == null)
                 throw new SyntaxError(
                     "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
-                    "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.", 0, 0);
+                    "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.",
+                    asyncFns[0].Line, 1);
         }
 
         // `yield from` in a coroutine is not the same construct: it would have to drive the
@@ -74,7 +75,7 @@ public static class AsyncTransform
                 throw new SyntaxError(
                     $"`yield from` is not supported inside `async def {fn.Name}`. It is available "
                     + "in a plain generator (a `def` whose body yields); a coroutine has no "
-                    + "delegation form yet.", 0, 0);
+                    + "delegation form yet.", fn.Line, 1);
 
         // A compile-time task set. `asyncio.create_task(f(args))` cannot append to a list:
         // each coroutine lowers to its own ZCA type and there is no common runtime handle
@@ -110,7 +111,7 @@ public static class AsyncTransform
             // functions and class methods and names neither `yield` nor `from`.
             foreach (var g in genFns)
                 if (DelegateYieldPosition(g.Body.Statements) is { } where)
-                    throw new SyntaxError(where, 0, 0);
+                    throw new SyntaxError(where.Message, where.Line, 1);
         }
         var genNames = new HashSet<string>();
         foreach (var fn in genFns)
@@ -145,6 +146,7 @@ public static class AsyncTransform
         public string CoroName = "";
         public int ParamCount;
         public List<Expression> Args = new();
+        public int Line;
     }
 
     // Rewrites every `asyncio.create_task(f(args))` into `__task = f(args); __task_on = 1`
@@ -166,16 +168,18 @@ public static class AsyncTransform
                     if (call.Callee is not VariableExpr coro || !coroNames.Contains(coro.Name))
                         throw new SyntaxError(
                             $"`{aio}.create_task(...)` takes a coroutine of this module called by "
-                            + "name, as in `create_task(blink())`.", 0, 0);
+                            + "name, as in `create_task(blink())`.", stmts[i].Line, 1);
                     if (inLoop)
                         throw new SyntaxError(
                             $"`{aio}.create_task({coro.Name}(...))` inside a loop would start one "
                             + "task, not one per iteration: the task set is fixed at compile time, "
-                            + "so each call site is one task. Write one create_task per task.", 0, 0);
+                            + "so each call site is one task. Write one create_task per task.",
+                            stmts[i].Line, 1);
                     if (call.Args.Count != arity[coro.Name])
                         throw new SyntaxError(
                             $"`{aio}.create_task({coro.Name}(...))`: {coro.Name} takes "
-                            + $"{arity[coro.Name]} argument(s), {call.Args.Count} given.", 0, 0);
+                            + $"{arity[coro.Name]} argument(s), {call.Args.Count} given.",
+                            stmts[i].Line, 1);
 
                     var t = new TaskSite
                     {
@@ -183,6 +187,7 @@ public static class AsyncTransform
                         Flag = "__pymcu_task" + tasks.Count + "_on",
                         CoroName = coro.Name,
                         ParamCount = call.Args.Count,
+                        Line = stmts[i].Line,
                     };
                     tasks.Add(t);
 
@@ -197,14 +202,14 @@ public static class AsyncTransform
                             $"`{aio}.create_task({coro.Name}(...))` after an `await` is not "
                             + "supported: the task set is fixed at compile time and every task "
                             + "starts when `run()` does. Move the create_task calls above the "
-                            + "first await.", 0, 0);
+                            + "first await.", stmts[i].Line, 1);
                     foreach (var a in call.Args)
                         if (ConstantInt(a) is null)
                             throw new SyntaxError(
                                 $"`{aio}.create_task({coro.Name}(...))` takes compile-time "
                                 + "constant arguments: the coroutine is built once at module "
                                 + "level. Pass a literal, or read the value inside the "
-                                + "coroutine instead.", 0, 0);
+                                + "coroutine instead.", stmts[i].Line, 1);
                     t.Args = call.Args;
                     stmts[i] = new Block();
                     continue;
@@ -256,7 +261,7 @@ public static class AsyncTransform
         if (runAt < 0)
             throw new SyntaxError(
                 $"`{aio}.create_task(...)` needs a `{aio}.run(main())` to drive the tasks; "
-                + "without it nothing polls them.", 0, 0);
+                + "without it nothing polls them.", tasks[0].Line, 1);
 
         // Build each task's coroutine here, once, with the arguments from its create_task
         // call site. The site itself only raises the flag.
@@ -430,7 +435,7 @@ public static class AsyncTransform
             throw new SyntaxError(
                 $"`yield from {inner.Name}(...)` is recursive (directly or through another " +
                 "generator). Delegation is expanded inline, so a cycle has no finite " +
-                "expansion; rewrite the generator as a loop.", 0, 0);
+                "expansion; rewrite the generator as a loop.", call.Line, 1);
 
         // `return` inside a delegated generator ends the DELEGATION, not the delegating
         // generator -- a different jump target than the one the splitter emits for a
@@ -463,7 +468,7 @@ public static class AsyncTransform
             if (arg == null)
                 throw new SyntaxError(
                     $"`yield from {inner.Name}(...)`: no argument for parameter '{p.Name}' " +
-                    "and it has no default.", 0, 0);
+                    "and it has no default.", call.Line, 1);
             repl.Statements.Add(new VarDecl(renames[p.Name], p.Type, arg));
         }
 
@@ -558,8 +563,8 @@ public static class AsyncTransform
                 case PassStmt: return new PassStmt { Line = s.Line };
                 default:
                     throw new SyntaxError(
-                        $"`yield from`: the delegated generator uses a {s.GetType().Name}, " +
-                        "which the delegation expansion cannot copy yet.", 0, 0);
+                        $"`yield from`: the delegated generator uses {PythonConstruct(s)}, " +
+                        "which the delegation expansion cannot copy yet.", s.Line, 1);
             }
         }
 
@@ -583,8 +588,8 @@ public static class AsyncTransform
                     return e;
                 default:
                     throw new SyntaxError(
-                        $"`yield from`: the delegated generator uses a {e.GetType().Name}, " +
-                        "which the delegation expansion cannot copy yet.", 0, 0);
+                        $"`yield from`: the delegated generator uses {PythonConstruct(e)}, " +
+                        "which the delegation expansion cannot copy yet.", e.Line, 1);
             }
         }
     }
@@ -841,12 +846,11 @@ public static class AsyncTransform
                     // TryGetAwaitSleep already threw for a non-sleep awaitable.
                     throw new SyntaxError(
                         $"async def '{_fnName}': only `await {_aio}.sleep(n)` / `sleep_ms(n)` " +
-                        "can be awaited (awaiting another coroutine/future is not supported yet).", 0, 0);
+                        "can be awaited (awaiting another coroutine/future is not supported yet).",
+                        s.Line, 1);
 
                 default:
-                    throw new SyntaxError(
-                        $"async def '{_fnName}': `await` inside a {s.GetType().Name} is not " +
-                        "supported (supported: if/elif/else, while, for-in-range).", 0, 0);
+                    throw new SyntaxError($"async def '{_fnName}': {AwaitContext(s)}.", s.Line, 1);
             }
         }
 
@@ -975,14 +979,15 @@ public static class AsyncTransform
             if (f.Iterable != null || f.RangeStop == null)
                 throw new SyntaxError(
                     $"async def '{_fnName}': `await` inside a for-loop is only supported for " +
-                    "`for i in range(...)`.", 0, 0);
+                    "`for i in range(...)`.", f.Line, 1);
             int step = 1;
             if (f.RangeStep != null)
             {
                 if (ConstantInt(f.RangeStep) is { } stepVal && stepVal > 0 && stepVal <= int.MaxValue)
                     step = (int)stepVal;
                 else throw new SyntaxError(
-                    $"async def '{_fnName}': for-range with `await` needs a positive constant step.", 0, 0);
+                    $"async def '{_fnName}': for-range with `await` needs a positive constant step.",
+                    f.Line, 1);
             }
 
             var iv = new VariableExpr(f.VarName);
@@ -1198,7 +1203,8 @@ public static class AsyncTransform
                 case TernaryExpr t:
                     return new TernaryExpr(Rewrite(t.TrueVal), Rewrite(t.Condition), Rewrite(t.FalseVal));
                 case AwaitExpr:
-                    throw new SyntaxError("`await` is only valid as a statement (e.g. `await sleep(n)`).", 0, 0);
+                    throw new SyntaxError(
+                        "`await` is only valid as a statement (e.g. `await sleep(n)`).", e.Line, 1);
                 default:
                     return e;
             }
@@ -1235,7 +1241,7 @@ public static class AsyncTransform
                 long us = lit * scale;
                 if (us < 0)
                     throw new SyntaxError(
-                        $"`await {aio}.{m.Member}({lit})`: the duration cannot be negative.", 0, 0);
+                        $"`await {aio}.{m.Member}({lit})`: the duration cannot be negative.", s.Line, 1);
                 // The wait compares `ticks() - start` against the duration in wrapping
                 // uint32 arithmetic, so the whole 2^32 us range is usable, about 71
                 // minutes. Past that the subtraction lands back inside the window and the
@@ -1244,7 +1250,7 @@ public static class AsyncTransform
                     throw new SyntaxError(
                         $"`await {aio}.{m.Member}({lit})` is longer than a single await can wait " +
                         "(the limit is 4294 seconds, about 71 minutes). Split it into shorter sleeps, " +
-                        "or count them in a loop.", 0, 0);
+                        "or count them in a loop.", s.Line, 1);
                 // IntegerLiteral is 32-bit signed, so only the lower half can be folded
                 // here; the rest keeps the multiply, which the backend widens correctly.
                 if (us > int.MaxValue) return true;
@@ -1382,6 +1388,44 @@ public static class AsyncTransform
     private const string StartField = "_start";
     private const string DurationField = "_duration";
 
+    // What to tell someone who put an `await` where the state splitter cannot cut. The
+    // statement's C# class name is not an answer: `VarDecl` is the annotated assignment they
+    // wrote, and `ExprStmt` means the `await` was used as a VALUE inside an expression, which
+    // is a different mistake with a different fix from an `await` in statement position.
+    private static string AwaitContext(Statement s) => s switch
+    {
+        VarDecl or AnnAssign =>
+            "an `await` in an annotated assignment is not supported yet; await on a line of "
+            + "its own and assign afterwards",
+        ExprStmt =>
+            "`await` cannot be used as a value inside an expression; put it on a line of its own",
+        TryStmt => "`await` inside `try`/`except` is not supported yet",
+        WithStmt => "`await` inside a `with` block is not supported yet",
+        MatchStmt => "`await` inside `match` is not supported yet",
+        _ => "`await` is supported in the body of the coroutine, in `if`/`elif`/`else`, in "
+             + "`while`, and in `for i in range(...)`",
+    };
+
+    // The Python name of a construct, for messages about a form that cannot be handled.
+    private static string PythonConstruct(Statement s) => s switch
+    {
+        TryStmt => "`try`/`except`",
+        WithStmt => "a `with` block",
+        MatchStmt => "`match`",
+        ClassDef => "a class definition",
+        FunctionDef => "a nested function definition",
+        GlobalStmt => "a `global` declaration",
+        _ => "a statement it cannot copy",
+    };
+
+    private static string PythonConstruct(Expression e) => e switch
+    {
+        FStringExpr => "an f-string",
+        ListExpr => "a list literal",
+        AwaitExpr => "an `await`",
+        _ => "an expression it cannot copy",
+    };
+
     private static string ScalarType(string t) => string.IsNullOrEmpty(t) ? "uint32" : t;
 
     private static Expression SelfRef(string field) => new MemberAccessExpr(new VariableExpr("self"), field);
@@ -1405,8 +1449,13 @@ public static class AsyncTransform
     /// Describes where a `yield from` that the expansion did not consume sits, or null when
     /// there is none left. The phrasing completes the sentence "`yield from` ...".
     /// </summary>
-    private static string? DelegateYieldPosition(List<Statement> stmts)
+    // The message for the first unsupported yield form in `stmts`, with the line it sits on,
+    // or null when there is none. The line matters: without it every one of these reads as
+    // `file:0:1` and the caret block prints nothing, so a module with several generators does
+    // not say which one is meant.
+    private static (string Message, int Line)? DelegateYieldPosition(List<Statement> stmts)
     {
+        int foundLine = 0;
         static bool IsDelegate(Expression? e) => e is YieldExpr { IsDelegate: true };
         static bool IsYield(Expression? e) => e is YieldExpr;
         static string What(Expression? e) => e is YieldExpr { IsDelegate: true } ? "`yield from`" : "`yield`";
@@ -1454,7 +1503,17 @@ public static class AsyncTransform
             }
         }
 
+        // Records the line of the DEEPEST statement that produced a message: the recursion
+        // returns from the innermost match first, so the first line recorded is the one the
+        // user wrote, not the `if` or `for` that contains it.
         string? Walk(Statement? st)
+        {
+            var found = WalkInner(st);
+            if (found != null && foundLine == 0 && st != null) foundLine = st.Line;
+            return found;
+        }
+
+        string? WalkInner(Statement? st)
         {
             switch (st)
             {
@@ -1493,7 +1552,8 @@ public static class AsyncTransform
             }
         }
 
-        return stmts.Select(Walk).FirstOrDefault(x => x != null);
+        var msg = stmts.Select(Walk).FirstOrDefault(x => x != null);
+        return msg == null ? null : (msg, foundLine);
     }
 
 }
