@@ -694,6 +694,177 @@ public partial class IRGenerator
         Emit(new Label(endLabel));
     }
 
+    /// <summary>
+    /// Drops the compile-time value of everything <paramref name="body"/> can assign to, before
+    /// a loop body is lowered. A loop body is emitted once and executed many times, so folding
+    /// it against the state of the first iteration is wrong for every iteration after it.
+    ///
+    /// Deliberately conservative about method calls: any call on an instance drops that
+    /// instance's fields, because deciding which fields a method touches means walking the
+    /// method (and everything it calls). Losing a fold is a size cost; keeping a stale one is
+    /// a wrong number.
+    /// </summary>
+    private void InvalidateConstantsAssignedIn(Statement body)
+    {
+        var names = new HashSet<string>();
+        var receivers = new HashSet<(string Instance, string Method)>();
+        CollectMutatedNames(body, names, receivers);
+        if (names.Count == 0 && receivers.Count == 0) return;
+
+        foreach (var name in names)
+            foreach (var key in CandidateKeys(name))
+            {
+                constantVariables.Remove(key);
+                strConstantVariables.Remove(key);
+            }
+
+        // `obj.method()` writes only the fields that method assigns to. Dropping every field
+        // of the receiver instead was too much: a Pin's `_bit` is written once in __init__ and
+        // read as a compile-time constant forever after, and without it the backend cannot
+        // emit the bit access at all ("Bit index must be constant for reading").
+        foreach (var (instance, method) in receivers)
+            foreach (var field in FieldsMutatedBy(instance, method))
+                foreach (var prefix in CandidateKeys(instance))
+                {
+                    constantVariables.Remove(prefix + "_" + field);
+                    constantVariables.Remove(prefix + "." + field);
+                }
+    }
+
+    /// <summary>
+    /// The fields `<paramref name="instance"/>.<paramref name="method"/>()` can assign to,
+    /// following the methods it calls on itself. Empty when the class or the method cannot be
+    /// resolved, which leaves the folds in place: this runs to prevent a stale value, and a
+    /// method nobody can find writes nothing that this loop will observe.
+    /// </summary>
+    private IEnumerable<string> FieldsMutatedBy(string instance, string method)
+    {
+        string? cls = InstanceClassOfName(instance);
+        if (cls == null) yield break;
+
+        if (!classFieldLayout.TryGetValue(cls, out var layout)) yield break;
+
+        string key = cls + "_" + method;
+        FunctionDef? def = null;
+        if (!instanceMethodDefs.TryGetValue(key, out def)
+            && !methodAstByName.TryGetValue(key, out def)
+            && !(inlineFunctions.TryGetValue(key, out var inlineDef) && (def = inlineDef) != null))
+            yield break;
+        if (def == null) yield break;
+
+        foreach (var (field, _, _) in layout)
+            if (MethodMutatesFieldPublic(def, field))
+                yield return field;
+    }
+
+    private IEnumerable<string> CandidateKeys(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
+        if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + name;
+        yield return name;
+    }
+
+    /// <summary>
+    /// Names a statement can write: assignment targets (plain, member and subscript), loop
+    /// variables, and the receiver of any method call.
+    /// </summary>
+    private static void CollectMutatedNames(Statement? st, HashSet<string> names, HashSet<(string, string)> receivers)
+    {
+        switch (st)
+        {
+            case null: return;
+            case Block b: foreach (var s in b.Statements) CollectMutatedNames(s, names, receivers); return;
+            case AssignStmt a: CollectTarget(a.Target, names, receivers); CollectCalls(a.Value, receivers); return;
+            case AugAssignStmt aug: CollectTarget(aug.Target, names, receivers); CollectCalls(aug.Value, receivers); return;
+            case AnnAssign an: names.Add(an.Target); CollectCalls(an.Value, receivers); return;
+            case VarDecl vd: names.Add(vd.Name); CollectCalls(vd.Init, receivers); return;
+            case TupleUnpackStmt tu: foreach (var t in tu.Targets) names.Add(t); CollectCalls(tu.Value, receivers); return;
+            case ExprStmt es: CollectCalls(es.Expr, receivers); return;
+            case ReturnStmt r: CollectCalls(r.Value, receivers); return;
+            case ForStmt f:
+                names.Add(f.VarName);
+                if (!string.IsNullOrEmpty(f.Var2Name)) names.Add(f.Var2Name);
+                CollectMutatedNames(f.Body, names, receivers);
+                return;
+            case WhileStmt w: CollectCalls(w.Condition, receivers); CollectMutatedNames(w.Body, names, receivers); return;
+            case IfStmt i:
+                CollectCalls(i.Condition, receivers);
+                CollectMutatedNames(i.ThenBranch, names, receivers);
+                foreach (var (cond, br) in i.ElifBranches)
+                {
+                    CollectCalls(cond, receivers);
+                    CollectMutatedNames(br, names, receivers);
+                }
+                CollectMutatedNames(i.ElseBranch, names, receivers);
+                return;
+            case WithStmt wi:
+                if (!string.IsNullOrEmpty(wi.AsName)) names.Add(wi.AsName);
+                CollectMutatedNames(wi.Body, names, receivers);
+                return;
+            case MatchStmt m:
+                CollectCalls(m.Target, receivers);
+                foreach (var br in m.Branches)
+                {
+                    if (!string.IsNullOrEmpty(br.CaptureName)) names.Add(br.CaptureName);
+                    CollectMutatedNames(br.Body, names, receivers);
+                }
+                return;
+            case TryStmt t:
+                foreach (var s in t.Body) CollectMutatedNames(s, names, receivers);
+                foreach (var (_, h) in t.Handlers) foreach (var s in h) CollectMutatedNames(s, names, receivers);
+                if (t.ElseBody != null) foreach (var s in t.ElseBody) CollectMutatedNames(s, names, receivers);
+                if (t.Finally != null) foreach (var s in t.Finally) CollectMutatedNames(s, names, receivers);
+                return;
+            default: return;
+        }
+    }
+
+    private static void CollectTarget(Expression target, HashSet<string> names, HashSet<(string, string)> receivers)
+    {
+        switch (target)
+        {
+            case VariableExpr v: names.Add(v.Name); return;
+            case MemberAccessExpr { Object: VariableExpr obj } m:
+                names.Add(obj.Name + "_" + m.Member);
+                names.Add(obj.Name + "." + m.Member);
+                return;
+            case IndexExpr { Target: VariableExpr arr }: names.Add(arr.Name); return;
+            default: return;
+        }
+    }
+
+    /// <summary>The receivers of method calls inside an expression: each may write its fields.</summary>
+    private static void CollectCalls(Expression? e, HashSet<(string, string)> receivers)
+    {
+        switch (e)
+        {
+            case null: return;
+            case CallExpr c:
+                if (c.Callee is MemberAccessExpr { Object: VariableExpr recv } rm)
+                    receivers.Add((recv.Name, rm.Member));
+                CollectCalls(c.Callee, receivers);
+                foreach (var a in c.Args) CollectCalls(a, receivers);
+                return;
+            case BinaryExpr b: CollectCalls(b.Left, receivers); CollectCalls(b.Right, receivers); return;
+            case UnaryExpr u: CollectCalls(u.Operand, receivers); return;
+            case MemberAccessExpr m: CollectCalls(m.Object, receivers); return;
+            case IndexExpr ix: CollectCalls(ix.Target, receivers); CollectCalls(ix.Index, receivers); return;
+            case TernaryExpr t:
+                CollectCalls(t.Condition, receivers);
+                CollectCalls(t.TrueVal, receivers);
+                CollectCalls(t.FalseVal, receivers);
+                return;
+            case FStringExpr fs:
+                foreach (var p in fs.Parts) CollectCalls(p.Expr, receivers);
+                return;
+            case ListExpr l: foreach (var x in l.Elements) CollectCalls(x, receivers); return;
+            case TupleExpr tp: foreach (var x in tp.Elements) CollectCalls(x, receivers); return;
+            case KeywordArgExpr k: CollectCalls(k.Value, receivers); return;
+            default: return;
+        }
+    }
+
     private void VisitWhile(WhileStmt stmt)
     {
         if (LowerInstanceTruthiness(stmt.Condition) is var loweredWhileCond
@@ -739,6 +910,12 @@ public partial class IRGenerator
         // in VisitRaise must not treat the "not found" arm of a search loop as an
         // unconditional raise (FixedDict's `while ...: probe` followed by `raise KeyError`).
         if (inlineStack.Count > 0) inlineStack[^1].SawDynamicLoop = true;
+
+        // The body is emitted ONCE but runs many times, so nothing it can change may be
+        // folded from the value it happens to hold on the way in. Without this, a counter
+        // method expanded in a loop folded its own field: `self.n = self.n + 1` became
+        // `n = 1` and the loop printed 1, 1, 1.
+        InvalidateConstantsAssignedIn(stmt.Body);
 
         if (isRuntimeLoop) _runtimeBranchDepth++;
         VisitStatement(stmt.Body);

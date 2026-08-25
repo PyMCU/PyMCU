@@ -1406,6 +1406,10 @@ public partial class IRGenerator
         return inner.Length > 0 && inner.All(char.IsDigit);
     }
 
+    /// <summary>Same question as MethodMutatesField, for callers outside the class scan.</summary>
+    private static bool MethodMutatesFieldPublic(FunctionDef method, string field)
+        => MethodMutatesField(method, field);
+
     // The mutation may also be indirect: `bump()` writing nothing itself but calling
     // `self.inc()`, which does. The field travels by value, so an indirect mutator needs the
     // same write-back as a direct one -- without it the sibling updated a copy and the
