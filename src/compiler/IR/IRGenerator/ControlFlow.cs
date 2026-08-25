@@ -704,11 +704,12 @@ public partial class IRGenerator
     /// method (and everything it calls). Losing a fold is a size cost; keeping a stale one is
     /// a wrong number.
     /// </summary>
-    private void InvalidateConstantsAssignedIn(Statement body)
+    private void InvalidateConstantsAssignedIn(Statement body, Expression? condition = null)
     {
         var names = new HashSet<string>();
         var receivers = new HashSet<(string Instance, string Method)>();
         CollectMutatedNames(body, names, receivers);
+        CollectCalls(condition, receivers);
         if (names.Count == 0 && receivers.Count == 0) return;
 
         foreach (var name in names)
@@ -879,6 +880,14 @@ public partial class IRGenerator
         loopStack.Add(new LoopLabels { ContinueLabel = startLabel, BreakLabel = endLabel,
                                        FinallyDepth = finallyStack.Count });
 
+        // The condition and the body are emitted ONCE but run many times, so nothing either
+        // of them can change may be folded from the value it happens to hold on the way in.
+        // Without this a counter method expanded in a loop folded its own field
+        // (`self.n = self.n + 1` became `n = 1`, and the loop printed 1, 1, 1); doing it after
+        // the condition instead left `while c.bump() < 4:` folded to the first value it
+        // returned, so the comparison vanished and the loop never ended.
+        InvalidateConstantsAssignedIn(stmt.Body, stmt.Condition);
+
         Emit(new Label(startLabel));
 
         int whileOpt = EmitOptimizedConditionalJump(stmt.Condition, endLabel, false);
@@ -910,12 +919,6 @@ public partial class IRGenerator
         // in VisitRaise must not treat the "not found" arm of a search loop as an
         // unconditional raise (FixedDict's `while ...: probe` followed by `raise KeyError`).
         if (inlineStack.Count > 0) inlineStack[^1].SawDynamicLoop = true;
-
-        // The body is emitted ONCE but runs many times, so nothing it can change may be
-        // folded from the value it happens to hold on the way in. Without this, a counter
-        // method expanded in a loop folded its own field: `self.n = self.n + 1` became
-        // `n = 1` and the loop printed 1, 1, 1.
-        InvalidateConstantsAssignedIn(stmt.Body);
 
         if (isRuntimeLoop) _runtimeBranchDepth++;
         VisitStatement(stmt.Body);
