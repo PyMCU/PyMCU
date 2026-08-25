@@ -52,6 +52,8 @@ public static class IrSerializer
 [JsonSerializable(typeof(Dictionary<string, int>))]
 [JsonSerializable(typeof(Dictionary<string, HashSet<string>>))]
 [JsonSerializable(typeof(HashSet<string>))]
+[JsonSerializable(typeof(List<ExternSignature>))]
+[JsonSerializable(typeof(ExternSignature))]
 [JsonSerializable(typeof(List<VtableSpec>))]
 [JsonSerializable(typeof(VtableSpec))]
 [JsonSerializable(typeof(VtableEntry))]

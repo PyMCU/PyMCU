@@ -35,6 +35,7 @@ public static class Optimizer
             GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
             Functions = program.Functions.Select(CloneFunction).ToList(),
             ExternSymbols = new List<string>(program.ExternSymbols),
+            ExternSignatures = new List<ExternSignature>(program.ExternSignatures),
             // Preserve class hierarchy for the devirt pass and downstream codegen.
             ClassChildren = new Dictionary<string, HashSet<string>>(
                 program.ClassChildren.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value))),

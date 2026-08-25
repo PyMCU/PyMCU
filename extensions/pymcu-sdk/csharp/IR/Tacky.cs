@@ -312,6 +312,19 @@ public class VtableSpec
     public List<VtableEntry> Entries  { get; set; } = new();
 }
 
+// Signature of an @extern("symbol") function.
+//
+// The backend needs the DECLARED parameter widths, not the widths of the values
+// at the call site: passing the literal 5 to a `uint16_t` parameter must still
+// load both bytes of the register pair. Absent in .mir files from older
+// compilers — deserializes to empty, which restores the value-width fallback.
+public class ExternSignature
+{
+    public string Symbol { get; set; } = "";
+    public List<DataType> ParamTypes { get; set; } = new();
+    public DataType ReturnType { get; set; } = DataType.VOID;
+}
+
 public class ProgramIR
 {
     public List<Variable> Globals { get; set; } = new();
@@ -334,6 +347,9 @@ public class ProgramIR
 
     // C symbols declared via @extern("name") in the source.
     public List<string> ExternSymbols { get; set; } = new();
+
+    // Declared signature of each entry in ExternSymbols, same order.
+    public List<ExternSignature> ExternSignatures { get; set; } = new();
 
     // True when the program uses GC_REF values; the backend injects the GC runtime.
     public bool NeedsGc { get; set; } = false;
