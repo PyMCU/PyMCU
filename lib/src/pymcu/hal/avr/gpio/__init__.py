@@ -200,7 +200,18 @@ class Pin:
             case "atmega328p" | "atmega328" | "atmega168p" | "atmega168" | "atmega88p" | "atmega88" | "atmega48p" | "atmega48":
                 return pin_pulse_in(self._pin, self._bit, state, timeout_us)
             case _:
-                return 0
+                # `return 0` here was a MEASUREMENT, not a refusal: on every other AVR the
+                # call compiled clean and reported a zero-length pulse for ever, which reads
+                # as a sensor that is present and answering. The chips that do not implement
+                # it say so themselves -- atmega2560.py and atmega32u4.py raise
+                # NotImplementedError, and the ATtiny files have no pin_pulse_in at all --
+                # and this arm was swallowing that.
+                raise CompileError(
+                    "Pin.pulse_in() is implemented only on the ATmega48/88/168/328 family. "
+                    "It measures a pulse by counting cycles in hand-written assembly, and "
+                    "that loop has not been written for this chip. Time the pulse with a "
+                    "timer, or poll the pin in a loop of your own -- but do not read a 0 "
+                    "from here as a short pulse, because it was never a reading.")
 
     @inline
     def mode(self, m: const = -1) -> uint8:
