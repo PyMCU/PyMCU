@@ -121,6 +121,43 @@ public partial class IRGenerator
         return null;
     }
 
+    // The (start, stop, step) of a plain `for x in range(...)` whose bounds are compile-time
+    // constants and whose trip count is at most <see cref="ConstSequenceUnrollLimit"/>, or null
+    // when the loop has to stay a loop. Only literals and names already folded to a constant
+    // count -- the same rule the range-as-iterable path uses -- so nothing is evaluated here
+    // that a run-time bound could make wrong.
+    private (int Start, int Stop, int Step)? RangeUnrollBounds(ForStmt stmt)
+    {
+        int? Bound(Expression? e, int whenAbsent)
+        {
+            if (e == null) return whenAbsent;
+            if (e is IntegerLiteral il) return il.Value;
+            if (e is UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }) return -n.Value;
+            // A NAME goes through the general constant evaluator, which knows the unrolled
+            // loop variables, the inline-expansion bindings and the module's own constants --
+            // so `WIDTH = 4` then `range(WIDTH)` unrolls exactly like `range(4)`. It throws on
+            // anything whose value is not fixed at compile time, which is the answer wanted:
+            // a run-time bound leaves the loop a loop.
+            if (e is VariableExpr)
+            {
+                try { return EvaluateConstantExpr(e); }
+                catch { return null; }
+            }
+            return null;
+        }
+
+        if (Bound(stmt.RangeStart, 0) is not { } start) return null;
+        if (Bound(stmt.RangeStop, 0) is not { } stop) return null;
+        if (Bound(stmt.RangeStep, 1) is not { } step || step == 0) return null;
+
+        long trips = step > 0
+            ? (stop > start ? ((long)stop - start + step - 1) / step : 0)
+            : (stop < start ? ((long)start - stop - step - 1) / -step : 0);
+        if (trips <= 0 || trips > ConstSequenceUnrollLimit) return null;
+
+        return (start, stop, step);
+    }
+
     private void EmitUnrolledIteration(Statement body, string breakLabel)
     {
         if (breakLabel.Length == 0) { VisitStatement(body); return; }
@@ -1113,6 +1150,39 @@ public partial class IRGenerator
 
             throw UserError(
                 "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
+        }
+
+        // `for p in range(11, 14)` over CONSTANT bounds and a short trip count unrolls, the way
+        // a short constant list already does. The parser files the plain form's bounds in
+        // RangeStart/Stop/Step and leaves Iterable null, so the unrolling above -- which only
+        // ever sees range() as an ITERABLE expression, the shape enumerate() and zip() build --
+        // never ran for it. The loop variable therefore never qualified where a compile-time
+        // constant is required, and `Pin(p, Pin.OUT)` rejected the range spelling while
+        // `pins = [11, 12, 13]` then `for p in pins:` compiled to the same three pins.
+        //
+        // The trip-count cap is the sequence limit: unrolling copies the body no more times
+        // than writing the same values as a list literal already copies it. Past it the loop
+        // stays a loop, and a body that needs a constant loop variable says so as before.
+        //
+        // Emitted before the run-time lowering starts, because the checks below evaluate the
+        // bound expressions and that is not free of side effects.
+        if (RangeUnrollBounds(stmt) is { } unroll)
+        {
+            (int unrollStart, int unrollStop, int unrollStep) = unroll;
+            string unrollKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + stmt.VarName
+                : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.VarName : stmt.VarName);
+            string unrollBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+
+            for (int i = unrollStart; unrollStep > 0 ? i < unrollStop : i > unrollStop; i += unrollStep)
+            {
+                constantVariables[unrollKey] = i;
+                EmitUnrolledIteration(stmt.Body, unrollBrk);
+            }
+            if (unrollBrk.Length > 0) Emit(new Label(unrollBrk));
+
+            constantVariables.Remove(unrollKey);
+            return;
         }
 
         Val startVal = stmt.RangeStart != null ? VisitExpression(stmt.RangeStart) : new Constant(0);
