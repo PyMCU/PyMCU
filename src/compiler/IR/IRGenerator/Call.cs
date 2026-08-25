@@ -551,6 +551,7 @@ public partial class IRGenerator
 
         if (callee == "any") return EmitAnyBuiltin(expr);
         if (callee == "all") return EmitAllBuiltin(expr);
+        if (callee == "bool") return EmitBoolBuiltin(expr);
 
         if (callee == "hex") return EmitHexBuiltin(expr);
         if (callee == "bin") return EmitBinBuiltin(expr);
@@ -771,6 +772,20 @@ public partial class IRGenerator
                         : "";
                 throw UserError($"'{wanted}' is not exported by {impMod}{tail}");
             }
+
+            // A Python builtin is in scope in every module and needs no import, so neither half
+            // of "(typo, or a missing import?)" can be the answer: the reader checks a spelling
+            // that is right and looks for an import that does not exist. Name the builtin, say
+            // it is not provided, and say what to write instead.
+            if (expr.Callee is VariableExpr && PythonBuiltins.Contains(shown))
+                throw UserError(
+                    UnsupportedBuiltins.TryGetValue(shown, out var why)
+                        ? $"{shown}() is a Python builtin that PyMCU does not provide: {why}."
+                        : $"{shown}() is a Python builtin that PyMCU does not provide. There is no "
+                          + "import that adds it -- the supported builtins are len, abs, min, max, "
+                          + "sum, any, all, bool, ord, chr, hex, bin, str, pow, divmod, print, "
+                          + "range, enumerate and zip, plus the numeric casts int/float/uint8/"
+                          + "int8/uint16/int16/uint32/int32.");
 
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)");
         }
@@ -2530,6 +2545,107 @@ public partial class IRGenerator
                 throw UserError("sum() requires a list literal or fixed-size array");
         }
     }
+
+    // bool(x): Python's truth test, which for every value PyMCU can hold is "not zero".
+    // Lowered as `x != 0` so the result is the 0/1 a materialized comparison already produces,
+    // at the operand's own width (bool(300) is True, not bool(300 & 0xFF)).
+    private Val EmitBoolBuiltin(CallExpr expr)
+    {
+        // Python's bool() with no argument is False.
+        if (expr.Args.Count == 0) return new Constant(0);
+        if (expr.Args.Count != 1) throw UserError("bool() expects at most one argument");
+
+        // A string is truthy when it is non-empty, which has nothing to do with the flash
+        // address it lowers to. Fold the literal; anything else would compare the address.
+        if (expr.Args[0] is StringLiteral sl) return new Constant(sl.Value.Length > 0 ? 1 : 0);
+        if (expr.Args[0] is FStringExpr)
+            throw UserError("bool() of an f-string is not supported: the string is built as it "
+                            + "is printed, so there is no value to test. Test the values that go "
+                            + "into it instead.");
+
+        return VisitExpression(
+            new BinaryExpr(expr.Args[0], Frontend.BinaryOp.NotEqual, new IntegerLiteral(0))
+                { Line = expr.Line });
+    }
+
+    /// <summary>
+    /// Python builtins PyMCU does not provide, each with the reason and the way out. A builtin
+    /// is always in scope and is spelled the same everywhere, so "(typo, or a missing import?)"
+    /// sends the reader to check two things that are both already right; these messages name the
+    /// builtin instead. Names absent from this table but present in <see cref="PythonBuiltins"/>
+    /// get the generic "builtin PyMCU does not provide" wording.
+    /// </summary>
+    private static readonly Dictionary<string, string> UnsupportedBuiltins = new()
+    {
+        ["round"] =
+            "rounding a float to the nearest integer is not implemented. `int(x)` truncates "
+            + "toward zero; for round-half-away-from-zero write `int(x + 0.5)` when x >= 0 and "
+            + "`int(x - 0.5)` when it is negative. Note that neither matches CPython's round(), "
+            + "which rounds a tie to the even neighbour",
+        ["isinstance"] =
+            "every value here has one type, fixed when the program is compiled, so a run-time "
+            + "type test has no question left to answer. Branch on a value you set yourself (an "
+            + "explicit tag field), or write one function per type",
+        ["issubclass"] =
+            "the class hierarchy is resolved at compile time and does not exist at run time. "
+            + "Decide the branch when you write the code",
+        ["type"] =
+            "types are resolved at compile time and no type object exists at run time. Use an "
+            + "explicit tag field if the program has to distinguish two shapes of value",
+        ["repr"] = "there is no run-time object model to describe. Use str(x), or print the "
+                   + "fields you care about",
+        ["input"] = "there is no console to read from. Read a byte from the UART instead "
+                    + "(`uart.read()`)",
+        ["open"] = "there is no filesystem. Use the chip's flash or EEPROM helpers",
+        ["sorted"] = "it returns a new list, which needs a heap. Sort a fixed-size array in "
+                     + "place instead",
+        ["reversed"] = "it returns an iterator, which needs a heap. Walk the indices backwards "
+                       + "with `for i in range(n - 1, -1, -1)`",
+        ["map"] = "it returns an iterator, which needs a heap. Write the loop",
+        ["filter"] = "it returns an iterator, which needs a heap. Write the loop with an `if`",
+        ["list"] = "a growable list needs a heap. Declare a fixed-size array "
+                   + "(`buf: uint8[4] = [...]`)",
+        ["dict"] = "a growable dict needs a heap. Use `FixedDict` from pymcu.collections",
+        ["set"] = "a growable set needs a heap. Use a bitmask, or a fixed-size array",
+        ["tuple"] = "building a tuple at run time needs a heap. A tuple literal works where the "
+                    + "compiler can see all of its elements",
+        ["frozenset"] = "a set needs a heap. Use a bitmask, or a fixed-size array",
+        ["iter"] = "there is no iterator protocol; `for` lowers each iterable shape directly. "
+                   + "Loop over the sequence itself",
+        ["next"] = "there is no iterator protocol outside `for`. Loop over the sequence itself",
+        ["callable"] = "whether a name is a function is decided at compile time. Nothing is "
+                       + "callable-or-not at run time",
+        ["id"] = "objects have no run-time identity. Use `ptr(...)` if you need an address",
+        ["hash"] = "there is no run-time object model to hash. Hash the bytes you care about "
+                   + "yourself",
+        ["format"] = "use an f-string (`f\"{x}\"`), which the compiler lowers directly",
+        ["super"] = "base-class calls are resolved at compile time; name the base class "
+                    + "explicitly (`Base.method(self, ...)`)",
+        ["complex"] = "complex numbers are not supported",
+        ["memoryview"] = "there is no run-time buffer protocol. Pass the array itself",
+        ["slice"] = "slice objects need a heap. Index the sequence directly",
+        ["exit"] = "there is nothing to exit to; the program is the whole system. Loop forever, "
+                   + "or reset the chip",
+        ["quit"] = "there is nothing to quit to; the program is the whole system. Loop forever, "
+                   + "or reset the chip",
+    };
+
+    /// <summary>
+    /// Every name in CPython's builtins namespace. Membership is what rules out "typo, or a
+    /// missing import?": a builtin is always in scope, so neither branch of that suggestion can
+    /// be the answer.
+    /// </summary>
+    private static readonly HashSet<string> PythonBuiltins = new(StringComparer.Ordinal)
+    {
+        "abs", "aiter", "all", "anext", "any", "ascii", "bin", "bool", "breakpoint", "bytearray",
+        "bytes", "callable", "chr", "classmethod", "compile", "complex", "delattr", "dict", "dir",
+        "divmod", "enumerate", "eval", "exec", "exit", "filter", "float", "format", "frozenset",
+        "getattr", "globals", "hasattr", "hash", "help", "hex", "id", "input", "int",
+        "isinstance", "issubclass", "iter", "len", "list", "locals", "map", "max", "memoryview",
+        "min", "next", "object", "oct", "open", "ord", "pow", "print", "property", "quit",
+        "range", "repr", "reversed", "round", "set", "setattr", "slice", "sorted",
+        "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
+    };
 
     // any(list-literal): compile-time fold when all elements are constant, else an
     // OR-reduction over the elements.

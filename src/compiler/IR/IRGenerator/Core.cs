@@ -1199,15 +1199,12 @@ public partial class IRGenerator
         // `self` is bound by the expansion machinery, not by any statement in the source.
         if (name == "self") return true;
 
-        // A builtin the compiler knows about: whatever is wrong with the call, the diagnostic
-        // that names the builtin is better than "not defined".
-        if (name is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec"
-            or "vars" or "dir" or "globals" or "locals" or "print" or "len" or "range"
-            or "abs" or "min" or "max" or "sum" or "ord" or "chr" or "hex" or "bin"
-            or "int" or "float" or "str" or "bool" or "bytes" or "bytearray" or "enumerate"
-            or "zip" or "isinstance" or "type" or "input" or "round" or "any" or "all"
-            or "next" or "iter" or "repr" or "super")
-            return true;
+        // A Python builtin: whatever is wrong with the call, the diagnostic that names the
+        // builtin (VisitCall, via UnsupportedBuiltins) is better than "not defined" -- a builtin
+        // is in scope everywhere, so it was never going to be assigned or imported. The full
+        // builtins namespace is used, not a hand-kept subset, so `sorted` and `oct` reach the
+        // same diagnostic `round` and `isinstance` do.
+        if (PythonBuiltins.Contains(name)) return true;
 
         var keys = new List<string> { qualified, name };
         if (!string.IsNullOrEmpty(currentFunction)) keys.Add(currentFunction + "." + name);
