@@ -103,6 +103,42 @@ public class BufferParamTests
     }
 
     [Fact]
+    public void AnInlineCalleeWritingIntoAModuleLevelBuffer_StoresAByte()
+    {
+        // The WRITE half of the alias normalization, and the one nothing was pinning: the
+        // read half had a test, so when this hunk was dropped from a commit by hand the
+        // suite stayed green while `buf[0] = v` went back to setting bit 0 of the array's
+        // ADDRESS. Silent, on a clean build, which is the whole family this issue is in.
+        var ir = Gen(Preamble +
+                     "buf3: uint8[3] = [1, 2, 3]\n" +
+                     "@inline\n" +
+                     "def poke(buf, v: uint8):\n" +
+                     "    buf[0] = v\n" +
+                     "def main():\n" +
+                     "    poke(buf3, 5)\n");
+
+        Assert.Contains(Body(ir, "main"), i => i is ArrayStore);
+        Assert.DoesNotContain(Body(ir, "main"), i => i is BitSet or BitClear or BitWrite);
+    }
+
+    [Fact]
+    public void AnInlineCalleeWritingAtARuntimeIndex_AlsoStores()
+    {
+        var ir = Gen(Preamble +
+                     "buf3: uint8[3] = [1, 2, 3]\n" +
+                     "@inline\n" +
+                     "def fill(buf, n: uint8):\n" +
+                     "    i: uint8 = 0\n" +
+                     "    while i < n:\n" +
+                     "        buf[i] = i\n" +
+                     "        i = i + 1\n" +
+                     "def main():\n" +
+                     "    fill(buf3, 3)\n");
+
+        Assert.DoesNotContain(Body(ir, "main"), i => i is BitSet or BitClear or BitWrite);
+    }
+
+    [Fact]
     public void AParameterThatIsNeverSubscripted_IsLeftAScalar()
     {
         // The inference has to be narrow: only a parameter the body indexes becomes a pointer.
