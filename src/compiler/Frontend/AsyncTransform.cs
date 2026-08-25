@@ -909,10 +909,27 @@ public static class AsyncTransform
                         iff.ElseBranch == null ? null : RewriteStmt(iff.ElseBranch)) { Line = iff.Line };
                 case WhileStmt w:
                     return new WhileStmt(Rewrite(w.Condition), RewriteStmt(w.Body)) { Line = w.Line };
-                case ForStmt:
-                    // Await-free for loops pass through whole; their loop var stays local to
-                    // the state (never a field: assigned before every use inside one state).
-                    return s;
+                case ForStmt f:
+                {
+                    // The loop VAR stays local to the state: it is assigned before every use
+                    // inside one state, so it never needs to be a field. Its BODY is another
+                    // matter -- a local promoted to a field is still a field in there, and
+                    // passing the loop through whole left the body accumulating into a
+                    // different variable from the one the rest of the coroutine reads.
+                    bool varWasField = _fields.Remove(f.VarName);
+                    bool var2WasField = !string.IsNullOrEmpty(f.Var2Name) && _fields.Remove(f.Var2Name);
+                    ForStmt rewritten = f.Iterable != null
+                        ? new ForStmt(f.VarName, Rewrite(f.Iterable), RewriteStmt(f.Body))
+                            { Var2Name = f.Var2Name, Line = f.Line }
+                        : new ForStmt(f.VarName,
+                            f.RangeStart == null ? null : Rewrite(f.RangeStart),
+                            f.RangeStop == null ? null : Rewrite(f.RangeStop),
+                            f.RangeStep == null ? null : Rewrite(f.RangeStep),
+                            RewriteStmt(f.Body)) { Var2Name = f.Var2Name, Line = f.Line };
+                    if (varWasField) _fields.Add(f.VarName);
+                    if (var2WasField) _fields.Add(f.Var2Name);
+                    return rewritten;
+                }
                 case Block b:
                 {
                     var nb = new Block();
@@ -936,6 +953,12 @@ public static class AsyncTransform
                     return new UnaryExpr(u.Op, Rewrite(u.Operand));
                 case CallExpr c:
                     // Don't rewrite the callee name into a field; only its arguments.
+                    // Promoting the RECEIVER of a method call is what #116 needs, and it is
+                    // not enough on its own: the promotion turns `a = Acc(s)` into
+                    // `self.a = Acc(s)` outside __init__, which the ZCA machinery answers with
+                    // "Unknown member access in assignment". Measured, and it breaks programs
+                    // that build today, so the receiver stays local until a field can hold an
+                    // instance.
                     return new CallExpr(c.Callee, c.Args.Select(Rewrite).ToList());
                 case MemberAccessExpr m:
                     return new MemberAccessExpr(Rewrite(m.Object), m.Member);

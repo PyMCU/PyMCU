@@ -736,12 +736,42 @@ public partial class IRGenerator
         // read as a compile-time constant forever after, and without it the backend cannot
         // emit the bit access at all ("Bit index must be constant for reading").
         foreach (var (instance, method) in receivers)
-            foreach (var field in FieldsMutatedBy(instance, method))
-                foreach (var prefix in CandidateKeys(instance))
+        {
+            // A pair tagged with "=" is a direct member WRITE, not a call: the field is named
+            // outright, so there is nothing to look up in the method.
+            var written = method.StartsWith("=", StringComparison.Ordinal)
+                ? new[] { method[1..] }
+                : FieldsMutatedBy(instance, method).ToArray();
+
+            foreach (var field in written)
+                foreach (var prefix in ResolvedKeys(instance))
                 {
                     constantVariables.Remove(prefix + "_" + field);
                     constantVariables.Remove(prefix + "." + field);
+                    strConstantVariables.Remove(prefix + "_" + field);
+                    strConstantVariables.Remove(prefix + "." + field);
                 }
+        }
+    }
+
+    /// <summary>
+    /// Every storage name <paramref name="name"/> can stand for: the qualified spellings, plus
+    /// whatever it is aliased to. `self` inside an expanded method is an alias for the caller's
+    /// instance, and the fields live under the instance's name, not under `self`.
+    /// </summary>
+    private IEnumerable<string> ResolvedKeys(string name)
+    {
+        var seen = new HashSet<string>();
+        foreach (var key in CandidateKeys(name))
+        {
+            string? cur = key;
+            for (int depth = 0; depth < 10 && cur != null; depth++)
+            {
+                if (!seen.Add(cur)) break;
+                yield return cur;
+                if (!variableAliases.TryGetValue(cur, out cur)) break;
+            }
+        }
     }
 
     /// <summary>
@@ -943,6 +973,11 @@ public partial class IRGenerator
             case MemberAccessExpr { Object: VariableExpr obj } m:
                 names.Add(obj.Name + "_" + m.Member);
                 names.Add(obj.Name + "." + m.Member);
+                // The receiver may be an alias: inside a state machine's poll() the body
+                // writes `self.total`, and the storage is named after the instance the caller
+                // bound. Recording the pair lets the caller resolve `self` before building
+                // the key, which the flattened names above cannot do on their own.
+                receivers.Add((obj.Name, "=" + m.Member));
                 return;
             case IndexExpr { Target: VariableExpr arr }: names.Add(arr.Name); return;
             default: return;

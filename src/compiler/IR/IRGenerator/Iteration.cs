@@ -1144,6 +1144,12 @@ public partial class IRGenerator
         // condition check at the top.
         loopStack.Add(new LoopLabels { ContinueLabel = contLabel, BreakLabel = endLabel, FinallyDepth = finallyStack.Count });
 
+        // Same rule as a `while`: the body is emitted once and runs many times, so nothing it
+        // can write may be folded from the value it holds on the way in. Without this an
+        // accumulator read its starting value on every pass, and `for i in range(4): total =
+        // total + i` came out 3 instead of 6.
+        InvalidateConstantsAssignedIn(stmt.Body);
+
         Emit(new Label(startLabel));
         // A negative step counts down, so the loop ends when the variable drops to or below
         // stop (Python's range(hi, lo, -1)); a positive step ends at/above stop. The previous
