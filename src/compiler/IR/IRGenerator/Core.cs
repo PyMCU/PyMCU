@@ -197,6 +197,37 @@ public partial class IRGenerator
             CopyDescendants(floatConstantVariables, sep);
             CopyDescendants(constantAddressVariables, sep);
             CopyDescendants(instanceClasses, sep);
+            // A field holding a RUN-TIME value has no constant to copy: it is an alias onto
+            // the variable that holds it. Leaving those behind bound the loop variable to a
+            // field name nothing ever wrote, so `for o in objs: o.g()` read zero.
+            CopyDescendants(variableAliases, sep);
+        }
+    }
+
+    /// <summary>
+    /// Bind <paramref name="dst"/> to the instance at <paramref name="src"/> for one unrolled
+    /// iteration: carry the compile-time state across, then COPY the fields that live in a
+    /// run-time variable. Those have nothing in the compile-time maps to carry, so without the
+    /// copies the loop variable named fields that nothing had ever written and every read came
+    /// back zero.
+    /// </summary>
+    private void BindInstanceForIteration(string src, string dst)
+    {
+        PropagateCtState(src, dst);
+
+        if (!instanceClasses.TryGetValue(src, out var cls) || cls == null) return;
+        if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+
+        foreach (var (field, type, _) in layout)
+        {
+            string from = src + "_" + field, to = dst + "_" + field;
+            if (constantVariables.ContainsKey(to) || variableAliases.ContainsKey(to)) continue;
+            if (!classFieldLayout.ContainsKey(type)) // a nested instance is carried, not copied
+            {
+                DataType dt = DataTypeExtensions.StringToDataType(type);
+                variableTypes[to] = dt;
+                Emit(new Copy(new Variable(from, dt), new Variable(to, dt)));
+            }
         }
     }
 
@@ -216,6 +247,7 @@ public partial class IRGenerator
             RemoveDescendants(constantVariables, sep);
             RemoveDescendants(strConstantVariables, sep);
             RemoveDescendants(floatConstantVariables, sep);
+            RemoveDescendants(variableAliases, sep);
             RemoveDescendants(constantAddressVariables, sep);
             RemoveDescendants(instanceClasses, sep);
         }

@@ -508,7 +508,7 @@ public partial class IRGenerator
                                         // Bind to the function-qualified value-var name the loop body
                                         // resolves to (qualifiedVal), not the inline-only valKey, so a
                                         // `pin.value = ...` setter inside a def sees the ZCA state.
-                                        PropagateCtState(elemKey, qualifiedVal);
+                                        BindInstanceForIteration(elemKey, qualifiedVal);
                                     }
                                     else if (constantVariables.TryGetValue(elemKey, out int cv))
                                     {
@@ -834,7 +834,7 @@ public partial class IRGenerator
                                     constantVariables[valKey] = cv;
                                 else if (instanceClasses.ContainsKey(elemKey) ||
                                          instanceClasses.Keys.Any(x => x.StartsWith(elemKey + ".")))
-                                    PropagateCtState(elemKey, qValKey);
+                                    BindInstanceForIteration(elemKey, qValKey);
                                 else
                                     Emit(new Copy(new Variable(elemKey, elemDt), new Variable(qValKey, elemDt)));
                                 VisitStatement(stmt.Body);
@@ -971,7 +971,7 @@ public partial class IRGenerator
                             Emit(new Copy(tmp, new Variable(forVarKey, elemDt2)));
                         }
                         else if (isZca)
-                            PropagateCtState(elemKey2, forVarKey);
+                            BindInstanceForIteration(elemKey2, forVarKey);
                         else if (constantVariables.TryGetValue(elemKey2, out int cv2))
                             constantVariables[forVarKey] = cv2;
                         else

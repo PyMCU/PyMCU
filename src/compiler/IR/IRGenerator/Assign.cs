@@ -108,6 +108,32 @@ public partial class IRGenerator
                 strConstantVariables.Remove(strKey);
         }
 
+        // `objs = [A(s), A(s + 1)]`: a list of instances. Build each element as an instance of
+        // its own under `<name>__<k>` and record the count, which is the shape `for o in objs`
+        // already knows how to unroll. Written straight into the `for` the same literal is
+        // rejected ("elements must be compile-time integer constants"); through a name it used
+        // to compile and read every field as zero, because nothing ever constructed the
+        // elements and the loop copied out of an array that was never filled.
+        if (stmt.Target is VariableExpr instSeqTgt && stmt.Value is ListExpr instSeqList
+            && instSeqList.Elements.Count is > 0 and <= ConstSequenceUnrollLimit
+            && instSeqList.Elements.All(e => e is CallExpr { Callee: VariableExpr ce }
+                                             && classFieldLayout.ContainsKey(ResolveCallee(ce.Name))))
+        {
+            string instSeqKey = !string.IsNullOrEmpty(currentInlinePrefix)
+                ? currentInlinePrefix + instSeqTgt.Name
+                : (!string.IsNullOrEmpty(currentFunction)
+                    ? currentFunction + "." + instSeqTgt.Name
+                    : instSeqTgt.Name);
+
+            for (int k = 0; k < instSeqList.Elements.Count; k++)
+                VisitStatement(new AssignStmt(
+                    new VariableExpr(instSeqTgt.Name + "__" + k), instSeqList.Elements[k]));
+
+            arraySizes[instSeqKey] = instSeqList.Elements.Count;
+            arrayElemTypes[instSeqKey] = DataType.UINT8;
+            return;
+        }
+
         // `pins = [11, 12, 13]` / `(11, 12, 13)`: remember the elements against the name so a
         // later `for p in pins:` unrolls, which is what the same literal written inline at the
         // `for` already does. Only short, all-constant sequences qualify -- past that the loop
@@ -3732,4 +3758,5 @@ public partial class IRGenerator
     private void VisitClassDef(ClassDef classNode)
     {
     } // Only scanned
+
 }
