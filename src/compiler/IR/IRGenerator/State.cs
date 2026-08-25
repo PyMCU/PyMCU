@@ -170,6 +170,11 @@ public partial class IRGenerator
     // to constantVariables, preventing incorrect DCE of branches like
     // "if sensor.failed:".
     private HashSet<string> killedConstants = new();
+
+    // Flattened fields of a MODULE-LEVEL instance that some function assigns to. They need
+    // real storage: a function's write is otherwise a dead store to a name nothing else in
+    // that function reads, and the reader in another function folds the constructor's value.
+    private HashSet<string> moduleInstanceMutableFields = new();
     // Names the program binds through a path that files no type: a loop variable, a
     // multi-return unpack target. Read only by the undefined-name check, which must not
     // mistake "bound elsewhere" for "never defined".

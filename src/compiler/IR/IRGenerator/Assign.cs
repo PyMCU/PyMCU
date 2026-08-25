@@ -1142,6 +1142,12 @@ public partial class IRGenerator
             // Store the flattened field at its declared width; hard-coding uint8 truncated a
             // uint16/uint32 field (a no-method multi-field struct's `total` read back as total&0xFF).
             DataType fdt = FlattenedFieldType(baseName, memExpr2.Member);
+            // A field of a module-level instance that some function assigns needs real storage:
+            // without it the write is a dead store to a name nothing else in that function
+            // reads, and the reader in another function folds the constructor's value instead.
+            if (moduleInstanceMutableFields.Contains(flattenedName))
+                mutableGlobals[flattenedName] = fdt;
+
             Emit(new Copy(value, new Variable(flattenedName, fdt)));
             if (fdt != DataType.UINT8) variableTypes[flattenedName] = fdt;
             return;

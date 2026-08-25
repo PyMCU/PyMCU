@@ -476,8 +476,77 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Mark every field of a MODULE-LEVEL instance that some function assigns to, so it is
+    /// never tracked as a compile-time constant.
+    ///
+    /// Functions are lowered in an order the program does not control, so a read in one
+    /// function could be folded against the constructor's value while the write that changes
+    /// it lives in a function lowered later: `obj = Box(0)` at module level, `obj.n = 77` in
+    /// setup(), and main() printing obj.n answered 0, with the store dead and eliminated
+    /// because nothing read the name. Writing and reading in the SAME function worked, which
+    /// is what made it look like an ISR problem rather than an ordering one.
+    ///
+    /// Only a field assigned OUTSIDE the constructor is marked. A Pin's `_bit` is written once
+    /// in __init__ and read as a compile-time constant forever after, and must stay that way.
+    /// </summary>
+    private void MarkModuleInstanceMutableFields(ProgramNode ast)
+    {
+        // topLevelInstanceTargets is the set the entry file already records for exactly this
+        // shape, `name = Ctor(...)` at module level, and it is filled before the class scan,
+        // which classFieldLayout is not.
+        var moduleInstances = topLevelInstanceTargets;
+        if (moduleInstances.Count == 0) return;
+
+        void Walk(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return;
+                case Block b: foreach (var cs in b.Statements) Walk(cs); return;
+                case AssignStmt { Target: MemberAccessExpr { Object: VariableExpr ov } ma }
+                    when moduleInstances.Contains(ov.Name):
+                    foreach (var key in new[] { currentModulePrefix + ov.Name + "_" + ma.Member,
+                                                ov.Name + "_" + ma.Member })
+                    {
+                        killedConstants.Add(key);
+                        moduleInstanceMutableFields.Add(key);
+                    }
+                    return;
+                case AugAssignStmt { Target: MemberAccessExpr { Object: VariableExpr ov2 } ma2 }
+                    when moduleInstances.Contains(ov2.Name):
+                    foreach (var key in new[] { currentModulePrefix + ov2.Name + "_" + ma2.Member,
+                                                ov2.Name + "_" + ma2.Member })
+                    {
+                        killedConstants.Add(key);
+                        moduleInstanceMutableFields.Add(key);
+                    }
+                    return;
+                case IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var (_, br) in i.ElifBranches) Walk(br);
+                    Walk(i.ElseBranch);
+                    return;
+                case WhileStmt w: Walk(w.Body); return;
+                case ForStmt f: Walk(f.Body); return;
+                case WithStmt wi: Walk(wi.Body); return;
+                case MatchStmt m: foreach (var br in m.Branches) Walk(br.Body); return;
+                case TryStmt t:
+                    foreach (var cs in t.Body) Walk(cs);
+                    foreach (var (_, h) in t.Handlers) foreach (var cs in h) Walk(cs);
+                    if (t.ElseBody != null) foreach (var cs in t.ElseBody) Walk(cs);
+                    if (t.Finally != null) foreach (var cs in t.Finally) Walk(cs);
+                    return;
+            }
+        }
+
+        foreach (var func in ast.Functions) Walk(func.Body);
+    }
+
     private void ScanFunctions(ProgramNode ast, ModuleScope? scope = null)
     {
+        MarkModuleInstanceMutableFields(ast);
+
         foreach (var func in ast.Functions)
         {
             string fullName = currentModulePrefix + func.Name;
