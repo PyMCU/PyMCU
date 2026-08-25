@@ -703,6 +703,13 @@ public class ImportStmt : Statement
     public Dictionary<string, string> Aliases { get; set; } = new();
     public string ModuleAlias { get; set; } = "";
 
+    // True when the import is written inside a function or class body rather than at module
+    // level. Conditional folding promotes such an import into ProgramNode.Imports (it has
+    // nowhere else to put it), so after folding the two are indistinguishable without this.
+    // A function-local import binds a local name and only matters if that function is
+    // compiled, which is why the imported-name check leaves it alone.
+    public bool InFunctionScope { get; set; }
+
     // True once StarImportExpander has replaced a `*` with the module's export list. Kept so
     // a later "name is not defined" can say that a star import is in scope and which names
     // it actually brought in.

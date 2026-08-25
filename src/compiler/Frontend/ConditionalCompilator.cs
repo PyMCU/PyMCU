@@ -32,9 +32,14 @@ public class ConditionalCompilator(DeviceConfig config)
         set => _evaluator.ModuleName = value;
     }
 
+    // Set while walking a function or class body, so an import promoted out of one is
+    // marked as what it is. See ImportStmt.InFunctionScope.
+    private bool _inFunctionBody;
+
     public void Process(ProgramNode program)
     {
         var newGlobals = new List<Statement>();
+        _inFunctionBody = false;
 
         foreach (var stmt in program.GlobalStatements)
         {
@@ -46,10 +51,17 @@ public class ConditionalCompilator(DeviceConfig config)
         program.GlobalStatements.AddRange(newGlobals);
 
         foreach (var stmt in program.GlobalStatements)
+        {
+            _inFunctionBody = false;
             ProcessBlock(stmt, program);
+        }
 
         foreach (var func in program.Functions)
+        {
+            _inFunctionBody = true;
             ProcessBlock(func.Body, program);
+        }
+        _inFunctionBody = false;
     }
 
     // Moves all statements in a Block into newStmts, routing ImportStmt to prog.Imports.
@@ -92,9 +104,11 @@ public class ConditionalCompilator(DeviceConfig config)
                     break;
                 }
                 case FunctionDef func:
+                    _inFunctionBody = true;
                     stmt = func.Body;
                     continue;
                 case ClassDef cls:
+                    _inFunctionBody = true;
                     stmt = cls.Body;
                     continue;
                 case WhileStmt loop:
@@ -126,9 +140,10 @@ public class ConditionalCompilator(DeviceConfig config)
         }
     }
 
-    private static ImportStmt CloneImport(ImportStmt src) =>
+    private ImportStmt CloneImport(ImportStmt src) =>
         new(src.ModuleName, [..src.Symbols], src.RelativeLevel)
         {
+            InFunctionScope = src.InFunctionScope || _inFunctionBody,
             ModuleAlias = src.ModuleAlias,
             Aliases = new Dictionary<string, string>(src.Aliases),
             WasStarImport = src.WasStarImport,

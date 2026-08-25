@@ -59,6 +59,11 @@ public class FrontendResolutionPhase(
         }
 
         LoadPostConditionalModulesRecursive(processors, context);
+
+        // Last, because it needs every module folded AND loaded: a facade binds its names in
+        // the winning branch of an `if __CHIP__.name == ...`, and asking before that has run
+        // would find none of them.
+        ImportedNameCheck.Check(context);
     }
 
     // Recursively loads and processes any modules that conditional compilation revealed

@@ -323,12 +323,10 @@ public partial class IRGenerator
         // silently defaults to uint8 and truncates wider arguments.
         PyMCU.Frontend.TypeInference.InferProgram(mainAst, importedModules.Values);
 
-        constantVariables["ValueError"]          = 1;
-        constantVariables["TypeError"]           = 2;
-        constantVariables["IndexError"]          = 3;
-        constantVariables["KeyError"]            = 4;
-        constantVariables["NotImplementedError"] = 5;
-        constantVariables["ZeroDivisionError"]   = 6;
+        // Shared with the import check, which has to know these resolve with or without an
+        // import naming them (PyMCU.Common.BuiltinExceptionNames).
+        foreach (var exn in PyMCU.Common.BuiltinExceptionNames.Codes)
+            constantVariables[exn.Key] = exn.Value;
 
         foreach (var imp in mainAst.Imports)
         {

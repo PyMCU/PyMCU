@@ -2871,19 +2871,10 @@ public partial class IRGenerator
     /// <summary>
     /// Every name in CPython's builtins namespace. Membership is what rules out "typo, or a
     /// missing import?": a builtin is always in scope, so neither branch of that suggestion can
-    /// be the answer.
+    /// be the answer. The list itself lives in PyMCU.Common so the imported-name check reads the
+    /// same one rather than a copy that drifts.
     /// </summary>
-    private static readonly HashSet<string> PythonBuiltins = new(StringComparer.Ordinal)
-    {
-        "abs", "aiter", "all", "anext", "any", "ascii", "bin", "bool", "breakpoint", "bytearray",
-        "bytes", "callable", "chr", "classmethod", "compile", "complex", "delattr", "dict", "dir",
-        "divmod", "enumerate", "eval", "exec", "exit", "filter", "float", "format", "frozenset",
-        "getattr", "globals", "hasattr", "hash", "help", "hex", "id", "input", "int",
-        "isinstance", "issubclass", "iter", "len", "list", "locals", "map", "max", "memoryview",
-        "min", "next", "object", "oct", "open", "ord", "pow", "print", "property", "quit",
-        "range", "repr", "reversed", "round", "set", "setattr", "slice", "sorted",
-        "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
-    };
+    private static readonly HashSet<string> PythonBuiltins = PyMCU.Common.PythonBuiltinNames.All;
 
     // any(list-literal): compile-time fold when all elements are constant, else an
     // OR-reduction over the elements.
