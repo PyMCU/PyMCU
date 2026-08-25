@@ -1340,6 +1340,20 @@ public partial class IRGenerator
             { "uint8", "int8", "uint16", "int16", "uint32", "int32", "float", "bool" };
         if (layout.Any(f => !scalarTypes.Contains(f.Type))) return false;
 
+        // A PARAMETER that is another instance cannot be passed either, for the same reason a
+        // ZCA field cannot: the instance is compile-time per-instance, not a runtime value a
+        // shared body can receive. `def read(self, o: C) -> uint8: return self.n + o.n` was
+        // outlined anyway, `self` arrived and `o` did not, and the method answered with the
+        // other operand missing -- 7 where 8 was right. Free functions with an instance
+        // parameter were already routed to expansion (#71, #72); methods were left out.
+        for (int pi = 1; pi < method.Params.Count; ++pi)
+        {
+            string pt = method.Params[pi].Type;
+            if (string.IsNullOrEmpty(pt) || scalarTypes.Contains(pt)) continue;
+            if (classFieldLayout.ContainsKey(pt) || classFieldLayout.ContainsKey(ResolveCallee(pt)))
+                return false;
+        }
+
         var fields = new HashSet<string>(layout.Select(f => f.Field));
         bool safe = true;
 
