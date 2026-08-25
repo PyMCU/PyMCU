@@ -31,6 +31,11 @@ public static class Optimizer
 
         var optimized = new ProgramIR
         {
+            // The optimizer rebuilds the program rather than mutating it, so anything
+            // not named here is dropped. Geometry dropped here would resurface as a
+            // refused build, not as a miscompile, because ProgramIR.Device is null
+            // rather than zeroed.
+            Device = program.Device,
             Globals = [..program.Globals],
             GlobalArrays = new Dictionary<string, int>(program.GlobalArrays),
             Functions = program.Functions.Select(CloneFunction).ToList(),

@@ -253,6 +253,18 @@ public partial class IRGenerator
         }
     }
 
+    // Carry the chip file's declared geometry into the IR, which is the only channel
+    // a backend has to it. DeviceConfig spells "not declared" as 0 for historical
+    // reasons; DeviceGeometry spells it as null, so a backend that needs a number it
+    // was never given fails the build instead of compiling for a chip with no flash.
+    private static DeviceGeometry GeometryOf(DeviceConfig config) => new()
+    {
+        Chip       = !string.IsNullOrEmpty(config.Chip) ? config.Chip : config.TargetChip,
+        RamSize    = config.RamSize    > 0 ? config.RamSize    : null,
+        FlashSize  = config.FlashSize  > 0 ? config.FlashSize  : null,
+        EepromSize = config.EepromSize > 0 ? config.EepromSize : null,
+    };
+
     public ProgramIR Generate(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
@@ -271,7 +283,7 @@ public partial class IRGenerator
         this.lastLine = -1;
         this.currentSourceFile = "";
 
-        var irProgram = new ProgramIR();
+        var irProgram = new ProgramIR { Device = GeometryOf(config) };
         globals.Clear();
         mutableGlobals.Clear();
         functionReturnTypes.Clear();
