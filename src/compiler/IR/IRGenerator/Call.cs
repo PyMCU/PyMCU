@@ -2245,6 +2245,14 @@ public partial class IRGenerator
                 string selfName = argVal is Variable v ? v.Name : (argVal is Temporary t ? t.Name : "");
                 return EmitDunderCall(selfName, cls, funcKey, new List<Val>());
             }
+
+            // Outlined __len__: dispatch as a method call rather than falling through to
+            // the container path, which rejects a class instance by type.
+            if (expr.Args[0] is VariableExpr lenVe
+                && TryResolveInstanceMethodAst(lenVe.Name, "__len__") != null)
+                return VisitCall(new CallExpr(
+                    new MemberAccessExpr(lenVe, "__len__"),
+                    new List<Expression>()) { Line = expr.Line });
         }
 
         // Handle list[T] variable: len(x) → load length from offset 0 of heap header

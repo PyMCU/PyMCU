@@ -470,6 +470,17 @@ public partial class IRGenerator
                     Val rhs = VisitExpression(expr.Right);
                     return EmitDunderCall(qname, cls, funcKey, new List<Val> { rhs });
                 }
+
+                // The dunder may be OUTLINED rather than inline, in which case it is absent
+                // from inlineFunctions but present in methodAstByName. Falling through here
+                // dropped the overload and lowered the operator numerically over the instance
+                // handle, which is never written: `x + y` answered 0 and `x == y` answered
+                // true for distinct instances. Dispatch it as the method call it stands for,
+                // the same way `obj(args)` resolves __call__.
+                if (TryResolveInstanceMethodAst(lv.Name, dunder) != null)
+                    return VisitCall(new CallExpr(
+                        new MemberAccessExpr(lv, dunder),
+                        new List<Expression> { expr.Right }) { Line = expr.Line });
             }
         }
 
@@ -486,6 +497,24 @@ public partial class IRGenerator
                 if (instanceClasses.TryGetValue(qname, out var cls) && !string.IsNullOrEmpty(cls))
                 {
                     string funcKey = cls + "_" + "__contains__";
+                    if (!inlineFunctions.ContainsKey(funcKey)
+                        && TryResolveInstanceMethodAst(rv.Name, "__contains__") != null)
+                    {
+                        // Outlined __contains__: dispatch as a method call instead of falling
+                        // through to the container path, which rejects a class instance.
+                        Val res2 = VisitCall(new CallExpr(
+                            new MemberAccessExpr(rv, "__contains__"),
+                            new List<Expression> { expr.Left }) { Line = expr.Line });
+                        if (negate)
+                        {
+                            Temporary neg2 = MakeTemp();
+                            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, res2, new Constant(0), neg2));
+                            return neg2;
+                        }
+
+                        return res2;
+                    }
+
                     if (inlineFunctions.ContainsKey(funcKey))
                     {
                         Val res = EmitDunderCall(qname, cls, funcKey, new List<Val> { lhs });
@@ -1480,6 +1509,15 @@ public partial class IRGenerator
                     Val idxVal = VisitExpression(expr.Index);
                     return EmitDunderCall(selfName, cls, funcKey, new List<Val> { idxVal });
                 }
+
+                // Outlined __getitem__: absent from inlineFunctions, present in
+                // methodAstByName. Without this the subscript fell through to the
+                // register bit-index path and reported "Bit index must be constant".
+                if (expr.Target is VariableExpr gv
+                    && TryResolveInstanceMethodAst(gv.Name, "__getitem__") != null)
+                    return VisitCall(new CallExpr(
+                        new MemberAccessExpr(gv, "__getitem__"),
+                        new List<Expression> { expr.Index }) { Line = expr.Line });
             }
         }
 

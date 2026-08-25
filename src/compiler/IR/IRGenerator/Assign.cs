@@ -1731,6 +1731,19 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(cls))
             {
                 string funcKey = cls + "_" + "__setitem__";
+                // Outlined __setitem__: dispatch as a method call. Falling through wrote
+                // through the built-in indexed-store path, which the later read did not see.
+                if (!inlineFunctions.ContainsKey(funcKey)
+                    && indexExpr.Target is VariableExpr sv
+                    && stmt.Value is not ListExpr && stmt.Value is not TupleExpr
+                    && TryResolveInstanceMethodAst(sv.Name, "__setitem__") != null)
+                {
+                    VisitCall(new CallExpr(
+                        new MemberAccessExpr(sv, "__setitem__"),
+                        new List<Expression> { indexExpr.Index, stmt.Value }) { Line = stmt.Line });
+                    return;
+                }
+
                 if (inlineFunctions.ContainsKey(funcKey))
                 {
                     string selfName = tgtVal is Variable v ? v.Name : (tgtVal is Temporary t ? t.Name : "");
