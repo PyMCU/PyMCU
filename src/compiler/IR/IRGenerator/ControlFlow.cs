@@ -23,6 +23,50 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    /// <summary>
+    /// The label an instruction jumps to, or null when it does not jump.
+    /// </summary>
+    private static string? JumpTargetOf(Instruction i) => i switch
+    {
+        Jump j => j.Target,
+        JumpIfZero j => j.Target,
+        JumpIfNotZero j => j.Target,
+        JumpIfEqual j => j.Target,
+        JumpIfNotEqual j => j.Target,
+        JumpIfLessThan j => j.Target,
+        JumpIfLessOrEqual j => j.Target,
+        JumpIfGreaterThan j => j.Target,
+        JumpIfGreaterOrEqual j => j.Target,
+        JumpIfBitSet j => j.Target,
+        JumpIfBitClear j => j.Target,
+        _ => null,
+    };
+
+    /// <summary>
+    /// True when anything emitted since <paramref name="from"/> jumps to
+    /// <paramref name="label"/>.
+    /// </summary>
+    /// <remarks>
+    /// EmitOptimizedConditionalJump lowers each operand of an `and` / `or` as it walks them,
+    /// so it can emit a jump to the label it was given and only afterwards discover that the
+    /// whole condition folds. `name == "PD2" or name == 2` under `jumpIfTrue = false` does
+    /// exactly that: the left operand folds true and jumps over the rest, the right folds
+    /// false and jumps to the caller's else label, and the two together answer "statically
+    /// true". The caller then keeps only the then branch and never defines that else label.
+    ///
+    /// The jump left behind is unreachable -- the static path always jumps past it -- but a
+    /// label that no one defines is not a dead instruction, it is a link error, and only
+    /// PYMCU_NO_OPT=1 shows it because the optimizer deletes the jump first. So the caller
+    /// asks this before abandoning a label, and defines it when the answer is yes.
+    /// </remarks>
+    private bool ConditionJumpedTo(string label, int from)
+    {
+        for (int i = from; i < currentInstructions.Count; ++i)
+            if (JumpTargetOf(currentInstructions[i]) == label)
+                return true;
+        return false;
+    }
+
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
     {
         // Every condition that reaches here is a truth test, including each operand of an
@@ -330,6 +374,7 @@ public partial class IRGenerator
         string endLabel = MakeLabel();
         string nextLabel = (stmt.ElifBranches.Count == 0 && stmt.ElseBranch == null) ? endLabel : MakeLabel();
 
+        int condStart = currentInstructions.Count;
         int optResult = EmitOptimizedConditionalJump(stmt.Condition, nextLabel, false);
         bool skipThen = false;
         bool isRuntimeBranch = false;
@@ -341,7 +386,13 @@ public partial class IRGenerator
         {
             // CT-true: only visit then branch, skip else entirely (prevents CT
             // side-effects like compile_isr from the else branch being processed).
+            // The condition may still have jumped to nextLabel on a path it then decided
+            // was not taken (see ConditionJumpedTo), and dropping the else branch drops the
+            // only definition of that label. Define it here: the jump is unreachable, so
+            // falling straight out of the `if` is where it would go if it ever ran.
+            bool nextIsTargeted = ConditionJumpedTo(nextLabel, condStart);
             VisitStatement(stmt.ThenBranch);
+            if (nextIsTargeted) Emit(new Label(nextLabel));
             Emit(new Label(endLabel));
             return;
         }
@@ -399,6 +450,7 @@ public partial class IRGenerator
             var elifCond = stmt.ElifBranches[i].Condition;
             var elifBlock = stmt.ElifBranches[i].Body;
 
+            int elifCondStart = currentInstructions.Count;
             int elifOpt = EmitOptimizedConditionalJump(elifCond, nextLabel, false);
             bool skipElif = false;
             bool elifIsRuntime = false;
@@ -408,8 +460,11 @@ public partial class IRGenerator
             if (elifOpt == -1) skipElif = true;
             else if (elifOpt == 2)
             {
-                // CT-true elif: only visit this block, skip remaining branches.
+                // CT-true elif: only visit this block, skip remaining branches. Same as the
+                // `if` above -- the condition may have jumped to nextLabel before folding.
+                bool elifNextIsTargeted = ConditionJumpedTo(nextLabel, elifCondStart);
                 VisitStatement(elifBlock);
+                if (elifNextIsTargeted) Emit(new Label(nextLabel));
                 Emit(new Label(endLabel));
                 return;
             }
