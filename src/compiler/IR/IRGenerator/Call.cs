@@ -147,6 +147,7 @@ public partial class IRGenerator
     {
         if (TryEmitPioStateMachine(expr) is { } pioResult) return pioResult;
         if (TryEmitSuperMethodCall(expr) is { } superResult) return superResult;
+        if (TryEmitUnboundClassMethodCall(expr) is { } unboundResult) return unboundResult;
 
         // uart.write_str(f"...") / uart.println(f"...") with a runtime f-string: lower it to direct
         // stream writes instead of letting it reach the const[str] parameter (which would reject the
@@ -1923,15 +1924,127 @@ public partial class IRGenerator
             && !methodAstByName.TryGetValue(calleeSuper, out funcSuper))
             return null;
 
+        return EmitUnboundMethodBody(basePrefix, funcSuper,
+            currentInlinePrefix + "self", expr.Args, $"super().{mem.Member}");
+    }
+
+    // Base.method(self, ...) -- the unbound spelling of a base-class call, and ordinary
+    // Python: a constructor forwarding with `Base.__init__(self, offset)` is what a great
+    // deal of code writes before learning super() is the spelling this compiler grew first.
+    // Callee resolution mangled it as <CallingClass>_<Base>_<method> (the base class name
+    // treated as part of the method name, looked up under the caller's own prefix), so the
+    // build failed naming a function the program never mentions.
+    //
+    // The receiver arrives as the first argument instead of through super(), so bind it and
+    // expand the same body the bound call reaches. Returns null -- fall through to the
+    // ordinary path -- for anything that is not a method call on an instance: a
+    // @staticmethod, a class-level helper, a zero-argument Cls.m().
+    private Val? TryEmitUnboundClassMethodCall(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr { Object: VariableExpr clsVe } mem) return null;
+        if (!classNames.Contains(clsVe.Name)) return null;
+        if (expr.Args.Count == 0) return null;
+        if (expr.Args[0] is KeywordArgExpr or StarArgExpr) return null;
+
+        string cls = ResolveCallee(clsVe.Name);
+        string callee = cls + "_" + mem.Member;
+        if (!inlineFunctions.TryGetValue(callee, out var func)
+            && !instanceMethodDefs.TryGetValue(callee, out func)
+            && !methodAstByName.TryGetValue(callee, out func))
+            return null;
+
+        // A @staticmethod has no receiver parameter, so its call is an ordinary function
+        // call the normal path already resolves. Only a method whose first parameter is the
+        // receiver takes the first argument as self.
+        if (func.Params.Count == 0 || func.Params[0].Name != "self")
+        {
+            // One shape reaches here having a receiver all the same: a method whose declared
+            // return type is a multi-field class is force-inlined (#49), and the definition
+            // registered for it is the OUTLINED rewrite, whose instance arrives flattened as
+            // one `self_<field>` parameter per field rather than as `self`.
+            //
+            // It is refused rather than expanded, because expanding it is what super() does
+            // for the same shape and super() MISCOMPILES it silently: the base body vanishes
+            // and the caller reads unwritten `self_*` slots as zero. A loud refusal is worth
+            // more than matching that. The refusal names the construct, which is what issue
+            // #131 asks a diagnostic to do; falling through would print the internal mangled
+            // name instead.
+            if (func.Params.Count > 0 && func.Params[0].Name.StartsWith("self_", StringComparison.Ordinal))
+                throw UserError(
+                    $"'{clsVe.Name}.{mem.Member}' returns {func.ReturnType}, a class with several " +
+                    "fields, and a base-class call cannot carry one back yet. Return the fields " +
+                    "separately, or call it on the instance");
+            return null;
+        }
+
+        // The first argument must actually name an instance. `self` inside a method resolves
+        // through the current inline frame exactly as the super() path resolves it; any other
+        // spelling has to be a name already known to carry a class, otherwise this is not the
+        // construct it looks like and the ordinary path keeps its own diagnostics.
+        string selfKey;
+        if (expr.Args[0] is VariableExpr { Name: "self" })
+        {
+            selfKey = currentInlinePrefix + "self";
+        }
+        else
+        {
+            var recv = VisitExpression(expr.Args[0]);
+            string? recvName = recv switch
+            {
+                Variable rv => rv.Name,
+                Temporary rt => rt.Name,
+                _ => null,
+            };
+            if (recvName == null) return null;
+            string chased = recvName;
+            for (int hop = 0; hop < 20 && !instanceClasses.ContainsKey(chased); ++hop)
+                if (!variableAliases.TryGetValue(chased, out chased!)) return null;
+            if (!instanceClasses.ContainsKey(chased)) return null;
+            selfKey = recvName;
+        }
+
+        return EmitUnboundMethodBody(cls + "_", func, selfKey, expr.Args.Skip(1).ToList(),
+            $"{clsVe.Name}.{mem.Member}");
+    }
+
+    // Shared body of the two spellings of an explicit base-class call, super().m(args) and
+    // Base.m(self, args): expand the method's body in place with self bound to
+    // <selfAliasKey>'s instance and <args> bound to the remaining parameters.
+    //
+    // <spelling> is what the user wrote, for the arity diagnostic: the mangled callee carries a
+    // module prefix nobody typed and nobody can search their own file for.
+    private Val EmitUnboundMethodBody(string basePrefix, FunctionDef funcSuper,
+        string selfAliasKey, List<Expression> args, string spelling)
+    {
+        // Too many positional arguments, refused here as an ordinary call already refuses them
+        // (see 7b5097ff). The binding loop below stops at the end of the parameter list, so a base
+        // silently dropped the extras: `super().__init__(offset, 99)` built clean and the 99
+        // vanished, and so did the same mistake written `Base.__init__(self, offset, 99)`.
+        // Phrasing borrowed from the check on the ordinary path so the two read alike.
+        int declaredArgs = funcSuper.Params.Count(p => p.Name != "self");
+        if (args.Count > declaredArgs)
+        {
+            string what = funcSuper.Name == "__init__"
+                ? $"constructor of '{spelling}'"
+                : $"'{spelling}'";
+            throw UserError(
+                $"too many arguments in call to {what}: it expects {declaredArgs} " +
+                $"argument(s), but {args.Count} were provided");
+        }
+
         var exitLabel = MakeLabel();
         var newDepth = inlineDepth + 1;
         var newPrefix = $"inline{newDepth}_{funcSuper.Name}_";
 
-        var selfAlias = currentInlinePrefix + "self";
+        var selfAlias = selfAliasKey;
         if (variableAliases.TryGetValue(selfAlias, out var vAlias))
             variableAliases[newPrefix + "self"] = vAlias;
         else if (!string.IsNullOrEmpty(pendingConstructorTarget))
             variableAliases[newPrefix + "self"] = pendingConstructorTarget;
+        // The unbound spelling can name the receiver directly (`Base.read(probe, x)`), in
+        // which case there is no alias to follow: the key IS the instance.
+        else if (instanceClasses.ContainsKey(selfAlias))
+            variableAliases[newPrefix + "self"] = selfAlias;
         // Propagate the concrete instance type so the base body's self.<field> resolves.
         if (instanceClasses.TryGetValue(selfAlias, out var selfClsSuper) && selfClsSuper != null)
             instanceClasses[newPrefix + "self"] = selfClsSuper;
@@ -1960,8 +2073,8 @@ public partial class IRGenerator
         foreach (var p in funcSuper.Params)
         {
             if (p.Name == "self") continue;
-            if (paramIdx >= expr.Args.Count) continue;
-            var argVal = VisitExpression(expr.Args[paramIdx]);
+            if (paramIdx >= args.Count) continue;
+            var argVal = VisitExpression(args[paramIdx]);
             var paramKey = newPrefix + p.Name;
             constantVariables.Remove(paramKey);
             variableAliases.Remove(paramKey);

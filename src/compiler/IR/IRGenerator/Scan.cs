@@ -810,7 +810,7 @@ public partial class IRGenerator
                         // Plain virtual/@inline HAL classes (base NOT in slotClasses) keep an empty
                         // layout so their construction model is unchanged (inheriting it there
                         // wrongly promotes the subclass to a slot and crashes codegen).
-                        if (clsLayout.Count == 0 && !InitCallsSuperInit(block))
+                        if (clsLayout.Count == 0 && !InitCallsSuperInit(block, classDef.Bases))
                             foreach (var baseName in classDef.Bases)
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
@@ -845,7 +845,7 @@ public partial class IRGenerator
                         // field (a super-only __init__, common at intermediate/leaf levels of a deep
                         // chain) -- merged becomes the full base layout, which keeps the chain
                         // propagating through any number of levels (L0->L1->...->Ln).
-                        if (InitCallsSuperInit(block))
+                        if (InitCallsSuperInit(block, classDef.Bases))
                             foreach (var baseName in classDef.Bases)
                             {
                                 if (baseName is "Enum" or "IntEnum") continue;
@@ -887,7 +887,7 @@ public partial class IRGenerator
                                         && !IsScalarTypeName(cv2.Name)
                                         && !fieldClasses.ContainsKey(classKey + "|" + m2.Member))
                                         fieldClasses[classKey + "|" + m2.Member] = ResolveCallee(cv2.Name);
-                        if (InitCallsSuperInit(block)) classInitCallsSuper.Add(classKey);
+                        if (InitCallsSuperInit(block, classDef.Bases)) classInitCallsSuper.Add(classKey);
                         // Note: slotClasses (>= 2 fields) is marked only when an @outline method
                         // is actually present (below), so plain @inline HAL classes with multiple
                         // fields keep their normal virtual-construction path. zcaFactoryClasses is
@@ -1321,10 +1321,15 @@ public partial class IRGenerator
         return found;
     }
 
-    // True when the class's own __init__ delegates to its base via super().__init__(...).
-    // Such a subclass gains the base's fields (set by the base ctor) in addition to its own,
-    // so its slot layout must merge the base fields ahead of its own.
-    private static bool InitCallsSuperInit(Block classBody)
+    // True when the class's own __init__ delegates to its base ctor. Such a subclass gains the
+    // base's fields (set by the base ctor) in addition to its own, so its slot layout must merge
+    // the base fields ahead of its own.
+    //
+    // Both spellings count: `super().__init__(...)` and the unbound `Base.__init__(self, ...)`.
+    // The unbound one is ordinary Python and reaches the same base body, so a subclass written
+    // that way owns the base's fields exactly as the super() one does -- reading only super()
+    // here left the base fields out of the layout of any subclass that used the other spelling.
+    private static bool InitCallsSuperInit(Block classBody, List<string>? bases = null)
     {
         FunctionDef? init = null;
         foreach (var s in classBody.Statements)
@@ -1332,8 +1337,10 @@ public partial class IRGenerator
         if (init == null) return false;
         foreach (var st in init.Body.Statements)
         {
-            if (st is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr {
-                    Member: "__init__", Object: CallExpr { Callee: VariableExpr { Name: "super" } } } } })
+            if (st is not ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr {
+                    Member: "__init__" } recv } }) continue;
+            if (recv.Object is CallExpr { Callee: VariableExpr { Name: "super" } }) return true;
+            if (bases != null && recv.Object is VariableExpr baseVe && bases.Contains(baseVe.Name))
                 return true;
         }
         return false;
