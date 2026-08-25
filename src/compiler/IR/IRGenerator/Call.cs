@@ -337,6 +337,26 @@ public partial class IRGenerator
                                 oArgs.Add(av);
                             }
 
+                            // An omitted argument takes its declared default. An outlined method
+                            // is a real subroutine with a fixed parameter list, so a call that
+                            // stops early left the remaining parameters unwritten and the body
+                            // read them as zero: `def g(self, k: uint8 = 4)` called as `o.g()`
+                            // computed with k = 0, on a clean build.
+                            // The defaults of an outlined method are recorded against its
+                            // synthesized parameter list, the leading self_<field> ones
+                            // included, so oArgs.Count is exactly the next position to fill.
+                            if (functionParamDefaults.TryGetValue(callee, out var oDefaults))
+                            {
+                                for (int di = oArgs.Count; di < oDefaults.Count; di++)
+                                {
+                                    if (oDefaults[di] is not { } defaultExpr)
+                                        break;
+                                    Val dv = VisitExpression(defaultExpr);
+                                    if (dv is FloatConstant dfc) dv = new Constant((int)Math.Round(dfc.Value));
+                                    oArgs.Add(dv);
+                                }
+                            }
+
                             // RFC 0001 (write-back): a single-field void mutator returns its
                             // (updated) field. The Python expression is still void, so emit the
                             // call into a temp, copy that temp back to the instance field, and
@@ -1755,6 +1775,26 @@ public partial class IRGenerator
         // Propagate the concrete instance type so the base body's self.<field> resolves.
         if (instanceClasses.TryGetValue(selfAlias, out var selfClsSuper) && selfClsSuper != null)
             instanceClasses[newPrefix + "self"] = selfClsSuper;
+
+        // Inside an OUTLINED method there is no `self` to alias: the instance arrives as one
+        // parameter per field (self_a, self_b, ...). The base body still writes self.<field>,
+        // which resolves to <newPrefix>self_<field> -- a name nobody writes, so every
+        // inherited field read as ZERO and the override computed from 0 without a word.
+        // Point each of those at this method's own parameter.
+        // The base body reads those names literally, so an alias is not enough: copy the
+        // value across.
+        if (functionParams.TryGetValue(currentFunction, out var ownParams))
+            foreach (var ownParam in ownParams)
+            {
+                string bare = ownParam.Contains('.') ? ownParam[(ownParam.LastIndexOf('.') + 1)..] : ownParam;
+                if (!bare.StartsWith("self_", StringComparison.Ordinal)) continue;
+
+                string mine = currentFunction + "." + bare;
+                DataType fieldType = variableTypes.TryGetValue(mine, out var ft) ? ft : DataType.UINT8;
+                string theirs = newPrefix + bare;
+                variableTypes[theirs] = fieldType;
+                Emit(new Copy(new Variable(mine, fieldType), new Variable(theirs, fieldType)));
+            }
 
         var paramIdx = 0;
         foreach (var p in funcSuper.Params)

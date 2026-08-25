@@ -772,6 +772,12 @@ public partial class IRGenerator
 
                                 functionParams[fullName] = @params;
                                 functionParamTypes[fullName] = paramTypes;
+                                // Methods need their defaults recorded too. Only top-level
+                                // functions were, so an outlined method called with an argument
+                                // omitted got nothing for that parameter and its body read zero
+                                // instead of the declared default.
+                                functionParamDefaults[fullName] =
+                                    func.Params.Select(p => p.DefaultValue).ToList();
 
                                 if (func.IsPropertyGetter)
                                 {
@@ -1281,6 +1287,9 @@ public partial class IRGenerator
         outlineFieldLayout[fullName] = layout;
         functionReturnTypes[fullName] = returnType;
         functionParams[fullName] = synthParams.Select(p => p.Name).ToList();
+        // Aligned with synthParams (the leading self_<field> ones included), so the call site
+        // can index them by position when an argument is omitted.
+        functionParamDefaults[fullName] = synthParams.Select(p => p.DefaultValue).ToList();
         functionParamTypes[fullName] = synthParams.Select(p => DataTypeExtensions.StringToDataType(p.Type)).ToList();
     }
 
