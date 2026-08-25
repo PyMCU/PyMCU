@@ -412,6 +412,17 @@ public partial class IRGenerator
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
         }
 
+        // `self.buf = [0, 0, 0]` with no annotation reached the generic expression visitor,
+        // which has no lowering for a list literal and answered "Unknown Expression type:
+        // ListExpr", the name of a compiler class. A field needs its size at the declaration,
+        // so ask for the annotation by the spelling that works.
+        if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr fieldList)
+            throw UserError(
+                $"a list literal assigned to '{FormatMemberTarget(listMem)}' needs a declared size. "
+                + $"Write `{FormatMemberTarget(listMem)}: uint8[{fieldList.Elements.Count}] = [...]` "
+                + "(or another element type), which reserves the storage in the instance and is "
+                + "indexable at run time.");
+
         Val value = VisitExpression(stmt.Value);
 
         if (stmt.Target is VariableExpr varExpr) { EmitScalarVarAssign(stmt, varExpr, value); }
@@ -804,6 +815,11 @@ public partial class IRGenerator
 
     // `obj.member = v`: assign through a member-access target — ZCA field stores
     // (slot/Model A), property-less member writes, and the related dispatch.
+    // `self.buf` as the program spells it, for a diagnostic. Falls back to the member name
+    // alone when the receiver is not a plain name.
+    private static string FormatMemberTarget(MemberAccessExpr mem)
+        => mem.Object is VariableExpr mv ? mv.Name + "." + mem.Member : mem.Member;
+
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
         // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
@@ -1889,6 +1905,13 @@ public partial class IRGenerator
     {
         IntegerLiteral il                                  => il.Value,
         BooleanLiteral b                                   => b.Value ? 1 : 0,
+        // A minus sign is always a Negate around a POSITIVE literal: the parser never builds
+        // a negative IntegerLiteral. So a negative value on the node can only be the 32-bit
+        // bit pattern the parser stored for a literal in 2^31..2^32-1, and the magnitude the
+        // program wrote is the unsigned reading of it. Negating the wrapped pattern instead
+        // turned `-2147483648` into +2147483648, which was then rejected as out of range for
+        // int32, the very type whose minimum it is.
+        UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral lit } => -(long)(uint)lit.Value,
         UnaryExpr { Op: Frontend.UnaryOp.Negate } u when TryLiteralInt(u.Operand) is { } v => -v,
         BinaryExpr { Op: Frontend.BinaryOp.Add } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l + r,
         BinaryExpr { Op: Frontend.BinaryOp.Sub } a when TryLiteralInt(a.Left) is { } l && TryLiteralInt(a.Right) is { } r => l - r,
@@ -2642,6 +2665,25 @@ public partial class IRGenerator
             int dot = stmt.Target.IndexOf('.');
             string objName = stmt.Target.Substring(0, dot);
             string member = stmt.Target.Substring(dot + 1);
+
+            // `self.buf: list[uint8]` parses as elem="list", size="uint8" under the T[N]
+            // reading below, and the size resolver then reported the ELEMENT TYPE as not
+            // being a compile-time constant, for a program with no size expression in it.
+            // A growable list is heap-allocated and a field is flattened into the instance,
+            // so there is nothing to route it to; say that, and name the fixed-size spelling
+            // that does work, with the size the initialiser already gives.
+            if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
+            {
+                string listElem = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
+                string shownSize = stmt.Value is ListExpr sizeHint
+                    ? sizeHint.Elements.Count.ToString()
+                    : "N";
+                throw UserError(
+                    $"a growable list cannot be a field. '{stmt.Target}: {stmt.Annotation}' is "
+                    + "heap-allocated, and a field is flattened into the instance, so it has no "
+                    + $"storage to grow into. Declare a fixed size instead, "
+                    + $"`{stmt.Target}: {listElem}[{shownSize}] = [...]`, which is indexable at run time.");
+            }
 
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
