@@ -528,6 +528,13 @@ public class NonlocalStmt : Statement
 
 public class BreakStmt : Statement
 {
+    /// <summary>
+    /// Set by the `for/while ... else` desugaring (Parser.AttachLoopElse) on every break that
+    /// targets the loop carrying the else clause: the name of the flag this break must clear so
+    /// the else body, which runs only when the loop was NOT broken out of, is skipped.
+    /// Empty for an ordinary break.
+    /// </summary>
+    public string LoopElseFlag { get; set; } = "";
 }
 
 public class ContinueStmt : Statement

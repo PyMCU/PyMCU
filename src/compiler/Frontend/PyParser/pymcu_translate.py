@@ -400,8 +400,9 @@ def s_for(node):
         raise Unsupported("a for target that is not one or two plain names", node)
 
     body = block(node.body)
-    if node.orelse:
-        raise Unsupported("for ... else", node)
+    # `for ... else`: the else clause runs only when the loop was not broken out of. The
+    # C# reader lowers it (LoopElseDesugar), the same way the hand-written parser does.
+    else_body = block(node.orelse) if node.orelse else None
 
     # `for i in range(...)` carries the bounds, not an iterable -- same split the
     # C# parser makes, and the IR generator depends on it.
@@ -418,16 +419,17 @@ def s_for(node):
         else:
             raise Unsupported("range() with that many arguments", node)
         return {"k": "For", "varName": var_name, "var2Name": var2, "rangeStart": start,
-                "rangeStop": stop, "rangeStep": step, "iterable": None, "body": body}
+                "rangeStop": stop, "rangeStep": step, "iterable": None, "body": body,
+                "else": else_body}
 
     return {"k": "For", "varName": var_name, "var2Name": var2, "rangeStart": None,
-            "rangeStop": None, "rangeStep": None, "iterable": expr(it), "body": body}
+            "rangeStop": None, "rangeStep": None, "iterable": expr(it), "body": body,
+            "else": else_body}
 
 
 def s_while(node):
-    if node.orelse:
-        raise Unsupported("while ... else", node)
-    return {"k": "While", "condition": expr(node.test), "body": block(node.body)}
+    return {"k": "While", "condition": expr(node.test), "body": block(node.body),
+            "else": block(node.orelse) if node.orelse else None}
 
 
 def s_with(node):

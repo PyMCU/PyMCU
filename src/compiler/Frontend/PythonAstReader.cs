@@ -155,6 +155,17 @@ public static class PythonAstReader
         return node;
     }
 
+    /// <summary>
+    /// A loop's `else` clause, lowered through the same rewrite the hand-written parser uses.
+    /// Sharing LoopElseDesugar is what keeps the two front ends producing identical nodes --
+    /// down to the flag's name, which both derive from the loop's line.
+    /// </summary>
+    private static Statement ReadLoopElse(Statement loop, Statement body, JsonElement e)
+        => Has(e, "else")
+            ? LoopElseDesugar.Attach(loop, body, (Block)ReadStatement(e.GetProperty("else")),
+                                     Int(e, "line"))
+            : loop;
+
     private static ImportStmt ReadImport(JsonElement e)
     {
         var symbols = new List<string>();
@@ -272,8 +283,11 @@ public static class PythonAstReader
                     Has(e, "else") ? ReadStatement(e.GetProperty("else")) : null), e);
             }
             case "While":
-                return Located(new WhileStmt(ReadExpr(e.GetProperty("condition"))!,
-                    ReadStatement(e.GetProperty("body"))), e);
+            {
+                var body = ReadStatement(e.GetProperty("body"));
+                var loop = Located(new WhileStmt(ReadExpr(e.GetProperty("condition"))!, body), e);
+                return ReadLoopElse(loop, body, e);
+            }
             case "For":
             {
                 var body = ReadStatement(e.GetProperty("body"));
@@ -285,7 +299,7 @@ public static class PythonAstReader
                         Has(e, "rangeStep") ? ReadExpr(e.GetProperty("rangeStep")) : null,
                         body);
                 loop.Var2Name = Str(e, "var2Name");
-                return Located(loop, e);
+                return ReadLoopElse(Located(loop, e), body, e);
             }
             case "With":
                 return Located(new WithStmt(ReadExpr(e.GetProperty("context"))!, Str(e, "asName"),

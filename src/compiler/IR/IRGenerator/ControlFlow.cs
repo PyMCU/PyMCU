@@ -1100,6 +1100,27 @@ public partial class IRGenerator
     {
         if (loopStack.Count == 0) throw UserError("Break statement outside of loop");
         var loop = Enumerable.Last<LoopLabels>(loopStack);
+
+        // `for/while ... else`: this break exits the loop whose else clause must NOT run, so
+        // clear the flag the desugared test reads (Parser.AttachLoopElse). The flag then stops
+        // being a compile-time constant -- it was folded to 1 by the initialiser emitted before
+        // the loop, and leaving that in place would fold the trailing test to "always taken"
+        // and run the else body on the broken-out path, which is the bug this lowering exists
+        // to avoid. A break that is never emitted (its branch folded away) can never run, so
+        // leaving the constant alone in that case is right.
+        if (stmt.LoopElseFlag.Length > 0)
+        {
+            VisitStatement(new AssignStmt(new VariableExpr(stmt.LoopElseFlag), new IntegerLiteral(0)));
+            foreach (var key in new[]
+                     {
+                         stmt.LoopElseFlag,
+                         currentInlinePrefix + stmt.LoopElseFlag,
+                         currentFunction + "." + stmt.LoopElseFlag,
+                         currentModulePrefix + stmt.LoopElseFlag,
+                     })
+                constantVariables.Remove(key);
+        }
+
         EmitPendingFinally(loop.FinallyDepth);   // run finallys between this break and the loop
         Emit(new Jump(loop.BreakLabel));
     }

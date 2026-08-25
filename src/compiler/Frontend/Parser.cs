@@ -1094,15 +1094,16 @@ public class Parser
         return new MatchStmt(target, branches);
     }
 
-    // The loop `else` clause (runs when the loop finishes without `break`) is not
-    // modelled. Reject it with a clear message instead of a confusing "Expected
-    // expression" syntax error from trying to parse `else` as a statement.
-    private void RejectLoopElse(string kind)
+    // The `else` clause of a loop, or null when there is none. The clause runs only when the
+    // loop finished WITHOUT a `break`; LoopElseDesugar lowers that, shared with the CPython-AST
+    // front end so the two produce the same nodes.
+    private Block? ParseLoopElse()
     {
-        if (Check(TokenType.Else))
-            throw new SyntaxError(
-                $"'{kind} ... else' is not supported; move the else body to after the loop",
-                Peek().Line, 1);
+        if (!Check(TokenType.Else)) return null;
+        Advance();
+        Consume(TokenType.Colon, "Expected ':' after 'else'");
+        Consume(TokenType.Newline, "Expected newline");
+        return ParseBlock();
     }
 
     private Statement ParseWhileStatement()
@@ -1113,8 +1114,8 @@ public class Parser
         Consume(TokenType.Colon, "Expected ':'");
         Consume(TokenType.Newline, "Expected newline");
         var body = ParseBlock();
-        RejectLoopElse("while");
-        return new WhileStmt(condition, body) { Line = line };
+        var elseBlock = ParseLoopElse();
+        return LoopElseDesugar.Attach(new WhileStmt(condition, body) { Line = line }, body, elseBlock, line);
     }
 
     private Statement ParseForStatement()
@@ -1171,8 +1172,7 @@ public class Parser
             }
 
             var stmt = new ForStmt(varTok.Value, start, stop, step, blockBody) { Var2Name = var2Name, Line = line };
-            RejectLoopElse("for");
-            return stmt;
+            return LoopElseDesugar.Attach(stmt, blockBody, ParseLoopElse(), line);
         }
 
         var iterable = ParseExpression();
@@ -1180,8 +1180,8 @@ public class Parser
         Consume(TokenType.Newline, "Expected newline");
         var ibody = ParseBlock();
 
-        RejectLoopElse("for");
-        return new ForStmt(varTok.Value, iterable, ibody) { Var2Name = var2Name, Line = line };
+        var iterStmt = new ForStmt(varTok.Value, iterable, ibody) { Var2Name = var2Name, Line = line };
+        return LoopElseDesugar.Attach(iterStmt, ibody, ParseLoopElse(), line);
     }
 
     private Statement ParseSimpleStatement()
