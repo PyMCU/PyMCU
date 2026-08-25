@@ -893,14 +893,16 @@ public partial class IRGenerator
             if (dMin >= fMin && dMax <= fMax) tempRanges[dst.Name] = (dMin, dMax);
         }
 
+        // Dividing by a literal zero is an error whatever the dividend is. Python raises
+        // ZeroDivisionError for `a // 0` too, and this used to reach the AVR division routine
+        // with a zero divisor and hand back 255 on a clean build. The runtime check further
+        // down only guards a divisor the compiler cannot see.
+        if (v2 is Constant { Value: 0 } && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
+            throw new ValueError("integer division or modulo by zero",
+                expr.Line > 0 ? expr.Line : lastLine, 1);
+
         if (v1 is Constant cA && v2 is Constant cB)
         {
-            // Division/modulo by a constant zero is a compile-time error (Python raises
-            // ZeroDivisionError). Guard before folding so we report a clean diagnostic
-            // instead of leaking a C# DivideByZeroException as an InternalCompilerError.
-            if (cB.Value == 0 && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
-                throw new ValueError("integer division or modulo by zero",
-                    expr.Line > 0 ? expr.Line : lastLine, 1);
 
             // A shift count outside 0..31 has no meaning for PyMCU's fixed-width ints and
             // would otherwise fold to a wrong value (C# masks the count to 5 bits, so
@@ -924,13 +926,27 @@ public partial class IRGenerator
                     expr.Line > 0 ? expr.Line : lastLine, 1);
             }
 
+            // int32 is the widest integer PyMCU has, so a constant that leaves its range has
+            // no value to fold to. Computing it in 32 bits wrapped instead: `-2147483648 - 1`
+            // became 2147483647 without a word, while the same overflow one width down
+            // (`int16 = -32768 - 1`) was already a build error.
+            Constant Fold(long result)
+            {
+                if (result < int.MinValue || result > int.MaxValue)
+                    throw new ValueError(
+                        $"the constant {result} does not fit in int32, the widest integer type "
+                        + "(the operands are folded at compile time, so there is no width to "
+                        + "carry it)", expr.Line > 0 ? expr.Line : lastLine, 1);
+                return new Constant((int)result);
+            }
+
             switch (expr.Op)
             {
-                case AstBinOp.Add: return new Constant(cA.Value + cB.Value);
-                case AstBinOp.Sub: return new Constant(cA.Value - cB.Value);
+                case AstBinOp.Add: return Fold((long)cA.Value + cB.Value);
+                case AstBinOp.Sub: return Fold((long)cA.Value - cB.Value);
                 case AstBinOp.Equal: return new Constant(cA.Value == cB.Value ? 1 : 0);
                 case AstBinOp.NotEqual: return new Constant(cA.Value != cB.Value ? 1 : 0);
-                case AstBinOp.Mul: return new Constant(cA.Value * cB.Value);
+                case AstBinOp.Mul: return Fold((long)cA.Value * cB.Value);
                 case AstBinOp.Div: return new Constant(cA.Value / cB.Value);
                 case AstBinOp.FloorDiv:
                     int q = cA.Value / cB.Value;
