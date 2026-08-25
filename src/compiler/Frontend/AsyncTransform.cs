@@ -76,6 +76,15 @@ public static class AsyncTransform
                     + "in a plain generator (a `def` whose body yields); a coroutine has no "
                     + "delegation form yet.", 0, 0);
 
+        // A compile-time task set. `asyncio.create_task(f(args))` cannot append to a list:
+        // each coroutine lowers to its own ZCA type and there is no common runtime handle
+        // to put in one. What an embedded program does have is a task set that is known at
+        // compile time, so every create_task call site gets its own global instance and a
+        // flag saying whether it is running, and `asyncio.run` becomes a round-robin over
+        // exactly those globals. See CollectTaskSites.
+        var tasks = new List<TaskSite>();
+        if (alias != null) CollectTaskSites(prog, alias, asyncFns, tasks);
+
         foreach (var fn in asyncFns)
         {
             prog.Functions.Remove(fn);
@@ -123,7 +132,186 @@ public static class AsyncTransform
                 RewriteGenFors(f.Body.Statements, genNames, ref counter);
             RewriteGenFors(prog.GlobalStatements, genNames, ref counter);
         }
+
+        if (tasks.Count > 0) EmitTaskSet(prog, alias!, tasks);
     }
+
+    // One create_task call site: the global holding its coroutine, and the flag saying
+    // whether that coroutine is still running.
+    private sealed class TaskSite
+    {
+        public string Global = "";
+        public string Flag = "";
+        public string CoroName = "";
+        public int ParamCount;
+        public List<Expression> Args = new();
+    }
+
+    // Rewrites every `asyncio.create_task(f(args))` into `__task = f(args); __task_on = 1`
+    // and records the site. The construction stays at the call site, so the arguments can be
+    // run-time values; a module-level seed is emitted later only to give the global a class.
+    private static void CollectTaskSites(ProgramNode prog, string aio, List<FunctionDef> asyncFns,
+        List<TaskSite> tasks)
+    {
+        var coroNames = new HashSet<string>(asyncFns.Select(f => f.Name));
+        var arity = asyncFns.ToDictionary(f => f.Name, f => f.Params.Count);
+
+        void Walk(List<Statement> stmts, bool inLoop, ref bool awaited)
+        {
+            for (int i = 0; i < stmts.Count; i++)
+            {
+                if (ContainsAwait(stmts[i])) awaited = true;
+                if (TryTaskCall(stmts[i], aio) is { } call)
+                {
+                    if (call.Callee is not VariableExpr coro || !coroNames.Contains(coro.Name))
+                        throw new SyntaxError(
+                            $"`{aio}.create_task(...)` takes a coroutine of this module called by "
+                            + "name, as in `create_task(blink())`.", 0, 0);
+                    if (inLoop)
+                        throw new SyntaxError(
+                            $"`{aio}.create_task({coro.Name}(...))` inside a loop would start one "
+                            + "task, not one per iteration: the task set is fixed at compile time, "
+                            + "so each call site is one task. Write one create_task per task.", 0, 0);
+                    if (call.Args.Count != arity[coro.Name])
+                        throw new SyntaxError(
+                            $"`{aio}.create_task({coro.Name}(...))`: {coro.Name} takes "
+                            + $"{arity[coro.Name]} argument(s), {call.Args.Count} given.", 0, 0);
+
+                    var t = new TaskSite
+                    {
+                        Global = "__pymcu_task" + tasks.Count,
+                        Flag = "__pymcu_task" + tasks.Count + "_on",
+                        CoroName = coro.Name,
+                        ParamCount = call.Args.Count,
+                    };
+                    tasks.Add(t);
+
+                    // The call site itself compiles to nothing. The coroutine is built at
+                    // module level and its flag starts raised, so the task is running from
+                    // the moment the scheduler starts. Writing the flag here instead would
+                    // be closer to CPython, but a coroutine that assigns a module global
+                    // never wakes from its next await (#122), and the arguments would have
+                    // to be evaluated where the instance is built anyway.
+                    if (awaited)
+                        throw new SyntaxError(
+                            $"`{aio}.create_task({coro.Name}(...))` after an `await` is not "
+                            + "supported: the task set is fixed at compile time and every task "
+                            + "starts when `run()` does. Move the create_task calls above the "
+                            + "first await.", 0, 0);
+                    foreach (var a in call.Args)
+                        if (ConstantInt(a) is null)
+                            throw new SyntaxError(
+                                $"`{aio}.create_task({coro.Name}(...))` takes compile-time "
+                                + "constant arguments: the coroutine is built once at module "
+                                + "level. Pass a literal, or read the value inside the "
+                                + "coroutine instead.", 0, 0);
+                    t.Args = call.Args;
+                    stmts[i] = new Block();
+                    continue;
+                }
+
+                switch (stmts[i])
+                {
+                    case Block b: Walk(b.Statements, inLoop, ref awaited); break;
+                    case IfStmt iff:
+                        WalkIn(iff.ThenBranch, inLoop, ref awaited);
+                        foreach (var (_, eb) in iff.ElifBranches) WalkIn(eb, inLoop, ref awaited);
+                        if (iff.ElseBranch != null) WalkIn(iff.ElseBranch, inLoop, ref awaited);
+                        break;
+                    // A loop body runs many times, so anything after it has to be treated as
+                    // following an await if the loop contains one.
+                    case WhileStmt w: WalkIn(w.Body, true, ref awaited); break;
+                    case ForStmt f: WalkIn(f.Body, true, ref awaited); break;
+                }
+            }
+        }
+        void WalkIn(Statement s, bool inLoop, ref bool awaited)
+        {
+            if (s is Block b) Walk(b.Statements, inLoop, ref awaited);
+        }
+
+        foreach (var f in prog.Functions)
+        {
+            bool awaited = false;
+            Walk(f.Body.Statements, false, ref awaited);
+        }
+        bool topAwaited = false;
+        Walk(prog.GlobalStatements, false, ref topAwaited);
+    }
+
+    // `<aio>.create_task(<call>)` as a statement of its own -> the inner call, else null.
+    private static CallExpr? TryTaskCall(Statement s, string aio) =>
+        s is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: "create_task" } m } outer }
+        && m.Object is VariableExpr mod && mod.Name == aio
+        && outer.Args.Count == 1 && outer.Args[0] is CallExpr inner
+            ? inner : null;
+
+    // Declares the task globals and turns `asyncio.run(main())` into a round-robin over
+    // them. The scheduler is generated rather than living in the stdlib because the stdlib
+    // cannot know how many tasks a program has, which is the same reason gather's arity is
+    // fixed at two.
+    private static void EmitTaskSet(ProgramNode prog, string aio, List<TaskSite> tasks)
+    {
+        int runAt = prog.GlobalStatements.FindIndex(st => RunArgument(st, aio) != null);
+        if (runAt < 0)
+            throw new SyntaxError(
+                $"`{aio}.create_task(...)` needs a `{aio}.run(main())` to drive the tasks; "
+                + "without it nothing polls them.", 0, 0);
+
+        // Build each task's coroutine here, once, with the arguments from its create_task
+        // call site. The site itself only raises the flag.
+        var seeds = new List<Statement>();
+        foreach (var t in tasks)
+        {
+            seeds.Add(new AssignStmt(new VariableExpr(t.Global),
+                new CallExpr(new VariableExpr(t.CoroName), t.Args)));
+            seeds.Add(new AssignStmt(new VariableExpr(t.Flag), Int(1)) { AnnotatedType = "uint8" });
+        }
+
+        // __pymcu_main = <coro>
+        // __pymcu_r = 1
+        // while __pymcu_r == 1:
+        //     __pymcu_r = __pymcu_main.poll()
+        //     if __taskN_on == 1:
+        //         if __taskN.poll() == 0: __taskN_on = 0
+        // A finished task stops being polled; run() returns when the main coroutine is done,
+        // abandoning whatever is still running, which is what asyncio.run does.
+        var sched = new Block();
+        sched.Statements.Add(new AssignStmt(new VariableExpr(SchedCoro), RunArgument(prog.GlobalStatements[runAt], aio)!));
+        sched.Statements.Add(new AssignStmt(new VariableExpr(SchedResult), Int(1)) { AnnotatedType = "uint8" });
+
+        var body = new Block();
+        body.Statements.Add(new AssignStmt(new VariableExpr(SchedResult),
+            new CallExpr(new MemberAccessExpr(new VariableExpr(SchedCoro), "poll"), new List<Expression>())));
+        foreach (var t in tasks)
+        {
+            var done = new Block();
+            done.Statements.Add(new AssignStmt(new VariableExpr(t.Flag), Int(0)));
+            var step = new Block();
+            step.Statements.Add(new IfStmt(
+                new BinaryExpr(
+                    new CallExpr(new MemberAccessExpr(new VariableExpr(t.Global), "poll"), new List<Expression>()),
+                    BinaryOp.Equal, Int(0)),
+                done));
+            body.Statements.Add(new IfStmt(
+                new BinaryExpr(new VariableExpr(t.Flag), BinaryOp.Equal, Int(1)), step));
+        }
+        sched.Statements.Add(new WhileStmt(
+            new BinaryExpr(new VariableExpr(SchedResult), BinaryOp.Equal, Int(1)), body));
+
+        prog.GlobalStatements[runAt] = sched;
+        prog.GlobalStatements.InsertRange(runAt, seeds);
+    }
+
+    // The coroutine expression of an `<aio>.run(<expr>)` statement, or null.
+    private static Expression? RunArgument(Statement s, string aio) =>
+        s is ExprStmt { Expr: CallExpr { Callee: MemberAccessExpr { Member: "run" } m } call }
+        && m.Object is VariableExpr mod && mod.Name == aio && call.Args.Count == 1
+            ? call.Args[0] : null;
+
+    private const string SchedCoro = "__pymcu_sched_main";
+    private const string SchedResult = "__pymcu_sched_r";
+
 
     private static void RewriteGenFors(List<Statement> stmts, HashSet<string> genNames, ref int counter)
     {
