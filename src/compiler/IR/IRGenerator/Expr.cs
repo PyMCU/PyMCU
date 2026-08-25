@@ -1476,13 +1476,18 @@ public partial class IRGenerator
                     // lets every target that reads a const[uint8[N]] table read a wide one.
                     // A constant index folds to constant byte offsets, so the common case is
                     // the same LPM sequence repeated, not index arithmetic.
+                    // The offset is a BYTE offset, so it outgrows eight bits before the element
+                    // count does: a uint16 table of 200 entries is 400 bytes, and index 128
+                    // scales to 256. Widen the offset temp once the table crosses that line, and
+                    // keep the narrow one for the tables that do not.
+                    DataType offType = sz * fsize > 256 ? DataType.UINT16 : DataType.UINT8;
                     Val ByteOffset(int b)
                     {
                         if (idxVal is Constant kc) return new Constant(kc.Value * fsize + b);
-                        Temporary scaled = MakeTemp(DataType.UINT8);
+                        Temporary scaled = MakeTemp(offType);
                         Emit(new Binary(BinaryOp.Mul, idxVal, new Constant(fsize), scaled));
                         if (b == 0) return scaled;
-                        Temporary off = MakeTemp(DataType.UINT8);
+                        Temporary off = MakeTemp(offType);
                         Emit(new Binary(BinaryOp.Add, scaled, new Constant(b), off));
                         return off;
                     }
