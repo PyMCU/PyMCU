@@ -256,6 +256,69 @@ public class OptimizerTests
         Assert.True(foundRes30 || foundReturn30,
             "res must be assigned 30, or Return must carry the constant 30 directly");
     }
+
+    // ─── Power-of-two rewrites are integer-only ────────────────────────────
+
+    private static DataType TypeOf(Val v) => v switch
+    {
+        Variable x => x.Type,
+        Temporary t => t.Type,
+        _ => DataType.UNKNOWN,
+    };
+
+    private static bool TouchesFloat(Binary b) =>
+        TypeOf(b.Src1) == DataType.FLOAT
+        || TypeOf(b.Src2) == DataType.FLOAT
+        || TypeOf(b.Dst) == DataType.FLOAT;
+
+    [Fact]
+    public void PowerOfTwoStrengthReduction_SkipsFloats()
+    {
+        // x * 2^n -> x << n and x // 2^n -> x >> n are integer identities and nothing
+        // more: a float's bit pattern is not its magnitude. Applied to a float they
+        // reached AvrCodeGen as a float LShift/RShift, which it refuses outright
+        // (pymcu-avr#5). The constant is an integer literal, so the rewrite fired
+        // whichever side the float was on.
+        var optimized = GenerateAndOptimize(
+            "def scale(x: float) -> float:\n" +
+            "    return x * 2\n" +
+            "\n" +
+            "def half(x: float) -> float:\n" +
+            "    return x // 2\n");
+
+        foreach (var func in optimized.Functions)
+            Assert.DoesNotContain(func.Body, i =>
+                i is Binary { Op: IrBinaryOp.LShift or IrBinaryOp.RShift or IrBinaryOp.BitAnd } b
+                && TouchesFloat(b));
+    }
+
+    [Fact]
+    public void FlooredDivisionByOne_IsNotAnIdentityOnAFloat()
+    {
+        // x // 1 -> x is true of integers and false of floats: 3.5 // 1 is 3.0, not 3.5.
+        // The rewrite dropped the operation entirely, so the wrong number reached the port
+        // with no diagnostic (PyMCU#128). The division has to survive optimization.
+        var optimized = GenerateAndOptimize(
+            "def floor_it(x: float) -> float:\n" +
+            "    return x // 1\n");
+
+        var body = optimized.Functions.Single(f => f.Name.EndsWith("floor_it")).Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.FloorDiv } b && TouchesFloat(b));
+    }
+
+    [Fact]
+    public void PowerOfTwoStrengthReduction_StillFiresOnIntegers()
+    {
+        // The guard above must not disable the rewrite it protects: this is why the pass
+        // exists, and hi * 256 becoming a byte placement is what pays for it.
+        var optimized = GenerateAndOptimize(
+            "def pack(hi: uint8, lo: uint8) -> uint16:\n" +
+            "    return hi * 256 + lo\n");
+
+        var body = optimized.Functions.Single(f => f.Name.EndsWith("pack")).Body;
+        Assert.Contains(body, i => i is Binary { Op: IrBinaryOp.LShift });
+        Assert.DoesNotContain(body, i => i is Binary { Op: IrBinaryOp.Mul });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

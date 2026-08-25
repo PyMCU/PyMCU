@@ -694,6 +694,21 @@ private static Function CloneFunction(Function f)
         int fullMask = dt switch { DataType.UINT8 or DataType.INT8 => 0xFF,
                                    DataType.UINT16 or DataType.INT16 => 0xFFFF, _ => -1 };
 
+        // Several rewrites below are integer identities and integer identities only. A
+        // float's bit pattern is not its magnitude, so halving it is not a shift, and its
+        // floored division by 1 is not itself. Applied to a float they were:
+        //
+        //   x * 2^n  -> x << n      reached AvrCodeGen as a float LShift, which it refuses
+        //   x // 2^n -> x >> n      same, as a float RShift        (pymcu-avr#5)
+        //   x %  2^n -> x & (2^n-1) same, as a float BitAnd
+        //   x // 1   -> x           3.5 // 1 printed 3.5, not 3.0  (PyMCU#128)
+        //   x %  1   -> 0           3.5 %  1 printed 0.0, not 0.5
+        //
+        // The last two are the ones that mattered: no diagnostic, just a different number.
+        // The constant here is an integer literal, so the float may sit on either side of
+        // the operator; the destination and the non-constant operand are both checked.
+        bool isFloat = dt == DataType.FLOAT || GetDataType(other) == DataType.FLOAT;
+
         switch (b.Op)
         {
             // Commutative: the constant may be on either side.
@@ -706,7 +721,7 @@ private static Function CloneFunction(Function f)
             // The backend lowers a constant shift to byte moves for multiples of 8
             // (e.g. hi * 256 in the ADC read becomes a high-byte placement instead
             // of a 16-bit MUL chain).
-            case BinaryOp.Mul when k > 1 && (k & (k - 1)) == 0:
+            case BinaryOp.Mul when !isFloat && k > 1 && (k & (k - 1)) == 0:
                 return new Binary(BinaryOp.LShift, other, new Constant(System.Numerics.BitOperations.TrailingZeroCount(k)), b.Dst);
             case BinaryOp.BitAnd when k == 0: return Zero();
             case BinaryOp.BitAnd when fullMask >= 0 && (k & fullMask) == fullMask: return Keep();
@@ -716,12 +731,12 @@ private static Function CloneFunction(Function f)
             // the arithmetic right shift rounds toward -inf and x & (2^n - 1) is the
             // non-negative residue -- both ARE the floored results. Dropping the divide
             // also un-links the software division runtime when nothing else divides.
-            case BinaryOp.FloorDiv when rightConst && k == 1: return Keep();
-            case BinaryOp.FloorDiv when rightConst && k > 1 && (k & (k - 1)) == 0:
+            case BinaryOp.FloorDiv when !isFloat && rightConst && k == 1: return Keep();
+            case BinaryOp.FloorDiv when !isFloat && rightConst && k > 1 && (k & (k - 1)) == 0:
                 return new Binary(BinaryOp.RShift, other,
                     new Constant(System.Numerics.BitOperations.TrailingZeroCount(k)), b.Dst);
-            case BinaryOp.Mod when rightConst && k == 1: return Zero();
-            case BinaryOp.Mod when rightConst && k > 1 && (k & (k - 1)) == 0:
+            case BinaryOp.Mod when !isFloat && rightConst && k == 1: return Zero();
+            case BinaryOp.Mod when !isFloat && rightConst && k > 1 && (k & (k - 1)) == 0:
                 return new Binary(BinaryOp.BitAnd, other, new Constant(k - 1), b.Dst);
             // Non-commutative: identity only when the constant is the right operand.
             case BinaryOp.Sub when rightConst && k == 0: return Keep();
