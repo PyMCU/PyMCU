@@ -881,6 +881,26 @@ public partial class IRGenerator
                 // of how the const[str] param's nominal type folds.
                 if (argVal is FlashStrAddr) ptype = FlashPtrType;
 
+                // A buffer parameter takes an ADDRESS. A chip register evaluates to its
+                // CONTENTS, so `f(PORTB)` hands the callee whatever happens to be in the port,
+                // and every `reg[i]` inside then reads or writes at that number. It compiled
+                // either way before -- as a bit test of a discarded copy, or as a store through
+                // the port's contents -- and neither did what the program says. There is no
+                // spelling that makes it work (`ptr(PORTB)` evaluates to the same contents), so
+                // name it rather than pick between two wrong answers.
+                if (argVal is MemoryAddress && bytearrayParams.Contains(paramVarName))
+                {
+                    string shown = i < callArgs.Count && callArgs[i] is VariableExpr regArg
+                        ? $"'{regArg.Name}'" : "that argument";
+                    throw UserError(
+                        $"{shown} is a chip register, and '{paramNames[i]}' is indexed in "
+                        + $"'{callee}' as a buffer, so it needs the ADDRESS of some bytes. A "
+                        + "register argument passes its CONTENTS, and every "
+                        + $"{paramNames[i]}[i] in the callee would read or write at that number. "
+                        + "Pass a buffer (`buf: uint8[N]`), or index the register where it is "
+                        + $"declared and pass the bit instead (`def {callee}(b): PORTx[b] = 1`).");
+                }
+
                 // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
                 // (which resolves as a UINT8 Variable rather than a FunctionRef), create the
                 // FunctionRef so DCE treats the function as reachable and the backend emits

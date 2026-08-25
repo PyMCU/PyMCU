@@ -661,6 +661,20 @@ public partial class IRGenerator
                         $"parameter '{p.Name}' of '{func.Name}' has a fixed-array type '{p.Type}'; " +
                         "pass an array to a function as a 'bytearray' (by reference), " +
                         $"e.g. `def {func.Name}({p.Name}: bytearray, ...)`");
+                // An UNANNOTATED parameter that the body subscripts is a buffer, not a
+                // register. Callers already pass an array by its base address, so the pointer
+                // was arriving all along and only the callee's reading of `buf[i]` was wrong:
+                // with nothing saying otherwise, the subscript fell through to the register
+                // BIT path. A run-time index then failed as "Bit index must be constant for
+                // reading" -- which names no buffer, no parameter, and an operation the
+                // program does not contain -- while a CONSTANT index was worse, compiling
+                // silently into a bit test of the buffer's address.
+                //
+                // Decided here rather than when the body is compiled so that a call site sees
+                // the same answer whichever of the two the compiler reaches first.
+                if (!func.IsInline && p.Type.Length == 0 && IsSubscriptedInBody(func.Body, p.Name))
+                    bytearrayParams.Add(fullName + "." + p.Name);
+
                 @params.Add(p.Name);
                 paramTypes.Add(DataTypeExtensions.StringToDataType(p.Type));
             }
@@ -1954,6 +1968,104 @@ public partial class IRGenerator
         foreach (var s in func.Body.Statements) ScanIStmt(s);
         visiting.Remove(func);
         return result;
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> appears as the target of a subscript anywhere in
+    /// <paramref name="body"/> (`name[...]`, read or written), skipping any nested function
+    /// that rebinds the name as its own parameter.
+    /// </summary>
+    /// <remarks>
+    /// Used to decide that an unannotated parameter is a buffer rather than a register. A
+    /// shape this walk does not reach simply infers nothing, which leaves the parameter
+    /// exactly as it was before -- so a gap here costs a diagnostic, never a wrong answer.
+    /// </remarks>
+    private static bool IsSubscriptedInBody(Statement? body, string name)
+    {
+        bool found = false;
+
+        void Expr(Expression? e)
+        {
+            if (e == null || found) return;
+            switch (e)
+            {
+                case IndexExpr idx:
+                    if (idx.Target is VariableExpr tv && tv.Name == name) { found = true; return; }
+                    Expr(idx.Target); Expr(idx.Index); return;
+                case SliceExpr sl: Expr(sl.Start); Expr(sl.Stop); Expr(sl.Step); return;
+                case BinaryExpr b: Expr(b.Left); Expr(b.Right); return;
+                case UnaryExpr u: Expr(u.Operand); return;
+                case TernaryExpr t: Expr(t.Condition); Expr(t.TrueVal); Expr(t.FalseVal); return;
+                case WalrusExpr w: Expr(w.Value); return;
+                case AwaitExpr aw: Expr(aw.Operand); return;
+                case YieldExpr y: Expr(y.Value); return;
+                case MemberAccessExpr m: Expr(m.Object); return;
+                case StarArgExpr st: Expr(st.Value); return;
+                case KeywordArgExpr kw: Expr(kw.Value); return;
+                case CallExpr c:
+                    Expr(c.Callee);
+                    foreach (var a in c.Args) Expr(a);
+                    return;
+                case ListExpr le: foreach (var el in le.Elements) Expr(el); return;
+                case TupleExpr te: foreach (var el in te.Elements) Expr(el); return;
+                case SetExpr se: foreach (var el in se.Elements) Expr(el); return;
+                case DictExpr de:
+                    foreach (var (k, v) in de.Entries) { Expr(k); Expr(v); }
+                    return;
+                case FStringExpr fs: foreach (var part in fs.Parts) Expr(part.Expr); return;
+                case ListCompExpr lc:
+                    Expr(lc.Element); Expr(lc.Iterable); Expr(lc.Iterable2); Expr(lc.Filter);
+                    return;
+                default: return;
+            }
+        }
+
+        void Stmt(Statement? s)
+        {
+            if (s == null || found) return;
+            switch (s)
+            {
+                case Block blk: foreach (var st in blk.Statements) Stmt(st); return;
+                case ExprStmt es: Expr(es.Expr); return;
+                case AssignStmt a: Expr(a.Target); Expr(a.Value); return;
+                case AugAssignStmt ag: Expr(ag.Target); Expr(ag.Value); return;
+                case AnnAssign an: Expr(an.Value); return;
+                case VarDecl vd: Expr(vd.Init); return;
+                case ReturnStmt r: Expr(r.Value); return;
+                case TupleUnpackStmt tu: Expr(tu.Value); return;
+                case AssertStmt asrt: Expr(asrt.Condition); return;
+                case IfStmt i:
+                    Expr(i.Condition); Stmt(i.ThenBranch);
+                    foreach (var (cond, bdy) in i.ElifBranches) { Expr(cond); Stmt(bdy); }
+                    Stmt(i.ElseBranch);
+                    return;
+                case WhileStmt w: Expr(w.Condition); Stmt(w.Body); return;
+                case ForStmt f:
+                    Expr(f.RangeStart); Expr(f.RangeStop); Expr(f.RangeStep); Expr(f.Iterable);
+                    Stmt(f.Body);
+                    return;
+                case WithStmt wi: Expr(wi.ContextExpr); Stmt(wi.Body); return;
+                case MatchStmt m:
+                    Expr(m.Target);
+                    foreach (var br in m.Branches) { Expr(br.Pattern); Expr(br.Guard); Stmt(br.Body); }
+                    return;
+                case TryStmt t:
+                    foreach (var st in t.Body) Stmt(st);
+                    foreach (var (_, h) in t.Handlers) foreach (var st in h) Stmt(st);
+                    if (t.ElseBody != null) foreach (var st in t.ElseBody) Stmt(st);
+                    if (t.Finally != null) foreach (var st in t.Finally) Stmt(st);
+                    return;
+                case FunctionDef nested:
+                    // A nested def that takes the same parameter name owns it from here in.
+                    if (nested.Params.Any(p => p.Name == name)) return;
+                    Stmt(nested.Body);
+                    return;
+                default: return;
+            }
+        }
+
+        Stmt(body);
+        return found;
     }
 
     private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix)

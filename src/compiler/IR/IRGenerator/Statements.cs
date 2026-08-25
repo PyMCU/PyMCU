@@ -369,6 +369,23 @@ public partial class IRGenerator
                 paramDt = FlashPtrType;   // 16-bit on AVR/PIC, 32-bit on ARM/RISC-V
                 flashStrPtrVars.Add(qualifiedParam);
             }
+
+            // Set by the scan (Scan.cs) for an unannotated parameter the body subscripts: it is a
+            // pass an array by its base address (ArrayBase), so the pointer was arriving all
+            // along and only the callee's reading of `buf[i]` was wrong: with nothing saying
+            // otherwise, a subscript fell through to the REGISTER BIT path. A run-time index
+            // then failed as "Bit index must be constant for reading", which names no buffer
+            // and no parameter and describes an operation the program does not contain; a
+            // constant index was worse, compiling silently into a bit test of the address.
+            //
+            // Reading it as a byte pointer is what the `bytearray` annotation does, so the
+            // annotated and unannotated spellings now agree. Inferring nothing (an annotated
+            // parameter, an @inline function whose body is expanded at the call site with the
+            // argument bound directly, a parameter never subscripted) leaves every other path
+            // exactly as it was.
+            if (param.Type.Length == 0 && bytearrayParams.Contains(qualifiedParam))
+                paramDt = DataTypeExtensions.PointerWidth >= 4 ? DataType.UINT32 : DataType.UINT16;
+
             variableTypes[qualifiedParam] = paramDt;
         }
 

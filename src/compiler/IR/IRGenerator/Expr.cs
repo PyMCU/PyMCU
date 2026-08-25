@@ -1408,7 +1408,24 @@ public partial class IRGenerator
                     qualified = inlineQ;
             }
 
-            // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
+            // The alias for an inline parameter bound to a MODULE-level array resolves to the
+            // function-qualified name ("main.gbuf") while a module array is registered bare
+            // ("gbuf"), so the lookup missed and the subscript fell through to the register
+            // bit path. With a run-time index that failed as "Bit index must be constant";
+            // with a constant index it compiled SILENTLY into a bit test of the array's
+            // ADDRESS. Same normalization the qualified/bare fallback above does.
+            if (!arraySizes.ContainsKey(qualified) && !bytearrayParams.Contains(qualified))
+            {
+                int lastDot = qualified.LastIndexOf('.');
+                if (lastDot >= 0)
+                {
+                    string bare = qualified[(lastDot + 1)..];
+                    if (arraySizes.ContainsKey(bare) || bytearrayParams.Contains(bare))
+                        qualified = bare;
+                }
+            }
+
+                        // Bytearray parameter: the value stored is a pointer; use indirect indexed load.
             if (bytearrayParams.Contains(qualified))
             {
                 Val idxVal = VisitExpression(expr.Index);
