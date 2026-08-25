@@ -346,6 +346,9 @@ public partial class IRGenerator
                 intrinsicNames.Add("funcref");
             }
 
+            if (imp.WasStarImport)
+                starImports.Add((imp.ModuleName, new List<string>(imp.Symbols)));
+
             if (imp.Symbols.Count == 0)
             {
                 string modKey = string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName : imp.ModuleAlias;
@@ -1276,7 +1279,7 @@ public partial class IRGenerator
 
             throw UserError(
                 $"name '{name}' is not defined -- it is read here but never assigned, " +
-                "imported, or received as a parameter");
+                "imported, or received as a parameter" + StarImportHint(name));
         }
 
         return new Variable(finalLocalName, type);

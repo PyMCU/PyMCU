@@ -131,6 +131,12 @@ public partial class IRGenerator
     // is unreliable. Unioned with method/property names at the check site.
     private HashSet<string> assignedMemberNames = new();
     private Dictionary<string, string?> importedAliases = new(); // Tracks Pin/_Pin -> pymcu.hal.gpio
+
+    // Star imports in scope, module name -> the names the star actually brought in. A star
+    // binds what its module defines at top level, so a name it only re-exports is missing;
+    // without this the reader was told the name was "never imported" with the import that
+    // was supposed to bring it in sitting in front of them.
+    private readonly List<(string Module, List<string> Names)> starImports = new();
     private Dictionary<string, string?> aliasToOriginal = new(); // Tracks _Pin -> Pin (for "from X import Pin as _Pin")
     private Dictionary<string, int> constantVariables = new(); // Tracks variables holding constants (for folding)
 
