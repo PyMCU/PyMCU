@@ -653,9 +653,15 @@ public partial class IRGenerator
                     {
                         globals[sym] = globalSym;
                     }
-                    else if (srcScope.MutableGlobals.TryGetValue(sym, out var mutGlobalType))
+                    else if (srcScope.MutableGlobals.ContainsKey(sym))
                     {
-                        mutableGlobals[sym] = mutGlobalType;
+                        // Deliberately NOT `mutableGlobals[sym] = type`. The name already has
+                        // storage, under the defining module's own key, and giving it a second
+                        // one here split the variable in two: the module initializer wrote the
+                        // declared value into `<mod>_<sym>` while the module's own functions and
+                        // this file both wrote and read the bare name, so the declared value was
+                        // in the firmware and nothing could reach it. ResolveBinding resolves
+                        // this name through importedAliases to the one slot that exists.
                     }
                 }
             }
@@ -1394,7 +1400,25 @@ public partial class IRGenerator
         if (strConstantVariables.TryGetValue(currentModulePrefix + bare, out var mv)) return mv;
         if (strConstantVariables.TryGetValue(bare, out var bv)) return bv;
 
+        // `from m import banner`: the text is filed under the DEFINING module's key, which is
+        // the only storage the name has (see the import loop in Generate). Reading it under
+        // the bare name alone answered with no text at all, and print wrote an empty line.
+        if (ImportedGlobalKey(bare) is { } importedKey
+            && strConstantVariables.TryGetValue(importedKey, out var iv)) return iv;
+
         return null;
+    }
+
+    /// <summary>
+    /// The defining module's key for a name this file imported with `from m import name`, or
+    /// null when the name was not imported that way. The name has no storage of its own: it
+    /// stands for the variable that lives in `m`.
+    /// </summary>
+    private string? ImportedGlobalKey(string name)
+    {
+        if (!importedAliases.TryGetValue(name, out var mod) || mod == null) return null;
+        string original = aliasToOriginal.TryGetValue(name, out var orig) ? orig : name;
+        return mod.Replace('.', '_') + "_" + original;
     }
 
     // --- Strings whose value is decided at run time (issue #145) -------------------------
@@ -1460,6 +1484,8 @@ public partial class IRGenerator
         if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
         if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + name;
         yield return name;
+        // `from m import state`: the slot belongs to m, and so does what is recorded about it.
+        if (ImportedGlobalKey(name) is { } importedKey) yield return importedKey;
     }
 
     /// <summary>
