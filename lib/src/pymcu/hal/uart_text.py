@@ -117,12 +117,22 @@ def uart_write_float(value: float):
     # Two decimals, rounded, on every architecture. The one-decimal truncating
     # variants that used to live in three of these files disagreed with this one
     # about what print_float means, and overflowed their accumulator past 6553.5.
+    #
+    # The integer part is taken straight from the value, never from a scaled
+    # accumulator. Scaling the whole value by 100 first caps what can be printed
+    # at 2**32 / 100, so every float past 42949672.95 came out as the same
+    # saturated number -- 1e8 and 1e9 both printed 21474836.48. That is the
+    # cliff uart_write_float_compact already exists to avoid one width down.
+    # Only the fraction is scaled, and it is below 1.0 by construction.
     if value < 0.0:
         uart_write(45)
         value = 0.0 - value
-    centis: uint32 = uint32(value * 100.0 + 0.5)
-    int_part: uint32 = centis // 100
-    frac: uint8 = uint8(centis % 100)
+    int_part: uint32 = uint32(value)
+    frac: uint8 = uint8((value - float(int_part)) * 100.0 + 0.5)
+    if frac >= 100:
+        # The rounding carried out of the fraction: 0.999 is 1.00, not 0.100.
+        frac = 0
+        int_part += 1
     uart_write_decimal_u32(int_part)
     uart_write(46)
     d1: uint8 = frac // 10
