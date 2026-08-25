@@ -513,6 +513,11 @@ public partial class IRGenerator
                 VariableExpr rsv when TryGetSetBinding(rsv.Name, out var sb) => sb.Elements,
                 VariableExpr rdv when TryGetDictBinding(rdv.Name, out var db)
                     => db.Entries.Select(en => en.Key).ToList(),
+                // A name bound to a LIST, which is what the message already said was allowed:
+                // only sets and dicts were actually resolved through their name, so
+                // `x in data` was refused by a sentence recommending the spelling it refused.
+                VariableExpr rlv when ElementsOfNamedSequence(rlv.Name) is { } listBound
+                    => listBound,
                 _ => throw UserError(
                     "'in' / 'not in' requires a list, tuple, set or dict literal (or a name " +
                     "bound to one) on the right-hand side")
@@ -1594,6 +1599,14 @@ public partial class IRGenerator
 
     private Val VisitMemberAccess(MemberAccessExpr expr)
     {
+        // A single-field instance handed back by a factory IS its one field: the call returns
+        // the field's value in a register and the name is bound to that (RFC 0001 Model B
+        // handle). A method call on it already knew that; a direct field READ did not, and
+        // resolved to a per-field name nobody ever wrote, so `o.a` came back as zero while
+        // `o.g()` answered correctly on the very next line.
+        if (expr.Object is VariableExpr handleVe && HandleFieldRead(handleVe.Name, expr.Member) is { } handleVal)
+            return handleVal;
+
         // RFC 0001 Model B (SRAM slot): inside a slot method, `self.<field>` reads from the
         // instance slot via the `self` pointer at the field's byte offset. Guard with an empty
         // inline prefix: when ANOTHER method is inlined into this outlined slot method (e.g.
@@ -1970,4 +1983,30 @@ public partial class IRGenerator
             if (methods.Contains(member)) return true;
         return false;
     }
+
+    /// <summary>
+    /// The value of `<paramref name="name"/>.<paramref name="member"/>` when name is bound to
+    /// a factory handle whose class has exactly one field and member IS that field. Null in
+    /// every other case, which leaves the ordinary member resolution alone.
+    /// </summary>
+    private Val? HandleFieldRead(string name, string member)
+    {
+        foreach (var key in new[]
+                 {
+                     !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+                     !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+                     name,
+                 })
+        {
+            if (key == null || !factoryHandleInstances.Contains(key)) continue;
+            if (!instanceClasses.TryGetValue(key, out var cls) || cls == null) continue;
+            if (!classFieldLayout.TryGetValue(cls, out var layout)) continue;
+            if (layout.Count != 1 || layout[0].Field != member) continue;
+
+            DataType dt = DataTypeExtensions.StringToDataType(layout[0].Type);
+            return new Variable(key, variableTypes.TryGetValue(key, out var vt) ? vt : dt);
+        }
+        return null;
+    }
+
 }
