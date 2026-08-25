@@ -659,7 +659,13 @@ public static class AsyncTransform
         foreach (var imp in prog.Imports)
         {
             // `import asyncio` / `import asyncio as aio` / `import pymcu.asyncio as aio`
-            if (imp.ModuleName == "asyncio" || imp.ModuleName == "pymcu.asyncio")
+            //
+            // `uasyncio` is the same module under the spelling most of the existing MicroPython
+            // code base uses, and the one every pre-1.13 tutorial shows. Without it here,
+            // `import uasyncio as asyncio` resolved the module and then failed with "this
+            // module uses `async def` but never imports asyncio" -- pointing at an import the
+            // program had already written, under the other name.
+            if (imp.ModuleName is "asyncio" or "uasyncio" or "pymcu.asyncio")
                 return string.IsNullOrEmpty(imp.ModuleAlias) ? imp.ModuleName.Split('.')[^1] : imp.ModuleAlias;
             // `from pymcu import asyncio` / `from pymcu import asyncio as aio`
             if ((imp.ModuleName == "pymcu" || imp.ModuleName == "") && imp.Symbols.Contains("asyncio"))
