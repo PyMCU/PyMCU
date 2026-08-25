@@ -389,6 +389,11 @@ public partial class IRGenerator
     // `for` over the NAME unrolls the way the same literal written inline already does.
     private Dictionary<string, List<Frontend.Expression>> constSequenceBindings = new();
 
+    // The literal elements an ANNOTATED array was initialized with (`base: uint8[4] = [1,2,3,4]`).
+    // Read only when a list comprehension iterates that array by name: the array itself keeps
+    // living as stores, so nothing else changes shape because the elements are remembered here.
+    private Dictionary<string, List<Frontend.Expression>> arrayLiteralElements = new();
+
     private Dictionary<string, Frontend.ListExpr> listLiteralParams = new();
 
     // Functions already reported via the @warning informational diagnostic, so

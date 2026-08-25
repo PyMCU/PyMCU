@@ -3074,6 +3074,7 @@ public partial class IRGenerator
                 {
                     for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
                         if (TryEvalElemConst(le.Elements[k], out int v)) initVals[k] = v;
+                    arrayLiteralElements[qualified] = le.Elements;
                 }
 
                 if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
@@ -3186,9 +3187,22 @@ public partial class IRGenerator
 
                 for (int i = start; i < stop; i++) vals.Add(i);
             }
-            else if (iterExpr is ListExpr le)
+            else if (iterExpr is ListExpr or TupleExpr)
             {
-                foreach (var e in le.Elements)
+                var elems = iterExpr is ListExpr le ? le.Elements : ((TupleExpr)iterExpr).Elements;
+                foreach (var e in elems)
+                {
+                    var v = EvalConst(e);
+                    if (v == null) throw UserError("List comprehension const err");
+                    vals.Add(v.Value);
+                }
+            }
+            else if (iterExpr is VariableExpr iterName && ElementsOfNamedSequence(iterName.Name) is { } bound)
+            {
+                // `[x * 2 for x in base]` where base is a list this function already built.
+                // Without this the iterable produced nothing and the comprehension was
+                // reported as generating 0 elements for an array of 4.
+                foreach (var e in bound)
                 {
                     var v = EvalConst(e);
                     if (v == null) throw UserError("List comprehension const err");
@@ -3336,14 +3350,40 @@ public partial class IRGenerator
     /// </summary>
     private List<Expression>? ExpandCtListComp(ListCompExpr lc)
     {
-        if (!string.IsNullOrEmpty(lc.Var2Name) || lc.Iterable2 != null || lc.Filter != null)
-            return null;
+        if (lc.Filter != null) return null;
+
+        // Two `for` clauses: the cross product, outer first, exactly as Python nests them.
+        // Annotated, this form already compiled and held the right nine values; unannotated it
+        // was reported as a comprehension with a filter it does not have.
+        if (lc.Iterable2 != null && !string.IsNullOrEmpty(lc.Var2Name))
+        {
+            var outer = ExpandCtListComp(new ListCompExpr(
+                new VariableExpr("__ctcomp_item"), lc.VarName, lc.Iterable));
+            var inner = ExpandCtListComp(new ListCompExpr(
+                new VariableExpr("__ctcomp_item"), lc.Var2Name, lc.Iterable2));
+            if (outer == null || inner == null) return null;
+
+            var pairs = new List<Expression>(outer.Count * inner.Count);
+            foreach (var o in outer)
+                foreach (var i in inner)
+                    pairs.Add(SubstituteVar(SubstituteVar(lc.Element, lc.VarName, o), lc.Var2Name, i));
+            return pairs;
+        }
+
+        if (!string.IsNullOrEmpty(lc.Var2Name) || lc.Iterable2 != null) return null;
 
         List<Expression> items;
         switch (lc.Iterable)
         {
             case TupleExpr te: items = te.Elements; break;
             case ListExpr le:  items = le.Elements; break;
+            // `[x * 2 for x in base]` where base is a name bound to a list. The elements are
+            // known -- that is what the binding records -- but only a literal iterable was
+            // being read here, so the comprehension fell through to the value path and was
+            // rejected for having a filter it does not have.
+            case VariableExpr seqName when ResolveConstSequence(seqName.Name) is { } bound:
+                items = bound;
+                break;
             case CallExpr { Callee: VariableExpr { Name: "range" } } rangeCall:
                 int start = 0, stop;
                 if (rangeCall.Args.Count == 1) stop = EvaluateConstantExpr(rangeCall.Args[0]);
@@ -3792,5 +3832,27 @@ public partial class IRGenerator
     private void VisitClassDef(ClassDef classNode)
     {
     } // Only scanned
+
+
+    /// <summary>
+    /// The elements behind a name bound to a sequence: an unannotated `base = [1, 2, 3]`
+    /// binding, or the literal an annotated `base: uint8[4] = [...]` was built from.
+    /// </summary>
+    private List<Expression>? ElementsOfNamedSequence(string name)
+    {
+        if (ResolveConstSequence(name) is { } bound) return bound;
+
+        foreach (var key in new[]
+                 {
+                     !string.IsNullOrEmpty(currentInlinePrefix) ? currentInlinePrefix + name : null,
+                     !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + name : null,
+                     !string.IsNullOrEmpty(currentModulePrefix) ? currentModulePrefix + name : null,
+                     name,
+                 })
+        {
+            if (key != null && arrayLiteralElements.TryGetValue(key, out var elems)) return elems;
+        }
+        return null;
+    }
 
 }

@@ -3608,6 +3608,22 @@ public partial class IRGenerator
                 return;
             }
 
+            // `print(s[i])` is a character too. Python has no char type: `"abcd"[0]` is the
+            // one-character string "a", and printing it shows a. The subscript yields the byte,
+            // which went to the decimal writer and sent "97".
+            if (arg is IndexExpr { Index: not SliceExpr } strIx && StringBehindSubscript(strIx) is { } sText)
+            {
+                if (TryEvalConstElement(strIx.Index, out int ixConst)
+                    && ixConst >= 0 && ixConst < sText.Length)
+                {
+                    EmitStreamStr(writeStrFn, sText[ixConst].ToString());
+                    return;
+                }
+
+                EmitStreamCharExpr(strIx);
+                return;
+            }
+
             // f-string -> stream: lower each part to a direct write.
             if (arg is FStringExpr fs)
             {
@@ -4207,5 +4223,20 @@ public partial class IRGenerator
             strConstantVariables.Remove(bse + "_" + field);
         }
     }
+
+
+    /// <summary>
+    /// The string a subscript reads from, or null when the target is not a known string. Used
+    /// to tell `print(s[i])` (a character) from `print(buf[i])` (a number): Python has no char
+    /// type, so a one-character string is what indexing a string yields.
+    /// </summary>
+    private string? StringBehindSubscript(IndexExpr ix) => ix.Target switch
+    {
+        StringLiteral sl => sl.Value,
+        VariableExpr v => ResolveStrConstant(
+                              string.IsNullOrEmpty(currentFunction) ? v.Name : currentFunction + "." + v.Name)
+                          ?? ResolveStrConstant(v.Name),
+        _ => null,
+    };
 
 }
