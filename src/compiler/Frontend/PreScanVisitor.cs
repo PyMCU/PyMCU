@@ -25,12 +25,57 @@ public class PreScanVisitor(DeviceConfig config)
 {
     // isTargetEstablished = true  → target was set by BootstrapPhase; validate only.
     // isTargetEstablished = false → first device_info() seen establishes the target.
+    // Module-level integer constants of the file being scanned, so that
+    // `RAM_SIZE = 2048` ... `device_info(ram_size=RAM_SIZE)` resolves. Every chip
+    // file in the stdlib is written that way, and until this map existed the sizes
+    // were silently dropped: the argument was a name, not an IntegerLiteral, the
+    // `is IntegerLiteral` test simply did not match, and DeviceConfig kept its 0.
+    private readonly Dictionary<string, int> moduleConstants = new();
+
     public void Scan(ProgramNode program, bool isTargetEstablished = false)
     {
+        // Collected up front, so a constant declared after the device_info() call
+        // resolves as readily as one declared before it.
+        foreach (var stmt in program.GlobalStatements)
+            RecordConstant(stmt);
+
         foreach (var stmt in program.GlobalStatements)
         {
             VisitStatement(stmt, isTargetEstablished);
         }
+    }
+
+    private void RecordConstant(Statement stmt)
+    {
+        switch (stmt)
+        {
+            case VarDecl { Init: IntegerLiteral v } d:
+                moduleConstants[d.Name] = v.Value;
+                break;
+            case AnnAssign { Value: IntegerLiteral v } a:
+                moduleConstants[a.Target] = v.Value;
+                break;
+            case AssignStmt { Target: VariableExpr t, Value: IntegerLiteral v }:
+                moduleConstants[t.Name] = v.Value;
+                break;
+        }
+    }
+
+    // An integer argument to device_info(): a literal, or a module-level integer
+    // constant of the same file. Anything else is refused rather than dropped --
+    // a size that quietly stays 0 is exactly the failure this plumbing exists to end.
+    private int ResolveSize(string key, Expression valueExpr, int line)
+    {
+        if (valueExpr is IntegerLiteral lit) return lit.Value;
+
+        if (valueExpr is VariableExpr name && moduleConstants.TryGetValue(name.Name, out int v))
+            return v;
+
+        throw new CompilerError("ConfigError",
+            $"device_info({key}=...) must be an integer literal or a module-level integer "
+            + "constant of this file; the backends read this number and cannot be given "
+            + "an expression they must evaluate.",
+            line, 0);
     }
 
     private void VisitStatement(Statement stmt, bool isTargetEstablished)
@@ -139,18 +184,18 @@ public class PreScanVisitor(DeviceConfig config)
             }
             else if (key == "ram_size")
             {
-                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
-                    config.RamSize = lit.Value;
+                if (!isTargetEstablished)
+                    config.RamSize = ResolveSize(key, valueExpr, call.Line);
             }
             else if (key == "flash_size")
             {
-                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
-                    config.FlashSize = lit.Value;
+                if (!isTargetEstablished)
+                    config.FlashSize = ResolveSize(key, valueExpr, call.Line);
             }
             else if (key == "eeprom_size")
             {
-                if (valueExpr is IntegerLiteral lit && !isTargetEstablished)
-                    config.EepromSize = lit.Value;
+                if (!isTargetEstablished)
+                    config.EepromSize = ResolveSize(key, valueExpr, call.Line);
             }
         }
 
