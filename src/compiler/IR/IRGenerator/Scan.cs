@@ -1236,6 +1236,16 @@ public partial class IRGenerator
     {
         var synthParams = new List<Param>();
         if (layout.Count >= 2) slotClasses.Add(classKey);
+        // A single-field method that BOTH writes its field and returns a value cannot be
+        // Model A: the field travels by value and the one return slot already carries the
+        // returned expression, so the write has nowhere to come back through and is lost.
+        // `@outline def bump(self) -> uint8: self.a = self.a + 1; return self.a` returned the
+        // right number and left the instance holding the old one. Give the class a slot so the
+        // body writes through a pointer instead.
+        else if (siblings != null
+                 && siblings.Values.Any(m => MethodHasReturnStmt(m)
+                        && layout.Any(f => MethodMutatesField(m, f.Field, siblings))))
+            slotClasses.Add(classKey);
         if (slotClasses.Contains(classKey))
         {
             synthParams.Add(new Param("self", "bytearray"));
