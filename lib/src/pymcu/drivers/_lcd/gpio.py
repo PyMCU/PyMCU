@@ -242,14 +242,17 @@ def lcd_write_char(rs: const[str], en: const[str], d4: const[str], d5: const[str
 
 @inline
 def lcd_set_cursor(rs: const[str], en: const[str], d4: const[str], d5: const[str], d6: const[str], d7: const[str], col: uint8, row: uint8):
-    # DDRAM address: row 0 = 0x00, row 1 = 0x40, row 2 = 0x14, row 3 = 0x54
+    # DDRAM address: row base + column, with the bases the HD44780 uses --
+    # row 0 = 0x00, row 1 = 0x40, row 2 = 0x14, row 3 = 0x54.
+    # The bases of rows 2 and 3 carry bits inside the column field, so this has
+    # to add: `4 | 0x14` is 0x14, which is column 0 of row 2, not column 4.
     addr: uint8 = col
     if row == 1:
-        addr = col | 0x40
+        addr = col + 0x40
     elif row == 2:
-        addr = col | 0x14
+        addr = col + 0x14
     elif row == 3:
-        addr = col | 0x54
+        addr = col + 0x54
     _lcd_send_byte_impl(rs, en, d4, d5, d6, d7, 0x80 | addr, 0)
     delay_us(40)
 
