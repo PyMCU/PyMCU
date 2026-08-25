@@ -206,20 +206,40 @@ public partial class IRGenerator
                         {
                             int count = int.Parse(ciNum);
                             DataType elemDt = DataTypeExtensions.StringToDataType(constInner.Substring(0, ciB));
-                            if (elemDt == DataType.UINT8)
+                            bool ciInteger = elemDt is DataType.UINT8 or DataType.INT8
+                                or DataType.UINT16 or DataType.INT16
+                                or DataType.UINT32 or DataType.INT32;
+                            if (ciInteger)
                             {
+                                // A table whose elements are wider than a byte used to fall
+                                // through here entirely: the name was never registered as an
+                                // array, so `T[i]` lowered to a REGISTER BIT TEST on a scalar
+                                // that does not exist, every read folded to zero, and a run-time
+                                // index failed the build talking about bit indices. A 16-bit
+                                // calibration table in flash is one of the most ordinary things
+                                // on an 8-bit part, precisely because the values do not fit in
+                                // a byte.
+                                //
+                                // FlashData stays byte-oriented, and the element is stored
+                                // little-endian, so the reader (see the flash branch of the
+                                // subscript lowering) walks SizeOf() bytes and reassembles it.
+                                // That needs no new IR node and no backend change, which is what
+                                // makes every target that already reads a const[uint8[N]] table
+                                // read a wide one too.
+                                int elemSize = elemDt.SizeOf();
                                 arraySizes[name] = count;
                                 arrayElemTypes[name] = elemDt;
                                 flashArrays.Add(name);
 
                                 // Collect FlashData so Generate() can inject it into the
                                 // main function body; ScanGlobals runs before VisitFunction.
-                                var bytes = new List<int>(Enumerable.Repeat(0, count));
+                                var bytes = new List<int>(Enumerable.Repeat(0, count * elemSize));
                                 if (initializer is ListExpr le)
                                 {
                                     for (int k = 0; k < Math.Min(count, le.Elements.Count); k++)
                                         if (TryEvalElemConst(le.Elements[k], out int v))
-                                            bytes[k] = v;
+                                            for (int b = 0; b < elemSize; b++)
+                                                bytes[k * elemSize + b] = (v >> (8 * b)) & 0xFF;
                                 }
                                 pendingFlashData.Add(new FlashData(name, bytes));
                             }

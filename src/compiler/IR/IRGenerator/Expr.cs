@@ -1460,9 +1460,53 @@ public partial class IRGenerator
 
                 if (flashArrays.Contains(qualified))
                 {
-                    Temporary tmp = MakeTemp(DataType.UINT8);
-                    Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
-                    return tmp;
+                    DataType felem = arrayElemTypes.TryGetValue(qualified, out var fe)
+                        ? fe : DataType.UINT8;
+                    int fsize = felem.SizeOf();
+                    if (fsize <= 1)
+                    {
+                        Temporary tmp = MakeTemp(felem);
+                        Emit(new ArrayLoadFlash(qualified, idxVal, tmp));
+                        return tmp;
+                    }
+
+                    // A table wider than a byte is stored little-endian as bytes, so the
+                    // element is read one byte at a time and reassembled here. ArrayLoadFlash
+                    // stays a byte load and no backend has to learn a new width, which is what
+                    // lets every target that reads a const[uint8[N]] table read a wide one.
+                    // A constant index folds to constant byte offsets, so the common case is
+                    // the same LPM sequence repeated, not index arithmetic.
+                    Val ByteOffset(int b)
+                    {
+                        if (idxVal is Constant kc) return new Constant(kc.Value * fsize + b);
+                        Temporary scaled = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(BinaryOp.Mul, idxVal, new Constant(fsize), scaled));
+                        if (b == 0) return scaled;
+                        Temporary off = MakeTemp(DataType.UINT8);
+                        Emit(new Binary(BinaryOp.Add, scaled, new Constant(b), off));
+                        return off;
+                    }
+
+                    // Built from the TOP byte down: each step shifts what is already there up
+                    // by eight and ORs the next byte in, so the two's-complement bit pattern of
+                    // a signed element comes out right without a sign-extension step.
+                    Temporary acc = MakeTemp(felem);
+                    Temporary hi = MakeTemp(DataType.UINT8);
+                    Emit(new ArrayLoadFlash(qualified, ByteOffset(fsize - 1), hi));
+                    Emit(new Copy(hi, acc));
+                    for (int b = fsize - 2; b >= 0; b--)
+                    {
+                        Temporary shifted = MakeTemp(felem);
+                        Emit(new Binary(BinaryOp.LShift, acc, new Constant(8), shifted));
+                        Temporary lo = MakeTemp(DataType.UINT8);
+                        Emit(new ArrayLoadFlash(qualified, ByteOffset(b), lo));
+                        Temporary widened = MakeTemp(felem);
+                        Emit(new Copy(lo, widened));
+                        Temporary merged = MakeTemp(felem);
+                        Emit(new Binary(BinaryOp.BitOr, shifted, widened, merged));
+                        acc = merged;
+                    }
+                    return acc;
                 }
 
                 if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
