@@ -49,6 +49,7 @@ public static class IrSerializer
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ProgramIR))]
+[JsonSerializable(typeof(DeviceGeometry))]
 [JsonSerializable(typeof(Dictionary<string, int>))]
 [JsonSerializable(typeof(Dictionary<string, HashSet<string>>))]
 [JsonSerializable(typeof(HashSet<string>))]

@@ -327,6 +327,15 @@ public class ExternSignature
 
 public class ProgramIR
 {
+    // Memory geometry of the target part, from device_info() in the chip file.
+    //
+    // Null, never a zeroed instance: a .mir written by a compiler older than this
+    // field deserializes to null, and RequireDevice() then refuses the build. An
+    // all-zero default would instead hand the backend a chip with no flash and no
+    // SRAM and let it carry on, which is the failure this whole field exists to
+    // end. Reach it through RequireDevice(), not directly.
+    public DeviceGeometry? Device { get; set; }
+
     public List<Variable> Globals { get; set; } = new();
 
     // Names of module-level globals referenced both inside an ISR (or a function
@@ -360,4 +369,16 @@ public class ProgramIR
 
     // Vtable specs surviving after devirtualization (empty for most programs).
     public List<VtableSpec> Vtables { get; set; } = new();
+
+    /// <summary>
+    /// The target's memory geometry, or a build error when this .mir predates the
+    /// geometry contract. Backends call this instead of touching <see cref="Device"/>,
+    /// so a compiler/backend version mismatch stops the build with one sentence
+    /// rather than silently compiling for a part with zero flash.
+    /// </summary>
+    public DeviceGeometry RequireDevice()
+        => Device ?? throw new InvalidOperationException(
+            "this .mir carries no device geometry: it was written by a pymcuc older than " +
+            "the geometry contract, which is the only place a backend can learn the chip's " +
+            "ram_size, flash_size and eeprom_size. Rebuild with a matching compiler.");
 }
