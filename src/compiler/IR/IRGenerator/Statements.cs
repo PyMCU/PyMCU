@@ -859,16 +859,37 @@ public partial class IRGenerator
                 Emit(new Copy(val, ctx.ResultTemp));
                 ctx.ResultAssigned = true;
 
-                if (val is Constant c)
+                // A return already visited at this expansion's own branch depth ends control
+                // flow: everything after it is dead code and must not change what the result
+                // is tracked as.
+                bool afterUnconditionalReturn = ctx.ResultReturnedUnconditionally;
+
+                if (val is Constant c && !afterUnconditionalReturn)
                 {
                     if (!wasAlreadyAssigned)
                     {
                         // First return wins for constants — subsequent const dead-code paths skipped.
+                        ctx.ResultConst = c.Value;
                         constantVariables[ctx.ResultTemp.Name] = c.Value;
                         // If the constant is a string ID, also register it as a string constant
                         // so downstream code can resolve it via ResolveStrConstant.
                         if (stringIdToStr.TryGetValue(c.Value, out string? sv))
                             strConstantVariables[ctx.ResultTemp.Name] = sv;
+                    }
+                    else if (ctx.ResultConst is int prevConst && prevConst != c.Value)
+                    {
+                        // A second REACHABLE return yields a different constant, so the callee
+                        // picks its result at run time and the result is not a compile-time
+                        // constant at all. Only arms the compiler actually walks get here, and
+                        // only while no earlier return has already ended control flow.
+                        //
+                        // Leaving the first constant in place made every consumer that folds a
+                        // constant RHS (a ZCA field store, an @inline argument) drop the store
+                        // and read the first `return` on every path (PWM.set_freq always chose
+                        // prescaler 1).
+                        ctx.ResultConst = null;
+                        constantVariables.Remove(ctx.ResultTemp.Name);
+                        strConstantVariables.Remove(ctx.ResultTemp.Name);
                     }
                 }
                 else if (val is Variable v)
@@ -891,6 +912,11 @@ public partial class IRGenerator
                     if (strConstantVariables.TryGetValue(t.Name, out string? tsv))
                         strConstantVariables[ctx.ResultTemp.Name] = tsv;
                 }
+
+                // No run-time condition opened inside this expansion guards this return, so it
+                // ends the body: mark it, and later returns are treated as the dead code they are.
+                if (_runtimeBranchDepth <= ctx.EntryBranchDepth)
+                    ctx.ResultReturnedUnconditionally = true;
             }
 
             Emit(new Jump(ctx.ExitLabel));

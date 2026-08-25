@@ -1998,7 +1998,8 @@ public partial class IRGenerator
         currentInlinePrefix = newPrefix;
         currentModulePrefix = basePrefix;
         inlineDepth = newDepth;
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult });
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
+            EntryBranchDepth = _runtimeBranchDepth });
 
         VisitBlock(funcSuper.Body);
         Emit(new Label(exitLabel));

@@ -29,6 +29,18 @@ public class InlineContext
     public string CalleeName { get; set; } = "";
     public bool ResultAssigned { get; set; } = false;
 
+    // The constant this expansion's result has been tracked as, if any. Set by the first
+    // `return <constant>` that is actually visited; cleared the moment a second REACHABLE
+    // return yields a DIFFERENT constant, because then the value is selected at run time.
+    public int? ResultConst { get; set; }
+
+    // Set once a return has been visited at this expansion's own branch depth, i.e. one that
+    // no run-time condition guards. Control cannot get past it, so every later return in the
+    // body is dead code and must not disturb what the result is tracked as. A folded `if`
+    // leaves the branch depth alone, which is what makes `if n == 13: return "PB5"` followed
+    // by a trailing `return "PD2"` still a compile-time "PB5" when n is 13.
+    public bool ResultReturnedUnconditionally { get; set; }
+
     // The inline name-prefix active inside this expansion's body (e.g. "inline1.outer.").
     // Used to resolve a free variable captured from an enclosing INLINE scope.
     public string Prefix { get; set; } = "";
