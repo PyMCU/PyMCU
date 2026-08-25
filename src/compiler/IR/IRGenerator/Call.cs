@@ -1279,9 +1279,11 @@ public partial class IRGenerator
                             $"{func.Params[paramIdx].Type} and requires a compile-time constant; " +
                             $"'{bare}' varies at runtime. A loop variable qualifies when the " +
                             "loop unrolls, which a `for` over a short constant list or tuple " +
-                            "does -- `pins = [11, 12, 13]` then `for p in pins:` -- while " +
-                            "`for p in range(...)` compiles to a real loop and does not. " +
-                            "Otherwise select with explicit constants (if/elif or match)");
+                            "does -- `pins = [11, 12, 13]` then `for p in pins:` -- and so does " +
+                            $"a `for` over a constant range of at most {ConstSequenceUnrollLimit} " +
+                            "steps. A longer range, or one with a bound that is not known at " +
+                            "compile time, stays a real loop. Otherwise select with explicit " +
+                            "constants (if/elif or match)");
                 }
                 variableAliases[paramName] = vArg.Name;
                 constantVariables.Remove(paramName);

@@ -412,16 +412,34 @@ public partial class IRGenerator
             if (elemExprs != null && TryVisitCtListAssign(listTarget, elemExprs)) return;
         }
 
-        // `self.buf = [0, 0, 0]` with no annotation reached the generic expression visitor,
-        // which has no lowering for a list literal and answered "Unknown Expression type:
-        // ListExpr", the name of a compiler class. A field needs its size at the declaration,
-        // so ask for the annotation by the spelling that works.
+        // `self.buf = [0, 0, 0]`: a list FIELD with no annotation. It reached the generic
+        // expression visitor, which has no lowering for a list literal, and answered "Unknown
+        // Expression type: ListExpr", the name of a compiler class, about a field written
+        // exactly the way a local list is. The literal carries the length, and the widest
+        // element carries the type, so the field is the same fixed array that
+        // `self.buf: list[uint8] = [...]` declares. Only all-constant literals qualify: a list
+        // of instances (`self.pins = [Pin(1), Pin(2)]`) is a different shape with its own path,
+        // and a literal whose size cannot be read still asks for the annotation by name.
         if (stmt.Target is MemberAccessExpr listMem && stmt.Value is ListExpr fieldList)
+        {
+            if (fieldList.Elements.Count > 0
+                && fieldList.Elements.All(e => TryEvalElemConst(e, out _))
+                && ResolveMemberArrayName(listMem) is null)
+            {
+                var fieldVals = new List<int>();
+                foreach (var e in fieldList.Elements) { TryEvalElemConst(e, out int ev); fieldVals.Add(ev); }
+                EmitMemberArrayInit(listMem.Object, listMem.Member,
+                    WidestElemType(fieldVals), fieldVals.Count, fieldVals,
+                    FormatMemberTarget(listMem));
+                return;
+            }
+
             throw UserError(
                 $"a list literal assigned to '{FormatMemberTarget(listMem)}' needs a declared size. "
                 + $"Write `{FormatMemberTarget(listMem)}: uint8[{fieldList.Elements.Count}] = [...]` "
                 + "(or another element type), which reserves the storage in the instance and is "
                 + "indexable at run time.");
+        }
 
         Val value = VisitExpression(stmt.Value);
 
@@ -2426,6 +2444,40 @@ public partial class IRGenerator
         }
     }
 
+    // Reserves the per-instance SRAM array behind a member (self._buf) and emits its
+    // initialisers. Shared by the three spellings that declare one: `self._buf: uint8[N]`,
+    // `self.buf: list[uint8] = [...]` and the bare `self.buf = [...]`.
+    private void EmitMemberArrayInit(Expression objExpr, string member, DataType elem,
+                                     int count, List<int> init, string targetShown)
+    {
+        var objVal = VisitExpression(objExpr);
+        string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
+        while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
+        if (string.IsNullOrEmpty(baseName))
+            throw UserError("Cannot resolve instance for member array '" + targetShown + "'");
+        string flat = baseName + "_" + member;
+
+        arraySizes[flat] = count;
+        arrayElemTypes[flat] = elem;
+        variableTypes[flat] = elem;
+        arraysWithVariableIndex.Add(flat);
+
+        for (int k = 0; k < count; ++k)
+            Emit(new ArrayStore(flat, new Constant(k), new Constant(init[k]), elem, count));
+    }
+
+    // The narrowest type that holds every element of an unannotated integer list literal.
+    // A list field written without an annotation has no declared element type, and picking
+    // uint8 outright would silently truncate `self.levels = [0, 300]`.
+    private static DataType WidestElemType(List<int> values)
+    {
+        bool negative = values.Any(x => x < 0);
+        int magnitude = values.Count == 0 ? 0 : values.Max(x => x < 0 ? -x : x);
+        if (negative)
+            return magnitude <= 0x7F ? DataType.INT8 : magnitude <= 0x7FFF ? DataType.INT16 : DataType.INT32;
+        return magnitude <= 0xFF ? DataType.UINT8 : magnitude <= 0xFFFF ? DataType.UINT16 : DataType.UINT32;
+    }
+
     // Resolves a member access (self._buf) to the flattened SRAM array name it
     // was declared under via `self._buf: uint8[N]`, or null if it is not an
     // instance-member array. Visiting the object (self) only resolves an alias
@@ -2666,44 +2718,37 @@ public partial class IRGenerator
             string objName = stmt.Target.Substring(0, dot);
             string member = stmt.Target.Substring(dot + 1);
 
-            // `self.buf: list[uint8]` parses as elem="list", size="uint8" under the T[N]
-            // reading below, and the size resolver then reported the ELEMENT TYPE as not
-            // being a compile-time constant, for a program with no size expression in it.
-            // A growable list is heap-allocated and a field is flattened into the instance,
-            // so there is nothing to route it to; say that, and name the fixed-size spelling
-            // that does work, with the size the initialiser already gives.
-            if (stmt.Annotation.StartsWith("list[") && stmt.Annotation.EndsWith("]"))
-            {
-                string listElem = stmt.Annotation.Substring(5, stmt.Annotation.Length - 6);
-                string shownSize = stmt.Value is ListExpr sizeHint
-                    ? sizeHint.Elements.Count.ToString()
-                    : "N";
-                throw UserError(
-                    $"a growable list cannot be a field. '{stmt.Target}: {stmt.Annotation}' is "
-                    + "heap-allocated, and a field is flattened into the instance, so it has no "
-                    + $"storage to grow into. Declare a fixed size instead, "
-                    + $"`{stmt.Target}: {listElem}[{shownSize}] = [...]`, which is indexable at run time.");
-            }
-
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
             if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
                 throw UserError("Instance-member annotation must be an array type, e.g. uint8[N]");
+            string memHead = stmt.Annotation.Substring(0, mb);
             string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
-            int memCount = ResolveArraySizeExpr(memSz);
-            DataType memElem = DataTypeExtensions.StringToDataType(stmt.Annotation.Substring(0, mb));
-
-            var objVal = VisitExpression(new VariableExpr(objName));
-            string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
-            while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
-            if (string.IsNullOrEmpty(baseName))
-                throw UserError("Cannot resolve instance for member array '" + stmt.Target + "'");
-            string flat = baseName + "_" + member;
-
-            arraySizes[flat] = memCount;
-            arrayElemTypes[flat] = memElem;
-            variableTypes[flat] = memElem;
-            arraysWithVariableIndex.Add(flat);
+            int memCount;
+            DataType memElem;
+            if (memHead == "list")
+            {
+                // `self.buf: list[uint8] = [0, 0, 0]` -- a list FIELD. Under the T[N] reading
+                // the bracket looks like a SIZE, and the size resolver reported the ELEMENT
+                // TYPE as not being a compile-time constant, for a program with no size
+                // expression in it. The field cannot hold the growable heap list a local gets,
+                // but the literal states how many elements there are, so the field is the fixed
+                // array of that element type: exactly what `self.buf: uint8[3] = [...]` gives,
+                // down to the same ROM.
+                memElem = DataTypeExtensions.StringToDataType(memSz);
+                if (stmt.Value is not ListExpr memLit || memLit.Elements.Count == 0)
+                    throw UserError(
+                        $"'{stmt.Target}: {stmt.Annotation}' has no size. A list field is a "
+                        + $"fixed array, so its length comes from the literal: write "
+                        + $"`{stmt.Target}: {stmt.Annotation} = [0, 0, 0]`, or give the length "
+                        + $"outright with `{stmt.Target}: {memSz}[N] = [...]`.");
+                memCount = memLit.Elements.Count;
+            }
+            else
+            {
+                memCount = ResolveArraySizeExpr(memSz);
+                memElem = DataTypeExtensions.StringToDataType(memHead);
+            }
 
             // Zero-initialise (a NeoPixel strip starts all-off), or apply a
             // literal list initialiser when one is supplied.
@@ -2711,8 +2756,8 @@ public partial class IRGenerator
             if (stmt.Value is ListExpr mle)
                 for (int k = 0; k < Math.Min(memCount, mle.Elements.Count); k++)
                     if (TryEvalElemConst(mle.Elements[k], out int mv)) memInit[k] = mv;
-            for (int k = 0; k < memCount; ++k)
-                Emit(new ArrayStore(flat, new Constant(k), new Constant(memInit[k]), memElem, memCount));
+
+            EmitMemberArrayInit(new VariableExpr(objName), member, memElem, memCount, memInit, stmt.Target);
             return;
         }
 

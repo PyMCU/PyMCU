@@ -1335,6 +1335,17 @@ public partial class IRGenerator
 
             if (field == null || !seen.Add(field)) continue;
 
+            // `self.buf = [0, 0, 0]` declares an ARRAY field, not a scalar one -- the same
+            // thing `self.buf: uint8[3] = [...]` declares, and that spelling is an AnnAssign,
+            // which never reaches this layout at all. Counted as a scalar the class became a
+            // one-field data class, its methods were outlined with the field passed BY VALUE,
+            // and `self.buf[1]` inside one compiled as bit 1 of a byte: a silent wrong answer,
+            // not a diagnostic. Only all-constant literals: `self.pins = [Pin(1), Pin(2)]` is a
+            // list of instances with its own lowering and stays a field here.
+            if (rhs is ListExpr fieldList && fieldList.Elements.Count > 0
+                && fieldList.Elements.All(e => { try { EvaluateConstantExpr(e); return true; } catch { return false; } }))
+                continue;
+
             // SourceParam: the __init__ param that directly initializes the field
             // (RHS is a bare parameter), else "" -- needed for factory return lowering.
             string type = "uint8";
