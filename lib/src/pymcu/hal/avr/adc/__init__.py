@@ -13,9 +13,9 @@ from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, inline, Callable, const
 
 if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
-    from pymcu.hal.avr.adc.attiny85 import adc_channel_admux, adc_init, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
+    from pymcu.hal.avr.adc.attiny85 import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
 else:
-    from pymcu.hal.avr.adc.atmega328p import adc_channel_admux, adc_init, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
+    from pymcu.hal.avr.adc.atmega328p import adc_channel_admux, adc_init, adc_select, adc_start, adc_read, adc_start_int, adc_read_result, adc_irq_setup, adc_read_u16
 
 
 class AnalogPin:
@@ -27,14 +27,17 @@ class AnalogPin:
 
     @inline
     def start(self):
+        adc_select(self._admux)
         adc_start()
 
     @inline
     def read(self) -> uint16:
+        adc_select(self._admux)
         return adc_read()
 
     @inline
     def start_conversion(self):
+        adc_select(self._admux)
         adc_start_int()
 
     @inline
@@ -47,4 +50,5 @@ class AnalogPin:
 
     @inline
     def read_u16(self) -> uint16:
+        adc_select(self._admux)
         return adc_read_u16()

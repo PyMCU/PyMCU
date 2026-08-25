@@ -38,6 +38,14 @@ def adc_init(admux_val: uint8):
     ADMUX.value = admux_val
     ADCSRA.value = 0x86   # ADEN | ADPS2 | ADPS1 (prescaler 64, enable ADC)
 
+# Select the channel (and reference) this pin was built with. Every operation that STARTS a
+# conversion has to do this: ADMUX is one register shared by every AnalogPin, so with more than
+# one pin alive the last one constructed owned it and every read returned that channel.
+@inline
+def adc_select(admux_val: uint8):
+    ADMUX.value = admux_val
+
+
 @inline
 def adc_start():
     ADCSRA[6] = 1   # ADSC: start conversion
