@@ -1196,9 +1196,22 @@ public partial class IRGenerator
         // of a slot nobody ever wrote, so the firmware shipped with whatever the RAM held and
         // no diagnostic said a word. Invent the local only for the first.
         if (!IsNameKnownSomewhere(finalLocalName, name))
+        {
+            // The name may be missing because its defining module REFUSED this target: a
+            // module-level `raise CompileError(...)` guard whose enclosing if/match folded
+            // away, so none of the module's symbols exist. The call path has reported that
+            // properly for a while (see EmitRegularFunctionCall); a plain name read did not,
+            // and answered "name 'uart_init' is not defined" for an internal helper the user
+            // never wrote, on a chip whose HAL had said in one sentence why it cannot be built.
+            foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
+                if (finalLocalName.StartsWith(g.Key, StringComparison.Ordinal)
+                    || currentModulePrefix.StartsWith(g.Key, StringComparison.Ordinal))
+                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})");
+
             throw UserError(
                 $"name '{name}' is not defined -- it is read here but never assigned, " +
                 "imported, or received as a parameter");
+        }
 
         return new Variable(finalLocalName, type);
     }
