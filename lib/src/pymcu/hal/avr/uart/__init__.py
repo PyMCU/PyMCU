@@ -14,8 +14,14 @@
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, int16, uint32, inline, const, compile_isr, Callable
+from pymcu.exceptions import CompileError
 
-if __CHIP__.name == "attiny2313":
+# The ATtiny 2313 family shares one USART at UCSRA 0x0B / UDR 0x0C in I/O space. The 4313 is
+# the same part with twice the memory and was missing from this list, so it fell through to
+# the else and compiled the ATmega328P USART: writes to UCSR0A 0xC0 and UDR0 0xC6, addresses
+# that do not exist on a part with 256 bytes of SRAM. Clean build, and the UART simply never
+# spoke.
+if __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
     from pymcu.hal.avr.uart.attiny2313 import (
         uart_init, uart_write, uart_read,
         uart_available, uart_read_nb, uart_read_byte_isr,
@@ -33,6 +39,17 @@ elif __CHIP__.name == "atmega32u4":
         uart_read_line,
         uart_write_fmt,
     )
+elif (__CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
+      or __CHIP__.name == "attiny25" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny85"
+      or __CHIP__.name == "attiny24" or __CHIP__.name == "attiny44" or __CHIP__.name == "attiny84"):
+    # These parts have NO hardware USART at all. They used to fall through to the else and
+    # compile the ATmega328P one, so a program built clean, ran, and wrote every byte into
+    # address space the chip does not have. Refusing by name is the honest answer; PyMCU has
+    # no software serial to offer instead.
+    raise CompileError(
+        "this chip has no hardware UART. The ATtiny 13/25/45/85 and 24/44/84 families have "
+        "no USART peripheral, so pymcu.hal.uart cannot drive one. Use a part that has one "
+        "(the ATtiny 2313/4313 do), or carry the data over another peripheral this chip has.")
 else:
     from pymcu.hal.avr.uart.avr import (
         uart_init, uart_write, uart_read,
