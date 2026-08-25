@@ -313,7 +313,17 @@ public partial class IRGenerator
 
     private static Val VisitLiteral(IntegerLiteral expr) => new Constant(expr.Value);
 
-    private Val VisitVariable(VariableExpr expr) => ResolveBinding(expr.Name);
+    private Val VisitVariable(VariableExpr expr)
+    {
+        // A str whose text differs per path has no compile-time value to hand back, and what
+        // it does hold -- the interned id -- is not a number the program means. print() and a
+        // comparison against a literal read it deliberately (multiStrHandleReads); every other
+        // position used to receive the id and treat it as data.
+        if (multiStrHandleReads == 0 && TryGetMultiStr(expr.Name, out _, out var vals, out _))
+            throw MultiStrUseError(expr.Name, vals);
+
+        return ResolveBinding(expr.Name);
+    }
 
     private static string BinaryOpSymbol(AstBinOp op) => op switch
     {
@@ -722,8 +732,21 @@ public partial class IRGenerator
             return acc;
         }
 
+        // `s == "running"` where s holds one of several texts: interning gives equal texts the
+        // same id, so the comparison IS the id comparison, decided at run time. Reading the id
+        // is allowed here and only here (the fold below would answer a flat False instead).
+        bool cmpAgainstStrLiteral = expr.Op is AstBinOp.Equal or AstBinOp.NotEqual
+            && (expr.Left is StringLiteral || expr.Right is StringLiteral);
+        if (cmpAgainstStrLiteral) multiStrHandleReads++;
         Val v1 = VisitExpression(expr.Left);
         Val v2 = VisitExpression(expr.Right);
+        if (cmpAgainstStrLiteral) multiStrHandleReads--;
+
+        // The operand is a run-time-decided string only where the read above was allowed:
+        // anywhere else VisitVariable has already refused it by name.
+        bool multiStrOperand = cmpAgainstStrLiteral
+            && ((expr.Left is VariableExpr mlv && TryGetMultiStr(mlv.Name, out _, out _, out _))
+                || (expr.Right is VariableExpr mrv && TryGetMultiStr(mrv.Name, out _, out _, out _)));
 
         // String literals are interned as integer IDs (>= 256); see VisitExpression.
         // Plain arithmetic on those IDs is meaningless — '+' would add the IDs and
@@ -734,7 +757,7 @@ public partial class IRGenerator
         bool HasStringLiteral = (expr.Left is StringLiteral sll && sll.Value.Length != 1)
                              || (expr.Right is StringLiteral srl && srl.Value.Length != 1);
         bool IsStringId(Val v) => v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
-        if (HasStringLiteral && (IsStringId(v1) || IsStringId(v2)))
+        if (HasStringLiteral && !multiStrOperand && (IsStringId(v1) || IsStringId(v2)))
         {
             bool bothStr = IsStringId(v1) && IsStringId(v2);
 
@@ -1828,6 +1851,12 @@ public partial class IRGenerator
 
             if (mutableGlobals.TryGetValue(mangledName, out var type))
             {
+                // `mod.state` where the module's own functions bind it to different texts: the
+                // slot holds an interned id, not a number the program means (see VisitVariable).
+                if (multiStrHandleReads == 0 && !strConstantVariables.ContainsKey(mangledName)
+                    && multiStrVariables.TryGetValue(mangledName, out var modStrValues))
+                    throw MultiStrUseError(varExpr.Name + "." + expr.Member, modStrValues);
+
                 return new Variable(mangledName, type);
             }
 

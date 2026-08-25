@@ -468,6 +468,65 @@ public partial class IRGenerator
         }
 
         NarrowLiteralOnlyGlobals(ast);
+        MarkStrGlobalsRebound(ast);
+    }
+
+    /// <summary>
+    /// Takes the compile-time value away from a module-level str that a FUNCTION binds to
+    /// another text. Functions are lowered in an order the program does not decide, and the
+    /// call that rebinds the name may not even run, so no single text is right at a read:
+    /// `state = "idle"` with a `global state; state = "running"` elsewhere printed "idle" on
+    /// every path, the store dead in a function nobody could see from the read (issue #145).
+    ///
+    /// Only assignments the language accepts as writing the global count: one under a
+    /// `global` declaration, or one in `main`, which IS the module's top-level scope.
+    /// </summary>
+    private void MarkStrGlobalsRebound(ProgramNode ast)
+    {
+        foreach (var fn in ast.Functions)
+        {
+            var declaredGlobal = new HashSet<string>();
+            CollectGlobalDeclarations(fn.Body, declaredGlobal);
+
+            foreach (var kv in CollectStrBindings(new List<Statement> { fn.Body }))
+            {
+                if (fn.Name != "main" && !declaredGlobal.Contains(kv.Key)) continue;
+                string key = currentModulePrefix + kv.Key;
+                if (!strConstantVariables.TryGetValue(key, out var declared)) continue;
+                if (kv.Value.Count == 1 && kv.Value[0] == declared) continue;
+
+                multiStrCandidates[key] = kv.Value.Prepend(declared)
+                    .Where(v => v != null).Select(v => v!).Distinct().ToList();
+                MarkMultiStr(key, multiStrCandidates[key]);
+            }
+        }
+    }
+
+    /// <summary>Every name a `global` statement in this body declares.</summary>
+    private static void CollectGlobalDeclarations(Statement? st, HashSet<string> into)
+    {
+        switch (st)
+        {
+            case null: return;
+            case GlobalStmt g: foreach (var n in g.Names) into.Add(n); return;
+            case Block b: foreach (var s in b.Statements) CollectGlobalDeclarations(s, into); return;
+            case ForStmt f: CollectGlobalDeclarations(f.Body, into); return;
+            case WhileStmt w: CollectGlobalDeclarations(w.Body, into); return;
+            case WithStmt wi: CollectGlobalDeclarations(wi.Body, into); return;
+            case IfStmt i:
+                CollectGlobalDeclarations(i.ThenBranch, into);
+                foreach (var (_, body) in i.ElifBranches) CollectGlobalDeclarations(body, into);
+                CollectGlobalDeclarations(i.ElseBranch, into);
+                return;
+            case MatchStmt m: foreach (var br in m.Branches) CollectGlobalDeclarations(br.Body, into); return;
+            case TryStmt t:
+                foreach (var s in t.Body) CollectGlobalDeclarations(s, into);
+                foreach (var (_, h) in t.Handlers) foreach (var s in h) CollectGlobalDeclarations(s, into);
+                if (t.ElseBody != null) foreach (var s in t.ElseBody) CollectGlobalDeclarations(s, into);
+                if (t.Finally != null) foreach (var s in t.Finally) CollectGlobalDeclarations(s, into);
+                return;
+            default: return;
+        }
     }
 
     /// <summary>

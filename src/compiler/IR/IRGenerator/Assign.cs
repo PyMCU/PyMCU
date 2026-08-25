@@ -105,7 +105,15 @@ public partial class IRGenerator
             if (stmt.Value is StringLiteral strLit)
                 strConstantVariables[strKey] = strLit.Value;
             else
+            {
                 strConstantVariables.Remove(strKey);
+                // Binding the name to something that is not a literal (another string name,
+                // an f-string buffer) puts a text in it that no candidate set can name, so
+                // the id in the slot no longer stands for one of them: stop dispatching on
+                // it and let the binding this assignment makes speak for the name.
+                multiStrVariables.Remove(strKey);
+                multiStrVariables.Remove(StrBindingKey(strTgt.Name));
+            }
         }
 
         // `objs = [A(s), A(s + 1)]`: a list of instances. Build each element as an instance of
@@ -634,6 +642,17 @@ public partial class IRGenerator
         // kept changing, and the sibling expansion's `free = 255` even WROTE into i (the
         // FixedDict.__setitem__ corruption). Nonlocal write-through aliases are exempt.
         InvalidateAliasesForWrite(varExpr.Name);
+
+        // `s = "running"` on a name that other paths bind to another text: the id goes to the
+        // name's 16-bit slot, whatever scope the name lives in. Without this the store either
+        // resolved to the id it was storing (a copy with no destination) or landed in a slot
+        // one byte wide, which printed the id truncated.
+        if (stmt.Value is StringLiteral && MultiStrStoreTarget(varExpr.Name) is Variable strSlot)
+        {
+            Emit(new Copy(value, strSlot));
+            constantVariables.Remove(strSlot.Name);
+            return;
+        }
 
         Val target;
         if (!string.IsNullOrEmpty(currentFunction))
@@ -2469,8 +2488,13 @@ public partial class IRGenerator
             // Declarations bind the name itself -- never a stale value-tracking alias
             // (same invalidation-before-resolve as EmitScalarVarAssign).
             InvalidateAliasesForWrite(stmt.Name);
-            Val target = ResolveBinding(stmt.Name);
-            if (target is Variable v) target = v with { Type = dt };
+            // A name bound to several string literals keeps its id in a 16-bit slot: resolving
+            // it would answer with THIS binding's id, and the copy would have no destination
+            // (`copy const 256 -> const 256` is what the declaration used to emit).
+            Val? strSlot = stmt.VarType == "str" && stmt.Init is StringLiteral
+                ? MultiStrStoreTarget(stmt.Name) : null;
+            Val target = strSlot ?? ResolveBinding(stmt.Name);
+            if (strSlot == null && target is Variable v) target = v with { Type = dt };
             Emit(new Copy(val, target));
 
             if (string.IsNullOrEmpty(currentFunction))
@@ -2938,9 +2962,18 @@ public partial class IRGenerator
             if (mutableGlobals.ContainsKey(mutableGlobalKey))
                 qualified2 = mutableGlobalKey;
         }
+        // A str global another function rebinds keeps its interned id at run time. As a uint8
+        // the id (>= 256) was truncated at the store, so the module init wrote a flat zero and
+        // the declared text was not anywhere in the firmware.
+        if (stmt.Annotation == "str" && stmt.Value is StringLiteral
+            && multiStrCandidates.ContainsKey(qualified2))
+            type = DataType.UINT16;
+
         variableTypes[qualified2] = type;
 
-        if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2) strConstantVariables[qualified2] = sl2.Value;
+        if (stmt.Annotation == "str" && stmt.Value is StringLiteral sl2
+            && !multiStrVariables.ContainsKey(qualified2))
+            strConstantVariables[qualified2] = sl2.Value;
 
         if (stmt.Value != null)
         {
@@ -2976,7 +3009,8 @@ public partial class IRGenerator
             // Propagate string constant from rhs to the declared variable so that
             // downstream match/case DCE (e.g. select_port) can fold it.
             // Handles:  pin_name: str = _arduino_pin_name(13)
-            if (stmt.Annotation == "str" && !strConstantVariables.ContainsKey(qualified2))
+            if (stmt.Annotation == "str" && !strConstantVariables.ContainsKey(qualified2)
+                && !multiStrVariables.ContainsKey(qualified2))
             {
                 string? sv = rhs is Temporary tRhs ? ResolveStrConstant(tRhs.Name)
                            : rhs is Variable  vRhs ? ResolveStrConstant(vRhs.Name)

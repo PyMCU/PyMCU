@@ -274,6 +274,71 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Every name that is bound to MORE THAN ONE distinct string literal in <paramref name="body"/>,
+    /// with the literals in the order they are written.
+    ///
+    /// A str in PyMCU is a compile-time value: one binding means one text, and folding it is
+    /// always right. Two bindings are the shape where a run-time branch can decide which one a
+    /// later read sees, and the fold silently answered with the first. Only these names get a
+    /// real store of the interned id at each binding site, so nothing changes for the single
+    /// binding that every pin name and banner in the HAL is.
+    /// </summary>
+    private static Dictionary<string, List<string>> CollectMultiStrNames(IEnumerable<Statement> body)
+    {
+        var result = new Dictionary<string, List<string>>();
+        foreach (var kv in CollectStrBindings(body))
+            if (kv.Value.Count > 1) result[kv.Key] = kv.Value;
+        return result;
+    }
+
+    /// <summary>
+    /// Every name bound to a string literal in <paramref name="body"/>, with the distinct texts
+    /// it is bound to, in source order.
+    /// </summary>
+    private static Dictionary<string, List<string>> CollectStrBindings(IEnumerable<Statement> body)
+    {
+        var seen = new Dictionary<string, List<string>>();
+
+        void Bind(string name, Expression? value)
+        {
+            if (value is not StringLiteral sl) return;
+            if (!seen.TryGetValue(name, out var vals)) seen[name] = vals = new List<string>();
+            if (!vals.Contains(sl.Value)) vals.Add(sl.Value);
+        }
+
+        void Walk(Statement? st)
+        {
+            switch (st)
+            {
+                case null: return;
+                case Block b: foreach (var s2 in b.Statements) Walk(s2); return;
+                case AssignStmt a when a.Target is VariableExpr av: Bind(av.Name, a.Value); return;
+                case AnnAssign an: Bind(an.Target, an.Value); return;
+                case VarDecl vd: Bind(vd.Name, vd.Init); return;
+                case ForStmt f: Walk(f.Body); return;
+                case WhileStmt w: Walk(w.Body); return;
+                case WithStmt wi: Walk(wi.Body); return;
+                case IfStmt i:
+                    Walk(i.ThenBranch);
+                    foreach (var (_, bodyStmt) in i.ElifBranches) Walk(bodyStmt);
+                    Walk(i.ElseBranch);
+                    return;
+                case MatchStmt m: foreach (var br in m.Branches) Walk(br.Body); return;
+                case TryStmt t2:
+                    foreach (var s2 in t2.Body) Walk(s2);
+                    foreach (var (_, handler) in t2.Handlers) foreach (var s2 in handler) Walk(s2);
+                    if (t2.ElseBody != null) foreach (var s2 in t2.ElseBody) Walk(s2);
+                    if (t2.Finally != null) foreach (var s2 in t2.Finally) Walk(s2);
+                    return;
+                default: return;
+            }
+        }
+
+        foreach (var st in body) Walk(st);
+        return seen;
+    }
+
     /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>
     private static DataType NarrowestTypeFor(long min, long max)
     {
@@ -340,6 +405,11 @@ public partial class IRGenerator
         // function did, and pulled in the 32-bit decimal writer -- 756 bytes on atmega328p,
         // 37% of an attiny2313's flash, for a choice the user did not know they were making.
         CollectLiteralOnlyLocalWidths(funcNode);
+
+        // Locals bound to more than one string literal: their id has to live in a variable,
+        // because a run-time branch decides which binding a later read sees (issue #145).
+        foreach (var kv in CollectMultiStrNames(new List<Statement> { funcNode.Body }))
+            multiStrCandidates[fullName + "." + kv.Key] = kv.Value;
 
         // RFC 0001 Model B (sret): a factory `-> C` for a MULTI-field (slot) ZCA gets a hidden
         // leading `__self` pointer param. The caller allocates the slot and passes its address;

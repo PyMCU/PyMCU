@@ -135,8 +135,15 @@ public partial class IRGenerator
 
             RejectBareRegisterOperands(binExpr);
 
+            // `if s == "running":` where s holds one of several texts. Interning gives equal
+            // texts the same id, so the test is the id comparison and it is decided at run
+            // time: reading the id is what this comparison means (see VisitBinary).
+            bool cmpAgainstStrLiteral = binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                && (binExpr.Left is StringLiteral || binExpr.Right is StringLiteral);
+            if (cmpAgainstStrLiteral) multiStrHandleReads++;
             Val v1 = VisitExpression(binExpr.Left);
             Val v2 = VisitExpression(binExpr.Right);
+            if (cmpAgainstStrLiteral) multiStrHandleReads--;
 
             // ONLY a comparison can be decided here. The switch below covers the six
             // comparison operators and nothing else, so a folded `3 & 1` or `3 + 1` used bare
@@ -546,7 +553,19 @@ public partial class IRGenerator
             if (allAgree && !first && hasElse)
             {
                 strConstantVariables[key] = agreedVal;
+                continue;
             }
+
+            // The branches left the name holding different texts (or one of them left it
+            // alone, so the value from before the `if` survives on that path). There is no
+            // single text here: the name keeps its id at run time and a read dispatches on
+            // it. Restoring the pre-branch value is what printed the initializer on every
+            // path, with the store dropped and nothing said (issue #145).
+            var candidates = new List<string?>();
+            if (snapBefore.TryGetValue(key, out var beforeVal)) candidates.Add(beforeVal);
+            foreach (var snap in branchSnaps)
+                if (snap.TryGetValue(key, out var bv)) candidates.Add(bv);
+            MarkMultiStr(key, candidates);
         }
     }
 
@@ -1109,6 +1128,7 @@ public partial class IRGenerator
         // (`self.n = self.n + 1` became `n = 1`, and the loop printed 1, 1, 1); doing it after
         // the condition instead left `while c.bump() < 4:` folded to the first value it
         // returned, so the comparison vanished and the loop never ended.
+        var strBeforeLoop = new Dictionary<string, string?>(strConstantVariables);
         InvalidateConstantsAssignedIn(stmt.Body, stmt.Condition);
 
         Emit(new Label(startLabel));
@@ -1149,6 +1169,30 @@ public partial class IRGenerator
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
+
+        // The body may run any number of times, zero included, so a str it rebinds holds
+        // either the value it came in with or the one the body last wrote. Folding the body's
+        // value here made a loop that never ran print the text from inside it.
+        MarkStrReboundBy(strBeforeLoop);
+    }
+
+    /// <summary>
+    /// Takes the compile-time value away from every str that a loop body rebound, keeping both
+    /// the value from before the loop and the one the body leaves as the candidates a read
+    /// dispatches over. A name the body binds for the FIRST time is left alone: it had no
+    /// value to disagree with, and the shape is a name the loop introduces.
+    /// </summary>
+    private void MarkStrReboundBy(Dictionary<string, string?> before)
+    {
+        var rebound = new List<(string Key, string? Before, string? After)>();
+        foreach (var kv in before)
+        {
+            strConstantVariables.TryGetValue(kv.Key, out var after);
+            if (after != kv.Value) rebound.Add((kv.Key, kv.Value, after));
+        }
+
+        foreach (var (key, beforeVal, afterVal) in rebound)
+            MarkMultiStr(key, new[] { beforeVal, afterVal });
     }
 
     private void VisitBreak(BreakStmt stmt)

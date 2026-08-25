@@ -1399,6 +1399,133 @@ public partial class IRGenerator
         return null;
     }
 
+    // --- Strings whose value is decided at run time (issue #145) -------------------------
+    //
+    // A str is a compile-time value in PyMCU: there is no string type, only an interned id
+    // that the writers turn back into flash bytes. When two paths bind the SAME name to
+    // different texts, no single text is right at a later read -- and folding one of them is
+    // how `s = "idle"; if x: s = "running"; print(s)` printed "idle" on every path.
+    //
+    // What lives at run time is the id, in a 16-bit variable. It is stored at each binding
+    // site (only for the names CollectMultiStrNames flagged: one binding still folds), and a
+    // read that needs the TEXT dispatches over the ids the name can hold.
+
+    /// <summary>The storage key a str binding of <paramref name="name"/> is filed under.</summary>
+    private string StrBindingKey(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction))
+        {
+            if (currentFunctionGlobals.Contains(name) && mutableGlobals.ContainsKey(currentModulePrefix + name))
+                return currentModulePrefix + name;
+            if (multiStrCandidates.ContainsKey(currentFunction + "." + name))
+                return currentFunction + "." + name;
+            if (mutableGlobals.ContainsKey(currentModulePrefix + name)) return currentModulePrefix + name;
+            return currentFunction + "." + name;
+        }
+        return currentModulePrefix + name;
+    }
+
+    /// <summary>
+    /// The candidate texts of a name whose string value is decided at run time, if it is one.
+    /// <paramref name="materialized"/> says whether the id is actually stored at every binding
+    /// site: only then can a read dispatch on it -- otherwise the slot holds whatever the RAM
+    /// held, and the read has to be refused instead.
+    /// </summary>
+    private bool TryGetMultiStr(string name, out string key, out List<string> values, out bool materialized)
+    {
+        foreach (var k in MultiStrKeys(name))
+        {
+            // An unconditional rebind (`s = "third"` outside any branch) gives the name a
+            // single value again, and that value is the right one to fold from there on.
+            if (strConstantVariables.ContainsKey(k)) break;
+
+            if (multiStrVariables.TryGetValue(k, out var vals))
+            {
+                key = k;
+                values = vals;
+                materialized = multiStrCandidates.ContainsKey(k);
+                return true;
+            }
+        }
+
+        key = "";
+        values = new List<string>();
+        materialized = false;
+        return false;
+    }
+
+    /// <summary>Every key a str binding of <paramref name="name"/> could be filed under.</summary>
+    private IEnumerable<string> MultiStrKeys(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
+        if (!string.IsNullOrEmpty(currentModulePrefix)) yield return currentModulePrefix + name;
+        yield return name;
+    }
+
+    /// <summary>
+    /// Records that <paramref name="key"/> holds one of <paramref name="values"/> at run time,
+    /// and stops it being a compile-time string. Marking is one-way: once two paths disagree,
+    /// no later single value makes the earlier read right again.
+    /// </summary>
+    private void MarkMultiStr(string key, IEnumerable<string?> values)
+    {
+        if (!multiStrVariables.TryGetValue(key, out var known))
+            multiStrVariables[key] = known = new List<string>();
+        foreach (var v in values)
+            if (v != null && !known.Contains(v)) known.Add(v);
+        strConstantVariables.Remove(key);
+        if (known.Count > 0) variableTypes[key] = DataType.UINT16;
+        if (mutableGlobals.ContainsKey(key)) mutableGlobals[key] = DataType.UINT16;
+    }
+
+    /// <summary>
+    /// The 16-bit slot a str binding must be stored into, or null when the name is bound to
+    /// one text only (then the fold is always right and nothing is stored). Emitting the store
+    /// does not commit to reading it: while the name still has a single compile-time value
+    /// every read folds and the store is dead, which the optimizer removes.
+    /// </summary>
+    private Val? MultiStrStoreTarget(string name)
+    {
+        string key = StrBindingKey(name);
+        if (!multiStrCandidates.ContainsKey(key)) return null;
+        variableTypes[key] = DataType.UINT16;
+        if (mutableGlobals.ContainsKey(key)) mutableGlobals[key] = DataType.UINT16;
+        return new Variable(key, DataType.UINT16);
+    }
+
+    /// <summary>
+    /// The refusal for a use of a run-time-decided string that PyMCU cannot lower. It names the
+    /// texts the name can hold, because the whole difficulty is that the reader of the source
+    /// sees several and the compiler used to pick one of them in silence.
+    /// </summary>
+    private Exception MultiStrUseError(string name, List<string> values)
+    {
+        string shown = values.Count switch
+        {
+            0 => "",
+            1 => $"\"{values[0]}\"",
+            _ => string.Join(" or ", values.Select(v => $"\"{v}\"")),
+        };
+        return UserError(
+            $"'{name}' has no single compile-time value here: it is {shown} depending on the "
+            + "path taken. A PyMCU string is a compile-time value, so a name that holds "
+            + "different texts on different paths can only be printed (print / write_str / "
+            + "println) or compared with a literal (== / !=).");
+    }
+
+    /// <summary>The interned id a string literal is lowered to (see VisitExpression).</summary>
+    private int StringIdOf(string text)
+    {
+        if (text.Length == 1) return text[0];
+        if (stringLiteralIds.TryGetValue(text, out int id)) return id;
+        id = nextStringId++;
+        stringLiteralIds[text] = id;
+        stringIdToStr[id] = text;
+        return id;
+    }
+
     // Interns a compile-time string value as a null-terminated FlashData entry,
     // returning the flash array name.  Reuses an existing entry if the same string
     // was interned before.  Registers the entry in flashArrays / arraySizes /

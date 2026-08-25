@@ -397,6 +397,22 @@ public partial class IRGenerator
     // Tracks compile-time string constant variables (for const[str] params / string for-in)
     private Dictionary<string, string?> strConstantVariables = new();
 
+    // Names bound to MORE THAN ONE string literal in the scope being lowered (collected from
+    // the source before the body is visited). A str name is a compile-time value, so a second
+    // binding is the only way its value can stop being single-valued -- and only these names
+    // pay for a real 16-bit store of the interned id at every binding site.
+    private Dictionary<string, List<string>> multiStrCandidates = new();
+
+    // Names whose string value genuinely DIFFERS per path (both arms of a run-time branch
+    // assigned, a loop body reassigned, another function assigned the global). The value is
+    // the candidate set, in first-seen order: the id held at run time is one of these, and
+    // print() dispatches on it. Reading such a name as a number is a located error.
+    private Dictionary<string, List<string>> multiStrVariables = new();
+
+    // Non-zero while a read of a multi-valued str name is allowed to resolve to its raw
+    // interned id (the print dispatch and `s == "literal"`, which both compare ids).
+    private int multiStrHandleReads;
+
     // Tracks inline-function parameters bound to a bytes/list literal argument
     // (e.g. uart.write(b"Hi")). Lets the param be iterated via for-in and
     // unrolled at compile time, mirroring a direct `for b in b"Hi"` loop.

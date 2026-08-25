@@ -1218,6 +1218,7 @@ public partial class IRGenerator
         // can write may be folded from the value it holds on the way in. Without this an
         // accumulator read its starting value on every pass, and `for i in range(4): total =
         // total + i` came out 3 instead of 6.
+        var strBeforeLoop = new Dictionary<string, string?>(strConstantVariables);
         InvalidateConstantsAssignedIn(stmt.Body);
 
         Emit(new Label(startLabel));
@@ -1236,6 +1237,10 @@ public partial class IRGenerator
         Emit(new Jump(startLabel));
         Emit(new Label(endLabel));
         loopStack.RemoveAt(loopStack.Count - 1);
+
+        // A range whose bounds are decided at run time can run zero times: a str the body
+        // rebinds holds either value at the exit (see MarkStrReboundBy).
+        MarkStrReboundBy(strBeforeLoop);
     }
 
     private int _withManagerCounter;

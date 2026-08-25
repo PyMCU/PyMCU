@@ -3586,6 +3586,88 @@ public partial class IRGenerator
         VisitCall(new CallExpr(new VariableExpr(writeStrFn), new List<Expression> { new StringLiteral(s) }));
     }
 
+    // The run-time-decided string behind `mod.name` or `obj.field`, resolved under the keys a
+    // member is filed by: the module-mangled name, and the flattened `<instance>_<field>` the
+    // receiver's binding gives (the same two spellings TryGetCompileTimeText reads).
+    private bool TryGetMultiStrMember(MemberAccessExpr ma, out string key,
+                                      out List<string> values, out bool materialized)
+    {
+        key = "";
+        values = new List<string>();
+        materialized = false;
+        if (ma.Object is not VariableExpr recv) return false;
+
+        var candidates = new List<string>();
+        string moduleBase = modules.ContainsKey(recv.Name)
+                            && importedAliases.TryGetValue(recv.Name, out var realMod) && realMod != null
+            ? realMod : recv.Name;
+        candidates.Add(moduleBase + "_" + ma.Member);
+
+        if (!modules.ContainsKey(recv.Name))
+        {
+            Val objVal = VisitExpression(recv);
+            string bse = objVal is Variable ov ? ov.Name : recv.Name;
+            while (variableAliases.TryGetValue(bse, out var alias) && alias != null) bse = alias;
+            candidates.Add(bse + "_" + ma.Member);
+            candidates.Add(bse + "." + ma.Member);
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (strConstantVariables.ContainsKey(candidate)) return false;
+            if (!multiStrVariables.TryGetValue(candidate, out var vals)) continue;
+            key = candidate;
+            values = vals;
+            materialized = multiStrCandidates.ContainsKey(candidate);
+            return true;
+        }
+
+        return false;
+    }
+
+    // Writes a string whose text is decided at run time: the name holds the interned id, so
+    // this is one comparison per text it can hold, each arm a write_str of a literal. The texts
+    // stay in flash where a folded write would have left them -- nothing is copied into RAM and
+    // nothing is formatted. Returns false when the name is not such a string.
+    private bool TryEmitMultiStrStream(string writeStrFn, Expression arg)
+    {
+        string shown;
+        string key;
+        List<string> values;
+        bool materialized;
+        switch (arg)
+        {
+            case VariableExpr ve when TryGetMultiStr(ve.Name, out key, out values, out materialized):
+                shown = ve.Name;
+                break;
+
+            // `mod.state` -- a str global of an imported module, and `o.n` -- a field. Both are
+            // filed under a key of their own, so the plain-name lookup above never sees them.
+            case MemberAccessExpr ma when TryGetMultiStrMember(ma, out key, out values, out materialized):
+                shown = FormatMemberTarget(ma);
+                break;
+
+            default:
+                return false;
+        }
+
+        if (!materialized) throw MultiStrUseError(shown, values);
+
+        var slot = new Variable(key, DataType.UINT16);
+        string endLabel = MakeLabel();
+        foreach (var text in values)
+        {
+            string nextLabel = MakeLabel();
+            Emit(new JumpIfNotEqual(slot, new Constant(StringIdOf(text)), nextLabel));
+            EmitStreamStr(writeStrFn, text);
+            Emit(new Jump(endLabel));
+            Emit(new Label(nextLabel));
+        }
+
+        Emit(new Label(endLabel));
+        return true;
+    }
+
     // Interpolating an instance would need __str__ at runtime, which PyMCU has no room for:
     // the value that reaches the formatter is whatever scalar the instance collapsed to, so it
     // printed a meaningless number (0 for a multi-field class) with no warning at all.
@@ -3822,10 +3904,13 @@ public partial class IRGenerator
         if (expr.Args.Count != 1) return null;
         FStringExpr? sfs = expr.Args[0] as FStringExpr;
         (string Name, string LenVar)? runtimeStr = null;
+        bool multiStr = false;
         if (sfs == null)
         {
             if (expr.Args[0] is VariableExpr rv && TryGetRuntimeStr(rv.Name, out var ri))
                 runtimeStr = (rv.Name, ri.LenVar);
+            else if (expr.Args[0] is VariableExpr mv && TryGetMultiStr(mv.Name, out _, out _, out _))
+                multiStr = true;
             else return null;
         }
         if (sm.Object is not VariableExpr) return null;
@@ -3840,6 +3925,7 @@ public partial class IRGenerator
             string ffn = ResolveFloatWriteFn();
             EmitStreamFString(wfn, ffn, sfs);
         }
+        else if (multiStr) TryEmitMultiStrStream(wfn, expr.Args[0]);
         else EmitRuntimeStrStream(runtimeStr!.Value.Name, runtimeStr.Value.LenVar);
         if (sm.Member == "println") EmitStreamStr(wfn, "\n");
         return new NoneVal();
@@ -4036,6 +4122,9 @@ public partial class IRGenerator
                 EmitStreamStr(writeStrFn, staticStr);
                 return;
             }
+
+            // A string decided at run time: dispatch on the id the name holds.
+            if (TryEmitMultiStrStream(writeStrFn, arg)) return;
 
             // A runtime string (f-string-as-value buffer): stream its bytes up to the
             // tracked length.
