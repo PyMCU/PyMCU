@@ -868,12 +868,16 @@ public partial class IRGenerator
             resRange = BinaryResultRange(expr.Op, ValRange(v1), ValRange(v2));
             var (tMin, tMax) = RangeOfType(resType);
             bool fits = resRange is (long rMin, long rMax) && rMin >= tMin && rMax <= tMax;
+            // The wider type must also be able to be NEGATIVE when the result can be. Promoting
+            // uint8 to uint16 for `-7 * a` (a: uint8) computed -49 as 65487, and the `// 7`
+            // that followed answered 9355 on a clean build.
+            bool negResult = resRange is (long nMin, _) && nMin < 0;
             if (!fits)
                 resType = resType switch
                 {
-                    DataType.UINT8 => DataType.UINT16,
+                    DataType.UINT8 => negResult ? DataType.INT16 : DataType.UINT16,
                     DataType.INT8 => DataType.INT16,
-                    DataType.UINT16 => DataType.UINT32,
+                    DataType.UINT16 => negResult ? DataType.INT32 : DataType.UINT32,
                     DataType.INT16 => DataType.INT32,
                     _ => resType,
                 };
@@ -1000,8 +1004,67 @@ public partial class IRGenerator
             Emit(new Label(divOk));
         }
 
+        // A comparison answers about VALUES, so both sides have to be read in a type that can
+        // hold both. `int8(100) > uint8(200)` compared the 200 as the -56 its bits spell in
+        // int8 and said True; `int8(100) < 200` materialized the 200 the same way and said
+        // False. Widening the operands here fixes every backend at once, because the widths
+        // reach the backend already agreed.
+        if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual or AstBinOp.Less
+            or AstBinOp.LessEq or AstBinOp.Greater or AstBinOp.GreaterEq)
+        {
+            DataType cmp = ComparisonType(v1, v2);
+            v1 = WidenForComparison(v1, cmp);
+            v2 = WidenForComparison(v2, cmp);
+        }
+
         Emit(new Binary(MapBinaryOp(expr.Op), v1, v2, dst));
         return dst;
+    }
+
+    /// <summary>
+    /// The type both sides of a comparison must be read in: the narrowest one whose range
+    /// covers the values each side can actually take. Returns VOID when the existing widths
+    /// already agree on every value, which leaves the operands untouched.
+    /// </summary>
+    private DataType ComparisonType(Val v1, Val v2)
+    {
+        DataType t1 = GetValType(v1), t2 = GetValType(v2);
+        if (t1 is DataType.FLOAT || t2 is DataType.FLOAT) return DataType.VOID;
+        if (!IsIntegerType(t1) || !IsIntegerType(t2)) return DataType.VOID;
+        if (t1 == t2) return DataType.VOID;
+
+        var (lo1, hi1) = ValRange(v1);
+        var (lo2, hi2) = ValRange(v2);
+        long lo = Math.Min(lo1, lo2), hi = Math.Max(hi1, hi2);
+
+        // Both readable as they stand: same signedness, or one side's values all fit the
+        // other's type. Nothing to widen -- this is the common case and must stay free.
+        var (r1Lo, r1Hi) = RangeOfType(t1);
+        var (r2Lo, r2Hi) = RangeOfType(t2);
+        if (lo >= r1Lo && hi <= r1Hi && t1.SizeOf() >= t2.SizeOf()) return DataType.VOID;
+        if (lo >= r2Lo && hi <= r2Hi && t2.SizeOf() >= t1.SizeOf()) return DataType.VOID;
+
+        foreach (var candidate in new[]
+                 { DataType.INT8, DataType.UINT8, DataType.INT16, DataType.UINT16,
+                   DataType.INT32, DataType.UINT32 })
+        {
+            var (cLo, cHi) = RangeOfType(candidate);
+            if (lo >= cLo && hi <= cHi) return candidate;
+        }
+        return DataType.VOID;
+    }
+
+    private static bool IsIntegerType(DataType t) => t is DataType.UINT8 or DataType.INT8
+        or DataType.UINT16 or DataType.INT16 or DataType.UINT32 or DataType.INT32;
+
+    private Val WidenForComparison(Val v, DataType to)
+    {
+        if (to is DataType.VOID || GetValType(v) == to) return v;
+        if (v is Constant) return v;   // a literal carries its value, not a width
+
+        Temporary wide = MakeTemp(to);
+        Emit(new Copy(v, wide));
+        return wide;
     }
 
     private Val VisitTernary(TernaryExpr expr)

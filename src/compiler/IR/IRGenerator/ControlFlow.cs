@@ -132,6 +132,18 @@ public partial class IRGenerator
                 return condResult ? 2 : -1;
             }
 
+            // Both sides of the test have to be read in a type that can hold both, exactly as
+            // in VisitBinary: an `if` takes this path instead, and without the same widening
+            // `int8(100) > uint8(200)` read the 200 as the -56 its bits spell in int8.
+            if (binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                or Frontend.BinaryOp.Less or Frontend.BinaryOp.LessEq
+                or Frontend.BinaryOp.Greater or Frontend.BinaryOp.GreaterEq)
+            {
+                DataType cmpType = ComparisonType(v1, v2);
+                v1 = WidenForComparison(v1, cmpType);
+                v2 = WidenForComparison(v2, cmpType);
+            }
+
             switch (binExpr.Op)
             {
                 case Frontend.BinaryOp.Equal:
