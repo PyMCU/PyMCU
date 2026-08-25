@@ -3013,6 +3013,7 @@ public partial class IRGenerator
             }
 
             var initVals = new List<int>(Enumerable.Repeat(0, count));
+            var runtimeElems = new Dictionary<int, Expression>();
             if (stmt.Value != null)
             {
                 if (stmt.Value is ListCompExpr lc)
@@ -3075,6 +3076,14 @@ public partial class IRGenerator
                     for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
                         if (TryEvalElemConst(le.Elements[k], out int v)) initVals[k] = v;
                     arrayLiteralElements[qualified] = le.Elements;
+
+                    // An element the folder cannot reduce still has a value at run time.
+                    // Only the constants were being stored, so `data: uint8[2] = [a, b]` with
+                    // a and b read from registers filled the array with zeros: data[0] and
+                    // data[1] both read 0, and sum(data) added nothing.
+                    for (int k = 0; k < Math.Min(count, le.Elements.Count); ++k)
+                        if (!TryEvalElemConst(le.Elements[k], out _))
+                            runtimeElems[k] = le.Elements[k];
                 }
 
                 if (stmt.Value is BinaryExpr be && be.Op == Frontend.BinaryOp.Mul && be.Left is ListExpr leRep &&
@@ -3089,10 +3098,14 @@ public partial class IRGenerator
                 }
             }
 
+            Val ElemInit(int k) => runtimeElems.TryGetValue(k, out var e)
+                ? VisitExpression(e)
+                : new Constant(initVals[k]);
+
             if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
             {
                 for (int k = 0; k < count; ++k)
-                    Emit(new ArrayStore(qualified, new Constant(k), new Constant(initVals[k]), elemDt, count));
+                    Emit(new ArrayStore(qualified, new Constant(k), ElemInit(k), elemDt, count));
             }
             else
             {
@@ -3101,7 +3114,7 @@ public partial class IRGenerator
                     string elemName = qualified + "__" + k;
                     var elemVar = new Variable(elemName, elemDt);
                     variableTypes[elemName] = elemDt;
-                    Emit(new Copy(new Constant(initVals[k]), elemVar));
+                    Emit(new Copy(ElemInit(k), elemVar));
                 }
             }
 
