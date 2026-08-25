@@ -571,6 +571,13 @@ public partial class IRGenerator
                 functionReturnTypes["main"] = "None";
                 functionParams["main"] = new List<string>();
                 functionParamTypes["main"] = new List<DataType>();
+
+                // A top-level script is an entry point too. Running an imported module's own
+                // module level was wired to the explicit `def main():` branch only, so the
+                // MicroPython and CircuitPython shape -- the one with no entry-point wrapper,
+                // and the shape #117 was reported in -- still read every module-level value of
+                // its imported modules as zero, with nothing to say so.
+                EmitImportedModuleInit(syntheticMain, importedModules, astToCanonicalPrefix);
             }
         }
         else
@@ -764,15 +771,47 @@ public partial class IRGenerator
 
         ForceInlineClassReturningFactories();
 
-        foreach (var entry in functionsToCompile)
+        // A synthesized `__module_init` is LOWERED before the rest, then put back where it was.
+        //
+        // Lowering the module level is what BINDS a module-level instance's fields: a Pin's
+        // port, direction register and bit are compile-time constants established by the
+        // construction. EmitImportedModuleInit appends the init to the end of the list, so a
+        // function of that same module was lowered first and read the fields as run-time
+        // values instead -- `led = Pin("PB5", Pin.OUT)` at a module's top level still failed
+        // from a function of that module, now on the field read rather than on the missing
+        // construction.
+        //
+        // Conditional because lowering order is observable: it advances the shared label,
+        // temporary and string-literal counters, so hoisting unconditionally renumbered every
+        // program in the corpus (and shifted interned string ids) for a binding only a module
+        // with an init needs. A program without one lowers exactly as it always did.
+        //
+        // Only the ORDER OF LOWERING changes. Emission order is restored below.
+        var lowered = new Function?[functionsToCompile.Count];
+        var lowerOrder = new List<int>(functionsToCompile.Count);
+        var initFirst = new List<int>();
+
+        for (int i = 0; i < functionsToCompile.Count; i++)
         {
+            if (functionsToCompile[i].Func.Name == "__module_init") initFirst.Add(i);
+            else lowerOrder.Add(i);
+        }
+        lowerOrder.InsertRange(0, initFirst);
+
+        foreach (int i in lowerOrder)
+        {
+            var entry = functionsToCompile[i];
             currentModulePrefix = entry.Prefix;
             currentSourceFile = entry.SourceFile;
             if (!entry.Func.IsInline)
             {
-                irProgram.Functions.Add(VisitFunction(entry.Func));
+                lowered[i] = VisitFunction(entry.Func);
             }
         }
+
+        foreach (var fn in lowered)
+            if (fn != null)
+                irProgram.Functions.Add(fn);
 
         // Inject FlashData instructions (global const[uint8[N]] arrays) into the
         // main function body so the backend emits .byte tables in flash.
@@ -911,6 +950,33 @@ public partial class IRGenerator
             classDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
 
         return irProgram;
+    }
+
+    /// <summary>
+    /// The tail of the "not defined" message when a star import is in scope. "never imported"
+    /// reads as a contradiction of the import the reader can see, so name the star and what it
+    /// did bring in. A leading underscore is the usual reason a name is missing: it is private
+    /// by convention and a star never binds one, in CPython either.
+    /// </summary>
+    private string StarImportHint(string name)
+    {
+        if (starImports.Count == 0) return "";
+
+        var parts = new List<string>();
+        foreach (var (module, names) in starImports)
+        {
+            string brought = names.Count == 0
+                ? "nothing: it exports no public top-level name"
+                : string.Join(", ", names.Take(8)) + (names.Count > 8 ? ", ..." : "");
+            parts.Add($"'from {module} import *' brings in {brought}");
+        }
+
+        string why = name.StartsWith('_')
+            ? $". A name starting with '_' is private and no star import binds it, here or in "
+              + $"CPython; write `from <its module> import {name}` if that is what you meant"
+            : "";
+
+        return $". {string.Join("; ", parts)}{why}";
     }
 
     private bool InlineScopeShadows(string name)
