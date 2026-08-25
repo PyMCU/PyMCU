@@ -227,6 +227,15 @@ public class CallExpr : Expression
     }
 }
 
+// `f(*xs)` -- the argument list is the elements of a compile-time sequence. There is no
+// run-time argument list on this target, so the elements are spliced into the call at
+// compile time and the node never survives IR generation.
+public class StarArgExpr : Expression
+{
+    public Expression Value { get; }
+    public StarArgExpr(Expression value) => Value = value;
+}
+
 public class KeywordArgExpr : Expression
 {
     public string Key { get; }

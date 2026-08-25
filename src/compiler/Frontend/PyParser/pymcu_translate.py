@@ -267,7 +267,8 @@ EXPR = {
     ast.Lambda: e_lambda,
     ast.Await: lambda n: {"k": "Await", "operand": expr(n.value)},
     ast.Yield: lambda n: {"k": "Yield", "value": expr(n.value)},
-    ast.Starred: lambda n: expr(n.value),
+    # `f(*xs)`: the elements are spliced at compile time, so the node carries the sequence.
+    ast.Starred: lambda n: {"k": "StarArg", "value": expr(n.value)},
 }
 
 

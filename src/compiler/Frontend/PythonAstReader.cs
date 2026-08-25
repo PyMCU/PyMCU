@@ -434,6 +434,7 @@ public static class PythonAstReader
                 foreach (var p in e.GetProperty("params").EnumerateArray()) parameters.Add(ReadParam(p));
                 return Located(new LambdaExpr(parameters, ReadExpr(e.GetProperty("body"))!), e);
             }
+            case "StarArg": return Located(new StarArgExpr(ReadExpr(e.GetProperty("value"))!), e);
             case "Await": return Located(new AwaitExpr(ReadExpr(e.GetProperty("operand"))!), e);
             case "Yield":
                 return Located(new YieldExpr(Has(e, "value") ? ReadExpr(e.GetProperty("value")) : null), e);

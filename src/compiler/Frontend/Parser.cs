@@ -547,6 +547,13 @@ public class Parser
                 continue;
             }
 
+            // `def f(**kwargs)`: a keyword dictionary is a run-time dict, which this target
+            // does not have. Named here instead of failing as "Expected parameter name".
+            if (Check(TokenType.DoubleStar))
+                Error("'**kwargs' is not supported: it collects arguments into a run-time "
+                      + "dictionary, and there is no heap for one. Declare the keyword "
+                      + "arguments explicitly, with defaults if they are optional.");
+
             var name = Consume(TokenType.Identifier, "Expected parameter name");
             string type = "";
             if (Match(TokenType.Colon))
@@ -602,6 +609,27 @@ public class Parser
 
     private Statement ParseStatement()
     {
+        // `async with` / `async for`: named here rather than dying two tokens later as
+        // "Expected newline or end of block". Both need the coroutine lowering, which is the
+        // piece that does not exist yet -- not the statement itself.
+        if (Check(TokenType.Identifier) && Peek().Value == "async"
+            && (PeekNext().Type == TokenType.With || PeekNext().Type == TokenType.For))
+        {
+            string form = PeekNext().Type == TokenType.With ? "async with" : "async for";
+            Error($"'{form}' is not supported: it suspends, and the coroutine-to-state-machine "
+                  + "lowering is not implemented yet (`async def` parses but does not lower "
+                  + $"either). Use the plain '{form.Substring(6)}' and drive the wait from a "
+                  + "cooperative loop.");
+        }
+
+        // `del x`: on a target with no heap there is nothing to free -- every variable has a
+        // static home for the whole program. Say that, instead of "Expected newline".
+        if (Check(TokenType.Identifier) && Peek().Value == "del"
+            && PeekNext().Type == TokenType.Identifier)
+            Error("'del' is not supported: storage here is static, so a name cannot be "
+                  + "unbound and nothing would be freed. Remove the statement, or narrow the "
+                  + "variable's scope by moving it into the function that uses it.");
+
         // `async def ...` -- a coroutine. `async` is a soft keyword (an identifier),
         // so detect it before the `def` dispatch and flag the parsed function.
         if (Check(TokenType.Identifier) && Peek().Value == "async" && PeekNext().Type == TokenType.Def)
@@ -1161,6 +1189,16 @@ public class Parser
         int line = Peek().Line;
         if (Check(TokenType.Return)) return ParseReturnStatement();
 
+        // `yield from g()` means "for v in g(): yield v", and that shape does not compile
+        // either: the generator lowering cannot consume another generator from inside a
+        // generator. So this is not a parser gap to desugar away, and saying "Expected
+        // expression" hid which construct was refused and why.
+        if (Check(TokenType.Yield) && PeekNext().Type == TokenType.From)
+            Error("'yield from' is not supported: delegating means consuming one generator "
+                  + "from inside another, and the generator lowering does not do that yet "
+                  + "(the hand-written `for v in inner(): yield v` fails the same way). "
+                  + "Consume the inner generator directly where the values are used.");
+
         if (Match(TokenType.Pass))
         {
             ConsumeStatementEnd();
@@ -1346,6 +1384,13 @@ public class Parser
     {
         if (Match(TokenType.Yield))
         {
+            // A bare `yield` suspends without producing a value, which the generator
+            // lowering already handles (it publishes 0). Only the parser insisted on an
+            // expression, and reported the absence as "Expected expression".
+            if (Check(TokenType.Newline) || Check(TokenType.RParen) || Check(TokenType.Comma)
+                || Check(TokenType.EndOfFile))
+                return new YieldExpr(null);
+
             var value = ParseExpression();
             return new YieldExpr(value);
         }
@@ -1622,6 +1667,12 @@ public class Parser
                             Consume(TokenType.Equal, "Expected '='");
                             var value = ParseExpression();
                             args.Add(new KeywordArgExpr(name, value));
+                        }
+                        else if (Check(TokenType.Star))
+                        {
+                            // `f(*xs)`: the elements of a compile-time sequence, spliced in.
+                            Advance();
+                            args.Add(new StarArgExpr(ParseExpression()) { Line = Peek().Line });
                         }
                         else
                         {

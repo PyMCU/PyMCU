@@ -576,6 +576,14 @@ public static class AstJsonWriter
                 w.WriteEndObject();
                 return;
 
+            case StarArgExpr sa:
+                w.WriteStartObject();
+                w.WriteString("k", "StarArg");
+                w.WritePropertyName("value"); WriteExpr(w, sa.Value);
+                w.WriteNumber("line", sa.Line);
+                w.WriteEndObject();
+                return;
+
             case AwaitExpr aw:
                 w.WriteStartObject();
                 w.WriteString("k", "Await");

@@ -155,6 +155,11 @@ public partial class IRGenerator
         if (TryEmitLcdMethodFString(expr) is { } lcdResult) return lcdResult;
         if (TryEmitDictMethod(expr) is { } dictResult) return dictResult;
 
+        // `f(*xs)`: splice the elements of the compile-time sequence into the argument list
+        // before anything else looks at it, so every path below sees an ordinary call.
+        if (expr.Args.Any(a => a is StarArgExpr))
+            expr = new CallExpr(expr.Callee, SpliceStarArgs(expr.Args)) { Line = expr.Line };
+
         string callee = "";
         if (expr.Callee is VariableExpr varE)
         {
@@ -1816,6 +1821,39 @@ public partial class IRGenerator
     /// scan and the stepper sequence all have this shape, and `for p in pins` only covers
     /// "do the same to all of them", not "act on the i-th".
     /// </summary>
+    /// <summary>
+    /// Replaces every `*seq` argument with the elements of the sequence it names. There is no
+    /// run-time argument list on this target, so the sequence has to be known now: a literal
+    /// written at the call, or a name bound to a short constant one.
+    /// </summary>
+    private List<Expression> SpliceStarArgs(List<Expression> args)
+    {
+        var spliced = new List<Expression>();
+        foreach (var a in args)
+        {
+            if (a is not StarArgExpr star) { spliced.Add(a); continue; }
+
+            List<Expression>? elements = star.Value switch
+            {
+                ListExpr le => le.Elements,
+                TupleExpr te => te.Elements,
+                VariableExpr ve => ResolveConstSequence(ve.Name) ?? (List<Expression>?)ResolveListLiteralParam(ve.Name)?.Elements,
+                _ => null,
+            };
+
+            if (elements == null)
+                throw UserError(
+                    "f(*args) needs a sequence the compiler can see: a list or tuple written "
+                    + "at the call, or a name bound to a short constant one. There is no "
+                    + "run-time argument list on this target, so the elements are spliced in "
+                    + "at compile time.");
+
+            spliced.AddRange(elements);
+        }
+
+        return spliced;
+    }
+
     private Val? TryEmitUnrolledInstanceArrayCall(CallExpr expr, MemberAccessExpr memC)
     {
         if (memC.Object is not IndexExpr { Target: VariableExpr arrVe } idxExpr) return null;
