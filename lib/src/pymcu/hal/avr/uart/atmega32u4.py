@@ -30,6 +30,7 @@
 # USART1 RX interrupt vector: 0x002C (word 0x0016)
 # -----------------------------------------------------------------------------
 
+from pymcu.chips import __FREQ__
 from pymcu.chips.atmega32u4 import UBRR1H, UBRR1L, UCSR1A, UCSR1B, UCSR1C, UDR1, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
 
@@ -44,21 +45,33 @@ def uart_init(baud: const[uint16]):
     DDRD[3] = 1
     DDRD[2] = 0
 
-    if baud == 9600:
-        UBRR1L.value = 103
-        UBRR1H.value = 0
-    elif baud == 19200:
-        UBRR1L.value = 51
-        UBRR1H.value = 0
-    elif baud == 38400:
-        UBRR1L.value = 25
-        UBRR1H.value = 0
-    elif baud == 57600:
-        UBRR1L.value = 16
-        UBRR1H.value = 0
-    elif baud == 115200:
-        UBRR1L.value = 8
-        UBRR1H.value = 0
+    # UBRR is COMPUTED from the configured clock and the requested rate, not looked up in a
+    # table. Both are compile-time constants, so the whole expression folds and what is emitted
+    # is still two register writes, with no runtime division.
+    #
+    # This used to be an if/elif over five literal rates with NO else, so any other rate left
+    # UBRR at its previous value (zero out of reset, which is the fastest the part can go), and
+    # the table ignored `frequency` in pyproject.toml entirely. Both were silent: the emulator
+    # does not model a baud mismatch, so only real hardware shows it.
+    #
+    #   UBRR = round(F_CPU / (16 * baud)) - 1        normal speed
+    #   UBRR = round(F_CPU / (8  * baud)) - 1        U2X, double speed
+    #
+    # The half-divisor added before the division is the integer way to round to nearest.
+    # Deliberately no annotated intermediates: an annotated local is materialised, and a
+    # materialised uint32 inside an @inline body makes the expansion something the outliner
+    # cannot share. Written as one expression per register write, the whole thing folds.
+    if __FREQ__ * 2 // (16 * baud) - __FREQ__ // (16 * baud) * 2 != 0:
+        # The normal-speed divisor loses more than half a step here, so double speed lands
+        # closer. That is what saves 115200 at 16 MHz: normal speed is 3.5% off, which transmit
+        # survives (the receiver resynchronizes on every start bit) and RECEIVE does not,
+        # because the error accumulates across the frame and bytes drop on real silicon.
+        UCSR1A.value = 0x02
+        UBRR1H.value = uint8(((__FREQ__ + 4 * baud) // (8 * baud) - 1) >> 8)
+        UBRR1L.value = uint8((__FREQ__ + 4 * baud) // (8 * baud) - 1)
+    else:
+        UBRR1H.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
+        UBRR1L.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
 
     # 8N1 frame format
     UCSR1C.value = 0x06

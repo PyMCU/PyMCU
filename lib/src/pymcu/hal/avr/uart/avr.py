@@ -29,6 +29,7 @@
 #   115200 -> 16 with U2X0 (0.64% error; plain UBRR=8 is -3.5% and breaks RX)
 # -----------------------------------------------------------------------------
 
+from pymcu.chips import __FREQ__
 from pymcu.chips.atmega328p import UBRR0H, UBRR0L, UCSR0A, UCSR0B, UCSR0C, UDR0, DDRD, SREG
 from pymcu.types import uint8, uint16, int16, uint32, int32, inline, const, compile_isr, Callable
 
@@ -47,29 +48,34 @@ def uart_init(baud: const[uint16]):
     DDRD[1] = 1
     DDRD[0] = 0
 
-    # Pre-computed UBRR for 16 MHz -- avoids runtime division
-    if baud == 9600:
-        UBRR0L.value = 103
-        UBRR0H.value = 0
-    elif baud == 19200:
-        UBRR0L.value = 51
-        UBRR0H.value = 0
-    elif baud == 38400:
-        UBRR0L.value = 25
-        UBRR0H.value = 0
-    elif baud == 57600:
-        UBRR0L.value = 16
-        UBRR0H.value = 0
-    elif baud == 115200:
-        # U2X0 double-speed with UBRR=16: 115942 baud, +0.64% error. The 16x
-        # setting (UBRR=8) runs at 111111 baud, -3.5%: transmit survives it
-        # because the receiving side resynchronizes on every start bit, but
-        # RECEIVE accumulates the error across the frame and drops bytes on
-        # real silicon. The emulator does not model baud mismatch, so only
-        # hardware shows it.
+    # UBRR is COMPUTED from the configured clock and the requested rate, not looked up
+    # in a table. Both are compile-time constants, so the whole expression folds and the
+    # emitted code is two register writes -- no runtime division.
+    #
+    # This used to be an if/elif over five literal rates with values for 16 MHz and NO
+    # else, so 4800 or 250000 left UBRR at 0 (1 Mbaud) and `frequency` in pyproject.toml
+    # was ignored: at 8 MHz a UART(9600) ran at 4808. Both were silent.
+    #
+    #   UBRR = round(F_CPU / (16 * baud)) - 1        normal speed
+    #   UBRR = round(F_CPU / (8  * baud)) - 1        U2X, double speed
+    #
+    # The +half-divisor before the division is the integer way to round to nearest.
+    # No intermediate locals with an annotation: an annotated local is materialised, and a
+    # materialised uint32 inside an @inline body turns the expansion into something the
+    # outliner cannot share (an argument wider than two bytes overflows the register file
+    # once several UARTs exist). Written as one expression per register write, the whole
+    # thing folds to two constants.
+    if __FREQ__ * 2 // (16 * baud) - __FREQ__ // (16 * baud) * 2 != 0:
+        # The normal-speed divisor loses more than half a step here, so double speed lands
+        # closer. At 16 MHz that is what saves 115200: normal speed is 3.5% off, which
+        # transmit survives (the receiver resyncs on every start bit) and RECEIVE does not,
+        # because the error accumulates across the frame and bytes drop on real silicon.
         UCSR0A.value = 0x02
-        UBRR0L.value = 16
-        UBRR0H.value = 0
+        UBRR0H.value = uint8(((__FREQ__ + 4 * baud) // (8 * baud) - 1) >> 8)
+        UBRR0L.value = uint8((__FREQ__ + 4 * baud) // (8 * baud) - 1)
+    else:
+        UBRR0H.value = uint8(((__FREQ__ + 8 * baud) // (16 * baud) - 1) >> 8)
+        UBRR0L.value = uint8((__FREQ__ + 8 * baud) // (16 * baud) - 1)
 
     # 8N1 frame format (UCSZ01=1, UCSZ00=1, async, no parity, 1 stop)
     UCSR0C.value = 0x06
