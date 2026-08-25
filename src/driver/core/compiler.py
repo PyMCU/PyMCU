@@ -15,10 +15,30 @@
 import sys
 import os
 import shutil
+import re
 import subprocess
 import time
 from pathlib import Path
 from rich.console import Console
+
+def _remap_diagnostics(text: str, diagnostic_source) -> str:
+    """Point every diagnostic at the file the user wrote.
+
+    `diagnostic_source` is (synthetic_path, real_path, preamble_lines). The compiler is
+    handed a synthetic entry with an injected preamble, so it reports
+    `dist/_generated/main.py:13:1` for a line the user wrote at 7 in `src/main.py`.
+    """
+    synthetic, real, offset = diagnostic_source
+    syn_name = os.path.basename(str(synthetic))
+
+    def fix(match):
+        path, line, rest = match.group(1), int(match.group(2)), match.group(3)
+        if os.path.basename(path) != syn_name or "_generated" not in path.replace("\\", "/"):
+            return match.group(0)
+        return f"{real}:{max(1, line - offset)}{rest}"
+
+    return re.sub(r"^(\S+?):(\d+)(:.*)$", fix, text, flags=re.MULTILINE)
+
 
 class PyMCUCompiler:
     """
@@ -102,7 +122,7 @@ class PyMCUCompiler:
                 self.console.print(f"\\[debug] Error in get_stdlib_path: {e}", style="dim")
         return ""
 
-    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None):
+    def compile(self, input_file: str, output_file: str, target: str, freq: int, configs: dict, search_path: str = None, verbose: bool = False, reset_vector: int = None, interrupt_vector: int = None, extra_includes: list = None, on_output=None, emit_ir_path: str = None, diagnostic_source: tuple = None):
         compiler = self.get_compiler_path()
         input_path = Path(input_file).absolute()
         cmd = [str(compiler), input_file, "-o", output_file, "--target", target, "--freq", str(freq)]
@@ -172,10 +192,17 @@ class PyMCUCompiler:
                 # encoding is pinned to utf-8 because pymcuc always emits utf-8; without
                 # it Popen(text=True) decodes with the locale codepage (cp1252 on
                 # Windows), raising UnicodeDecodeError on non-ASCII diagnostics.
+                # stderr is captured ONLY when there is a synthetic entry to map back:
+                # the compiler sees dist/_generated/main.py and reports against it, at a
+                # line shifted by the injected preamble, which sends the reader into their
+                # own build output at a line that says something else. Rewriting the path
+                # and the number makes the problem matcher point at the real file, so this
+                # helps the editor integration rather than working against it.
+                capture_stderr = subprocess.PIPE if diagnostic_source else None
                 with subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=None,
+                    stderr=capture_stderr,
                     text=True,
                     encoding="utf-8",
                     errors="replace",
@@ -183,7 +210,12 @@ class PyMCUCompiler:
                 ) as proc:
                     if proc.stdout:
                         buffered = [raw.rstrip("\r\n") for raw in proc.stdout]
+                    err_text = proc.stderr.read() if proc.stderr else ""
                     proc.wait()
+
+                if err_text:
+                    sys.stderr.write(_remap_diagnostics(err_text, diagnostic_source))
+                    sys.stderr.flush()
 
                 if proc.returncode == SIGKILL_RETURNCODE and attempt < max_signal_retries:
                     time.sleep(0.25 * (attempt + 1))

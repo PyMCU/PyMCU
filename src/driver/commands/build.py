@@ -905,6 +905,7 @@ def build(
         # code runs, so print()/input() work out of the box with no extra imports.
         # The output device is configurable via [tool.pymcu] stdout / stdout_baud.
         _linemap_preamble_offset = 0
+        _original_entry_point = entry_point
 
         _has_print, _has_uart, _has_input = _detect_print_usage(sources_dir)
         if (_has_print or _has_input) and not _has_uart:
@@ -989,6 +990,16 @@ def build(
             _diag_log("rp2350 target — injecting clock_init() (150 MHz + 1 MHz timer tick)",
                       verbose=is_verbose)
 
+        # What the compiler will see versus what the user wrote. Every preamble injection
+        # above replaced entry_point with a synthetic file under dist/_generated and shifted
+        # the line numbers; without this map a diagnostic sends the reader into their own
+        # build output, at a line that says something else.
+        _diagnostic_source = (
+            (str(entry_point), str(_original_entry_point), _linemap_preamble_offset)
+            if _linemap_preamble_offset > 0 and str(entry_point) != str(_original_entry_point)
+            else None
+        )
+
         # Detect C interop: [tool.pymcu.ffi] sources = [...]
         ffi_config = pymcu_config.get("ffi", {})
         ffi_sources_raw: list[str] = list(ffi_config.get("sources", []))
@@ -1052,6 +1063,7 @@ def build(
                         extra_includes=extra_includes or None,
                         on_output=compiler_handler,
                         emit_ir_path=str(ir_file),
+                        diagnostic_source=_diagnostic_source,
                     )
                     progress.update(build_task, description="  [cyan]Code Generation[/cyan]...", completed=40)
                     linemap_path: Path | None = None
