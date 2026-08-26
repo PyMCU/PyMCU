@@ -99,6 +99,7 @@ class PyMCUCompiler:
     
     def __init__(self, console: Console):
         self.console = console
+        self.compiler_candidates: list[str] = []
 
     def _get_start_path(self) -> Path:
         """Helper to allow easier mocking or inheritance if needed"""
@@ -110,19 +111,28 @@ class PyMCUCompiler:
         # compiler.py is in src/driver/core/
         # toolchain.py was in src/driver/
         # Compiler usually sits near the package root or in bin/
-        
+        #
+        # Every candidate tried is recorded in self.compiler_candidates, because "which binary
+        # is this actually running" was the first question in all five stale-artifact
+        # incidents, and answering it took a `find` each time. Reported under PYMCU_VERBOSE.
+
         base_path = self._get_start_path() 
         
         candidates = ["pymcuc"]
         if sys.platform == "win32":
             candidates.insert(0, "pymcuc.exe")
 
+        tried: list[str] = []
+        self.compiler_candidates = tried
+
         # 1. Check adjacent to src/driver/ (standard wheel layout)
         for name in candidates:
             local_compiler = base_path / name
+            tried.append(str(local_compiler))
             if local_compiler.exists():
                 return local_compiler
             bin_compiler = base_path / "bin" / name
+            tried.append(str(bin_compiler))
             if bin_compiler.exists():
                 return bin_compiler
 
@@ -130,10 +140,12 @@ class PyMCUCompiler:
         project_root = base_path.parent.parent
         for name in candidates:
             p = project_root / "build" / "bin" / name
+            tried.append(str(p))
             if p.exists():
                 return p
 
         # 3. System PATH
+        tried.append("PATH: pymcuc")
         which_result = shutil.which("pymcuc")
         if which_result:
             return Path(which_result)
@@ -203,6 +215,26 @@ class PyMCUCompiler:
                     self.console.print(f"\\[debug] Extra include: {inc}", style="dim")
 
         stdlib = self.get_stdlib_path(verbose=verbose)
+
+        # Is the artifact about to run the one the sources expect? Nothing here can fail a
+        # build: every check is a warning, and the mtime comparison only speaks at all when the
+        # artifacts are part of a checkout. See core/staleness.py for why each one exists.
+        try:
+            from .staleness import resolution_report, warnings_for  # noqa: PLC0415
+
+            if os.environ.get("PYMCU_VERBOSE") == "1" or verbose:
+                for line in resolution_report(compiler, stdlib, self.compiler_candidates):
+                    self.console.print(f"\\[debug] {line}", style="dim")
+
+            source_roots = [Path(search_path) if search_path else input_path.parent]
+            source_roots.extend(Path(i) for i in (extra_includes or []))
+            for warning in warnings_for(compiler, stdlib, source_roots):
+                self.console.print(f"warning: {warning}", style="yellow")
+        except Exception:
+            # A freshness check that breaks a build would be worse than the staleness it
+            # exists to report.
+            pass
+
         if stdlib:
             # Resolving path is critical for C++ compiler if CWD varies or if path is relative
             include_path = str(Path(stdlib).parent.resolve())
