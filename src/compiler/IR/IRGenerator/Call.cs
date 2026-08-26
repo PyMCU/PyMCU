@@ -155,6 +155,7 @@ public partial class IRGenerator
         if (TryEmitStreamMethodFString(expr) is { } streamResult) return streamResult;
         if (TryEmitLcdMethodFString(expr) is { } lcdResult) return lcdResult;
         if (TryEmitDictMethod(expr) is { } dictResult) return dictResult;
+        if (TryEmitSetMethod(expr) is { } setResult) return setResult;
 
         // `f(*xs)`: splice the elements of the compile-time sequence into the argument list
         // before anything else looks at it, so every path below sees an ordinary call.
@@ -1829,16 +1830,41 @@ public partial class IRGenerator
     // table, so this is the d[key] lowering with the miss handed the default instead of a
     // KeyError. Returns null when the receiver is not a dict literal, so a real method call
     // on an instance is unaffected -- without this the call mangled into an undefined `d_get`.
+    // A method call on a set-literal binding. A set literal is a compile-time membership
+    // table here, so no method on it has a lowering, and without this the call mangled the
+    // receiver and the member together into an undefined `s_add` (issue #197): a name that
+    // appears nowhere in the program, called a FUNCTION when it is a method, and offered a
+    // typo-or-missing-import suggestion when the spelling is right and no import can add a
+    // method to a set. The dict path a few lines above answers the same question properly
+    // and this is its counterpart, phrased alike on purpose.
+    private Val? TryEmitSetMethod(CallExpr expr)
+    {
+        if (expr.Callee is not MemberAccessExpr { Object: VariableExpr sv } sm) return null;
+        if (!TryGetSetBinding(sv.Name, out _)) return null;
+
+        // Every member, not a list of rejected ones: nothing on a set literal is available,
+        // so naming a supported subset would be inventing one.
+        throw UserError(
+            $"'{sv.Name}' is a compile-time set literal (read-only membership table): " +
+            $"'{sm.Member}()' is not available. Supported: x in {sv.Name}, " +
+            $"len({sv.Name}). For a collection you write into, use a " +
+            "bytearray or a fixed-size list.");
+    }
+
     private Val? TryEmitDictMethod(CallExpr expr)
     {
         if (expr.Callee is not MemberAccessExpr { Object: VariableExpr dv } dm) return null;
         if (!TryGetDictBinding(dv.Name, out var dict)) return null;
 
         if (dm.Member != "get")
+            // Named receiver, matching its set counterpart above. Two sibling messages that
+            // differ in whether they name the receiver is the inconsistency each of them
+            // exists to avoid, and with two dicts in scope the name is the useful half.
             throw UserError(
-                $"dict literals are compile-time lookup tables: '{dm.Member}()' is not available. " +
-                "Supported: d[key], key in d, len(d), d.get(key, default). For a mutable dict use " +
-                "pymcu.collections.FixedDict(capacity).");
+                $"'{dv.Name}' is a compile-time lookup table (read-only dict literal): " +
+                $"'{dm.Member}()' is not available. Supported: {dv.Name}[key], " +
+                $"key in {dv.Name}, len({dv.Name}), {dv.Name}.get(key, default). " +
+                "For a mutable dict use pymcu.collections.FixedDict(capacity).");
 
         if (expr.Args.Count != 2)
             throw UserError(
