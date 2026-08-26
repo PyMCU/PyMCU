@@ -217,7 +217,15 @@ public partial class IRGenerator
                 // `gather(a(), b())` hit this for any user coroutine called a or b.
                 else if (classNames.Contains(ve.Name) && InstanceClassOfName(ve.Name) == null)
                 {
-                    callee = currentModulePrefix + ve.Name + "_" + memC.Member;
+                    // Resolve the CLASS, do not paste the enclosing prefix in front of it.
+                    // currentModulePrefix inside a method is the enclosing class, so
+                    // `Base.read(...)` written inside Registry produced `Registry_Base_read`, a
+                    // name nothing emits and nothing in the source is called (PyMCU#161). The
+                    // same call in a free function worked only because the prefix was empty
+                    // there, so the enclosing scope decided, not the construct. ResolveCallee
+                    // walks the prefix chain and finds the class wherever it is defined, which
+                    // is what every other class lookup on this path already uses.
+                    callee = ResolveCallee(ve.Name) + "_" + memC.Member;
                     resolvedAsModule = true;
                 }
                 else if (ve.Name == "int")
