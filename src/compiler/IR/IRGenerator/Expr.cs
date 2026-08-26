@@ -695,7 +695,16 @@ public partial class IRGenerator
                     Val ev = VisitExpression(e);
                     if (ev is Constant ec)
                     {
-                        if (lc.Value == ec.Value) return new Constant(negate ? 0 : 1);
+                        // Two Constants standing for STRINGS match on their text, not their
+                        // value: the same one-character string is its character code in
+                        // expression position and an interned id through a name, so
+                        // `c in ("a", "b")` compared two spellings of "a" and answered false
+                        // (#211). Both sides or neither, so a pair without text is compared
+                        // exactly as before.
+                        bool hit = lc.Text != null && ec.Text != null
+                            ? lc.Text == ec.Text
+                            : lc.Value == ec.Value;
+                        if (hit) return new Constant(negate ? 0 : 1);
                     }
                     else allConst = false;
 

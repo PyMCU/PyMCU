@@ -931,7 +931,16 @@ public partial class IRGenerator
                     var ct = targetVal as Constant;
                     foreach (var v in altVals)
                     {
-                        if (((Constant)v).Value == ct!.Value)
+                        // Match a STRING pattern on its text, not on its value: the same
+                        // one-character string is its character code in expression position and
+                        // an interned id through a name, so `match c: case "a"` compared two
+                        // spellings of "a" and fell through to the wildcard (#211). Both sides
+                        // or neither, so a numeric pattern is compared exactly as before.
+                        var alt = (Constant)v;
+                        bool hit = alt.Text != null && ct!.Text != null
+                            ? alt.Text == ct.Text
+                            : alt.Value == ct!.Value;
+                        if (hit)
                         {
                             anyMatch = true;
                             break;
