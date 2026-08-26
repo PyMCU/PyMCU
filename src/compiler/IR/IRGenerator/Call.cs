@@ -209,7 +209,13 @@ public partial class IRGenerator
                         resolvedAsModule = true;
                     }
                 }
-                else if (classNames.Contains(ve.Name))
+                // A name bound to an instance is that instance, even when a class shares the
+                // name: the binding shadows the class, as it does in Python. Reading it as the
+                // class built a receiver-less `<module>_<name>_<member>` and reported it as an
+                // undefined function. asyncio.gather's parameters are `a` and `b`, and the async
+                // desugar names each coroutine's state-machine class after the coroutine, so
+                // `gather(a(), b())` hit this for any user coroutine called a or b.
+                else if (classNames.Contains(ve.Name) && InstanceClassOfName(ve.Name) == null)
                 {
                     callee = currentModulePrefix + ve.Name + "_" + memC.Member;
                     resolvedAsModule = true;
