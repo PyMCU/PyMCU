@@ -553,17 +553,32 @@ public partial class IRGenerator
 
         if (stmt.Line > 0 && stmt.Line != lastLine)
         {
-            var linesPtr = sourceLines;
+            // By PATH, not by a module name rebuilt from currentModulePrefix. That prefix is
+            // mangled (`drivers.led` -> `drivers_led_`) and mangling is not reversible, so the
+            // rebuilt key never matched a dotted name; worse, inside a class the prefix is the
+            // CLASS prefix (`led_Blinker_`), which missed for undotted modules too. Every miss
+            // fell back to the entry file's lines without a word, and the listing came out well
+            // formed with the wrong file's text against real line numbers.
+            //
+            // currentSourcePath comes from FunctionEntry.SourcePath, which is derived from the
+            // module name where it is still known. It is empty for the entry file's own
+            // functions, which is exactly when the entry file's lines are the right answer.
+            //
+            // Inside a module (a non-empty prefix) the entry file's lines are never the right
+            // answer, so a path that resolves to nothing emits no DebugLine at all. Falling
+            // back there is what produced the fiction in the first place: silence is the
+            // honest outcome, and the entry file keeps its own lines because its prefix is
+            // empty and it never takes this branch.
+            List<string>? linesPtr = sourceLines;
             if (!string.IsNullOrEmpty(currentModulePrefix))
             {
-                string modKey = currentModulePrefix.Substring(0, currentModulePrefix.Length - 1);
-                if (moduleSourceLines.TryGetValue(modKey, out var lines))
-                {
-                    linesPtr = lines;
-                }
+                linesPtr = !string.IsNullOrEmpty(currentSourcePath)
+                           && sourceLinesByPath.TryGetValue(currentSourcePath, out var lines)
+                    ? lines
+                    : null;
             }
 
-            if (stmt.Line <= linesPtr.Count)
+            if (linesPtr != null && stmt.Line <= linesPtr.Count)
             {
                 Emit(new DebugLine(stmt.Line, linesPtr[stmt.Line - 1], currentSourceFile, !string.IsNullOrEmpty(currentInlinePrefix)));
                 lastLine = stmt.Line;

@@ -282,6 +282,16 @@ public partial class IRGenerator
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
         this.modulePaths = modulePaths ?? new Dictionary<string, string>();
+
+        // Join the two maps the caller already provides, so a debug listing can be looked up
+        // by the path a compiled function carries rather than by a module name reconstructed
+        // from its mangled prefix. The reconstruction could never match a dotted name, and a
+        // miss was silent: it fell back to the entry file and printed that file's text against
+        // the module's line numbers (issue #179).
+        this.sourceLinesByPath = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var kv in this.moduleSourceLines)
+            if (this.modulePaths.TryGetValue(kv.Key, out var modPath) && modPath.Length > 0)
+                this.sourceLinesByPath[modPath] = kv.Value;
         this.lastLine = -1;
         this.currentSourceFile = "";
         this.currentSourcePath = "";

@@ -331,6 +331,12 @@ public partial class IRGenerator
     // Debugging
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();
+
+    // The same source lines keyed by FILE PATH, which is the identity a compiled function
+    // already carries (FunctionEntry.SourcePath -> currentSourcePath). The name-keyed map
+    // cannot be queried from inside a function body: all that is in scope there is the
+    // MANGLED prefix, and mangling is not reversible (`a.b` and `a_b` both give `a_b`).
+    private Dictionary<string, List<string>> sourceLinesByPath = new();
     private string currentSourceFile = "";
 
     // The path of the module currently being scanned or lowered, empty for the entry file.
