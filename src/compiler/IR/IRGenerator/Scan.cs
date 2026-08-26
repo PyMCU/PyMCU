@@ -808,7 +808,7 @@ public partial class IRGenerator
                 else if (!hasZcaFirstParam)
                 {
                     functionsToCompile.Add(new FunctionEntry
-                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
                 }
                 // An UNANNOTATED first parameter lands in neither: it is the decorator shape the
                 // stdlib uses (`def inline(f): return f`), which has never been lowered and must
@@ -1552,7 +1552,7 @@ public partial class IRGenerator
 
         var synth = new FunctionDef(func.Name, synthParams, returnType, body, isInline: false);
         functionsToCompile.Add(new FunctionEntry
-            { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile });
+            { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
 
         outlinedMethods.Add(fullName);
         outlineFieldLayout[fullName] = layout;
@@ -1925,7 +1925,7 @@ public partial class IRGenerator
                 else
                 {
                     functionsToCompile.Add(new FunctionEntry
-                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile });
+                        { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
                     instanceMethodDefs[fullName] = func;
                 }
 

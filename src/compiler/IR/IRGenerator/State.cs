@@ -316,6 +316,26 @@ public partial class IRGenerator
     private List<string> sourceLines = new();
     private Dictionary<string, List<string>> moduleSourceLines = new();
     private string currentSourceFile = "";
+
+    // The path of the module currently being scanned or lowered, empty for the entry file.
+    // Stamped onto every diagnostic raised from here so an error inside an imported module
+    // names that module's file (PyMCU#178). currentSourceFile cannot do this job: it is
+    // "led.py" for drivers/led.py, which is neither unique nor openable.
+    private string currentSourcePath = "";
+
+    // Module name to the file it was loaded from, handed over by the module loader.
+    private Dictionary<string, string> modulePaths = new();
+
+    /// The file a module was loaded from, or empty when it is not known. Tries the qualified
+    /// name first, then the trailing segment, because a module reaches IR generation under
+    /// whichever name imported it and the loader records every name it was requested under.
+    private string PathOfModule(string modName)
+    {
+        if (modulePaths.TryGetValue(modName, out var p)) return p;
+        int dot = modName.LastIndexOf('.');
+        if (dot != -1 && modulePaths.TryGetValue(modName.Substring(dot + 1), out var q)) return q;
+        return "";
+    }
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
 
@@ -350,7 +370,13 @@ public partial class IRGenerator
     /// character chosen only because it was the one position available. Use the overload below
     /// wherever the offending AST node is in hand; that node knows its own column.
     private PyMCU.Common.CompilerError UserError(string message) =>
-        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
+        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1))
+        { File = LocatedFile };
+
+    /// The file to report against, or null to mean the entry file. The line numbers this
+    /// generator carries belong to whichever module is being lowered, so a diagnostic that does
+    /// not also say WHICH file states a line of one file against the name of another.
+    private string? LocatedFile => string.IsNullOrEmpty(currentSourcePath) ? null : currentSourcePath;
 
     /// Builds the same error, located at the node the message is about.
     ///
@@ -367,7 +393,8 @@ public partial class IRGenerator
             ? at.Line
             : (currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
         return new PyMCU.Common.CompilerError(
-            "CompileError", message, line, at.Column, at.Length > 0 ? at.Length : 1);
+            "CompileError", message, line, at.Column, at.Length > 0 ? at.Length : 1)
+            { File = LocatedFile };
     }
 
     // Intrinsic tracking

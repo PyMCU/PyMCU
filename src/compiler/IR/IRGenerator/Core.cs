@@ -271,7 +271,8 @@ public partial class IRGenerator
         DeviceConfig config,
         List<string>? sourceLines = null,
         Dictionary<string, List<string>>? moduleSourceLines = null,
-        HashSet<string>? projectModules = null)
+        HashSet<string>? projectModules = null,
+        Dictionary<string, string>? modulePaths = null)
     {
         // Assign the PARAMETER, not only the field: inside this method the parameter shadows
         // the field, so every later use of the bare name saw the caller's null.
@@ -280,8 +281,10 @@ public partial class IRGenerator
         this.deviceConfig = config;
         this.sourceLines = sourceLines ?? new List<string>();
         this.moduleSourceLines = moduleSourceLines ?? new Dictionary<string, List<string>>();
+        this.modulePaths = modulePaths ?? new Dictionary<string, string>();
         this.lastLine = -1;
         this.currentSourceFile = "";
+        this.currentSourcePath = "";
 
         var irProgram = new ProgramIR { Device = GeometryOf(config) };
         globals.Clear();
@@ -494,6 +497,7 @@ public partial class IRGenerator
             currentModulePrefix = modPrefix;
             int dotPos = modName.LastIndexOf('.');
             currentSourceFile = (dotPos != -1 ? modName.Substring(dotPos + 1) : modName) + ".py";
+            currentSourcePath = PathOfModule(modName);
             ScanGlobals(modAst, modules[modName]);
             ScanFunctions(modAst, modules[modName]);
         }
@@ -512,6 +516,7 @@ public partial class IRGenerator
                 currentModulePrefix = modName.Replace('.', '_') + "_";
                 int dotPos2 = modName.LastIndexOf('.');
                 currentSourceFile = (dotPos2 != -1 ? modName.Substring(dotPos2 + 1) : modName) + ".py";
+                currentSourcePath = PathOfModule(modName);
                 ScanGlobals(modAst, scope);
                 ScanFunctions(modAst, scope);
             }
@@ -551,6 +556,9 @@ public partial class IRGenerator
 
         currentModulePrefix = "";
         currentSourceFile = "main.py";
+        // The entry file is what diagnostics are reported against by default, so it carries no
+        // path of its own: an empty path means "the file the compiler was invoked on".
+        currentSourcePath = "";
 
         // Record entry-file module-level `name = Ctor(...)` targets: their construction
         // is injected into main as module init, but later references resolve them as
@@ -580,7 +588,7 @@ public partial class IRGenerator
 
                 var syntheticMain = new FunctionDef("main", new List<Param>(), "None", syntheticBlock);
                 functionsToCompile.Insert(0,
-                    new FunctionEntry { Prefix = "", Func = syntheticMain, SourceFile = "main.py" });
+                    new FunctionEntry { Prefix = "", Func = syntheticMain, SourceFile = "main.py", SourcePath = "" });
                 functionReturnTypes["main"] = "None";
                 functionParams["main"] = new List<string>();
                 functionParamTypes["main"] = new List<DataType>();
@@ -836,6 +844,7 @@ public partial class IRGenerator
             var entry = functionsToCompile[i];
             currentModulePrefix = entry.Prefix;
             currentSourceFile = entry.SourceFile;
+            currentSourcePath = entry.SourcePath;
             if (!entry.Func.IsInline)
             {
                 lowered[i] = VisitFunction(entry.Func);
@@ -1908,7 +1917,7 @@ public partial class IRGenerator
             string initName = prefix + "__module_init";
             var initFn = new FunctionDef("__module_init", new List<Param>(), "None", body);
             functionsToCompile.Add(new FunctionEntry
-                { Prefix = prefix, Func = initFn, SourceFile = kvp.Key + ".py" });
+                { Prefix = prefix, Func = initFn, SourceFile = kvp.Key + ".py", SourcePath = PathOfModule(kvp.Key) });
             functionReturnTypes[initName] = "None";
             calls.Add(new ExprStmt(new CallExpr(new VariableExpr(initName), new List<Expression>())));
         }

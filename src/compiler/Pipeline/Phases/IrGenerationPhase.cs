@@ -37,7 +37,8 @@ public class IrGenerationPhase : CompilerPhaseBase
 
         var irGen = new IRGenerator();
         var ir = irGen.Generate(context.RootAst!, context.NamedModules, context.DeviceConfig,
-            context.SourceLines, context.ModuleSourceLines, context.ProjectModules);
+            context.SourceLines, context.ModuleSourceLines, context.ProjectModules,
+            context.ModulePaths);
 
         // PYMCU_NO_OPT=1 skips the optimizer: lets a miscompile be bisected to the
         // IR generator (raw IR wrong) vs an optimizer pass (raw IR right).
