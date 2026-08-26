@@ -247,6 +247,26 @@ public class FileSystemModuleLoader : IModuleLoader
             }
         }
 
+        // A name from the Python or MicroPython standard library can never be produced by
+        // `pymcu install`, so the library advice below is a round trip that ends where it
+        // started. Say what the name IS and what to do instead (issue #189).
+        if (StandardModuleNames.TryDescribe(moduleName, out var stdOrigin, out var stdAdvice))
+        {
+            // Whether the compat layer is actually here changes what the reader should do
+            // next: with the layer installed, "install the layer" is the wrong move, and
+            // saying so closes that door. Probed by resolving a module the layer always
+            // provides rather than by trusting the declared stdlib list.
+            string layerNote = "";
+            if (stdOrigin == StandardModuleNames.Origin.MicroPython
+                && includePaths.Any(baseDir => File.Exists(Path.Combine(baseDir, "machine.py"))))
+                layerNote = " The micropython layer IS installed here; it does not provide this module.";
+
+            throw new Exception(
+                $"Module not found: {moduleName} -- '{moduleName}' is a "
+                + $"{StandardModuleNames.Describe(stdOrigin)} module, not a PyMCU library, so "
+                + $"`pymcu install` has nothing to fetch. {stdAdvice}{layerNote}");
+        }
+
         // Anything else with no dots is a plain top-level import, which is what a
         // third-party library provides. The name is the one people type.
         if (!moduleName.Contains('.'))
