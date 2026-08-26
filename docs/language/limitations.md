@@ -60,6 +60,30 @@ Fixed-size arrays `arr: uint8[N]` support both constant- and variable-index acce
 `for ch in "ABC":` (compile-time unroll), `const[str]` runtime subscript (reads byte from
 flash), and **runtime f-strings streamed directly to a sink** — see below.
 
+### A str that different paths bind differently
+
+A string is a compile-time value, so a name normally *is* its text. When two paths bind the
+same name to different texts, what the name holds at run time is the id of the text, and a
+read picks the matching one:
+
+```python
+s: str = "idle"
+if seed > 10:
+    s = "running"
+print(s)              # writes "running" or "idle", decided at run time
+if s == "running":    # compares the ids, also at run time
+    ...
+```
+
+The two texts stay in flash and the name costs one 16-bit slot; nothing is copied into RAM.
+This covers the three ways a name can end up with more than one text: a run-time branch, a
+loop body that rebinds it, and a module-level `str` that a function rebinds through `global`.
+
+Only `print()`, `uart.write_str()` / `println()` and `==` / `!=` against a literal can read
+such a name. Anything else (`len(s)`, `s[i]`, `s + t`, passing it to a `const[str]`
+parameter) is a compile error naming the texts it can hold, because there is no single text
+to hand over.
+
 ### f-strings (streamed)
 
 `f"..."` with **runtime interpolations** is supported streamed to a sink — the compiler
@@ -442,10 +466,25 @@ hardware timer dependency.
 | Third-party PyPI packages | Only `pymcu` stdlib is compiled | Implement in `pymcu` stdlib or use `@extern` |
 | `importlib` / dynamic imports | Runtime module loading | Not available |
 | Circular imports | Not supported | Restructure module dependencies |
+| A function defined twice in one module | PyMCU compiles the first, Python binds the last | Rename one, or make every definition `@inline` with different parameter types |
 
 **Supported:** `import foo`, `from foo import Bar`, `from foo import Bar as B`,
-relative imports, multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` and
-`pymcu-micropython` compat packages.
+`from foo import *`, relative imports (`from .util import half`, `from . import util`),
+multi-module projects, `pymcu` stdlib, `pymcu-circuitpython` and `pymcu-micropython`
+compat packages.
+
+`from foo import *` binds the public top-level names of `foo`: its functions, classes and
+module-level variables, minus the ones whose name starts with `_`, which are private and
+which a star never binds in CPython either. A module that declares `__all__` gets exactly
+that list instead. A name `foo` re-exports (one it imported itself) resolves through the
+star as well.
+
+A module-level object in an imported module is constructed at startup, before the entry
+file's own module-level statements, in the order the modules are imported. This applies to
+the project's own modules, the ones under `sources`. An installed distribution (the `pymcu`
+stdlib and the compat layers) is written knowing that only the entry file's module level
+runs, and several guard their top level on the target chip, so theirs is deliberately left
+alone.
 
 ---
 

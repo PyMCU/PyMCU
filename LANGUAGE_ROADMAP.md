@@ -27,7 +27,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `return` | With/without value; tuple multi-return from `@inline` functions, optionally annotated `-> (T1, T2)` or `-> tuple[T1, T2]` (the element types set the result widths) |
 | `pass` / `raise` | `raise ExnType` signals an error via the T flag and returns; caught at the call site by an enclosing `try` (SET/BRTS, no `longjmp`); `ValueError`/`TypeError`/`IndexError`/`KeyError`/`NotImplementedError` are builtins — no import required |
 | `raise CompileError(msg)` | Compile-time intrinsic — aborts compilation with `CompileError:` diagnostic; never generates `RaiseExn` IR; cannot be caught by `try/except`; used in all HAL modules for unsupported arch/chip guards |
-| `import` / `from ... import` / `import X as Y` | Relative imports, multi-level |
+| `import` / `from ... import` / `import X as Y` / `from ... import *` | Relative imports (`from .util import half`, `from . import util`), multi-level; a star binds the names the module defines at top level, or exactly its `__all__` |
 | `global` | Cross-function variable access |
 
 ### Expressions
@@ -247,9 +247,11 @@ Everything in this section is shipped and tested in the current alpha build.
 | Extended unpacking `first, *rest = tup` | Starred target captures middle slice; compile-time tuples only (PEP 3132) |
 | `lambda x: expr` (no capture) | Inlined as anonymous `@inline` function; no closure capture (PEP 3) |
 | `str.join` | `sep.join([...])` folds compile-time strings; `''.join([chr(b) for b in buf])` lowers to a runtime string (the MicroPython/CircuitPython bytes-to-string idiom) |
+| `str` rebound on another path | A name bound to different literals by a run-time branch, a loop body or a `global` write holds the interned id in a 16-bit slot; `print` / `write_str` / `println` dispatch on it and `==` / `!=` against a literal compare it. Any other use is a located error naming the texts |
 | Slice indexing `arr[1:3]`, `arr[::2]` | Compile-time constant indices produce a fixed-size array. Equal-length slice ASSIGNMENT (`arr[a:b] = src`, v0.14) with list/bytes/array/slice sources incl. overlapping same-array copies, and through `__setitem__` objects (`nvm[0:4] = b'...'`). ITERATION over a slice accepts runtime bounds (`for b in buf[0:n]`, rewritten to a range loop). `print(bytearray)` / `print(obj[a:b])` stream the CPython `bytearray(b'...')` repr |
 | `nonlocal` in nested `@inline` | Mutates enclosing scope variable via SRAM alias (PEP 3104) |
-| Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__floordiv__`, `__mod__`, `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`, `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__neg__`, `__invert__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__` |
+| Dunder operator overloading | `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`, `__mod__`, `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`, `__eq__`, `__ne__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__neg__`, `__invert__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`. The in-place forms dispatch too (`__iadd__` and the rest), except `__ipow__`; reflected forms (`__radd__` and the rest) do not |
+| `for v in obj` over `__getitem__` | The sequence protocol, when `__len__` is a compile-time constant: the trip count is known, so it unrolls to one `__getitem__` per index and costs what `for i in range(len(obj))` costs. A run-time `__len__` (or none) is refused, naming `__getitem__` and the missing trip count. `__iter__`/`__next__` stay unsupported: `StopIteration` is an exception, so the loop would have nothing to end on |
 
 ### C/C++ Interop
 
