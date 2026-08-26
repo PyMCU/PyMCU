@@ -6,7 +6,12 @@
 # Licensed under the MIT License. See LICENSE for details.
 # -----------------------------------------------------------------------------
 
-from typing import NewType, Union
+# `typing` is not resolvable by this compiler and never has been, so importing it here made
+# pymcu.pio unimportable in every spelling -- an ImportError raised inside our own stdlib
+# rather than in the reader's program (issue #199). It was used for two Union annotations,
+# below, which are written as comments now: this module is read for the NAMES it binds, and
+# nothing consumes the annotations. PIOCodeGenTests builds an equivalent module with no
+# annotations at all and assembles the same program from it.
 
 # --- 1. Phantom Types for Registers ---
 # These allow the compiler to distinguish between a number '0' 
@@ -43,12 +48,19 @@ def push(block: bool = True) -> None:
     """Pushes 32 bits from the ISR into the RX FIFO."""
     pass
 
-def out(destination: Union[PIORegister, int], bit_count: int) -> None:
-    """Shifts bit_count bits out of OSR to destination. Usage: out(PINS, 1)"""
+def out(destination, bit_count: int) -> None:
+    """Shifts bit_count bits out of OSR to destination. Usage: out(PINS, 1)
+
+    `destination` is a PIORegister or a plain int address; it carries no annotation because
+    either is accepted and PyMCU has no union spelling.
+    """
     pass
 
-def in_(source: Union[PIORegister, int], bit_count: int) -> None:
-    """Shifts bit_count bits from source into ISR. Named in_ because in is a keyword."""
+def in_(source, bit_count: int) -> None:
+    """Shifts bit_count bits from source into ISR. Named in_ because in is a keyword.
+
+    `source` is a PIORegister or a plain int address; see out().
+    """
     pass
 
 def wait(polarity: int, source: PIORegister, index: int) -> None:
