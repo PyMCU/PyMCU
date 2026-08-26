@@ -636,7 +636,17 @@ public ref struct Lexer
                 if (parenDepth > 0)
                 {
                     atLineStart = false;
-                    while (pos < src.Length && src[pos] == ' ') pos++;
+                    // Advance(), not pos++. Inside brackets there is no INDENT token to emit,
+                    // so this skips the leading run directly -- but stepping pos by hand left
+                    // `column` behind, and every token on a bracketed continuation line then
+                    // reported a column short by the indentation. A name at column 17 of
+                    //
+                    //     b: uint8 = (a +
+                    //                 undefined_name)
+                    //
+                    // was reported at column 1, and the caret was drawn from the margin across
+                    // the indentation and into the name it was supposed to point at.
+                    while (pos < src.Length && src[pos] == ' ') Advance();
                     if (tokenQueue.Count > 0) tokenQueue.Clear();
                 }
                 else
