@@ -1596,8 +1596,16 @@ public partial class IRGenerator
     private bool TryEmitJoinAssign(string target, Expression value)
     {
         if (value is not CallExpr { Callee: MemberAccessExpr { Member: "join" } jm } jc) return false;
+        // A `join` whose receiver is not a string is somebody's own method and belongs to the
+        // ordinary call lowering. Asking that FIRST is what lets everything below speak about
+        // str.join with no hedging: past this line the receiver is a string, so the refusals
+        // can name the part that is unsupported instead of the shape of the statement.
         string? sep = StaticStringOf(jm.Object);
-        if (sep == null || jc.Args.Count != 1) return false;
+        if (sep == null) return false;
+        if (jc.Args.Count != 1)
+            throw UserError(
+                "str.join takes one argument, the sequence to join; this call passes "
+                + $"{jc.Args.Count}.");
 
         if (jc.Args[0] is ListExpr jle && jle.Elements.All(e => StaticStringOf(e) != null))
         {
@@ -1653,7 +1661,49 @@ public partial class IRGenerator
             return true;
         }
 
-        return false;
+        // The separator is a compile-time string, so this IS str.join in assignment form and
+        // the SEQUENCE is what cannot be laid out. The refusal used to be left to the bare
+        // expression path, which answers "assign the result to a variable before using it":
+        // advice describing a property `s = ",".join([a, "b"])` already has, so a reader who
+        // followed it rewrote the assignment they had and got the same error back.
+        throw UserError(JoinSequenceRefusal(jc.Args[0]));
+    }
+
+    // A PyMCU string has no heap to be built in, so str.join is a compile-time operation and
+    // its result has to be spelled out while compiling. Both refusals share this, so the
+    // reader gets one account of what str.join is rather than two half-descriptions.
+    private const string JoinIsCompileTime =
+        "str.join lays its result out at compile time (a PyMCU string lives in flash, and "
+        + "there is no heap to build a new one in), so it needs a separator that is a "
+        + "compile-time string and a list whose elements are all compile-time strings. The "
+        + "one run-time form is ''.join([chr(b) for b in buf]) over a fixed-size buffer.";
+
+    // Name the element that cannot be laid out, and what to write instead. Naming the FIRST
+    // one is deliberate: a message that says "some element" leaves the reader checking each
+    // in turn, which is the work the compiler already did.
+    private string JoinSequenceRefusal(Expression seq)
+    {
+        if (seq is not ListExpr le)
+            return "str.join needs a list written out at the call ([a, b, c]), or "
+                   + "[chr(b) for b in buf] over a fixed-size buffer. " + JoinIsCompileTime;
+
+        for (int i = 0; i < le.Elements.Count; i++)
+        {
+            if (StaticStringOf(le.Elements[i]) != null) continue;
+            string what = le.Elements[i] switch
+            {
+                VariableExpr v => $"element {i} is '{v.Name}', which does not hold a "
+                                  + "compile-time string",
+                FStringExpr => $"element {i} is an f-string, which is built at run time",
+                CallExpr => $"element {i} is a call result, which is only known at run time",
+                _ => $"element {i} is only known at run time",
+            };
+            return $"str.join cannot build this text: {what}. {JoinIsCompileTime} Build text "
+                   + "that depends on a run-time value with an f-string instead, which does "
+                   + "have a run-time form: s = f\"{a},b\".";
+        }
+
+        return "str.join cannot build this text from the list given. " + JoinIsCompileTime;
     }
 
     // Compile-time __len__ of a class, when its body is a single constant return

@@ -796,6 +796,19 @@ public partial class IRGenerator
                     throw UserError($"'{shown}' is not callable (it is a value, not a function)", cv);
             }
 
+            // `sep.join([...])` where the compiler no longer holds `sep`'s text -- it was bound
+            // from a field, or from another name -- builds the callee `sep_join`, which nothing
+            // defines, and the reader was sent to look for a typo in a symbol their program
+            // never mentions. Reaching here means no such function exists, so a class of one's
+            // own with a join() method is untouched. The separator is the condition; say so.
+            if (expr.Callee is MemberAccessExpr { Member: "join", Object: VariableExpr joinRecv })
+                throw UserError(
+                    $"'{joinRecv.Name}.join([...])' needs '{joinRecv.Name}' to be a compile-time "
+                    + $"string, and it is not: '{joinRecv.Name}' was bound to a value whose text "
+                    + "the compiler does not hold. " + JoinIsCompileTime + " Write the separator "
+                    + "at the call (\",\".join([...])), or bind the name to a literal.",
+                    expr.Callee);
+
             // Reflection builtins: name the real reason instead of "undefined function".
             if (shown is "getattr" or "setattr" or "hasattr" or "delattr" or "eval" or "exec" or "vars" or "dir" or "globals" or "locals")
                 throw UserError($"'{shown}' is runtime reflection, which PyMCU does not support " +
