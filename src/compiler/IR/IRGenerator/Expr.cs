@@ -1770,6 +1770,21 @@ public partial class IRGenerator
                 "also want to iterate it), or subscript a fixed array instead. A subscript on a " +
                 "non-class value reads a register bit, which is not what an instance holds.");
 
+        // Same defect as the guard above, with a set binding instead of an instance, and it
+        // reached the same place: `s = {70, 7}` then `s[1]` emitted `bchk main.s, 1` against a
+        // name nothing ever assigns, because a set literal binds a compile-time table and no
+        // storage. It built clean and tested a bit of an undefined slot. CPython raises
+        // TypeError, a set not being subscriptable in any Python (#208).
+        //
+        // A DICT binding is deliberately not caught here: `d[key]` is supported and lowers to
+        // the constant lookup, so it must keep reaching the path below.
+        if (expr.Target is VariableExpr setVe && TryGetSetBinding(setVe.Name, out _))
+            throw UserError(
+                $"'{setVe.Name}' is a compile-time set literal (read-only membership table), and a " +
+                "set is not subscriptable: there is no order for an index to mean. Supported: " +
+                $"x in {setVe.Name}, len({setVe.Name}). For a collection you index, use a " +
+                "fixed-size list or a bytearray.");
+
         Val target = VisitExpression(expr.Target);
         Val indexVal2 = VisitExpression(expr.Index);
 
