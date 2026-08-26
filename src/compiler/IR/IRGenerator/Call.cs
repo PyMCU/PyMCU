@@ -2920,25 +2920,112 @@ public partial class IRGenerator
         }
     }
 
+    /// The elements of a min/max sequence argument, or the refusal that names the shape.
+    private List<Expression> SequenceElementsOrThrow(Expression arg, string name)
+        => ConstantElementsOf(arg)
+           ?? throw UserError(
+               $"{name}() over a sequence needs a length known at compile time, and this one " +
+               $"does not have it. Pass the operands as separate arguments " +
+               $"(`{name}(a, b, c)`), index a fixed-size array " +
+               $"(`{name}(xs[0], xs[1], xs[2])`), or keep a running {name} in a loop.");
+
     /// Rewrites `f(xs)` into `f(xs[0], xs[1], ...)` for min/max, or throws naming the shape.
     private Val ExpandSequenceMinMax(CallExpr expr, string name)
     {
-        var elems = ConstantElementsOf(expr.Args[0]);
-        if (elems == null)
-            throw UserError(
-                $"{name}() over a sequence needs a length known at compile time, and this one " +
-                $"does not have it. Pass the operands as separate arguments " +
-                $"(`{name}(a, b, c)`), index a fixed-size array " +
-                $"(`{name}(xs[0], xs[1], xs[2])`), or keep a running {name} in a loop.");
+        var elems = SequenceElementsOrThrow(expr.Args[0], name);
 
         if (elems.Count == 1) return VisitExpression(elems[0]);
         return VisitExpression(new CallExpr(new VariableExpr(name), new List<Expression>(elems)));
+    }
+
+    private int _minMaxKeyTemp;
+
+    /// Splits a `key=` argument out of a min()/max() call. Any other keyword is refused by
+    /// name here: min and max are handled before the general keyword path, so a kwarg used to
+    /// reach VisitExpression and surface as "Unknown Expression type: KeywordArgExpr", which
+    /// is a class of this compiler reported to someone who wrote `key=` (#190).
+    private (List<Expression> Args, Expression? Key) SplitMinMaxKey(CallExpr expr, string name)
+    {
+        if (!expr.Args.Any(a => a is KeywordArgExpr)) return (expr.Args, null);
+
+        var positional = new List<Expression>();
+        Expression? key = null;
+        foreach (var a in expr.Args)
+        {
+            if (a is not KeywordArgExpr kw) { positional.Add(a); continue; }
+            if (kw.Key != "key")
+                throw UserError(
+                    $"unknown keyword argument '{kw.Key}' in call to '{name}()'; {name}() takes "
+                    + "the values to compare and an optional 'key'", kw.Value);
+            if (key != null)
+                throw UserError($"keyword argument 'key' repeated in call to '{name}()'", kw.Value);
+            key = kw.Value;
+        }
+
+        // `key=None` is Python's way of saying no key at all, so it leaves the plain lowering.
+        if (key is NoneLiteral) key = null;
+        return (positional, key);
+    }
+
+    /// `min(a, b, key=f)` / `max(...)`: the key is applied to each operand and the operands are
+    /// compared by their keys, so what comes back is the ORIGINAL value, not its key.
+    ///
+    /// Every operand is bound to a name of its own before anything is compared, because it is
+    /// read twice -- once by the key call and once as the result -- and re-evaluating the
+    /// expression would run its side effects twice. The running winner and its key are bound
+    /// the same way at each step, which is what keeps the key call count at one per operand,
+    /// the number CPython makes, instead of re-deriving the winner's key at every comparison.
+    ///
+    /// `<=` for min and `>=` for max keep CPython's tie rule: the FIRST operand with the
+    /// winning key is the one returned.
+    private Val EmitMinMaxByKey(List<Expression> operands, Expression key, string name)
+    {
+        if (operands.Count == 0) throw UserError($"{name}() needs an argument");
+        if (operands.Count == 1) operands = SequenceElementsOrThrow(operands[0], name);
+
+        string Bind(Expression e)
+        {
+            string bound = "__minmax_key_" + (_minMaxKeyTemp++);
+            VisitStatement(new AssignStmt(new VariableExpr(bound), e));
+            return bound;
+        }
+
+        string KeyOf(string operand)
+            => Bind(new CallExpr(key, new List<Expression> { new VariableExpr(operand) }));
+
+        var op = name == "min" ? PyMCU.Frontend.BinaryOp.LessEq : PyMCU.Frontend.BinaryOp.GreaterEq;
+        string best = Bind(operands[0]);
+        string bestKey = KeyOf(best);
+
+        for (int i = 1; i < operands.Count; i++)
+        {
+            string candidate = Bind(operands[i]);
+            string candidateKey = KeyOf(candidate);
+
+            // Both sides of this comparison are bound names, so writing it twice re-reads two
+            // variables and calls nothing.
+            BinaryExpr BestWins() => new(new VariableExpr(bestKey), op, new VariableExpr(candidateKey));
+
+            string nextBest = Bind(new TernaryExpr(
+                new VariableExpr(best), BestWins(), new VariableExpr(candidate)));
+            // The winner's key is only needed to compare against the NEXT operand.
+            if (i < operands.Count - 1)
+                bestKey = Bind(new TernaryExpr(
+                    new VariableExpr(bestKey), BestWins(), new VariableExpr(candidateKey)));
+            best = nextBest;
+        }
+
+        return VisitExpression(new VariableExpr(best));
     }
 
     // min(a, b): compile-time fold for constants, else compare-and-select.
     // min(xs): expanded to the above over the array's elements.
     private Val EmitMinBuiltin(CallExpr expr)
     {
+        var (minArgs, minKey) = SplitMinMaxKey(expr, "min");
+        if (minKey != null) return EmitMinMaxByKey(minArgs, minKey, "min");
+        if (minArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, minArgs) { Line = expr.Line };
+
         if (expr.Args.Count == 0) throw UserError("min() needs an argument");
         if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "min");
         if (expr.Args.Count > 2)
@@ -2972,6 +3059,10 @@ public partial class IRGenerator
     // max(xs): expanded to the above over the array's elements.
     private Val EmitMaxBuiltin(CallExpr expr)
     {
+        var (maxArgs, maxKey) = SplitMinMaxKey(expr, "max");
+        if (maxKey != null) return EmitMinMaxByKey(maxArgs, maxKey, "max");
+        if (maxArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, maxArgs) { Line = expr.Line };
+
         if (expr.Args.Count == 0) throw UserError("max() needs an argument");
         if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "max");
         if (expr.Args.Count > 2)

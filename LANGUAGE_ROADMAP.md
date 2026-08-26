@@ -46,7 +46,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | Unary `- ~ not` | Constant folding |
 | Augmented assignment `+= -= *= //= &= |= ^= <<= >>=` | Variable, subscript, and member targets |
 | Type cast `uint8(val)`, `uint16(val)` | Constant-fold; truncate/zero-extend at runtime |
-| `abs(x)`, `min(a, b)`, `max(a, b)` | Intrinsic built-ins |
+| `abs(x)`, `min(a, b)`, `max(a, b)` | Intrinsic built-ins. `min`/`max` also take a fixed-size sequence and a `key=` function; the key resolves at compile time and is called once per operand |
 | `len(arr)` / `len([...])` | Compile-time constant fold |
 | `ord('A')`, `chr(n)` | Compile-time constant only |
 | Multiple assignment `a = b = 0` | Left-to-right Copy chain |

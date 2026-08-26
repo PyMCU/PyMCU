@@ -499,7 +499,7 @@ alone.
 | `range(n)` | ✅ Supported | For-loop bounds; runtime or constant |
 | `len(arr)` / `len(b"...")` | ✅ Supported | Compile-time constant fold |
 | `abs(x)` | ✅ Supported | Intrinsic |
-| `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic |
+| `min(a, b)` / `max(a, b)` | ✅ Supported | Intrinsic. Also over a fixed-size array, and with `key=f`: the key is called once per operand and the winner is the original value, not its key |
 | `sum(iterable)` | ✅ Supported | Compile-time fold or unrolled additions |
 | `enumerate(iterable)` | ✅ Supported | Compile-time index counter |
 | `zip(a, b)` | ✅ Supported | Compile-time unroll over constant lists |
