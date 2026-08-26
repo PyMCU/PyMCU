@@ -1136,6 +1136,8 @@ public partial class IRGenerator
         var kwArgValues = new Dictionary<string, Val>();
         var rawKwStrArgs = new Dictionary<string, string?>();
         var rawStrArgs = new List<StringLiteral?>();
+        // The argument EXPRESSIONS, parallel to argValues, kept for their source position.
+        var rawArgExprs = new List<Expression?>();
         var rawListArgs = new List<ListExpr?>();
 
         foreach (var rawArg in expr.Args)
@@ -1155,6 +1157,7 @@ public partial class IRGenerator
             {
                 arg = HoistSlotCtorArg(arg);
                 rawStrArgs.Add(arg as StringLiteral);
+                rawArgExprs.Add(arg);
                 // A bytes/list literal (b"Hi", [1,2,3]) or a tuple literal
                 // ((r,g,b)) is a fixed sequence: normalise both to a ListExpr
                 // and bind it to the inline parameter so the callee can consume
@@ -1333,6 +1336,27 @@ public partial class IRGenerator
             if (paramIdx >= func.Params.Count) break;
             string paramName = currentInlinePrefix + func.Params[paramIdx].Name;
             boundParams.Add(paramIdx);
+
+            // Remember where this argument was written, for a refusal that is about the
+            // argument rather than about the line inside the library that noticed it.
+            // `savedPrefix` is the CALLER's prefix: the expressions were evaluated before this
+            // expansion took over `currentInlinePrefix`.
+            Expression? origin = i < rawArgExprs.Count ? rawArgExprs[i] : null;
+            if (origin is VariableExpr originVe
+                && argumentOrigin.TryGetValue(savedPrefix + originVe.Name, out var inherited))
+            {
+                origin = inherited;              // handed down, so keep pointing at the source
+            }
+            else if (!string.IsNullOrEmpty(savedSourcePath))
+            {
+                // The call is itself inside a library body, so this expression was written
+                // there and not by the caller. Taking its position would report a library line
+                // against the user's file, which is the non-existent location #164 removed.
+                // Only a chain that resolved survives from here.
+                origin = null;
+            }
+            if (origin != null && origin.Column > 0) argumentOrigin[paramName] = origin;
+            else argumentOrigin.Remove(paramName);
 
             // A register alias bound at an EARLIER call site to the same @inline function
             // survives in constantAddressVariables unless it is cleared here. The parameter key

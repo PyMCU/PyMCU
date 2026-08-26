@@ -51,6 +51,22 @@ public partial class IRGenerator
     /// identity, because a function reaches `inlineFunctions` under any of several mangled
     /// keys and none of them carries a path. An entry-file function maps to "", which is what
     /// `LocatedFile` already spells as "the entry file".
+    /// Where the value bound to an inline parameter was WRITTEN, keyed by the prefixed
+    /// parameter name. A `raise CompileError` that refuses an argument is about this position,
+    /// not about the statement inside the library that happened to notice: `LCD(rs="PA0")` is
+    /// a pin the caller has to change, and the caret belongs on `"PA0"`.
+    ///
+    /// Chained on binding, so a value handed down through several expansions keeps pointing at
+    /// where the user wrote it: `PWM("PC0", d)` reaches `pwm_init(pin, ...)` two levels deep
+    /// and the origin still names the literal. The chain only follows parameters; a value
+    /// stored in a field and read back later loses it, which is the wider half of #193.
+    private readonly Dictionary<string, Expression> argumentOrigin = new();
+
+    /// The argument a `match` or `if` currently being lowered is testing, innermost last, for
+    /// the subjects that ARE a parameter with a known origin. A raise in one of those branches
+    /// is refusing that argument.
+    private readonly List<Expression> blamedArgument = new();
+
     private readonly Dictionary<FunctionDef, string> functionSourcePath = new();
 
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining

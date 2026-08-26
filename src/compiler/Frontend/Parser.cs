@@ -1941,9 +1941,19 @@ public class Parser
             // Python concatenates adjacent string literals: "a" "b" is one string, and
             // inside parentheses the pieces may sit on separate lines. Without this a
             // long message had to live on one 200-character line.
-            string joined = Previous().Value;
-            while (Check(TokenType.String)) joined += Advance().Value;
-            return new StringLiteral(joined);
+            // Stamped from the token for the same reason VariableExpr is: a string literal is
+            // what an argument check is usually refusing, and `LCD(rs="PA0", en=..., d4=...)`
+            // has six of them on one line. Adjacent pieces concatenate, so the span runs from
+            // the first token to the end of the last.
+            Token first = Previous();
+            string joined = first.Value;
+            Token last = first;
+            while (Check(TokenType.String)) { last = Advance(); joined += last.Value; }
+            int span = last.Line == first.Line && last.Column >= first.Column
+                ? (last.Column - first.Column) + last.Length
+                : first.Length;
+            return new StringLiteral(joined)
+                { Line = first.Line, Column = first.Column, Length = span };
         }
 
         if (Match(TokenType.FString))

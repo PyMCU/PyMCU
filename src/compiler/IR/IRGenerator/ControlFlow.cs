@@ -691,6 +691,30 @@ public partial class IRGenerator
 
     private void VisitMatch(MatchStmt stmt)
     {
+        // A match on a parameter whose origin is known is, when one of its arms refuses, a
+        // refusal OF THAT ARGUMENT. Remember which one for the duration of the match.
+        bool blaming = false;
+        if (stmt.Target is VariableExpr subjVe)
+        {
+            if (argumentOrigin.TryGetValue(currentInlinePrefix + subjVe.Name, out var subjOrigin)
+                || argumentOrigin.TryGetValue(subjVe.Name, out subjOrigin))
+            {
+                blamedArgument.Add(subjOrigin);
+                blaming = true;
+            }
+        }
+        try
+        {
+            VisitMatchBody(stmt);
+        }
+        finally
+        {
+            if (blaming) blamedArgument.RemoveAt(blamedArgument.Count - 1);
+        }
+    }
+
+    private void VisitMatchBody(MatchStmt stmt)
+    {
         Val targetVal = VisitExpression(stmt.Target);
         bool ctAlreadyMatched = false;
         string endLabel = MakeLabel();
@@ -1440,6 +1464,16 @@ public partial class IRGenerator
                 // past its end (machine.py:115 reported against an 8-line sketch).
                 // currentStmtLine stays frozen at the call site during an expansion, which
                 // is the line whoever reads the error can actually act on.
+                // When the refusal is about an argument whose position is known, that is what
+                // the caret belongs on: the reader has to change that value, and inside a six
+                // pin constructor "one of these is wrong" is not enough to act on. Otherwise
+                // the call site's line, unlocated, as before.
+                if (blamedArgument.Count > 0)
+                {
+                    var at = blamedArgument[^1];
+                    throw new ArchitectureError(msg, at.Line > 0 ? at.Line : stmt.Line,
+                                                at.Column, at.Length > 0 ? at.Length : 1);
+                }
                 int raiseLine = inlineDepth > 0 && currentStmtLine > 0 ? currentStmtLine : stmt.Line;
                 throw new ArchitectureError(msg, raiseLine, 0);
             }
