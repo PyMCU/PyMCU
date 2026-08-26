@@ -134,6 +134,14 @@ public class Parser
         if (Check(TokenType.Dedent)) return;
         if (Check(TokenType.EndOfFile)) return;
 
+        // '@' between two expressions is matrix multiplication. It is never valid here, and
+        // the statement-end message named neither it nor the operator, so a reader met
+        // "Expected newline or end of block" pointing at their '@' (#169). There is no
+        // accept-it option: the IR has no matrix type for __matmul__ to dispatch to.
+        if (Check(TokenType.At))
+            Error("the '@' operator (matrix multiplication) is not supported; PyMCU has no "
+                  + "matrix type");
+
         Error("Expected newline or end of block");
     }
 
@@ -1666,6 +1674,13 @@ public class Parser
             Advance();
             return new UnaryExpr(UnaryOp.Negate, ParseUnary());
         }
+
+        // Unary plus is not accepted. Falling through to ParsePrimary reported "Expected
+        // expression" at the '+', which names nothing and reads as a missing operand rather
+        // than an unsupported operator, especially next to unary minus, which works (#169).
+        if (Check(TokenType.Plus))
+            Error("unary '+' is not supported; it has no effect on a number, so write the "
+                  + "operand on its own");
 
         if (Check(TokenType.Tilde))
         {

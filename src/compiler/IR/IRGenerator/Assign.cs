@@ -303,6 +303,8 @@ public partial class IRGenerator
                             Frontend.BinaryOp.Add => "__add__",
                             Frontend.BinaryOp.Sub => "__sub__",
                             Frontend.BinaryOp.Mul => "__mul__",
+                            Frontend.BinaryOp.Div => "__truediv__",
+                            Frontend.BinaryOp.Pow => "__pow__",
                             Frontend.BinaryOp.FloorDiv => "__floordiv__",
                             Frontend.BinaryOp.Mod => "__mod__",
                             Frontend.BinaryOp.BitAnd => "__and__",
@@ -3680,6 +3682,7 @@ public partial class IRGenerator
                     AugOp.Add => "__iadd__",
                     AugOp.Sub => "__isub__",
                     AugOp.Mul => "__imul__",
+                    AugOp.Div => "__itruediv__",
                     AugOp.FloorDiv => "__ifloordiv__",
                     AugOp.Mod => "__imod__",
                     AugOp.BitAnd => "__iand__",
@@ -3708,6 +3711,7 @@ public partial class IRGenerator
                         AugOp.Add => Frontend.BinaryOp.Add,
                         AugOp.Sub => Frontend.BinaryOp.Sub,
                         AugOp.Mul => Frontend.BinaryOp.Mul,
+                        AugOp.Div => Frontend.BinaryOp.Div,
                         AugOp.FloorDiv => Frontend.BinaryOp.FloorDiv,
                         AugOp.Mod => Frontend.BinaryOp.Mod,
                         AugOp.BitAnd => Frontend.BinaryOp.BitAnd,
@@ -3720,9 +3724,16 @@ public partial class IRGenerator
                     VisitAssign(new AssignStmt(zve, new BinaryExpr(zve, bop, stmt.Value)) { Line = stmt.Line });
                     return;
                 }
+                // Rendered in two shapes on purpose. With a known dunder name the reader gets
+                // it qualified (`Acc.__iadd__`); without one, naming the class before the
+                // prose produced "Acc.an in-place dunder", which is not a sentence and reads
+                // as a placeholder that lost its argument (#168).
                 throw UserError(
-                    $"'{zve.Name}' is a {zcls} instance: augmented assignment needs " +
-                    $"{zcls}.{(idunder.Length > 0 ? idunder : "an in-place dunder")} (or the matching binary dunder) defined");
+                    $"'{zve.Name}' is a {zcls} instance: augmented assignment needs "
+                    + (idunder.Length > 0
+                        ? $"{zcls}.{idunder}"
+                        : $"an in-place dunder on {zcls}")
+                    + " (or the matching binary dunder) defined");
             }
         }
 

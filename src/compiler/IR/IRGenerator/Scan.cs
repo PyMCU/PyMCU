@@ -991,13 +991,44 @@ public partial class IRGenerator
                                 // different messages, none of them mentioning __str__). Say it
                                 // where the method is written.
                                 if (func.Name is "__str__" or "__repr__" or "__format__"
-                                    or "__iter__" or "__next__")
+                                    or "__iter__" or "__next__"
+                                    or "__ipow__" or "__abs__" or "__int__" or "__float__"
+                                    or "__divmod__" or "__index__")
                                 {
-                                    string why = func.Name is "__iter__" or "__next__"
-                                        ? "PyMCU does not run the iterator protocol; iterate the "
-                                          + "underlying array, or give the class a method you call by name"
-                                        : "PyMCU has no run-time string formatting; print the fields "
-                                          + "explicitly, or give the class a method you call by name";
+                                    string why = func.Name switch
+                                    {
+                                        "__iter__" or "__next__" =>
+                                            "PyMCU does not run the iterator protocol; iterate the "
+                                            + "underlying array, or give the class a method you call by name",
+                                        "__str__" or "__repr__" or "__format__" =>
+                                            "PyMCU has no run-time string formatting; print the fields "
+                                            + "explicitly, or give the class a method you call by name",
+                                        // `**` is expanded at compile time (the IR has no pow
+                                        // operation, which is why the exponent must be constant),
+                                        // so `a **= 2` is rewritten to `a = a ** 2` in the parser
+                                        // and the in-place attempt is gone before dispatch runs.
+                                        // __pow__ IS dispatched, so that is the spelling to name.
+                                        "__ipow__" =>
+                                            "'**=' is rewritten to 'a = a ** 2' because '**' is expanded "
+                                            + "at compile time, so the in-place form is never tried; "
+                                            + "define __pow__ instead, which is dispatched",
+                                        // __index__ has no builtin of its own: it is what a
+                                        // subscript would consult, and a subscript on an instance
+                                        // is refused by name now (#171), so there is no call site
+                                        // left to reach it.
+                                        "__index__" =>
+                                            "PyMCU resolves a subscript without consulting the class, "
+                                            + "and an instance subscript is refused outright; index a "
+                                            + "fixed array, or give the class a method you call by name",
+                                        // These are builtin call sites rather than operators, and
+                                        // the builtin lowers its argument numerically without
+                                        // consulting the class.
+                                        _ =>
+                                            $"PyMCU lowers {func.Name.Trim('_')}() on a numeric value "
+                                            + "and does not consult the class; give the class a method "
+                                            + "you call by name instead",
+                                    };
+
                                     Console.Error.WriteLine(
                                         $"[pymcuc] warning: line {func.Line}: '{classDef.Name}.{func.Name}' is "
                                         + $"defined but never called -- {why}.");

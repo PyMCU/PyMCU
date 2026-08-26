@@ -2024,6 +2024,153 @@ public class IRGeneratorTests
         Assert.DoesNotContain("not a compile-time constant", err.Message);
     }
 
+    // ── Reflected operators dispatch when the instance is on the right ─────
+    // PyMCU#168: only the LEFT operand was consulted, so `2 + a` lowered numerically over the
+    // instance slot, which is never written. The answer was 2, and every reflected dunder in
+    // the program was dead code with no diagnostic.
+    [Fact]
+    public void ReflectedDunder_InstanceOnTheRight_Dispatches()
+    {
+        const string src =
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __radd__(self, other: uint8) -> uint8:\n" +
+            "        return other + self.v + 77\n" +
+            "def main():\n" +
+            "    a = Acc(1)\n" +
+            "    x: uint8 = 2 + a\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        // 2 + 1 + 77 folds to 80, and 80 can only come from __radd__'s body. Before the fix
+        // the operator lowered over the instance slot and the answer was 2.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 80 } });
+    }
+
+    // The forward dunder must keep winning when the left operand is an instance, or the
+    // reflected lookup would change programs that already dispatched.
+    [Fact]
+    public void ReflectedDunder_ForwardStillWinsOnTheLeft()
+    {
+        const string src =
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __add__(self, other: uint8) -> uint8:\n" +
+            "        return self.v + other + 11\n" +
+            "    @inline\n" +
+            "    def __radd__(self, other: uint8) -> uint8:\n" +
+            "        return other + self.v + 77\n" +
+            "def main():\n" +
+            "    a = Acc(1)\n" +
+            "    x: uint8 = a + 2\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        // __add__ gives 1 + 2 + 11 = 14; __radd__ would have given 2 + 1 + 77 = 80.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 14 } });
+        Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 80 } });
+    }
+
+    // `a /= 2` was the only augmented assignment that errored, and it named a dunder the class
+    // had. AugOp.Div was simply missing from the in-place map.
+    [Fact]
+    public void AugmentedDiv_DispatchesLikeTheOtherAugmentedOperators()
+    {
+        const string src =
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "    @inline\n" +
+            "    def __itruediv__(self, other: uint8) -> uint8:\n" +
+            "        self.v = self.v + other + 77\n" +
+            "        return self.v\n" +
+            "def main():\n" +
+            "    a = Acc(1)\n" +
+            "    a /= 2\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        // 1 + 2 + 77 = 80 stored back into the field. Before the fix this line was the only
+        // augmented assignment that errored outright.
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body),
+            i => i is Copy { Src: Constant { Value: 80 } });
+    }
+
+    // The no-dunder message rendered the class name in front of prose ("Acc.an in-place
+    // dunder"), which is not a sentence. The qualified form is only correct when a name exists.
+    [Fact]
+    public void AugmentedAssign_NoDunder_DoesNotGlueTheClassOntoProse()
+    {
+        const string src =
+            "class Acc:\n" +
+            "    @inline\n" +
+            "    def __init__(self, v: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "def main():\n" +
+            "    a = Acc(1)\n" +
+            "    a /= 2\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        // Every AugOp now maps to a dunder name, so the qualified form is what a reader gets
+        // and the glued prose that read as a lost placeholder is gone.
+        Assert.DoesNotContain("Acc.an in-place dunder", err.Message);
+        Assert.Contains("Acc.__itruediv__", err.Message);
+    }
+
+    // ── A subscript on an instance is not a register bit ───────────────────
+    // PyMCU#171: with no __getitem__ the subscript fell through to the bit path, which gave
+    // three different wrong answers by index. `a[0]` is the dangerous one: bits 0..7 are legal,
+    // so it built clean and answered from an unassigned slot.
+    [Fact]
+    public void Subscript_InstanceWithoutGetitem_NamesTheClassInsteadOfReadingABit()
+    {
+        const string src =
+            "class Plain:\n" +
+            "    def __init__(self, v: uint8, m: uint8):\n" +
+            "        self.v: uint8 = v\n" +
+            "        self.m: uint8 = m\n" +
+            "def main():\n" +
+            "    a = Plain(1, 5)\n" +
+            "    x: uint8 = a[0]\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        // Naming the class and __getitem__ is what distinguishes this from the bit message the
+        // same line used to produce; the bit wording must not survive for an instance.
+        Assert.Contains("Plain", err.Message);
+        Assert.Contains("__getitem__", err.Message);
+        Assert.DoesNotContain("Bit index must be constant", err.Message);
+    }
+
+    // The bit path is what a subscript is FOR on a register, so it has to stay. This is the
+    // guard against fixing #171 by disabling it.
+    [Fact]
+    public void Subscript_RegisterBit_StillCompiles()
+    {
+        const string src =
+            "def main():\n" +
+            "    PINB: ptr[uint8] = ptr(0x23)\n" +
+            "    x: uint8 = PINB[3]\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.Contains(ir.Functions.SelectMany(f => f.Body), i => i is BitCheck);
+    }
+
+
     [Fact]
     public void SupportedDunder_IsNotWarnedAbout()
     {

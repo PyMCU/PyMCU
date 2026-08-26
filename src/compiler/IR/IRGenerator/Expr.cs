@@ -344,6 +344,7 @@ public partial class IRGenerator
             AstBinOp.Add => "__add__",
             AstBinOp.Sub => "__sub__",
             AstBinOp.Mul => "__mul__",
+            AstBinOp.Pow => "__pow__",
             AstBinOp.Div => "__truediv__",
             AstBinOp.FloorDiv => "__floordiv__",
             AstBinOp.Mod => "__mod__",
@@ -358,6 +359,30 @@ public partial class IRGenerator
             AstBinOp.LessEq => "__le__",
             AstBinOp.Greater => "__gt__",
             AstBinOp.GreaterEq => "__ge__",
+            _ => null
+        };
+    }
+
+    // The reflected counterpart of a binary operator's dunder, for `2 + a` where the instance
+    // is the RIGHT operand. Arithmetic and bitwise only: a comparison's reflection is a
+    // different method rather than an `r`-prefixed name (`__lt__` reflects to `__gt__`), so
+    // there is no `__rlt__` to look for and returning null leaves comparisons on their
+    // existing path.
+    private string? ReflectedOpDunder(AstBinOp op)
+    {
+        return op switch
+        {
+            AstBinOp.Add => "__radd__",
+            AstBinOp.Sub => "__rsub__",
+            AstBinOp.Mul => "__rmul__",
+            AstBinOp.Div => "__rtruediv__",
+            AstBinOp.FloorDiv => "__rfloordiv__",
+            AstBinOp.Mod => "__rmod__",
+            AstBinOp.BitAnd => "__rand__",
+            AstBinOp.BitOr => "__ror__",
+            AstBinOp.BitXor => "__rxor__",
+            AstBinOp.LShift => "__rlshift__",
+            AstBinOp.RShift => "__rrshift__",
             _ => null
         };
     }
@@ -492,6 +517,39 @@ public partial class IRGenerator
                     return VisitCall(new CallExpr(
                         new MemberAccessExpr(lv, dunder),
                         new List<Expression> { expr.Right }) { Line = expr.Line });
+            }
+        }
+
+        // Reflected dispatch: `2 + a`, where the INSTANCE is on the right. CPython tries the
+        // reflected dunder when the left operand's type does not implement the operator, which
+        // is exactly the state reached here. Without it the operator lowered numerically over
+        // the instance handle, and that slot is never written, so `2 + a` answered 2 and every
+        // reflected dunder in the program was dead code with no diagnostic (#168).
+        //
+        // Ordering matters and matches Python: the forward dunder above wins whenever the left
+        // operand is an instance that has it, so nothing that already dispatched changes.
+        // Comparisons are deliberately excluded, since their reflection is not a name prefix
+        // (`__lt__` reflects to `__gt__`, not to `__rlt__`) and no such method exists to find.
+        string? rDunder = ReflectedOpDunder(expr.Op);
+        if (rDunder != null && expr.Right is VariableExpr rvRefl)
+        {
+            string rqname = string.IsNullOrEmpty(currentInlinePrefix)
+                ? (string.IsNullOrEmpty(currentFunction) ? rvRefl.Name : currentFunction + "." + rvRefl.Name)
+                : currentInlinePrefix + rvRefl.Name;
+            if (instanceClasses.TryGetValue(rqname, out var rcls) && !string.IsNullOrEmpty(rcls))
+            {
+                string rFuncKey = rcls + "_" + rDunder;
+                if (inlineFunctions.ContainsKey(rFuncKey))
+                {
+                    Val other = VisitExpression(expr.Left);
+                    return EmitDunderCall(rqname, rcls, rFuncKey, new List<Val> { other });
+                }
+
+                // Outlined reflected dunder, same fallback the forward path uses.
+                if (TryResolveInstanceMethodAst(rvRefl.Name, rDunder) != null)
+                    return VisitCall(new CallExpr(
+                        new MemberAccessExpr(rvRefl, rDunder),
+                        new List<Expression> { expr.Left }) { Line = expr.Line });
             }
         }
 
@@ -1691,6 +1749,26 @@ public partial class IRGenerator
                 return tmp;
             }
         }
+
+        // Everything below treats a subscript as a REGISTER BIT access, which is what it is for
+        // (`PORTB[3]`). A class instance reaching here has no __getitem__ (that path returned
+        // above), and reading its bits is never what the author meant. Left alone it produced
+        // three different wrong answers depending on the index: bits 0..7 are legal, so `a[0]`
+        // built clean and answered from an unassigned slot; `a[9]` overflowed the 8-bit immediate
+        // and only avr-as noticed; a run-time index hit "Bit index must be constant for reading"
+        // in a program with no registers in it (#171).
+        //
+        // Narrow on purpose: only a name bound to an instance of a class that HAS a declared
+        // field layout, so registers, pointers, bytearrays and every numeric target keep the bit
+        // path untouched.
+        if (expr.Target is VariableExpr subVe
+            && InstanceClassOfName(subVe.Name) is { } subCls
+            && classFieldLayout.ContainsKey(subCls))
+            throw UserError(
+                $"'{subCls}' does not define __getitem__, so '{subVe.Name}[...]' has no meaning. " +
+                "Give the class a __getitem__ method (and a __len__ with a constant return if you " +
+                "also want to iterate it), or subscript a fixed array instead. A subscript on a " +
+                "non-class value reads a register bit, which is not what an instance holds.");
 
         Val target = VisitExpression(expr.Target);
         Val indexVal2 = VisitExpression(expr.Index);

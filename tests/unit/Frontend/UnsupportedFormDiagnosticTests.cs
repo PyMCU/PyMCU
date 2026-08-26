@@ -120,6 +120,49 @@ public class UnsupportedFormDiagnosticTests
         Assert.Equal(written, augmented);
     }
 
+    // PyMCU#169: unary plus fell through to ParsePrimary and reported "Expected expression"
+    // at the '+', which reads as a missing operand rather than an unsupported operator. Unary
+    // minus works, so the two spellings of the same idea diverged with no explanation.
+    [Fact]
+    public void UnaryPlus_NamesTheOperator()
+    {
+        var msg = ErrorFor("def main():\n    x: uint8 = +1\n");
+
+        Assert.Contains("unary '+'", msg);
+        Assert.DoesNotContain("Expected expression", msg);
+    }
+
+    // Unary minus is the neighbour that already worked; fixing the message for '+' must not
+    // reach it.
+    [Fact]
+    public void UnaryMinus_StillParses()
+    {
+        var ast = new Parser(new Lexer("def main():\n    x: int8 = -1\n").Tokenize()).ParseProgram();
+
+        Assert.NotNull(ast);
+    }
+
+    // PyMCU#169: '@' between two expressions died two tokens later at the statement end, so
+    // the message named neither the operator nor the line's real problem.
+    [Fact]
+    public void MatMul_NamesTheOperator()
+    {
+        var msg = ErrorFor("def main():\n    x: uint8 = 1 @ 2\n");
+
+        Assert.Contains("'@'", msg);
+        Assert.DoesNotContain("Expected newline or end of block", msg);
+    }
+
+    // '@' as a decorator is the spelling that has to keep working.
+    [Fact]
+    public void MatMulMessage_DoesNotReachDecorators()
+    {
+        var ast = new Parser(new Lexer(
+            "@inline\ndef f() -> uint8:\n    return 1\n").Tokenize()).ParseProgram();
+
+        Assert.NotNull(ast);
+    }
+
     /// <summary>The instruction stream of a program, as text, for comparing two spellings.</summary>
     private static string Ir(string src)
     {
