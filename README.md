@@ -45,13 +45,26 @@
 ---
 
 > [!IMPORTANT]
-> **Alpha 3 is out — [v0.1.0a3 release notes](https://github.com/PyMCU/PyMCU/releases/tag/v0.1.0a3).**
-> The language grows **generators**, **async/await**, **dict/set literals**, f-strings as
-> values and type inference; the ARM targets (**RP2040 / RP2350**) reach feature parity
-> with AVR — exceptions, floats, WiFi; and a brand-new **PIC backend** joins the family.
-> Core compilation is stable and test-covered, but rough edges remain in error messages
-> and tooling — if you hit a bug, [please open an issue](https://github.com/PyMCU/PyMCU/issues),
-> it helps a lot.
+> **Alpha 10 is out — [v0.1.0a10 release notes](https://github.com/PyMCU/PyMCU/releases/tag/v0.1.0a10).**
+> The hardware-validation release. It came out of a sustained bug hunt on a real Arduino
+> Uno with a logic analyzer, plus a sweep of the official MicroPython quickref and
+> CircuitPython Essentials examples — 63 projects, 53 of which compile; the rest fail on
+> purpose with a clear diagnostic.
+>
+> What that hunt found was a class of **silent miscompiles**: `uint32(float_var)` emitting
+> raw float bits, a global shadowing a function parameter (which had been driving the DHT
+> start pulse for 250 ms instead of 18), `millis()` counting 1024 ms per second, and a
+> timer's second PWM channel disconnecting the first. Each fix shipped with a regression
+> test. Suites at that release: **517 unit, 508 driver, 1549 AVR integration**.
+>
+> **Alpha 10 still has bugs, and the hunt did not stop.** 145 more fixes have landed since
+> it shipped, most of them turning a case the compiler used to answer blindly into a
+> diagnostic that names what it cannot do. That work is heading for **beta 1**; watch the
+> repo if you want to hear when it lands.
+>
+> So: core compilation is stable and test-covered, the alpha is usable, and you will still
+> find edges. If you hit one, [please open an issue](https://github.com/PyMCU/PyMCU/issues) —
+> that is how the list above got written.
 >
 > **Avoid `pymcu.hal.*`** during the alpha — the native HAL API may change between releases.
 > Use the **MicroPython** or **CircuitPython** compat API instead; those are stable and
@@ -267,7 +280,7 @@ direct register access not yet covered by the compat layers.
 | **AVR** (ATmega) | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
 | **AVR** (ATtiny) | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
 | **ARM** (Cortex-M0+ / M33) | RP2040 (Pico / Pico W), RP2350 (Pico 2 / Pico 2 W) — incl. PIO and CYW43 WiFi |
-| **PIC** (mid-range) | PIC16F84A, PIC16F877A — new in alpha 3 |
+| **PIC** (mid-range) | PIC16F84A, PIC16F877A |
 
 ---
 
