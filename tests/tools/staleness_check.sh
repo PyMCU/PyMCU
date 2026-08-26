@@ -33,15 +33,30 @@ check_base() {
     cd "$repo" || { echo "no such repo: $repo"; return 1; }
     local head; head=$(git rev-parse --short HEAD)
     echo "base drift: $(basename "$repo") $base -> $head"
-    local files; files=$(grep -h "^+++ b/" "$pdir"/*.patch 2>/dev/null | sed 's#^+++ b/##' | sort -u)
+    # `diff --git` and not `+++ b/`: a DELETION writes `+++ /dev/null`, so reading the +++
+    # side alone cannot see the files a patch removes, which is where drift is most dangerous
+    # (deleting a file someone else has just edited). This header names both sides for adds,
+    # deletes, modifications and renames alike.
+    local files; files=$(grep -hE "^diff --git " "$pdir"/*.patch 2>/dev/null \
+        | sed -E 's#^diff --git a/(.*) b/.*#\1#' | sort -u)
     [ -z "$files" ] && { echo "  no patches found in $pdir"; return 1; }
     local bad=0
     for f in $files; do
+        # Ask git before trusting the filesystem. A path absent from the worktree is either a
+        # file this patch ADDS, which can revert nothing, or one somebody has REMOVED since the
+        # base, which the patch is about to collide with. Those need opposite answers and the
+        # only thing that tells them apart is whether anything landed on it in the window.
+        local n; n=$(git log --oneline "$base"..HEAD -- "$f" | wc -l | tr -d ' ')
         if [ ! -e "$f" ]; then
-            printf "  %-56s new file, cannot revert anything\n" "$f"
+            if [ "$n" = "0" ]; then
+                printf "  %-56s new file, cannot revert anything\n" "$f"
+            else
+                printf "  %-56s GONE from HEAD, %s commit(s) touched it\n" "$f" "$n"
+                git log --oneline "$base"..HEAD -- "$f" | sed 's/^/       /'
+                bad=$((bad + 1))
+            fi
             continue
         fi
-        local n; n=$(git log --oneline "$base"..HEAD -- "$f" | wc -l | tr -d ' ')
         if [ "$n" = "0" ]; then
             printf "  %-56s clean\n" "$f"
         else
