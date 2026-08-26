@@ -463,6 +463,15 @@ public partial class IRGenerator
     /// not also say WHICH file states a line of one file against the name of another.
     private string? LocatedFile => string.IsNullOrEmpty(currentSourcePath) ? null : currentSourcePath;
 
+    /// The call's i-th argument node, or null when the call does not have one.
+    ///
+    /// Guarded because these are read on the error path: several of them run after an arity
+    /// check that guarantees the index, but a later edit that moves or weakens that check would
+    /// turn a clean diagnostic into an IndexOutOfRangeException, which is the one outcome worse
+    /// than a missing caret. A null here degrades to the statement-level location and no caret.
+    private static PyMCU.Frontend.ASTNode? ArgAt(PyMCU.Frontend.CallExpr call, int i) =>
+        i >= 0 && i < call.Args.Count ? call.Args[i] : null;
+
     /// Builds the same error, located at the node the message is about.
     ///
     /// A node the parser built from a token carries that token's line, column and length; one

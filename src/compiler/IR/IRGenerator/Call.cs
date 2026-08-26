@@ -48,7 +48,7 @@ public partial class IRGenerator
 
         int smId = TryConstInt(pos[0]) ?? 0;
         if (smId != 0)
-            throw UserError("PIO StateMachine MVP supports state machine 0 only (sm_id=0)");
+            throw UserError("PIO StateMachine MVP supports state machine 0 only (sm_id=0)", expr.Callee);
 
         // Keyword config (all compile-time constants).
         int Kw(string key, int dflt)
@@ -543,7 +543,7 @@ public partial class IRGenerator
         }
         else
         {
-            throw UserError("Indirect calls not yet supported");
+            throw UserError("Indirect calls not yet supported", expr.Callee);
         }
 
         // Lambda call: a variable bound to a lambda expands the lambda body in place.
@@ -617,7 +617,7 @@ public partial class IRGenerator
 
         if (callee == "ptr" && intrinsicNames.Contains("ptr"))
         {
-            if (expr.Args.Count != 1) throw UserError("ptr() expects exactly one argument");
+            if (expr.Args.Count != 1) throw UserError("ptr() expects exactly one argument", expr.Callee);
             // Evaluate the argument as a compile-time ADDRESS: a literal, a const, or a
             // register/MMIO base combined with constant +/- offsets, e.g. ptr(PORTB + 6).
             // A bare register contributes its address here (not its dereferenced value).
@@ -627,7 +627,7 @@ public partial class IRGenerator
             // A string/f-string is not an address (it would otherwise be accepted as its
             // flash string-id, silently aiming the pointer at a garbage address).
             if (expr.Args[0] is StringLiteral or FStringExpr)
-                throw UserError("ptr() argument must be a numeric address, not a string");
+                throw UserError("ptr() argument must be a numeric address, not a string", ArgAt(expr, 0));
 
             // Runtime address, e.g. ptr(BASE + x) with a non-constant offset. Materialize
             // the address (at the chip's native pointer width -- 32-bit on Cortex-M /
@@ -650,10 +650,10 @@ public partial class IRGenerator
 
         if (callee == "const" && intrinsicNames.Contains("const"))
         {
-            if (expr.Args.Count != 1) throw UserError("const() expects exactly one argument");
+            if (expr.Args.Count != 1) throw UserError("const() expects exactly one argument", expr.Callee);
             Val argVal = VisitExpression(expr.Args[0]);
             if (argVal is Constant) return argVal;
-            throw UserError("const() argument must be a compile-time constant expression");
+            throw UserError("const() argument must be a compile-time constant expression", ArgAt(expr, 0));
         }
 
         if ((callee == "funcref" || callee == "pymcu_types_funcref") && intrinsicNames.Contains("funcref"))
@@ -769,14 +769,14 @@ public partial class IRGenerator
             // this use site instead of a misleading "undefined function".
             foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
                 if (callee.StartsWith(g.Key, StringComparison.Ordinal))
-                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})");
+                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})", expr.Callee);
 
             // A known class invoked but with no __init__ to construct it — Python would use a
             // default constructor, which PyMCU does not synthesize. Be specific.
             if (classNames.Contains(callee) || classNames.Contains(shown))
                 throw UserError(
                     $"class '{shown}' cannot be constructed: it has no __init__ method (PyMCU does " +
-                    "not synthesize a default constructor — add `def __init__(self): ...`)");
+                    "not synthesize a default constructor — add `def __init__(self): ...`)", expr.Callee);
 
             // `obj(args)` where obj is an instance whose class defines __call__: Python's
             // callable-object protocol. Dispatch it as the method call it stands for.
@@ -930,7 +930,7 @@ public partial class IRGenerator
         {
             if (callArgs.Count > paramNames.Count)
                 throw UserError(
-                    $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided");
+                    $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided", expr.Callee);
             // Fill omitted trailing arguments from the parameter defaults (Python-style),
             // so defaults work for real subroutines, not only @inline functions.
             if (argValuesL.Count < paramNames.Count)
@@ -941,7 +941,7 @@ public partial class IRGenerator
                     var def = defaults != null && i < defaults.Count ? defaults[i] : null;
                     if (def is null)
                         throw UserError(
-                            $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided");
+                            $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided", expr.Callee);
                     argValuesL.Add(VisitExpression(def));
                 }
             }
@@ -1092,11 +1092,11 @@ public partial class IRGenerator
             if (pendingTupleCount == 0)
                 throw UserError(
                     $"'{func.Name}' returns {declaredTupleElems.Count} values {declared}; " +
-                    $"unpack them into {declaredTupleElems.Count} targets");
+                    $"unpack them into {declaredTupleElems.Count} targets", expr.Callee);
             if (pendingTupleCount != declaredTupleElems.Count)
                 throw UserError(
                     $"'{func.Name}' is declared to return {declaredTupleElems.Count} values " +
-                    $"{declared}, but {pendingTupleCount} unpack target(s) were given");
+                    $"{declared}, but {pendingTupleCount} unpack target(s) were given", expr.Callee);
         }
 
         if (pendingTupleCount > 0)
@@ -1361,7 +1361,7 @@ public partial class IRGenerator
                 : $"'{SourceCalleeName()}'";
             throw UserError(
                 $"too many arguments in call to {whatX}: it expects {declaredArgs} " +
-                $"argument(s), but {argValues.Count} were provided");
+                $"argument(s), but {argValues.Count} were provided", expr.Callee);
         }
 
         for (int i = 0; i < argValues.Count; ++i)
@@ -1745,7 +1745,7 @@ public partial class IRGenerator
                 string whatKw = isCtorKw
                     ? $"constructor of '{SourceCalleeName()}'"
                     : $"'{SourceCalleeName()}'";
-                throw UserError($"unknown keyword argument '{kvp.Key}' in call to {whatKw}");
+                throw UserError($"unknown keyword argument '{kvp.Key}' in call to {whatKw}", expr.Callee);
             }
         }
 
@@ -1778,7 +1778,7 @@ public partial class IRGenerator
 
                     if (!(defaultVal is Constant cdf))
                         throw UserError(
-                            $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant");
+                            $"Default value for const parameter '{func.Params[i].Name}' must be a compile-time constant", expr.Callee);
                     constantVariables[paramName] = cdf.Value;
                     continue;
                 }
@@ -1800,7 +1800,7 @@ public partial class IRGenerator
                     : $"'{SourceCalleeName()}'";
                 throw UserError(
                     $"missing required argument '{func.Params[i].Name}' in call to {what} " +
-                    $"(expects {func.Params.Count - paramOffset} argument(s))");
+                    $"(expects {func.Params.Count - paramOffset} argument(s))", expr.Callee);
             }
         }
 
@@ -1889,7 +1889,7 @@ public partial class IRGenerator
             $"'{sv.Name}' is a compile-time set literal (read-only membership table): " +
             $"'{sm.Member}()' is not available. Supported: x in {sv.Name}, " +
             $"len({sv.Name}). For a collection you write into, use a " +
-            "bytearray or a fixed-size list.");
+            "bytearray or a fixed-size list.", expr.Callee);
     }
 
     private Val? TryEmitDictMethod(CallExpr expr)
@@ -1905,12 +1905,12 @@ public partial class IRGenerator
                 $"'{dv.Name}' is a compile-time lookup table (read-only dict literal): " +
                 $"'{dm.Member}()' is not available. Supported: {dv.Name}[key], " +
                 $"key in {dv.Name}, len({dv.Name}), {dv.Name}.get(key, default). " +
-                "For a mutable dict use pymcu.collections.FixedDict(capacity).");
+                "For a mutable dict use pymcu.collections.FixedDict(capacity).", expr.Callee);
 
         if (expr.Args.Count != 2)
             throw UserError(
                 "d.get(key, default) needs the default spelled out: PyMCU has no None value to " +
-                "return for a missing key.");
+                "return for a missing key.", expr.Callee);
 
         return EmitDictLookup(dict, expr.Args[0], expr.Args[1]);
     }
@@ -2493,7 +2493,7 @@ public partial class IRGenerator
                 $"'{arrVe.Name}[i].{memC.Member}()' selects among {count} instances at run time, "
                 + $"which is lowered as {count} branches -- past {maxUnrolled} that is more code "
                 + "than it is worth. Iterate with `for p in " + arrVe.Name + ":`, or split the "
-                + "array.");
+                + "array.", expr.Callee);
 
         string methodName = memC.Member;
         string endLabel = MakeLabel();
@@ -2730,7 +2730,7 @@ public partial class IRGenerator
             Emit(new IndirectCall(tmpFn, indArgs, indDst));
             return indDst;
         }
-        throw UserError($"Callable array '{idxArr.Name}' not found or element type is not Callable");
+        throw UserError($"Callable array '{idxArr.Name}' not found or element type is not Callable", expr.Callee);
     }
 
     // ── Built-in functions (each handled when callee matches; always returns or throws) ──
@@ -2739,7 +2739,7 @@ public partial class IRGenerator
     // load for list[T]; __len__ dunder for ZCA instances.
     private Val EmitLenBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("len() expects exactly one argument", expr.Callee);
         if (expr.Args[0] is ListExpr le2) return new Constant(le2.Elements.Count);
         if (expr.Args[0] is TupleExpr te2) return new Constant(te2.Elements.Count);
         if (expr.Args[0] is Frontend.DictExpr de2) return new Constant(de2.Entries.Count);
@@ -2818,26 +2818,26 @@ public partial class IRGenerator
             }
         }
 
-        throw UserError("len() argument must be a fixed-size array or list literal");
+        throw UserError("len() argument must be a fixed-size array or list literal", ArgAt(expr, 0));
     }
 
     // int.from_bytes(bytes, endian): assemble a uint16 from a two-byte literal/list.
     private Val EmitIntFromBytesBuiltin(CallExpr expr)
     {
         if (expr.Args.Count != 2)
-            throw UserError("int.from_bytes() expects exactly two arguments (bytes, endian)");
+            throw UserError("int.from_bytes() expects exactly two arguments (bytes, endian)", expr.Callee);
         bool littleEndian = true;
         if (expr.Args[1] is StringLiteral estr)
         {
             if (estr.Value == "big") littleEndian = false;
             else if (estr.Value != "little")
-                throw UserError("int.from_bytes() endian must be 'little' or 'big'");
+                throw UserError("int.from_bytes() endian must be 'little' or 'big'", ArgAt(expr, 1));
         }
-        else throw UserError("int.from_bytes() endian argument must be a string literal");
+        else throw UserError("int.from_bytes() endian argument must be a string literal", ArgAt(expr, 1));
 
         if (expr.Args[0] is ListExpr le)
         {
-            if (le.Elements.Count < 2) throw UserError("int.from_bytes() requires at least 2 bytes");
+            if (le.Elements.Count < 2) throw UserError("int.from_bytes() requires at least 2 bytes", ArgAt(expr, 0));
             Val b0 = VisitExpression(le.Elements[0]);
             Val b1 = VisitExpression(le.Elements[1]);
 
@@ -2858,15 +2858,15 @@ public partial class IRGenerator
             return resT;
         }
 
-        throw UserError("int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]");
+        throw UserError("int.from_bytes() first argument must be a bytes literal b\"...\" or list [lo, hi]", ArgAt(expr, 0));
     }
 
     // abs(x): compile-time fold for constants, else a branchless-ish negate-if-negative.
     private Val EmitAbsBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("abs() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("abs() expects exactly one argument", expr.Callee);
         if (expr.Args[0] is StringLiteral or FStringExpr)
-            throw UserError("abs() argument must be numeric, not a string");
+            throw UserError("abs() argument must be numeric, not a string", ArgAt(expr, 0));
         var v = VisitExpression(expr.Args[0]);
         if (v is Constant c) return new Constant(c.Value < 0 ? -c.Value : c.Value);
         // The result carries the operand's width/signedness. A bare uint8 temp here
@@ -3026,7 +3026,7 @@ public partial class IRGenerator
         if (minKey != null) return EmitMinMaxByKey(minArgs, minKey, "min");
         if (minArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, minArgs) { Line = expr.Line };
 
-        if (expr.Args.Count == 0) throw UserError("min() needs an argument");
+        if (expr.Args.Count == 0) throw UserError("min() needs an argument", expr.Callee);
         if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "min");
         if (expr.Args.Count > 2)
         {
@@ -3063,7 +3063,7 @@ public partial class IRGenerator
         if (maxKey != null) return EmitMinMaxByKey(maxArgs, maxKey, "max");
         if (maxArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, maxArgs) { Line = expr.Line };
 
-        if (expr.Args.Count == 0) throw UserError("max() needs an argument");
+        if (expr.Args.Count == 0) throw UserError("max() needs an argument", expr.Callee);
         if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "max");
         if (expr.Args.Count > 2)
         {
@@ -3095,10 +3095,10 @@ public partial class IRGenerator
     // ord(c): single-character string literal -> its code point; otherwise pass through.
     private Val EmitOrdBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("ord() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("ord() expects exactly one argument", expr.Callee);
         if (expr.Args[0] is StringLiteral sl)
         {
-            if (sl.Value.Length != 1) throw UserError("ord() argument must be a single character");
+            if (sl.Value.Length != 1) throw UserError("ord() argument must be a single character", ArgAt(expr, 0));
             return new Constant((int)sl.Value[0]);
         }
 
@@ -3108,7 +3108,7 @@ public partial class IRGenerator
     // chr(n): a byte value treated as a character; pass the value through unchanged.
     private Val EmitChrBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("chr() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("chr() expects exactly one argument", expr.Callee);
         Val v = VisitExpression(expr.Args[0]);
         // A char on an 8-bit target is a single byte; a compile-time argument outside 0..255
         // would otherwise pass through as a too-large Constant and be silently truncated.
@@ -3121,7 +3121,7 @@ public partial class IRGenerator
     // sum(seq): fold a list literal or sum a fixed-size array's unrolled elements.
     private Val EmitSumBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("sum() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("sum() expects exactly one argument", expr.Callee);
         switch (expr.Args[0])
         {
             case ListExpr { Elements.Count: 0 }:
@@ -3175,7 +3175,7 @@ public partial class IRGenerator
                     arrBase = sumVar.Name;
                 }
 
-                if (arrSize <= 0) throw UserError("sum() requires a list literal or fixed-size array");
+                if (arrSize <= 0) throw UserError("sum() requires a list literal or fixed-size array", ArgAt(expr, 0));
 
                 // Read each element at the array's real element type; a hardcoded UINT8 here
                 // truncated every element of a uint16/int16 array (and the running sum).
@@ -3192,7 +3192,7 @@ public partial class IRGenerator
                 return acc;
             }
             default:
-                throw UserError("sum() requires a list literal or fixed-size array");
+                throw UserError("sum() requires a list literal or fixed-size array", ArgAt(expr, 0));
         }
     }
 
@@ -3203,7 +3203,7 @@ public partial class IRGenerator
     {
         // Python's bool() with no argument is False.
         if (expr.Args.Count == 0) return new Constant(0);
-        if (expr.Args.Count != 1) throw UserError("bool() expects at most one argument");
+        if (expr.Args.Count != 1) throw UserError("bool() expects at most one argument", expr.Callee);
 
         // A string is truthy when it is non-empty, which has nothing to do with the flash
         // address it lowers to. Fold the literal; anything else would compare the address.
@@ -3211,7 +3211,7 @@ public partial class IRGenerator
         if (expr.Args[0] is FStringExpr)
             throw UserError("bool() of an f-string is not supported: the string is built as it "
                             + "is printed, so there is no value to test. Test the values that go "
-                            + "into it instead.");
+                            + "into it instead.", ArgAt(expr, 0));
 
         return VisitExpression(
             new BinaryExpr(expr.Args[0], Frontend.BinaryOp.NotEqual, new IntegerLiteral(0))
@@ -3292,8 +3292,8 @@ public partial class IRGenerator
     // OR-reduction over the elements.
     private Val EmitAnyBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("any() expects exactly one argument");
-        if (!(expr.Args[0] is ListExpr le)) throw UserError("any() requires a list literal argument");
+        if (expr.Args.Count != 1) throw UserError("any() expects exactly one argument", expr.Callee);
+        if (!(expr.Args[0] is ListExpr le)) throw UserError("any() requires a list literal argument", ArgAt(expr, 0));
         if (le.Elements.Count == 0) return new Constant(0);
         bool allConst = true;
         foreach (var e in le.Elements)
@@ -3327,8 +3327,8 @@ public partial class IRGenerator
     // AND-reduction over the elements.
     private Val EmitAllBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("all() expects exactly one argument");
-        if (!(expr.Args[0] is ListExpr le)) throw UserError("all() requires a list literal argument");
+        if (expr.Args.Count != 1) throw UserError("all() expects exactly one argument", expr.Callee);
+        if (!(expr.Args[0] is ListExpr le)) throw UserError("all() requires a list literal argument", ArgAt(expr, 0));
         if (le.Elements.Count == 0) return new Constant(1);
         bool allConst = true;
         foreach (var e in le.Elements)
@@ -3361,9 +3361,9 @@ public partial class IRGenerator
     // hex(const): intern "0x…" as a flash string literal, return its id (compile-time only).
     private Val EmitHexBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("hex() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("hex() expects exactly one argument", expr.Callee);
         Val v = VisitExpression(expr.Args[0]);
-        if (!(v is Constant c)) throw UserError("hex() argument must be a compile-time constant integer");
+        if (!(v is Constant c)) throw UserError("hex() argument must be a compile-time constant integer", expr.Args[0]);
         string hexstr = "0x" + c.Value.ToString("x");
         if (!stringLiteralIds.ContainsKey(hexstr))
         {
@@ -3378,9 +3378,9 @@ public partial class IRGenerator
     // bin(const): intern "0b…" as a flash string literal, return its id (compile-time only).
     private Val EmitBinBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("bin() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("bin() expects exactly one argument", expr.Callee);
         Val v = VisitExpression(expr.Args[0]);
-        if (!(v is Constant c)) throw UserError("bin() argument must be a compile-time constant integer");
+        if (!(v is Constant c)) throw UserError("bin() argument must be a compile-time constant integer", ArgAt(expr, 0));
         string binstr = "0b" + Convert.ToString(c.Value, 2);
         if (!stringLiteralIds.ContainsKey(binstr))
         {
@@ -3395,9 +3395,9 @@ public partial class IRGenerator
     // str(const): intern the decimal form as a flash string literal (compile-time only).
     private Val EmitStrBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("str() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError("str() expects exactly one argument", expr.Callee);
         Val v = VisitExpression(expr.Args[0]);
-        if (!(v is Constant c)) throw UserError("str() argument must be a compile-time constant integer");
+        if (!(v is Constant c)) throw UserError("str() argument must be a compile-time constant integer", ArgAt(expr, 0));
         string decstr = c.Value.ToString();
         if (!stringLiteralIds.ContainsKey(decstr))
         {
@@ -3412,14 +3412,14 @@ public partial class IRGenerator
     // pow(base, exp): compile-time integer exponentiation (both args must be constant).
     private Val EmitPowBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 2) throw UserError("pow() expects exactly two arguments");
+        if (expr.Args.Count != 2) throw UserError("pow() expects exactly two arguments", expr.Callee);
         Val bv = VisitExpression(expr.Args[0]);
         Val ev = VisitExpression(expr.Args[1]);
         if (!(bv is Constant cb) || !(ev is Constant ce))
-            throw UserError("pow() arguments must be compile-time constant integers");
+            throw UserError("pow() arguments must be compile-time constant integers", ArgAt(expr, 0));
         int @base = cb.Value;
         int exp = ce.Value;
-        if (exp < 0) throw UserError("pow() negative exponent not supported");
+        if (exp < 0) throw UserError("pow() negative exponent not supported", ArgAt(expr, 1));
         int res = 1;
         for (int k = 0; k < exp; ++k) res *= @base;
         return new Constant(res);
@@ -3437,7 +3437,7 @@ public partial class IRGenerator
     // FloorDiv+Mod pair for the 2-tuple target, else just the quotient.
     private Val EmitDivmodBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 2) throw UserError("divmod() expects exactly two arguments");
+        if (expr.Args.Count != 2) throw UserError("divmod() expects exactly two arguments", expr.Callee);
         Val aVal = VisitExpression(expr.Args[0]);
         Val bVal = VisitExpression(expr.Args[1]);
         // Result width follows the wider operand, so divmod(uint16, ...) divides at
@@ -3460,7 +3460,7 @@ public partial class IRGenerator
 
         if (aVal is Constant ca && bVal is Constant cb)
         {
-            if (cb.Value == 0) throw UserError("divmod(): division by zero");
+            if (cb.Value == 0) throw UserError("divmod(): division by zero", ArgAt(expr, 1));
             int q = ca.Value / cb.Value;
             int r = ca.Value % cb.Value;
             if (pendingTupleCount == 2)
@@ -3765,7 +3765,7 @@ public partial class IRGenerator
             if (a is KeywordArgExpr)
                 throw UserError(
                     "str.format() with keyword arguments is not supported; use an f-string, "
-                    + "e.g. f\"val {x}\"");
+                    + "e.g. f\"val {x}\"", call.Callee);
 
         var parts = new List<FStringPart>();
         var text = new System.Text.StringBuilder();
@@ -3780,7 +3780,7 @@ public partial class IRGenerator
 
             int close = format.IndexOf('}', i + 1);
             if (close < 0)
-                throw UserError($"str.format(): unmatched '{{' in \"{format}\"");
+                throw UserError($"str.format(): unmatched '{{' in \"{format}\"", call.Callee);
 
             string hole = format.Substring(i + 1, close - i - 1);
             i = close;
@@ -3795,12 +3795,12 @@ public partial class IRGenerator
             else
                 throw UserError(
                     $"str.format(): named field '{{{hole}}}' is not supported; use an f-string, "
-                    + $"e.g. f\"...{{{hole}}}...\"");
+                    + $"e.g. f\"...{{{hole}}}...\"", call.Callee);
 
             if (argIndex < 0 || argIndex >= args.Count)
                 throw UserError(
                     $"str.format(): \"{format}\" needs argument {argIndex}, but "
-                    + $"{args.Count} {(args.Count == 1 ? "was" : "were")} given");
+                    + $"{args.Count} {(args.Count == 1 ? "was" : "were")} given", call.Callee);
 
             if (text.Length > 0)
             {
@@ -3819,7 +3819,7 @@ public partial class IRGenerator
     private Val EmitNumericCastBuiltin(CallExpr expr, string callee)
     {
         DataType dstType = CastTypes[callee];
-        if (expr.Args.Count != 1) throw UserError(callee + "() expects exactly one argument");
+        if (expr.Args.Count != 1) throw UserError(callee + "() expects exactly one argument", expr.Callee);
 
         // `uint8(input("n: "))` is the one-line way to read a number, and it is exactly the two
         // statements the user would otherwise write -- both of which already work. Only the
@@ -3843,12 +3843,12 @@ public partial class IRGenerator
         if (expr.Args[0] is FStringExpr)
             throw UserError(
                 $"{callee}() cannot convert an f-string: its text is only assembled at run time. " +
-                "Convert the value before formatting it.");
+                "Convert the value before formatting it.", ArgAt(expr, 0));
         if (IsRuntimeStringExpr(expr.Args[0]))
             throw UserError(
                 $"{callee}() cannot parse a string that is only known at run time. " +
                 "PyMCU has no run-time string-to-number conversion; read the digits and " +
-                "accumulate them (d = c - 48), or keep the value numeric end to end.");
+                "accumulate them (d = c - 48), or keep the value numeric end to end.", ArgAt(expr, 0));
         // Casting an arithmetic expression to an integer width is the explicit "compute at this
         // width" signal (fixed-width wrap + flags) -- the escape hatch from arithmetic promotion.
         // Hint the immediate binary op via castWidthHint (VisitBinary consumes/clears it).
@@ -3897,14 +3897,14 @@ public partial class IRGenerator
     // bitcast(type, value): reinterpret bits between float and integer widths.
     private Val EmitBitcastBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 2) throw UserError("bitcast() expects exactly two arguments: bitcast(type, value)");
+        if (expr.Args.Count != 2) throw UserError("bitcast() expects exactly two arguments: bitcast(type, value)", expr.Callee);
         string typeName = (expr.Args[0] as VariableExpr)?.Name
-            ?? throw UserError("bitcast() first argument must be a type name");
+            ?? throw UserError("bitcast() first argument must be a type name", ArgAt(expr, 0));
         DataType bcDstType;
         if (typeName == "float")
             bcDstType = DataType.FLOAT;
         else if (!CastTypes.TryGetValue(typeName, out bcDstType))
-            throw UserError($"bitcast(): unknown type '{typeName}'");
+            throw UserError($"bitcast(): unknown type '{typeName}'", ArgAt(expr, 0));
 
         Val srcVal = VisitExpression(expr.Args[1]);
 
@@ -3925,7 +3925,7 @@ public partial class IRGenerator
     // gc_alloc(size): allocate from the bounded GC heap, returning a GC_REF.
     private Val EmitGcAllocBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count != 1) throw UserError("gc_alloc() expects exactly one argument: gc_alloc(size)");
+        if (expr.Args.Count != 1) throw UserError("gc_alloc() expects exactly one argument: gc_alloc(size)", expr.Callee);
         Val sizeVal = VisitExpression(expr.Args[0]);
         Temporary gcDst = MakeTemp(DataType.GC_REF);
         Emit(new GcAlloc(sizeVal, gcDst));
@@ -3938,7 +3938,7 @@ public partial class IRGenerator
     {
         // asm("code")                  — bare inline assembly (no constraints)
         // asm("code", op0, op1, ...)   — assembly with %N register constraints
-        if (expr.Args.Count < 1) throw UserError("asm() requires at least one string argument");
+        if (expr.Args.Count < 1) throw UserError("asm() requires at least one string argument", expr.Callee);
 
         string? code = null;
         if (expr.Args[0] is StringLiteral str2)
@@ -3949,12 +3949,12 @@ public partial class IRGenerator
             if (resolved is Constant c2 && stringIdToStr.TryGetValue(c2.Value, out var s2))
                 code = s2;
             else
-                throw UserError("asm() f-string did not resolve to a string constant");
+                throw UserError("asm() f-string did not resolve to a string constant", ArgAt(expr, 0));
         }
         else if (expr.Args[0] is VariableExpr ve2)
-            throw UserError($"asm() argument must be a string literal, got variable '{ve2.Name}'");
+            throw UserError($"asm() argument must be a string literal, got variable '{ve2.Name}'", ArgAt(expr, 0));
         else
-            throw UserError("asm() argument must be a compile-time string literal");
+            throw UserError("asm() argument must be a compile-time string literal", ArgAt(expr, 0));
 
         if (code == null) return new NoneVal();
 
@@ -4135,7 +4135,7 @@ public partial class IRGenerator
         throw UserError(
             $"cannot interpolate '{ve.Name}', an instance of '{shown}': PyMCU resolves attributes " +
             "at compile time and has no runtime __str__. Interpolate a value instead, e.g. " +
-            $"f\"{{{ve.Name}.<field>}}\" or a method that returns a number.");
+            $"f\"{{{ve.Name}.<field>}}\" or a method that returns a number.", e);
     }
 
     // A bool value in the Python sense: a True/False literal, or a name bound to one
@@ -4361,7 +4361,7 @@ public partial class IRGenerator
         Val v = VisitExpression(e);
         DataType vt = GetValType(v);
         if (vt == DataType.FLOAT || v is FloatConstant)
-            throw UserError("f-string format spec is not supported for float values");
+            throw UserError("f-string format spec is not supported for float values", e);
 
         bool signed = vt is DataType.INT8 or DataType.INT16 or DataType.INT32;
         // Pack the options into one flags byte: bit0 upper, bit1 signed, bit2 zero-pad. Keeping the
@@ -4528,7 +4528,7 @@ public partial class IRGenerator
             if (!string.IsNullOrEmpty(part.FormatSpec))
                 (width, radix, pad, upper) = ParseFormatSpec(part.FormatSpec);
             if (InferExprType(part.Expr!) == DataType.FLOAT)
-                throw UserError("f-string format on an LCD is not supported for float values");
+                throw UserError("f-string format on an LCD is not supported for float values", expr.Callee);
             bool signed = InferExprType(part.Expr!) is DataType.INT8 or DataType.INT16 or DataType.INT32;
             int flags = (upper ? 0x01 : 0) | (signed ? 0x02 : 0) | (pad == '0' ? 0x04 : 0);
 
@@ -4562,7 +4562,7 @@ public partial class IRGenerator
                         if (kw.Key == "end") endStr = lit.Value;
                         else sepStr = lit.Value;
                     }
-                    else throw UserError($"print() '{kw.Key}' must be a compile-time string literal");
+                    else throw UserError($"print() '{kw.Key}' must be a compile-time string literal", expr.Callee);
                 }
                 else RefuseUnknownKeyword("print", kw.Key, PrintKeywords, expr);
             }
@@ -4682,9 +4682,9 @@ public partial class IRGenerator
     private Val EmitFuncrefIntrinsic(CallExpr expr)
     {
         if (expr.Args.Count != 1)
-            throw UserError("funcref() expects exactly one argument: a function name");
+            throw UserError("funcref() expects exactly one argument: a function name", expr.Callee);
         if (expr.Args[0] is not VariableExpr fnRefExpr)
-            throw UserError("funcref() argument must be a function name identifier");
+            throw UserError("funcref() argument must be a function name identifier", ArgAt(expr, 0));
 
         // Resolve alias chain (same as compile_isr) to find the canonical function name.
         string key = currentInlinePrefix + fnRefExpr.Name;
@@ -4739,11 +4739,11 @@ public partial class IRGenerator
     private Val EmitCompileIsrIntrinsic(CallExpr expr)
     {
         if (expr.Args.Count != 2)
-            throw UserError("compile_isr() expects exactly 2 arguments: compile_isr(handler, vector)");
+            throw UserError("compile_isr() expects exactly 2 arguments: compile_isr(handler, vector)", expr.Callee);
         Val vecVal = VisitExpression(expr.Args[1]);
         int vector = 0;
         if (vecVal is Constant c) vector = c.Value;
-        else throw UserError("compile_isr() second argument (vector) must be a compile-time constant");
+        else throw UserError("compile_isr() second argument (vector) must be a compile-time constant", ArgAt(expr, 1));
 
         string handlerFuncName = "";
         bool handlerProvided = false;
@@ -4777,7 +4777,7 @@ public partial class IRGenerator
         {
             Val arg0 = VisitExpression(expr.Args[0]);
             if (arg0 is Constant c0 && c0.Value == 0) return new NoneVal();
-            throw UserError("compile_isr() first argument must be a function reference or 0");
+            throw UserError("compile_isr() first argument must be a function reference or 0", ArgAt(expr, 0));
         }
 
         if (!handlerProvided) return new NoneVal();
