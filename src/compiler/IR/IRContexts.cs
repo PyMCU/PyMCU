@@ -82,4 +82,9 @@ public class FunctionEntry
     public string? Prefix { get; set; } = "";
     public FunctionDef Func { get; set; } = null!;
     public string SourceFile { get; set; } = "";
+
+    /// The path the module was loaded from, or empty for the entry file. SourceFile is a bare
+    /// display name derived from the module name, which collides across directories and cannot
+    /// be opened; this is what a diagnostic needs in order to name the file it is really in.
+    public string SourcePath { get; set; } = "";
 }

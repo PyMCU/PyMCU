@@ -41,6 +41,13 @@ public class CompilationContext(CompilerOptions options)
     // several of them guard their top level on the target chip.
     public HashSet<string> ProjectModules { get; } = new();
     public Dictionary<string, List<string>> ModuleSourceLines { get; } = new();
+
+    // Module name to the file it was actually loaded from. A diagnostic raised while lowering
+    // an imported module has to name that module's file, and by IR generation the only thing
+    // left of the module is a name and a prefix: the path the loader resolved is gone unless it
+    // is kept here. Without it every such error was reported against the ENTRY file, at the
+    // module's line number, which is a line of a different file (PyMCU#178).
+    public Dictionary<string, string> ModulePaths { get; } = new();
     public HashSet<string> LoadingModules { get; } = [];
     public ProgramNode? RootAst { get; set; }
 

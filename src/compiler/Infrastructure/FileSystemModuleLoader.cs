@@ -43,6 +43,10 @@ public class FileSystemModuleLoader : IModuleLoader
 
         RecordProjectModule(moduleName, path, context);
 
+        // Before the cache check, so a file imported under two qualified names records a path
+        // under BOTH. IR generation looks this up by whichever name it is lowering under.
+        context.ModulePaths[moduleName] = path;
+
         if (context.ModuleCache.TryGetValue(path, out var cachedAst))
         {
             // Register the module under the requested name even on a cache hit.
