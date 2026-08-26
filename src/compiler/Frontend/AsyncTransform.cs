@@ -1158,7 +1158,13 @@ public static class AsyncTransform
                 case VariableExpr v: Touch(v.Name, isRead: true); return;
                 case BinaryExpr b: Expr(b.Left); Expr(b.Right); return;
                 case UnaryExpr u: Expr(u.Operand); return;
-                case CallExpr c: foreach (var a in c.Args) Expr(a is KeywordArgExpr kw ? kw.Value : a); return;
+                case CallExpr c:
+                    // The RECEIVER of a method call is a use of the name like any other. Walking
+                    // only the arguments left an object a coroutine only ever calls methods on
+                    // uncounted, so phase B never lifted it into the state.
+                    if (c.Callee is MemberAccessExpr recv) Expr(recv.Object);
+                    foreach (var a in c.Args) Expr(a is KeywordArgExpr kw ? kw.Value : a);
+                    return;
                 case MemberAccessExpr m: Expr(m.Object); return;
                 case IndexExpr ix: Expr(ix.Target); Expr(ix.Index); return;
                 case TernaryExpr t: Expr(t.Condition); Expr(t.TrueVal); Expr(t.FalseVal); return;
@@ -1284,14 +1290,13 @@ public static class AsyncTransform
                 case UnaryExpr u:
                     return new UnaryExpr(u.Op, Rewrite(u.Operand));
                 case CallExpr c:
-                    // Don't rewrite the callee name into a field; only its arguments.
-                    // Promoting the RECEIVER of a method call is what #116 needs, and it is
-                    // not enough on its own: the promotion turns `a = Acc(s)` into
-                    // `self.a = Acc(s)` outside __init__, which the ZCA machinery answers with
-                    // "Unknown member access in assignment". Measured, and it breaks programs
-                    // that build today, so the receiver stays local until a field can hold an
-                    // instance.
-                    return new CallExpr(c.Callee, c.Args.Select(Rewrite).ToList());
+                    // A bare callee name is a function, never a field, so it is left alone. The
+                    // RECEIVER of a method call is a value and is rewritten like any other.
+                    return new CallExpr(
+                        c.Callee is MemberAccessExpr mc
+                            ? new MemberAccessExpr(Rewrite(mc.Object), mc.Member)
+                            : c.Callee,
+                        c.Args.Select(Rewrite).ToList());
                 case MemberAccessExpr m:
                     return new MemberAccessExpr(Rewrite(m.Object), m.Member);
                 case IndexExpr ix:
