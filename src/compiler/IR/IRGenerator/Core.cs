@@ -1282,6 +1282,7 @@ public partial class IRGenerator
                         variableTypes.TryGetValue(lastNonTemp, out var lstDt) ? lstDt : DataType.UINT16);
                 DataType resolvedType = DataType.UINT8;
                 if (variableTypes.TryGetValue(lastNonTemp, out var lastDt)) resolvedType = lastDt;
+                else if (mutableGlobals.TryGetValue(lastNonTemp, out var lastGlobalDt)) resolvedType = lastGlobalDt;
                 return new Variable(lastNonTemp, resolvedType);
             }
         }
