@@ -991,6 +991,11 @@ public partial class IRGenerator
         irProgram.ClassDirectMethods = new Dictionary<string, HashSet<string>>(
             classDirectMethods.ToDictionary(kv => kv.Key, kv => new HashSet<string>(kv.Value)));
 
+        // An outlined body reachable from two contexts that can interrupt each other is not
+        // reentrant, and its statics are shared between them. Checked on the finished IR so an
+        // @inline body, already expanded into its callers, cannot be flagged.
+        CheckReentrancy(irProgram);
+
         return irProgram;
     }
 
