@@ -30,11 +30,11 @@ from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
 from ..backends import get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
 from ..core.boards import (
-    BOARD_CHIPS,
     board_frequency,
     default_frequency,
     load_extension_board_chips,
     resolve_chip_for_board,
+    suggest_boards,
 )
 from ..core.libraries import (
     find_layer_shadowing as library_layer_shadowing,
@@ -156,7 +156,8 @@ def _make_compiler_output_handler(progress, task, verbose: bool):
 
 
 
-# BOARD_CHIPS is imported from core.boards to avoid duplication with flash.py.
+# BOARD_CHIPS lives in core.boards, read through resolve_chip_for_board, so `build` and
+# `flash` cannot drift apart.
 # Extension packages may supplement it via a board_chips.py module
 # (see _load_extension_board_chips()).
 # ---------------------------------------------------------------------------
@@ -671,15 +672,6 @@ def build(
         src_path     = pymcu_config.get("sources", "src")
         _diag_log(f"freq: {freq}, src_path: {src_path}", verbose=is_verbose)
 
-        # board and target are mutually exclusive
-        if target_key and board_key:
-            implied = BOARD_CHIPS.get(board_key, "?")
-            console.print(
-                f"[bold red]Error:[/bold red] Cannot set both 'target' and 'board' in \\[tool.pymcu].\n"
-                f"  'board = \"{board_key}\"' implies target = \"{implied}\". Remove the 'target' key."
-            )
-            raise typer.Exit(code=1)
-
         # Resolve stdlib flavors: CLI --stdlib overrides pyproject.toml
         stdlib_flavors: list[str] = (
             list(stdlib_override)
@@ -751,9 +743,26 @@ def build(
         if board_key:
             target = _resolve_chip_for_board(board_key, extension_board_chips)
             if target is None:
+                near = suggest_boards(board_key, extension_board_chips)
+                hint = (f" Did you mean '{near[0]}'?" if len(near) == 1
+                        else f" Close names: {', '.join(near)}." if near
+                        else "")
                 console.print(
-                    f"[bold red]Error:[/bold red] Unknown board '{board_key}'. "
-                    f"Add it to BOARD_CHIPS in core/boards.py or provide a board_chips.py in your extension package."
+                    f"[bold red]Error:[/bold red] Unknown board '{board_key}'.{hint}\n"
+                    "  [dim]`pymcu boards` lists what this installation supports.[/dim]\n"
+                    "  [dim]An extension package adds its own in board_chips.py.[/dim]"
+                )
+                raise typer.Exit(code=1)
+
+            # Both keys set. Checked here rather than where they are read, because the implied
+            # target is the whole content of the sentence and it is not known until the
+            # extension board tables above are loaded. Printed as "?" it sent the reader to
+            # delete the `target` line that was correct, and the real error, a board name that
+            # resolves to nothing, appeared only after they had (#198).
+            if target_key:
+                console.print(
+                    f"[bold red]Error:[/bold red] Cannot set both 'target' and 'board' in \\[tool.pymcu].\n"
+                    f"  'board = \"{board_key}\"' implies target = \"{target}\". Remove the 'target' key."
                 )
                 raise typer.Exit(code=1)
         elif target_key:

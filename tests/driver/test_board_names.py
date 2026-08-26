@@ -8,6 +8,7 @@ from src.driver.core.boards import (
     BOARD_CHIPS,
     board_label,
     chip_label,
+    suggest_boards,
 )
 from src.driver.core.project_config import available_boards
 
@@ -59,3 +60,37 @@ class TestBoardsPayload:
         assert uno["chip_label"] == "ATmega328P"
         # The key stays: it is what gets written to pyproject.toml.
         assert uno["name"] == "arduino_uno"
+
+
+class TestBoardSuggestions:
+    """
+    What a message says after refusing a board name (issue #198). The short form of the real
+    name is what people write, and it is the case difflib alone does not cover: `uno` against
+    `arduino_uno` scores 0.43, well under any cutoff worth having.
+    """
+
+    def test_a_short_form_finds_the_full_name(self):
+        assert suggest_boards("uno") == ["arduino_uno"]
+        assert suggest_boards("mega") == ["arduino_mega"]
+
+    def test_a_slip_difflib_can_see_is_still_found(self):
+        # No substring relation either way, so this is the half the substring rule cannot do.
+        assert "rp2040" in suggest_boards("rp2400")
+
+    def test_a_prefix_shared_by_several_offers_the_shortest_completions(self):
+        # Alphabetical order would put arduino_uno fourth and the cap would drop it, which is
+        # the one name a person typing `arduino` is most likely to have meant.
+        assert suggest_boards("arduino") == ["arduino_uno", "arduino_mega", "arduino_nano"]
+
+    def test_nothing_close_suggests_nothing(self):
+        assert suggest_boards("banana_pi_zz99") == []
+
+    def test_an_empty_name_suggests_nothing(self):
+        # `board = ""` is a real thing to write, and `"" in name` is true of every board.
+        assert suggest_boards("") == []
+
+    def test_an_extension_board_is_offered_like_any_other(self):
+        assert suggest_boards("feather", {"adafruit_feather": "rp2040"}) == ["adafruit_feather"]
+
+    def test_the_list_is_capped(self):
+        assert len(suggest_boards("attiny")) <= 3

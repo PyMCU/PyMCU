@@ -12,6 +12,8 @@
 # TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
 # -----------------------------------------------------------------------------
 
+import difflib
+
 # Canonical mapping from well-known board names to chip identifiers.
 # Extension packages may supplement this at build time via board_chips.py.
 # Both `build` and `flash` commands import from here to avoid drift.
@@ -145,6 +147,30 @@ def extension_board_chips(flavors: list[str]) -> dict[str, str]:
 def resolve_chip_for_board(board: str, extra: dict[str, str]) -> str | None:
     """Return the chip name for *board*, checking extension-supplied entries first."""
     return extra.get(board) or BOARD_CHIPS.get(board)
+
+
+def suggest_boards(board: str, extra: dict[str, str] | None = None) -> list[str]:
+    """
+    Board names close to *board*, best first, for a message that has just refused it.
+
+    A substring match is tried first because the misses people write are short forms of the
+    real name: `uno` for `arduino_uno`, `mega` for `arduino_mega`. difflib finds none of those
+    at a cutoff worth using -- `uno` against `arduino_uno` scores 0.43 -- and it does find the
+    slips a substring rule cannot, `rp2400` for `rp2040`. So both, in that order.
+    """
+    known = sorted(set(BOARD_CHIPS) | set(extra or {}))
+    typed = board.strip().lower()
+    if not typed:
+        return []
+
+    # Shortest first among the substring matches: `arduino` matches four boards and the one
+    # with the least left over is the likeliest completion, where alphabetical order would
+    # have put `arduino_uno` last and the cap would have dropped it.
+    contained = sorted((name for name in known if typed in name or name in typed),
+                       key=lambda name: (len(name), name))
+    close = [name for name in difflib.get_close_matches(typed, known, n=3, cutoff=0.6)
+             if name not in contained]
+    return (contained + close)[:3]
 
 
 def default_toolchain(chip: str) -> str:
