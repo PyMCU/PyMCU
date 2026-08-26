@@ -2763,10 +2763,59 @@ public partial class IRGenerator
         return result;
     }
 
+    /// The elements of a single `min`/`max` argument when they are known at compile time:
+    /// a list or tuple literal, or a name bound to a fixed-size array. Null when the length is
+    /// not known, which is the case that has to be refused rather than guessed at.
+    ///
+    /// `max(xs)` is the ordinary Python spelling with a list in hand, and it unrolls to exactly
+    /// the comparisons `max(a, b, c)` already emits, so it is expanded into that form rather
+    /// than given a lowering of its own.
+    private List<Expression>? ConstantElementsOf(Expression arg)
+    {
+        switch (arg)
+        {
+            case ListExpr le:  return le.Elements.Count > 0 ? le.Elements : null;
+            case TupleExpr te: return te.Elements.Count > 0 ? te.Elements : null;
+            case VariableExpr ve:
+            {
+                // Same resolution order the Callable[N] call uses: inline prefix, then the
+                // enclosing function, then the bare name for a module-level array.
+                string key = !string.IsNullOrEmpty(currentInlinePrefix)
+                    ? currentInlinePrefix + ve.Name
+                    : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + ve.Name : ve.Name);
+                if (!arraySizes.ContainsKey(key) && arraySizes.ContainsKey(ve.Name)) key = ve.Name;
+                if (!arraySizes.TryGetValue(key, out int n) || n <= 0) return null;
+
+                var elems = new List<Expression>(n);
+                for (int i = 0; i < n; i++)
+                    elems.Add(new IndexExpr(new VariableExpr(ve.Name), new IntegerLiteral(i)));
+                return elems;
+            }
+            default: return null;
+        }
+    }
+
+    /// Rewrites `f(xs)` into `f(xs[0], xs[1], ...)` for min/max, or throws naming the shape.
+    private Val ExpandSequenceMinMax(CallExpr expr, string name)
+    {
+        var elems = ConstantElementsOf(expr.Args[0]);
+        if (elems == null)
+            throw UserError(
+                $"{name}() over a sequence needs a length known at compile time, and this one " +
+                $"does not have it. Pass the operands as separate arguments " +
+                $"(`{name}(a, b, c)`), index a fixed-size array " +
+                $"(`{name}(xs[0], xs[1], xs[2])`), or keep a running {name} in a loop.");
+
+        if (elems.Count == 1) return VisitExpression(elems[0]);
+        return VisitExpression(new CallExpr(new VariableExpr(name), new List<Expression>(elems)));
+    }
+
     // min(a, b): compile-time fold for constants, else compare-and-select.
+    // min(xs): expanded to the above over the array's elements.
     private Val EmitMinBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count < 2) throw UserError("min() expects at least two arguments");
+        if (expr.Args.Count == 0) throw UserError("min() needs an argument");
+        if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "min");
         if (expr.Args.Count > 2)
         {
             var folded = expr.Args[0];
@@ -2795,9 +2844,11 @@ public partial class IRGenerator
     }
 
     // max(a, b): compile-time fold for constants, else compare-and-select.
+    // max(xs): expanded to the above over the array's elements.
     private Val EmitMaxBuiltin(CallExpr expr)
     {
-        if (expr.Args.Count < 2) throw UserError("max() expects at least two arguments");
+        if (expr.Args.Count == 0) throw UserError("max() needs an argument");
+        if (expr.Args.Count == 1) return ExpandSequenceMinMax(expr, "max");
         if (expr.Args.Count > 2)
         {
             var folded = expr.Args[0];
