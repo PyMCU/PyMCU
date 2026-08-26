@@ -859,6 +859,25 @@ public partial class IRGenerator
     private static string FormatMemberTarget(MemberAccessExpr mem)
         => mem.Object is VariableExpr mv ? mv.Name + "." + mem.Member : mem.Member;
 
+    // True while lowering a constructor body, at any nesting depth inside it. A method is
+    // named `<Class>___init__` when compiled on its own and carries an `...__init__` inline
+    // prefix when force-inlined at a construction site, so both spellings are checked.
+    private bool IsInsideInit()
+    {
+        static bool IsInit(string s) =>
+            s.EndsWith("___init__", StringComparison.Ordinal)
+            || s.EndsWith(".__init__", StringComparison.Ordinal)
+            || s == "__init__";
+
+        if (!string.IsNullOrEmpty(currentFunction) && IsInit(currentFunction)) return true;
+        if (string.IsNullOrEmpty(currentInlinePrefix)) return false;
+        // The prefix is a dotted chain of expansions (`inline1.__init__.`); any __init__ link
+        // in it means this statement came from a constructor body.
+        foreach (var part in currentInlinePrefix.Split('.'))
+            if (part == "__init__" || IsInit(part)) return true;
+        return false;
+    }
+
     private void EmitMemberAssign(AssignStmt stmt, MemberAccessExpr memExpr2, Val value)
     {
         // Class variable write: `ClassName.attr = value`. The read side resolves ClassName.attr
@@ -1045,6 +1064,37 @@ public partial class IRGenerator
                 throw UserError("Unknown member access in assignment: " + memExpr2.Member);
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
+
+            // Reaching here on a known class means the member is not one of its fields: every real
+            // field write (slot store, write-back, instance array) returned above. The write lands
+            // in a flattened `<obj>_<member>` of its own, disjoint from the object, so a misspelled
+            // name compiles to a new variable and the field the author meant keeps its old value.
+            //
+            // Scoped by WHERE the assignment is, not by what the field set says. Inside __init__ an
+            // assignment DEFINES a field, so a typo and a new field are the same shape there and
+            // nothing can be said; outside it, a `self.<name>` that no __init__ introduced is either
+            // a typo or a field that should have been declared, and the fix is the same for both.
+            //
+            // That scoping is also what makes this safe. classFieldLayout only collects TOP-LEVEL
+            // assignments in __init__, so a class assigning its fields inside a `match` (the HAL's
+            // _PinRegs does) has fields the layout never learned. Asking the layout about those
+            // rejected the stdlib outright. Skipping __init__ entirely puts every such assignment
+            // out of scope, so the gap in the map cannot be reached from here. The gap itself is
+            // still real and is recorded in #170.
+            if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
+                && !IsInsideInit()
+                && baseName != null
+                && instanceClasses.TryGetValue(baseName, out var fieldCls)
+                && fieldCls != null
+                && classFieldLayout.TryGetValue(fieldCls, out var fieldLay)
+                && fieldLay.Count > 0
+                && !fieldLay.Any(f => f.Field == memExpr2.Member)
+                && !IsKnownMethodName(memExpr2.Member))
+                throw UserError(
+                    $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "
+                    + "name of its own rather than reaching the object, because PyMCU lays instances "
+                    + "out at compile time. Assign it in __init__ to make it a field, or correct the "
+                    + $"spelling. Declared fields: {string.Join(", ", fieldLay.Select(f => f.Field))}");
 
             // A field assigned None has no runtime value; record the flattened name so
             // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None

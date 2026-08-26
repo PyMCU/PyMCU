@@ -2024,6 +2024,76 @@ public class IRGeneratorTests
         Assert.DoesNotContain("not a compile-time constant", err.Message);
     }
 
+    // ── A field write outside __init__ has to reach a declared field ───────
+    // PyMCU#170: `self.tempreature = raw` compiled to a flattened name of its own, so the
+    // field the author meant kept its old value and nothing said so.
+    [Fact]
+    public void FieldWrite_UndeclaredOutsideInit_NamesTheClassAndTheField()
+    {
+        const string src =
+            "class Sensor:\n" +
+            "    def __init__(self, raw: uint8):\n" +
+            "        self.temperature: uint8 = raw\n" +
+            "        self.humidity: uint8 = 0\n" +
+            "    def update(self, raw: uint8):\n" +
+            "        self.tempreature = raw\n" +
+            "def main():\n" +
+            "    s = Sensor(1)\n" +
+            "    s.update(2)\n";
+
+        var err = Assert.Throws<PyMCU.Common.CompilerError>(
+            () => GenerateIR(src, new DeviceConfig { Arch = "avr" }));
+
+        Assert.Contains("Sensor", err.Message);
+        Assert.Contains("tempreature", err.Message);
+        Assert.Contains("temperature", err.Message);
+    }
+
+    // INVARIANT, and the one that matters most. A class assigning its fields inside a `match`
+    // in __init__ is the HAL's _PinRegs shape, and classFieldLayout does not know those fields
+    // because it only collects top-level assignments. A first attempt at this diagnostic asked
+    // the layout anyway and rejected 35 of the AVR suite's fixtures. Scoping to outside __init__
+    // is what makes that gap unreachable, so this test is the guard on the scoping, not on the
+    // message.
+    [Fact]
+    public void FieldWrite_InsideInitAtDepth_IsNeverDiagnosed()
+    {
+        const string src =
+            "class Regs:\n" +
+            "    def __init__(self, name: uint8):\n" +
+            "        match name:\n" +
+            "            case 0:\n" +
+            "                self.port: uint8 = 1\n" +
+            "            case _:\n" +
+            "                self.port: uint8 = 2\n" +
+            "def main():\n" +
+            "    r = Regs(0)\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.NotNull(ir);
+    }
+
+    // INVARIANT: a declared field written from an ordinary method is the common case and has to
+    // stay silent, or every mutating driver breaks.
+    [Fact]
+    public void FieldWrite_DeclaredFromAMethod_StillCompiles()
+    {
+        const string src =
+            "class Sensor:\n" +
+            "    def __init__(self, raw: uint8):\n" +
+            "        self.temperature: uint8 = raw\n" +
+            "    def update(self, raw: uint8):\n" +
+            "        self.temperature = raw\n" +
+            "def main():\n" +
+            "    s = Sensor(1)\n" +
+            "    s.update(2)\n";
+
+        var ir = GenerateIR(src, new DeviceConfig { Arch = "avr" });
+
+        Assert.NotNull(ir);
+    }
+
     // ── Reflected operators dispatch when the instance is on the right ─────
     // PyMCU#168: only the LEFT operand was consulted, so `2 + a` lowered numerically over the
     // instance slot, which is never written. The answer was 2, and every reflected dunder in
