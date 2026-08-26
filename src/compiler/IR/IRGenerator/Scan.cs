@@ -588,9 +588,15 @@ public partial class IRGenerator
         // instance-to-class map is only filled when the construction is LOWERED, which
         // happens inside main and therefore after this pass.
         var ctorClass = new Dictionary<string, string>();
+        // The arguments each instance was constructed with, so a field that holds another
+        // instance can be followed back to the instance it holds (see MarkNestedWrites).
+        var ctorArgs = new Dictionary<string, List<Expression>>();
         foreach (var st in ast.GlobalStatements)
-            if (st is AssignStmt { Target: VariableExpr tv, Value: CallExpr { Callee: VariableExpr cv } })
+            if (st is AssignStmt { Target: VariableExpr tv, Value: CallExpr { Callee: VariableExpr cv } cc })
+            {
                 ctorClass[tv.Name] = ResolveCallee(cv.Name);
+                ctorArgs[tv.Name] = cc.Args;
+            }
 
         void Mark(string instance, string field)
         {
@@ -626,6 +632,85 @@ public partial class IRGenerator
             foreach (var (field, _, _) in layout) Mark(instance, field);
         }
 
+        // `obj.go()` where go() writes through a field that HOLDS another instance.
+        //
+        // The write is not lost for want of a name: the outline write-back already targets the
+        // held instance's own flattened field (`inner0_v`). What is missing is that nobody ever
+        // marks THAT field, because the only mention of the held instance in the whole program
+        // is `obj.inner`, and the walk below only ever sees `obj`. Unmarked, the field is not a
+        // mutable global, so the constructor never materializes its store and every reader keeps
+        // folding the value the constructor was given -- #183, compiling clean and answering
+        // with the constructor's number forever.
+        //
+        // So the marking has to follow the field back to the instance it holds. `Outer(inner0)`
+        // plus the layout's SourceParam says `self.inner` IS `inner0`, and from there this is
+        // the ordinary one-level case that already works.
+        //
+        // Only the WRITTEN paths, never every nested field: a driver holding a Pin and calling
+        // `self.pin.high()` must keep `_bit` a compile-time constant, which the backend needs to
+        // build the mask and is not an optimization to trade away.
+        void MarkNestedWrites(string instance, string cls, string callee)
+        {
+            if (!classFieldLayout.TryGetValue(cls, out var layout)) return;
+            if (!ctorArgs.TryGetValue(instance, out var args)) return;
+
+            foreach (var (path, leafType) in NestedFieldsWrittenBy(callee))
+                foreach (var (field, ftype, srcParam) in layout)
+                {
+                    if (!classFieldLayout.ContainsKey(ftype)) continue;
+                    if (!path.StartsWith(field + "_", StringComparison.Ordinal)) continue;
+
+                    string leaf = path.Substring(field.Length + 1);
+                    var held = HeldInstanceName(cls, srcParam, args);
+                    if (held != null) { Mark(held, leaf); continue; }
+
+                    // `Outer(Inner(0))`: the held instance is built in the argument and has no
+                    // name yet. Leave the leaf for the lowering to claim when it mints one.
+                    if (HeldCtorCall(cls, srcParam, args) is { } anon)
+                    {
+                        if (!anonCtorMutableLeaves.TryGetValue(anon, out var leaves))
+                            anonCtorMutableLeaves[anon] = leaves = new List<(string, string)>();
+                        if (!leaves.Any(l => l.Leaf == leaf)) leaves.Add((leaf, leafType));
+                    }
+                }
+        }
+
+        // The constructor call passed for the field whose SourceParam is `srcParam`, when the
+        // argument is a call rather than a name.
+        CallExpr? HeldCtorCall(string cls, string srcParam, List<Expression> args)
+            => ArgumentFor(cls, srcParam, args) as CallExpr;
+
+        // The module-level instance passed to the constructor for the field whose SourceParam is
+        // `srcParam`. Null when the field is not initialized from a bare parameter, or the
+        // argument is not a plain name: `Outer(Inner(...))` builds a temp that has no name until
+        // lowering, and there is nothing here to mark.
+        string? HeldInstanceName(string cls, string srcParam, List<Expression> args)
+            => ArgumentFor(cls, srcParam, args) is VariableExpr av ? av.Name : null;
+
+        // The constructor argument that initializes the field whose SourceParam is `srcParam`.
+        // Null when the field is not initialized from a bare parameter, or the parameter cannot
+        // be matched to an argument.
+        Expression? ArgumentFor(string cls, string srcParam, List<Expression> args)
+        {
+            if (string.IsNullOrEmpty(srcParam)) return null;
+
+            FunctionDef? init = null;
+            if (!instanceMethodDefs.TryGetValue(cls + "___init__", out init)
+                && !methodAstByName.TryGetValue(cls + "___init__", out init)) return null;
+            if (init == null) return null;
+
+            foreach (var a in args)
+                if (a is KeywordArgExpr kw && kw.Key == srcParam) return kw.Value;
+
+            // Positional: the parameter list carries self, the call's argument list does not.
+            int idx = init.Params.FindIndex(p => p.Name == srcParam);
+            if (idx < 0) return null;
+            if (init.Params.Count > 0 && init.Params[0].Name == "self") idx--;
+            if (idx < 0 || idx >= args.Count) return null;
+
+            return args[idx] is KeywordArgExpr ? null : args[idx];
+        }
+
         void Expr(Expression? e)
         {
             switch (e)
@@ -650,7 +735,11 @@ public partial class IRGenerator
                     when topLevelInstanceTargets.Contains(recv.Name):
                     if (!(ctorClass.TryGetValue(recv.Name, out var recvCls)
                           && MethodWritesNoField(recvCls + "_" + method)))
+                    {
                         MarkEveryField(recv.Name);
+                        if (recvCls != null)
+                            MarkNestedWrites(recv.Name, recvCls, recvCls + "_" + method);
+                    }
                     foreach (var a in c.Args) Expr(a);
                     return;
                 case MemberAccessExpr { Object: VariableExpr ov } ma

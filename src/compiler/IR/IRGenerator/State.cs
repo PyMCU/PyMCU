@@ -204,6 +204,15 @@ public partial class IRGenerator
     // real storage: a function's write is otherwise a dead store to a name nothing else in
     // that function reads, and the reader in another function folds the constructor's value.
     private HashSet<string> moduleInstanceMutableFields = new();
+
+    // Constructor calls whose RESULT is held in a field that some method writes through, and
+    // which have no name of their own: the inner call of `obj = Outer(Inner(0))`. The scan pass
+    // can see that `Outer.go()` writes `inner_v`, but the instance holding that `v` is not named
+    // until lowering invents `main.__c1`, so the fields to give storage to are recorded against
+    // the AST node and claimed at the moment that name is minted. Keyed by reference: the node
+    // scanned and the node lowered are the same object.
+    private Dictionary<CallExpr, List<(string Leaf, string Type)>> anonCtorMutableLeaves =
+        new(ReferenceEqualityComparer.Instance);
     // Names the program binds through a path that files no type: a loop variable, a
     // multi-return unpack target. Read only by the undefined-name check, which must not
     // mistake "bound elsewhere" for "never defined".

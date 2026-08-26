@@ -1281,6 +1281,20 @@ public partial class IRGenerator
                 string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
                 target = bBase + ".__c" + (++ctorAnonId);
                 ctorSubexprSynth = target;
+
+                // This nameless instance is held in a field that some method writes through
+                // (#183). The scan pass could see the write but not the name; now that the name
+                // exists, give the written leaves real storage, BEFORE the body below lowers
+                // `self.<leaf> = ...` -- registered after that, the constructor's store has
+                // already been folded away and every reader keeps returning its value.
+                if (anonCtorMutableLeaves.TryGetValue(expr, out var anonLeaves))
+                    foreach (var (leaf, leafType) in anonLeaves)
+                    {
+                        string key = target + "_" + leaf;
+                        killedConstants.Add(key);
+                        moduleInstanceMutableFields.Add(key);
+                        mutableGlobals[key] = DataTypeExtensions.StringToDataType(leafType);
+                    }
             }
 
             variableAliases[selfName] = target;
@@ -1679,7 +1693,19 @@ public partial class IRGenerator
                 }
             }
 
-            if (!found) throw UserError($"Unknown keyword argument '{kvp.Key}' in call to {callee}");
+            // The USER's spelling, not the mangled callee. `SPI(baudrate=...)` reported
+            // "in call to machine_SPI___init__", a symbol nobody typed and nobody can search
+            // for in their own file (issue #194). The neighbouring rejections on this same
+            // path already print SourceCalleeName(), including the "constructor of" form for
+            // an __init__, so this borrows both rather than inventing a third convention.
+            if (!found)
+            {
+                bool isCtorKw = callee.Contains("___init__", StringComparison.Ordinal);
+                string whatKw = isCtorKw
+                    ? $"constructor of '{SourceCalleeName()}'"
+                    : $"'{SourceCalleeName()}'";
+                throw UserError($"unknown keyword argument '{kvp.Key}' in call to {whatKw}");
+            }
         }
 
         for (int i = paramOffset; i < func.Params.Count; ++i)

@@ -1090,6 +1090,53 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// The same set as <see cref="FieldsWrittenBy"/>, but only the paths that reach THROUGH a
+    /// field holding an instance, each with the declared type of the leaf.
+    ///
+    /// The receiver's own fields are excluded because their caller already handles them off the
+    /// class layout; what it cannot handle is `inner_v`, which is not a field name of any class
+    /// and so was never given storage. The type comes back because the layout the caller would
+    /// look the name up in does not contain it either.
+    ///
+    /// Only WRITTEN paths, never every nested field: a driver holding a Pin and calling
+    /// `self.pin.high()` must keep `_bit` a compile-time constant, which the backend requires
+    /// for the mask and is not an optimization to trade away.
+    /// </summary>
+    private IEnumerable<(string Path, string Type)> NestedFieldsWrittenBy(string callee)
+    {
+        var typed = new List<(string, string)>();
+        CollectNestedFieldsWrittenBy(callee, "", typed, new HashSet<string>());
+        return typed;
+    }
+
+    private void CollectNestedFieldsWrittenBy(string callee, string prefix,
+                                              List<(string, string)> typed, HashSet<string> visiting)
+    {
+        if (!visiting.Add(callee) || visiting.Count > 8) return;
+
+        string? cls = OwningClassOf(callee);
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return;
+
+        FunctionDef? def = null;
+        if (!instanceMethodDefs.TryGetValue(callee, out def)
+            && !methodAstByName.TryGetValue(callee, out def)
+            && !inlineFunctions.TryGetValue(callee, out def)) return;
+        if (def == null) return;
+
+        foreach (var (field, type, _) in layout)
+        {
+            // Only below the first hop: at prefix "" this is the receiver's own field, which the
+            // caller marks off the layout.
+            if (prefix.Length > 0 && MethodMutatesFieldPublic(def, field))
+                typed.Add((prefix + field, type));
+
+            if (!classFieldLayout.ContainsKey(type)) continue;
+            foreach (string inner in NestedMethodsCalledOn(def, field))
+                CollectNestedFieldsWrittenBy(type + "_" + inner, prefix + field + "_", typed, visiting);
+        }
+    }
+
+    /// <summary>
     /// Accumulate into <paramref name="paths"/> the flattened field paths the method writes,
     /// relative to its receiver: `_value` for its own field, `inner__state` for a field of an
     /// instance it holds. A nested instance is reached through a call, so the recursion follows
