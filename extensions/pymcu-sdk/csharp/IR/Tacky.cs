@@ -31,7 +31,17 @@ namespace PyMCU.IR;
 [JsonDerivedType(typeof(FlashStrAddr),  "fstr")]
 public abstract record Val;
 
-public record Constant(int Value) : Val;
+// Text: the compile-time string this Constant stands for, when it stands for one.
+//
+// A one-character string literal is lowered to its own character code, which is what makes
+// `c == 'x'` and `uart.write('A')` work, and that code is never registered in stringIdToStr --
+// so 44 is the string "," and the number 44 with nothing to tell them apart. Every site that
+// asked that question of the id table got the wrong answer, and each one guarded on
+// `Length != 1` rather than diagnosing it (#211).
+//
+// Frontend-only: [JsonIgnore] keeps it out of the .mir, so a backend receives exactly the bytes
+// it received before. Value is untouched, so a one-character literal still passes as its code.
+public record Constant(int Value, [property: JsonIgnore] string? Text = null) : Val;
 
 public record FloatConstant(double Value) : Val;
 

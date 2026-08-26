@@ -1242,21 +1242,28 @@ public partial class IRGenerator
 
         if (constantVariables.TryGetValue(finalLocalName, out int finVal))
         {
-            return new Constant(finVal);
+            // A name bound to a one-character string is in BOTH maps: the numeric one holds its
+            // character code and the string one holds its text. The numeric lookup wins here, so
+            // without carrying the text the read arrives downstream as a bare number.
+            return new Constant(finVal, ResolveStrConstant(finalLocalName));
         }
 
         string? strVal = ResolveStrConstant(finalLocalName);
         if (strVal != null)
         {
+            // The text rides along with the id. It matters most for a ONE-character string,
+            // whose id here is an interned number while the same literal in expression position
+            // is its character code -- two encodings of one string, which a comparison by value
+            // reads as unequal.
             if (stringLiteralIds.TryGetValue(strVal, out int strId))
             {
-                return new Constant(strId);
+                return new Constant(strId, strVal);
             }
 
             int newId = nextStringId++;
             stringLiteralIds[strVal] = newId;
             stringIdToStr[newId] = strVal;
-            return new Constant(newId);
+            return new Constant(newId, strVal);
         }
 
         DataType type = DataType.UINT8;
