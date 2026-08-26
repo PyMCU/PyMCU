@@ -1182,6 +1182,19 @@ public partial class IRGenerator
                 return;
             }
 
+            // A ONE-CHARACTER string never reaches the id table: VisitExpression turns it into
+            // the character's code, which is what makes `c == 'x'` and uart.write('A') work. So
+            // the stringIdToStr lookup below has nothing to give back for it and the field kept
+            // only the number: a class holding `self.sep: str = ","` printed 44 where "," was
+            // meant, and sep.join([...]) on that field was refused for a separator the compiler
+            // was holding all along. Ask the AST what the value IS -- it can tell a character
+            // from a string -- before the id table, which cannot.
+            //
+            // The numeric identity is untouched: the branches below still record the code, so
+            // `o.sep == ","` and passing the field where a character is wanted keep folding.
+            if (StaticStringOf(stmt.Value) is { } fieldText)
+                strConstantVariables[flattenedName] = fieldText;
+
             if (value is Constant c)
             {
                 if (baseName != null && !virtualInstances.Contains(baseName))

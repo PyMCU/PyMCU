@@ -1580,7 +1580,28 @@ public partial class IRGenerator
             if (argValues[i] is Constant cArg3)
             {
                 constantVariables[paramName] = cArg3.Value;
-                strConstantVariables.Remove(paramName);
+                // A string literal arrives here as a number: an interned id, or -- for a
+                // ONE-CHARACTER string -- the character's own code, since that is what makes
+                // `c == 'x'` and uart.write('A') work. A use site can ask stringIdToStr what an
+                // id stood for; nothing can ask that of a character code, because 44 is also
+                // the number 44. So `One(",")` bound a `s: str` parameter to 44 and the field
+                // it was assigned to became 44 as well, and the program printed 44.
+                //
+                // Only the one-character case is restored here, and only where the parameter is
+                // declared `str`. A longer string keeps arriving with its identity dropped,
+                // exactly as before, because the id round-trip already serves it at the use
+                // site -- and because carrying the text on the parameter is what makes a plain
+                // `str` behave like a `const[str]`, which is a language change and not this
+                // one. The declared type is the discriminator that must not be dropped either:
+                // `uart.write('\n')` passes a one-character literal to a `uint8`, where the
+                // character code IS the value wanted, and giving that parameter a text made
+                // the UART HAL refuse itself. The raw argument is the same source of truth the
+                // const[str] binding above already trusts.
+                if (func.Params[paramIdx].Type == "str"
+                    && i < rawStrArgs.Count && rawStrArgs[i] is { Value.Length: 1 } oneChar)
+                    strConstantVariables[paramName] = oneChar.Value;
+                else
+                    strConstantVariables.Remove(paramName);
                 floatConstantVariables.Remove(paramName);
                 variableAliases.Remove(paramName);
                 continue;
@@ -3379,18 +3400,30 @@ public partial class IRGenerator
     {
         if (arg is StringLiteral lit) return lit.Value;
 
-        // A string held in a FIELD (`self.n`, `o.n`). The characters live in flash exactly as
-        // they do for a plain name; only the key differs, since a field is stored under the
-        // flattened `<instance>_<field>`. Without this the read fell through to the numeric
-        // writer and printed the string's interned id: `print(o.n)` sent 256.
-        if (arg is MemberAccessExpr { Object: VariableExpr recv } ma)
+        // A string held in a FIELD (`self.n`, `o.n`, `o.inner.sep`). The characters live in
+        // flash exactly as they do for a plain name; only the key differs, since a field is
+        // stored under the flattened `<instance>_<field>`. Without this the read fell through
+        // to the numeric writer and printed the string's interned id: `print(o.n)` sent 256.
+        //
+        // The chain is walked to any depth. Matching only `<name>.<field>` left every deeper
+        // read -- `o.inner.sep`, which is filed as `main.o_inner_sep` and whose text the
+        // compiler has -- falling through to that same numeric writer, so two levels of
+        // nesting printed 256 again while one level printed the string.
+        if (arg is MemberAccessExpr ma)
         {
+            (VariableExpr? recv, List<string> fields) = FieldChainOf(ma);
+            if (recv == null) return null;
+
             Val objVal = VisitExpression(recv);
             string bse = objVal is Variable ov ? ov.Name : recv.Name;
-            while (variableAliases.TryGetValue(bse, out var alias) && alias != null) bse = alias;
+            bse = ResolveAlias(bse);
 
-            foreach (var flat in new[] { bse + "_" + ma.Member, bse + "." + ma.Member })
+            foreach (var joiner in new[] { "_", "." })
+            {
+                string flat = bse;
+                foreach (string f in fields) flat = ResolveAlias(flat + joiner + f);
                 if (ResolveStrConstant(flat) is { } fieldText) return fieldText;
+            }
             return null;
         }
 
@@ -4035,7 +4068,61 @@ public partial class IRGenerator
                 ?? (!string.IsNullOrEmpty(currentFunction)
                     ? ResolveStrConstant(currentFunction + "." + ve.Name) : null)
                 ?? ResolveStrConstant(ve.Name);
+        // A field holding a compile-time string IS statically a string; answering null for
+        // one made `sep.join([...])` refuse a separator whose text the compiler was holding.
+        if (e is MemberAccessExpr ma) return StaticStringOfField(ma);
         return null;
+    }
+
+    /// <summary>
+    /// The dotted chain of a member access, split into the name it starts from and the fields
+    /// read off it: `o.inner.sep` gives (`o`, ["inner", "sep"]). The name is null when the
+    /// chain does not start from one (a call result, an index).
+    /// </summary>
+    private (VariableExpr? Root, List<string> Fields) FieldChainOf(MemberAccessExpr ma)
+    {
+        var fields = new List<string>();
+        Expression cur = ma;
+        while (cur is MemberAccessExpr m) { fields.Add(m.Member); cur = m.Object; }
+        fields.Reverse();
+        return (cur as VariableExpr, fields);
+    }
+
+    /// <summary>
+    /// Compile-time text of a string held in a field, at any depth. A ZCA field has no
+    /// storage of its own: it is flattened into a name built from the instance and the field
+    /// chain, so `o.inner.sep` read in main is filed as `main.o_inner_sep`. AST-only, like
+    /// StaticStringOf -- nothing is visited and no IR is emitted, so a caller that asks may
+    /// still decline afterwards.
+    /// </summary>
+    private string? StaticStringOfField(MemberAccessExpr ma)
+    {
+        (VariableExpr? root, List<string> fields) = FieldChainOf(ma);
+        if (root == null) return null;
+
+        foreach (string prefix in new[]
+                 {
+                     currentInlinePrefix,
+                     !string.IsNullOrEmpty(currentFunction) ? currentFunction + "." : null,
+                     "",
+                 })
+        {
+            if (prefix == null) continue;
+            string key = ResolveAlias(prefix + root.Name);
+            foreach (string f in fields) key = ResolveAlias(key + "_" + f);
+            if (strConstantVariables.TryGetValue(key, out var text)) return text;
+        }
+        return null;
+    }
+
+    // The name a variable actually stores under, following the alias chain. Capped, since an
+    // alias cycle would otherwise spin.
+    private string ResolveAlias(string name)
+    {
+        string key = name;
+        for (int d = 0; d < 20 && variableAliases.TryGetValue(key, out var alias) && alias != null; d++)
+            key = alias;
+        return key;
     }
 
     private string? ResolveByteReprFn()
