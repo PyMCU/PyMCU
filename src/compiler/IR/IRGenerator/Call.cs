@@ -288,6 +288,15 @@ public partial class IRGenerator
                         // inherited non-inline methods (e.g. DHTBase._read_byte called on a
                         // DHT11 instance) resolve to the correct label instead of the
                         // non-existent <ConcreteClass>_<method> symbol.
+                        // A generator's class is synthesized and carries only __init__ and
+                        // poll(), so every method of the generator protocol resolved to a
+                        // symbol built from the generator's own name ('gen_send') and was
+                        // reported as undefined, with "(typo, or a missing import?)" pointing
+                        // at neither of the two true things: the method is real Python, and it
+                        // is the feature that is missing.
+                        if (generatorClasses.Contains(clsC!))
+                            RejectGeneratorProtocol(clsC!, memC.Member);
+
                         string definingClass = ResolveMROMethod(clsC!, memC.Member);
                         callee = definingClass + "_" + memC.Member;
 
@@ -778,6 +787,18 @@ public partial class IRGenerator
             // of "(typo, or a missing import?)" can be the answer: the reader checks a spelling
             // that is right and looks for an import that does not exist. Name the builtin, say
             // it is not provided, and say what to write instead.
+            // `next(g)` / `iter(g)` where g IS a generator instance. The generic advice is
+            // "Loop over the sequence itself", which is advice for a list: a generator is not
+            // a sequence, and there is nothing else to loop over. Name the generator instead.
+            if (expr.Callee is VariableExpr && (shown == "next" || shown == "iter")
+                && expr.Args.Count > 0 && ResolveGeneratorArg(expr.Args[0]) is { } genName)
+                throw UserError(
+                    $"{shown}() is the iterator protocol, which PyMCU does not provide, and "
+                    + $"'{genName}' is a generator: pulling one value at a time would need "
+                    + "somewhere to report exhaustion, and there is no StopIteration to put it "
+                    + $"in. Consume it with `for v in {genName}(...):`, which drives the "
+                    + "generator and ends when it does.", expr.Callee);
+
             if (expr.Callee is VariableExpr && PythonBuiltins.Contains(shown))
                 throw UserError(
                     UnsupportedBuiltins.TryGetValue(shown, out var why)
@@ -2195,6 +2216,62 @@ public partial class IRGenerator
         }
 
         return spliced;
+    }
+
+    /// <summary>
+    /// A call of the generator protocol on a generator instance. Each one is refused by its own
+    /// name and its own reason: `send` because there is nowhere for the value to arrive,
+    /// `throw`/`close` because there is no generator object to act on at run time, `__next__`
+    /// because manual iteration would need somewhere to put "exhausted".
+    /// </summary>
+    private void RejectGeneratorProtocol(string generatorName, string member)
+    {
+        string? why = member switch
+        {
+            "send" =>
+                "a sent value arrives at `x = yield v`, and `yield` is a statement here, not an "
+                + "expression, so there is nowhere for it to land",
+            "throw" =>
+                "raising into a suspended generator needs a generator object at run time, and a "
+                + "generator lowers to a state machine with no such object",
+            "close" =>
+                "the state machine is a plain value with no heap allocation and no finalizer, so "
+                + "there is nothing to release",
+            "__next__" or "next" =>
+                "pulling one value at a time would need somewhere to report exhaustion, and "
+                + "PyMCU has no StopIteration to put it in",
+            _ => null,
+        };
+        if (why == null) return;
+
+        throw UserError(
+            $"'{generatorName}.{member}()' is the generator protocol, which PyMCU does not "
+            + $"provide: {why}. A generator is consumed with `for v in {generatorName}(...):`, "
+            + "which drives it to exhaustion and ends when it does.");
+    }
+
+    /// <summary>
+    /// The generator function's name when <paramref name="arg"/> names an instance of a class
+    /// the generator lowering synthesized, else null. Tries the same key shapes instance
+    /// lookups use elsewhere, because a local is stored qualified by its function.
+    /// </summary>
+    private string? ResolveGeneratorArg(Expression arg)
+    {
+        if (arg is not VariableExpr v) return null;
+        foreach (var key in new[]
+                 {
+                     currentInlinePrefix + v.Name,
+                     string.IsNullOrEmpty(currentFunction) ? v.Name : currentFunction + "." + v.Name,
+                     currentModulePrefix + v.Name,
+                     v.Name,
+                 })
+        {
+            if (string.IsNullOrEmpty(key)) continue;
+            if (instanceClasses.TryGetValue(key, out var cls) && cls != null
+                && generatorClasses.Contains(cls))
+                return cls;
+        }
+        return null;
     }
 
     private Val? TryEmitUnrolledInstanceArrayCall(CallExpr expr, MemberAccessExpr memC)

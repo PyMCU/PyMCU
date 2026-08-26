@@ -32,6 +32,8 @@ public static class AsyncTransform
     public static void TransformProgram(ProgramNode prog)
     {
         RejectCoroutineMethods(prog);
+        RejectGeneratorMethods(prog);
+        RejectInlineGenerators(prog);
 
         var asyncFns = prog.Functions.Where(f => f.IsAsync).ToList();
         // A plain function containing `yield` is a GENERATOR: same state-machine
@@ -119,7 +121,9 @@ public static class AsyncTransform
         foreach (var fn in genFns)
         {
             prog.Functions.Remove(fn);
-            prog.GlobalStatements.Add(TransformFunction(fn, asyncioAlias: null));
+            var genClass = TransformFunction(fn, asyncioAlias: null);
+            genClass.IsGenerator = true;
+            prog.GlobalStatements.Add(genClass);
             genNames.Add(fn.Name);
         }
 
@@ -156,6 +160,51 @@ public static class AsyncTransform
     //    is not yet known. Building on it would emit silently wrong programs.
     //
     // See PyMCU/PyMCU#110 for the measurements.
+    /// <summary>
+    /// A `yield` inside a method. Only `prog.Functions` is scanned for generators, so a method
+    /// kept its `yield` all the way to the IR and the caller's `for v in s.items()` answered
+    /// with the list of iterable kinds `for` knows -- a message that names neither generators
+    /// nor methods, and reads as though the call site were at fault.
+    /// </summary>
+    private static void RejectGeneratorMethods(ProgramNode prog)
+    {
+        foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())
+        {
+            if (cls.Body is not Block body) continue;
+            foreach (var m in body.Statements.OfType<FunctionDef>())
+            {
+                if (m.IsAsync || !ContainsYield(m.Body)) continue;
+                throw new SyntaxError(
+                    $"`yield` in method '{m.Name}' of class '{cls.Name}': a generator has to be a "
+                    + "module-level function today, because it lowers to a state-machine class of "
+                    + "its own and a method has no place to keep one. Move it out of the class and "
+                    + "pass what the body reads from `self` as an argument: `def "
+                    + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
+                        .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
+                    m.Line, 1);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A `yield` inside an `@inline` function. `genFns` excludes @inline, so the body kept its
+    /// `yield` and the caller's `for` reported the iterable-kind message, naming neither the
+    /// decorator that caused it nor the `yield` that needed it.
+    /// </summary>
+    private static void RejectInlineGenerators(ProgramNode prog)
+    {
+        foreach (var fn in prog.Functions)
+        {
+            if (!fn.IsInline || fn.IsAsync || !ContainsYield(fn.Body)) continue;
+            throw new SyntaxError(
+                $"`@inline def {fn.Name}` contains `yield`. An @inline function is expanded into "
+                + "each call site, and a generator needs a state machine of its own to suspend in, "
+                + $"so the two cannot be combined. Remove `@inline` from '{fn.Name}' to make it a "
+                + "generator, and consume it with `for v in " + fn.Name + "(...):`.",
+                fn.Line, 1);
+        }
+    }
+
     private static void RejectCoroutineMethods(ProgramNode prog)
     {
         foreach (var cls in prog.GlobalStatements.OfType<ClassDef>())

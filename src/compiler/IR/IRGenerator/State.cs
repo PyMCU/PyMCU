@@ -243,6 +243,9 @@ public partial class IRGenerator
     // fields via BytearrayLoad at byte offsets. This is the multi-field analogue of the
     // register handle (which only fits one small field in the return register).
     private HashSet<string> slotClasses = new();
+    // Classes the generator lowering synthesized. Used only to answer a call of the
+    // generator protocol by name instead of as an undefined mangled symbol.
+    private HashSet<string> generatorClasses = new();
     // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
     private Dictionary<string, string> slotInstances = new();
     // @outline method symbol -> field -> byte offset within the slot (for self.field loads).

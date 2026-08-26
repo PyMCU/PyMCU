@@ -88,6 +88,10 @@ public class ClassDef : Statement
     public bool IsStatic { get; set; } = false;
     public bool IsDataclass { get; set; } = false;
     public bool IsValue { get; set; } = false;
+    // Synthesized by the generator lowering, not written by the user. The name is the
+    // generator function's, so a call of the generator protocol on an instance would
+    // otherwise resolve to a symbol built from it and be reported as undefined.
+    public bool IsGenerator { get; set; } = false;
 
     public ClassDef(string name, List<string> bases, Statement body)
     {

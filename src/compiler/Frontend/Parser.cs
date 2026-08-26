@@ -2040,6 +2040,15 @@ public class Parser
             }
 
             var first = ParseExpression();
+            // `(x for x in xs)` -- a generator expression. It builds a lazy iterator object,
+            // which needs a heap and the iterator protocol; neither exists here. Named at the
+            // `for`, because "Expected ')'" reads as a typo in the parentheses.
+            if (Check(TokenType.For))
+                Error("generator expressions are not supported: `(x for x in ...)` builds a lazy "
+                      + "iterator object, and there is no heap to hold one. Write the producer as "
+                      + "a generator function (a `def` whose body yields) and consume it with "
+                      + "`for v in gen(...):`, or iterate the sequence directly with a plain "
+                      + "`for`.");
             if (Check(TokenType.Comma))
             {
                 var elems = new List<Expression> { first };
