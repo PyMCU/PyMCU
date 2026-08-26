@@ -164,6 +164,33 @@ public class Parser
         throw new IndentationError(message, t.Line, t.Column, t.Length);
     }
 
+    // Index of the first character of an f-string replacement field that sits outside every
+    // bracket and every quoted run and satisfies `match`, or -1. The markers that end a field
+    // (':', '!', '=') all also occur inside the expression, so every search for one has to skip
+    // the same two kinds of text.
+    private static int ScanField(string src, Func<string, int, bool> match)
+    {
+        int depth = 0;
+        char quote = (char)0;
+        for (int k = 0; k < src.Length; k++)
+        {
+            char ch = src[k];
+            if (quote != (char)0)
+            {
+                if (ch == (char)92) k++;
+                else if (ch == quote) quote = (char)0;
+                continue;
+            }
+
+            if (ch == (char)34 || ch == (char)39) quote = ch;
+            else if (ch == '(' || ch == '[' || ch == '{') depth++;
+            else if (ch == ')' || ch == ']' || ch == '}') depth--;
+            else if (depth == 0 && match(src, k)) return k;
+        }
+
+        return -1;
+    }
+
     private string ParseTypeAnnotation()
     {
         if (Check(TokenType.String))
@@ -1958,7 +1985,14 @@ public class Parser
 
         if (Match(TokenType.FString))
         {
-            string raw = Previous().Value;
+            Token fstr = Previous();
+            string raw = fstr.Value;
+
+            // Everything wrong with an f-string is wrong inside the literal, and the parser has
+            // already stepped past it, so Error() would put the caret on whatever follows.
+            void FStringError(string message) =>
+                throw new SyntaxError(message, fstr.Line, fstr.Column, fstr.Length);
+
             var parts = new List<FStringPart>();
             int i = 0;
             while (i < raw.Length)
@@ -1967,25 +2001,52 @@ public class Parser
                 {
                     int j = i + 1;
                     while (j < raw.Length && raw[j] != '}') j++;
-                    if (j >= raw.Length) Error("Unterminated '{' in f-string");
+                    if (j >= raw.Length) FStringError("Unterminated '{' in f-string");
                     string exprSrc = raw.Substring(i + 1, j - i - 1);
 
-                    // Split off a format spec at the first ':' that is at bracket-nesting depth 0,
-                    // so slices/subscripts inside the expression (e.g. {a[1:2]}) are not mistaken
-                    // for a spec. `{value:02x}` -> expr "value", spec "02x".
+                    // A replacement field is `expression ['='] ['!' conversion] [':' spec]`, and
+                    // the three markers are taken off the end in that order. Each search skips
+                    // anything inside brackets or quotes, so {a[1:2]}, {f(x=1)} and {'a:b'} are
+                    // read as the expressions they are.
+
+                    // `{value:02x}` -> expr "value", spec "02x".
                     string fmtSpec = "";
-                    int depth = 0;
-                    for (int k = 0; k < exprSrc.Length; k++)
+                    int colon = ScanField(exprSrc, static (s, k) => s[k] == ':');
+                    if (colon >= 0)
                     {
-                        char ch = exprSrc[k];
-                        if (ch == '(' || ch == '[' || ch == '{') depth++;
-                        else if (ch == ')' || ch == ']' || ch == '}') depth--;
-                        else if (ch == ':' && depth == 0)
-                        {
-                            fmtSpec = exprSrc.Substring(k + 1);
-                            exprSrc = exprSrc.Substring(0, k);
-                            break;
-                        }
+                        fmtSpec = exprSrc.Substring(colon + 1);
+                        exprSrc = exprSrc.Substring(0, colon);
+                    }
+
+                    // A conversion asks for a different rendering of the value. PyMCU writes a
+                    // value as text and has no second rendering to switch to, so accepting the
+                    // spelling would mean ignoring it. Name it here: reaching the sub-lexer, a
+                    // '!' with no '=' after it is reported as a broken '!=' instead.
+                    int bang = ScanField(exprSrc, static (s, k) =>
+                        s[k] == '!' && (k + 1 >= s.Length || s[k + 1] != '='));
+                    if (bang >= 0)
+                    {
+                        FStringError($"f-string conversion "
+                                     + $"'!{exprSrc.Substring(bang + 1).Trim()}' is not supported; "
+                                     + "the value is written as text");
+                    }
+
+                    // Python's debug spelling: a trailing '=' asks for the expression as written
+                    // and then its value, so `{seed=}` is the text `seed=` followed by the value
+                    // and `{seed=:02x}` keeps the spec for the value half. The text is the field
+                    // verbatim, spaces included, which is what `{seed = }` is asking for. '==',
+                    // '!=', '<=' and '>=' are comparisons and stay in the expression.
+                    int eq = ScanField(exprSrc, static (s, k) =>
+                        s[k] == '='
+                        && (k + 1 >= s.Length || s[k + 1] != '=')
+                        && (k == 0 || (s[k - 1] != '=' && s[k - 1] != '!'
+                                       && s[k - 1] != '<' && s[k - 1] != '>')));
+                    if (eq >= 0)
+                    {
+                        if (exprSrc.Substring(eq + 1).Trim().Length != 0)
+                            FStringError("Unexpected text after '=' in f-string");
+                        parts.Add(new FStringPart { IsExpr = false, Text = exprSrc });
+                        exprSrc = exprSrc.Substring(0, eq);
                     }
 
                     var subLex = new Lexer(exprSrc.AsSpan());
@@ -1998,7 +2059,7 @@ public class Parser
                 }
                 else if (raw[i] == '}')
                 {
-                    Error("Unexpected '}' in f-string");
+                    FStringError("Unexpected '}' in f-string");
                 }
                 else
                 {
