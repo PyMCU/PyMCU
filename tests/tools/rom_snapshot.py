@@ -305,6 +305,76 @@ def chips():
     return out
 
 
+
+# ── does the image touch a register this chip has? ───────────────────────────
+#
+# The gate records whether a binary was PRODUCED. It has never said whether the binary is for
+# the chip it names, and three bugs shipped through that gap: the ATmega328P USART compiled on
+# every AVR (so an ATtiny4313 with 256 bytes of SRAM got UCSR0A at 0xC0 and UDR0 at 0xC6, and
+# eight parts with no USART at all got one), a flash table over 256 bytes read only its first
+# 256, and a 16-bit compare register written low-byte-only. Every one produced a binary, and
+# the gate counted its bytes.
+#
+# One invariant, the cheapest one that a wrong-chip image cannot satisfy: every absolute
+# data-space address in the IR has to be a register THIS chip declares. A `mem` operand comes
+# from a chip register; a variable is a `var` with a name and never appears as a raw address,
+# so the set to compare against is exactly what the chip file declares.
+#
+# Note it deliberately does NOT also allow "anywhere in SRAM": 0xC0 falls inside the
+# ATtiny4313's RAM (0x0060..0x015F), so a range test passes the very bug this exists to catch.
+#
+# Chips whose registers are computed from a base (`ptr(UART0_BASE + 0x08)`) rather than written
+# as literals are out of scope, because the declared set cannot be read off the file. That is
+# the four RP2040/RP2350/CH32V parts; the 26 others, including every AVR and PIC, are covered.
+# Two chips with identical register maps cannot be told apart this way, which is correct: for
+# this measurement they are the same chip.
+
+LITERAL_PTR = re.compile(r"ptr\(\s*(0x[0-9a-fA-F]+)\s*\)")
+ANY_PTR = re.compile(r"ptr\(")
+
+
+def declared_registers(chip: str):
+    """The addresses `chip` declares as literals, or None when it uses computed bases."""
+    f = CHIPS_DIR / f"{chip}.py"
+    if not f.exists():
+        return None
+    text = f.read_text()
+    literal = LITERAL_PTR.findall(text)
+    if not literal or len(literal) != len(ANY_PTR.findall(text)):
+        return None
+    return {int(a, 16) for a in literal}
+
+
+def mir_addresses(mir: Path):
+    """Every absolute data-space address the IR touches."""
+    try:
+        doc = json.loads(mir.read_text())
+    except (OSError, ValueError):
+        return set()
+    found = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("$t") == "mem" and isinstance(node.get("address"), int):
+                found.add(node["address"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(doc)
+    return found
+
+
+def foreign_registers(mir: Path, chip: str):
+    """Addresses the image touches that `chip` does not declare. Empty is the right answer."""
+    declared = declared_registers(chip)
+    if declared is None:
+        return []
+    return sorted(a for a in mir_addresses(mir) if a not in declared)
+
+
 def build(work: Path, chip: str, arch: str, source: str):
     (work / "src").mkdir(parents=True, exist_ok=True)
     (work / "src" / "main.py").write_text(source)
@@ -334,6 +404,9 @@ def build(work: Path, chip: str, arch: str, source: str):
     mir = work / "dist" / "firmware.mir"
     if mir.exists():
         entry["mir"] = hashlib.sha256(mir.read_bytes()).hexdigest()[:16]
+        foreign = foreign_registers(mir, chip)
+        if foreign:
+            entry["foreign"] = [hex(a) for a in foreign]
     for name in ("debug/firmware.asm", "firmware.asm"):
         asm = work / "dist" / name
         if asm.exists():
@@ -568,6 +641,12 @@ def main():
             print(f"  {len(noisy)} compilan CON AVISOS del ensamblador -- ensamblar no es estar bien:")
             for key, cell in sorted(noisy.items()):
                 print(f"    {key:24s} {cell['warn']:3d}  {cell.get('warn_first', '')}")
+        alien = {k: v for k, v in current.items() if v.get("foreign")}
+        if alien:
+            print(f"  {len(alien)} tocan REGISTROS QUE EL CHIP NO TIENE -- "
+                  "producir un binario no es producir el binario de este chip:")
+            for key, cell in sorted(alien.items()):
+                print(f"    {key:24s} {', '.join(cell['foreign'][:8])}")
         return 0
 
     stored = json.loads(path.read_text())
@@ -586,6 +665,16 @@ def main():
         print("    un diff de celdas aqui puede no ser tuyo.\n")
     elif drifted:
         print("procedencia equivalente (" + "; ".join(t for _, t in drifted) + ")\n")
+    # A wrong-chip image is not an outcome to be frozen and diffed like the others: it is
+    # wrong on its own, whether or not it changed since the capture. This is the one thing
+    # here that fails without reference to the snapshot.
+    alien = {k: v for k, v in current.items() if v.get("foreign")}
+    if alien:
+        print(f"\n{len(alien)} celdas tocan REGISTROS QUE EL CHIP NO TIENE:")
+        for key, cell in sorted(alien.items()):
+            print(f"  {key:24s} {', '.join(cell['foreign'][:8])}")
+        print("  un binario para otro chip tambien pesa bytes; esto no es un diff, es un bug.")
+
     diffs = []
     for key in sorted(set(before) | set(current)):
         a, b = measured(before.get(key)), measured(current.get(key))
@@ -605,7 +694,7 @@ def main():
             diffs.append((key, f"{a} -> {b}", None))
     if not diffs:
         print(f"\nsin cambios: {len(current)} celdas identicas")
-        return 0
+        return 1 if alien else 0
     moved = {name for kind, text in drifted if kind == "distinto"
              for name in prov["toolchain"] if text.startswith(name + ":")}
     frontend_moved = any(kind == "distinto" and not text.startswith("pymcuc-")
@@ -630,7 +719,7 @@ def main():
         else:
             flag = ""
         print(f"  {key:24s} {text}{flag}")
-    return 1 if worse else 0
+    return 1 if (worse or alien) else 0
 
 
 if __name__ == "__main__":
