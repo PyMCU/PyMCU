@@ -21,23 +21,74 @@ import time
 from pathlib import Path
 from rich.console import Console
 
+_DIAG_HEADER_RE = re.compile(r"^(\S+?):(\d+)(:.*)$")
+
+# `12 |     x: uint8 = +seed` -- a source line in the snippet the compiler draws under the
+# header. The caret line carries no leading number and so never matches.
+_DIAG_GUTTER_RE = re.compile(r"^(\s*)(\d+)( \| .*)$")
+
+
 def _remap_diagnostics(text: str, diagnostic_source) -> str:
-    """Point every diagnostic at the file the user wrote.
+    """Point every diagnostic at the file the user wrote, header AND snippet.
 
     `diagnostic_source` is (synthetic_path, real_path, preamble_lines). The compiler is
     handed a synthetic entry with an injected preamble, so it reports
     `dist/_generated/main.py:13:1` for a line the user wrote at 7 in `src/main.py`.
+
+    The snippet under the header is rendered by the compiler against that same synthetic
+    file, so its gutter carries the offset too. Rewriting only the header left one message
+    stating two different line numbers for the same line. The gutter follows the header and
+    never the reverse: the header is what the editor integrations parse and what the reader
+    opens their editor at.
     """
     synthetic, real, offset = diagnostic_source
     syn_name = os.path.basename(str(synthetic))
 
-    def fix(match):
-        path, line, rest = match.group(1), int(match.group(2)), match.group(3)
-        if os.path.basename(path) != syn_name or "_generated" not in path.replace("\\", "/"):
-            return match.group(0)
-        return f"{real}:{max(1, line - offset)}{rest}"
+    def is_synthetic(path: str) -> bool:
+        return (os.path.basename(path) == syn_name
+                and "_generated" in path.replace("\\", "/"))
 
-    return re.sub(r"^(\S+?):(\d+)(:.*)$", fix, text, flags=re.MULTILINE)
+    out: list[str] = []
+    # Whether the snippet currently being read belongs to the entry file. Decided per block
+    # rather than per line: a diagnostic reported against an imported module has numbering of
+    # its own, and shifting it by the ENTRY file's preamble would invent a line.
+    renumber = False
+
+    for line in text.split("\n"):
+        header = _DIAG_HEADER_RE.match(line)
+        if header:
+            path, num, rest = header.group(1), int(header.group(2)), header.group(3)
+            if is_synthetic(path):
+                # A line at or below the offset is inside the preamble, so the generated file
+                # really is where it went wrong. Its frame stays as the compiler drew it;
+                # renumbering would send the reader to a line of their own source that is not
+                # the one that failed.
+                renumber = num > offset
+                out.append(f"{real}:{max(1, num - offset)}{rest}")
+            else:
+                renumber = False
+                out.append(line)
+            continue
+
+        gutter = _DIAG_GUTTER_RE.match(line) if renumber else None
+        if gutter:
+            pad, digits, rest = gutter.group(1), gutter.group(2), gutter.group(3)
+            mapped = int(digits) - offset
+            if mapped < 1:
+                # A context line from inside the preamble. There is no number of the user's
+                # that fits it, and clamping it to 1 would label injected code as the first
+                # line they wrote, so it is dropped instead.
+                continue
+            # Right-justified into the width the compiler already used. The caret line was
+            # padded against that width, so preserving it keeps the arrow under its character
+            # without this code needing to know how the caret line was built. The mapped
+            # number is never longer than the original, so the field never overflows.
+            out.append(f"{str(mapped).rjust(len(pad) + len(digits))}{rest}")
+            continue
+
+        out.append(line)
+
+    return "\n".join(out)
 
 
 class PyMCUCompiler:
