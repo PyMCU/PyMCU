@@ -1,0 +1,104 @@
+/*
+ * -----------------------------------------------------------------------------
+ * PyMCU Compiler (pymcuc)
+ * Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * -----------------------------------------------------------------------------
+ * SAFETY WARNING / HIGH RISK ACTIVITIES:
+ * THE SOFTWARE IS NOT DESIGNED, MANUFACTURED, OR INTENDED FOR USE IN HAZARDOUS
+ * ENVIRONMENTS REQUIRING FAIL-SAFE PERFORMANCE, SUCH AS IN THE OPERATION OF
+ * NUCLEAR FACILITIES, AIRCRAFT NAVIGATION OR COMMUNICATION SYSTEMS, AIR
+ * TRAFFIC CONTROL, DIRECT LIFE SUPPORT MACHINES, OR WEAPONS SYSTEMS.
+ * -----------------------------------------------------------------------------
+ */
+
+using Xunit;
+using PyMCU.Common;
+using PyMCU.Common.Models;
+using PyMCU.Frontend;
+using PyMCU.IR;
+using PyMCU.IR.IRGenerator;
+
+namespace PyMCU.UnitTests;
+
+/// <summary>
+/// PyMCU#177, the call cluster. A diagnostic about a CALL points at the callee; one about an
+/// ARGUMENT points at that argument.
+///
+/// The split follows #164: what the message blames is what the caret marks. "hex() expects
+/// exactly one argument" is about the call, so it marks `hex`; "hex() argument must be a
+/// compile-time constant" is about the argument, so it marks the argument.
+///
+/// These land far more often than the parser stamping did, and the reason is worth keeping: a
+/// callee is a VariableExpr, which the parser already stamps, so pointing at it produces a real
+/// column today. The arguments only produce one when their own node type is stamped, which is
+/// why a literal argument still reports no column below.
+/// </summary>
+public class CallDiagnosticColumnTests
+{
+    private static CompilerError Fails(string body)
+    {
+        string src = "from pymcu.types import uint8\ndef main() -> None:\n" + body;
+        return Assert.Throws<CompilerError>(() =>
+            new IRGenerator().Generate(
+                new Parser(new Lexer(src).Tokenize()).ParseProgram(),
+                new Dictionary<string, ProgramNode>(),
+                new DeviceConfig { Arch = "avr" }));
+    }
+
+    //          123456789
+    // line 3: "    s = hex(1, 2)"  -- `hex` starts at column 9
+
+    [Theory]
+    [InlineData("    s = hex(1, 2)\n")]
+    [InlineData("    n = len()\n")]
+    [InlineData("    v = pow(2)\n")]
+    [InlineData("    v = bin(1, 2)\n")]
+    [InlineData("    v = chr(1, 2)\n")]
+    [InlineData("    v = str(1, 2)\n")]
+    public void AnArityErrorPointsAtTheCallee(string body)
+    {
+        var ex = Fails(body);
+
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(9, ex.Column);
+        Assert.Equal(3, ex.Length);   // the callee's own name, underlined
+    }
+
+    [Fact]
+    public void AnArgumentErrorPointsAtTheArgumentAndNotAtTheCallee()
+    {
+        //          1234567890123456
+        // line 4: "    s = hex(a + 1)"  -- the '+' of the argument is at column 15
+        var ex = Fails("    a: uint8 = 5\n    s = hex(a + 1)\n");
+
+        Assert.Equal(4, ex.Line);
+        Assert.Equal(15, ex.Column);
+    }
+
+    [Fact]
+    public void AStringArgumentErrorPointsAtThatString()
+    {
+        // int.from_bytes(bytes, endian) -- the endian argument is the second one, and a string
+        // literal is stamped, so this marks the string rather than the call.
+        var ex = Fails("    v = int.from_bytes(b\"\\x01\\x02\", \"middle\")\n");
+
+        Assert.Contains("endian", ex.Message);
+        Assert.True(ex.Column > 9,
+            $"expected the caret on the endian argument, well right of the callee, got {ex.Column}");
+    }
+
+    [Fact]
+    public void AnArgumentWhoseNodeTypeIsNotStampedStillReportsNoColumn()
+    {
+        // `sum(1)` blames the argument, and an IntegerLiteral carries no position yet. The rule
+        // holds: no measurement, no caret. This starts passing a real column the day integer
+        // literals are stamped, with no edit here.
+        var ex = Fails("    v = sum(1)\n");
+
+        Assert.Contains("sum()", ex.Message);
+        Assert.False(ex.HasColumn);
+    }
+}
