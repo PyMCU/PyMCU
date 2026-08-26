@@ -61,10 +61,18 @@ def set_duty_ops(tmp_path: Path, pin: str, duty: int):
     assert "[BUILD_OK]" in proc.stdout, proc.stdout + proc.stderr
     ir = json.loads(mir.read_text())
     main = next(f for f in ir["functions"] if f["name"] == "main")
+    # Collect from the call site to the next statement of main.py. Until PyMCU#179 every
+    # dbg inside the inlined stdlib body carried MAIN.PY's text, so `collecting` could be
+    # recomputed per marker and stayed true through the whole body. Those markers now carry
+    # the stdlib's own source, which is the point of that fix, so the span has to be
+    # delimited by its two ends instead of by a substring holding across it.
     ops, collecting = [], False
     for i in main["body"]:
         if i.get("$t") == "dbg":
-            collecting = "set_duty" in i["text"]
+            if "set_duty(" in i["text"]:
+                collecting = True
+            elif collecting and "while True" in i["text"]:
+                break
             continue
         if collecting:
             ops.append(i)
