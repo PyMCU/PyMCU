@@ -286,7 +286,7 @@ at the call site. `nonlocal` is supported inside nested `@inline` functions.
 
 **Supported:** ZCA `@inline` classes (zero SRAM), `@property` / `@name.setter`,
 single-level class inheritance with `super()`, `with obj:` context managers
-(`__enter__`/`__exit__`), `@staticmethod`, operator dunder methods (`__add__`, `__sub__`,
+(`__enter__`/`__exit__`), operator dunder methods (`__add__`, `__sub__`,
 `__mul__`, `__len__`, `__contains__`, `__getitem__`, `__setitem__`, all comparison / bitwise
 dunders). A class-typed field dispatches correctly through a **value-returning** method too
 (`self.pin.read()` on a nested ZCA field), which is what the compat layers are built on —

@@ -74,7 +74,7 @@ Everything in this section is shipped and tested in the current alpha build.
 | `@inline` | Zero-cost abstraction |
 | `@interrupt(vector)` | ISR handler generation with automatic `sei` |
 | `@property` / `@name.setter` | Compile-time expansion only |
-| `@staticmethod` | Silently ignored (all class methods are effectively static) |
+| `@staticmethod` | NOT supported, and not silently. `A.f(x)` emits a call to `A_f` that the same build never defines, so it fails at link time with a symbol and no source line; `a.f(x)` binds the receiver to the first parameter, so the argument has nowhere to go. Calling anything through the class object is what is missing; the decorator changes nothing either way (PyMCU#201) |
 | `__CHIP__` | Conditional compilation by chip name / architecture |
 | `__FREQ__` | Compile-time clock frequency in Hz (e.g. `16000000` at 16 MHz); use for timing calculations |
 | `.value` dereference | 8/16-bit memory read/write via `ptr` |

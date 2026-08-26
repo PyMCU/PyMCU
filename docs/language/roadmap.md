@@ -83,7 +83,7 @@ This page tracks which language and HAL features have been implemented, and what
 | `[tool.pymcu.ffi]` build config | C/C++ interop: `sources`, `include_dirs`, `cflags` |
 | `float` (soft-float) | IEEE 754 single-precision; AVR (`__fp_*` intrinsics) and RP2040 (bootrom fast-float library via `__aeabi_f*` shims); annotation `x: float = 3.14`; float↔int conversions truncate toward zero. RP2350 pending (M33 FPU) |
 | `@naked` | No compiler prolog/epilog; registers hold raw calling-convention values at function entry; required for precise `uint16` register manipulation |
-| `@staticmethod` | Silently ignored — all class methods in PyMCU are effectively static |
+| `@staticmethod` | NOT supported. `A.f(x)` emits a call to `A_f` that the same build never defines, failing at link time with no source line; `a.f(x)` binds the receiver to the first parameter, so the argument has nowhere to go. Class methods are *not* effectively static: the receiver is still bound. Calling through the class object is what is missing (PyMCU#201) |
 | `CompileError` intrinsic | `raise CompileError("msg")` aborts compilation with a `CompileError:` diagnostic; never generates `RaiseExn` IR; used in all HAL modules for unsupported arch/chip guards; cannot be caught by `try/except` |
 
 ### HAL (ATmega328P)
