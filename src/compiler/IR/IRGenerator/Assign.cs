@@ -106,15 +106,24 @@ public partial class IRGenerator
             string strKey = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + strTgt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + strTgt.Name : strTgt.Name);
-            if (stmt.Value is StringLiteral strLit)
-                strConstantVariables[strKey] = strLit.Value;
+            // What the right-hand side IS, not whether it was spelled as a literal. `b = a`
+            // and `c = BANNER` and `n = cfg.name` all hold a text the compiler knows, and
+            // clearing it here is what made print stream the interned id as a decimal: a
+            // two-line program printed 256 for "abc" (#209).
+            string? boundText = StaticStringOf(stmt.Value);
+            if (boundText != null)
+                strConstantVariables[strKey] = boundText;
             else
-            {
                 strConstantVariables.Remove(strKey);
-                // Binding the name to something that is not a literal (another string name,
-                // an f-string buffer) puts a text in it that no candidate set can name, so
-                // the id in the slot no longer stands for one of them: stop dispatching on
-                // it and let the binding this assignment makes speak for the name.
+
+            // DISPATCH is a different question from what the name holds, and only this half
+            // was ever load-bearing. A name bound to anything but a literal must stop
+            // selecting const[str] overloads (#144) and must keep refusing when it is rebound
+            // to a different text on another path (#145). That stays exactly as it was: the
+            // two removals below run for every non-literal right-hand side, including the
+            // ones whose text is now kept.
+            if (stmt.Value is not StringLiteral)
+            {
                 multiStrVariables.Remove(strKey);
                 multiStrVariables.Remove(StrBindingKey(strTgt.Name));
             }

@@ -30,6 +30,17 @@ STDLIB = REPO / "lib" / "src"
 pytestmark = pytest.mark.skipif(
     not PYMCUC.exists(), reason="compiler binary not built (run `just build`)")
 
+def _flash_strings(mir):
+    """The texts the firmware actually holds. `ok` alone cannot tell a right join from a wrong
+    one -- both compile."""
+    out = []
+    for fn in mir.get("functions", []):
+        for i in fn.get("body", []):
+            if i.get("$t") == "fdata":
+                out.append(bytes(i["bytes"][:-1]).decode("latin1"))
+    return out
+
+
 STDOUT_IMPORT = "from pymcu.hal.uart import UART as _stdout\n"
 STDOUT_OPEN = "    _stdout(115200)\n"
 # `pymcu build` injects both of these; pymcuc on its own has neither a console nor the
@@ -136,11 +147,42 @@ COPIED_SEPARATOR = (
 )
 
 
+def test_the_copied_separator_now_compiles(tmp_path):
+    """It used to be refused, and this test used to pin that refusal. #209 gave a name bound
+    from another name its text back, so `sep = c.sep` followed by `sep.join([...])` is now an
+    ordinary compile-time join and there is nothing left to refuse.
+
+    Kept rather than deleted because the program is the one the ISSUE proposed as the
+    workaround, and it went from "answers with a symbol the program never wrote" to "refused
+    with an accurate sentence" to "compiles". Asserting the result, not just the exit code:
+    compiling with the wrong separator would pass an `ok` check.
+    """
+    ok, out, mir = compile_(tmp_path, COPIED_SEPARATOR)
+    assert ok, out
+    assert "a-b" in _flash_strings(mir), _flash_strings(mir)
+
+
+# The discriminator this file was built around, aimed at a program that is still refused: a
+# separator bound to something that is not a string at all. It must name `sep` and say what it
+# needs, and it must never name `sep_join`, a symbol the reader's program does not contain.
+TEXTLESS_SEPARATOR = (
+    STDOUT_IMPORT
+    + "from pymcu.types import uint8\n\n\n"
+    + "def pick(n: uint8) -> uint8:\n"
+    + "    return n\n\n\n"
+    + "def main():\n"
+    + STDOUT_OPEN
+    + "    sep = pick(3)\n"
+    + '    s = sep.join(["a", "b"])\n'
+    + "    print(s)\n"
+)
+
+
 def test_a_separator_with_no_text_does_not_name_a_symbol_the_program_never_wrote(tmp_path):
     """The discriminator: this answered "call to undefined function 'sep_join'", sending the
     reader to look for a typo in a name their program does not contain."""
-    ok, out, _ = compile_(tmp_path, COPIED_SEPARATOR)
-    assert not ok, "the copied separator compiled; this test has stopped discriminating"
+    ok, out, _ = compile_(tmp_path, TEXTLESS_SEPARATOR)
+    assert not ok, "the textless separator compiled; this test has stopped discriminating"
     assert "sep_join" not in out, out
     assert "'sep'" in out and "compile-time string" in out, out
 
