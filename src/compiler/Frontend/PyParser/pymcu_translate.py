@@ -151,7 +151,25 @@ def e_constant(node):
     if isinstance(v, bytes):
         # What the C# parser produces for b"...": a list of byte values.
         return {"k": "List", "elements": [{"k": "Int", "value": b, "line": line_of(node)} for b in v]}
+    if v is Ellipsis:
+        raise Unsupported(
+            "'...' is the Ellipsis literal, and PyMCU has no value for one. As a placeholder "
+            "BODY it is accepted and means `pass`; in an expression -- assigned, passed, "
+            "compared -- there is nothing for it to be.", node)
     raise Unsupported(f"literal of type {type(v).__name__}", node)
+
+
+def s_expr_stmt(node):
+    """`...` on its own line is the ordinary Python placeholder body and means `pass`.
+
+    It reaches here as an expression statement holding Ellipsis, and the constant handler has
+    no value to give back for one, so it used to answer "literal of type ellipsis" -- an
+    internal spelling, for the most common way there is to sketch a function. Only the
+    STATEMENT position is accepted: `x = ...` still has nothing to be, and says so by name.
+    """
+    if isinstance(node.value, ast.Constant) and node.value.value is Ellipsis:
+        return {"k": "Pass"}
+    return {"k": "ExprStmt", "expr": expr(node.value)}
 
 
 def strip_triple_quote_newline(node, value):
@@ -648,7 +666,7 @@ STMT = {
     ast.Assign: s_assign,
     ast.AnnAssign: s_annassign,
     ast.AugAssign: s_augassign,
-    ast.Expr: lambda n: {"k": "ExprStmt", "expr": expr(n.value)},
+    ast.Expr: lambda n: s_expr_stmt(n),
     ast.Return: lambda n: {"k": "Return", "value": expr(n.value)},
     ast.If: s_if,
     ast.For: s_for,
@@ -730,7 +748,16 @@ def apply_decorator(fn, dec, node):
         elif name == "staticmethod":
             pass
         elif name == "classmethod":
-            raise Unsupported("@classmethod is not supported (no runtime class object)", node)
+            # The same sentence the C# front end gives (Frontend/Parser.cs,
+            # ClassMethodUnsupported). This used to be a shorter text of its own, with neither
+            # the reason nor a way forward, so the same program got two different answers
+            # depending on which parser ran. The @staticmethod alternative the other one used
+            # to offer is gone from both: measured, `A.make()` on a @staticmethod answers
+            # "Function 'A_make' expects 1 arguments, but 0 were provided".
+            raise Unsupported(
+                "@classmethod is not supported: there is no runtime class object on bare metal "
+                "for cls to be. Write a module-level factory function instead "
+                "(`def make() -> T:` returning `T(...)`), which compiles.", node)
         elif name == "asm_pio":
             fn["isPio"] = True
         elif name == "interrupt":

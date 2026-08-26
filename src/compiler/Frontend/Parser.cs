@@ -69,14 +69,17 @@ public class Parser
             }
             else
             {
-                try
-                {
-                    prog.GlobalStatements.Add(ParseStatement());
-                }
-                catch (SyntaxError e)
-                {
-                    Error("Expected function definition, import, or valid statement. Original error: " + e.Message);
-                }
+                // The statement parser's own error is the specific one and is rethrown as it
+                // stands. It used to be wrapped -- "Expected function definition, import, or
+                // valid statement. Original error: " + e.Message -- which put a generic
+                // sentence in front of a message written to be read, and the phrase "Original
+                // error:" in front of that, telling the reader they are looking at compiler
+                // internals rather than at their program. The wrapper never improved an inner
+                // message: `@classmethod` arrived here carrying its own account of why, and
+                // `...` arrived carrying a position, and both were buried. It also lost the
+                // inner error's line and column, since Error() re-reads the CURRENT token,
+                // which by then is wherever the parser stopped unwinding.
+                prog.GlobalStatements.Add(ParseStatement());
             }
         }
 
@@ -149,6 +152,21 @@ public class Parser
 
         Error("Expected newline or end of block");
     }
+
+    // Shared with the Python front end (Frontend/PyParser/pymcu_translate.py), which had a
+    // shorter text of its own: "@classmethod is not supported (no runtime class object)", with
+    // neither the reason nor a way forward. Two front ends answering the same program with two
+    // different messages is its own defect (#196), so the text lives in one place in each and
+    // reads the same.
+    //
+    // The @staticmethod alternative this used to offer is GONE because it does not work.
+    // Measured: `A.make()` on a @staticmethod answers "Function 'A_make' expects 1 arguments,
+    // but 0 were provided" -- the method still carries self. The module-level factory does
+    // work, verified by compiling one, so it is the only thing offered.
+    internal const string ClassMethodUnsupported =
+        "@classmethod is not supported: there is no runtime class object on bare metal for cls "
+        + "to be. Write a module-level factory function instead (`def make() -> T:` returning "
+        + "`T(...)`), which compiles.";
 
     private void Error(string message)
     {
@@ -427,8 +445,7 @@ public class Parser
             }
             else if (decorator.Value == "classmethod")
             {
-                Error("@classmethod is not supported (no runtime class object on bare metal); " +
-                      "use a module-level factory function, or a @staticmethod that calls the constructor");
+                Error(ClassMethodUnsupported);
             }
             else if (decorator.Value == "naked")
             {
@@ -666,8 +683,24 @@ public class Parser
         return PeekAt(offset).Type == TokenType.Class;
     }
 
+    // `...` is three Dot tokens: the lexer has no ellipsis token, and there is no PyMCU value
+    // for one, so it cannot be an expression here. As a BODY it is the ordinary Python
+    // placeholder and means exactly `pass`, which is what it becomes. Any other position is
+    // refused by name in ParsePrimary rather than left to "Expected expression".
+    private bool AtEllipsis() =>
+        Check(TokenType.Dot) && PeekNext().Type == TokenType.Dot && PeekAt(2).Type == TokenType.Dot;
+
     private Statement ParseStatement()
     {
+        if (AtEllipsis())
+        {
+            Advance();
+            Advance();
+            Advance();
+            ConsumeStatementEnd();
+            return new PassStmt();
+        }
+
         // `async with` / `async for`: named here rather than dying two tokens later as
         // "Expected newline or end of block". Both need the coroutine lowering, which is the
         // piece that does not exist yet -- not the statement itself.
@@ -2308,6 +2341,11 @@ public class Parser
             Consume(TokenType.RBracket, "Expected ']'");
             return new ListExpr(lelems);
         }
+
+        if (AtEllipsis())
+            Error("'...' is the Ellipsis literal, and PyMCU has no value for one. As a "
+                  + "placeholder BODY it is accepted and means `pass`; in an expression -- "
+                  + "assigned, passed, compared -- there is nothing for it to be.");
 
         Error("Expected expression");
         return null!;
