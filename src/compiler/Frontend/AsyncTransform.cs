@@ -87,6 +87,8 @@ public static class AsyncTransform
         // compile time, so every create_task call site gets its own global instance and a
         // flag saying whether it is running, and `asyncio.run` becomes a round-robin over
         // exactly those globals. See CollectTaskSites.
+        if (alias != null) RejectNestedGather(prog, alias);
+
         var tasks = new List<TaskSite>();
         if (alias != null) CollectTaskSites(prog, alias, asyncFns, tasks);
 
@@ -226,6 +228,74 @@ public static class AsyncTransform
 
     private static string LowerFirst(string n) =>
         string.IsNullOrEmpty(n) ? n : char.ToLowerInvariant(n[0]) + n[1..];
+
+    // `gather` drives its two coroutines to completion before it returns, so a gather passed
+    // as an argument to another one is not a way to reach three tasks: the inner gather is
+    // evaluated first, runs its pair to the end, and only then does the outer one start. That
+    // is sequential, not concurrent, and it is what the docstring used to advise. Refused here
+    // by name rather than reaching the inliner, which reported `gather` as recursive -- a
+    // property the program does not have, since gather does not call itself.
+    private static void RejectNestedGather(ProgramNode prog, string aio)
+    {
+        static bool IsGather(Expression e, string aio) =>
+            e is CallExpr { Callee: MemberAccessExpr { Member: "gather" } m }
+            && m.Object is VariableExpr v && v.Name == aio;
+
+        bool HasGatherInside(Expression? e) => e switch
+        {
+            null => false,
+            CallExpr c => IsGather(c, aio) || c.Args.Any(HasGatherInside) || HasGatherInside(c.Callee),
+            BinaryExpr b => HasGatherInside(b.Left) || HasGatherInside(b.Right),
+            UnaryExpr u => HasGatherInside(u.Operand),
+            MemberAccessExpr ma => HasGatherInside(ma.Object),
+            IndexExpr ix => HasGatherInside(ix.Target) || HasGatherInside(ix.Index),
+            TernaryExpr t => HasGatherInside(t.Condition) || HasGatherInside(t.TrueVal)
+                             || HasGatherInside(t.FalseVal),
+            KeywordArgExpr kw => HasGatherInside(kw.Value),
+            _ => false,
+        };
+
+        void Check(Expression? e, int line)
+        {
+            if (e is not CallExpr call) return;
+            if (IsGather(call, aio) && call.Args.Any(HasGatherInside))
+                throw new SyntaxError(
+                    $"`{aio}.gather(...)` inside another `{aio}.gather(...)` does not run three "
+                    + "coroutines together: gather drives its pair to completion before it "
+                    + $"returns, so the inner one finishes before the outer one starts. Use "
+                    + $"`{aio}.create_task(...)` for each extra coroutine and one "
+                    + $"`{aio}.run(main())` to drive them.", line, 1);
+            foreach (var a in call.Args) Check(a, line);
+            Check(call.Callee, line);
+        }
+
+        void Walk(List<Statement> stmts)
+        {
+            foreach (var st in stmts)
+            {
+                switch (st)
+                {
+                    case ExprStmt es: Check(es.Expr, es.Line); break;
+                    case AssignStmt a: Check(a.Value, a.Line); break;
+                    case VarDecl vd: Check(vd.Init, vd.Line); break;
+                    case AnnAssign an: Check(an.Value, an.Line); break;
+                    case ReturnStmt r: Check(r.Value, r.Line); break;
+                    case Block b: Walk(b.Statements); break;
+                    case IfStmt iff:
+                        WalkIn(iff.ThenBranch);
+                        foreach (var (_, eb) in iff.ElifBranches) WalkIn(eb);
+                        if (iff.ElseBranch != null) WalkIn(iff.ElseBranch);
+                        break;
+                    case WhileStmt w: WalkIn(w.Body); break;
+                    case ForStmt f: WalkIn(f.Body); break;
+                }
+            }
+        }
+        void WalkIn(Statement s) { if (s is Block b) Walk(b.Statements); }
+
+        foreach (var f in prog.Functions) Walk(f.Body.Statements);
+        Walk(prog.GlobalStatements);
+    }
 
     // One create_task call site: the global holding its coroutine, and the flag saying
     // whether that coroutine is still running.

@@ -74,9 +74,23 @@ def run(coro):
 def gather(a, b):
     """Drive two coroutines concurrently until both complete.
 
-    The arity is fixed at compile time (coroutine state machines have no runtime
-    representation to put in an array); nest gathers or add explicit poll loops
-    for more tasks.
+    The arity is fixed at compile time: a coroutine state machine is its own type
+    with no runtime representation to put in an array, so there is nothing for a
+    variadic form to iterate.
+
+    For three or more, use create_task(), which builds the task set at compile
+    time and lets run() drive all of them:
+
+        async def main():
+            asyncio.create_task(t1())
+            asyncio.create_task(t2())
+            await asyncio.sleep_ms(1000)
+
+        asyncio.run(main())
+
+    Nesting gathers does NOT work and is refused: gather drives its pair to
+    completion before it returns, so an inner gather finishes before the outer one
+    starts, which is sequential rather than concurrent.
     """
     ra: uint32 = 1
     rb: uint32 = 1
