@@ -825,7 +825,7 @@ public partial class IRGenerator
             {
                 string wanted = aliasToOriginal.GetValueOrDefault(impVe.Name, impVe.Name) ?? impVe.Name;
                 var exports = ExportedNames(impMod);
-                string near = NearestExportedName(exports, wanted);
+                string near = NearestName(exports, wanted);
                 string tail = near.Length > 0
                     ? $". Did you mean '{near}'?"
                     : exports.Count > 0
@@ -3507,15 +3507,15 @@ public partial class IRGenerator
     }
 
     /// <summary>
-    /// The exported name of <paramref name="moduleName"/> closest to <paramref name="wanted"/>,
-    /// or "" when nothing is close enough to be worth suggesting. Exports are the functions and
-    /// classes this generator has registered under the module's mangled prefix.
+    /// The name in <paramref name="candidates"/> closest to <paramref name="wanted"/>, or ""
+    /// when nothing is close enough to be worth suggesting. Used for a module's exports and for
+    /// a builtin's keyword arguments, which are the same question asked of different sets.
     /// </summary>
-    private static string NearestExportedName(IReadOnlyCollection<string> exported, string wanted)
+    private static string NearestName(IReadOnlyCollection<string> candidates, string wanted)
     {
         string best = "";
         int bestDistance = int.MaxValue;
-        foreach (var name in exported)
+        foreach (var name in candidates)
         {
             int d = string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase)
                 ? 0
@@ -3526,6 +3526,29 @@ public partial class IRGenerator
         // Two edits on a short name is already a different word; suggesting it would be noise.
         int allowed = Math.Max(2, wanted.Length / 3);
         return bestDistance <= allowed ? best : "";
+    }
+
+    /// <summary>
+    /// Refuse a keyword argument a builtin does not have.
+    ///
+    /// Every other call already answers this. A user function, an @inline and a constructor all
+    /// go through the parameter binder, which says `unknown keyword argument 'x' in call to
+    /// 'f'`. `print` and `input` lower their own keywords instead, and neither loop had an else,
+    /// so an unrecognised key was dropped without a word: `print(1, 2, foo=3)` emitted exactly
+    /// `print(1, 2)`, and `input(maxlenn=8)` took the default 64-byte buffer instead of 8.
+    ///
+    /// The shape it hides in is a near miss on a keyword that exists, so both the accepted set
+    /// and the suggestion are worth the words. CPython raises TypeError here.
+    /// </summary>
+    private void RefuseUnknownKeyword(
+        string callee, string key, IReadOnlyList<string> accepted, Expression at)
+    {
+        string near = NearestName(accepted, key);
+        throw UserError(
+            $"unknown keyword argument '{key}' in call to '{callee}()': it takes "
+            + string.Join(" and ", accepted)
+            + (near.Length > 0 ? $". Did you mean '{near}'?" : "."),
+            at);
     }
 
     /// <summary>
@@ -4426,6 +4449,10 @@ public partial class IRGenerator
         return new NoneVal();
     }
 
+    // The keywords print really has. Named so the refusal below and the loop that accepts them
+    // cannot drift apart, which is how the loop came to accept everything else in silence.
+    private static readonly string[] PrintKeywords = { "sep", "end" };
+
     // print(*args, sep=" ", end="\n"): write each argument via the resolved string/
     // decimal/float UART helpers, separated by sep and terminated by end.
     private Val EmitPrintBuiltin(CallExpr expr)
@@ -4446,6 +4473,7 @@ public partial class IRGenerator
                     }
                     else throw UserError($"print() '{kw.Key}' must be a compile-time string literal");
                 }
+                else RefuseUnknownKeyword("print", kw.Key, PrintKeywords, expr);
             }
             // `print("val {}".format(x))` streams like the f-string it is. Rewritten here
             // rather than when the call is evaluated, so it takes the streaming path instead

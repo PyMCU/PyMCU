@@ -22,6 +22,10 @@ namespace PyMCU.IR.IRGenerator;
 
 public partial class IRGenerator
 {
+    // The keywords input() really has, named for the same reason PrintKeywords is: the loop
+    // that accepts them and the refusal that lists them must not drift apart.
+    private static readonly string[] InputKeywords = { "prompt", "maxlen" };
+
     private void VisitAssign(AssignStmt stmt)
     {
         // Assigning to a plain name binds it, whatever the right-hand side turns out to be and
@@ -2534,6 +2538,19 @@ public partial class IRGenerator
                             {
                                 if (kw.Key == "prompt" && kw.Value is StringLiteral ksl) inputPrompt = ksl.Value;
                                 else if (kw.Key == "maxlen" && kw.Value is IntegerLiteral kil) inputMaxLen = kil.Value;
+                                // Two ways to fall out of those, and they are different
+                                // questions. A key input() does not have is the same refusal
+                                // every other call gives; a key it DOES have, carrying
+                                // something that is not a literal, is about the value. Both
+                                // were silently dropped: `maxlenn=8` took the default 64-byte
+                                // buffer instead of 8, which is 56 bytes of SRAM nobody asked
+                                // for on a part that has two thousand of them.
+                                else if (kw.Key is "prompt" or "maxlen")
+                                    throw UserError(
+                                        $"input() '{kw.Key}' must be a compile-time "
+                                        + (kw.Key == "prompt" ? "string literal" : "integer literal"));
+                                else
+                                    RefuseUnknownKeyword("input", kw.Key, InputKeywords, call);
                             }
                             else
                                 throw UserError("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
