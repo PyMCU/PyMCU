@@ -435,6 +435,13 @@ public partial class IRGenerator
 
         var snapBefore = new Dictionary<string, string>(strConstantVariables);
         var branchSnaps = new List<Dictionary<string, string>>();
+        // The same bookkeeping for integer constants. Arms are mutually exclusive, so a value
+        // one arm assigns cannot be in effect while a sibling arm runs: without this, a field
+        // set to a constant in one arm was still believed when another arm READ it, the read
+        // folded, and `self._n = self._n + 1` in the second arm became a store of the constant
+        // 1. The field never accumulated and a state machine never left that arm.
+        var snapBeforeInt = new Dictionary<string, int>(constantVariables);
+        var branchSnapsInt = new List<Dictionary<string, int>>();
         bool hasElse = stmt.ElseBranch != null;
 
         if (!skipThen)
@@ -446,6 +453,8 @@ public partial class IRGenerator
                 Emit(new Jump(endLabel));
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
+            branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
+            constantVariables = new Dictionary<string, int>(snapBeforeInt);
         }
 
         for (int i = 0; i < stmt.ElifBranches.Count; ++i)
@@ -501,6 +510,8 @@ public partial class IRGenerator
                 if (!isLastElif || stmt.ElseBranch != null) Emit(new Jump(endLabel));
                 branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
                 strConstantVariables = new Dictionary<string, string>(snapBefore);
+                branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
+                constantVariables = new Dictionary<string, int>(snapBeforeInt);
             }
         }
 
@@ -513,9 +524,46 @@ public partial class IRGenerator
             if (isRuntimeBranch) _runtimeBranchDepth--;
             branchSnaps.Add(new Dictionary<string, string>(strConstantVariables));
             strConstantVariables = new Dictionary<string, string>(snapBefore);
+            branchSnapsInt.Add(new Dictionary<string, int>(constantVariables));
+            constantVariables = new Dictionary<string, int>(snapBeforeInt);
         }
 
         Emit(new Label(endLabel));
+
+        // Past the chain, an integer constant survives only when every arm agrees on it and one
+        // arm always runs, which is the rule the string constants below already follow. Every
+        // arm has to contribute its snapshot, the else included: with one missing, a value only
+        // one arm assigns looks unanimous and is re-established as a constant, which is what
+        // #132 relies on NOT happening for an @inline returning a different value per branch.
+        if (branchSnapsInt.Count > 0)
+        {
+            // The pre-branch snapshot predates anything an arm killed, so restoring it
+            // wholesale resurrects a constant a write inside an arm had already marked mutable
+            // and the read then folds to a value the program has since overwritten.
+            constantVariables = new Dictionary<string, int>(snapBeforeInt);
+            foreach (var dead in killedConstants) constantVariables.Remove(dead);
+
+            var changedInt = new HashSet<string>();
+            foreach (var kvp in branchSnapsInt.SelectMany(snap => snap))
+                if (!snapBeforeInt.TryGetValue(kvp.Key, out var oldV) || oldV != kvp.Value)
+                    changedInt.Add(kvp.Key);
+
+            foreach (var key in changedInt)
+            {
+                bool allAgree = true;
+                int agreed = 0;
+                bool first = true;
+                foreach (var snap in branchSnapsInt)
+                {
+                    if (!snap.TryGetValue(key, out var v)) { allAgree = false; break; }
+                    if (first) { agreed = v; first = false; }
+                    else if (v != agreed) { allAgree = false; break; }
+                }
+
+                if (allAgree && !first && hasElse) constantVariables[key] = agreed;
+                else constantVariables.Remove(key);
+            }
+        }
 
         if (branchSnaps.Count <= 0) return;
         var changedKeys = new HashSet<string>();
