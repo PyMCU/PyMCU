@@ -2055,26 +2055,12 @@ public partial class IRGenerator
         // A @staticmethod has no receiver parameter, so its call is an ordinary function
         // call the normal path already resolves. Only a method whose first parameter is the
         // receiver takes the first argument as self.
-        if (func.Params.Count == 0 || func.Params[0].Name != "self")
-        {
-            // One shape reaches here having a receiver all the same: a method whose declared
-            // return type is a multi-field class is force-inlined (#49), and the definition
-            // registered for it is the OUTLINED rewrite, whose instance arrives flattened as
-            // one `self_<field>` parameter per field rather than as `self`.
-            //
-            // It is refused rather than expanded, because expanding it is what super() does
-            // for the same shape and super() MISCOMPILES it silently: the base body vanishes
-            // and the caller reads unwritten `self_*` slots as zero. A loud refusal is worth
-            // more than matching that. The refusal names the construct, which is what issue
-            // #131 asks a diagnostic to do; falling through would print the internal mangled
-            // name instead.
-            if (func.Params.Count > 0 && func.Params[0].Name.StartsWith("self_", StringComparison.Ordinal))
-                throw UserError(
-                    $"'{clsVe.Name}.{mem.Member}' returns {func.ReturnType}, a class with several " +
-                    "fields, and a base-class call cannot carry one back yet. Return the fields " +
-                    "separately, or call it on the instance");
-            return null;
-        }
+        // A @staticmethod has no receiver parameter, so its call is an ordinary function call
+        // the normal path already resolves. A method that got the OUTLINED ABI does have one,
+        // spelled as one `self_<field>` parameter per field rather than as `self`: that shape
+        // is expanded like any other, which is what makes the two spellings behave alike now
+        // that the shared emitter binds a flattened receiver correctly (PyMCU#157).
+        if (func.Params.Count == 0 || !IsReceiverParamName(func.Params[0].Name)) return null;
 
         // The first argument must actually name an instance. `self` inside a method resolves
         // through the current inline frame exactly as the super() path resolves it; any other
@@ -2130,6 +2116,12 @@ public partial class IRGenerator
     //
     // <spelling> is what the user wrote, for the arity diagnostic: the mangled callee carries a
     // module prefix nobody typed and nobody can search their own file for.
+    // The receiver of a method reaches its body either as `self`, or, for a method that got
+    // the outlined ABI, as one `self_<field>` parameter per field. Neither is an argument the
+    // caller writes, and both must be skipped when binding arguments.
+    private static bool IsReceiverParamName(string name) =>
+        name == "self" || name.StartsWith("self_", StringComparison.Ordinal);
+
     private Val EmitUnboundMethodBody(string basePrefix, FunctionDef funcSuper,
         string selfAliasKey, List<Expression> args, string spelling)
     {
@@ -2138,7 +2130,7 @@ public partial class IRGenerator
         // silently dropped the extras: `super().__init__(offset, 99)` built clean and the 99
         // vanished, and so did the same mistake written `Base.__init__(self, offset, 99)`.
         // Phrasing borrowed from the check on the ordinary path so the two read alike.
-        int declaredArgs = funcSuper.Params.Count(p => p.Name != "self");
+        int declaredArgs = funcSuper.Params.Count(p => !IsReceiverParamName(p.Name));
         if (args.Count > declaredArgs)
         {
             string what = funcSuper.Name == "__init__"
@@ -2156,7 +2148,11 @@ public partial class IRGenerator
         var selfAlias = selfAliasKey;
         if (variableAliases.TryGetValue(selfAlias, out var vAlias))
             variableAliases[newPrefix + "self"] = vAlias;
-        else if (!string.IsNullOrEmpty(pendingConstructorTarget))
+        // Only a CONSTRUCTOR may fall back to the pending target: during construction that
+        // target IS the instance being built. For any other method it is the target of the
+        // ASSIGNMENT the call feeds, a different object entirely -- `p = super().split(raw)`
+        // aliased self to `p`, so the base body read `p.offset` instead of the receiver's.
+        else if (funcSuper.Name == "__init__" && !string.IsNullOrEmpty(pendingConstructorTarget))
             variableAliases[newPrefix + "self"] = pendingConstructorTarget;
         // The unbound spelling can name the receiver directly (`Base.read(probe, x)`), in
         // which case there is no alias to follow: the key IS the instance.
@@ -2189,7 +2185,11 @@ public partial class IRGenerator
         var paramIdx = 0;
         foreach (var p in funcSuper.Params)
         {
-            if (p.Name == "self") continue;
+            // Skipping only the exact name `self` bound the first ARGUMENT into the receiver's
+            // first flattened field: `super().split(raw)` emitted `copy raw -> ..._self_offset`
+            // right over the copy that had just put the real offset there, and the callee's own
+            // `raw` parameter was then never bound at all. The body computed raw + raw.
+            if (IsReceiverParamName(p.Name)) continue;
             if (paramIdx >= args.Count) continue;
             var argVal = VisitExpression(args[paramIdx]);
             var paramKey = newPrefix + p.Name;

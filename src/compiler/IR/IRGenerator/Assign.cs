@@ -777,7 +777,19 @@ public partial class IRGenerator
             {
                 resolvedClass = ResolveCallee(calleeVar.Name);
             }
-            else if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
+            // A base-class call whose declared return type is a ZCA class, in either spelling:
+            // `super().split(raw)` and `Base.split(self, raw)`. Without this the target is never
+            // registered as that class, so the constructor inside the base body builds into an
+            // anonymous `__cN` and the caller reads `p_a` / `p_b`, names nothing ever writes. It
+            // read two unwritten slots as zero, silently (PyMCU#157). The module branch below
+            // covers `m.Pin(...)`; a CLASS receiver is a different thing and had no branch.
+            if (string.IsNullOrEmpty(resolvedClass)
+                && TryResolveBaseCallClass(call) is { } baseRt)
+            {
+                resolvedClass = baseRt;
+            }
+
+            if (call.Callee is MemberAccessExpr calleeMem && calleeMem.Object is VariableExpr objVar)
             {
                 if (modules.ContainsKey(objVar.Name))
                 {
@@ -850,6 +862,41 @@ public partial class IRGenerator
                 factoryHandleInstances.Add(qn);
             }
         }
+    }
+
+    // The class a base-class method call returns, for the two spellings of one construct:
+    // `super().m(...)` and `Base.m(self, ...)`. Returns null when the call is not one of those,
+    // or when its declared return type is not a class this compiler builds with a constructor.
+    private string? TryResolveBaseCallClass(CallExpr call)
+    {
+        if (call.Callee is not MemberAccessExpr mem) return null;
+
+        string callee;
+        if (mem.Object is CallExpr { Callee: VariableExpr { Name: "super" } })
+        {
+            string childClass = methodInstanceTypes.TryGetValue(currentFunction, out var mit)
+                ? mit
+                : (string.IsNullOrEmpty(currentModulePrefix)
+                    ? ""
+                    : currentModulePrefix[..^1]);
+            if (!classBasePrefixes.TryGetValue(childClass, out var basePrefix)) return null;
+            callee = basePrefix + mem.Member;
+        }
+        else if (mem.Object is VariableExpr clsVe && classNames.Contains(clsVe.Name))
+        {
+            callee = ResolveCallee(clsVe.Name) + "_" + mem.Member;
+        }
+        else return null;
+
+        if (!functionReturnTypes.TryGetValue(callee, out var rt) || string.IsNullOrEmpty(rt)) return null;
+        if (rt is "None" or "void") return null;
+
+        foreach (var key in new[] { ResolveCallee(rt), currentModulePrefix + rt, rt })
+            if (inlineFunctions.ContainsKey(key + "___init__")
+                || overloadedFunctions.Contains(key + "___init__"))
+                return key;
+
+        return null;
     }
 
     // `obj.member = v`: assign through a member-access target — ZCA field stores
