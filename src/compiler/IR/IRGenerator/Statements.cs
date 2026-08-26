@@ -541,6 +541,16 @@ public partial class IRGenerator
             currentStmtLine = stmt.Line;
         }
 
+        // Tracked alongside, never instead. `currentStmtLine` stays on the call the reader
+        // wrote, which is what an author-written `raise CompileError` in a HAL dispatcher
+        // wants: those are ABOUT the caller's argument, and the pin name to fix is in the
+        // caller's file. Only a compiler-generated diagnostic, which is about the callee's own
+        // code, prefers this one. See UserError and #164.
+        if (stmt.Line > 0 && inlineDepth > 0 && inlineTracksCalleeLine)
+        {
+            inlineCalleeStmtLine = stmt.Line;
+        }
+
         if (stmt.Line > 0 && stmt.Line != lastLine)
         {
             var linesPtr = sourceLines;

@@ -1161,6 +1161,40 @@ public partial class IRGenerator
             Emit(new InlineExpansionMarker(Optimizer.InlineMarkerTag + callee, false));
 
         inlineDepth++;
+        // While this body is expanded, diagnostics raised inside it belong to the file that
+        // DEFINES it, not to the file that called it. Without this, a `for`-in over a plain
+        // `str` parameter in an imported module reported the caller's file: either the
+        // caller's line with the caller's name, or the callee's line with the caller's name,
+        // which is a location that does not exist. Issue #164.
+        //
+        // Only set when a path was recorded. An unrecorded callee leaves the caller's path in
+        // place, which is the pre-existing behaviour, and RecordSourcePaths covers every
+        // function a module defines, so the gap is synthesized bodies rather than user code.
+        // A NON-EMPTY recorded path is the only case where the callee can be named. An empty
+        // one means the entry file or an unknown origin, and the two are not distinguishable
+        // here, so the location stays on the call rather than borrowing a line from a file the
+        // diagnostic is not going to name. Getting this wrong moves the LINE into the stdlib
+        // while the FILE stays the user's, which is the incoherent location #164 is about,
+        // just relocated: `LCD(rs="PA0")` on line 5 of a ten-line file reported line 151.
+        string savedSourcePath = currentSourcePath;
+        bool savedTracksCallee = inlineTracksCalleeLine;
+        int savedCalleeLine = inlineCalleeStmtLine;
+        if (func != null
+            && functionSourcePath.TryGetValue(func, out var calleePath)
+            && !string.IsNullOrEmpty(calleePath))
+        {
+            currentSourcePath = calleePath;
+            inlineTracksCalleeLine = true;
+            inlineCalleeStmtLine = 0;
+        }
+        else
+        {
+            // Every frame decides for itself. A nested expansion into a body with no path of
+            // its own must not inherit the outer frame's tracking, or the line follows a file
+            // the diagnostic will not name.
+            inlineTracksCalleeLine = false;
+        }
+
         string savedPrefix = currentInlinePrefix;
         currentInlinePrefix = newPrefix;
 
@@ -1681,6 +1715,9 @@ public partial class IRGenerator
         // when the result folded to a bare Constant.
         lastInlineReturnType = DataTypeExtensions.StringToDataType(func.ReturnType);
 
+        currentSourcePath = savedSourcePath;
+        inlineTracksCalleeLine = savedTracksCallee;
+        inlineCalleeStmtLine = savedCalleeLine;
         currentInlinePrefix = savedPrefix;
         currentModulePrefix = savedModulePrefix;
         inlineDepth--;

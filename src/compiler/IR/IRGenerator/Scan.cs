@@ -706,6 +706,13 @@ public partial class IRGenerator
 
     private void ScanFunctions(ProgramNode ast, ModuleScope? scope = null)
     {
+        // Record where every function in this module came from, before any of them is
+        // registered. Done here rather than at the registration sites because there are
+        // sixteen of those across five files, and a method reaches them by a different route
+        // from a free function; this is the one place that sees the whole module with
+        // `currentSourcePath` still set to it.
+        RecordSourcePaths(ast);
+
         foreach (var func in ast.Functions)
         {
             string fullName = currentModulePrefix + func.Name;
@@ -1908,6 +1915,30 @@ public partial class IRGenerator
     /// explicit `@inline` decorator and by functions that take a class instance, which have
     /// no other lowering.
     /// </summary>
+    /// Notes the current module's file against every function it defines, including methods
+    /// of its classes and of classes nested inside them. Reads nothing and decides nothing;
+    /// it exists so that <see cref="EmitInlineFunctionCall"/> can restore the callee's file
+    /// while it expands that callee's body.
+    private void RecordSourcePaths(ProgramNode ast)
+    {
+        foreach (var func in ast.Functions)
+            functionSourcePath[func] = currentSourcePath;
+
+        void Walk(ClassDef cls)
+        {
+            if (cls.Body is not Block block) return;
+            foreach (var st in block.Statements)
+            {
+                if (st is FunctionDef m) functionSourcePath[m] = currentSourcePath;
+                else if (st is ClassDef inner) Walk(inner);
+            }
+        }
+
+        // Classes are ordinary top-level statements, not a separate list.
+        foreach (var st in ast.GlobalStatements)
+            if (st is ClassDef cls) Walk(cls);
+    }
+
     private void RegisterInlineFunction(FunctionDef func, string fullName, ModuleScope? scope)
     {
         // `|| overloadedFunctions.Contains` so that once a name is overloaded (its

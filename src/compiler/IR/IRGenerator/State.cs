@@ -46,6 +46,13 @@ public partial class IRGenerator
     // inlining resolves the body's internal calls (e.g. a private @inline helper) in
     // the right module rather than the facade that re-exported the function.
     private Dictionary<string, string> functionModulePrefix = new();
+    /// The file each function was scanned from, so a diagnostic raised while an @inline body
+    /// is being expanded can name the callee's file instead of the caller's. Keyed by AST node
+    /// identity, because a function reaches `inlineFunctions` under any of several mangled
+    /// keys and none of them carries a path. An entry-file function maps to "", which is what
+    /// `LocatedFile` already spells as "the entry file".
+    private readonly Dictionary<FunctionDef, string> functionSourcePath = new();
+
     private Dictionary<string, FunctionDef?> inlineFunctions = new(); // Map for inlining
     // Names currently bound to None (the real null, not the integer -1). Used to
     // resolve `x is None` / `x is not None` at compile time: a name here IS None,
@@ -348,6 +355,18 @@ public partial class IRGenerator
     private int lastLine = -1;
     private int currentStmtLine = 0; // Tracks the current statement's source line
 
+    /// True while expanding an @inline body whose defining file is known, which is when the
+    /// statement line should follow the CALLEE rather than stay on the call. Naming the
+    /// callee's file and the caller's line together is a location that does not exist, and
+    /// the line the reader has to edit is the callee's. Issue #164.
+    private bool inlineTracksCalleeLine = false;
+
+    /// The line of the statement currently being lowered INSIDE an @inline body whose file is
+    /// known. Separate from `currentStmtLine`, which stays on the call, because the two kinds
+    /// of diagnostic want opposite ends: one is about the callee's code, the other about the
+    /// caller's argument.
+    private int inlineCalleeStmtLine = 0;
+
     // Names assigned a constructor call at MODULE level of the entry file. Their init
     // runs inside main (module init), but references resolve them as module globals —
     // SlotInstanceKey uses this to register the boxed instance under its module key.
@@ -378,9 +397,18 @@ public partial class IRGenerator
     /// not where the problem is, so pointing a caret there would be a confident lie about a
     /// character chosen only because it was the one position available. Use the overload below
     /// wherever the offending AST node is in hand; that node knows its own column.
-    private PyMCU.Common.CompilerError UserError(string message) =>
-        new("CompileError", message, currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1))
-        { File = LocatedFile };
+    private PyMCU.Common.CompilerError UserError(string message)
+    {
+        // A compiler-generated diagnostic raised while an @inline body is being expanded is
+        // about THAT body: a `for` over a plain `str` parameter is the callee's line to fix,
+        // in the callee's file, and naming one without the other is a location that does not
+        // exist. An author-written `raise CompileError` does not come through here; it keeps
+        // the call site, which is the line its message is about. Issue #164.
+        int line = inlineTracksCalleeLine && inlineCalleeStmtLine > 0
+            ? inlineCalleeStmtLine
+            : (currentStmtLine > 0 ? currentStmtLine : (lastLine > 0 ? lastLine : 1));
+        return new("CompileError", message, line) { File = LocatedFile };
+    }
 
     /// The file to report against, or null to mean the entry file. The line numbers this
     /// generator carries belong to whichever module is being lowered, so a diagnostic that does
