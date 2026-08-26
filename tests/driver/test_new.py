@@ -623,3 +623,42 @@ def test_new_runs_the_venv_python_by_absolute_path(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert seen, "pip was never invoked"
     assert Path(seen[0][0]).is_absolute(), seen[0][0]
+
+
+# ---------------------------------------------------------------------------
+# What a refused board name offers next
+# ---------------------------------------------------------------------------
+
+class TestNewUnknownBoard:
+    """
+    `Unknown board 'uno'. Use --chip to specify a custom target.` named the board and then
+    sent the reader to a flag for a bare chip, when the board they meant is one word away.
+    `pymcu build` learned to offer it in #198; this is the same reader, a step earlier, since
+    `pymcu new` is where a board name is typed for the first time.
+    """
+
+    def test_a_short_form_is_offered_the_full_name(self, tmp_path, monkeypatch, unwrapped):
+        monkeypatch.chdir(tmp_path)
+        result = _invoke_new("proj", "--board", "uno", "--stdlib", "micropython")
+
+        assert result.exit_code == 1
+        assert "did you mean 'arduino_uno'?" in unwrapped(result.output).lower()
+
+    def test_a_name_nothing_is_close_to_offers_the_listing_instead(
+            self, tmp_path, monkeypatch, unwrapped):
+        # No guess is better than a wrong one, and the reader still needs somewhere to look.
+        monkeypatch.chdir(tmp_path)
+        result = _invoke_new("proj", "--board", "banana_pi_zz99", "--stdlib", "micropython")
+        out = unwrapped(result.output).lower()
+
+        assert result.exit_code == 1
+        assert "did you mean" not in out
+        assert "pymcu boards" in out
+
+    def test_a_board_that_resolves_still_scaffolds(self, tmp_path, monkeypatch, unwrapped):
+        # The invariant: the refusal is one `if` away from every project this command makes.
+        monkeypatch.chdir(tmp_path)
+        result = _invoke_new("proj", "--board", "arduino_uno", "--stdlib", "micropython")
+
+        assert "unknown board" not in unwrapped(result.output).lower()
+        assert (tmp_path / "proj" / "pyproject.toml").exists()

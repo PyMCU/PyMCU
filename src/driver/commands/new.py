@@ -31,6 +31,7 @@ from ..core.boards import (
     default_frequency,
     default_programmer,
     default_toolchain,
+    suggest_boards,
 )
 
 console = Console()
@@ -341,11 +342,21 @@ def new(
             ]
             board = _select(f"Board:", board_choices, flag="--board")
 
+        # BOARD_CHIPS alone, which is what this command scaffolds from: a board a compat
+        # layer declares can have no toolchain behind it, and `pymcu new` accepting one would
+        # produce a project whose first build says "No toolchain found for chip 'stm32f405'".
+        # The suggestion is computed over the same table, so it never offers a name this
+        # command would then refuse.
         chip = BOARD_CHIPS.get(board)
         if chip is None:
+            near = suggest_boards(board)
+            hint = (f" Did you mean '{near[0]}'?" if len(near) == 1
+                    else f" Close names: {', '.join(near)}." if near
+                    else "")
             console.print(
-                f"[red]Unknown board '{board}'. "
-                "Use --chip to specify a custom target.[/red]"
+                f"[red]Unknown board '{board}'.{hint}[/red]\n"
+                "  [dim]`pymcu boards` lists what this installation supports.[/dim]\n"
+                "  [dim]--chip names a bare target instead of a board.[/dim]"
             )
             raise typer.Exit(code=1)
         freq = board_frequency(board)

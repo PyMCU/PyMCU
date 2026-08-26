@@ -42,6 +42,7 @@ from .boards import (
     default_toolchain,
     extension_board_chips,
     resolve_chip_for_board,
+    suggest_boards,
 )
 
 LAYERS = ("native", "micropython", "circuitpython")
@@ -159,9 +160,16 @@ def apply_changes(path: Path, doc: tomlkit.TOMLDocument, *,
 
     if board is not None:
         layers = [str(f) for f in cfg.get("stdlib", [])]
-        chip = resolve_chip_for_board(board, extension_board_chips(layers))
+        extra = extension_board_chips(layers)
+        chip = resolve_chip_for_board(board, extra)
         if chip is None:
-            return ConfigChange(False, f"Unknown board '{board}'.")
+            # The layer refusal two branches up lists what it will accept; this one named the
+            # board and stopped, and `uno` for `arduino_uno` is the miss people write.
+            near = suggest_boards(board, extra)
+            hint = (f" Did you mean '{near[0]}'?" if len(near) == 1
+                    else f" Close names: {', '.join(near)}." if near
+                    else " `pymcu boards` lists what this installation supports.")
+            return ConfigChange(False, f"Unknown board '{board}'.{hint}")
         cfg["board"] = board
         # The build refuses a project that sets both, so setting one clears the
         # other rather than leaving a file that cannot be built.

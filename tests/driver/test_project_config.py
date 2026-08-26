@@ -114,6 +114,36 @@ class TestApplyChanges:
         assert not result.ok and "teensy41" in result.message
         assert path.read_text() == before
 
+    def test_a_refused_board_offers_the_name_it_was_close_to(self, tmp_path):
+        # The layer refusal in the same function lists what it will accept; this one named
+        # the board and stopped, and `uno` for `arduino_uno` is the miss people write.
+        path, doc = _project(tmp_path)
+        result = cfg.apply_changes(path, doc, board="uno")
+        assert not result.ok
+        assert "Did you mean 'arduino_uno'?" in result.message
+
+    def test_a_refused_board_with_nothing_close_points_at_the_listing(self, tmp_path):
+        path, doc = _project(tmp_path)
+        result = cfg.apply_changes(path, doc, board="teensy41")
+        assert "Did you mean" not in result.message
+        assert "pymcu boards" in result.message
+
+    def test_a_board_a_layer_supplies_is_still_resolved(self, tmp_path, monkeypatch):
+        """
+        The invariant on the line that was edited. This setter reads the merged table, and a
+        board that only a compat layer declares has to keep resolving through it.
+        """
+        monkeypatch.setattr(
+            "src.driver.core.boards.load_extension_board_chips",
+            lambda flavor: {"acme_board": "atmega328p"} if flavor == "micropython" else {},
+        )
+        path, doc = _project(
+            tmp_path,
+            '[tool.pymcu]\nboard = "arduino_uno"\nstdlib = ["micropython"]\n')
+        result = cfg.apply_changes(path, doc, board="acme_board")
+        assert result.ok
+        assert result.changed["chip"] == "atmega328p"
+
     def test_unknown_layer_is_refused_without_writing(self, tmp_path):
         path, doc = _project(tmp_path)
         before = path.read_text()
