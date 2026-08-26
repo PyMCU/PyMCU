@@ -492,15 +492,39 @@ public partial class IRGenerator
                             "str.join is supported in assignment form: s = sep.join([...]) with " +
                             "compile-time strings, or s = ''.join([chr(b) for b in buf]) over a " +
                             "fixed-size buffer; assign the result to a variable before using it");
-                    // Reached when the receiver of a value-returning method is itself a
-                    // ZCA field (e.g. `self.pin.pulse_in()` — a Pin stored in a field of
-                    // another ZCA). The chained access resolves to a temporary, which the
-                    // current model can't dispatch through. Name the member to make the
-                    // limitation actionable instead of opaque.
+                    // What arrives here is a method whose RECEIVER is a compile-time constant:
+                    // a string ("a,b,c".split(",")) or a number ((5).bit_length()). It used to
+                    // answer with a sentence about a ZCA field that is itself a ZCA, like
+                    // self.pin.pulse_in(). That described neither the reader's program -- which
+                    // has no class, no ZCA and no member access -- nor a real limitation:
+                    // self.pin.pulse_in() compiles, at two and three levels of nesting, called
+                    // from a method or from main. The message outlived the gap it was written
+                    // for and then sent readers looking for a ZCA they did not have.
+                    //
+                    // A receiver that IS a name or a register never reaches this branch, so
+                    // there is no object to name here; say what the receiver is and what does
+                    // work on it. Everything offered below is checked to compile.
+                    if (StaticStringOf(memC.Object) != null)
+                        throw UserError(
+                            $"'.{memC.Member}()' is not supported on a string. A PyMCU string is a "
+                            + "compile-time constant or a fixed buffer, not an object carrying "
+                            + "methods, and there is no heap to build a result in. What does work "
+                            + "on a string: len(), indexing (s[0]), iterating it (for c in s), "
+                            + "f-strings and '...'.format(x) to build text, and sep.join([...]) "
+                            + "assigned to a name.");
+
+                    if (memC.Object is IntegerLiteral or FloatLiteral)
+                        throw UserError(
+                            $"'.{memC.Member}()' is not supported on a number literal. Numbers in "
+                            + "PyMCU are machine integers and floats, not objects carrying methods; "
+                            + "use the operators and the builtins (abs, min, max, round) instead.");
+
+                    // Anything else that resolves to neither a name nor a register. No cause is
+                    // claimed here on purpose: the one this branch used to name now compiles, and
+                    // guessing a new one is how the last message became wrong.
                     throw UserError(
-                        $"calling .{memC.Member}() on a nested member access is not yet supported " +
-                        "(a ZCA field that is itself a ZCA, like self.pin.pulse_in()); " +
-                        "void methods on such a field work, but value-returning ones do not yet");
+                        $"'.{memC.Member}()' cannot be dispatched: its receiver is not a name bound "
+                        + "to an object, a register, or a value PyMCU defines methods on.");
                 }
             }
         }
