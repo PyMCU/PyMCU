@@ -880,6 +880,43 @@ public partial class IRGenerator
     }
 
     /// <summary>
+    /// True when `<paramref name="callee"/>` (`Class_method`) is fully resolvable AND writes no
+    /// field of its receiver, directly or through a method it calls on one of its own fields.
+    ///
+    /// This exists because <see cref="FieldsWrittenBy"/> returns an empty sequence for BOTH
+    /// "writes nothing" and "cannot be resolved". Where that method is used -- invalidating
+    /// folds around a loop -- collapsing the two is safe, because an unresolvable method writes
+    /// nothing the loop will observe. A caller deciding whether a field may stay constant needs
+    /// them apart: reading "unknown" as "writes nothing" there is a silent wrong value.
+    ///
+    /// So this answers only the question it can answer safely, and returns false for anything
+    /// it cannot see through, including a nested call on a field whose class does not resolve.
+    /// </summary>
+    private bool MethodWritesNoField(string callee)
+    {
+        string? cls = OwningClassOf(callee);
+        if (cls == null || !classFieldLayout.TryGetValue(cls, out var layout)) return false;
+
+        FunctionDef? def = null;
+        if (!instanceMethodDefs.TryGetValue(callee, out def)
+            && !methodAstByName.TryGetValue(callee, out def)
+            && !inlineFunctions.TryGetValue(callee, out def)) return false;
+        if (def == null) return false;
+
+        foreach (var (field, type, _) in layout)
+        {
+            if (MethodMutatesFieldPublic(def, field)) return false;
+
+            // A call on a field that holds an instance can write through it. Following that
+            // is what FieldsWrittenBy does; here it is enough to refuse to answer, because
+            // the caller's fallback is the conservative mark it would have made anyway.
+            if (NestedMethodsCalledOn(def, field).Any()) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// The fields the method compiled under <paramref name="callee"/> (`Class_method`) can
     /// assign to, following the methods it calls on itself. Empty when the class or the method
     /// cannot be resolved, which leaves the folds in place: this runs to prevent a stale value,

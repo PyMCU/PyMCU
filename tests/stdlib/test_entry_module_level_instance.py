@@ -159,17 +159,29 @@ def test_the_helper_actually_drives_the_port(tmp_path):
         f"blink() names no PORTD access; it touches {[hex(a) for a in sorted(mem_addresses(blink))]}"
 
 
-def test_main_binds_the_bit_the_helper_reads(tmp_path):
-    """PD5 is bit 5, and main's injected module level is what establishes it."""
+def test_the_program_uses_the_bit_the_pin_names(tmp_path):
+    """PD5 is bit 5, and main's injected module level is what establishes it.
+
+    How it establishes it changed with #175. Before, the bit was a run-time value main
+    copied into `led__bit` storage for the helper to read. Now that a read-only method no
+    longer forces the field mutable, it is a compile-time constant and appears as the bit
+    of the operations themselves. Either way the program has to use bit 5, so that is what
+    is asserted rather than the storage that used to carry it.
+    """
     out, ir = build(tmp_path, HELPER_ABOVE)
     assert ir is not None, out
 
-    main = next(f for f in ir["functions"] if f["name"] == "main")
-    assert any(i.get("$t") == "copy"
-               and i["src"].get("$t") == "const" and i["src"]["value"] == 5
-               and str(i["dst"].get("name", "")).endswith("_bit")
-               for i in main["body"]), \
-        "main must write the instance's bit before the helper that reads it runs"
+    def bits_used(fn):
+        return {i["bit"] for i in fn["body"] if i.get("$t") in ("bset", "bclr", "bwrt")}
+
+    stored = any(i.get("$t") == "copy"
+                 and i["src"].get("$t") == "const" and i["src"]["value"] == 5
+                 and str(i["dst"].get("name", "")).endswith("_bit")
+                 for f in ir["functions"] for i in f["body"])
+    folded = 5 in set().union(*(bits_used(f) for f in ir["functions"]))
+
+    assert stored or folded, \
+        "the program must reach bit 5, either through the instance's stored bit or folded"
 
 
 def test_the_direction_register_is_still_configured(tmp_path):

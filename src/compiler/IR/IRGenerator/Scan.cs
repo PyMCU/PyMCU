@@ -632,10 +632,25 @@ public partial class IRGenerator
             {
                 case null: return;
                 // `obj.m(...)`: the method may write any of obj's fields, and through the
-                // write-back convention it does so without an assignment anywhere in sight.
-                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr recv } } c
+                // write-back convention it does so without an assignment anywhere in sight --
+                // so unless the method can be SEEN to write nothing, every field is marked.
+                //
+                // The narrow case is worth having because a HAL object is mostly readers:
+                // `Pin.high()` is `self._port[self._bit] = 1` and writes no field, yet one call
+                // to it used to make `_port`, `_ddr`, `_pin` and `_bit` mutable for the rest of
+                // the program, so the bit became a run-time shift instead of a constant mask.
+                //
+                // Deliberately all-or-nothing rather than marking exactly the fields the method
+                // writes: a method that writes ANY field still marks them all, which is what it
+                // did before. Marking exactly is possible (FieldsWrittenBy already computes the
+                // set) but its flattened nested paths are not class-layout field names, and
+                // getting that wrong is #124 and #127 again -- a write discarded and the reader
+                // folding the constructor's value, compiling clean.
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr recv, Member: var method } } c
                     when topLevelInstanceTargets.Contains(recv.Name):
-                    MarkEveryField(recv.Name);
+                    if (!(ctorClass.TryGetValue(recv.Name, out var recvCls)
+                          && MethodWritesNoField(recvCls + "_" + method)))
+                        MarkEveryField(recv.Name);
                     foreach (var a in c.Args) Expr(a);
                     return;
                 case MemberAccessExpr { Object: VariableExpr ov } ma

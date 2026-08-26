@@ -67,10 +67,50 @@ public class ModuleInitLoweringOrderTests
         Assert.True(read < init, "hoisting is for LOWERING order only; emission order is unchanged");
     }
 
+    // `Config.value()` reads and writes nothing, so since #175 the field it reads stays a
+    // compile-time constant and the init has no storage to write. What #117 is about is that
+    // the CONSTRUCTOR'S VALUE reaches the module's own function, so that is what is asserted;
+    // whether it arrives folded or through a global is the optimisation, not the property.
+    // The mutable path is covered by TheFieldAMethodWritesIsStillGivenStorage below.
     [Fact]
-    public void TheFieldTheInitWrites_IsTheOneItsModulesFunctionReads()
+    public void TheConstructorsValue_ReachesItsModulesFunction()
     {
         var ir = Gen(MainSrc, ("tasks", TasksModule));
+
+        var read = Assert.Single(ir.Functions, f => f.Name == "tasks_read");
+        var call = Assert.Single(read.Body.OfType<Call>());
+        var arg = Assert.Single(call.Args);
+
+        Assert.True(arg is Constant { Value: 10 } or Variable { Name: "tasks_cfg_base" },
+            $"the base the constructor was given must reach cfg.value(), got {arg}");
+    }
+
+    // The half that needs storage: a class one of whose methods assigns to a field. The fold
+    // has to be given up there, or the write goes to a name with nothing behind it and the
+    // reader sees the constructor's value -- issues #124 and #127.
+    [Fact]
+    public void TheFieldAMethodWritesIsStillGivenStorage()
+    {
+        var ir = Gen(
+            "from tasks import bump, read\n\ndef main():\n    bump()\n    read()\n",
+            ("tasks",
+             "class Config:\n" +
+             "    def __init__(self, base: uint8):\n" +
+             "        self.base = base\n" +
+             "\n" +
+             "    def mark(self) -> None:\n" +
+             "        self.base = 77\n" +
+             "\n" +
+             "    def value(self) -> uint8:\n" +
+             "        return self.base + 1\n" +
+             "\n" +
+             "cfg = Config(10)\n" +
+             "\n" +
+             "def bump() -> None:\n" +
+             "    cfg.mark()\n" +
+             "\n" +
+             "def read() -> uint8:\n" +
+             "    return cfg.value()\n"));
 
         var init = Assert.Single(ir.Functions, f => f.Name == "tasks___module_init");
         Assert.Contains(init.Body, i =>
