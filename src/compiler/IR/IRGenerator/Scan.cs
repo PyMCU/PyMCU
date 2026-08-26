@@ -1717,6 +1717,20 @@ public partial class IRGenerator
                 case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr { Name: "self" } } } selfCall:
                     foreach (var a in selfCall.Args) E(a);
                     return;
+                // Base.method(self, args): the unbound spelling of a base-class call, the same
+                // construct `super().method(args)` spells. Its leading `self` is the RECEIVER,
+                // not a value being passed: the base body reaches the very fields this method
+                // already has, exactly as it does through super(). Reading it as a bare self
+                // passed by value is what refused outlining for this spelling alone, so it was
+                // force-inlined at every call site while super() emitted one shared subroutine.
+                // For a base method with control flow that was worth up to 130% of program size
+                // (PyMCU#160). Validate the remaining arguments, as the self-call case does.
+                case CallExpr { Callee: MemberAccessExpr { Object: VariableExpr baseVe } } baseCall
+                        when classNames.Contains(baseVe.Name)
+                             && baseCall.Args.Count > 0
+                             && baseCall.Args[0] is VariableExpr { Name: "self" }:
+                    for (int ai = 1; ai < baseCall.Args.Count; ++ai) E(baseCall.Args[ai]);
+                    return;
                 case CallExpr c: E(c.Callee); foreach (var a in c.Args) E(a); return;
                 case KeywordArgExpr kw: E(kw.Value); return;
                 case IndexExpr ix: E(ix.Target); E(ix.Index); return;
