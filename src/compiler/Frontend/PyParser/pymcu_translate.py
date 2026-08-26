@@ -519,12 +519,33 @@ def s_raise(node):
     raise Unsupported("that raise form", node)
 
 
+def s_try_star(node):
+    # Reached through STMT, so it replaces the generic fallback, which named the AST class
+    # (`TryStar is not supported`) rather than anything the program wrote.
+    raise Unsupported(
+        "'except*' (exception groups) is not supported. PyMCU signals one exception at a "
+        "time, so there is no group to split. Write 'except <Type>:'",
+        node.handlers[0] if node.handlers else node)
+
+
 def s_try(node):
     handlers = []
     for h in node.handlers:
         exn = ""
+        # Both refusals are the C# parser's, word for word (#196). This front end used to take
+        # `as e` and drop the binding, and to unparse a tuple into a type name nothing defines,
+        # so the same program built here and was refused there.
+        if isinstance(h.type, ast.Tuple):
+            raise Unsupported(
+                "'except (A, B):' is not supported. Write one 'except' clause per "
+                "exception type, each naming the type without parentheses", h)
         if h.type is not None:
             exn = ast.unparse(h.type)
+        if h.name is not None:
+            raise Unsupported(
+                f"'except {exn} as ...' is not supported. A raise carries only which "
+                "exception was raised, not an exception object, so there is nothing to "
+                f"bind. Write 'except {exn}:' and report what you know at the raise site", h)
         handlers.append({"exnType": exn, "body": [s for s in block(h.body)["statements"]]})
     return {
         "k": "Try",
@@ -635,6 +656,7 @@ STMT = {
     ast.With: s_with,
     ast.Raise: s_raise,
     ast.Try: s_try,
+    ast.TryStar: s_try_star,
     ast.Assert: s_assert,
     ast.Match: s_match,
     ast.Pass: lambda n: {"k": "Pass"},

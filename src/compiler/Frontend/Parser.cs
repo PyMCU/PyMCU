@@ -837,9 +837,34 @@ public class Parser
         while (Check(TokenType.Except))
         {
             Consume(TokenType.Except, "Expected 'except'");
+
+            // Three unsupported spellings of the except header, each of which used to report
+            // where the parser stopped and so described the program as missing what it has: a
+            // tuple of types read as no type at all, `as e` as a missing colon, and `except*`
+            // as no type either (#196). They are named here instead, because the rest of
+            // try/except works and the reader has a handler that compiles one line above.
+            if (Check(TokenType.Star))
+                Error("'except*' (exception groups) is not supported. PyMCU signals one "
+                      + "exception at a time, so there is no group to split. Write "
+                      + "'except <Type>:'");
+
+            if (Check(TokenType.LParen))
+                Error("'except (A, B):' is not supported. Write one 'except' clause per "
+                      + "exception type, each naming the type without parentheses");
+
             string exnType = Check(TokenType.Colon)
                 ? ""
                 : Consume(TokenType.Identifier, "Expected exception type after 'except'").Value;
+
+            // A raise carries the exception's identity and nothing else, so there is no object
+            // to bind. Saying so is what stops the reader from looking for the exception object
+            // elsewhere, here and in every other construct that would want one.
+            if (Check(TokenType.As))
+                Error($"'except {exnType} as ...' is not supported. A raise carries only which "
+                      + "exception was raised, not an exception object, so there is nothing to "
+                      + $"bind. Write 'except {exnType}:' and report what you know at the raise "
+                      + "site");
+
             Consume(TokenType.Colon, "Expected ':' after exception type");
             ConsumeStatementEnd();
             var handlerBlock = ParseBlock();
