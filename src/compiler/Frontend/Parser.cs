@@ -1585,13 +1585,34 @@ public class Parser
         return left;
     }
 
+    /// Stamps a binary expression with the position of its OPERATOR.
+    ///
+    /// The operator, not the start of the whole expression. The messages these nodes carry are
+    /// about the operation ("integer division or modulo by zero", "unsupported operand type
+    /// for +"), and in `b: uint8 = a // 0` the left operand is innocent: a caret under `a`
+    /// names the wrong thing almost as confidently as a caret under the indent did. Clang and
+    /// rustc both mark the operator for an operator diagnostic.
+    ///
+    /// The line is stamped too, not only the column. An expression can span lines, and a
+    /// column taken from one line against a line number taken from another points at whatever
+    /// happens to sit there. The diagnostic sites already prefer the node's own line when it
+    /// has one, so stamping both is what keeps the pair consistent.
+    private static BinaryExpr Located(BinaryExpr node, Token op)
+    {
+        node.Line = op.Line;
+        node.Column = op.Column;
+        node.Length = op.Length;
+        return node;
+    }
+
     private Expression ParseLogicalOr()
     {
         var left = ParseLogicalAnd();
         while (Match(TokenType.Or))
         {
+            var opToken = Previous();
             var right = ParseLogicalAnd();
-            left = new BinaryExpr(left, BinaryOp.Or, right);
+            left = Located(new BinaryExpr(left, BinaryOp.Or, right), opToken);
         }
 
         return left;
@@ -1602,8 +1623,9 @@ public class Parser
         var left = ParseLogicalNot();
         while (Match(TokenType.And))
         {
+            var opToken = Previous();
             var right = ParseLogicalNot();
-            left = new BinaryExpr(left, BinaryOp.And, right);
+            left = Located(new BinaryExpr(left, BinaryOp.And, right), opToken);
         }
 
         return left;
@@ -1629,6 +1651,7 @@ public class Parser
         // Python semantics — instead of the left-associative (a<b)<c. operands[i]
         // and ops[i] line up so the chain is operands[0] ops[0] operands[1] ...
         var ops = new List<BinaryOp>();
+        var opTokens = new List<Token>();
         var operands = new List<Expression> { first };
 
         while (Check(TokenType.EqualEqual) || Check(TokenType.BangEqual) ||
@@ -1638,6 +1661,7 @@ public class Parser
                (Check(TokenType.Not) && PeekNext().Type == TokenType.In))
         {
             BinaryOp op = BinaryOp.Equal;
+            Token opTok = Peek();
 
             if (Check(TokenType.Not))
             {
@@ -1679,19 +1703,24 @@ public class Parser
 
             var right = ParseBitwiseOr();
             ops.Add(op);
+            opTokens.Add(opTok);
             operands.Add(right);
         }
 
         if (ops.Count == 0) return first;
-        if (ops.Count == 1) return new BinaryExpr(operands[0], ops[0], operands[1]);
+        if (ops.Count == 1)
+            return Located(new BinaryExpr(operands[0], ops[0], operands[1]), opTokens[0]);
 
         // Chained: build ((o0 op0 o1) and (o1 op1 o2)) and ...  The shared middle
         // operands are reused as AST nodes; with side-effect-free operands (the
         // usual case) this matches Python's single-evaluation semantics closely.
-        Expression chain = new BinaryExpr(operands[0], ops[0], operands[1]);
+        // Each comparison is stamped at its own operator. The `and` nodes joining them are
+        // NOT: the user never wrote them, so they have no position, and inventing one would be
+        // the same defect this stamping exists to remove.
+        Expression chain = Located(new BinaryExpr(operands[0], ops[0], operands[1]), opTokens[0]);
         for (int i = 1; i < ops.Count; i++)
             chain = new BinaryExpr(chain, BinaryOp.And,
-                new BinaryExpr(operands[i], ops[i], operands[i + 1]));
+                Located(new BinaryExpr(operands[i], ops[i], operands[i + 1]), opTokens[i]));
         return chain;
     }
 
@@ -1700,8 +1729,9 @@ public class Parser
         var left = ParseBitwiseXor();
         while (Match(TokenType.Pipe))
         {
+            var opToken = Previous();
             var right = ParseBitwiseXor();
-            left = new BinaryExpr(left, BinaryOp.BitOr, right);
+            left = Located(new BinaryExpr(left, BinaryOp.BitOr, right), opToken);
         }
 
         return left;
@@ -1712,8 +1742,9 @@ public class Parser
         var left = ParseBitwiseAnd();
         while (Match(TokenType.Caret))
         {
+            var opToken = Previous();
             var right = ParseBitwiseAnd();
-            left = new BinaryExpr(left, BinaryOp.BitXor, right);
+            left = Located(new BinaryExpr(left, BinaryOp.BitXor, right), opToken);
         }
 
         return left;
@@ -1724,8 +1755,9 @@ public class Parser
         var left = ParseShift();
         while (Match(TokenType.Ampersand))
         {
+            var opToken = Previous();
             var right = ParseShift();
-            left = new BinaryExpr(left, BinaryOp.BitAnd, right);
+            left = Located(new BinaryExpr(left, BinaryOp.BitAnd, right), opToken);
         }
 
         return left;
@@ -1739,7 +1771,7 @@ public class Parser
             var opToken = Advance();
             BinaryOp op = opToken.Type == TokenType.LShift ? BinaryOp.LShift : BinaryOp.RShift;
             var right = ParseAdditive();
-            left = new BinaryExpr(left, op, right);
+            left = Located(new BinaryExpr(left, op, right), opToken);
         }
 
         return left;
@@ -1753,7 +1785,7 @@ public class Parser
             var opToken = Advance();
             BinaryOp op = opToken.Type == TokenType.Plus ? BinaryOp.Add : BinaryOp.Sub;
             var right = ParseMultiplicative();
-            left = new BinaryExpr(left, op, right);
+            left = Located(new BinaryExpr(left, op, right), opToken);
         }
 
         return left;
@@ -1772,7 +1804,7 @@ public class Parser
             else if (opToken.Type == TokenType.FloorDiv) op = BinaryOp.FloorDiv;
 
             var right = ParsePower();
-            left = new BinaryExpr(left, op, right);
+            left = Located(new BinaryExpr(left, op, right), opToken);
         }
 
         return left;
@@ -1783,9 +1815,9 @@ public class Parser
         var left = ParseUnary();
         if (Check(TokenType.DoubleStar))
         {
-            Advance();
+            var opToken = Advance();
             var right = ParsePower();
-            left = new BinaryExpr(left, BinaryOp.Pow, right);
+            left = Located(new BinaryExpr(left, BinaryOp.Pow, right), opToken);
         }
 
         return left;

@@ -359,7 +359,7 @@ public partial class IRGenerator
                     "(f\"...\")) and assignment to a variable (s = f\"...\" builds the string " +
                     "into a fixed buffer). Assign the f-string to a name first, then use " +
                     "that name here.",
-                    expr.Line > 0 ? expr.Line : lastLine, 1);
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
             }
         }
 
@@ -552,7 +552,7 @@ public partial class IRGenerator
             }
             throw new TypeError(
                 "None supports only ==, !=, is and is not comparisons",
-                expr.Line > 0 ? expr.Line : lastLine, 1);
+                expr.Line > 0 ? expr.Line : lastLine, expr.Column);
         }
 
         string? dunder = BinaryOpDunder(expr.Op);
@@ -918,11 +918,11 @@ public partial class IRGenerator
                 throw new TypeError(
                     "cannot concatenate a string with a non-string value; both operands of '+' " +
                     "must be compile-time string literals (runtime string building is not supported)",
-                    errLine, 1);
+                    errLine, expr.Column);
 
             throw new TypeError(
                 $"operator '{BinaryOpSymbol(expr.Op)}' is not supported on string values",
-                errLine, 1);
+                errLine, expr.Column);
         }
 
         double? AsFloatCt(Val v)
@@ -948,7 +948,7 @@ public partial class IRGenerator
                 or AstBinOp.LShift or AstBinOp.RShift)
                 throw new TypeError(
                     $"unsupported operand type for {BinaryOpSymbol(expr.Op)}: 'float'",
-                    expr.Line > 0 ? expr.Line : lastLine, 1);
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
             double? f1 = AsFloatCt(v1);
             double? f2 = AsFloatCt(v2);
@@ -958,7 +958,7 @@ public partial class IRGenerator
             // clean and put a plausible zero on the port.
             if (f2 is 0.0 && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
                 throw new ValueError("float division by zero",
-                    expr.Line > 0 ? expr.Line : lastLine, 1);
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
             if (f1.HasValue && f2.HasValue)
             {
@@ -1051,7 +1051,7 @@ public partial class IRGenerator
             {
                 // Same rule as everywhere else: a literal zero divisor is the error, not 0.0.
                 if (fcb.Value == 0.0)
-                    throw new ValueError("division by zero", dline, 1);
+                    throw new ValueError("division by zero", dline, expr.Column);
                 return new FloatConstant(fca.Value / fcb.Value);
             }
             if (fb is not FloatConstant)
@@ -1137,7 +1137,7 @@ public partial class IRGenerator
         // down only guards a divisor the compiler cannot see.
         if (v2 is Constant { Value: 0 } && expr.Op is AstBinOp.Div or AstBinOp.FloorDiv or AstBinOp.Mod)
             throw new ValueError("integer division or modulo by zero",
-                expr.Line > 0 ? expr.Line : lastLine, 1);
+                expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
         if (v1 is Constant cA && v2 is Constant cB)
         {
@@ -1158,10 +1158,10 @@ public partial class IRGenerator
                         $"cannot shift by the string \"{asText}\" -- a number is expected here. "
                         + "This usually means a name was passed where a number belongs "
                         + $"(for example a pin name instead of a pin number).",
-                        expr.Line > 0 ? expr.Line : lastLine, 1);
+                        expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
                 throw new ValueError($"shift count {cB.Value} out of range (expected 0..31)",
-                    expr.Line > 0 ? expr.Line : lastLine, 1);
+                    expr.Line > 0 ? expr.Line : lastLine, expr.Column);
             }
 
             // int32 is the widest integer PyMCU has, so a constant that leaves its range has
@@ -1174,7 +1174,7 @@ public partial class IRGenerator
                     throw new ValueError(
                         $"the constant {result} does not fit in int32, the widest integer type "
                         + "(the operands are folded at compile time, so there is no width to "
-                        + "carry it)", expr.Line > 0 ? expr.Line : lastLine, 1);
+                        + "carry it)", expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                 return new Constant((int)result);
             }
 
@@ -1368,7 +1368,7 @@ public partial class IRGenerator
                 || (operand is Variable fv && floatConstantVariables.ContainsKey(fv.Name))
                 || GetValType(operand) == DataType.FLOAT))
             throw new TypeError("unsupported operand type for ~: 'float'",
-                expr.Line > 0 ? expr.Line : lastLine, 1);
+                expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
         if (operand is Constant c)
         {
@@ -1660,7 +1660,7 @@ public partial class IRGenerator
                     if (adj < 0)
                         throw new IndexError(
                             $"array index {negc.Value} out of range for size {sz}",
-                            expr.Line > 0 ? expr.Line : lastLine, 1);
+                            expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                     idxVal = new Constant(adj);
                 }
 
@@ -1670,7 +1670,7 @@ public partial class IRGenerator
                 if (idxVal is Constant cidx && (cidx.Value < 0 || cidx.Value >= sz))
                     throw new IndexError(
                         $"array index {cidx.Value} out of range for size {sz}",
-                        expr.Line > 0 ? expr.Line : lastLine, 1);
+                        expr.Line > 0 ? expr.Line : lastLine, expr.Column);
 
                 if (flashArrays.Contains(qualified))
                 {
@@ -1742,7 +1742,7 @@ public partial class IRGenerator
                     if (elemIdx < 0 || elemIdx >= sz)
                         throw new IndexError(
                             $"array index {elemIdx} out of range for size {sz}",
-                            expr.Line > 0 ? expr.Line : lastLine, 1);
+                            expr.Line > 0 ? expr.Line : lastLine, expr.Column);
                     string elemName = qualified + "__" + elemIdx;
                     return new Variable(elemName, arrayElemTypes[qualified]);
                 }

@@ -476,7 +476,7 @@ public partial class IRGenerator
                                 $"'.{memC.Member}()' requires a typed list; an untyped '[]' has no " +
                                 "runtime list. Declare it like `x: list[uint8] = []`, or use a " +
                                 "fixed-size array `x: uint8[N]`.",
-                                expr.Line > 0 ? expr.Line : lastLine, 1);                        callee = vObj.Name + "_" + memC.Member;
+                                expr.Line > 0 ? expr.Line : lastLine, expr.Column);                        callee = vObj.Name + "_" + memC.Member;
                     }
                 }
                 else if (objVal is MemoryAddress addr)
@@ -1063,7 +1063,7 @@ public partial class IRGenerator
             throw new RecursionError(
                 $"function '{rn}' is recursive; PyMCU has no call frame for inlined " +
                 "or ZCA methods, so recursion is not supported — rewrite it as a loop",
-                currentStmtLine > 0 ? currentStmtLine : 1, 1);
+                currentStmtLine > 0 ? currentStmtLine : 1);
         }
 
         // @warning("..."): print the author-supplied note (once per function)
@@ -1817,7 +1817,7 @@ public partial class IRGenerator
         catch (Exception ex)
         {
             int callLine = currentStmtLine > 0 ? currentStmtLine : 1;
-            throw new CompilerError("CompileError", ex.Message, callLine, 1);
+            throw new CompilerError("CompileError", ex.Message, callLine);
         }
 
         lastLine = savedLastLine;
@@ -3114,7 +3114,7 @@ public partial class IRGenerator
         // would otherwise pass through as a too-large Constant and be silently truncated.
         if (v is Constant c && (c.Value < 0 || c.Value > 255))
             throw new ValueError($"chr() arg not in range(256): {c.Value}",
-                expr.Line > 0 ? expr.Line : lastLine, 1);
+                expr.Line > 0 ? expr.Line : lastLine, expr.Column);
         return v;
     }
 
