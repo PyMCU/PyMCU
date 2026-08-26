@@ -569,6 +569,126 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// Lowers `case Cls(...)`. Returns true when the branch is fully handled.
+    ///
+    /// The class test is decided at compile time from the subject's known class. Each
+    /// sub-pattern is either a value to compare the field against or a name to bind to it,
+    /// and the binds are applied only after every comparison has passed, so a pattern that
+    /// fails half way leaves nothing behind.
+    /// </summary>
+    private bool VisitClassPattern(MatchStmt stmt, CaseBranch branch, CallExpr pattern,
+                                   Val targetVal, string nextCaseLabel, string endLabel)
+    {
+        if (pattern.Callee is not VariableExpr patName)
+            throw UserError("match/case: a call is not a pattern; `case Cls(...)` matches a "
+                          + "class, and its callee has to be a class name");
+
+        string subjectClass = GetValClass(targetVal);
+        if (string.IsNullOrEmpty(subjectClass))
+            throw UserError(
+                $"match/case: `case {patName.Name}(...)` needs the subject's class to be known "
+                + "at compile time, and it is not here. Match on a value the program builds "
+                + $"from a constructor (`p = {patName.Name}(...)` then `match p:`), or compare "
+                + "the fields directly with if/elif");
+
+        string subjectShort = subjectClass.Contains('_')
+            ? subjectClass[(subjectClass.LastIndexOf('_') + 1)..]
+            : subjectClass;
+
+        // A different class can never match: there is one static type per value here.
+        if (subjectShort != patName.Name)
+        {
+            Emit(new Jump(nextCaseLabel));
+            Emit(new Label(nextCaseLabel));
+            return true;
+        }
+
+        classMatchArgs.TryGetValue(subjectClass, out var matchArgs);
+
+        var tests = new List<(string Field, Expression Sub)>();
+        int positional = 0;
+        foreach (var arg in pattern.Args)
+        {
+            if (arg is KeywordArgExpr kw)
+            {
+                tests.Add((kw.Key, kw.Value));
+                continue;
+            }
+
+            // Positional sub-patterns need __match_args__ to know which field each one is,
+            // exactly as CPython does. Substituting the field layout would accept a program
+            // CPython rejects with "accepts 0 positional sub-patterns".
+            if (matchArgs == null || positional >= matchArgs.Count)
+                throw UserError(
+                    $"'{patName.Name}' accepts {matchArgs?.Count ?? 0} positional sub-pattern(s) "
+                    + $"and {pattern.Args.Count} were given. A positional class pattern takes its "
+                    + $"field order from __match_args__; add it to '{patName.Name}' "
+                    + $"(`__match_args__ = (\"x\", \"y\")`), or name the fields in the pattern "
+                    + $"(`case {patName.Name}(x=..., y=...)`)");
+
+            tests.Add((matchArgs[positional], arg));
+            positional++;
+        }
+
+        string Qualify(string name) => string.IsNullOrEmpty(currentFunction)
+            ? name
+            : currentFunction + "." + name;
+
+        // Comparisons first, binds after: a half-matched pattern must bind nothing.
+        var binds = new List<(string Field, string Target)>();
+        foreach (var (field, sub) in tests)
+        {
+            if (sub is VariableExpr cap && cap.Name != "_")
+            {
+                binds.Add((field, Qualify(cap.Name)));
+                continue;
+            }
+            if (sub is VariableExpr) continue; // `_` matches anything and binds nothing
+
+            Val fieldVal = VisitExpression(new MemberAccessExpr(stmt.Target, field));
+            Val subVal = VisitExpression(sub);
+            Temporary cmp = MakeTemp();
+            Emit(new Binary(PyMCU.IR.BinaryOp.Equal, fieldVal, subVal, cmp));
+            Emit(new JumpIfZero(cmp, nextCaseLabel));
+        }
+
+        foreach (var (field, qname) in binds)
+        {
+            Val fieldVal = VisitExpression(new MemberAccessExpr(stmt.Target, field));
+            DataType dt = fieldVal switch
+            {
+                Variable v => v.Type,
+                Temporary t => t.Type,
+                _ => DataType.UINT8,
+            };
+            Emit(new Copy(fieldVal, new Variable(qname, dt)));
+            variableTypes[qname] = dt;
+        }
+
+        if (!string.IsNullOrEmpty(branch.CaptureName))
+        {
+            string qname = Qualify(branch.CaptureName);
+            variableAliases[qname] = targetVal is Variable tv ? tv.Name : qname;
+            if (!string.IsNullOrEmpty(subjectClass)) instanceClasses[qname] = subjectClass;
+        }
+
+        if (branch.Guard != null)
+        {
+            Val g = VisitExpression(branch.Guard);
+            Emit(new JumpIfZero(g, nextCaseLabel));
+        }
+
+        // The body runs under a run-time condition whenever the pattern tested anything.
+        _runtimeBranchDepth++;
+        if (branch.Body != null) VisitBlock((Block)branch.Body);
+        _runtimeBranchDepth--;
+
+        Emit(new Jump(endLabel));
+        Emit(new Label(nextCaseLabel));
+        return true;
+    }
+
     private void VisitMatch(MatchStmt stmt)
     {
         Val targetVal = VisitExpression(stmt.Target);
@@ -657,6 +777,22 @@ public partial class IRGenerator
                     Emit(new Jump(endLabel));
                     Emit(new Label(nextCaseLabel));
                     continue;
+                }
+
+                // A CLASS PATTERN: `case Point(x=0)` or `case Point(a, b)`. A call cannot
+                // appear in a pattern in Python, so any CallExpr here is one of these, and
+                // it was previously visited as an expression: the keyword form was lowered
+                // as a constructor CALL and asked for the argument it was missing, and the
+                // positional form resolved its capture names as reads and reported the very
+                // names the pattern binds as undefined (issue #173).
+                //
+                // There is no runtime type tag on this target, so the isinstance half is a
+                // compile-time decision: the subject either IS that class, and only the
+                // sub-patterns cost anything, or it is not, and the case is dead.
+                if (branch.Pattern is CallExpr classPat)
+                {
+                    if (VisitClassPattern(stmt, branch, classPat, targetVal, nextCaseLabel, endLabel))
+                        continue;
                 }
 
                 var alts = new List<Expression>();

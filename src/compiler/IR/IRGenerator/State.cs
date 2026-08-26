@@ -223,6 +223,12 @@ public partial class IRGenerator
     // Same layout keyed by class symbol (e.g. "Counter"), for factory return lowering.
     private Dictionary<string, List<(string Field, string Type, string SourceParam)>> classFieldLayout = new();
 
+    // `__match_args__ = ("x", "y")` per class key, which is what gives a POSITIONAL class
+    // pattern its field order. CPython requires it for positional sub-patterns and so does
+    // this compiler, rather than quietly substituting the field layout and accepting a
+    // program CPython rejects.
+    private readonly Dictionary<string, List<string>> classMatchArgs = new();
+
     // A field whose declared type is itself a ZCA class. Keyed "classKey|fieldName" -> the
     // field's class key. Resolved at scan time (in the defining module's import scope). Lets a
     // member access recover the nested class identity that a single-field ZCA loses when it

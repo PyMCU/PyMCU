@@ -941,6 +941,35 @@ public partial class IRGenerator
                             }
 
                         classFieldLayout[classKey] = clsLayout;
+
+                        // `__match_args__` names the fields a positional class pattern binds,
+                        // in order. It parsed and was ignored before, so writing one changed
+                        // nothing and positional patterns had no order to work from.
+                        foreach (var cs in block.Statements)
+                        {
+                            Expression? maVal = cs switch
+                            {
+                                AssignStmt { Target: VariableExpr { Name: "__match_args__" } } ma => ma.Value,
+                                AnnAssign { Target: "__match_args__" } maa => maa.Value,
+                                VarDecl { Name: "__match_args__" } mad => mad.Init,
+                                _ => null,
+                            };
+                            if (maVal == null) continue;
+
+                            var argNames = new List<string>();
+                            var elems = maVal switch
+                            {
+                                TupleExpr te => te.Elements,
+                                ListExpr le => le.Elements,
+                                _ => null,
+                            };
+                            if (elems == null) continue;
+                            foreach (var el in elems)
+                                if (el is StringLiteral sl && sl.Value.Length > 0)
+                                    argNames.Add(sl.Value);
+                            classMatchArgs[classKey] = argNames;
+                            break;
+                        }
                         // Record any field whose type is itself a class, so a member read can
                         // recover the nested class identity a single-field ZCA loses on collapse.
                         // (1) param-typed fields (`self.x = pin` where pin: SomeClass): the layout
