@@ -69,15 +69,39 @@ def test_the_package_scan_is_not_empty():
     assert len(PACKAGES) >= 20, f"only {len(PACKAGES)} packages found; the scan is broken"
 
 
+def _is_inline(node):
+    return any(getattr(d, "id", getattr(d, "attr", None)) == "inline"
+               for d in getattr(node, "decorator_list", []))
+
+
+def _param_types(node):
+    """The parameter type annotations, as written, or None where unannotated."""
+    return tuple(ast.dump(a.annotation) if a.annotation else None
+                 for a in node.args.args)
+
+
 @pytest.mark.parametrize("path", [p.relative_to(STDLIB).as_posix() for p in sources()],
                          ids=lambda p: p)
 def test_no_file_defines_the_same_name_twice(path):
-    """Only the first definition is compiled, so a second one is unreachable code."""
+    """Only the first definition is compiled, so a second one is unreachable code.
+
+    An OVERLOAD is the exception, under the rule the compiler enforces: every definition
+    of the name is @inline and their parameter type lists differ pairwise. math.floor is
+    written that way, one form for float and one for each integer width, so a check that
+    counted names alone would have refused the stdlib for doing the supported thing.
+    """
     tree = ast.parse((STDLIB / path).read_text())
-    seen, dups = set(), []
+    by_name, dups = {}, []
     for node in tree.body:      # top level only: if/else branches are alternatives
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if node.name in seen:
-                dups.append(f"{node.name} (line {node.lineno})")
-            seen.add(node.name)
+            prev = by_name.setdefault(node.name, [])
+            if prev:
+                overloadable = (
+                    isinstance(node, ast.FunctionDef)
+                    and all(isinstance(p, ast.FunctionDef) and _is_inline(p) for p in prev)
+                    and _is_inline(node)
+                    and all(_param_types(p) != _param_types(node) for p in prev))
+                if not overloadable:
+                    dups.append(f"{node.name} (line {node.lineno})")
+            prev.append(node)
     assert not dups, f"{path} redefines {', '.join(dups)}; only the first is compiled"
