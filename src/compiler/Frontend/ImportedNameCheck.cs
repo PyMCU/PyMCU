@@ -88,7 +88,7 @@ public static class ImportedNameCheck
                         ? context.Options.FilePath
                         : pathOf.TryGetValue(owner, out var p) ? p : context.Options.FilePath;
 
-                    throw new CompilerError("ImportError", Message(imp.ModuleName, sym, bound),
+                    throw new CompilerError("ImportError", Message(imp.ModuleName, sym, target, bound),
                                             imp.Line > 0 ? imp.Line : 1, 1)
                     {
                         File = where,
@@ -98,27 +98,56 @@ public static class ImportedNameCheck
         }
     }
 
-    private static string Message(string moduleName, string symbol, HashSet<string> bound)
+    private static string Message(string moduleName, string symbol, ProgramNode module,
+                                  HashSet<string> bound)
     {
-        var offered = bound.Where(n => n.Length > 0 && n[0] != '_')
-                           .OrderBy(n => n, StringComparer.Ordinal)
-                           .ToList();
+        // What the module OFFERS, not everything its namespace holds. Listing the bindings
+        // put every helper import beside the real API: `machine` advertised `Callable` and
+        // `CompileError`, which arrive from `from pymcu.types import ...` and
+        // `from pymcu.exceptions import CompileError`, and with the list elided at ten names
+        // two of the ten a reader saw did not exist (issue #194). A reader who has just been
+        // refused a name reads this list to find out what IS there, so a fifth of it being
+        // unusable is worse than it being shorter.
+        //
+        // The CHECK above still tests against the bindings, because a re-export really is
+        // importable. Only the advertisement is narrowed.
+        var offered = StarImportExpander.ExportedNames(module)
+                          .Where(n => n.Length > 0 && n[0] != '_')
+                          .OrderBy(n => n, StringComparer.Ordinal)
+                          .ToList();
+
+        // Everything importable from here, which for a facade is all of it.
+        var importable = bound.Where(n => n.Length > 0 && n[0] != '_')
+                              .OrderBy(n => n, StringComparer.Ordinal)
+                              .ToList();
 
         // A near miss first, when there is one. The reader who wrote `Pn` wants to be told
         // `Pin`, not handed the export list to search. #54 established that at the CALL site;
         // this check reports at the IMPORT, which is earlier and better, so it has to carry the
         // suggestion too or the move loses it.
-        string near = Nearest(offered, symbol);
-        if (near.Length > 0)
-            return $" Did you mean '{near}'?";
+        // Appended to the sentence, never returned in place of it. Returning the fragment
+        // alone produced "ImportError:  Did you mean 'Pin'?", which never says what failed,
+        // and reads as a stray remark with a doubled space in front of it.
+        //
+        // Computed over the BINDINGS, not the narrowed list. The same reasoning that keeps the
+        // check against the bindings applies here: a re-export really is importable, so a
+        // near miss for one is a real suggestion. Narrowing this too silently removed the
+        // suggestion from every facade, `pymcu.hal.gpio` included, where it is most wanted.
+        string near = Nearest(importable, symbol);
 
-        string list = offered.Count == 0
-            ? " It binds no public name."
-            : $" '{moduleName}' binds {string.Join(", ", offered.Take(10))}"
-              + (offered.Count > 10 ? ", ..." : "") + ".";
+        // A module that defines nothing of its own is a pure facade, and re-exporting IS what
+        // it offers. Advertising its bindings there is not the `machine` problem: there are no
+        // helper imports to separate out, because separating them is what defines the facade.
+        var advertised = offered.Count > 0 ? offered : importable;
+        string verb = offered.Count > 0 ? "defines" : "offers";
+        string list = advertised.Count == 0
+            ? ""
+            : $" '{moduleName}' {verb} {string.Join(", ", advertised.Take(10))}"
+              + (advertised.Count > 10 ? ", ..." : "") + ".";
 
         return $"cannot import '{symbol}' from '{moduleName}': the module was found and does "
-             + $"not define that name." + list;
+             + $"not define that name."
+             + (near.Length > 0 ? $" Did you mean '{near}'?" : list);
     }
 
     // The entry file first (its name is null), then every module loaded under a name. The
