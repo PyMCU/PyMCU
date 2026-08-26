@@ -185,23 +185,41 @@ Requires Python 3.11+ and `pipx`. Each extra bundles its full toolchain
 ### 2. Create a project
 
 ```bash
-pymcu new blink
+pymcu new blink --board arduino_uno --stdlib micropython
 cd blink
 ```
 
-### 3. Choose your API and write the program
+That is the whole setup. `pymcu new` scaffolds a project that already builds: a
+`pyproject.toml` carrying the board, frequency, toolchain and dependencies, a
+`src/main.py` with a working blink, plus `requirements.txt`, a `Makefile` and VS Code
+tasks. Pass `--stdlib circuitpython` for the other API, or run it with no flags and it
+asks for what you left out.
 
-**CircuitPython style** — add `pymcu-circuitpython` to dependencies:
+> [!WARNING]
+> `pymcu new` asks whether to install dependencies and **defaults to no**. The compat
+> layer you picked is one of those dependencies, so declining leaves you with a project
+> that scaffolds fine and a first `pymcu build` that fails with
+> `ImportError: Module not found: machine`. If you already said no, install them from
+> inside the project with `uv sync`, `poetry install` or `pip install -e .`.
 
-```toml
-# pyproject.toml
-[project]
-dependencies = ["pymcu-compiler[avr]", "pymcu-circuitpython"]
+### 3. The program it wrote for you
 
-[tool.pymcu]
-board     = "arduino_uno"
-frequency = 16000000
+**MicroPython style** (`--stdlib micropython`):
+
+```python
+# src/main.py
+from machine import Pin
+from time import sleep_ms
+
+led = Pin(13, Pin.OUT)
+while True:
+    led.value(1)
+    sleep_ms(500)
+    led.value(0)
+    sleep_ms(500)
 ```
+
+**CircuitPython style** (`--stdlib circuitpython`):
 
 ```python
 # src/main.py
@@ -211,7 +229,6 @@ import time
 
 led = digitalio.DigitalInOut(board.LED)
 led.direction = digitalio.Direction.OUTPUT
-
 while True:
     led.value = True
     time.sleep(0.5)
@@ -219,31 +236,9 @@ while True:
     time.sleep(0.5)
 ```
 
-**MicroPython style** — add `pymcu-micropython` to dependencies:
-
-```toml
-# pyproject.toml
-[project]
-dependencies = ["pymcu-compiler[avr]", "pymcu-micropython"]
-
-[tool.pymcu]
-board     = "arduino_uno"
-frequency = 16000000
-```
-
-```python
-# src/main.py
-from machine import Pin
-from utime import sleep_ms
-
-led = Pin(13, Pin.OUT)
-
-while True:
-    led.value(1)
-    sleep_ms(500)
-    led.value(0)
-    sleep_ms(500)
-```
+Both compile to bare-metal firmware for the same chip. The
+[Quick Start](https://docs.pymcu.org/getting-started/quickstart/) walks the same path in
+more detail, including what each scaffolded file is for.
 
 ### 4. Build and flash
 
