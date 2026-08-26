@@ -320,7 +320,7 @@ private static void DetectRecursion(ProgramIR program)
         throw new RecursionError(
             $"recursive call cycle: {cycle}. PyMCU uses a static stack layout " +
             "(no per-call frames), so recursion is not supported — rewrite it as a loop",
-            line, 1);
+            line);
     }
 
     foreach (var f in program.Functions)
@@ -792,7 +792,7 @@ private static Function CloneFunction(Function f)
                             // left as a runtime Binary with a const-0 divisor and miscompile.
                             case BinaryOp.Div or BinaryOp.FloorDiv or BinaryOp.Mod when c2.Value == 0:
                                 throw new ValueError("integer division or modulo by zero",
-                                    curLine > 0 ? curLine : 1, 1);
+                                    curLine > 0 ? curLine : 1);
                             case BinaryOp.Div:
                                 result = c1.Value / c2.Value;
                                 break;
@@ -936,7 +936,7 @@ private static Function CloneFunction(Function f)
                             while (n < func.Body.Count && func.Body[n] is DebugLine) n++;
                             if (n < func.Body.Count && func.Body[n] is SignalError { Code: Constant { Value: 6 } })
                                 throw new ValueError("integer division or modulo by zero",
-                                    curLine > 0 ? curLine : 1, 1);
+                                    curLine > 0 ? curLine : 1);
                             func.Body[i] = new Copy(new Constant(0), new Temporary("__dead_jmp__"));
                         }
                     }

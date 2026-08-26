@@ -688,7 +688,7 @@ public partial class IRGenerator
                                 $"'{varExpr.Name}' is a module-level global; to assign it inside " +
                                 $"'{currentFunction}' add a 'global {varExpr.Name}' declaration, " +
                                 "or rename the variable if a local was intended",
-                                stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                                stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
 
                         // First top-level store into an unannotated global that ScanGlobals
                         // could not type: adopt the RHS's real width. As uint8, a uint16
@@ -2070,7 +2070,7 @@ public partial class IRGenerator
                     throw new TypeError(
                         "runtime bit index is only supported on a chip register (a constant " +
                         "port address); indexing a bit through a runtime pointer is not yet supported",
-                        stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                        stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
                 Val rmwVal = VisitExpression(stmt.Value);
                 Temporary mask = MakeTemp(DataType.UINT8);
                 Emit(new Binary(BinaryOp.LShift, new Constant(1), indexVal, mask));
@@ -2188,7 +2188,7 @@ public partial class IRGenerator
         if (shown < r.Min || shown > r.Max)
             throw new ValueError(
                 $"integer literal {shown} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
-                line, 1);
+                line);
     }
 
     // `s = f"..."` with runtime interpolations -- the f-string as a VALUE. Expands to a
@@ -2445,7 +2445,7 @@ public partial class IRGenerator
                 throw new TypeError(
                     $"None is not a value of type {stmt.VarType}; None is only valid for " +
                     "comparisons (is/== None) and optional reference parameters",
-                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                    stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
             string qn = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.Name
                 : (!string.IsNullOrEmpty(currentFunction) ? currentFunction + "." + stmt.Name : stmt.Name);
@@ -2464,7 +2464,7 @@ public partial class IRGenerator
                 throw new TypeError(
                     $"cannot assign a float literal to integer variable '{stmt.Name}' of type " +
                     $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
-                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                    stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
         }
 
         // A bare `const` (no explicit width) infers its scalar width from the
@@ -2662,7 +2662,7 @@ public partial class IRGenerator
                 throw new TypeError(
                     $"cannot assign a float value to integer variable '{stmt.Name}' of type " +
                     $"{stmt.VarType}; use {stmt.VarType}(...) to truncate",
-                    stmt.Line > 0 ? stmt.Line : lastLine, 1);
+                    stmt.Line > 0 ? stmt.Line : lastLine, stmt.Column);
 
             // Declarations bind the name itself -- never a stale value-tracking alias
             // (same invalidation-before-resolve as EmitScalarVarAssign).

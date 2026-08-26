@@ -82,7 +82,7 @@ public static class DuplicateDefinitionCheck
             $"duplicate function definition: '{func.Name}' is defined more than once in "
             + $"'{Path.GetFileName(filePath)}'{where}. Python binds the last definition and "
             + $"PyMCU compiles the first, so the two disagree. {how}",
-            func.Line > 0 ? func.Line : 1, 1)
+            func.Line > 0 ? func.Line : 1, func.Column)
         {
             File = filePath,
         };

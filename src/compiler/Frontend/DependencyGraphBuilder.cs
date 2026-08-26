@@ -68,7 +68,7 @@ public class DependencyGraphBuilder(IModuleLoader moduleLoader) : IDependencyGra
                     // written. A failed import in a module used to be printed against the
                     // entry file's line 1, a line that does not mention the module named.
                     throw new CompilerError(e.TypeName, e.Message,
-                        imp.Line > 0 ? imp.Line : 1, 1) { File = currentPath };
+                        imp.Line > 0 ? imp.Line : 1, imp.Column) { File = currentPath };
                 }
 
                 // `from m import *`: replace the star with the names m exports, now that m's

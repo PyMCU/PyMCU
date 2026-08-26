@@ -132,7 +132,7 @@ public partial class IRGenerator
                         + "are one set of fixed locations rather than one set per call: the second "
                         + "entry overwrites the first one's, and the first reads back the second's "
                         + "answer. Mark it @inline so each caller gets its own copy, or arrange for "
-                        + "only one of the two to call it.", 1, 1);
+                        + "only one of the two to call it.", 1);
                 }
         }
     }

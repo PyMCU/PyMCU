@@ -43,7 +43,7 @@ public static class PythonAstReader
         if (root.TryGetProperty("error", out var err))
         {
             int line = root.TryGetProperty("line", out var l) ? l.GetInt32() : 0;
-            throw new SyntaxError(err.GetString() ?? "parse failed", line, 1);
+            throw new SyntaxError(err.GetString() ?? "parse failed", line);
         }
 
         var program = new ProgramNode();

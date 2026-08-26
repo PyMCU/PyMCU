@@ -89,7 +89,7 @@ public static class ImportedNameCheck
                         : pathOf.TryGetValue(owner, out var p) ? p : context.Options.FilePath;
 
                     throw new CompilerError("ImportError", Message(imp.ModuleName, sym, target, bound),
-                                            imp.Line > 0 ? imp.Line : 1, 1)
+                                            imp.Line > 0 ? imp.Line : 1, imp.Column)
                     {
                         File = where,
                     };

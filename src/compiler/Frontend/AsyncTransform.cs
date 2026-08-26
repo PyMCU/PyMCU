@@ -51,7 +51,7 @@ public static class AsyncTransform
         {
             if (asyncFns.Contains(fn) || genFns.Contains(fn)) continue;
             if (DelegateYieldPosition(fn.Body.Statements) is { } stray)
-                throw new SyntaxError(stray.Message, stray.Line, 1);
+                throw new SyntaxError(stray.Message, stray.Line);
         }
 
         if (asyncFns.Count == 0 && genFns.Count == 0) return;
@@ -67,7 +67,7 @@ public static class AsyncTransform
                 throw new SyntaxError(
                     "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
                     "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.",
-                    asyncFns[0].Line, 1);
+                    asyncFns[0].Line, asyncFns[0].Column);
         }
 
         // `yield from` in a coroutine is not the same construct: it would have to drive the
@@ -79,7 +79,7 @@ public static class AsyncTransform
                 throw new SyntaxError(
                     $"`yield from` is not supported inside `async def {fn.Name}`. It is available "
                     + "in a plain generator (a `def` whose body yields); a coroutine has no "
-                    + "delegation form yet.", fn.Line, 1);
+                    + "delegation form yet.", fn.Line, fn.Column);
 
         // A compile-time task set. `asyncio.create_task(f(args))` cannot append to a list:
         // each coroutine lowers to its own ZCA type and there is no common runtime handle
@@ -117,7 +117,7 @@ public static class AsyncTransform
             // functions and class methods and names neither `yield` nor `from`.
             foreach (var g in genFns)
                 if (DelegateYieldPosition(g.Body.Statements) is { } where)
-                    throw new SyntaxError(where.Message, where.Line, 1);
+                    throw new SyntaxError(where.Message, where.Line);
         }
         var genNames = new HashSet<string>();
         foreach (var fn in genFns)
@@ -183,7 +183,7 @@ public static class AsyncTransform
                     + "pass what the body reads from `self` as an argument: `def "
                     + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
                         .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
-                    m.Line, 1);
+                    m.Line, m.Column);
             }
         }
     }
@@ -203,7 +203,7 @@ public static class AsyncTransform
                 + "each call site, and a generator needs a state machine of its own to suspend in, "
                 + $"so the two cannot be combined. Remove `@inline` from '{fn.Name}' to make it a "
                 + "generator, and consume it with `for v in " + fn.Name + "(...):`.",
-                fn.Line, 1);
+                fn.Line, fn.Column);
         }
     }
 
@@ -221,7 +221,7 @@ public static class AsyncTransform
                     + "it needs as arguments: `async def "
                     + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
                         .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
-                    m.Line, 1);
+                    m.Line, m.Column);
             }
         }
     }
@@ -264,7 +264,7 @@ public static class AsyncTransform
                     + "coroutines together: gather drives its pair to completion before it "
                     + $"returns, so the inner one finishes before the outer one starts. Use "
                     + $"`{aio}.create_task(...)` for each extra coroutine and one "
-                    + $"`{aio}.run(main())` to drive them.", line, 1);
+                    + $"`{aio}.run(main())` to drive them.", line);
             foreach (var a in call.Args) Check(a, line);
             Check(call.Callee, line);
         }
@@ -328,18 +328,18 @@ public static class AsyncTransform
                     if (call.Callee is not VariableExpr coro || !coroNames.Contains(coro.Name))
                         throw new SyntaxError(
                             $"`{aio}.create_task(...)` takes a coroutine of this module called by "
-                            + "name, as in `create_task(blink())`.", stmts[i].Line, 1);
+                            + "name, as in `create_task(blink())`.", stmts[i].Line, stmts[i].Column);
                     if (inLoop)
                         throw new SyntaxError(
                             $"`{aio}.create_task({coro.Name}(...))` inside a loop would start one "
                             + "task, not one per iteration: the task set is fixed at compile time, "
                             + "so each call site is one task. Write one create_task per task.",
-                            stmts[i].Line, 1);
+                            stmts[i].Line, stmts[i].Column);
                     if (call.Args.Count != arity[coro.Name])
                         throw new SyntaxError(
                             $"`{aio}.create_task({coro.Name}(...))`: {coro.Name} takes "
                             + $"{arity[coro.Name]} argument(s), {call.Args.Count} given.",
-                            stmts[i].Line, 1);
+                            stmts[i].Line, stmts[i].Column);
 
                     var t = new TaskSite
                     {
@@ -362,14 +362,14 @@ public static class AsyncTransform
                             $"`{aio}.create_task({coro.Name}(...))` after an `await` is not "
                             + "supported: the task set is fixed at compile time and every task "
                             + "starts when `run()` does. Move the create_task calls above the "
-                            + "first await.", stmts[i].Line, 1);
+                            + "first await.", stmts[i].Line, stmts[i].Column);
                     foreach (var a in call.Args)
                         if (ConstantInt(a) is null)
                             throw new SyntaxError(
                                 $"`{aio}.create_task({coro.Name}(...))` takes compile-time "
                                 + "constant arguments: the coroutine is built once at module "
                                 + "level. Pass a literal, or read the value inside the "
-                                + "coroutine instead.", stmts[i].Line, 1);
+                                + "coroutine instead.", stmts[i].Line, stmts[i].Column);
                     t.Args = call.Args;
                     stmts[i] = new Block();
                     continue;
@@ -421,7 +421,7 @@ public static class AsyncTransform
         if (runAt < 0)
             throw new SyntaxError(
                 $"`{aio}.create_task(...)` needs a `{aio}.run(main())` to drive the tasks; "
-                + "without it nothing polls them.", tasks[0].Line, 1);
+                + "without it nothing polls them.", tasks[0].Line);
 
         // Build each task's coroutine here, once, with the arguments from its create_task
         // call site. The site itself only raises the flag.
@@ -595,7 +595,7 @@ public static class AsyncTransform
             throw new SyntaxError(
                 $"`yield from {inner.Name}(...)` is recursive (directly or through another " +
                 "generator). Delegation is expanded inline, so a cycle has no finite " +
-                "expansion; rewrite the generator as a loop.", call.Line, 1);
+                "expansion; rewrite the generator as a loop.", call.Line, call.Column);
 
         // `return` inside a delegated generator ends the DELEGATION, not the delegating
         // generator -- a different jump target than the one the splitter emits for a
@@ -628,7 +628,7 @@ public static class AsyncTransform
             if (arg == null)
                 throw new SyntaxError(
                     $"`yield from {inner.Name}(...)`: no argument for parameter '{p.Name}' " +
-                    "and it has no default.", call.Line, 1);
+                    "and it has no default.", call.Line, call.Column);
             repl.Statements.Add(new VarDecl(renames[p.Name], p.Type, arg));
         }
 
@@ -724,7 +724,7 @@ public static class AsyncTransform
                 default:
                     throw new SyntaxError(
                         $"`yield from`: the delegated generator uses {PythonConstruct(s)}, " +
-                        "which the delegation expansion cannot copy yet.", s.Line, 1);
+                        "which the delegation expansion cannot copy yet.", s.Line, s.Column);
             }
         }
 
@@ -749,7 +749,7 @@ public static class AsyncTransform
                 default:
                     throw new SyntaxError(
                         $"`yield from`: the delegated generator uses {PythonConstruct(e)}, " +
-                        "which the delegation expansion cannot copy yet.", e.Line, 1);
+                        "which the delegation expansion cannot copy yet.", e.Line, e.Column);
             }
         }
     }
@@ -1013,10 +1013,10 @@ public static class AsyncTransform
                     throw new SyntaxError(
                         $"async def '{_fnName}': only `await {_aio}.sleep(n)` / `sleep_ms(n)` " +
                         "can be awaited (awaiting another coroutine/future is not supported yet).",
-                        s.Line, 1);
+                        s.Line, s.Column);
 
                 default:
-                    throw new SyntaxError($"async def '{_fnName}': {AwaitContext(s)}.", s.Line, 1);
+                    throw new SyntaxError($"async def '{_fnName}': {AwaitContext(s)}.", s.Line, s.Column);
             }
         }
 
@@ -1145,7 +1145,7 @@ public static class AsyncTransform
             if (f.Iterable != null || f.RangeStop == null)
                 throw new SyntaxError(
                     $"async def '{_fnName}': `await` inside a for-loop is only supported for " +
-                    "`for i in range(...)`.", f.Line, 1);
+                    "`for i in range(...)`.", f.Line, f.Column);
             int step = 1;
             if (f.RangeStep != null)
             {
@@ -1153,7 +1153,7 @@ public static class AsyncTransform
                     step = (int)stepVal;
                 else throw new SyntaxError(
                     $"async def '{_fnName}': for-range with `await` needs a positive constant step.",
-                    f.Line, 1);
+                    f.Line, f.Column);
             }
 
             var iv = new VariableExpr(f.VarName);
@@ -1375,7 +1375,7 @@ public static class AsyncTransform
                     return new TernaryExpr(Rewrite(t.TrueVal), Rewrite(t.Condition), Rewrite(t.FalseVal));
                 case AwaitExpr:
                     throw new SyntaxError(
-                        "`await` is only valid as a statement (e.g. `await sleep(n)`).", e.Line, 1);
+                        "`await` is only valid as a statement (e.g. `await sleep(n)`).", e.Line, e.Column);
                 default:
                     return e;
             }
@@ -1412,7 +1412,7 @@ public static class AsyncTransform
                 long us = lit * scale;
                 if (us < 0)
                     throw new SyntaxError(
-                        $"`await {aio}.{m.Member}({lit})`: the duration cannot be negative.", s.Line, 1);
+                        $"`await {aio}.{m.Member}({lit})`: the duration cannot be negative.", s.Line, s.Column);
                 // The wait compares `ticks() - start` against the duration in wrapping
                 // uint32 arithmetic, so the whole 2^32 us range is usable, about 71
                 // minutes. Past that the subtraction lands back inside the window and the
@@ -1421,7 +1421,7 @@ public static class AsyncTransform
                     throw new SyntaxError(
                         $"`await {aio}.{m.Member}({lit})` is longer than a single await can wait " +
                         "(the limit is 4294 seconds, about 71 minutes). Split it into shorter sleeps, " +
-                        "or count them in a loop.", s.Line, 1);
+                        "or count them in a loop.", s.Line, s.Column);
                 // IntegerLiteral is 32-bit signed, so only the lower half can be folded
                 // here; the rest keeps the multiply, which the backend widens correctly.
                 if (us > int.MaxValue) return true;
