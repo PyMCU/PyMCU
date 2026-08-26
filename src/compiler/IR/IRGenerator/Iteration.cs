@@ -309,18 +309,68 @@ public partial class IRGenerator
             {
                 var elems = iter is ListExpr le ? le.Elements : ((TupleExpr)iter).Elements;
                 string llBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+
+                // `for a, b in [(1, 2), (3, 4)]`. The unrolling is the same one the single-target
+                // form does; what the two-name form needs is the second key bound alongside the
+                // first, from the element's second component. Qualified the same way varKey is,
+                // so the body finds it under whatever name it reads.
+                string? varKey2 = string.IsNullOrEmpty(stmt.Var2Name) ? null
+                    : (!string.IsNullOrEmpty(currentInlinePrefix)
+                        ? currentInlinePrefix + stmt.Var2Name
+                        : (!string.IsNullOrEmpty(currentFunction)
+                            ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name));
+
                 foreach (var elem in elems)
                 {
+                    if (varKey2 != null)
+                    {
+                        // Refuse by naming what the element IS and how many names it carries,
+                        // rather than repeating "must be constants" at a program whose elements
+                        // are all constants.
+                        if (elem is not (ListExpr or TupleExpr))
+                            throw UserError(
+                                $"'for {stmt.VarName}, {stmt.Var2Name} in ...' unpacks two names from each " +
+                                "element, so every element has to be a pair like (1, 2). This one is not a " +
+                                $"pair, so there is nothing to give {stmt.Var2Name}.");
+
+                        var parts = elem is ListExpr pl ? pl.Elements : ((TupleExpr)elem).Elements;
+                        if (parts.Count != 2)
+                            throw UserError(
+                                $"'for {stmt.VarName}, {stmt.Var2Name} in ...' unpacks two names, and this " +
+                                $"element has {parts.Count}. Every element has to carry exactly two values.");
+
+                        if (!TryEvalConstElement(parts[0], out int pv0)
+                            || !TryEvalConstElement(parts[1], out int pv1))
+                            throw UserError(
+                                "for-in over a list of pairs unrolls at compile time, so both values in " +
+                                "each pair have to be integer constants. Read the run-time value inside " +
+                                "the body instead.");
+
+                        constantVariables[varKey] = pv0;
+                        constantVariables[varKey2] = pv1;
+                        EmitUnrolledIteration(stmt.Body, llBrk);
+                        continue;
+                    }
+
                     if (TryEvalConstElement(elem, out int ev))
                     {
                         constantVariables[varKey] = ev;
                         EmitUnrolledIteration(stmt.Body, llBrk);
                     }
+                    // A tuple element with a single loop name is the shape that used to be
+                    // reported as a non-constant element while every element was a constant.
+                    // What is missing is a name to unpack it into, which is what it says now.
+                    else if (elem is ListExpr or TupleExpr)
+                        throw UserError(
+                            $"each element here is a pair, and '{stmt.VarName}' is one name, so there is " +
+                            $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
+                            "unpack both.");
                     else throw UserError("for-in list/tuple iterable elements must be compile-time integer constants.");
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
                 constantVariables.Remove(varKey);
+                if (varKey2 != null) constantVariables.Remove(varKey2);
                 return;
             }
 
