@@ -105,9 +105,18 @@ print(stamp(fe))
 print("  backend the driver uses:")
 print(stamp(be))
 
+# The debug bundle's directory is named pymcuc-avr.dSYM, so "*/dSYM/*" never matched it
+# and six DWARF images were being counted as runnable backends. Match the real shape.
+#
+# Scope is every place a backend has actually been found on a developer machine, not just
+# the repos: a pipx venv, uv's wheel cache and a project venv in Downloads each shipped
+# their own copy, and the pipx one is what a `pymcu` off the PATH runs.
+roots = [d for d in (os.path.expanduser(x) for x in (
+    "~/Repos", "~/.local/pipx/venvs", "~/.cache/uv", "~/Library/Caches/uv", "~/Downloads",
+)) if os.path.isdir(d)]
 others = subprocess.run(
-    ["find", os.path.expanduser("~/Repos"), "-name", "pymcuc-avr", "-type", "f",
-     "-not", "-path", "*/dSYM/*"],
+    ["find", *roots, "-name", "pymcuc-avr", "-type", "f",
+     "-not", "-path", "*.dSYM/*"],
     capture_output=True, text=True).stdout.split()
 seen = {}
 for p in others:
@@ -115,7 +124,7 @@ for p in others:
         seen.setdefault(hashlib.sha256(open(p, "rb").read()).hexdigest()[:16], []).append(p)
     except OSError:
         pass
-print("  distinct pymcuc-avr binaries under ~/Repos: %d" % len(seen))
+print("  distinct pymcuc-avr binaries in %d searched roots: %d" % (len(roots), len(seen)))
 if be:
     h = hashlib.sha256(open(be, "rb").read()).hexdigest()[:16]
     for k, ps in sorted(seen.items()):
