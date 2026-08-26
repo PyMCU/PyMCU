@@ -213,6 +213,7 @@ match read_sensor():
     case STATUS_OK:    ...
     case STATUS_RANGE: ...
 ```
+| One type per handler | `except ValueError:`, without parentheses and without `as`. A raise carries the type code and nothing else, so there is no exception object for `except E as e:` to bind, and `except (A, B):` has no single code to compare. Both are refused by name, as is `except*` (exception groups) |
 :::
 
 **`CompileError` — compile-time intrinsic:**
