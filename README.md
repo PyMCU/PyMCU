@@ -345,6 +345,12 @@ See the [Language Limitations](docs/language/limitations.md) page for the full l
 
 ---
 
+## Written up elsewhere
+
+- [Python on a Classic Uno](https://projecthub.arduino.cc/begeistert/python-on-a-classic-uno-38-bytes-of-code-zero-ram-534299) on Arduino Project Hub — why the board that taught millions of us electronics never got to speak Python, and what changes once the interpreter is gone.
+
+---
+
 ## Sustainability
 
 Post-alpha development will be slower and community-driven. If PyMCU saves you time,
