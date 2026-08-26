@@ -55,6 +55,90 @@ public class DebugLineSourceTests
             modulePaths: new Dictionary<string, string> { [moduleName] = modulePath });
     }
 
+    // An INLINED body is expanded into the caller, so its markers sit in main's instruction
+    // list. Their line and text follow the callee; the file name has to follow it too, or
+    // the three halves of one marker describe two different files (issue #204).
+    private static ProgramIR GenInlined(string moduleName, string modulePath)
+    {
+        const string inlineModule =
+            "from pymcu.types import uint8, inline\n" +   // 1
+            "\n" +                                        // 2
+            "\n" +                                        // 3
+            "@inline\n" +                                 // 4
+            "def helper(v: uint8) -> uint8:\n" +          // 5
+            "    w: uint8 = v + 7\n" +                    // 6  <- only in the module
+            "    return w\n";                             // 7
+
+        string entry =
+            "from pymcu.types import uint8\n" +
+            $"from {moduleName} import helper\n" +
+            "\n" +
+            "\n" +
+            "def main() -> None:\n" +
+            "    bbb: uint8 = helper(3)\n";
+
+        return new IRGenerator().Generate(
+            new Parser(new Lexer(entry).Tokenize()).ParseProgram(),
+            new Dictionary<string, ProgramNode>
+            {
+                [moduleName] = new Parser(new Lexer(inlineModule).Tokenize()).ParseProgram(),
+            },
+            new DeviceConfig { Arch = "avr" },
+            sourceLines: entry.Split('\n').ToList(),
+            moduleSourceLines: new Dictionary<string, List<string>>
+            {
+                [moduleName] = inlineModule.Split('\n').ToList(),
+            },
+            projectModules: [moduleName],
+            modulePaths: new Dictionary<string, string> { [moduleName] = modulePath });
+    }
+
+    [Fact]
+    public void AnInlinedBodysMarker_NamesTheCalleesFileNotTheCallers()
+    {
+        var ir = GenInlined("drivers.led", "/proj/src/drivers/led.py");
+        var main = Assert.Single(ir.Functions, f => f.Name == "main");
+
+        var fromCallee = main.Body.OfType<DebugLine>()
+                             .Where(d => d.Text.Contains("w: uint8 = v + 7"))
+                             .ToList();
+
+        Assert.NotEmpty(fromCallee);
+        Assert.All(fromCallee, d => Assert.Equal("led.py", d.SourceFile));
+    }
+
+    // A package module is labelled by its own segment, not by the literal __init__.py, which
+    // is how the non-inlined path already names it. One module, one label, either way.
+    [Fact]
+    public void APackageModulesMarker_IsLabelledByItsSegment()
+    {
+        var ir = GenInlined("drivers.led", "/proj/src/drivers/led/__init__.py");
+        var main = Assert.Single(ir.Functions, f => f.Name == "main");
+
+        var fromCallee = main.Body.OfType<DebugLine>()
+                             .Where(d => d.Text.Contains("w: uint8 = v + 7"))
+                             .ToList();
+
+        Assert.NotEmpty(fromCallee);
+        Assert.All(fromCallee, d => Assert.Equal("led.py", d.SourceFile));
+    }
+
+    // The caller's own statements must come back to the caller's name once the expansion
+    // ends, or the fix trades one mislabel for another.
+    [Fact]
+    public void TheCallersOwnMarkers_StillNameTheEntryFile()
+    {
+        var ir = GenInlined("drivers.led", "/proj/src/drivers/led.py");
+        var main = Assert.Single(ir.Functions, f => f.Name == "main");
+
+        var fromCaller = main.Body.OfType<DebugLine>()
+                             .Where(d => d.Text.Contains("helper(3)"))
+                             .ToList();
+
+        Assert.NotEmpty(fromCaller);
+        Assert.All(fromCaller, d => Assert.Equal("main.py", d.SourceFile));
+    }
+
     private static List<string> TextOf(ProgramIR ir, string functionName)
         => Assert.Single(ir.Functions, f => f.Name == functionName)
                  .Body.OfType<DebugLine>().Select(d => d.Text).ToList();

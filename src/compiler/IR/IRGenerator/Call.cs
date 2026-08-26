@@ -1226,6 +1226,11 @@ public partial class IRGenerator
         // while the FILE stays the user's, which is the incoherent location #164 is about,
         // just relocated: `LCD(rs="PA0")` on line 5 of a ten-line file reported line 151.
         string savedSourcePath = currentSourcePath;
+        // The FILE label moves with the path. It did not, so an inlined body carried the
+        // callee's line and the callee's text under the CALLER's file name: two different
+        // stdlib modules both reported as main.py, at lines an eight-line main.py does not
+        // have (issue #204). Both halves of a marker have to name the same file.
+        string savedSourceFile = currentSourceFile;
         bool savedTracksCallee = inlineTracksCalleeLine;
         int savedCalleeLine = inlineCalleeStmtLine;
         if (func != null
@@ -1233,6 +1238,7 @@ public partial class IRGenerator
             && !string.IsNullOrEmpty(calleePath))
         {
             currentSourcePath = calleePath;
+            currentSourceFile = SourceFileLabel(calleePath);
             inlineTracksCalleeLine = true;
             inlineCalleeStmtLine = 0;
         }
@@ -1833,6 +1839,7 @@ public partial class IRGenerator
         lastInlineReturnType = DataTypeExtensions.StringToDataType(func.ReturnType);
 
         currentSourcePath = savedSourcePath;
+        currentSourceFile = savedSourceFile;
         inlineTracksCalleeLine = savedTracksCallee;
         inlineCalleeStmtLine = savedCalleeLine;
         currentInlinePrefix = savedPrefix;

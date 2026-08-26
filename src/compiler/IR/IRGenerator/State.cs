@@ -370,6 +370,23 @@ public partial class IRGenerator
     // "led.py" for drivers/led.py, which is neither unique nor openable.
     private string currentSourcePath = "";
 
+    /// <summary>
+    /// The name the rest of the generator labels a module's file with: the module's last
+    /// segment plus .py, which for a package is the DIRECTORY name and not the literal
+    /// __init__.py. Scanning derives it from the module name; an inline expansion has only
+    /// the path, and has to arrive at the same answer or one module would be labelled two
+    /// ways depending on whether it was inlined.
+    /// </summary>
+    private static string SourceFileLabel(string path)
+    {
+        string name = Path.GetFileName(path);
+        if (!string.Equals(name, "__init__.py", StringComparison.Ordinal)) return name;
+
+        string? dir = Path.GetDirectoryName(path);
+        string pkg = string.IsNullOrEmpty(dir) ? "" : Path.GetFileName(dir);
+        return pkg.Length > 0 ? pkg + ".py" : name;
+    }
+
     // Module name to the file it was loaded from, handed over by the module loader.
     private Dictionary<string, string> modulePaths = new();
 
