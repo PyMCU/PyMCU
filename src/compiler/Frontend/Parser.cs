@@ -24,6 +24,11 @@ public class Parser
     private int pos = 0;
     private int functionDepth = 0;
 
+    // The names of the functions currently being parsed, outermost first. Only used so a
+    // diagnostic can say WHICH function it is talking about; `functionDepth` remains the
+    // authority on nesting.
+    private readonly List<string> enclosingFunctions = new();
+
     // Extra modules from a comma-separated `import a, b, c`: ParseImportStatement returns
     // the first and queues the rest here for the caller to drain.
     private readonly Queue<ImportStmt> pendingImports = new();
@@ -444,7 +449,9 @@ public class Parser
         Consume(TokenType.Newline, "Expected newline after function definition");
 
         functionDepth++;
+        enclosingFunctions.Add(name);
         var body = ParseBlock();
+        enclosingFunctions.RemoveAt(enclosingFunctions.Count - 1);
         functionDepth--;
 
         var func = new FunctionDef(name, parameters, returnType, body, isInline, isInterrupt, vector)
@@ -988,6 +995,29 @@ public class Parser
         {
             names.Add(Consume(TokenType.Identifier, "Expected variable name").Value);
         } while (Match(TokenType.Comma));
+
+        // `nonlocal` means "bind to a name in an ENCLOSING FUNCTION", so with no enclosing
+        // function there is nothing it can mean, and CPython rejects it at parse time. Accepting
+        // it was not harmless: inside an @inline body it aliased the name write-through to the
+        // CALLER's variable of the same name, so a local assignment in the inlined function
+        // silently overwrote the caller's own. `bump()` setting its `seed` to 99 left main's
+        // `seed` reading 99 instead of 5, on a clean build.
+        //
+        // The nesting is what makes it legal: depth 2 is a def inside a def, which is the shape
+        // the aliasing exists for and which keeps working.
+        if (functionDepth < 2)
+        {
+            string shown = names[0];
+            string where = functionDepth == 1 && enclosingFunctions.Count > 0
+                ? $"'{enclosingFunctions[^1]}' is defined at module level, so there is no outer "
+                  + "function for the name to come from"
+                : "there is no function scope here at all";
+
+            Error($"'nonlocal {shown}' has no enclosing function to bind to: {where}. "
+                  + $"If '{shown}' is a module-level variable, the declaration that lets you "
+                  + $"assign it is 'global {shown}'; if it is meant to be local, the line can go. "
+                  + "`nonlocal` is for a def nested inside another def.");
+        }
 
         ConsumeStatementEnd();
         return new NonlocalStmt(names) { Line = line };

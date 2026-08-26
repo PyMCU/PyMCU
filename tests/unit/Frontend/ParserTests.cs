@@ -389,12 +389,25 @@ public class ParserControlFlowTests
     [Fact]
     public void NonlocalStatement_Parsed()
     {
-        // The PyMCU parser accepts `nonlocal` as a statement node (syntactic parsing),
-        // even though nested functions (the only meaningful context for nonlocal) are
-        // not yet supported by the compiler backend. The test verifies the parser
-        // produces a NonlocalStmt node rather than throwing a syntax error.
-        var prog = Parse("def f():\n    nonlocal x\n    pass\n");
-        Assert.Contains(prog.Functions[0].Body.Statements, s => s is NonlocalStmt);
+        // Still checks what it always checked: the parser produces a NonlocalStmt node. The
+        // CONTEXT moved, because the premise it was written under has expired. It used to read
+        // `def f(): nonlocal x` at module level, on the grounds that nested functions "are not
+        // yet supported by the compiler backend" so no meaningful context existed. They are
+        // supported now, as @inline defs, and the meaningless context is the one PyMCU#165
+        // refuses: with no enclosing function there is nothing `nonlocal` can bind to, and
+        // inside an @inline body it aliased the name write-through to the caller's variable of
+        // the same name and silently overwrote it.
+        var prog = Parse("def f():\n" +
+                         "    x = 0\n" +
+                         "    @inline\n" +
+                         "    def g():\n" +
+                         "        nonlocal x\n" +
+                         "        x = x + 1\n" +
+                         "    g()\n");
+
+        var inner = Assert.IsType<FunctionDef>(
+            prog.Functions[0].Body.Statements.First(s => s is FunctionDef));
+        Assert.Contains(((Block)inner.Body).Statements, s => s is NonlocalStmt);
     }
 
     // ─── VarDecl with type annotation ─────────────────────────────────────

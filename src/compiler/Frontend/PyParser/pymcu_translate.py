@@ -47,6 +47,43 @@ class Unsupported(Exception):
         super().__init__(message)
 
 
+def _body_of(node):
+    """The function's body, parsed with the nesting depth recorded."""
+    _function_depth[0] += 1
+    _enclosing_functions.append(node.name)
+    try:
+        return block(node.body)
+    finally:
+        _enclosing_functions.pop()
+        _function_depth[0] -= 1
+
+
+def s_nonlocal(node):
+    # `nonlocal` binds to a name in an ENCLOSING FUNCTION, so with no enclosing function there
+    # is nothing it can mean. CPython rejects it, but only in compile(), not in ast.parse(),
+    # which is why reading the AST alone lets it through.
+    if _function_depth[0] < 2:
+        shown = node.names[0]
+        where = (f"'{_enclosing_functions[-1]}' is defined at module level, so there is no outer "
+                 "function for the name to come from"
+                 if _function_depth[0] == 1 and _enclosing_functions
+                 else "there is no function scope here at all")
+        raise Unsupported(
+            f"'nonlocal {shown}' has no enclosing function to bind to: {where}. "
+            f"If '{shown}' is a module-level variable, the declaration that lets you assign it "
+            f"is 'global {shown}'; if it is meant to be local, the line can go. "
+            "`nonlocal` is for a def nested inside another def.", node)
+    return {"k": "Nonlocal", "names": list(node.names)}
+
+
+# How many function bodies we are inside, mirroring the C# parser's `functionDepth`. Only
+# `nonlocal` reads it, and only so the two front ends refuse the same programs: the AST is the
+# contract, and one of them accepting what the other rejects breaks it just as surely as a
+# different node would.
+_function_depth = [0]
+_enclosing_functions = []
+
+
 def line_of(node):
     return getattr(node, "lineno", 0)
 
@@ -604,7 +641,7 @@ STMT = {
     ast.Break: lambda n: {"k": "Break"},
     ast.Continue: lambda n: {"k": "Continue"},
     ast.Global: lambda n: {"k": "Global", "names": list(n.names)},
-    ast.Nonlocal: lambda n: {"k": "Nonlocal", "names": list(n.names)},
+    ast.Nonlocal: s_nonlocal,
     ast.Import: s_import,
     ast.ImportFrom: s_importfrom,
 }
@@ -641,7 +678,7 @@ def function_of(node, is_async=False):
 
     fn = {
         "k": "Function", "name": node.name, "params": params_of(node.args),
-        "returnType": return_type, "body": block(node.body),
+        "returnType": return_type, "body": _body_of(node),
         "isInline": implicit_inline, "isInterrupt": False, "vector": 0,
         "isPropertyGetter": False, "isPropertySetter": False, "propertyName": "",
         "isNaked": False, "isExtern": False, "externSymbol": "", "isExportC": False,
