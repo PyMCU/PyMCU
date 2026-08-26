@@ -2087,11 +2087,29 @@ public class Parser
             int i = 0;
             while (i < raw.Length)
             {
-                if (raw[i] == '{')
+                // `{{` and `}}` are one literal brace each: the doubling is how Python writes
+                // a brace that is not a replacement field. Neither was handled in any position,
+                // and each position failed differently -- `f"{{{seed}}}"` reached the
+                // sub-lexer, which read `{seed}` as a SET literal and answered "Expected '}'
+                // after set literal", naming a construct that is not in the line. The other
+                // three reported the single brace as unbalanced, which is exactly what the
+                // doubling exists to prevent.
+                //
+                // Both are consumed by the literal-text branch rather than given a branch of
+                // their own, so `f"{{}}"` stays ONE text part. Splitting it into two would
+                // emit two uart_write_str calls where CPython's parser -- which the Python
+                // front end reads, and which already gets all of this right -- emits one, and
+                // the two front ends have to produce the same image.
+                bool doubledBrace = (raw[i] == '{' || raw[i] == '}')
+                                    && i + 1 < raw.Length && raw[i + 1] == raw[i];
+
+                if (raw[i] == '{' && !doubledBrace)
                 {
                     int j = i + 1;
                     while (j < raw.Length && raw[j] != '}') j++;
-                    if (j >= raw.Length) FStringError("Unterminated '{' in f-string");
+                    if (j >= raw.Length)
+                        FStringError("Unterminated '{' in f-string. A literal brace is written "
+                                     + "doubled: f\"{{\" prints one '{'");
                     string exprSrc = raw.Substring(i + 1, j - i - 1);
 
                     // A replacement field is `expression ['='] ['!' conversion] [':' spec]`, and
@@ -2147,15 +2165,27 @@ public class Parser
                     parts.Add(new FStringPart { IsExpr = true, Expr = innerExpr, FormatSpec = fmtSpec });
                     i = j + 1;
                 }
-                else if (raw[i] == '}')
+                else if (raw[i] == '}' && !doubledBrace)
                 {
-                    FStringError("Unexpected '}' in f-string");
+                    FStringError("Unexpected '}' in f-string. A literal brace is written "
+                                 + "doubled: f\"}}\" prints one '}'");
                 }
                 else
                 {
                     string text = "";
-                    while (i < raw.Length && raw[i] != '{' && raw[i] != '}')
+                    while (i < raw.Length)
                     {
+                        if (raw[i] == '{' || raw[i] == '}')
+                        {
+                            // A doubled brace is one literal brace and the text carries on
+                            // through it; a single one ends the run, for the field parser or
+                            // the error above to take.
+                            if (i + 1 >= raw.Length || raw[i + 1] != raw[i]) break;
+                            text += raw[i];
+                            i += 2;
+                            continue;
+                        }
+
                         if (raw[i] == (char)92 && i + 1 < raw.Length)
                         {
                             char esc = raw[i + 1];
