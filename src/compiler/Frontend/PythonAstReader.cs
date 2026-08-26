@@ -152,6 +152,12 @@ public static class PythonAstReader
     private static T Located<T>(T node, JsonElement e) where T : ASTNode
     {
         node.Line = Int(e, "line");
+        // Absent for every kind the translator does not position, and Int answers 0 there,
+        // which is CompilerError.Unlocated: no column claimed, no caret drawn. That is the
+        // same default the hand-written parser gives an unstamped node, so a diagnostic reads
+        // identically through either front end.
+        node.Column = Int(e, "col");
+        node.Length = Int(e, "len");
         return node;
     }
 

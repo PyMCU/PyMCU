@@ -88,6 +88,35 @@ def line_of(node):
     return getattr(node, "lineno", 0)
 
 
+# Node kinds whose POSITION the two front ends agree on, so carrying it here cannot make them
+# disagree. A leaf IS its token in both: CPython's col_offset for a Name or a string literal is
+# the start of that name or string, which is exactly where the hand-written parser stamps it.
+#
+# ast.BinOp is deliberately absent. CPython's col_offset for a BinOp is the start of the WHOLE
+# expression, while the hand-written parser stamps a binary expression at its OPERATOR (`a // 0`
+# gives the `//`). Carrying it would not close a divergence, it would open one in the other
+# direction, with the two front ends naming different characters for the same error. Adding a
+# kind here means first checking that both front ends locate it the same way.
+POSITIONED_KINDS = ("Var", "Str")
+
+
+def position_of(node):
+    """1-based column and token length, or {} when CPython does not give them.
+
+    CPython counts columns from 0 and PyMCU from 1. A node that spans lines reports no length,
+    because the underline is drawn on one line and a span across two would be measured against
+    the wrong one.
+    """
+    col = getattr(node, "col_offset", None)
+    if col is None:
+        return {}
+    out = {"col": col + 1}
+    end = getattr(node, "end_col_offset", None)
+    if end is not None and getattr(node, "end_lineno", None) == getattr(node, "lineno", None):
+        out["len"] = max(1, end - col)
+    return out
+
+
 def annotation_of(node):
     """PyMCU stores annotations as source text ('uint8[4]', 'const[str]'), in the exact
     spelling the C# parser produces: `-> None` is "void", a parenthesised multi-value
@@ -123,6 +152,8 @@ def expr(node):
     out = handler(node)
     if isinstance(out, dict) and "line" not in out:
         out["line"] = line_of(node)
+    if isinstance(out, dict) and out.get("k") in POSITIONED_KINDS and "col" not in out:
+        out.update(position_of(node))
     return out
 
 
@@ -366,6 +397,8 @@ def stmt(node):
     out = handler(node)
     if isinstance(out, dict) and "line" not in out:
         out["line"] = line_of(node)
+    if isinstance(out, dict) and out.get("k") in POSITIONED_KINDS and "col" not in out:
+        out.update(position_of(node))
     return out
 
 

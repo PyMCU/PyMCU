@@ -1587,6 +1587,15 @@ public class Parser
 
     /// Stamps a binary expression with the position of its OPERATOR.
     ///
+    /// This deliberately differs from how the leaf nodes are stamped, and the difference is not
+    /// a bug in either. A `VariableExpr` or a string literal IS its token, so it is stamped at
+    /// its own start. A node built by combining others has no token of its own, so its position
+    /// has to come from a decision about which part the reader should be shown, and the answer
+    /// is per node type: the operator for a binary expression, and the callee for a call. Any
+    /// future combining node needs that decision made and written down here beside these, or
+    /// the next reader will find two node types stamped two ways and take one of them for a
+    /// defect.
+    ///
     /// The operator, not the start of the whole expression. The messages these nodes carry are
     /// about the operation ("integer division or modulo by zero", "unsupported operand type
     /// for +"), and in `b: uint8 = a // 0` the left operand is innocent: a caret under `a`
