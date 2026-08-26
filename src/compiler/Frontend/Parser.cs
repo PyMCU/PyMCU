@@ -331,7 +331,7 @@ public class Parser
             else if (Check(TokenType.Dot))
             {
                 Advance();
-                var suffix = Consume(TokenType.Identifier, "Expected 'setter' or 'getter' after '.'");
+                var suffix = Consume(TokenType.Identifier, "Expected a name after '.' in a decorator");
                 if (suffix.Value == "setter")
                 {
                     isPropertySetter = true;
@@ -343,9 +343,26 @@ public class Parser
                     isPropertyGetter = true;
                     isInline = true;
                 }
+                else if (decorator.Value == "micropython"
+                         && (suffix.Value == "native" || suffix.Value == "viper"))
+                {
+                    // Accepted and ignored, which is the honest outcome rather than a kinder
+                    // rejection: both exist to ask MicroPython's interpreter to emit machine
+                    // code for this function, and PyMCU compiles every function to machine
+                    // code already. There is nothing left for them to ask for, so they are
+                    // no-ops here BY CONSTRUCTION and not by omission -- and an unmodified
+                    // MicroPython program building is the whole point of the compat layer.
+                }
                 else
                 {
-                    Error("Unknown property modifier '@" + decorator.Value + "." + suffix.Value + "'");
+                    // NOT "unknown property modifier". Only `.setter` and `.getter` make a
+                    // dotted decorator a property modifier; everything else here is simply a
+                    // decorator this compiler does not know, and naming a feature the program
+                    // does not use sends the reader hunting for a `@property` they never
+                    // wrote. The `@rp2.asm_pio` branch above already words it this way.
+                    Error($"Unknown decorator '@{decorator.Value}.{suffix.Value}'. A dotted "
+                          + "decorator is a property modifier only when it ends in '.setter' or "
+                          + "'.getter'.");
                 }
             }
             else if (decorator.Value == "interrupt")
