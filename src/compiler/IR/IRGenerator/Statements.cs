@@ -339,6 +339,125 @@ public partial class IRGenerator
         return seen;
     }
 
+    /// <summary>
+    /// The width each UNANNOTATED module-level global needs because of what functions assign to
+    /// it, keyed by bare name. Only widening evidence: a name absent from the result keeps
+    /// whatever the module-level scan decided.
+    ///
+    /// A module global's storage width is fixed before any function is lowered, and the scan
+    /// that fixes it sees only module-level statements. So `total = 0` was uint8 and
+    /// `total = total + r` with `r: uint16` inside a function wrote sixteen bits into eight,
+    /// silently -- a moving average that wrapped and reported small plausible numbers (#205).
+    /// Widening at the STORE cannot fix it: by then the read of `total` on the right-hand side
+    /// has already been lowered at the narrow width, and a constant expression has already
+    /// folded truncated. The width has to be known here, before anything is lowered.
+    ///
+    /// Only assignments under a `global` declaration count. A bare assignment to a
+    /// module-global name inside a function is already refused as the local/global trap, and in
+    /// `main` -- exempt from that refusal because it is the module's own top level -- a bare
+    /// assignment is an init and is treated the same way.
+    /// </summary>
+    private static Dictionary<string, DataType> CollectGlobalWidthsFromFunctions(
+        IEnumerable<FunctionDef> functions)
+    {
+        var widths = new Dictionary<string, DataType>();
+
+        void Note(string name, DataType t)
+        {
+            if (t == DataType.UNKNOWN) return;
+            if (!widths.TryGetValue(name, out var have) || t.SizeOf() > have.SizeOf())
+                widths[name] = t;
+        }
+
+        foreach (var fn in functions)
+        {
+            // Names this function may write through to module scope, and the annotated width of
+            // its own locals, which is the evidence the right-hand side is typed from.
+            var declaredGlobal = new HashSet<string>();
+            var localTypes = new Dictionary<string, DataType>();
+            bool isMain = fn.Name == "main";
+
+            void Scan(Statement? st)
+            {
+                switch (st)
+                {
+                    case null: return;
+                    case Block b: foreach (var s in b.Statements) Scan(s); return;
+                    case GlobalStmt g: foreach (var n in g.Names) declaredGlobal.Add(n); return;
+                    case AnnAssign an:
+                        localTypes[an.Target] = DataTypeExtensions.StringToDataType(an.Annotation);
+                        return;
+                    case VarDecl vd when !string.IsNullOrEmpty(vd.VarType):
+                        localTypes[vd.Name] = DataTypeExtensions.StringToDataType(vd.VarType);
+                        return;
+                    case AssignStmt a when a.Target is VariableExpr av
+                                           && (declaredGlobal.Contains(av.Name) || isMain):
+                        Note(av.Name, WidthOf(a.Value, localTypes, av.Name));
+                        return;
+                    case AugAssignStmt ag when ag.Target is VariableExpr agv
+                                               && (declaredGlobal.Contains(agv.Name) || isMain):
+                        Note(agv.Name, WidthOf(ag.Value, localTypes, agv.Name));
+                        return;
+                    case IfStmt i:
+                        Scan(i.ThenBranch);
+                        foreach (var (_, br) in i.ElifBranches) Scan(br);
+                        Scan(i.ElseBranch);
+                        return;
+                    case WhileStmt w: Scan(w.Body); return;
+                    case ForStmt f: Scan(f.Body); return;
+                    case WithStmt wi: Scan(wi.Body); return;
+                    case TryStmt t:
+                        foreach (var s in t.Body) Scan(s);
+                        foreach (var (_, h) in t.Handlers) foreach (var s in h) Scan(s);
+                        if (t.ElseBody != null) foreach (var s in t.ElseBody) Scan(s);
+                        if (t.Finally != null) foreach (var s in t.Finally) Scan(s);
+                        return;
+                    case MatchStmt m: foreach (var br in m.Branches) Scan(br.Body); return;
+                }
+            }
+
+            Scan(fn.Body);
+        }
+
+        return widths;
+    }
+
+    /// <summary>
+    /// The width an expression is worth at scan time, or UNKNOWN when it cannot be told without
+    /// lowering. Deliberately incomplete: an unknown contributes no widening, which leaves the
+    /// name exactly as the module-level scan typed it.
+    /// </summary>
+    private static DataType WidthOf(Expression? e, Dictionary<string, DataType> localTypes,
+                                    string selfName)
+    {
+        switch (e)
+        {
+            case IntegerLiteral lit:
+                return NarrowestTypeFor(lit.Value, lit.Value);
+            case UnaryExpr { Op: PyMCU.Frontend.UnaryOp.Negate, Operand: IntegerLiteral n }:
+                return NarrowestTypeFor(-n.Value, -n.Value);
+            case VariableExpr v when v.Name == selfName:
+                // The accumulator reading itself. It contributes no evidence of its own width --
+                // that is the question being answered -- so it counts as the floor and lets the
+                // other operand decide. `total = total + r` is as wide as r.
+                return DataType.UINT8;
+            case VariableExpr v:
+                return localTypes.TryGetValue(v.Name, out var t) ? t : DataType.UNKNOWN;
+            case BinaryExpr b:
+            {
+                // The sum is as wide as its widest operand. An operand this cannot type makes
+                // the whole expression untypable rather than narrow: guessing from the half it
+                // can see is how the accumulator got to be eight bits in the first place.
+                var l = WidthOf(b.Left, localTypes, selfName);
+                var r = WidthOf(b.Right, localTypes, selfName);
+                if (l == DataType.UNKNOWN || r == DataType.UNKNOWN) return DataType.UNKNOWN;
+                return l.SizeOf() >= r.SizeOf() ? l : r;
+            }
+            default:
+                return DataType.UNKNOWN;
+        }
+    }
+
     /// <summary>The narrowest integer type that holds the whole closed range [min, max].</summary>
     private static DataType NarrowestTypeFor(long min, long max)
     {

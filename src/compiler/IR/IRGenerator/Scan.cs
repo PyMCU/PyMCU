@@ -423,6 +423,16 @@ public partial class IRGenerator
                             DataType t = DataTypeExtensions.StringToDataType(type);
                             mutableGlobals[currentModulePrefix + name] = t;
                             if (scope != null) scope.MutableGlobals[name] = t;
+
+                            // An UNANNOTATED global is typed here from its initializer alone --
+                            // `total = 0` is uint8 -- and a later store from inside a function is
+                            // not in this scan's reach. Left un-widenable, `total = total + r`
+                            // with r uint16 wrote 16 bits into 8 and a moving average wrapped
+                            // silently (#205). Only the initializer-failed path used to register
+                            // here, so a global whose initializer typed FINE could never widen.
+                            // The store site widens on the real RHS width and never narrows.
+                            if (string.IsNullOrEmpty(type))
+                                widenableGlobals.Add(currentModulePrefix + name);
                         }
                     }
                 }
@@ -552,6 +562,23 @@ public partial class IRGenerator
             if (!mutableGlobals.ContainsKey(key)) continue;
             mutableGlobals[key] = kv.Value;
             widenableGlobals.Remove(key);
+        }
+
+        // What the FUNCTIONS assign decides the width too. The pass above sees only module-level
+        // statements, so an accumulator initialised `total = 0` and then fed a uint16 inside a
+        // function stayed eight bits and wrapped without a word (#205). Widening only: a name
+        // this cannot type keeps exactly what the scan above gave it.
+        foreach (var kv in CollectGlobalWidthsFromFunctions(ast.Functions))
+        {
+            string key = currentModulePrefix + kv.Key;
+            if (!mutableGlobals.TryGetValue(key, out var have)) continue;
+            // A written annotation is the user's choice and outranks anything inferred here;
+            // those names never reach mutableGlobals unannotated, so only widen what is wider.
+            if (kv.Value.SizeOf() > have.SizeOf())
+            {
+                mutableGlobals[key] = kv.Value;
+                widenableGlobals.Remove(key);
+            }
         }
     }
 
