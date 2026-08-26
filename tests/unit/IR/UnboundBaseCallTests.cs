@@ -95,12 +95,21 @@ public class UnboundBaseCallTests
         Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body),
             i => i is Call c && c.FunctionName.Contains("Child_Base"));
 
-        // The base body is reached and the base's field arrives with the constructor's value:
-        // the doubling shift is emitted over a value derived from raw + 10.
-        Assert.Contains(body.Concat(ir.Functions.SelectMany(f => f.Body)),
-            i => i is Binary { Op: IR.BinaryOp.Add, Src2: Constant { Value: 10 } });
-        Assert.Contains(body.Concat(ir.Functions.SelectMany(f => f.Body)),
-            i => i is Binary { Op: IR.BinaryOp.Mul } or Binary { Op: IR.BinaryOp.LShift });
+        // The base body is reached, and the doubling it wraps is emitted.
+        //
+        // This used to assert that a Binary added the CONSTANT 10, which was an accident of the
+        // unbound spelling being force-inlined: the offset folded into the expansion. #160 made
+        // the spelling outline like super(), so the offset now arrives as a run-time parameter
+        // and no literal 10 appears. The assertion was anchored to a lowering detail rather than
+        // to behaviour, and it went red on a change that made the program strictly better.
+        // What is actually being claimed is that the base body runs, so claim that.
+        var all = ir.Functions.SelectMany(f => f.Body).ToList();
+        Assert.Contains(all, i => i is Binary { Op: IR.BinaryOp.Mul } or Binary { Op: IR.BinaryOp.LShift });
+        Assert.True(
+            ir.Functions.Any(f => f.Name.EndsWith("_read"))
+            || all.Any(i => i is Call c2 && c2.FunctionName.EndsWith("_read")),
+            "the base body must be reachable, as its own function or through a call to one");
+        Assert.NotEmpty(body);
     }
 
     // The realistic shape from the issue's "where it was found": a base plus a subclass that
@@ -217,6 +226,47 @@ public class UnboundBaseCallTests
         Return { Value: Variable v } => [v.Name],
         _ => [],
     };
+
+    // The two spellings of a base call must LOWER the same, not merely compute the same. The
+    // outlining scan read the leading `self` of `Base.read(self, raw)` as a bare self passed by
+    // value, refused outlining for that spelling alone, and force-inlined it at every call site
+    // while super() emitted one shared subroutine. For a base method with control flow that was
+    // up to 130% of program size (PyMCU#160).
+    //
+    // DISCRIMINATING: `Child_read` existing as a function in the unbound lowering. Before the
+    // fix it existed for super() and not for the unbound spelling, which is the whole defect.
+    // INVARIANT: that both compute the same value. That held before and says nothing.
+    private const string BaseCallInMethod =
+        "class Base:\n" +
+        "    def __init__(self, offset: uint16):\n" +
+        "        self.offset: uint16 = offset\n" +
+        "    def read(self, raw: uint16) -> uint16:\n" +
+        "        t: uint16 = raw + self.offset\n" +
+        "        if t > 500:\n" +
+        "            t = t - 100\n" +
+        "        return t\n" +
+        "class Child(Base):\n" +
+        "    def read(self, raw: uint16) -> uint16:\n" +
+        "        return {DELEGATE} * 2\n" +
+        "def main():\n" +
+        "    seed: uint16 = uint16(G.value)\n" +
+        "    c = Child(10)\n" +
+        "    G.value = uint8(c.read(seed + 1))\n" +
+        "    G.value = uint8(c.read(seed + 2))\n" +
+        "    G.value = uint8(c.read(seed + 3))\n";
+
+    [Fact]
+    public void BothSpellingsOfABaseCall_LowerIdentically()
+    {
+        var unbound = Render(Gen(Preamble + BaseCallInMethod.Replace("{DELEGATE}", "Base.read(self, raw)")));
+        var viaSuper = Render(Gen(Preamble + BaseCallInMethod.Replace("{DELEGATE}", "super().read(raw)")));
+
+        // The shared subroutine exists in BOTH. Before the fix it was absent from the unbound
+        // one, whose body had been expanded into every call site instead.
+        Assert.Contains("FUNC Child_read", unbound);
+        Assert.Contains("FUNC Child_read", viaSuper);
+        Assert.Equal(viaSuper, unbound);
+    }
 
     // The guard on the fix: `Cls.helper(...)` where helper takes no receiver is NOT a method
     // call on an instance, and must keep resolving the way it always did.
