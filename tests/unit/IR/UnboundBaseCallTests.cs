@@ -149,39 +149,74 @@ public class UnboundBaseCallTests
         Assert.Contains(shown, ex.Message);
     }
 
-    // A base method whose declared return type is a multi-field class is force-inlined (#49),
-    // and the definition registered for it is the OUTLINED rewrite, whose instance arrives as
-    // one `self_<field>` parameter per field. The unbound call is refused rather than expanded,
-    // because super() expands that shape and MISCOMPILES it silently (the base body vanishes
-    // and the caller reads unwritten self_* slots as zero). What this pins is that the refusal
-    // names the construct, not the internal mangled name `Child_Base_split` #131 complains about.
-    [Fact]
-    public void UnboundBaseCall_ReturningAMultiFieldClass_IsNamedNotMangled()
-    {
-        var ex = Assert.Throws<PyMCU.Common.CompilerError>(() => Gen(
-            Preamble +
-            "class Pair:\n" +
-            "    def __init__(self, a: uint16, b: uint16):\n" +
-            "        self.a: uint16 = a\n" +
-            "        self.b: uint16 = b\n" +
-            "class Base:\n" +
-            "    def __init__(self, offset: uint16):\n" +
-            "        self.offset: uint16 = offset\n" +
-            "    def split(self, raw: uint16) -> Pair:\n" +
-            "        return Pair(raw + self.offset, raw)\n" +
-            "class Child(Base):\n" +
-            "    def __init__(self, offset: uint16):\n" +
-            "        Base.__init__(self, offset)\n" +
-            "    def widen(self, raw: uint16) -> uint16:\n" +
-            "        return Base.split(self, raw).a\n" +
-            "def main():\n" +
-            "    seed: uint8 = G.value\n" +
-            "    c = Child(10)\n" +
-            "    G.value = uint8(c.widen(uint16(seed) + 5))\n"));
+    // A base method whose declared return type is a multi-field class (PyMCU#157). The base
+    // body used to vanish and the caller added two slots nobody wrote, reading zero, silently.
+    // Both spellings must now reach the body and compute the same value.
+    //
+    // DISCRIMINATING: the invariant below. Before the fix, `Child_widen` was two instructions
+    // adding `p_a` and `p_b`, neither of which any instruction writes, in both spellings.
+    // INVARIANT: that the program builds at all, and that no mangled `Child_Base_split`
+    // appears. Both held for `super()` before the fix, so neither alone would have caught it.
+    private const string MultiFieldReturn =
+        "class Pair:\n" +
+        "    def __init__(self, a: uint16, b: uint16):\n" +
+        "        self.a: uint16 = a\n" +
+        "        self.b: uint16 = b\n" +
+        "class Base:\n" +
+        "    def __init__(self, offset: uint16):\n" +
+        "        self.offset: uint16 = offset\n" +
+        "    def split(self, raw: uint16) -> Pair:\n" +
+        "        return Pair(raw + self.offset, raw)\n" +
+        "class Child(Base):\n" +
+        "    def __init__(self, offset: uint16):\n" +
+        "        {CTOR}\n" +
+        "    def widen(self, raw: uint16) -> uint16:\n" +
+        "        p = {DELEGATE}\n" +
+        "        return p.a + p.b\n" +
+        "def main():\n" +
+        "    seed: uint8 = G.value\n" +
+        "    c = Child(10)\n" +
+        "    G.value = uint8(c.widen(uint16(seed) + 5))\n";
 
-        Assert.Contains("Base.split", ex.Message);
-        Assert.DoesNotContain("Child_Base_split", ex.Message);
+    [Theory]
+    [InlineData("Base.__init__(self, offset)", "Base.split(self, raw)")]
+    [InlineData("super().__init__(offset)", "super().split(raw)")]
+    public void BaseCallReturningAMultiFieldClass_ReadsNothingUnwritten(string ctor, string delegateCall)
+    {
+        var ir = Gen(Preamble + MultiFieldReturn.Replace("{CTOR}", ctor).Replace("{DELEGATE}", delegateCall));
+
+        Assert.DoesNotContain(ir.Functions.SelectMany(f => f.Body),
+            i => i is Call c && c.FunctionName.Contains("Child_Base"));
+
+        // Every Variable an instruction READS must be written somewhere, or be a parameter of
+        // the function that reads it. Two unwritten slots being added together IS the defect.
+        foreach (var fn in ir.Functions)
+        {
+            var written = new HashSet<string>(
+                fn.Body.SelectMany(WrittenNames).Concat(fn.Params));
+            foreach (var name in fn.Body.SelectMany(ReadNames))
+                Assert.True(written.Contains(name),
+                    $"{fn.Name} reads '{name}', which nothing in it writes and which is not a parameter");
+        }
     }
+
+    private static IEnumerable<string> WrittenNames(Instruction i) => i switch
+    {
+        Copy { Dst: Variable v } => [v.Name],
+        Binary { Dst: Variable v } => [v.Name],
+        Unary { Dst: Variable v } => [v.Name],
+        Call { Dst: Variable v } => [v.Name],
+        _ => [],
+    };
+
+    private static IEnumerable<string> ReadNames(Instruction i) => i switch
+    {
+        Copy { Src: Variable v } => [v.Name],
+        Binary b => new[] { b.Src1, b.Src2 }.OfType<Variable>().Select(v => v.Name),
+        Unary { Src: Variable v } => [v.Name],
+        Return { Value: Variable v } => [v.Name],
+        _ => [],
+    };
 
     // The guard on the fix: `Cls.helper(...)` where helper takes no receiver is NOT a method
     // call on an instance, and must keep resolving the way it always did.
