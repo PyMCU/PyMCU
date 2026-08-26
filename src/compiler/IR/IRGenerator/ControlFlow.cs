@@ -69,10 +69,16 @@ public partial class IRGenerator
 
     private int EmitOptimizedConditionalJump(Expression cond, string targetLabel, bool jumpIfTrue = false)
     {
+
         // Every condition that reaches here is a truth test, including each operand of an
         // `and` / `or`, which recurses into this method. `if x and True:` tested the raw
         // instance handle for x and answered false for an object whose __bool__ says true.
         cond = LowerInstanceTruthiness(cond);
+
+        // An `if` does not lower its comparison through VisitBinary; it comes straight here and
+        // becomes a conditional jump. That is how `a == b` over two bytes names emitted a
+        // one-byte `jne` between the two array names and answered without reading either.
+        if (cond is BinaryExpr seqCmp) RefuseSequenceComparison(seqCmp);
 
         int? ResolveInt(Expression expr)
         {
@@ -158,6 +164,30 @@ public partial class IRGenerator
 
             if (v1 is Constant c1 && v2 is Constant c2 && isComparison)
             {
+                // Two Constants standing for STRINGS compare by their text, not by their value.
+                // The same string reaches this point with two different values depending on how
+                // it got here: a one-character literal in expression position is its character
+                // code (97), and the same literal read back through a name is an interned id
+                // (256). Comparing the numbers compared two encodings of "a" and answered false,
+                // and the `if` then folded away the branch that should have run (#211).
+                // BOTH sides, never one. Deciding a mixed pair here as "a string is never equal
+                // to a non-string" is the Python answer and it broke two compile-time guards:
+                // `if name == "B"` inside an @inline, where the parameter carries no text and
+                // the literal does, was numerically true and stopped firing. Requiring both
+                // makes this strictly additive -- a pair that has no text on one side is
+                // compared exactly as it was before.
+                if (c1.Text != null && c2.Text != null
+                    && binExpr.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual)
+                {
+                    bool textEq = c1.Text == c2.Text;
+                    bool wantEq = binExpr.Op == Frontend.BinaryOp.Equal;
+                    bool res = textEq == wantEq;
+
+                    if (jumpIfTrue) { if (res) Emit(new Jump(targetLabel)); }
+                    else            { if (!res) Emit(new Jump(targetLabel)); }
+                    return res ? 2 : -1;
+                }
+
                 bool condResult = false;
                 switch (binExpr.Op)
                 {

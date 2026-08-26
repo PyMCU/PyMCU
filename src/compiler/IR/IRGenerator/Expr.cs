@@ -53,7 +53,10 @@ public partial class IRGenerator
 
         if (expr is StringLiteral str)
         {
-            if (str.Value.Length == 1) return new Constant((int)str.Value[0]);
+            // A one-character literal is its own character code, so `uart.write('A')` passes 65
+            // and `c == 'x'` compares numbers. The code alone cannot say whether it means the
+            // string or the number, so the text rides along; nothing downstream has to guess.
+            if (str.Value.Length == 1) return new Constant((int)str.Value[0], str.Value);
 
             if (!stringLiteralIds.ContainsKey(str.Value))
             {
@@ -62,7 +65,7 @@ public partial class IRGenerator
                 nextStringId++;
             }
 
-            return new Constant(stringLiteralIds[str.Value]);
+            return new Constant(stringLiteralIds[str.Value], str.Value);
         }
 
         if (expr is FStringExpr fstr) return VisitFStringExpr(fstr);
@@ -100,8 +103,67 @@ public partial class IRGenerator
                 "length must be a compile-time constant. Build the list with an explicit " +
                 "loop, or drop the filter (plain [f(i) for i in range(N)] works)");
 
+        // A bytes or list literal reaching a VALUE position. `b"ab"` parses to a ListExpr of
+        // integers, so this answered "Unknown Expression type: ListExpr": a compiler class name
+        // for something the reader spelled b"ab", and a phase name for a program that is simply
+        // not supported here.
+        if (expr is ListExpr)
+            throw UserError(
+                "a bytes or list literal has no value in this position. " + SequenceIsStorage
+                + " The positions that do work reach it through a NAME: bind it "
+                + "(`data = b\"ab\"`), then index it (`data[0]`), take its len(), iterate it, "
+                + "slice it, or pass the name to a function. A comparison, a return and a "
+                + "parameter default are not among them.",
+                expr);
+
         throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
     }
+
+    // The one fact behind every refusal below, so a reader meets it once and the three sites
+    // cannot drift into describing three different languages.
+    private const string SequenceIsStorage =
+        "PyMCU lays one out as a fixed array -- element storage under a name, with no handle "
+        + "and no length travelling with it, because there is no heap to hold one -- so there "
+        + "is no single value to carry here.";
+
+    /// <summary>
+    /// True when the expression is a bytes/list OBJECT rather than a value: a literal, or a
+    /// name bound to a fixed array.
+    ///
+    /// The reported half of #195 crashed, which at least stopped the build. The half that did
+    /// not crash is worse and is why this asks about names as well as literals. `a == b` over
+    /// two bytes names lowered to a one-byte `jne` between the two array NAMES -- measured,
+    /// `b"ab" == b"ab"` and `b"ab" == b"ax"` produce byte-identical IR, so the comparison
+    /// answers without reading either operand and one of the two answers it gives has to be
+    /// wrong. `return x` did the same at the other end: the array came back as a scalar, and
+    /// the caller's `y[0]` lowered to a bit test on it.
+    /// </summary>
+    /// <summary>
+    /// Refuse `==` / `!=` over a bytes or list object. Called from BOTH lowerings of a
+    /// comparison: VisitBinary, and the conditional-jump path that an `if` takes instead --
+    /// which is the one that was emitting a one-byte `jne` between two array NAMES, so a check
+    /// added only to VisitBinary would have left the silent case exactly as it was.
+    /// </summary>
+    private void RefuseSequenceComparison(BinaryExpr expr)
+    {
+        if (expr.Op is not (AstBinOp.Equal or AstBinOp.NotEqual)) return;
+        if (!IsSequenceObject(expr.Left) && !IsSequenceObject(expr.Right)) return;
+
+        throw UserError(
+            "a bytes or list object cannot be compared. " + SequenceIsStorage
+            + " Compare the elements that matter (`data[0] == 0x61`), or walk them with a loop "
+            + "over range(len(data)). As written the comparison answered without reading either "
+            + "side: b\"ab\" == b\"ab\" and b\"ab\" == b\"ax\" compiled to the same "
+            + "instructions.",
+            expr);
+    }
+
+    private bool IsSequenceObject(Expression? e) => e switch
+    {
+        ListExpr => true,
+        VariableExpr v => ResolveArrayVar(v.Name) != null,
+        _ => false,
+    };
 
     private Val VisitLambdaExpr(LambdaExpr expr)
     {
@@ -465,6 +527,8 @@ public partial class IRGenerator
     {
         RejectBareRegisterOperands(expr);
 
+        RefuseSequenceComparison(expr);
+
         // Capture and CLEAR any explicit-cast width hint up front: it applies to THIS op only,
         // so operands (visited below) and nested ops promote normally. `uint8(a + b)` then makes
         // the `+` an 8-bit op (wrap + 8-bit flags), the escape hatch from default promotion.
@@ -806,15 +870,22 @@ public partial class IRGenerator
             && ((expr.Left is VariableExpr mlv && TryGetMultiStr(mlv.Name, out _, out _, out _))
                 || (expr.Right is VariableExpr mrv && TryGetMultiStr(mrv.Name, out _, out _, out _)));
 
-        // String literals are interned as integer IDs (>= 256); see VisitExpression.
-        // Plain arithmetic on those IDs is meaningless — '+' would add the IDs and
-        // silently emit garbage. We only treat an operand as a string when there is
-        // a real string literal in the source expression: an interned ID can collide
-        // with an ordinary integer (e.g. `x * 256`), so the value alone is not enough.
-        // This still covers the real cases ("a" + "b", s + "x", name == "PB5").
-        bool HasStringLiteral = (expr.Left is StringLiteral sll && sll.Value.Length != 1)
-                             || (expr.Right is StringLiteral srl && srl.Value.Length != 1);
-        bool IsStringId(Val v) => v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
+        // A string operand is one whose Constant carries its text. That is the whole test:
+        // the value alone never was enough (an interned id collides with an ordinary integer,
+        // `x * 256`), and neither was the id table (a one-character string's id IS its
+        // character code and is never registered in it).
+        //
+        // The previous form asked the id table and excluded one-character literals to stop it
+        // answering nonsense. The comment above it claimed to cover `"a" + "b"`, `s + "x"` and
+        // `name == "PB5"`; measured, it broke the first two. `"a" + "b"` printed 195 -- the two
+        // character codes added -- because neither operand was ever seen as a string (#211).
+        bool HasStringLiteral = expr.Left is StringLiteral || expr.Right is StringLiteral;
+        bool IsStringId(Val v) => v is Constant { Text: not null }
+                                  || v is Constant sc && stringIdToStr.ContainsKey(sc.Value);
+
+        // The text of an operand already known to be a string.
+        string StringTextOf(Val v) =>
+            v is Constant { Text: { } carried } ? carried : stringIdToStr[((Constant)v).Value];
         if (HasStringLiteral && !multiStrOperand && (IsStringId(v1) || IsStringId(v2)))
         {
             bool bothStr = IsStringId(v1) && IsStringId(v2);
@@ -824,7 +895,7 @@ public partial class IRGenerator
             // `if pin_name == "PB5"` / `__CHIP__ == "..."` dispatch idiom working.
             if (expr.Op is AstBinOp.Equal or AstBinOp.NotEqual)
             {
-                bool equal = bothStr && ((Constant)v1).Value == ((Constant)v2).Value;
+                bool equal = bothStr && StringTextOf(v1) == StringTextOf(v2);
                 bool isEq = expr.Op == AstBinOp.Equal;
                 return new Constant(equal == isEq ? 1 : 0);
             }
@@ -832,7 +903,7 @@ public partial class IRGenerator
             // Compile-time concatenation of two string literals.
             if (expr.Op == AstBinOp.Add && bothStr)
             {
-                string joined = stringIdToStr[((Constant)v1).Value] + stringIdToStr[((Constant)v2).Value];
+                string joined = StringTextOf(v1) + StringTextOf(v2);
                 if (!stringLiteralIds.TryGetValue(joined, out int joinedId))
                 {
                     joinedId = nextStringId++;

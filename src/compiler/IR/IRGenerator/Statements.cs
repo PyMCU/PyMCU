@@ -891,6 +891,17 @@ public partial class IRGenerator
             throw UserError(
                 $"cannot return a string from a function declared to return {retRt}");
 
+        // Returning a bytes/list object. The literal form crashed with an AST class name; the
+        // form through a name compiled and returned the array as a SCALAR, after which the
+        // caller's `y[0]` lowered to a bit test on it. Neither is a value the caller can use.
+        if (stmt.Value != null && IsSequenceObject(stmt.Value))
+            throw UserError(
+                "a bytes or list object cannot be returned. " + SequenceIsStorage
+                + " Give the caller the buffer instead: take it as a parameter and fill it in "
+                + "place, which is what the stdlib's read helpers do, or return one element "
+                + "(`return data[0]`).",
+                stmt.Value);
+
         // A `return` escaping a try-with-finally must run the pending finally block(s) first
         // (Python semantics). Evaluate the value, materialize it so the finally can't change it,
         // run the finallies, then return. Handles the common non-inline, non-constructor return;
