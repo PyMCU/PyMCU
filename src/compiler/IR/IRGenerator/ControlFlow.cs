@@ -397,6 +397,27 @@ public partial class IRGenerator
             $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).");
     }
 
+    /// <summary>
+    /// The origin of the argument an if-chain is dispatching on, when it is testing one.
+    /// `if pin_name == "PD2": ... else: raise` is the same shape as a match on a parameter and
+    /// wants the same answer, and it is the shape the two sensor drivers use where the LCD uses
+    /// a match (#193). Either side of the comparison, because `if "PD2" == pin_name` is the
+    /// same test.
+    /// </summary>
+    private Expression? IfChainSubjectOrigin(Expression condition)
+    {
+        if (condition is not BinaryExpr { Op: PyMCU.Frontend.BinaryOp.Equal } cmp) return null;
+
+        foreach (var side in new[] { cmp.Left, cmp.Right })
+        {
+            if (side is not VariableExpr ve) continue;
+            if (argumentOrigin.TryGetValue(currentInlinePrefix + ve.Name, out var origin)
+                || argumentOrigin.TryGetValue(ve.Name, out origin))
+                return origin;
+        }
+        return null;
+    }
+
     private void VisitIf(IfStmt stmt)
     {
         if (LowerInstanceTruthiness(stmt.Condition) is var loweredCond
@@ -407,6 +428,24 @@ public partial class IRGenerator
                 stmt.ElseBranch) { Line = stmt.Line });
             return;
         }
+
+        // An if-chain that dispatches on an argument is, when one of its arms refuses, a
+        // refusal OF THAT ARGUMENT. Held for the whole chain, so the `else: raise` at the end
+        // is covered too, which is where these drivers put theirs.
+        var chainSubject = IfChainSubjectOrigin(stmt.Condition);
+        if (chainSubject != null) blamedArgument.Add(chainSubject);
+        try
+        {
+            VisitIfBody(stmt);
+        }
+        finally
+        {
+            if (chainSubject != null) blamedArgument.RemoveAt(blamedArgument.Count - 1);
+        }
+    }
+
+    private void VisitIfBody(IfStmt stmt)
+    {
 
         string endLabel = MakeLabel();
         string nextLabel = (stmt.ElifBranches.Count == 0 && stmt.ElseBranch == null) ? endLabel : MakeLabel();

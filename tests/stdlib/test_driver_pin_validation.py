@@ -100,14 +100,14 @@ def build(tmp_path: Path, program: str, pin: str):
     return proc.stdout + proc.stderr
 
 
-LOCATION = re.compile(r"([A-Za-z0-9_./-]+\.py):(\d+):")
+LOCATION = re.compile(r"([A-Za-z0-9_./-]+\.py):(\d+):(\d+)")
 
 
 def location(out: str):
-    """(file, line) of the first diagnostic, as the reader is shown it."""
+    """(file, line, column) of the first diagnostic, as the reader is shown it."""
     m = LOCATION.search(out)
     assert m, f"no located diagnostic in:\n{out}"
-    return Path(m.group(1)).name, int(m.group(2))
+    return Path(m.group(1)).name, int(m.group(2)), int(m.group(3))
 
 
 @pytest.mark.parametrize("name,program,good,bad,label", DRIVERS,
@@ -126,7 +126,7 @@ def test_a_pin_the_driver_cannot_drive_stops_the_build(tmp_path, name, program,
     # intermediate version of the #164 fix reported line 151 of this eight-line file, with the
     # right filename attached, and this test stayed green. So the line is checked against the
     # file it names, and the source at that line against what the message is about.
-    name, line = location(out)
+    name, line, col = location(out)
     assert name == "main.py", (
         f"{label} names {bad}, a value written in main.py, so the reader has to be sent "
         f"there and not into the driver; got {name}")
@@ -136,16 +136,19 @@ def test_a_pin_the_driver_cannot_drive_stops_the_build(tmp_path, name, program,
         f"main.py has {len(text)} lines; {label}'s diagnostic claims line {line}. A line "
         f"number from one file against the name of another is not a location.")
 
-    # The line has to be one of the caller's own statements about this driver: either the
-    # construction holding the pin, or the call that first drives it. Which of the two depends
-    # on where the guard sits, and both are actionable; a line inside the driver is not.
-    holds_pin = bad in text[line - 1]
-    drives_it = any(tok in text[line - 1] for tok in (".read()", ".init()", ".write(",
-                                                      ".set_duty(", ".set_pixel("))
-    assert holds_pin or drives_it, (
-        f"main.py:{line} is {text[line - 1]!r}, which is neither the line holding {bad} nor "
-        f"a use of the driver. The line a diagnostic points at has to be one its message is "
-        f"about.")
+    # Tightened when the wide half of #193 landed. This used to accept EITHER the construction
+    # holding the pin or the call that first drove it, because a driver that stores its pin and
+    # validates at first use could only report the latter, and the latter is a line with nothing
+    # on it to change. Both are the construction now, so the weaker half is gone.
+    assert bad in text[line - 1], (
+        f"main.py:{line} is {text[line - 1]!r}, which does not hold {bad}. A diagnostic about a "
+        f"pin belongs on the line that pin is written on, not on the statement that noticed.")
+
+    # And the column, which is the half that makes it usable: LCD passes six pins that all look
+    # alike, so a line number alone still leaves the reader to find which one.
+    assert text[line - 1][col - 1:].startswith(f'"{bad}"'), (
+        f"main.py:{line}:{col} points at {text[line - 1][col - 1:col + 6]!r}, not at the "
+        f'"{bad}" the message is about. The caret is what says WHICH argument.')
 
 
 @pytest.mark.parametrize("name,program,good,bad,label", DRIVERS,

@@ -1216,6 +1216,25 @@ public partial class IRGenerator
             if (StaticStringOf(stmt.Value) is { } fieldText)
                 strConstantVariables[flattenedName] = fieldText;
 
+            // Where the value came from, filed under the same key the value itself is. A driver
+            // stores its pin at construction and validates it at first use, so by the time the
+            // refusal fires the argument is several expansions away; without this the origin is
+            // dropped at the field store and the diagnostic lands on the `read()` line, which
+            // holds nothing the reader can change (#193).
+            if (stmt.Value is VariableExpr srcVe)
+            {
+                if (argumentOrigin.TryGetValue(currentInlinePrefix + srcVe.Name, out var fo)
+                    || argumentOrigin.TryGetValue(srcVe.Name, out fo))
+                    argumentOrigin[flattenedName] = fo;
+            }
+            else if (stmt.Value.Column > 0)
+            {
+                // Written at the construction site itself (`self.pin = "PA0"` is rare, but a
+                // literal default in the class body is not), and that position is as good as an
+                // argument's.
+                argumentOrigin[flattenedName] = stmt.Value;
+            }
+
             if (value is Constant c)
             {
                 if (baseName != null && !virtualInstances.Contains(baseName))

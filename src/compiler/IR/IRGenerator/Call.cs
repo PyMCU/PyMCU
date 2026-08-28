@@ -680,6 +680,27 @@ public partial class IRGenerator
     // keyword args. Reports unknown/duplicate/missing keyword bindings as clean user errors
     // (the inline path already does this; previously a kwarg to a real subroutine reached
     // VisitExpression and surfaced the cryptic "Unknown Expression type: KeywordArgExpr").
+    /// <summary>
+    /// Where the value in `obj.field` was written, when it is an argument that was stored into
+    /// a field earlier. The base name is resolved through the alias chain exactly as the read
+    /// of that field resolves it, so the key asked for is the key the field's value lives
+    /// under; anything else would be a name that happens to match.
+    /// </summary>
+    private bool TryFieldOrigin(Expression? arg, string callerPrefix, out Expression origin)
+    {
+        origin = null!;
+        if (arg is not MemberAccessExpr ma || ma.Object is not VariableExpr baseVe) return false;
+
+        foreach (var start in new[] { callerPrefix + baseVe.Name, baseVe.Name })
+        {
+            string b = start;
+            var seen = new HashSet<string>();
+            while (variableAliases.TryGetValue(b, out var alias) && alias != b && seen.Add(b)) b = alias;
+            if (argumentOrigin.TryGetValue(b + "_" + ma.Member, out origin!)) return true;
+        }
+        return false;
+    }
+
     private List<Expression> ReorderCallArgs(List<Expression> args, string callee)
     {
         if (!args.Any(a => a is KeywordArgExpr)) return args;
@@ -1199,6 +1220,10 @@ public partial class IRGenerator
 
         var kwArgValues = new Dictionary<string, Val>();
         var rawKwStrArgs = new Dictionary<string, string?>();
+        // The keyword argument EXPRESSIONS, kept for their source position the way rawArgExprs
+        // keeps the positional ones. `LCD(rs="PA0", ...)` passes every pin by keyword, so
+        // without these the origin of a refused pin is lost at the first hop (#193).
+        var rawKwArgExprs = new Dictionary<string, Expression>();
         var rawStrArgs = new List<StringLiteral?>();
         // The argument EXPRESSIONS, parallel to argValues, kept for their source position.
         var rawArgExprs = new List<Expression?>();
@@ -1213,6 +1238,7 @@ public partial class IRGenerator
                 pendingConstructorTarget = "";
                 kwArgValues[kw.Key] = VisitExpression(kw.Value);
                 if (kw.Value is StringLiteral s) rawKwStrArgs[kw.Key] = s.Value;
+                rawKwArgExprs[kw.Key] = kw.Value;
                 // Always restore: inner ctor targets (anonymous __cN) must not
                 // overwrite the outer assignment target (e.g. "main.spi").
                 pendingConstructorTarget = savedOuterPct;
@@ -1444,6 +1470,14 @@ public partial class IRGenerator
                 && argumentOrigin.TryGetValue(savedPrefix + originVe.Name, out var inherited))
             {
                 origin = inherited;              // handed down, so keep pointing at the source
+            }
+            else if (TryFieldOrigin(origin, savedPrefix, out var fromField))
+            {
+                // A driver that stores its pin at construction and validates it at first use
+                // passes the FIELD, `_avr_read(self.name)`, so the hand-down above has no bare
+                // name to follow. The field's provenance is filed under the same key the
+                // field's value is, which is what makes this a lookup rather than a guess (#193).
+                origin = fromField;
             }
             else if (!string.IsNullOrEmpty(savedSourcePath))
             {
@@ -1748,6 +1782,21 @@ public partial class IRGenerator
                     constantAddressVariables.Remove(paramName + "_type");
 
                     if (kvp.Value is Variable vkw) variableAliases[paramName] = vkw.Name;
+
+                    // Where this keyword argument was written, on the same terms as a
+                    // positional one: a name that already carries an origin hands it down, a
+                    // field that carries one hands that down, and an expression written inside
+                    // a library body carries nothing (it is not the caller's to fix).
+                    Expression? kwOrigin = rawKwArgExprs.TryGetValue(kvp.Key, out var kwRaw) ? kwRaw : null;
+                    if (kwOrigin is VariableExpr kwVe
+                        && argumentOrigin.TryGetValue(savedPrefix + kwVe.Name, out var kwInherited))
+                        kwOrigin = kwInherited;
+                    else if (TryFieldOrigin(kwOrigin, savedPrefix, out var kwFromField))
+                        kwOrigin = kwFromField;
+                    else if (!string.IsNullOrEmpty(savedSourcePath))
+                        kwOrigin = null;
+                    if (kwOrigin != null && kwOrigin.Column > 0) argumentOrigin[paramName] = kwOrigin;
+                    else argumentOrigin.Remove(paramName);
 
                     if (IsConstType(func.Params[pi].Type))
                     {
