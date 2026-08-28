@@ -91,6 +91,10 @@ public partial class IRGenerator
             DataType.INT8 => "int8",
             DataType.INT16 => "int16",
             DataType.INT32 => "int32",
+            // Without this a FLOAT argument spelled itself "uint8", so `f(2.5)` could never
+            // exact-match `f(x: float)` and every float call fell through to the arity
+            // fallback (PyMCU#182).
+            DataType.FLOAT => "float",
             _ => "uint8",
         };
     }

@@ -1303,7 +1303,21 @@ public partial class IRGenerator
         }
         else if (func.Name.Length < callee.Length)
         {
-            currentModulePrefix = callee.Substring(0, callee.Length - func.Name.Length);
+            // Derive the MODULE prefix, and an overloaded callee is not `prefix + name`: it is
+            // `prefix + name + "___" + <parameter types>`. Subtracting only the name left the
+            // mangled key itself as the prefix, `mm_floor___`, and then every name inside the
+            // body that happens to spell a parameter type resolved to that overload. `float(t)`
+            // written in `floor(x: float)` found `mm_floor___float` and the build died with
+            // "function 'floor' is recursive" about a function that does not call itself
+            // (PyMCU#182). `int32` escaped only because it is an intrinsic and returns earlier.
+            string bare = callee;
+            int mangle = bare.IndexOf("___", StringComparison.Ordinal);
+            if (mangle > 0 && bare.LastIndexOf(func.Name, mangle, StringComparison.Ordinal) >= 0)
+                bare = bare[..mangle];
+            if (func.Name.Length < bare.Length)
+                currentModulePrefix = bare[..^func.Name.Length];
+            else
+                currentModulePrefix = "";
         }
 
         if (methodInstanceTypes.TryGetValue(callee, out var mit))
@@ -2103,6 +2117,15 @@ public partial class IRGenerator
                 // ADC(channel: const[uint8]) overload, where it landed as "'__c3' varies at run
                 // time", a message about a temporary the program never mentions.
                 bool IsInstanceType(string t) => classNames.Contains(t);
+                // An integer argument must not bind to a float parameter while an integer one is
+                // on offer, and the reverse. Before this the shape test asked ONLY "is this an
+                // instance?", which both numeric candidates answered the same way, so the winner
+                // was whichever key `inlineFunctions` happened to enumerate first. Declaring the
+                // float overload second was enough to make `floor(count)` on a whole number pick
+                // it and drag the software float routines into the image, silently (PyMCU#182).
+                // Swapping the two declarations swapped the answer, which is how the ordering
+                // dependence was measured rather than inferred.
+                bool IsFloatType(string t) => t == "float";
                 var argSuffixes = suffix == "void"
                     ? new List<string>()
                     : suffix.Split('_').ToList();
@@ -2110,7 +2133,8 @@ public partial class IRGenerator
                 {
                     if (ps.Count != argSuffixes.Count) return false;
                     for (int i = 0; i < ps.Count; i++)
-                        if (IsInstanceType(NormType(ps[i].Type)) != IsInstanceType(argSuffixes[i]))
+                        if (IsInstanceType(NormType(ps[i].Type)) != IsInstanceType(argSuffixes[i])
+                            || IsFloatType(NormType(ps[i].Type)) != IsFloatType(argSuffixes[i]))
                             return false;
                     return true;
                 }
