@@ -155,6 +155,15 @@ public partial class IRGenerator
                 type = varDecl.VarType;
                 initializer = varDecl.Init;
 
+                // The same immutability the AnnAssign branch below records. Which of the two
+                // branches a declaration lands in is decided by the parser on one character:
+                // an annotation containing '[' becomes an AnnAssign and anything else a
+                // VarDecl. So `LIMIT: const[uint8] = 10` was recorded and refused a rebind,
+                // and `LIMIT: const = 10` was recorded nowhere and accepted one in silence,
+                // which is a const enforced or not depending on how it was spelled (#217).
+                if (IsConstType(type))
+                    declaredConstants.Add(name);
+
                 if (type == "bytearray" && initializer != null)
                     TryRegisterModuleBytearray(name, initializer);
 
@@ -179,9 +188,17 @@ public partial class IRGenerator
                 type = annAssign.Annotation;
                 initializer = annAssign.Value;
 
-                // A `const[...]` annotation marks the name immutable; record it so a later
+                // A `const` annotation marks the name immutable; record it so a later
                 // assignment to it is rejected (see VisitAssign's reassignment guard).
-                if (type.StartsWith("const[") && type.EndsWith("]"))
+                //
+                // Through IsConstType, which is the predicate the rest of the compiler uses and
+                // accepts the bare spelling as well as the subscripted one. This site tested for
+                // `const[` alone, so `LIMIT: const = 10` was never recorded and `global LIMIT`
+                // then `LIMIT = 20` was accepted in silence, while `LIMIT: const[uint8] = 10`
+                // was refused: one declaration enforced, one not, with nothing to say which was
+                // which (#217). Module-level declarations only reach here; VisitAnnAssign's own
+                // registration, which has always used IsConstType, is never called for them.
+                if (IsConstType(type))
                     declaredConstants.Add(name);
 
                 // A module-level string constant (`str` or `const[str]`). Register its
