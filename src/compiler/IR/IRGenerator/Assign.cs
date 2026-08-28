@@ -74,7 +74,7 @@ public partial class IRGenerator
                                 ? $"be rebound to a different one ('{already}' then '{resolvedFn}')."
                                 : "be bound inside a run-time branch.")
                             + " For a dispatch table, declare the parameter or array as Callable "
-                            + "and pass the function, or take its address with funcref().");
+                            + "and pass the function, or take its address with funcref().", fnTgt);
 
                     loopFunctionAliases[tgtKey] = resolvedFn;
                     boundNames.Add(tgtKey);
@@ -86,7 +86,7 @@ public partial class IRGenerator
         // A name declared with a `const[...]` annotation is immutable; reassigning it is a
         // user error (previously this was silently accepted, overwriting the constant).
         if (stmt.Target is VariableExpr constTgt && declaredConstants.Contains(constTgt.Name))
-            throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)");
+            throw UserError($"cannot assign to constant '{constTgt.Name}' (declared const)", constTgt);
 
         // `s = f"..."` with runtime interpolations: expand into a fixed buffer + strfmt calls.
         if (stmt.Target is VariableExpr fsvTgt && TryExpandFStringValue(fsvTgt.Name, stmt.Value))
@@ -206,7 +206,7 @@ public partial class IRGenerator
             throw UserError(
                 $"'{mutVe.Name}' is a compile-time dict literal (read-only lookup table). " +
                 "For a mutable dict use pymcu.collections.FixedDict(capacity) -- fixed " +
-                "footprint, no heap.");
+                "footprint, no heap.", mutVe);
 
         // A65: when `c = a OP b` invokes an operator dunder that returns a SLOT-class instance,
         // the result is built as a Model-A (flattened) instance, so a later method call on c
@@ -461,7 +461,7 @@ public partial class IRGenerator
                 $"a list literal assigned to '{FormatMemberTarget(listMem)}' needs a declared size. "
                 + $"Write `{FormatMemberTarget(listMem)}: uint8[{fieldList.Elements.Count}] = [...]` "
                 + "(or another element type), which reserves the storage in the instance and is "
-                + "indexable at run time.");
+                + "indexable at run time.", listMem);
         }
 
         Val value = VisitExpression(stmt.Value);
@@ -473,7 +473,7 @@ public partial class IRGenerator
             Val ptr = VisitExpression(unExpr.Operand);
             Emit(new StoreIndirect(value, ptr, RuntimePtrElem(ptr)));
         }
-        else throw UserError("Invalid assignment target");
+        else throw UserError("Invalid assignment target", stmt.Target);
 
         if (!string.IsNullOrEmpty(slotMatName))
             MaterializeSlotFromFlattened(slotMatName, slotMatCls);
@@ -561,7 +561,7 @@ public partial class IRGenerator
             if (propertyGetters.Contains(cls + "." + memTarget.Member))
                 throw UserError(
                     $"cannot assign to read-only property '{memTarget.Member}': it has a @property " +
-                    $"getter but no @{memTarget.Member}.setter");
+                    $"getter but no @{memTarget.Member}.setter", memTarget);
             return false;
         }
 
@@ -647,7 +647,7 @@ public partial class IRGenerator
             if (isRegister)
                 throw UserError(
                     $"assigning to '{varExpr.Name}' rebinds the name and never writes the register; " +
-                    $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit");
+                    $"use {varExpr.Name}.value = ... to write the whole register, or {varExpr.Name}[bit] = ... for one bit", varExpr);
         }
 
         // A write creates a NEW binding: kill the target's value-tracking alias BEFORE
@@ -1069,7 +1069,7 @@ public partial class IRGenerator
                     Emit(new Copy(value, target));
                     break;
                 case 1:
-                    throw UserError("Cannot assign to .value of this expression type");
+                    throw UserError("Cannot assign to .value of this expression type", memExpr2);
                 case 2 when target is MemoryAddress addr:
                 {
                     // On 32-bit cores (ARM/RISC-V) MMIO must be a single word-
@@ -1092,7 +1092,7 @@ public partial class IRGenerator
                     break;
                 }
                 case 2:
-                    throw UserError("16-bit .value assignment requires constant address");
+                    throw UserError("16-bit .value assignment requires constant address", memExpr2);
                 case 4 when target is MemoryAddress addr32:
                 {
                     // See the 16-bit case: keep 32-bit MMIO stores atomic on
@@ -1111,9 +1111,9 @@ public partial class IRGenerator
                     break;
                 }
                 case 4:
-                    throw UserError("32-bit .value assignment requires constant address");
+                    throw UserError("32-bit .value assignment requires constant address", memExpr2);
                 default:
-                    throw UserError("Unsupported type size for .value assignment");
+                    throw UserError("Unsupported type size for .value assignment", memExpr2);
             }
         }
         else
@@ -1121,7 +1121,7 @@ public partial class IRGenerator
             var objVal = VisitExpression(memExpr2.Object);
             var baseName = objVal is Variable v3 ? v3.Name : (objVal is Temporary t3 ? t3.Name : "");
             if (string.IsNullOrEmpty(baseName))
-                throw UserError("Unknown member access in assignment: " + memExpr2.Member);
+                throw UserError("Unknown member access in assignment: " + memExpr2.Member, memExpr2);
             while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
             var flattenedName = baseName + "_" + memExpr2.Member;
 
@@ -1563,13 +1563,13 @@ public partial class IRGenerator
 
         if (arraysWithVariableIndex.Contains(qualified) || moduleSramArrays.Contains(qualified))
             throw UserError($"'{target.Name}' is indexed by a runtime value, so a slice assigned to "
-                + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'");
+                + $"it needs an explicit fixed-size annotation: '{target.Name}: <type>[N] = ...'", target);
 
         DataType srcEdt = arrayElemTypes[srcQ];
         int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
         int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-        if (step == 0) throw UserError("Slice step cannot be zero");
+        if (step == 0) throw UserError("Slice step cannot be zero", sl);
         if (start < 0) start += srcSize;
         if (stop < 0) stop += srcSize;
         start = Math.Max(0, Math.Min(start, srcSize));
@@ -1651,7 +1651,7 @@ public partial class IRGenerator
                 if (bound > existing.Capacity)
                     throw UserError(
                         $"'{target}' is re-assigned a join result needing {bound} bytes but its " +
-                        $"buffer was sized {existing.Capacity} by an earlier assignment");
+                        $"buffer was sized {existing.Capacity} by an earlier assignment", value);
                 lenVar = existing.LenVar;
             }
             else
@@ -1679,7 +1679,7 @@ public partial class IRGenerator
         // expression path, which answers "assign the result to a variable before using it":
         // advice describing a property `s = ",".join([a, "b"])` already has, so a reader who
         // followed it rewrote the assignment they had and got the same error back.
-        throw UserError(JoinSequenceRefusal(jc.Args[0]));
+        throw UserError(JoinSequenceRefusal(jc.Args[0]), jc.Args[0]);
     }
 
     // A PyMCU string has no heap to be built in, so str.join is a compile-time operation and
@@ -1743,7 +1743,7 @@ public partial class IRGenerator
         if (len is null && (sl.Start is null || sl.Stop is null))
             throw UserError(
                 "slice assignment on this object needs explicit start and stop " +
-                "(its __len__ is not a compile-time constant)");
+                "(its __len__ is not a compile-time constant)", sl);
         List<int> idx;
         try { idx = SliceIndices(sl, len ?? int.MaxValue); }
         catch (Exception) { return false; }
@@ -1751,11 +1751,11 @@ public partial class IRGenerator
         if (stmt.Value is not ListExpr le)
             throw UserError(
                 "slice assignment to an object with __setitem__ needs a bytes or list " +
-                "literal source of the same length");
+                "literal source of the same length", sl);
         if (le.Elements.Count != idx.Count)
             throw UserError(
                 $"slice assignment length mismatch: target selects {idx.Count} " +
-                $"element(s), source has {le.Elements.Count}");
+                $"element(s), source has {le.Elements.Count}", sl);
 
         for (int k = 0; k < idx.Count; k++)
             VisitStatement(new AssignStmt(
@@ -1770,7 +1770,7 @@ public partial class IRGenerator
         int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
         int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : size;
         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-        if (step == 0) throw UserError("Slice step cannot be zero");
+        if (step == 0) throw UserError("Slice step cannot be zero", sl);
         if (start < 0) start += size;
         if (stop < 0) stop += size;
         start = Math.Max(0, Math.Min(start, size));
@@ -1813,7 +1813,7 @@ public partial class IRGenerator
                 if (le.Elements.Count != dstIdx.Count)
                     throw UserError(
                         $"slice assignment length mismatch: target selects {dstIdx.Count} " +
-                        $"element(s), source list has {le.Elements.Count}");
+                        $"element(s), source list has {le.Elements.Count}", sl);
                 for (int k = 0; k < dstIdx.Count; k++)
                     VisitStatement(new AssignStmt(
                         new IndexExpr(tgt.Target, new IntegerLiteral(dstIdx[k])), le.Elements[k]));
@@ -1889,7 +1889,7 @@ public partial class IRGenerator
             throw UserError(
                 "slice assignment needs compile-time indices and a source of the SAME length " +
                 "(list literal, array, or array slice); inserting/deleting via slices is not " +
-                "supported — restructure with explicit element assignments");
+                "supported — restructure with explicit element assignments", indexExpr);
         }
 
         if (indexExpr.Target is VariableExpr ve)
@@ -2246,7 +2246,7 @@ public partial class IRGenerator
             throw UserError(
                 "assigning an f-string with runtime values needs the pymcu.strfmt helpers; " +
                 "`pymcu build` injects them automatically -- if invoking the compiler by hand, " +
-                "add `import pymcu.strfmt as _pymcu_strfmt` to the entry file.");
+                "add `import pymcu.strfmt as _pymcu_strfmt` to the entry file.", value);
 
         // Static size bound (type-free, conservative): a plain interpolation is at most 11
         // chars (sign + 10 decimal digits of a 32-bit value); a spec part is bounded by
@@ -2280,7 +2280,7 @@ public partial class IRGenerator
                 throw UserError(
                     $"'{target}' is re-assigned an f-string needing {bound} bytes but its " +
                     $"buffer was sized {existing.Capacity} by an earlier assignment; assign " +
-                    "the longest f-string first (buffer size is fixed at the first assignment).");
+                    "the longest f-string first (buffer size is fixed at the first assignment).", value);
             lenVar = existing.LenVar;
             VisitStatement(new AssignStmt(new VariableExpr(lenVar), new IntegerLiteral(0)));
         }
@@ -2705,7 +2705,7 @@ public partial class IRGenerator
         string? baseName = objVal is Variable v ? v.Name : (objVal is Temporary t ? t.Name : "");
         while (baseName != null && variableAliases.TryGetValue(baseName, out var alias)) baseName = alias;
         if (string.IsNullOrEmpty(baseName))
-            throw UserError("Cannot resolve instance for member array '" + targetShown + "'");
+            throw UserError("Cannot resolve instance for member array '" + targetShown + "'", objExpr);
         string flat = baseName + "_" + member;
 
         arraySizes[flat] = count;
@@ -3585,14 +3585,14 @@ public partial class IRGenerator
                 if (call.Args.Count == 1)
                 {
                     var sv = EvalConst(call.Args[0]);
-                    if (sv == null) throw UserError("List comprehension const err");
+                    if (sv == null) throw UserError("List comprehension const err", lc);
                     stop = sv.Value;
                 }
                 else if (call.Args.Count >= 2)
                 {
                     var sv = EvalConst(call.Args[0]);
                     var ev = EvalConst(call.Args[1]);
-                    if (sv == null || ev == null) throw UserError("List comprehension const err");
+                    if (sv == null || ev == null) throw UserError("List comprehension const err", lc);
                     start = sv.Value;
                     stop = ev.Value;
                 }
@@ -3605,7 +3605,7 @@ public partial class IRGenerator
                 foreach (var e in elems)
                 {
                     var v = EvalConst(e);
-                    if (v == null) throw UserError("List comprehension const err");
+                    if (v == null) throw UserError("List comprehension const err", lc);
                     vals.Add(v.Value);
                 }
             }
@@ -3617,7 +3617,7 @@ public partial class IRGenerator
                 foreach (var e in bound)
                 {
                     var v = EvalConst(e);
-                    if (v == null) throw UserError("List comprehension const err");
+                    if (v == null) throw UserError("List comprehension const err", lc);
                     vals.Add(v.Value);
                 }
             }
@@ -3643,7 +3643,7 @@ public partial class IRGenerator
                     if (lc.Filter != null)
                     {
                         var fv = EvalConst(lc.Filter);
-                        if (fv == null) throw UserError("filter error");
+                        if (fv == null) throw UserError("filter error", lc);
                         if (fv == 0) continue;
                     }
 
@@ -3657,7 +3657,7 @@ public partial class IRGenerator
                 if (lc.Filter != null)
                 {
                     var fv = EvalConst(lc.Filter);
-                    if (fv == null) throw UserError("filter error");
+                    if (fv == null) throw UserError("filter error", lc);
                     if (fv == 0) continue;
                 }
 
@@ -3668,7 +3668,7 @@ public partial class IRGenerator
         constantVariables.Remove(outerKey);
 
         if (entries.Count != count)
-            throw UserError($"List comprehension generated {entries.Count} but array is {count}");
+            throw UserError($"List comprehension generated {entries.Count} but array is {count}", lc);
         bool useSram = arraysWithVariableIndex.Contains(qualifiedName) || moduleSramArrays.Contains(qualifiedName);
 
         for (int k = 0; k < count; ++k)
@@ -3845,7 +3845,7 @@ public partial class IRGenerator
         // A const-declared name is immutable; an augmented assignment (`K += 1`) mutates it
         // just like a plain assignment, so reject it with the same located error.
         if (stmt.Target is VariableExpr augConstTgt && declaredConstants.Contains(augConstTgt.Name))
-            throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)");
+            throw UserError($"cannot assign to constant '{augConstTgt.Name}' (declared const)", augConstTgt);
 
         // `obj OP= v` where obj is a ZCA instance: Python first tries the in-place dunder
         // (__iadd__ & co.), then falls back to the binary one via `obj = obj OP v`. Without
@@ -3919,7 +3919,7 @@ public partial class IRGenerator
                     + (idunder.Length > 0
                         ? $"{zcls}.{idunder}"
                         : $"an in-place dunder on {zcls}")
-                    + " (or the matching binary dunder) defined");
+                    + " (or the matching binary dunder) defined", zve);
             }
         }
 
