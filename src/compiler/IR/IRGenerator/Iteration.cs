@@ -374,6 +374,153 @@ public partial class IRGenerator
                 return;
             }
 
+            // Iterating a dict or a set. Both bind a compile-time table and no storage, so
+            // there is no run-time sequence to walk -- and none is needed: the entries are
+            // known here, so the loop unrolls over them exactly as a constant list literal
+            // already does, and the loop variable is a compile-time constant inside the body
+            // the same way (issue #200). `d[k]` in the body then folds to that entry's value.
+            //
+            // The order is the order written. For a dict that is CPython's order too; for a
+            // set CPython iterates in hash order, and a compile-time membership table has no
+            // hashes, so source order is the only answer that is stable across builds.
+            {
+                // The element as the program wrote it, for a message that shows the list to
+                // write instead. Anything else is shown as `...`: a wrong rendering in advice
+                // is worse than an honest gap in it.
+                static string SourceOfElement(Expression e) => e switch
+                {
+                    IntegerLiteral il => il.Value.ToString(),
+                    StringLiteral sl2 => "\"" + sl2.Value + "\"",
+                    BooleanLiteral bl2 => bl2.Value ? "True" : "False",
+                    UnaryExpr { Op: Frontend.UnaryOp.Negate, Operand: IntegerLiteral ng } => "-" + ng.Value,
+                    _ => "...",
+                };
+
+                DictExpr? DictOf(Expression e) =>
+                    e as DictExpr
+                    ?? (e is VariableExpr dv && TryGetDictBinding(dv.Name, out var bd) ? bd : null);
+                SetExpr? SetOf(Expression e) =>
+                    e as SetExpr
+                    ?? (e is VariableExpr sv && TryGetSetBinding(sv.Name, out var bs) ? bs : null);
+
+                List<Expression>? dsElems = null;                       // one name per element
+                List<(Expression Key, Expression Value)>? dsPairs = null;  // two, from items()
+                string dsWhat = "";
+
+                if (DictOf(iter) is { } dIter)
+                {
+                    dsElems = dIter.Entries.Select(en => en.Key).ToList();
+                    dsWhat = "dict";
+                }
+                else if (SetOf(iter) is { } sIter)
+                {
+                    // Not unrolled, and the order is why. CPython walks a set in hash-table
+                    // slot order: {30, 5} gives 5 then 30, and {70, 7} gives 70 then 7, which
+                    // is neither the order written nor sorted. A compile-time membership table
+                    // has no hashes and no table, so any order chosen here would silently
+                    // disagree with the host on some literal, which is worse than not walking
+                    // it at all. A dict IS unrolled, because its order is insertion order and
+                    // that is exactly what the source says.
+                    throw UserError(
+                        $"a set is not iterated here: CPython walks it in hash order, and a "
+                        + "compile-time membership table has no hashes to reproduce it with, so "
+                        + "the order would differ from the one your program prints on the host. "
+                        + $"Write the values as a list to walk them in order (`for {stmt.VarName} "
+                        + $"in [{string.Join(", ", sIter.Elements.Take(3).Select(SourceOfElement))}"
+                        + (sIter.Elements.Count > 3 ? ", ..." : "") + "]`), or keep the set and "
+                        + $"ask it what it holds (`{stmt.VarName} in ...`), which is what it is for.");
+                }
+                else if (iter is CallExpr { Callee: MemberAccessExpr dsMa } dsCall
+                         && dsCall.Args.Count == 0 && DictOf(dsMa.Object) is { } mDict)
+                {
+                    switch (dsMa.Member)
+                    {
+                        case "keys":
+                            dsElems = mDict.Entries.Select(en => en.Key).ToList();
+                            dsWhat = "dict";
+                            break;
+                        case "values":
+                            dsElems = mDict.Entries.Select(en => en.Value).ToList();
+                            dsWhat = "dict";
+                            break;
+                        case "items":
+                            dsPairs = mDict.Entries.Select(en => (en.Key, en.Value)).ToList();
+                            dsWhat = "dict";
+                            break;
+                    }
+                }
+
+                if (dsElems != null || dsPairs != null)
+                {
+                    string dsWhich = dsPairs != null ? "items()" : dsWhat;
+                    string? dsKey2 = string.IsNullOrEmpty(stmt.Var2Name) ? null
+                        : (!string.IsNullOrEmpty(currentInlinePrefix)
+                            ? currentInlinePrefix + stmt.Var2Name
+                            : (!string.IsNullOrEmpty(currentFunction)
+                                ? currentFunction + "." + stmt.Var2Name : stmt.Var2Name));
+
+                    // Binds one entry to one loop name. A string key or value is bound as a
+                    // string constant, which is what makes `d[k]` fold for the string-keyed
+                    // dict this reads best on.
+                    void BindOne(string key, Expression e, string role)
+                    {
+                        if (TryEvalConstElement(e, out int iv)) { constantVariables[key] = iv; return; }
+                        if (e is StringLiteral sl)
+                        {
+                            strConstantVariables[key] = sl.Value;
+                            // A one-character string is its own character code in expression
+                            // position, and an interned id when read back through a name. The
+                            // unrolled name has to be indistinguishable from the literal it
+                            // stands for, so it is bound in both maps, which is the state the
+                            // read path already expects for such a name.
+                            if (sl.Value.Length == 1) constantVariables[key] = sl.Value[0];
+                            return;
+                        }
+                        throw UserError(
+                            $"a {dsWhat} is iterated by unrolling it at compile time, so every {role} has "
+                            + $"to be a constant, and this one is not. Read the run-time value inside the "
+                            + "body instead.");
+                    }
+                    void Unbind(string key)
+                    {
+                        constantVariables.Remove(key);
+                        strConstantVariables.Remove(key);
+                    }
+
+                    if (dsPairs != null && dsKey2 == null)
+                        throw UserError(
+                            $"'{stmt.VarName}' is one name and items() gives a key and a value, so there "
+                            + $"is nowhere to put the value. Write 'for {stmt.VarName}, value in ...', or "
+                            + "iterate the dict itself for the keys alone.");
+                    if (dsPairs == null && dsKey2 != null)
+                        throw UserError(
+                            $"iterating a {dsWhich} gives one value at a time, and this unpacks two names. "
+                            + (dsWhat == "dict"
+                                ? "Write 'for k, v in d.items()' for both, or one name for the keys."
+                                : "Write one name."));
+
+                    string dsBrk = LoopBodyHasBreakOrContinue(stmt.Body) ? MakeLabel() : "";
+                    if (dsPairs != null)
+                        foreach (var (kE, vE) in dsPairs)
+                        {
+                            BindOne(varKey, kE, "key");
+                            BindOne(dsKey2!, vE, "value");
+                            EmitUnrolledIteration(stmt.Body, dsBrk);
+                        }
+                    else
+                        foreach (var elem in dsElems!)
+                        {
+                            BindOne(varKey, elem, dsWhat == "dict" ? "key" : "element");
+                            EmitUnrolledIteration(stmt.Body, dsBrk);
+                        }
+                    if (dsBrk.Length > 0) Emit(new Label(dsBrk));
+
+                    Unbind(varKey);
+                    if (dsKey2 != null) Unbind(dsKey2);
+                    return;
+                }
+            }
+
             if (iter is CallExpr call && call.Callee is VariableExpr calleeVar)
             {
                 if (calleeVar.Name == "range")
