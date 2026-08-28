@@ -127,14 +127,29 @@ public partial class IRGenerator
                 return DataType.UINT32;
             case VariableExpr varExpr:
             {
-                var key = currentInlinePrefix + varExpr.Name;
-                for (var i = 0; i < 20; ++i)
+                // Try the same qualifications the read side uses: the inline prefix, then the
+                // enclosing function, then the bare name. Only the first was tried, so a plain
+                // function LOCAL was never found -- it is registered as `main.x`, not `x` -- and
+                // every such argument silently inferred UINT8. `x: float` then spelled itself
+                // "uint8" for overload selection, so `math.floor(x)` could not exact-match
+                // `floor(x: float)` and fell through to the arity fallback (PyMCU#182).
+                foreach (var start in new[]
                 {
-                    if (variableTypes.TryGetValue(key, out var type)) return type;
-                    if (variableAliases.TryGetValue(key, out var alias))
-                        key = alias;
-                    else
-                        break;
+                    string.IsNullOrEmpty(currentInlinePrefix) ? null : currentInlinePrefix + varExpr.Name,
+                    string.IsNullOrEmpty(currentFunction) ? null : currentFunction + "." + varExpr.Name,
+                    varExpr.Name,
+                })
+                {
+                    if (start == null) continue;
+                    var key = start;
+                    for (var i = 0; i < 20; ++i)
+                    {
+                        if (variableTypes.TryGetValue(key, out var type)) return type;
+                        if (variableAliases.TryGetValue(key, out var alias))
+                            key = alias;
+                        else
+                            break;
+                    }
                 }
 
                 break;
