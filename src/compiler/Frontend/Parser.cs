@@ -1585,6 +1585,20 @@ public class Parser
         return left;
     }
 
+    /// Stamps a literal with the position of the token it was written as.
+    ///
+    /// This is the LEAF convention, the same one `VariableExpr` and string literals follow: a
+    /// literal IS its token, so there is no decision to make about which part to show. The `0`
+    /// in `a // 0` is at the `0`. Contrast Located() below, which positions a node built by
+    /// combining others and therefore has to choose.
+    private static T Leaf<T>(T node, Token t) where T : Expression
+    {
+        node.Line = t.Line;
+        node.Column = t.Column;
+        node.Length = t.Length;
+        return node;
+    }
+
     /// Stamps a binary expression with the position of its OPERATOR.
     ///
     /// This deliberately differs from how the leaf nodes are stamped, and the difference is not
@@ -2018,9 +2032,9 @@ public class Parser
             return new LambdaExpr(lparams, body);
         }
 
-        if (Match(TokenType.True)) return new BooleanLiteral(true);
-        if (Match(TokenType.False)) return new BooleanLiteral(false);
-        if (Match(TokenType.None)) return new NoneLiteral();
+        if (Match(TokenType.True)) return Leaf(new BooleanLiteral(true), Previous());
+        if (Match(TokenType.False)) return Leaf(new BooleanLiteral(false), Previous());
+        if (Match(TokenType.None)) return Leaf(new NoneLiteral(), Previous());
 
         if (Match(TokenType.Identifier))
         {
@@ -2052,6 +2066,9 @@ public class Parser
                     string tok = encoded.Substring(start, comma - start);
                     if (!string.IsNullOrEmpty(tok))
                     {
+                        // Deliberately NOT Leaf(): these come from decoding one bytes literal's
+                        // payload, so no element is a token the user wrote. There is nothing to
+                        // point at but the whole b"..." , and the elements have no position.
                         elems.Add(new IntegerLiteral(int.Parse(tok)));
                     }
 
@@ -2268,7 +2285,7 @@ public class Parser
                 if (b == 10 && (text.Contains('.') || text.Contains('e') || text.Contains('E')))
                 {
                     double valD = double.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
-                    return new FloatLiteral(valD);
+                    return Leaf(new FloatLiteral(valD), t);
                 }
 
                 long val64 = Convert.ToInt64(text.Substring(offset), b);
@@ -2279,7 +2296,7 @@ public class Parser
                 // byte-wise, and the magnitude-based width sees 4 bytes either way.
                 // (Compile-time folding of arithmetic ON such literals would see the
                 // signed reading; runtime uint32 arithmetic is unaffected.)
-                return new IntegerLiteral(unchecked((int)(uint)val64));
+                return Leaf(new IntegerLiteral(unchecked((int)(uint)val64)), t);
             }
             catch (OverflowException)
             {

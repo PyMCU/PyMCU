@@ -91,14 +91,34 @@ public class CallDiagnosticColumnTests
     }
 
     [Fact]
-    public void AnArgumentWhoseNodeTypeIsNotStampedStillReportsNoColumn()
+    public void AnArgumentThatIsALiteralPointsAtTheLiteral()
     {
-        // `sum(1)` blames the argument, and an IntegerLiteral carries no position yet. The rule
-        // holds: no measurement, no caret. This starts passing a real column the day integer
-        // literals are stamped, with no edit here.
+        //          1234567890123
+        // line 3: "    v = sum(1)"  -- the `1` is at column 13
+        //
+        // This test was written asserting the OPPOSITE, that an IntegerLiteral carried no
+        // position and so drew no caret, with the note that it would start passing a real
+        // column the day literals were stamped. That day came in the very next change and the
+        // test failed, which is the whole point of having written it that way: it converted
+        // itself from a guard into a discriminator rather than sitting green through a change
+        // in behaviour.
         var ex = Fails("    v = sum(1)\n");
 
         Assert.Contains("sum()", ex.Message);
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(13, ex.Column);
+    }
+
+    [Fact]
+    public void AnArgumentSynthesisedRatherThanWrittenStillReportsNoColumn()
+    {
+        // The rule the test above used to guard still holds; it just needs a node that really
+        // has no position. The elements of a bytes literal are decoded from one b"..." token,
+        // so no element is anything the user typed, and Parser deliberately leaves them
+        // unstamped. Nothing to point at but the whole literal.
+        var ex = Fails("    v = int.from_bytes(b\"\\x01\", \"little\")\n");
+
+        Assert.Contains("at least 2 bytes", ex.Message);
         Assert.False(ex.HasColumn);
     }
 }

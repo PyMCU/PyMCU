@@ -89,15 +89,16 @@ def line_of(node):
 
 
 # Node kinds whose POSITION the two front ends agree on, so carrying it here cannot make them
-# disagree. A leaf IS its token in both: CPython's col_offset for a Name or a string literal is
-# the start of that name or string, which is exactly where the hand-written parser stamps it.
+# disagree. A leaf IS its token in both: CPython's col_offset for a Name, a string, a number or
+# a True/False/None is the start of what was written, which is exactly where the hand-written
+# parser stamps it (Parser.Leaf).
 #
 # ast.BinOp is deliberately absent. CPython's col_offset for a BinOp is the start of the WHOLE
 # expression, while the hand-written parser stamps a binary expression at its OPERATOR (`a // 0`
 # gives the `//`). Carrying it would not close a divergence, it would open one in the other
 # direction, with the two front ends naming different characters for the same error. Adding a
 # kind here means first checking that both front ends locate it the same way.
-POSITIONED_KINDS = ("Var", "Str")
+POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None")
 
 
 def position_of(node):

@@ -101,4 +101,51 @@ public class BinaryExprPositionTests
         Assert.Equal(3, e.Line);
         Assert.Equal(10, e.Column);
     }
+
+    // ---- literals ------------------------------------------------------------------------
+
+    [Theory]
+    //           1234567890123
+    [InlineData("    b = 7\n", 9, 1)]          // the `7`
+    [InlineData("    b = 4096\n", 9, 4)]       // the whole number, underlined
+    [InlineData("    b = 0xFF\n", 9, 4)]       // the prefix belongs to the token
+    [InlineData("    b = 1.5\n", 9, 3)]        // a float is its token too
+    [InlineData("    b = True\n", 9, 4)]
+    [InlineData("    b = None\n", 9, 4)]
+    public void ALiteralIsLocatedAtItsOwnToken(string body, int column, int length)
+    {
+        var prog = new Parser(new Lexer("def main():\n" + body).Tokenize()).ParseProgram();
+        var stmt = Assert.IsType<Block>(prog.Functions[0].Body).Statements[0];
+        Expression init = stmt switch
+        {
+            VarDecl v => v.Init!,
+            AnnAssign a => a.Value!,
+            AssignStmt sa => sa.Value,
+            ExprStmt e => e.Expr,
+            _ => throw new Xunit.Sdk.XunitException($"unexpected {stmt.GetType().Name}"),
+        };
+
+        Assert.Equal(2, init.Line);
+        Assert.Equal(column, init.Column);
+        Assert.Equal(length, init.Length);
+    }
+
+    [Fact]
+    public void TheElementsOfABytesLiteralAreNotGivenAPositionOfTheirOwn()
+    {
+        // They are decoded from one b"..." token, so no element is anything the user typed.
+        // The leaf convention is "a literal IS its token"; these have no token.
+        var prog = new Parser(new Lexer("def main():\n    b = b\"\\x01\\x02\"\n").Tokenize())
+            .ParseProgram();
+        var stmt = Assert.IsType<Block>(prog.Functions[0].Body).Statements[0];
+        Expression init = stmt switch
+        {
+            VarDecl v => v.Init!, AnnAssign a => a.Value!, AssignStmt sa => sa.Value,
+            ExprStmt e => e.Expr,
+            _ => throw new Xunit.Sdk.XunitException($"unexpected {stmt.GetType().Name}"),
+        };
+        var list = Assert.IsType<ListExpr>(init);
+
+        Assert.All(list.Elements, el => Assert.Equal(0, el.Column));
+    }
 }
