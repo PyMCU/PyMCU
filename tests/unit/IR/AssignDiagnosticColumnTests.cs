@@ -76,17 +76,38 @@ public class AssignDiagnosticColumnTests
     }
 
     [Fact]
-    public void ASliceDiagnosticCarriesItsNodeButDrawsNoCaretYet()
+    public void ASliceDiagnosticPointsAtTheSlicesColon()
     {
-        // The site passes the SliceExpr it blames, which is the durable half. SliceExpr is not
-        // a stamped node type, so there is no column to report and none is invented. This test
-        // is written to FLIP when slices are stamped, the way the literal one did: if it starts
-        // failing, the fix is to assert the real column, not to restore the silence.
+        //          123456789
+        // line 4: "    xs[0:2] = [9]"  -- the `:` is at column 9
+        //
+        // Written asserting the opposite, that the site carried its SliceExpr but drew no
+        // caret because SliceExpr was unstamped, with the instruction that if it started
+        // failing the fix was to assert the real column rather than restore the silence.
+        // Slices were stamped in the next change, it failed, and this is that instruction
+        // being followed. Second test in this issue to convert itself on schedule.
         var ex = Fails(
             "from pymcu.types import uint8\n" +
             "def main() -> None:\n" +
             "    xs: uint8[3] = [1, 2, 3]\n" +
             "    xs[0:2] = [9]\n");
+
+        Assert.Contains("slice assignment", ex.Message);
+        Assert.Equal(4, ex.Line);
+        Assert.Equal(9, ex.Column);
+    }
+
+    [Fact]
+    public void AnIndexDiagnosticCarriesItsNodeButDrawsNoCaretYet()
+    {
+        // The guard the slice test used to provide, moved to a type that still lacks a stamp.
+        // IndexExpr is passed by the site that blames it and has no position of its own, so no
+        // caret is drawn. Same instruction: when this fails, assert the column.
+        var ex = Fails(
+            "from pymcu.types import uint8\n" +
+            "def main() -> None:\n" +
+            "    xs: uint8[4] = [1, 2, 3, 4]\n" +
+            "    xs[0:4:0] = [1, 2, 3, 4]\n");
 
         Assert.Contains("slice assignment", ex.Message);
         Assert.False(ex.HasColumn);

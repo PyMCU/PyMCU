@@ -1602,13 +1602,19 @@ public class Parser
     /// Stamps a binary expression with the position of its OPERATOR.
     ///
     /// This deliberately differs from how the leaf nodes are stamped, and the difference is not
-    /// a bug in either. A `VariableExpr` or a string literal IS its token, so it is stamped at
-    /// its own start. A node built by combining others has no token of its own, so its position
-    /// has to come from a decision about which part the reader should be shown, and the answer
-    /// is per node type: the operator for a binary expression, and the callee for a call. Any
-    /// future combining node needs that decision made and written down here beside these, or
-    /// the next reader will find two node types stamped two ways and take one of them for a
-    /// defect.
+    /// a bug in either. A `VariableExpr`, a literal or a string IS its token, so it is stamped
+    /// at its own start (see Leaf above). A node built by combining others has no token of its
+    /// own, so its position has to come from a decision about which part the reader should be
+    /// shown. The decisions, all of them, so that two nodes stamped two ways never reads as a
+    /// defect in one of them:
+    ///
+    ///   BinaryExpr        the OPERATOR       `a // 0` marks the `//`
+    ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
+    ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
+    ///   CallExpr          not stamped; the diagnostic sites pass expr.Callee, which is a
+    ///                     leaf and carries its own position
+    ///
+    /// Any future combining node needs its decision made and added to that list.
     ///
     /// The operator, not the start of the whole expression. The messages these nodes carry are
     /// about the operation ("integer division or modulo by zero", "unsupported operand type
@@ -1620,11 +1626,11 @@ public class Parser
     /// column taken from one line against a line number taken from another points at whatever
     /// happens to sit there. The diagnostic sites already prefer the node's own line when it
     /// has one, so stamping both is what keeps the pair consistent.
-    private static BinaryExpr Located(BinaryExpr node, Token op)
+    private static T Located<T>(T node, Token at) where T : Expression
     {
-        node.Line = op.Line;
-        node.Column = op.Column;
-        node.Length = op.Length;
+        node.Line = at.Line;
+        node.Column = at.Column;
+        node.Length = at.Length;
         return node;
     }
 
@@ -1931,7 +1937,7 @@ public class Parser
                 Expression? index;
                 if (Check(TokenType.Colon))
                 {
-                    Advance();
+                    var colon = Advance();
                     Expression? stop = Check(TokenType.RBracket) || Check(TokenType.Colon) ? null : ParseExpression();
                     Expression? step = null;
                     if (Match(TokenType.Colon))
@@ -1939,14 +1945,14 @@ public class Parser
                         step = Check(TokenType.RBracket) ? null : ParseExpression();
                     }
 
-                    index = new SliceExpr(null, stop, step);
+                    index = Located(new SliceExpr(null, stop, step), colon);
                 }
                 else
                 {
                     var first = ParseExpression();
                     if (Check(TokenType.Colon))
                     {
-                        Advance();
+                        var colon = Advance();
                         Expression? stop = Check(TokenType.RBracket) || Check(TokenType.Colon)
                             ? null
                             : ParseExpression();
@@ -1956,7 +1962,7 @@ public class Parser
                             step = Check(TokenType.RBracket) ? null : ParseExpression();
                         }
 
-                        index = new SliceExpr(first, stop, step);
+                        index = Located(new SliceExpr(first, stop, step), colon);
                     }
                     else
                     {
@@ -1970,7 +1976,7 @@ public class Parser
             else if (Match(TokenType.Dot))
             {
                 var member = Consume(TokenType.Identifier, "Expected member name");
-                expr = new MemberAccessExpr(expr, member.Value);
+                expr = Located(new MemberAccessExpr(expr, member.Value), member);
             }
             else
             {

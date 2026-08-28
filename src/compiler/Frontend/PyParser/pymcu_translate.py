@@ -100,6 +100,37 @@ def line_of(node):
 # kind here means first checking that both front ends locate it the same way.
 POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None")
 
+# Kinds whose position is not CPython's col_offset but is EXACTLY derivable from it, so parity
+# with the hand-written parser is still reachable. Each entry says which part to mark and how
+# the offset is computed; a kind belongs here only once that computation has been checked
+# against real source rather than assumed.
+#
+#   Member  the member name.   CPython gives the start of the whole `o.sep`; the name ends at
+#           end_col_offset, so it starts at end_col_offset - len(attr).
+#   Slice   the first colon.   CPython gives the start of the slice content; the colon sits
+#           immediately after `lower`, or at the slice's own start when there is no lower.
+DERIVED_KINDS = ("Member", "Slice")
+
+
+def derived_position(kind, node):
+    """The 1-based column and length for a kind whose position CPython does not give directly."""
+    if kind == "Member":
+        end = getattr(node, "end_col_offset", None)
+        name = getattr(node, "attr", None)
+        if end is None or name is None:
+            return {}
+        return {"col": end - len(name) + 1, "len": max(1, len(name))}
+    if kind == "Slice":
+        lower = getattr(node, "lower", None)
+        if lower is not None:
+            end = getattr(lower, "end_col_offset", None)
+            if end is None:
+                return {}
+            return {"col": end + 1, "len": 1}
+        col = getattr(node, "col_offset", None)
+        return {} if col is None else {"col": col + 1, "len": 1}
+    return {}
+
 
 def position_of(node):
     """1-based column and token length, or {} when CPython does not give them.
@@ -153,8 +184,12 @@ def expr(node):
     out = handler(node)
     if isinstance(out, dict) and "line" not in out:
         out["line"] = line_of(node)
-    if isinstance(out, dict) and out.get("k") in POSITIONED_KINDS and "col" not in out:
-        out.update(position_of(node))
+    if isinstance(out, dict) and "col" not in out:
+        k = out.get("k")
+        if k in POSITIONED_KINDS:
+            out.update(position_of(node))
+        elif k in DERIVED_KINDS:
+            out.update(derived_position(k, node))
     return out
 
 
@@ -398,8 +433,12 @@ def stmt(node):
     out = handler(node)
     if isinstance(out, dict) and "line" not in out:
         out["line"] = line_of(node)
-    if isinstance(out, dict) and out.get("k") in POSITIONED_KINDS and "col" not in out:
-        out.update(position_of(node))
+    if isinstance(out, dict) and "col" not in out:
+        k = out.get("k")
+        if k in POSITIONED_KINDS:
+            out.update(position_of(node))
+        elif k in DERIVED_KINDS:
+            out.update(derived_position(k, node))
     return out
 
 

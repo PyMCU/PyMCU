@@ -148,4 +148,58 @@ public class BinaryExprPositionTests
 
         Assert.All(list.Elements, el => Assert.Equal(0, el.Column));
     }
+
+    // ---- combining nodes other than a binary expression --------------------------------
+
+    private static Expression FirstValue(string body)
+    {
+        var prog = new Parser(new Lexer("def main():\n" + body).Tokenize()).ParseProgram();
+        var stmt = Assert.IsType<Block>(prog.Functions[0].Body).Statements[0];
+        return stmt switch
+        {
+            VarDecl v => v.Init!, AnnAssign a => a.Value!, AssignStmt sa => sa.Value,
+            ExprStmt e => e.Expr,
+            _ => throw new Xunit.Sdk.XunitException($"unexpected {stmt.GetType().Name}"),
+        };
+    }
+
+    [Fact]
+    public void AMemberAccessIsLocatedAtTheMemberName()
+    {
+        //           1234567890
+        // line 2:  "    x = o.sep"  -- `sep` starts at column 11, `o` at 9
+        var m = Assert.IsType<MemberAccessExpr>(FirstValue("    x = o.sep\n"));
+
+        Assert.Equal(2, m.Line);
+        Assert.Equal(11, m.Column);
+        Assert.Equal(3, m.Length);
+    }
+
+    [Fact]
+    public void AChainedMemberAccessIsLocatedAtItsOwnLastName()
+    {
+        // `a.b.c` is Member(Member(a, b), c). The outer marks `c`, the inner marks `b`, so a
+        // diagnostic about either points at the name it is actually about.
+        //           123456789012345
+        // line 2:  "    x = a.b.c"
+        var outer = Assert.IsType<MemberAccessExpr>(FirstValue("    x = a.b.c\n"));
+        var inner = Assert.IsType<MemberAccessExpr>(outer.Object);
+
+        Assert.Equal(13, outer.Column);
+        Assert.Equal(11, inner.Column);
+    }
+
+    [Theory]
+    //            1234567890123
+    [InlineData("    x = xs[0:2]\n", 13)]     // the first colon
+    [InlineData("    x = xs[:2]\n", 12)]      // no lower bound: the colon is still the mark
+    [InlineData("    x = xs[0:2:1]\n", 13)]   // the FIRST colon, not the second
+    public void ASliceIsLocatedAtItsFirstColon(string body, int column)
+    {
+        var idx = Assert.IsType<IndexExpr>(FirstValue(body));
+        var sl = Assert.IsType<SliceExpr>(idx.Index);
+
+        Assert.Equal(2, sl.Line);
+        Assert.Equal(column, sl.Column);
+    }
 }
