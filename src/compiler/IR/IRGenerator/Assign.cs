@@ -728,6 +728,14 @@ public partial class IRGenerator
                         {
                             if (value is Temporary tmp) type = tmp.Type;
                             else if (value is Variable vv) type = vv.Type;
+                            // A float literal with no annotation. There was no case for it, so
+                            // it fell past every branch below and kept the UINT8 default: the
+                            // name was typed an integer and the store truncated, so `f = 1.5`
+                            // printed 1 with no error (#216). The annotated form is refused
+                            // outright (`f: uint8 = 1.5` is a TypeError), and float arithmetic
+                            // types its result correctly, which is why this survived -- it needs
+                            // a bare literal, no annotation, and no arithmetic before the read.
+                            else if (value is FloatConstant) type = DataType.FLOAT;
                             else if (stmt.Value is IntegerLiteral)
                                 type = literalOnlyLocalWidths.TryGetValue(varExpr.Name, out var litW)
                                     ? litW
