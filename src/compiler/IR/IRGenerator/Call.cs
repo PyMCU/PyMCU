@@ -956,6 +956,28 @@ public partial class IRGenerator
 
         if (functionParams.TryGetValue(callee, out var paramNames))
         {
+            // `A.f(x)` where f takes self. CPython binds x to self and the argument the reader
+            // meant has nowhere to go; here the arity message named `A_f` and two counts, which
+            // is a symbol the program does not contain and a parameter it cannot see (#201).
+            // Say which call it is and what the two ways out are. Dropping `self` is the second
+            // one because a method without it IS compiled under this name and reached by
+            // exactly this call.
+            //
+            // The receiver decides, not the parameter name: an outlined method's first synthetic
+            // parameter is `self_<field>` rather than `self`, so reading the name would have
+            // missed every method that carries data.
+            if (callArgs.Count != paramNames.Count
+                && expr.Callee is MemberAccessExpr { Object: VariableExpr clsRecv } clsMa
+                && classNames.Contains(clsRecv.Name) && InstanceClassOfName(clsRecv.Name) == null
+                && methodInstanceTypes.ContainsKey(callee))
+                throw UserError(
+                    $"'{clsRecv.Name}.{clsMa.Member}(...)' calls a method that takes 'self' through "
+                    + "the class itself, and there is no instance for it, so the first argument "
+                    + $"would become 'self'. Call it on an instance (`obj.{clsMa.Member}(...)`), or "
+                    + $"drop 'self' from the definition, which makes '{clsRecv.Name}.{clsMa.Member}"
+                    + "(...)' the way to call it.",
+                    expr.Callee);
+
             if (callArgs.Count > paramNames.Count)
                 throw UserError(
                     $"Function '{callee}' expects {paramNames.Count} arguments, but {callArgs.Count} were provided", expr.Callee);

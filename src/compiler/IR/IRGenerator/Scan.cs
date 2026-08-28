@@ -1314,12 +1314,29 @@ public partial class IRGenerator
                                             + $" Mark every '{func.Name}' @inline to overload by "
                                             + "parameter types, or give them different names.");
 
-                                    // RFC 0001 F4: an undecorated method is OUTLINED BY DEFAULT when
-                                    // it is outline-safe (touches self only as self.<field>). This is
-                                    // why @inline now means something: without it, a representable
-                                    // method is shared, not silently force-inlined per instance.
+                                    // A method with no `self` parameter is a plain function that
+                                    // happens to be written in a class body, and `A.f(x)` is the only
+                                    // way to call it. It has no receiver, so the field layout the
+                                    // outline decision turns on says nothing about it: a class with no
+                                    // fields has an empty layout, IsOutlineSafe refuses an empty one,
+                                    // and the method went to expansion-only. The call site still built
+                                    // the name `A_f` and emitted a call to it, so the two halves
+                                    // disagreed inside one build and it surfaced at the linker (#201).
+                                    //
+                                    // Compiled as an ordinary function under the class prefix, which
+                                    // is the name the call site already forms. @inline keeps working
+                                    // as it did, by expansion, which is what fixtures/static-method
+                                    // has been relying on.
                                     var defLayout = clsLayout;
-                                    if (IsOutlineSafe(func, defLayout))
+                                    if (func.Params.Count == 0 || func.Params[0].Name != "self")
+                                    {
+                                        functionsToCompile.Add(new FunctionEntry
+                                        {
+                                            Prefix = currentModulePrefix, Func = func,
+                                            SourceFile = currentSourceFile, SourcePath = currentSourcePath,
+                                        });
+                                    }
+                                    else if (IsOutlineSafe(func, defLayout))
                                     {
                                         // A single-field mutator that ALSO has explicit returns
                                         // cannot use write-back-via-return (one return slot can't
