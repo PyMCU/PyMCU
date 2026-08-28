@@ -1454,7 +1454,7 @@ public partial class IRGenerator
     // a runtime one.
     private Val EmitDictLookup(Frontend.DictExpr d, Expression keyExpr, Expression? defaultExpr = null)
     {
-        var entries = new List<(int Key, int Value, bool StrKey)>();
+        var entries = new List<(int Key, int Value, bool StrKey, string? Text)>();
         foreach (var (kE, vE) in d.Entries)
         {
             Val kV = VisitExpression(kE);
@@ -1462,16 +1462,32 @@ public partial class IRGenerator
             if (kV is not Constant kc || vV is not Constant vc)
                 throw UserError("dict literals are compile-time lookup tables: every key and " +
                                 "value must be a compile-time constant");
-            entries.Add((kc.Value, vc.Value, kE is StringLiteral));
+            entries.Add((kc.Value, vc.Value, kE is StringLiteral, kc.Text));
         }
 
         Val keyVal = VisitExpression(keyExpr);
         if (keyVal is Constant keyC)
         {
+            // Match on the TEXT when both sides carry it, and only fall back to the numbers when
+            // one of them does not. A one-character string has two encodings: as a literal it
+            // folds to its character code, and through a name it resolves to its interned id.
+            // Comparing the numbers read those as different strings, so `k = "a"` missed the
+            // entry `"a"` -- `d[k]` raised KeyError naming 256, a number the program never wrote,
+            // and `d.get(k, 1)` silently returned the default (PyMCU#215). A multi-character key
+            // was unaffected because both encodings are the same interned id for it.
+            //
+            // Both spellings arrive here: `d[k]` and `d.get(k, default)` are one site, differing
+            // only in whether defaultExpr is null, so this covers both.
             foreach (var e in entries)
-                if (e.Key == keyC.Value) return new Constant(e.Value);
+            {
+                bool hit = e.Text != null && keyC.Text != null
+                    ? e.Text == keyC.Text
+                    : e.Key == keyC.Value;
+                if (hit) return new Constant(e.Value);
+            }
+
             if (defaultExpr != null) return VisitExpression(defaultExpr);
-            throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC.Value)} is not a key of " +
+            throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC)} is not a key of " +
                             "this dict literal (checked at compile time)");
         }
 
@@ -1511,10 +1527,14 @@ public partial class IRGenerator
         return result;
     }
 
-    private string DescribeDictKey(Expression keyExpr, int folded) => keyExpr switch
+    // Name the key the way the program wrote it. A name bound to a string reaches here as a
+    // VariableExpr, so the old fall-through printed the folded number and the message read
+    // "KeyError: 256", which is not anything the source says.
+    private string DescribeDictKey(Expression keyExpr, Constant folded) => keyExpr switch
     {
         StringLiteral s => $"\"{s.Value}\"",
-        _ => folded.ToString(),
+        _ when folded.Text != null => $"\"{folded.Text}\"",
+        _ => folded.Value.ToString(),
     };
 
     private Val VisitIndex(IndexExpr expr)
