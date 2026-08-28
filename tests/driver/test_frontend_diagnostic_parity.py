@@ -84,3 +84,61 @@ def test_a_binary_argument_is_the_known_gap(tmp_path):
     assert hand[0] == cpython[0], "the LINE must agree even where the column does not"
     assert hand[1] > 1, "the hand-written parser locates the operator"
     assert cpython[1] == 1, "the bridge carries no position for a BinOp"
+
+# --- the MESSAGE, not only the position (PyMCU#218) -----------------------------------
+#
+# Every divergence found before this one was a column: one side pointed, the other did not,
+# which degrades a diagnostic. These are divergences in the TEXT, which breaks anything
+# matching on it -- a user searching for the sentence, a doc quoting it, a test asserting it.
+
+
+def _message(src: Path, py_parser: bool) -> str:
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+        env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    proc = subprocess.run(
+        [str(PYMCUC), str(src), "--target", "atmega328p",
+         "--emit-ir", os.devnull, "-o", os.devnull,
+         "-I", str(STDLIB), "-I", str(src.parent)],
+        capture_output=True, text=True, env=env,
+    )
+    line = next((l for l in proc.stderr.splitlines() if "error:" in l), None)
+    assert line, f"expected a diagnostic, got:\n{proc.stderr}"
+    return line.split("error: ", 1)[1]
+
+
+@pytest.mark.parametrize("body", [
+    "    x: uint8 = 0xFFFFFFFFFF\n",                 # quoted as WRITTEN, not as a decimal
+    "    x: uint8 = 99999999999\n",
+    "    x: uint8 = 1\n    del x\n",                 # the written refusal, not a stub
+])
+def test_both_front_ends_say_the_same_sentence(tmp_path, body):
+    src = _write(tmp_path, body)
+
+    assert _message(src, py_parser=False) == _message(src, py_parser=True)
+
+
+def test_an_oversized_literal_is_quoted_as_it_was_written(tmp_path):
+    # CPython hands the bridge the VALUE, so `0xFFFFFFFFFF` would be reported as
+    # 1099511627775, a number that appears nowhere in the program being read.
+    src = _write(tmp_path, "    x: uint8 = 0xFFFFFFFFFF\n")
+
+    for py in (False, True):
+        assert "'0xFFFFFFFFFF'" in _message(src, py_parser=py)
+        assert "1099511627775" not in _message(src, py_parser=py)
+
+
+def test_an_oversized_literal_points_at_the_literal(tmp_path):
+    #          1234567890123456
+    # line 3: "    x: uint8 = 0xFFFFFFFFFF"  -- the literal starts at column 16
+    #
+    # It used to point at whatever token FOLLOWED the number, because Parser.Error() reports
+    # Peek() and the literal had already been consumed: the caret landed on the `]` closing a
+    # comprehension, or on the newline.
+    src = _write(tmp_path, "    x: uint8 = 0xFFFFFFFFFF\n")
+
+    assert _where(src, py_parser=False) == (3, 16)
+    assert _where(src, py_parser=True) == (3, 16)

@@ -42,8 +42,14 @@ public static class PythonAstReader
 
         if (root.TryGetProperty("error", out var err))
         {
-            int line = root.TryGetProperty("line", out var l) ? l.GetInt32() : 0;
-            throw new SyntaxError(err.GetString() ?? "parse failed", line);
+            // The translator reports a column now, not only a line. Absent or 0 stays
+            // Unlocated, so a refusal it cannot place still draws no caret rather than one
+            // at the margin.
+            int line = Int(root, "line");
+            int col = Int(root, "col");
+            int len = Int(root, "len");
+            throw new SyntaxError(err.GetString() ?? "parse failed", line, col,
+                                  len > 0 ? len : 1);
         }
 
         var program = new ProgramNode();

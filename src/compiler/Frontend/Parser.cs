@@ -2296,7 +2296,11 @@ public class Parser
 
                 long val64 = Convert.ToInt64(text.Substring(offset), b);
                 if (val64 > uint.MaxValue)
-                    Error("Integer literal is too large: '" + t.Value + "'");
+                    // Not Error(), which reports Peek(): the offending literal has already been
+                    // consumed, so Peek() is whatever follows it and the caret landed on the
+                    // `]` or the newline after the number rather than on the number.
+                    throw new SyntaxError("Integer literal is too large: '" + t.Value + "'",
+                                          t.Line, t.Column, t.Length);
                 // 2^31..2^32-1 is a valid uint32 literal (e.g. 4000000000). The AST/IR
                 // carry int, so store the 32-bit BIT PATTERN: backends emit constants
                 // byte-wise, and the magnitude-based width sees 4 bytes either way.
@@ -2306,11 +2310,13 @@ public class Parser
             }
             catch (OverflowException)
             {
-                Error("Integer literal is too large: '" + t.Value + "'");
+                throw new SyntaxError("Integer literal is too large: '" + t.Value + "'",
+                                      t.Line, t.Column, t.Length);
             }
             catch (FormatException)
             {
-                Error("Invalid integer literal: '" + t.Value + "'");
+                throw new SyntaxError("Invalid integer literal: '" + t.Value + "'",
+                                      t.Line, t.Column, t.Length);
             }
 
             return null!;

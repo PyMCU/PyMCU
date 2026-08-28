@@ -39,11 +39,18 @@ SOURCE = ""
 
 
 class Unsupported(Exception):
-    """A construct the PyMCU AST has no shape for. Carries the line so the
-    message can point at it the way a parser error would."""
+    """A construct the PyMCU AST has no shape for. Carries the POSITION so the message can
+    point at it the way a parser error would.
+
+    The column matters as much as the line. Every error raised from here used to report
+    column 1, so the same program refused by both front ends got a caret from one and none
+    from the other, which is a divergence in a flag that is supposed to be invisible."""
 
     def __init__(self, message, node=None):
         self.line = getattr(node, "lineno", 0) if node is not None else 0
+        pos = position_of(node) if node is not None else {}
+        self.col = pos.get("col", 0)
+        self.length = pos.get("len", 0)
         super().__init__(message)
 
 
@@ -193,11 +200,29 @@ def expr(node):
     return out
 
 
+def source_text_of(node):
+    """The source the node was written as, or None when it cannot be recovered.
+
+    A literal has to be quoted back as the user typed it. CPython hands over the VALUE, so
+    `0xFFFFFFFFFF` would be reported as 1099511627775, a number that appears nowhere in the
+    program the reader is looking at."""
+    if SOURCE is None:
+        return None
+    try:
+        return ast.get_source_segment(SOURCE, node)
+    except Exception:
+        return None
+
+
 def int32_pattern(value, node):
     """The AST carries int, and 2^31..2^32-1 is a valid uint32 literal, so store the
     32-bit BIT PATTERN the way the C# parser does (unchecked (int)(uint))."""
     if value > 0xFFFFFFFF or value < -0x80000000:
-        raise Unsupported(f"integer literal is too large: {value}", node)
+        # Word for word what Parser.cs says, quoting included. A user searching for the
+        # sentence, a doc citing it or a test matching it must not depend on which front
+        # end ran.
+        written = source_text_of(node) or str(value)
+        raise Unsupported(f"Integer literal is too large: '{written}'", node)
     if value > 0x7FFFFFFF:
         return value - 0x100000000
     return value
@@ -425,11 +450,25 @@ def block(statements):
     return {"k": "Block", "statements": out}
 
 
+# Constructs the hand-written parser refuses with a sentence written for the reader. The
+# bridge has no handler for them either, but "Delete is not supported" is not the same answer
+# as the one Parser.cs gives, and which front end ran is not supposed to change what a user is
+# told. Word for word, so the two agree.
+#
+# Only entries whose text has been copied from Parser.cs belong here. Everything else falls
+# through to the generic sentence below, which is honest about being generic.
+REFUSALS = {
+    ast.Delete: ("'del' is not supported: storage here is static, so a name cannot be "
+                 "unbound and nothing would be freed. Remove the statement, or narrow the "
+                 "variable's scope by moving it into the function that uses it."),
+}
+
+
 def stmt(node):
     kind = type(node)
     handler = STMT.get(kind)
     if handler is None:
-        raise Unsupported(f"{kind.__name__} is not supported", node)
+        raise Unsupported(REFUSALS.get(kind, f"{kind.__name__} is not supported"), node)
     out = handler(node)
     if isinstance(out, dict) and "line" not in out:
         out["line"] = line_of(node)
@@ -946,10 +985,11 @@ def main():
     try:
         program = translate(source, path)
     except SyntaxError as e:
-        print(json.dumps({"error": f"{e.msg}", "line": e.lineno or 0}))
+        # CPython's offset is already 1-based.
+        print(json.dumps({"error": f"{e.msg}", "line": e.lineno or 0, "col": e.offset or 0}))
         return 1
     except Unsupported as e:
-        print(json.dumps({"error": str(e), "line": e.line}))
+        print(json.dumps({"error": str(e), "line": e.line, "col": e.col, "len": e.length}))
         return 1
 
     json.dump(program, sys.stdout)
