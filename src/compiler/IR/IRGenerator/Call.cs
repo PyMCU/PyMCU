@@ -861,6 +861,34 @@ public partial class IRGenerator
                           + "range, enumerate and zip, plus the numeric casts int/float/uint8/"
                           + "int8/uint16/int16/uint32/int32.", expr.Callee);
 
+            // A method call on a local whose type has no such member is not a missing function.
+            // `x = 5` then `x.bit_length()` reported "call to undefined function 'x_bit_length'":
+            // a name the program never wrote, a category that is wrong, and two suggestions that
+            // are both dead ends -- the spelling is right and no import adds a method to an int.
+            // str, bytearray, list, dict and set already answer properly here; this is int and
+            // float catching up with them (#207).
+            if (expr.Callee is MemberAccessExpr { Object: VariableExpr numRecv } numMem
+                && NumericLocalKind(numRecv.Name) is { } numKind)
+            {
+                bool isInt = numKind == "an integer";
+                // Everything offered here is checked to compile on a run-time value of that
+                // type, not read off the builtin list: hex(), bin() and pow() are on that list
+                // and all three refuse anything but a compile-time constant, and round() does
+                // not exist at all.
+                string works = isInt
+                    ? "the arithmetic, comparison and bitwise operators, the builtins abs(), "
+                      + "min(), max() and divmod(), and the width casts uint8()/int8()/"
+                      + "uint16()/int16()/uint32()/int32()"
+                    : "the arithmetic and comparison operators, abs(), and int() to truncate "
+                      + "toward zero";
+
+                throw UserError(
+                    $"'{numRecv.Name}' is {numKind}: '{numMem.Member}()' is not available. "
+                    + $"{(isInt ? "Integers" : "Floats")} on this target are fixed-width machine "
+                    + $"values, not objects carrying methods. Supported: {works}.",
+                    expr.Callee);
+            }
+
             throw UserError($"call to undefined function '{shown}' (typo, or a missing import?)",
                             expr.Callee);
         }
@@ -1878,6 +1906,40 @@ public partial class IRGenerator
     // typo-or-missing-import suggestion when the spelling is right and no import can add a
     // method to a set. The dict path a few lines above answers the same question properly
     // and this is its counterpart, phrased alike on purpose.
+    /// <summary>
+    /// "an integer" / "a float" when <paramref name="name"/> is a numeric local in scope, else
+    /// null. Only ever consulted on the way to an error, so a name it cannot classify simply
+    /// falls through to the message that was going to be printed anyway.
+    ///
+    /// Deliberately positive: it answers only for names it finds in a numeric map, never by
+    /// ruling other kinds out. A receiver that is a string, an array, an instance or a register
+    /// is answered by its own path long before this one, and adding a negative test here would
+    /// be a second place to keep that list correct.
+    /// </summary>
+    private string? NumericLocalKind(string name)
+    {
+        foreach (var key in Qualifications(name))
+        {
+            if (floatConstantVariables.ContainsKey(key)) return "a float";
+            if (constantVariables.ContainsKey(key)) return "an integer";
+            if (variableTypes.TryGetValue(key, out var dt))
+                return dt == DataType.FLOAT ? "a float"
+                     : dt is DataType.UINT8 or DataType.INT8 or DataType.UINT16 or DataType.INT16
+                            or DataType.UINT32 or DataType.INT32 ? "an integer"
+                     : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>The keys a local name can be filed under, most specific first.</summary>
+    private IEnumerable<string> Qualifications(string name)
+    {
+        if (!string.IsNullOrEmpty(currentInlinePrefix)) yield return currentInlinePrefix + name;
+        if (!string.IsNullOrEmpty(currentFunction)) yield return currentFunction + "." + name;
+        yield return name;
+    }
+
     private Val? TryEmitSetMethod(CallExpr expr)
     {
         if (expr.Callee is not MemberAccessExpr { Object: VariableExpr sv } sm) return null;
