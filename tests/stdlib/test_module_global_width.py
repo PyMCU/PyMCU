@@ -172,9 +172,10 @@ INITIALIZER_VS_FUNCTION = (
 )
 
 
-@pytest.mark.xfail(reason="the initializer's own literal is dropped once a function assigns "
-                          "the name; measured at 576dee6e, `wide = 300` stores 44",
-                   strict=True)
+# Was xfail(strict=True) for #212 and collected: it went red when the defect was fixed, which
+# is what a strict xfail is for. The reason it carried, "the initializer's own literal is
+# dropped once a function assigns the name; measured at 576dee6e, `wide = 300` stores 44", is
+# kept here because it is the shape a regression would take.
 def test_the_initializers_own_width_survives_a_narrower_store(tmp_path):
     """A function assigning the name NARROWS it, by removing the initializer from the scan.
 

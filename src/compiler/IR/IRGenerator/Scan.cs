@@ -568,15 +568,37 @@ public partial class IRGenerator
         // statements, so an accumulator initialised `total = 0` and then fed a uint16 inside a
         // function stayed eight bits and wrapped without a word (#205). Widening only: a name
         // this cannot type keeps exactly what the scan above gave it.
-        foreach (var kv in CollectGlobalWidthsFromFunctions(ast.Functions))
+        //
+        // The initializer has to be in this widening too, and it was not (#212). The exclusion
+        // above is what keeps a function's assignment from being NARROWED away, and it was
+        // written when nothing reached inside a function at all -- the comment on it still says
+        // "not in this scan's reach", which stopped being true when the loop below was added.
+        // With `wide = 300` at module level and `wide = 7` in a function, the initializer was
+        // dropped for narrowing and 7 was not wide enough to widen, so the 300 the author wrote
+        // was truncated at its own defining store and `wide` came out 44.
+        //
+        // Taking the widest of the two is safe in the direction that matters: widening only ever
+        // adds room, so a function assigning something this cannot type still keeps whatever the
+        // narrowing pass allowed, and a name the narrowing pass already sized is untouched.
+        var initializerWidths = CollectLiteralOnlyWidths(ast.GlobalStatements, []);
+        var fromFunctions = CollectGlobalWidthsFromFunctions(ast.Functions);
+
+        foreach (var name in fromFunctions.Keys.Concat(initializerWidths.Keys).Distinct())
         {
-            string key = currentModulePrefix + kv.Key;
+            string key = currentModulePrefix + name;
             if (!mutableGlobals.TryGetValue(key, out var have)) continue;
+
+            var want = have;
+            if (fromFunctions.TryGetValue(name, out var fnType) && fnType.SizeOf() > want.SizeOf())
+                want = fnType;
+            if (initializerWidths.TryGetValue(name, out var initType) && initType.SizeOf() > want.SizeOf())
+                want = initType;
+
             // A written annotation is the user's choice and outranks anything inferred here;
             // those names never reach mutableGlobals unannotated, so only widen what is wider.
-            if (kv.Value.SizeOf() > have.SizeOf())
+            if (want.SizeOf() > have.SizeOf())
             {
-                mutableGlobals[key] = kv.Value;
+                mutableGlobals[key] = want;
                 widenableGlobals.Remove(key);
             }
         }
