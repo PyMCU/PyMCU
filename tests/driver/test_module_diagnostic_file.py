@@ -146,4 +146,37 @@ def test_the_caret_and_the_file_agree_across_modules(
     header = next(l for l in err.splitlines() if "error:" in l)
     assert "drivers/led.py" in header, header
     assert f":{want_line}:{want_col}:" in header, header
+def test_a_raise_inside_an_inlined_callee_reports_the_call_site(tmp_path):
+    """The one site in ControlFlow.cs where the node is available and deliberately not passed.
 
+    An @inline callee that raises unconditionally is refused while it is being expanded. The
+    node in hand is the callee's `raise`; the useful location is the CALLER's call site, which
+    is the line the reader can actually change. Passing the node would report the callee's line
+    against whichever module is being lowered, which is the two halves of a location coming
+    from different places.
+
+    If this ever starts reporting drivers/led.py, someone passed the node.
+    """
+    err = _compile(
+        tmp_path,
+        """
+        from pymcu.types import uint8
+        from drivers.led import probe
+
+        def main() -> None:
+            qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq: uint8 = 1
+            v: uint8 = probe(3)
+        """,
+        """
+        from pymcu.types import uint8, inline
+
+        @inline
+        def probe(pin: uint8) -> uint8:
+            raise ValueError("unsupported pin")
+        """,
+    )
+
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "main.py:6:" in header, header
+    assert "drivers/led.py" not in header, header
+    assert "^" not in err, "no caret: the location is the call site, not a measured column"
