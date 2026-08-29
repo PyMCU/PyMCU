@@ -95,13 +95,13 @@ public partial class IRGenerator
         if (expr is TupleExpr)
             throw UserError(
                 "tuples are not supported as runtime values -- use a fixed list " +
-                "([a, b, c]) for indexable storage, or unpack directly (x, y = f())");
+                "([a, b, c]) for indexable storage, or unpack directly (x, y = f())", expr);
 
         if (expr is ListCompExpr)
             throw UserError(
                 "list comprehensions with a filter (if) are not supported -- the array " +
                 "length must be a compile-time constant. Build the list with an explicit " +
-                "loop, or drop the filter (plain [f(i) for i in range(N)] works)");
+                "loop, or drop the filter (plain [f(i) for i in range(N)] works)", expr);
 
         // A bytes or list literal reaching a VALUE position. `b"ab"` parses to a ListExpr of
         // integers, so this answered "Unknown Expression type: ListExpr": a compiler class name
