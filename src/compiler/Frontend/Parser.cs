@@ -1313,6 +1313,50 @@ public class Parser
         return LoopElseDesugar.Attach(new WhileStmt(condition, body) { Line = line }, body, elseBlock, line);
     }
 
+    /// How many redundant grouping parentheses sit between `in` and a `range(` call, or -1
+    /// when what follows is not a parenthesised range.
+    ///
+    /// `for i in (range(n))` means exactly `for i in range(n)`: in Python those parentheses
+    /// group, and CPython does not even record them in the AST. The bounded-loop form below is
+    /// selected by peeking for a bare `range` identifier, so a single parenthesis sent the loop
+    /// down the general-iterable path, whose own range handler only accepts a constant bound.
+    /// `range(3)` therefore worked and `range(n)` did not, which is a difference the source
+    /// does not have (PyMCU#224).
+    ///
+    /// Counted rather than peeled blindly, because a parenthesis after `in` is not always
+    /// grouping: `for v in (1, 2)` is a TUPLE and must keep its parentheses. So this commits
+    /// only when the closing parentheses sit immediately after the range call's own `)`, with
+    /// nothing between them -- no comma, no operator. `(range(n), 3)` and `(range(n)) + xs`
+    /// both fail that test and fall through to the general path, which is where they belong.
+    private int RedundantParensBeforeRange()
+    {
+        int depth = 0;
+        while (PeekAt(depth).Type == TokenType.LParen) depth++;
+        if (depth == 0) return -1;
+
+        if (PeekAt(depth).Type != TokenType.Identifier || PeekAt(depth).Value != "range") return -1;
+        if (PeekAt(depth + 1).Type != TokenType.LParen) return -1;
+
+        // Walk the range call's argument list to its matching ')'.
+        int i = depth + 1, nest = 0;
+        for (; ; i++)
+        {
+            var t = PeekAt(i);
+            if (t.Type == TokenType.EndOfFile) return -1;
+            if (t.Type is TokenType.LParen or TokenType.LBracket or TokenType.LBrace) nest++;
+            else if (t.Type is TokenType.RParen or TokenType.RBracket or TokenType.RBrace)
+            {
+                nest--;
+                if (nest == 0) break;
+            }
+        }
+
+        // Exactly the parentheses we opened must close here, and the loop header must end.
+        for (int k = 1; k <= depth; k++)
+            if (PeekAt(i + k).Type != TokenType.RParen) return -1;
+        return PeekAt(i + depth + 1).Type == TokenType.Colon ? depth : -1;
+    }
+
     private Statement ParseForStatement()
     {
         int line = Peek().Line;
@@ -1326,6 +1370,10 @@ public class Parser
         }
 
         Consume(TokenType.In, "Expected 'in'");
+
+        int groupingParens = RedundantParensBeforeRange();
+        if (groupingParens > 0)
+            for (int k = 0; k < groupingParens; k++) Consume(TokenType.LParen, "Expected '('");
 
         if (Check(TokenType.Identifier) && Peek().Value == "range")
         {
@@ -1345,6 +1393,8 @@ public class Parser
             }
 
             Consume(TokenType.RParen, "Expected ')'");
+            if (groupingParens > 0)
+                for (int k = 0; k < groupingParens; k++) Consume(TokenType.RParen, "Expected ')'");
             Consume(TokenType.Colon, "Expected ':'");
             Consume(TokenType.Newline, "Expected newline");
             var blockBody = ParseBlock();
