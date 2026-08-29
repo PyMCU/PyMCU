@@ -108,7 +108,8 @@ def line_of(node):
 # gives the `//`). Carrying it would not close a divergence, it would open one in the other
 # direction, with the two front ends naming different characters for the same error. Adding a
 # kind here means first checking that both front ends locate it the same way.
-POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp", "Unary")
+POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp", "Unary",
+                     "Break", "Continue", "Raise", "Function")
 
 # Kinds whose position is not CPython's col_offset but is EXACTLY derivable from it, so parity
 # with the hand-written parser is still reachable. Each entry says which part to mark and how
@@ -839,6 +840,11 @@ def function_of(node, is_async=False):
         "isNaked": False, "isExtern": False, "externSymbol": "", "isExportC": False,
         "isOutline": False, "warning": "", "isPio": False, "pioParams": {},
         "isAsync": is_async, "line": line_of(node),
+        # function_of is called straight from translate() and block(), never through
+        # stmt(), so the position stamping there does not reach it and has to be applied
+        # here. CPython puts a FunctionDef at its `def`, with decorators in a separate
+        # list, which is where Parser stamps it too.
+        **position_of(node),
     }
     for dec in node.decorator_list:
         apply_decorator(fn, dec, node)

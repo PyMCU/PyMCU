@@ -500,7 +500,10 @@ public class Parser
             Consume(TokenType.Newline, "Expected newline after decorator");
         }
 
-        Consume(TokenType.Def, "Expected 'def'");
+        // The `def` keyword, kept for Located() below. NOT the decorator above it: CPython
+        // puts a FunctionDef at its `def` too, with the decorators in a separate list, so
+        // marking the keyword is what keeps the two front ends agreeing.
+        Token defKeyword = Consume(TokenType.Def, "Expected 'def'");
         if (!Check(TokenType.Identifier))
         {
             Error("Expected function name, but found " + Peek().Value + " (Type: " + Peek().Type + ")");
@@ -548,6 +551,13 @@ public class Parser
             PioParams = pioParams,
             Line = nameToken.Line
         };
+        // The `def` keyword. A FunctionDef is a combining node, so this is a DECISION, and the
+        // one the message needs: "'f' is declared to return uint8 but can reach the end of its
+        // body" is about the whole function, and the reader is told to add a return "on the
+        // remaining path", which is not a single token the compiler can mark. The annotation
+        // was the other candidate and was rejected: pointing at `-> uint8` reads as "change
+        // this type", which is the opposite of the remedy the sentence gives.
+        Located(func, defKeyword);
         return func;
     }
 
@@ -780,14 +790,16 @@ public class Parser
 
         if (Match(TokenType.Break))
         {
+            var kw = Previous();
             ConsumeStatementEnd();
-            return new BreakStmt();
+            return Located(new BreakStmt(), kw);
         }
 
         if (Match(TokenType.Continue))
         {
+            var kw = Previous();
             ConsumeStatementEnd();
-            return new ContinueStmt();
+            return Located(new ContinueStmt(), kw);
         }
 
         if (Match(TokenType.Pass))
@@ -835,7 +847,7 @@ public class Parser
     private Statement ParseRaiseStatement()
     {
         int line = Peek().Line;
-        Consume(TokenType.Raise, "Expected 'raise'");
+        Token raiseKeyword = Consume(TokenType.Raise, "Expected 'raise'");
         // A bare `raise` (no type) re-raises the current exception inside an except handler.
         // ErrorType "" marks that re-raise; VisitRaise re-signals the pending code (in R22).
         string errorType = "";
@@ -872,7 +884,7 @@ public class Parser
         }
 
         ConsumeStatementEnd();
-        return new RaiseStmt(errorType, message, messageName) { Line = line };
+        return Located(new RaiseStmt(errorType, message, messageName) { Line = line }, raiseKeyword);
     }
 
     private Statement ParseTryStatement()
@@ -1380,14 +1392,16 @@ public class Parser
 
         if (Match(TokenType.Break))
         {
+            var kw = Previous();
             ConsumeStatementEnd();
-            return new BreakStmt() { Line = line };
+            return Located(new BreakStmt() { Line = line }, kw);
         }
 
         if (Match(TokenType.Continue))
         {
+            var kw = Previous();
             ConsumeStatementEnd();
-            return new ContinueStmt() { Line = line };
+            return Located(new ContinueStmt() { Line = line }, kw);
         }
 
         return ParseAssignmentOrDeclaration();
@@ -1630,6 +1644,11 @@ public class Parser
     ///
     ///   BinaryExpr        the OPERATOR       `a // 0` marks the `//`
     ///   UnaryExpr         the OPERATOR       `-1` marks the `-`, `not a` marks the `not`
+    ///   FunctionDef       the `def` KEYWORD  not the decorator above it, and not the return
+    ///                     annotation, which would read as "change this type"
+    ///   BreakStmt         its own keyword    a keyword statement IS its token
+    ///   ContinueStmt      its own keyword
+    ///   RaiseStmt         its own keyword
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
     ///   ListCompExpr      the OPENING `[`    where the construct starts
@@ -1661,7 +1680,7 @@ public class Parser
     /// column taken from one line against a line number taken from another points at whatever
     /// happens to sit there. The diagnostic sites already prefer the node's own line when it
     /// has one, so stamping both is what keeps the pair consistent.
-    private static T Located<T>(T node, Token at) where T : Expression
+    private static T Located<T>(T node, Token at) where T : ASTNode
     {
         node.Line = at.Line;
         node.Column = at.Column;
