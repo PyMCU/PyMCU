@@ -205,3 +205,77 @@ def test_a_local_of_the_same_name_is_not_the_module_binding(tmp_path):
             capture_output=True, text=True, env=env,
         )
         assert proc.returncode == 0, f"py_parser={py} refused a plain local:\n{proc.stderr}"
+
+
+# --- assert: the refusal, and the warning that replaces silence (PyMCU#225) -----------
+#
+# `assert` fired only for the literal `0`; `assert False` and `assert 1 == 2` lowered to
+# nothing. Both halves of the fix are checked here rather than only in the unit suite: the
+# refusal because a refusal is invisible to the differential axis, and the warning because
+# reading it from a subprocess beats swapping Console.Error under a shared test host.
+
+
+def _assert_src(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "main.py"
+    p.write_text("from pymcu.types import uint8\ndef main() -> None:\n" + body)
+    return p
+
+
+def _stderr(src: Path, py_parser: bool) -> tuple[int, str]:
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+        env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    proc = subprocess.run(
+        [str(PYMCUC), str(src), "--target", "atmega328p",
+         "--emit-ir", os.devnull, "-o", os.devnull,
+         "-I", str(STDLIB), "-I", str(src.parent)],
+        capture_output=True, text=True, env=env,
+    )
+    return proc.returncode, proc.stderr
+
+
+@pytest.mark.parametrize("body", [
+    "    assert 0\n",
+    "    assert False\n",
+    "    assert 1 == 2\n",
+    "    assert not True\n",
+    "    assert 0 and 1\n",
+])
+def test_a_false_assert_is_refused_by_both_front_ends(tmp_path, body):
+    src = _assert_src(tmp_path, body)
+
+    hand = _message(src, py_parser=False)
+    cpython = _message(src, py_parser=True)
+
+    assert "AssertionError" in hand
+    assert hand == cpython
+
+
+# The condition the compiler cannot resolve keeps compiling to nothing, which is what
+# `python -O` does. What changed is that it says so: silence is what made a dropped
+# assertion indistinguishable from a checked one.
+@pytest.mark.parametrize("body", [
+    "    x: uint8 = 1\n    assert x == 2\n",
+    "    x: uint8 = 1\n    assert x\n",
+])
+def test_an_unresolvable_assert_warns_instead_of_going_quiet(tmp_path, body):
+    src = _assert_src(tmp_path, body)
+
+    for py in (False, True):
+        rc, err = _stderr(src, py_parser=py)
+        assert rc == 0, f"py_parser={py} refused a run-time assert:\n{err}"
+        assert "assert on line" in err and "is not checked" in err, \
+            f"py_parser={py} compiled it out in silence:\n{err}"
+
+
+@pytest.mark.parametrize("body", ["    assert True\n", "    assert 2 == 2\n"])
+def test_a_true_assert_is_neither_refused_nor_warned_about(tmp_path, body):
+    # A warning on an assertion that IS resolved, and resolved true, would be noise on every
+    # correct program.
+    for py in (False, True):
+        rc, err = _stderr(_assert_src(tmp_path, body), py_parser=py)
+        assert rc == 0, err
+        assert "is not checked" not in err, f"py_parser={py} warned about a true assert:\n{err}"
