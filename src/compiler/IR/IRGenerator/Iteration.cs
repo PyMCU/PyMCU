@@ -1619,22 +1619,94 @@ public partial class IRGenerator
         }
     }
 
+    /// <summary>
+    /// A condition folded to true or false at compile time, or null when it does not fold.
+    ///
+    /// Local to `assert` on purpose. EvaluateConstantExpr folds arithmetic and bitwise
+    /// operators and nothing else, so a comparison and a `BooleanLiteral` both throw out of
+    /// it; teaching IT to fold comparisons would change every caller that asks it for an
+    /// array size or an address, which is far wider than an assert needs.
+    /// </summary>
+    private bool? FoldAssertCondition(Expression? cond)
+    {
+        switch (cond)
+        {
+            case null: return null;
+            case BooleanLiteral b: return b.Value;
+
+            case UnaryExpr { Op: Frontend.UnaryOp.Not } u:
+                return FoldAssertCondition(u.Operand) is { } inner ? !inner : null;
+
+            case BinaryExpr { Op: Frontend.BinaryOp.And } a:
+                // Short-circuit: one false operand decides the whole thing even when the
+                // other does not fold, which is what makes `assert 0 and f()` answerable.
+                if (FoldAssertCondition(a.Left) is false || FoldAssertCondition(a.Right) is false) return false;
+                return FoldAssertCondition(a.Left) is true && FoldAssertCondition(a.Right) is true ? true : null;
+
+            case BinaryExpr { Op: Frontend.BinaryOp.Or } o:
+                if (FoldAssertCondition(o.Left) is true || FoldAssertCondition(o.Right) is true) return true;
+                return FoldAssertCondition(o.Left) is false && FoldAssertCondition(o.Right) is false ? false : null;
+
+            case BinaryExpr cmp when cmp.Op is Frontend.BinaryOp.Equal or Frontend.BinaryOp.NotEqual
+                                          or Frontend.BinaryOp.Less or Frontend.BinaryOp.Greater
+                                          or Frontend.BinaryOp.LessEq or Frontend.BinaryOp.GreaterEq:
+            {
+                if (TryEvalElemConst(cmp.Left, out int l) && TryEvalElemConst(cmp.Right, out int r))
+                    return cmp.Op switch
+                    {
+                        Frontend.BinaryOp.Equal     => l == r,
+                        Frontend.BinaryOp.NotEqual  => l != r,
+                        Frontend.BinaryOp.Less      => l < r,
+                        Frontend.BinaryOp.Greater   => l > r,
+                        Frontend.BinaryOp.LessEq    => l <= r,
+                        _                           => l >= r,
+                    };
+                return null;
+            }
+
+            default:
+                return TryEvalElemConst(cond, out int v) ? v != 0 : null;
+        }
+    }
+
+    // `assert` fired only for the literal `0`. Every other spelling of a false assertion was
+    // dropped: this method evaluated the condition and the catch swallowed everything that was
+    // not already an AssertionError. EvaluateConstantExpr folds an integer literal, so `0`
+    // arrived, but it folds neither a comparison nor a BooleanLiteral, so `assert 1 == 2` and
+    // `assert False` both threw, were both swallowed, and lowered to nothing. The one row that
+    // agreed with CPython was the one nobody writes.
+    //
+    // Refusing a statically false assert wherever it stands, rather than only on a path always
+    // reached, is the policy `assert 0` already shipped: it was refused inside a run-time `if`
+    // and inside an `else` too. Keeping that and making the other spellings match it does mean
+    // `assert False` cannot serve as an unreachable-branch marker, and it could not when
+    // spelled `assert 0` either. `raise` is the construct that survives to run time.
+    //
+    // A condition that does NOT fold still emits no code. That is deliberate and measured:
+    // `AssertionError` is not a defined name in PyMCU, so a run-time check has nothing to
+    // raise, and the nearest equivalent that does compile, `if x != y: raise ValueError(...)`,
+    // cost 24 bytes over the same program with no assert. Compiling asserts out is what
+    // `python -O` does, so the behaviour is defensible; being silent about it is not, because
+    // the reader cannot tell a checked assertion from a dropped one.
     private void VisitAssert(AssertStmt stmt)
     {
-        try
-        {
-            int val = EvaluateConstantExpr(stmt.Condition);
-            if (val == 0)
-            {
-                throw UserError(
-                    "AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message),
-                    stmt.Condition);
-            }
-        }
-        catch (Exception e)
-        {
-            if (e.Message.StartsWith("AssertionError")) throw;
-        }
+        bool? folded = FoldAssertCondition(stmt.Condition);
+
+        if (folded == false)
+            throw UserError(
+                "AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message),
+                stmt.Condition);
+
+        if (folded == true) return;
+
+        // Line only, no file. UserError(msg, node) takes the node's line and the file of the
+        // module being LOWERED, so a name-resolved node yields a plausible cursor naming the
+        // wrong file; a warning printed here has no better source of truth, so it does not
+        // claim one.
+        Console.Error.WriteLine(
+            $"warning: assert on line {stmt.Line} is not checked. Its condition is not known at "
+            + "compile time, and PyMCU emits no run-time check, the way `python -O` drops "
+            + "asserts. Use `if <cond>: raise ...` for a check that survives to run time.");
     }
 
     /// <summary>True when every return in the method hands back bare `self`.</summary>
