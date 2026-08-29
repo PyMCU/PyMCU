@@ -168,6 +168,19 @@ public class Parser
         + "to be. Write a module-level factory function instead (`def make() -> T:` returning "
         + "`T(...)`), which compiles.";
 
+    /// Reports at the next token. Correct only for a message about what is COMING, such as
+    /// "Expected ')'", where Peek() is the thing that was not what it should have been.
+    ///
+    /// For a refusal -- "X is not supported" -- it is the wrong token, because by then X has
+    /// been consumed and Peek() is whatever follows. Use ErrorAt with the token the message is
+    /// about. Two shapes come out of getting this wrong and they look like different bugs:
+    ///
+    ///   Peek() is a real token   the caret lands on what follows, the `for` of a generator
+    ///                            expression or the `]` closing a comprehension
+    ///   Peek() is a NEWLINE      the caret lands on the indentation, because a newline token
+    ///                            carries a hardcoded column 1 and the line it terminates
+    ///
+    /// The second is the one that reads as "this diagnostic has no position at all".
     private void Error(string message)
     {
         var t = Peek();
@@ -175,6 +188,11 @@ public class Parser
             throw new SyntaxError("Unexpected EOF while parsing", t.Line, t.Column, 1);
         throw new SyntaxError(message, t.Line, t.Column, t.Length);
     }
+
+    /// Reports at the token the message is ABOUT, which for a refusal is the construct being
+    /// refused rather than whatever follows it.
+    private void ErrorAt(Token at, string message) =>
+        throw new SyntaxError(message, at.Line, at.Column, at.Length);
 
     private void IndentError(string message)
     {
@@ -445,7 +463,7 @@ public class Parser
             }
             else if (decorator.Value == "classmethod")
             {
-                Error(ClassMethodUnsupported);
+                ErrorAt(decorator, ClassMethodUnsupported);
             }
             else if (decorator.Value == "naked")
             {
@@ -1090,7 +1108,9 @@ public class Parser
     private Statement ParseNonlocalStatement()
     {
         int line = Peek().Line;
-        Consume(TokenType.Nonlocal, "Expected 'nonlocal'");
+        // Kept for the refusal below: by the time the depth is known the whole statement has
+        // been consumed, so Peek() is the newline and its column is a hardcoded 1.
+        Token kw = Consume(TokenType.Nonlocal, "Expected 'nonlocal'");
         var names = new List<string>();
 
         do
@@ -1115,7 +1135,7 @@ public class Parser
                   + "function for the name to come from"
                 : "there is no function scope here at all";
 
-            Error($"'nonlocal {shown}' has no enclosing function to bind to: {where}. "
+            ErrorAt(kw, $"'nonlocal {shown}' has no enclosing function to bind to: {where}. "
                   + $"If '{shown}' is a module-level variable, the declaration that lets you "
                   + $"assign it is 'global {shown}'; if it is meant to be local, the line can go. "
                   + "`nonlocal` is for a def nested inside another def.");
