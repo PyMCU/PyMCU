@@ -255,7 +255,7 @@ public partial class IRGenerator
                             case "append" when expr.Args.Count == 1:
                                 return EmitListAppend(vObj, expr.Args[0]);
                             default:
-                                throw UserError($"list.{memC.Member}(): method not supported");
+                                throw UserError($"list.{memC.Member}(): method not supported", memC);
                         }
                     }
 
@@ -310,7 +310,7 @@ public partial class IRGenerator
                         // at neither of the two true things: the method is real Python, and it
                         // is the feature that is missing.
                         if (generatorClasses.Contains(clsC!))
-                            RejectGeneratorProtocol(clsC!, memC.Member);
+                            RejectGeneratorProtocol(clsC!, memC);
 
                         string definingClass = ResolveMROMethod(clsC!, memC.Member);
                         callee = definingClass + "_" + memC.Member;
@@ -500,7 +500,8 @@ public partial class IRGenerator
                         throw UserError(
                             "str.join is supported in assignment form: s = sep.join([...]) with " +
                             "compile-time strings, or s = ''.join([chr(b) for b in buf]) over a " +
-                            "fixed-size buffer; assign the result to a variable before using it");
+                            "fixed-size buffer; assign the result to a variable before using it",
+                            memC);
                     // What arrives here is a method whose RECEIVER is a compile-time constant:
                     // a string ("a,b,c".split(",")) or a number ((5).bit_length()). It used to
                     // answer with a sentence about a ZCA field that is itself a ZCA, like
@@ -520,20 +521,21 @@ public partial class IRGenerator
                             + "methods, and there is no heap to build a result in. What does work "
                             + "on a string: len(), indexing (s[0]), iterating it (for c in s), "
                             + "f-strings and '...'.format(x) to build text, and sep.join([...]) "
-                            + "assigned to a name.");
+                            + "assigned to a name.", memC);
 
                     if (memC.Object is IntegerLiteral or FloatLiteral)
                         throw UserError(
                             $"'.{memC.Member}()' is not supported on a number literal. Numbers in "
                             + "PyMCU are machine integers and floats, not objects carrying methods; "
-                            + "use the operators and the builtins (abs, min, max, round) instead.");
+                            + "use the operators and the builtins (abs, min, max, round) instead.",
+                            memC);
 
                     // Anything else that resolves to neither a name nor a register. No cause is
                     // claimed here on purpose: the one this branch used to name now compiles, and
                     // guessing a new one is how the last message became wrong.
                     throw UserError(
                         $"'.{memC.Member}()' cannot be dispatched: its receiver is not a name bound "
-                        + "to an object, a register, or a value PyMCU defines methods on.");
+                        + "to an object, a register, or a value PyMCU defines methods on.", memC);
                 }
             }
         }
@@ -701,7 +703,7 @@ public partial class IRGenerator
         return false;
     }
 
-    private List<Expression> ReorderCallArgs(List<Expression> args, string callee)
+    private List<Expression> ReorderCallArgs(List<Expression> args, string callee, ASTNode? at)
     {
         if (!args.Any(a => a is KeywordArgExpr)) return args;
 
@@ -717,18 +719,23 @@ public partial class IRGenerator
         }
         string shown = callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
         if (paramNames == null)
-            throw UserError($"keyword arguments are not supported in call to '{shown}'");
+            throw UserError($"keyword arguments are not supported in call to '{shown}'", at);
 
         var positional = new List<Expression>();
         var byName = new Dictionary<string, Expression>();
+        // The keyword NODE beside its value, so "multiple values for argument" further down can
+        // point at the keyword that collides rather than at the positional argument, which is
+        // the half the reader wrote correctly.
+        var byNameNode = new Dictionary<string, KeywordArgExpr>();
         foreach (var a in args)
         {
             if (a is KeywordArgExpr kw)
             {
                 if (!paramNames.Contains(kw.Key))
-                    throw UserError($"unknown keyword argument '{kw.Key}' in call to '{shown}'");
+                    throw UserError($"unknown keyword argument '{kw.Key}' in call to '{shown}'", kw);
                 if (!byName.TryAdd(kw.Key, kw.Value))
-                    throw UserError($"keyword argument '{kw.Key}' repeated in call to '{shown}'");
+                    throw UserError($"keyword argument '{kw.Key}' repeated in call to '{shown}'", kw);
+                byNameNode[kw.Key] = kw;
             }
             else positional.Add(a);
         }
@@ -745,7 +752,8 @@ public partial class IRGenerator
             if (i < positional.Count)
             {
                 if (byName.ContainsKey(paramNames[i]))
-                    throw UserError($"multiple values for argument '{paramNames[i]}' in call to '{shown}'");
+                    throw UserError($"multiple values for argument '{paramNames[i]}' in call to '{shown}'",
+                        byNameNode.GetValueOrDefault(paramNames[i]));
                 ordered.Add(positional[i]);
             }
             else if (byName.TryGetValue(paramNames[i], out var kwVal))
@@ -756,7 +764,7 @@ public partial class IRGenerator
             {
                 var def = defaults != null && i < defaults.Count ? defaults[i] : null;
                 if (def == null)
-                    throw UserError($"missing argument '{paramNames[i]}' in call to '{shown}'");
+                    throw UserError($"missing argument '{paramNames[i]}' in call to '{shown}'", at);
                 ordered.Add(def);
             }
         }
@@ -916,7 +924,7 @@ public partial class IRGenerator
 
         bool calleeIsKnownFunc = functionParams.ContainsKey(callee);
         // Resolve any keyword arguments into positional order before evaluating them.
-        var callArgs = ReorderCallArgs(expr.Args, callee);
+        var callArgs = ReorderCallArgs(expr.Args, callee, expr.Callee);
         var argValuesL = new List<Val>();
         foreach (var arg in callArgs)
         {
@@ -1044,7 +1052,8 @@ public partial class IRGenerator
                         + "register argument passes its CONTENTS, and every "
                         + $"{paramNames[i]}[i] in the callee would read or write at that number. "
                         + "Pass a buffer (`buf: uint8[N]`), or index the register where it is "
-                        + $"declared and pass the bit instead (`def {callee}(b): PORTx[b] = 1`).");
+                        + $"declared and pass the bit instead (`def {callee}(b): PORTx[b] = 1`).",
+                        i < callArgs.Count ? callArgs[i] : null);
                 }
 
                 // Auto-wrap: if a Callable (FUNCREF) parameter receives a bare function name
@@ -1590,6 +1599,14 @@ public partial class IRGenerator
                         || functionParams.ContainsKey(bare)
                         || inlineFunctions.ContainsKey(vArg.Name)
                         || inlineFunctions.ContainsKey(bare);
+                    // Deliberately unlocated, and not for the usual reason. Argument binding
+                    // runs BEFORE the callee's first statement, so `inlineCalleeStmtLine` is
+                    // still 0 while `currentSourcePath` has already moved to the callee: the
+                    // line in hand is the CALLER's and the file label is the CALLEE's. Measured
+                    // across two modules, this already reports `helper.py:12` for a six-line
+                    // helper.py, line 12 being main.py's call. Adding a column would put a caret
+                    // under a character of a line that file does not have. The four sites in
+                    // this binding loop stay caretless until that pair is made coherent.
                     if (!isFunctionRef)
                         throw UserError(
                             $"Parameter '{func.Params[paramIdx].Name}' is declared as " +
@@ -1673,6 +1690,9 @@ public partial class IRGenerator
                         continue;
                     }
 
+                    // Unlocated for the reason recorded at the const[uint8] site above: in the
+                    // argument-binding window the line is the caller's and the file label is
+                    // the callee's, so a column would point into a file that has no such line.
                     throw UserError(
                         $"Parameter '{func.Params[paramIdx].Name}' is declared as const[str] and requires a compile-time string constant value");
                 }
@@ -1686,6 +1706,9 @@ public partial class IRGenerator
                     continue;
                 }
                 if (!(argValues[i] is Constant cArg2))
+                    // Unlocated for the reason recorded at the const[uint8] site above: in the
+                    // argument-binding window the line is the caller's and the file label is
+                    // the callee's, so a column would point into a file that has no such line.
                     throw UserError(
                         $"Parameter '{func.Params[paramIdx].Name}' is declared as const and requires a compile-time constant value");
                 constantVariables[paramName] = cArg2.Value;
@@ -1807,6 +1830,9 @@ public partial class IRGenerator
                             else if (kvp.Value is Variable vkw2 && ResolveStrConstant(vkw2.Name) is { } svkw)
                                 strConstantVariables[paramName] = svkw;
                             else
+                            // Unlocated for the reason recorded at the const[uint8] site
+                            // above: in the argument-binding window the line is the caller's
+                            // and the file label is the callee's.
                                 throw UserError(
                                     $"Parameter '{func.Params[pi].Name}' is declared as const[str] and requires a compile-time string constant value");
                         }
@@ -1817,6 +1843,9 @@ public partial class IRGenerator
                             else if (kvp.Value is FloatConstant fkw)
                                 floatConstantVariables[paramName] = fkw.Value;
                             else
+                            // Unlocated for the reason recorded at the const[uint8] site
+                            // above: in the argument-binding window the line is the caller's
+                            // and the file label is the callee's.
                                 throw UserError(
                                     $"Parameter '{func.Params[pi].Name}' is declared as const and requires a compile-time constant value");
                         }
@@ -2420,7 +2449,8 @@ public partial class IRGenerator
                 : $"'{spelling}'";
             throw UserError(
                 $"too many arguments in call to {what}: it expects {declaredArgs} " +
-                $"argument(s), but {args.Count} were provided");
+                $"argument(s), but {args.Count} were provided",
+                args[declaredArgs]);
         }
 
         var exitLabel = MakeLabel();
@@ -2559,7 +2589,8 @@ public partial class IRGenerator
                     "f(*args) needs a sequence the compiler can see: a list or tuple written "
                     + "at the call, or a name bound to a short constant one. There is no "
                     + "run-time argument list on this target, so the elements are spliced in "
-                    + "at compile time.");
+                    + "at compile time.",
+                    star.Value);
 
             spliced.AddRange(elements);
         }
@@ -2573,8 +2604,9 @@ public partial class IRGenerator
     /// `throw`/`close` because there is no generator object to act on at run time, `__next__`
     /// because manual iteration would need somewhere to put "exhausted".
     /// </summary>
-    private void RejectGeneratorProtocol(string generatorName, string member)
+    private void RejectGeneratorProtocol(string generatorName, MemberAccessExpr at)
     {
+        string member = at.Member;
         string? why = member switch
         {
             "send" =>
@@ -2596,7 +2628,7 @@ public partial class IRGenerator
         throw UserError(
             $"'{generatorName}.{member}()' is the generator protocol, which PyMCU does not "
             + $"provide: {why}. A generator is consumed with `for v in {generatorName}(...):`, "
-            + "which drives it to exhaustion and ends when it does.");
+            + "which drives it to exhaustion and ends when it does.", at);
     }
 
     /// <summary>
@@ -3084,7 +3116,8 @@ public partial class IRGenerator
                $"{name}() over a sequence needs a length known at compile time, and this one " +
                $"does not have it. Pass the operands as separate arguments " +
                $"(`{name}(a, b, c)`), index a fixed-size array " +
-               $"(`{name}(xs[0], xs[1], xs[2])`), or keep a running {name} in a loop.");
+               $"(`{name}(xs[0], xs[1], xs[2])`), or keep a running {name} in a loop.",
+               arg);
 
     /// Rewrites `f(xs)` into `f(xs[0], xs[1], ...)` for min/max, or throws naming the shape.
     private Val ExpandSequenceMinMax(CallExpr expr, string name)
@@ -3135,9 +3168,9 @@ public partial class IRGenerator
     ///
     /// `<=` for min and `>=` for max keep CPython's tie rule: the FIRST operand with the
     /// winning key is the one returned.
-    private Val EmitMinMaxByKey(List<Expression> operands, Expression key, string name)
+    private Val EmitMinMaxByKey(List<Expression> operands, Expression key, string name, ASTNode? at)
     {
-        if (operands.Count == 0) throw UserError($"{name}() needs an argument");
+        if (operands.Count == 0) throw UserError($"{name}() needs an argument", at);
         if (operands.Count == 1) operands = SequenceElementsOrThrow(operands[0], name);
 
         string Bind(Expression e)
@@ -3180,7 +3213,7 @@ public partial class IRGenerator
     private Val EmitMinBuiltin(CallExpr expr)
     {
         var (minArgs, minKey) = SplitMinMaxKey(expr, "min");
-        if (minKey != null) return EmitMinMaxByKey(minArgs, minKey, "min");
+        if (minKey != null) return EmitMinMaxByKey(minArgs, minKey, "min", expr.Callee);
         if (minArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, minArgs) { Line = expr.Line };
 
         if (expr.Args.Count == 0) throw UserError("min() needs an argument", expr.Callee);
@@ -3217,7 +3250,7 @@ public partial class IRGenerator
     private Val EmitMaxBuiltin(CallExpr expr)
     {
         var (maxArgs, maxKey) = SplitMinMaxKey(expr, "max");
-        if (maxKey != null) return EmitMinMaxByKey(maxArgs, maxKey, "max");
+        if (maxKey != null) return EmitMinMaxByKey(maxArgs, maxKey, "max", expr.Callee);
         if (maxArgs.Count != expr.Args.Count) expr = new CallExpr(expr.Callee, maxArgs) { Line = expr.Line };
 
         if (expr.Args.Count == 0) throw UserError("max() needs an argument", expr.Callee);
@@ -3720,20 +3753,20 @@ public partial class IRGenerator
     /// Parses the text of a compile-time string into the cast's target type, the way Python's
     /// int()/float() would, and refuses text that is not a number instead of yielding one.
     /// </summary>
-    private Val ParseTextAsNumber(string text, string callee, DataType dstType)
+    private Val ParseTextAsNumber(string text, string callee, DataType dstType, ASTNode? at)
     {
         string t = text.Trim();
         if (dstType == DataType.FLOAT)
         {
             if (!double.TryParse(t, System.Globalization.NumberStyles.Float,
                                  System.Globalization.CultureInfo.InvariantCulture, out double d))
-                throw UserError($"{callee}(\"{text}\"): not a number");
+                throw UserError($"{callee}(\"{text}\"): not a number", at);
             return new FloatConstant((float)d);
         }
 
         if (!long.TryParse(t, System.Globalization.NumberStyles.Integer,
                            System.Globalization.CultureInfo.InvariantCulture, out long n))
-            throw UserError($"{callee}(\"{text}\"): not a whole number");
+            throw UserError($"{callee}(\"{text}\"): not a whole number", at);
 
         long lo = dstType switch
         {
@@ -3749,7 +3782,7 @@ public partial class IRGenerator
             _ => int.MaxValue,
         };
         if (n < lo || n > hi)
-            throw UserError($"{callee}(\"{text}\"): {n} does not fit in {callee} ({lo}..{hi})");
+            throw UserError($"{callee}(\"{text}\"): {n} does not fit in {callee} ({lo}..{hi})", at);
 
         return new Constant((int)n);
     }
@@ -3996,7 +4029,7 @@ public partial class IRGenerator
         // A string whose text is known at compile time is parsed here, which is what Python
         // does; anything else is refused by name rather than becoming a number nobody wrote.
         if (TryGetCompileTimeText(expr.Args[0]) is { } text)
-            return ParseTextAsNumber(text, callee, dstType);
+            return ParseTextAsNumber(text, callee, dstType, ArgAt(expr, 0));
         if (expr.Args[0] is FStringExpr)
             throw UserError(
                 $"{callee}() cannot convert an f-string: its text is only assembled at run time. " +
@@ -4495,6 +4528,12 @@ public partial class IRGenerator
 
     // Parse the supported f-string format-spec subset: [0][width][type], type in d/x/X/b/o (c is
     // rejected for now). Returns the radix, field width, pad char and upper-case flag.
+    // Unlocated on purpose, and this one is a WRONG caret removed rather than a missing one
+    // withheld. Everything between the braces of an f-string is re-lexed by a fresh Lexer over
+    // just that text, so an interpolated expression carries line 1 column 1 of the field, not
+    // of the file. Measured: `print(f"{x:3d}")` on line 6 of main.py reported main.py:1:1 and
+    // drew the caret under the auto-injected comment on line 1. Until the sub-lexer is given
+    // the f-string token's offset, no node parsed inside a field can locate anything.
     private (int Width, int Base, char Pad, bool Upper) ParseFormatSpec(string spec)
     {
         int i = 0;
@@ -4518,7 +4557,11 @@ public partial class IRGenerator
         Val v = VisitExpression(e);
         DataType vt = GetValType(v);
         if (vt == DataType.FLOAT || v is FloatConstant)
-            throw UserError("f-string format spec is not supported for float values", e);
+            // `e` is parsed by the f-string sub-lexer and carries line 1 column 1 of the
+            // FIELD (see ParseFormatSpec above), so this drew a caret under the first line of
+            // the file for a diagnostic about line 6. Withheld rather than aimed at a line the
+            // reader did not write.
+            throw UserError("f-string format spec is not supported for float values");
 
         bool signed = vt is DataType.INT8 or DataType.INT16 or DataType.INT32;
         // Pack the options into one flags byte: bit0 upper, bit1 signed, bit2 zero-pad. Keeping the
