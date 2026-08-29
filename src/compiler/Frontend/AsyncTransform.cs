@@ -67,7 +67,7 @@ public static class AsyncTransform
                 throw new SyntaxError(
                     "this module uses `async def` but never imports asyncio. Add `import asyncio` " +
                     "(or `import pymcu.asyncio as asyncio`) and await `asyncio.sleep(...)`.",
-                    asyncFns[0].Line, asyncFns[0].Column);
+                    asyncFns[0].Line, asyncFns[0].Column, asyncFns[0].Length);
         }
 
         // `yield from` in a coroutine is not the same construct: it would have to drive the
@@ -79,7 +79,7 @@ public static class AsyncTransform
                 throw new SyntaxError(
                     $"`yield from` is not supported inside `async def {fn.Name}`. It is available "
                     + "in a plain generator (a `def` whose body yields); a coroutine has no "
-                    + "delegation form yet.", fn.Line, fn.Column);
+                    + "delegation form yet.", fn.Line, fn.Column, fn.Length);
 
         // A compile-time task set. `asyncio.create_task(f(args))` cannot append to a list:
         // each coroutine lowers to its own ZCA type and there is no common runtime handle
@@ -183,7 +183,7 @@ public static class AsyncTransform
                     + "pass what the body reads from `self` as an argument: `def "
                     + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
                         .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
-                    m.Line, m.Column);
+                    m.Line, m.Column, m.Length);
             }
         }
     }
@@ -203,7 +203,7 @@ public static class AsyncTransform
                 + "each call site, and a generator needs a state machine of its own to suspend in, "
                 + $"so the two cannot be combined. Remove `@inline` from '{fn.Name}' to make it a "
                 + "generator, and consume it with `for v in " + fn.Name + "(...):`.",
-                fn.Line, fn.Column);
+                fn.Line, fn.Column, fn.Length);
         }
     }
 
@@ -221,7 +221,7 @@ public static class AsyncTransform
                     + "it needs as arguments: `async def "
                     + $"{m.Name}(" + string.Join(", ", m.Params.Where(pp => pp.Name != "self")
                         .Select(pp => pp.Name).Prepend(LowerFirst(cls.Name))) + ")`.",
-                    m.Line, m.Column);
+                    m.Line, m.Column, m.Length);
             }
         }
     }
