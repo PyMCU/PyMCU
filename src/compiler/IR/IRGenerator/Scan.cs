@@ -1833,7 +1833,22 @@ public partial class IRGenerator
             wf.Add(field);
         }
 
-        var synth = new FunctionDef(func.Name, synthParams, returnType, body, isInline: false);
+        // The stand-in carries the position of the method it stands for. It is not a synthetic
+        // function: the user wrote it, and every diagnostic raised while lowering it is about
+        // their `def`. Leaving the position at 0 did not just withhold the caret, it moved the
+        // LINE: `UserError(msg, node)` falls back to `lastLine` when the node has no column, so
+        // a missing return in an outlined method was reported at the last statement of the
+        // body instead of at the `def` -- a line that reads as plausible and is wrong, which is
+        // worse than no line at all.
+        //
+        // Position only. The other fields this stand-in does not copy (IsAsync, IsNaked,
+        // IsExtern, the property flags) are a separate question and are left as they were.
+        var synth = new FunctionDef(func.Name, synthParams, returnType, body, isInline: false)
+        {
+            // The `def` keyword, which is where Parser stamps a FunctionDef; see the decision
+            // table above Located() in Parser.cs.
+            Line = func.Line, Column = func.Column, Length = func.Length,
+        };
         functionsToCompile.Add(new FunctionEntry
             { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
 
