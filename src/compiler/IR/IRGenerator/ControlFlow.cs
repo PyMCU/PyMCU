@@ -1674,6 +1674,20 @@ public partial class IRGenerator
         {
             string reason = resolvedMessage.Length > 0 ? resolvedMessage : stmt.ErrorType;
             int line = currentStmtLine > 0 ? currentStmtLine : stmt.Line;
+
+            // Deliberately unlocated, and deliberately NOT `stmt`.
+            //
+            // This fires while an @inline callee is being expanded, so `stmt` is the callee's
+            // `raise` and `currentStmtLine` is the CALLER's call site. The call site is the
+            // right place: the reader wrote `probe(3)` and that is the line they can change;
+            // the `raise` inside the library is not theirs to edit. Measured with the callee in
+            // another module, it reports the caller's file and line.
+            //
+            // Passing `stmt` would move the report onto the callee's raise and take its line
+            // while the file comes from whichever module is being lowered -- the two halves of
+            // a location arriving from different places, which is the failure this issue
+            // exists to remove. So the node is in hand and is not passed, on purpose. Pinned by
+            // test_a_raise_inside_an_inlined_callee_reports_the_call_site.
             throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0);
         }
 
