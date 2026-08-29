@@ -1383,12 +1383,25 @@ public class Parser
             var arg1 = ParseExpression();
             Expression? arg2 = null;
             Expression? arg3 = null;
-            if (Match(TokenType.Comma))
+            // `!Check(RParen)` after each comma is the trailing comma. A comma before `)` ends
+            // the list in every Python call, and ParsePostfix already allows it, so `len(xs,)`
+            // compiled while `range(n,)` did not -- the same comma accepted in one call and
+            // refused in another, in the same program, because this header parses its own
+            // argument list and went straight to ParseExpression(), which met `)` and said
+            // "Expected expression" (PyMCU#228).
+            //
+            // `range(,)` is still an error: arg1 is parsed before any of this, so a leading
+            // comma has nothing in front of it and fails the same way it always did.
+            if (Match(TokenType.Comma) && !Check(TokenType.RParen))
             {
                 arg2 = ParseExpression();
-                if (Match(TokenType.Comma))
+                if (Match(TokenType.Comma) && !Check(TokenType.RParen))
                 {
                     arg3 = ParseExpression();
+                    // And after the LAST argument too. Handling only the first two commas is
+                    // the same bug one position along: `range(n,)` and `range(1, n,)` would
+                    // work while `range(0, n, 2,)` did not.
+                    Match(TokenType.Comma);
                 }
             }
 
