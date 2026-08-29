@@ -1194,17 +1194,31 @@ public partial class IRGenerator
                 case AstBinOp.Equal: return new Constant(cA.Value == cB.Value ? 1 : 0);
                 case AstBinOp.NotEqual: return new Constant(cA.Value != cB.Value ? 1 : 0);
                 case AstBinOp.Mul: return Fold((long)cA.Value * cB.Value);
-                case AstBinOp.Div: return new Constant(cA.Value / cB.Value);
+                // Divided in long, and NOT routed through Fold(). C# throws
+                // OverflowException on int.MinValue / -1 and int.MinValue % -1, the two cases
+                // whose true quotient is 2147483648; unhandled, it reached the user as
+                // `InternalCompilerError: OverflowException` at line 1:1 (#223). int8 and
+                // int16 never hit it, since 128 and 32768 fit the int they were computed in.
+                //
+                // These wrap rather than diagnosing, unlike Add/Sub/Mul above, because the
+                // executed answer is the wrap and the narrower widths already fold to it:
+                // int8 MIN // -1 folds to -128 and runs as -128, int16 to -32768, and int32
+                // now folds to -2147483648, which is what an atmega328p produces for the same
+                // expression with opaque operands. MIN % -1 is 0 at every width. Add, Sub and
+                // Mul leave the range routinely and have no single representable answer, so
+                // they keep diagnosing; a floored division of two in-range operands can only
+                // leave it in this one case, and there the hardware has already answered.
+                case AstBinOp.Div: return new Constant(unchecked((int)((long)cA.Value / cB.Value)));
                 case AstBinOp.FloorDiv:
-                    int q = cA.Value / cB.Value;
+                    long q = (long)cA.Value / cB.Value;
                     if ((cA.Value ^ cB.Value) < 0 && q * cB.Value != cA.Value) q--;
-                    return new Constant(q);
+                    return new Constant(unchecked((int)q));
                 case AstBinOp.Mod:
                     // Python's % follows the sign of the divisor (floored), unlike C#'s
                     // truncated %. e.g. -7 % 3 == 2, not -1. Match Python at fold time.
-                    int rem = cA.Value % cB.Value;
-                    if (rem != 0 && ((rem ^ cB.Value) < 0)) rem += cB.Value;
-                    return new Constant(rem);
+                    long rem = (long)cA.Value % cB.Value;
+                    if (rem != 0 && ((rem < 0) != (cB.Value < 0))) rem += cB.Value;
+                    return new Constant(unchecked((int)rem));
                 case AstBinOp.BitAnd: return new Constant(cA.Value & cB.Value);
                 case AstBinOp.BitOr: return new Constant(cA.Value | cB.Value);
                 case AstBinOp.LShift: return new Constant(cA.Value << cB.Value);

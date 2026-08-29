@@ -793,14 +793,27 @@ private static Function CloneFunction(Function f)
                             case BinaryOp.Div or BinaryOp.FloorDiv or BinaryOp.Mod when c2.Value == 0:
                                 throw new ValueError("integer division or modulo by zero",
                                     curLine > 0 ? curLine : 1);
+                            // The three below divide in long, not int. C# throws
+                            // OverflowException on int.MinValue / -1 and on int.MinValue % -1,
+                            // the two cases whose true quotient is 2147483648 and so does not
+                            // fit the int it is being computed in. Unhandled, it reached the
+                            // user as `InternalCompilerError: OverflowException` at line 1:1
+                            // (#223). int8 and int16 never hit it: their quotients, 128 and
+                            // 32768, fit an int and then wrap correctly in WrapToType below.
+                            //
+                            // long is wide enough for every int pair (its own MinValue / -1 is
+                            // unreachable from int operands), and WrapToType already narrows to
+                            // the declared width, which is what makes the folded answer agree
+                            // with the executed one: int32 MIN // -1 wraps back to MIN, and
+                            // MIN % -1 is 0, both measured on hardware.
                             case BinaryOp.Div:
-                                result = c1.Value / c2.Value;
+                                result = unchecked((int)((long)c1.Value / c2.Value));
                                 break;
                             case BinaryOp.FloorDiv:
                             {
-                                int q = c1.Value / c2.Value;
+                                long q = (long)c1.Value / c2.Value;
                                 if ((c1.Value ^ c2.Value) < 0 && q * c2.Value != c1.Value) q--;
-                                result = q;
+                                result = unchecked((int)q);
                                 break;
                             }
                             case BinaryOp.Mod:
@@ -810,9 +823,9 @@ private static Function CloneFunction(Function f)
                                 // Mirror the FloorDiv adjustment above so -7 % 2 folds to 1,
                                 // not -1. (For non-negative operands — all unsigned values —
                                 // the adjustment never triggers.)
-                                int r = c1.Value % c2.Value;
+                                long r = (long)c1.Value % c2.Value;
                                 if (r != 0 && (r < 0) != (c2.Value < 0)) r += c2.Value;
-                                result = r;
+                                result = unchecked((int)r);
                                 break;
                             }
                             case BinaryOp.Equal: result = c1.Value == c2.Value ? 1 : 0; break;
