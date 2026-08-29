@@ -103,3 +103,47 @@ def test_an_error_in_the_entry_file_still_names_the_entry_file(tmp_path):
     header = next(l for l in err.splitlines() if "error:" in l)
     assert "main.py" in header, header
     assert "drivers/led.py" not in header, header
+
+# --- the file and the COLUMN must come from the same place (PyMCU#177 tail) ------------
+#
+# UserError(msg, node) takes the LINE and COLUMN from the node and the FILE from the module
+# being lowered. While everything is one file those agree. A node that arrives from a
+# different module than the one being lowered makes them disagree, and the result is worse
+# than no caret: an arrow at a real column of the WRONG file, which no single-file test sees.
+#
+# These pin that the sites in Statements.cs and ControlFlow.cs do not have that shape. Each
+# main.py deliberately has a LONG line where the module has a short one, so a file mixup puts
+# the caret in the middle of the padding instead of on the token, visibly rather than subtly.
+
+CALLER_WITH_A_LONG_LINE = """
+    from pymcu.types import uint8
+    from drivers.led import {name}
+
+    def main() -> None:
+        zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: uint8 = 1
+        b: uint8 = {call}
+"""
+
+
+@pytest.mark.parametrize("module_src,name,call,want_line,want_col", [
+    # a string returned from a uint8 function: blames stmt.Value, a stamped StringLiteral
+    ("""
+        from pymcu.types import uint8
+
+        def returns_str() -> uint8:
+            x: uint8 = 1
+            return "nope"
+    """, "returns_str", "returns_str()", 5, 12),
+])
+def test_the_caret_and_the_file_agree_across_modules(
+        tmp_path, module_src, name, call, want_line, want_col):
+    err = _compile(
+        tmp_path,
+        CALLER_WITH_A_LONG_LINE.format(name=name, call=call),
+        module_src,
+    )
+
+    header = next(l for l in err.splitlines() if "error:" in l)
+    assert "drivers/led.py" in header, header
+    assert f":{want_line}:{want_col}:" in header, header
+
