@@ -161,6 +161,10 @@ public class IterationColumnTests
         Assert.Null(loop.Iterable);
     }
 
+    // This is now the only test pinning WHICH of two arguments the plural message marks.
+    // Its `for i in (range(0, n))` sibling covered the same decision at the range-as-iterable
+    // site and was rewritten when #224 stopped refusing that spelling. If this one moves or
+    // changes shape, that decision loses its last guard without anything going red.
     [Fact]
     public void EnumerateRange_PointsAtTheArgumentThatIsNotConstant()
     {
