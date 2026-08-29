@@ -41,13 +41,13 @@ public partial class IRGenerator
         if (expr is AwaitExpr)
             throw UserError(
                 "`await` is only valid inside an `async def`, and the coroutine lowering is not " +
-                "implemented yet. Drive a future's poll() from a cooperative loop for now.");
+                "implemented yet. Drive a future's poll() from a cooperative loop for now.", expr);
 
         if (expr is Frontend.DictExpr or Frontend.SetExpr)
             throw UserError(
                 "dict/set literals are compile-time lookup tables: bind one to a name " +
                 "(`d = {...}`) and use `d[k]` / `x in d` / `len(d)`; they have no runtime " +
-                "value in other positions (no heap on bare metal).");
+                "value in other positions (no heap on bare metal).", expr);
 
         if (expr is NoneLiteral) return new NoneVal();
 
@@ -116,7 +116,7 @@ public partial class IRGenerator
                 + "parameter default are not among them.",
                 expr);
 
-        throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}");
+        throw UserError($"IR Generation: Unknown Expression type: {expr.GetType().Name}", expr);
     }
 
     // The one fact behind every refusal below, so a reader meets it once and the three sites
@@ -500,7 +500,7 @@ public partial class IRGenerator
         string name = ((VariableExpr)expr).Name;
         throw UserError(
             $"'{name}' names a register, not its contents; use {name}.value to read the whole " +
-            $"register, or {name}[bit] for one bit");
+            $"register, or {name}[bit] for one bit", expr);
     }
 
     private void RejectBareRegisterOperands(BinaryExpr expr)
@@ -682,7 +682,7 @@ public partial class IRGenerator
                     => listBound,
                 _ => throw UserError(
                     "'in' / 'not in' requires a list, tuple, set or dict literal (or a name " +
-                    "bound to one) on the right-hand side")
+                    "bound to one) on the right-hand side", expr.Right)
             };
             if (rhsElems.Count == 0) return new Constant(negate ? 1 : 0);
 
@@ -819,10 +819,10 @@ public partial class IRGenerator
             Val bv = VisitExpression(expr.Left);
             Val ev = VisitExpression(expr.Right);
             if (ev is not Constant ce)
-                throw UserError("** operator: the exponent must be a compile-time constant integer");
+                throw UserError("** operator: the exponent must be a compile-time constant integer", expr.Right);
             int exp = ce.Value;
             if (exp < 0)
-                throw UserError("** operator: negative exponent not supported (Python would return a float)");
+                throw UserError("** operator: negative exponent not supported (Python would return a float)", expr.Right);
 
             // Both operands constant: fold the whole power at compile time (table sizes, masks...).
             if (bv is Constant cb)
@@ -840,7 +840,7 @@ public partial class IRGenerator
             if (exp == 0) return new Constant(1);
             if (exp == 1) return bv;
             if (exp > 16)
-                throw UserError("** operator: exponent too large to unroll (max 16 for a runtime base); use a loop");
+                throw UserError("** operator: exponent too large to unroll (max 16 for a runtime base); use a loop", expr.Right);
 
             static DataType BumpTier(DataType t) => t switch
             {
@@ -1407,7 +1407,7 @@ public partial class IRGenerator
         throw UserError(
             "'yield' is only supported in top-level plain functions (lowered to a " +
             "state-machine class) -- not inside @inline functions or class methods. " +
-            "Move the generator to module level, or fill a fixed-size array instead.");
+            "Move the generator to module level, or fill a fixed-size array instead.", expr);
     }
 
     // Resolves a variable name to the bytes/list/tuple literal bound to it as an
@@ -1461,7 +1461,7 @@ public partial class IRGenerator
             Val vV = VisitExpression(vE);
             if (kV is not Constant kc || vV is not Constant vc)
                 throw UserError("dict literals are compile-time lookup tables: every key and " +
-                                "value must be a compile-time constant");
+                                "value must be a compile-time constant", d);
             entries.Add((kc.Value, vc.Value, kE is StringLiteral, kc.Text));
         }
 
@@ -1488,14 +1488,14 @@ public partial class IRGenerator
 
             if (defaultExpr != null) return VisitExpression(defaultExpr);
             throw UserError($"KeyError: {DescribeDictKey(keyExpr, keyC)} is not a key of " +
-                            "this dict literal (checked at compile time)");
+                            "this dict literal (checked at compile time)", keyExpr);
         }
 
         if (entries.Any(e => e.StrKey))
             throw UserError("a dict with string keys needs a compile-time constant key; " +
-                            "runtime keys can only match integer keys");
+                            "runtime keys can only match integer keys", keyExpr);
         if (entries.Count == 0)
-            throw UserError("KeyError: lookup on an empty dict literal");
+            throw UserError("KeyError: lookup on an empty dict literal", d);
 
         // Result width from the value range.
         int min = entries.Min(e => e.Value), max = entries.Max(e => e.Value);
@@ -1549,7 +1549,7 @@ public partial class IRGenerator
         // A string subscript is a mistake — a single-char string would otherwise fold to
         // its code point and be used as a (wrong) integer index, e.g. a["k"] -> a[107].
         if (expr.Index is StringLiteral)
-            throw UserError("array index must be an integer, not a string");
+            throw UserError("array index must be an integer, not a string", expr.Index);
 
         if (expr.Index is SliceExpr sl)
         {
@@ -1563,7 +1563,7 @@ public partial class IRGenerator
                     int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
                     int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
                     int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                    if (step == 0) throw UserError("Slice step cannot be zero");
+                    if (step == 0) throw UserError("Slice step cannot be zero", expr.Index);
                     if (start < 0) start += srcSize;
                     if (stop < 0) stop += srcSize;
                     start = Math.Max(0, Math.Min(start, srcSize));
@@ -1599,7 +1599,7 @@ public partial class IRGenerator
                 }
             }
 
-            throw UserError("Slice indexing is only supported on named fixed-size arrays");
+            throw UserError("Slice indexing is only supported on named fixed-size arrays", expr.Target);
         }
 
         if (expr.Target is VariableExpr ve)
@@ -1613,10 +1613,10 @@ public partial class IRGenerator
                 int li;
                 if (expr.Index is IntegerLiteral ilit) li = ilit.Value;
                 else if (VisitExpression(expr.Index) is Constant clit) li = clit.Value;
-                else throw UserError("Tuple/list parameter subscript must be a compile-time constant");
+                else throw UserError("Tuple/list parameter subscript must be a compile-time constant", expr.Index);
                 if (li < 0) li += litArg.Elements.Count;
                 if (li < 0 || li >= litArg.Elements.Count)
-                    throw UserError("Tuple/list parameter subscript index out of range");
+                    throw UserError("Tuple/list parameter subscript index out of range", expr.Index);
                 return VisitExpression(litArg.Elements[li]);
             }
 
@@ -1836,7 +1836,7 @@ public partial class IRGenerator
                 if (expr.Index is IntegerLiteral ic)
                 {
                     if (ic.Value < 0 || ic.Value >= strVal.Length)
-                        throw UserError("String subscript index out of range");
+                        throw UserError("String subscript index out of range", expr.Index);
                     return new Constant((int)strVal[ic.Value]);
                 }
 
@@ -1868,7 +1868,7 @@ public partial class IRGenerator
                 $"'{subCls}' does not define __getitem__, so '{subVe.Name}[...]' has no meaning. " +
                 "Give the class a __getitem__ method (and a __len__ with a constant return if you " +
                 "also want to iterate it), or subscript a fixed array instead. A subscript on a " +
-                "non-class value reads a register bit, which is not what an instance holds.");
+                "non-class value reads a register bit, which is not what an instance holds.", subVe);
 
         // Same defect as the guard above, with a set binding instead of an instance, and it
         // reached the same place: `s = {70, 7}` then `s[1]` emitted `bchk main.s, 1` against a
@@ -1883,7 +1883,7 @@ public partial class IRGenerator
                 $"'{setVe.Name}' is a compile-time set literal (read-only membership table), and a " +
                 "set is not subscriptable: there is no order for an index to mean. Supported: " +
                 $"x in {setVe.Name}, len({setVe.Name}). For a collection you index, use a " +
-                "fixed-size list or a bytearray.");
+                "fixed-size list or a bytearray.", setVe);
 
         Val target = VisitExpression(expr.Target);
         Val indexVal2 = VisitExpression(expr.Index);
@@ -1916,7 +1916,7 @@ public partial class IRGenerator
             bool resolved = false;
             if (indexVal2 is Temporary t) resolved = TryConst(t.Name);
             else if (indexVal2 is Variable v) resolved = TryConst(v.Name);
-            if (!resolved) throw UserError("Bit index must be constant for reading");
+            if (!resolved) throw UserError("Bit index must be constant for reading", expr.Index);
         }
 
         Temporary dst = MakeTemp();
@@ -2076,7 +2076,7 @@ public partial class IRGenerator
                     if (key.StartsWith(classPrefix)) return new Variable(mangledName, DataType.UINT8);
                 }
 
-                throw UserError("Unknown module member: " + mangledName);
+                throw UserError("Unknown module member: " + mangledName, expr);
             }
 
             if (functionParams.ContainsKey(mangledName) || functionReturnTypes.ContainsKey(mangledName))
@@ -2220,7 +2220,7 @@ public partial class IRGenerator
                     return objVal;   // scalar single field: self IS the value
                 }
             }
-            throw UserError("Unknown member access: " + expr.Member);
+            throw UserError("Unknown member access: " + expr.Member, expr);
         }
         while (baseName != null && variableAliases.TryGetValue(baseName, out var next))
         {
@@ -2336,7 +2336,7 @@ public partial class IRGenerator
                 if (ownerLay.Count == 1 && ownerLay[0].Field == expr.Member)
                     return objVal;
             }
-            throw UserError($"'{expr.Member}' is not a member of a numeric value");
+            throw UserError($"'{expr.Member}' is not a member of a numeric value", expr);
         }
 
         if (!globals.TryGetValue(flattenedName, out var sym5))
@@ -2352,7 +2352,7 @@ public partial class IRGenerator
             if (deviceConfig.Arch.Length > 0 && !deviceConfig.Arch.Contains("pio")
                 && !assignedMemberNames.Contains(expr.Member)
                 && !IsKnownMethodName(expr.Member))
-                throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)");
+                throw UserError($"object has no attribute '{expr.Member}' (typo, or a field never assigned)", expr);
 
             // A field promoted to a runtime home (e.g. a write-back-mutated ZCA field) carries
             // its declared width in variableTypes; read it at that width so a uint16/uint32
