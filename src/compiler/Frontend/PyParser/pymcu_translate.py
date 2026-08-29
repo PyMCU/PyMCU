@@ -108,7 +108,7 @@ def line_of(node):
 # gives the `//`). Carrying it would not close a divergence, it would open one in the other
 # direction, with the two front ends naming different characters for the same error. Adding a
 # kind here means first checking that both front ends locate it the same way.
-POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp")
+POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp", "Unary")
 
 # Kinds whose position is not CPython's col_offset but is EXACTLY derivable from it, so parity
 # with the hand-written parser is still reachable. Each entry says which part to mark and how

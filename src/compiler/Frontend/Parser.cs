@@ -1629,12 +1629,27 @@ public class Parser
     /// defect in one of them:
     ///
     ///   BinaryExpr        the OPERATOR       `a // 0` marks the `//`
+    ///   UnaryExpr         the OPERATOR       `-1` marks the `-`, `not a` marks the `not`
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
+    ///   ListCompExpr      the OPENING `[`    where the construct starts
     ///   CallExpr          not stamped; the diagnostic sites pass expr.Callee, which is a
     ///                     leaf and carries its own position
     ///
     /// Any future combining node needs its decision made and added to that list.
+    ///
+    /// A SECOND decision sits on top of this one and is easy to miss, because getting it wrong
+    /// still produces a caret somewhere reasonable. Stamping says where a node IS; a diagnostic
+    /// then has to choose WHICH node it is about, and that is rarely the whole expression:
+    ///
+    ///   "** operator: the exponent must be constant"   the exponent, expr.Right, not the `**`
+    ///   "'in' requires a list"                         the container, expr.Right, not the `in`
+    ///   "array index must be an integer"               expr.Index, not the array
+    ///   "KeyError: 9 is not a key"                     the key, not the dict
+    ///
+    /// Pointing at the operator for all of those would be defensible, consistent and wrong, and
+    /// it would pass review, because a caret somewhere reasonable is indistinguishable from a
+    /// caret in the right place unless someone asks what the message is about. Ask that.
     ///
     /// The operator, not the start of the whole expression. The messages these nodes carry are
     /// about the operation ("integer division or modulo by zero", "unsupported operand type
@@ -1684,9 +1699,9 @@ public class Parser
     {
         if (Check(TokenType.Not) && PeekNext().Type != TokenType.In)
         {
-            Advance();
+            var op = Advance();
             var operand = ParseLogicalNot();
-            return new UnaryExpr(UnaryOp.Not, operand);
+            return Located(new UnaryExpr(UnaryOp.Not, operand), op);
         }
 
         return ParseComparison();
@@ -1884,8 +1899,8 @@ public class Parser
 
         if (Check(TokenType.Minus))
         {
-            Advance();
-            return new UnaryExpr(UnaryOp.Negate, ParseUnary());
+            var op = Advance();
+            return Located(new UnaryExpr(UnaryOp.Negate, ParseUnary()), op);
         }
 
         // Unary plus is not accepted. Falling through to ParsePrimary reported "Expected
@@ -1897,14 +1912,14 @@ public class Parser
 
         if (Check(TokenType.Tilde))
         {
-            Advance();
-            return new UnaryExpr(UnaryOp.BitNot, ParseUnary());
+            var op = Advance();
+            return Located(new UnaryExpr(UnaryOp.BitNot, ParseUnary()), op);
         }
 
         if (Check(TokenType.Not))
         {
-            Advance();
-            return new UnaryExpr(UnaryOp.Not, ParseUnary());
+            var op = Advance();
+            return Located(new UnaryExpr(UnaryOp.Not, ParseUnary()), op);
         }
 
         return ParsePostfix();
