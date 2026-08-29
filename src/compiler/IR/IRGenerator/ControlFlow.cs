@@ -394,7 +394,7 @@ public partial class IRGenerator
         string shown = cls.Contains('_') ? cls[(cls.LastIndexOf('_') + 1)..] : cls;
         throw UserError(
             $"'{ve.Name}' is an instance of '{shown}' with no __bool__ or __len__, so it has no " +
-            $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).");
+            $"truth value. Test a field or a method result instead (e.g. `if {ve.Name}.<field>:`).", ve);
     }
 
     /// <summary>
@@ -699,7 +699,7 @@ public partial class IRGenerator
     {
         if (pattern.Callee is not VariableExpr patName)
             throw UserError("match/case: a call is not a pattern; `case Cls(...)` matches a "
-                          + "class, and its callee has to be a class name");
+                          + "class, and its callee has to be a class name", pattern);
 
         string subjectClass = GetValClass(targetVal);
         if (string.IsNullOrEmpty(subjectClass))
@@ -707,7 +707,7 @@ public partial class IRGenerator
                 $"match/case: `case {patName.Name}(...)` needs the subject's class to be known "
                 + "at compile time, and it is not here. Match on a value the program builds "
                 + $"from a constructor (`p = {patName.Name}(...)` then `match p:`), or compare "
-                + "the fields directly with if/elif");
+                + "the fields directly with if/elif", patName);
 
         string subjectShort = subjectClass.Contains('_')
             ? subjectClass[(subjectClass.LastIndexOf('_') + 1)..]
@@ -742,7 +742,7 @@ public partial class IRGenerator
                     + $"and {pattern.Args.Count} were given. A positional class pattern takes its "
                     + $"field order from __match_args__; add it to '{patName.Name}' "
                     + $"(`__match_args__ = (\"x\", \"y\")`), or name the fields in the pattern "
-                    + $"(`case {patName.Name}(x=..., y=...)`)");
+                    + $"(`case {patName.Name}(x=..., y=...)`)", patName);
 
             tests.Add((matchArgs[positional], arg));
             positional++;
@@ -846,7 +846,7 @@ public partial class IRGenerator
                 {
                     string arrName = "";
                     if (targetVal is Variable v) arrName = v.Name;
-                    else throw UserError("match/case sequence pattern: subject must be an array variable");
+                    else throw UserError("match/case sequence pattern: subject must be an array variable", stmt);
 
                     int patSize = seq.Elements.Count;
                     if (arraySizes.TryGetValue(arrName, out int size) && size != patSize)
@@ -1567,7 +1567,7 @@ public partial class IRGenerator
 
     private void VisitBreak(BreakStmt stmt)
     {
-        if (loopStack.Count == 0) throw UserError("Break statement outside of loop");
+        if (loopStack.Count == 0) throw UserError("Break statement outside of loop", stmt);
         var loop = Enumerable.Last<LoopLabels>(loopStack);
 
         // `for/while ... else`: this break exits the loop whose else clause must NOT run, so
@@ -1596,7 +1596,7 @@ public partial class IRGenerator
 
     private void VisitContinue(ContinueStmt stmt)
     {
-        if (loopStack.Count == 0) throw UserError("Continue statement outside of loop");
+        if (loopStack.Count == 0) throw UserError("Continue statement outside of loop", stmt);
         var loop = Enumerable.Last<LoopLabels>(loopStack);
         EmitPendingFinally(loop.FinallyDepth);   // run finallys between this continue and the loop
         Emit(new Jump(loop.ContinueLabel));
@@ -1616,7 +1616,7 @@ public partial class IRGenerator
                     $"raise {stmt.ErrorType}({stmt.MessageName}): '{stmt.MessageName}' is not a " +
                     "string constant known at compile time. The message must be one or more " +
                     "string literals, or the name of a module-level constant declared as " +
-                    $"`{stmt.MessageName}: str = \"...\"`");
+                    $"`{stmt.MessageName}: str = \"...\"`", stmt);
         }
 
         if (stmt.ErrorType == "CompileError")

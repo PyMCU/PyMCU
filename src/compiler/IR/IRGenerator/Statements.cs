@@ -117,7 +117,7 @@ public partial class IRGenerator
             }
         }
 
-        throw UserError("Not a constant expression");
+        throw UserError("Not a constant expression", expr);
     }
 
     /// <summary>
@@ -480,7 +480,7 @@ public partial class IRGenerator
                 $"async def '{funcNode.Name}': the coroutine-to-state-machine lowering is not " +
                 "implemented yet (the syntax parses; the transform is the next step). For now, " +
                 "write the future as a small class with a poll() method and drive it from a " +
-                "cooperative loop -- the zero-cost pattern async lowers to (see the RTOS example).");
+                "cooperative loop -- the zero-cost pattern async lowers to (see the RTOS example).", funcNode);
 
         // A multi-value return is lowered only through the @inline expansion path, where the
         // caller's unpack targets become the result slots. A real subroutine has one return
@@ -493,7 +493,7 @@ public partial class IRGenerator
                 $"'{funcNode.Name}' is declared to return {TupleType.Describe(funcNode.ReturnType)}: " +
                 "returning multiple values is only supported from an @inline function " +
                 "(the caller's unpack targets receive them); mark the function @inline or " +
-                "return a single value");
+                "return a single value", funcNode);
         }
 
         var irFunc = new Function();
@@ -602,7 +602,7 @@ public partial class IRGenerator
             throw UserError(
                 $"'{funcNode.Name}' is declared to return {funcNode.ReturnType}, but it can reach "
                 + "the end of its body without a return. Python would answer None there, which a "
-                + $"{funcNode.ReturnType} has no room for -- add a return on the remaining path.");
+                + $"{funcNode.ReturnType} has no room for -- add a return on the remaining path.", funcNode);
 
         if (currentInstructions.Count == 0 || !(currentInstructions.Last() is Return))
         {
@@ -830,7 +830,7 @@ public partial class IRGenerator
 
         if (stmt is FunctionDef funcDef)
         {
-            if (!funcDef.IsInline) throw UserError($"Nested function '{funcDef.Name}' must be @inline");
+            if (!funcDef.IsInline) throw UserError($"Nested function '{funcDef.Name}' must be @inline", funcDef);
             inlineFunctions[funcDef.Name] = funcDef;
             functionReturnTypes[funcDef.Name] = funcDef.ReturnType;
             var @params = new List<string>();
@@ -868,7 +868,7 @@ public partial class IRGenerator
         }
         else
         {
-            throw UserError($"IR Generation: Unknown Statement type: {stmt.GetType().Name}");
+            throw UserError($"IR Generation: Unknown Statement type: {stmt.GetType().Name}", stmt);
         }
     }
 
@@ -889,7 +889,7 @@ public partial class IRGenerator
             && functionReturnTypes.TryGetValue(returnOwner, out var retRt) && retRt != null
             && retRt is "uint8" or "int8" or "uint16" or "int16" or "uint32" or "int32")
             throw UserError(
-                $"cannot return a string from a function declared to return {retRt}");
+                $"cannot return a string from a function declared to return {retRt}", stmt.Value);
 
         // Returning a bytes/list object. The literal form crashed with an AST class name; the
         // form through a name compiled and returned the array as a SCALAR, after which the
@@ -933,11 +933,11 @@ public partial class IRGenerator
                 if (declared.Count > 0 && tup.Elements.Count != declared.Count)
                     throw UserError(
                         $"'{ctx.CalleeName}' is declared to return {declared.Count} values " +
-                        $"{TupleType.Describe(ctxRt!)}, but this return has {tup.Elements.Count}");
+                        $"{TupleType.Describe(ctxRt!)}, but this return has {tup.Elements.Count}", stmt.Value);
 
                 if (tup.Elements.Count != ctx.ResultVars.Count)
                 {
-                    throw UserError($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements");
+                    throw UserError($"Tuple return size mismatch: expected {ctx.ResultVars.Count} elements", stmt.Value);
                 }
 
                 for (int k = 0; k < tup.Elements.Count; ++k)
@@ -962,7 +962,7 @@ public partial class IRGenerator
                 && TupleType.IsTupleType(singleRt))
                 throw UserError(
                     $"'{inlineStack.Last().CalleeName}' is declared to return " +
-                    $"{TupleType.Describe(singleRt!)}, but this return has a single value");
+                    $"{TupleType.Describe(singleRt!)}, but this return has a single value", stmt.Value);
         }
 
         // A multi-value (tuple) return is only lowered through the @inline expansion path
@@ -973,7 +973,7 @@ public partial class IRGenerator
             throw UserError(
                 "returning multiple values is only supported from an @inline function " +
                 "(the caller's unpack targets receive them); mark the function @inline or " +
-                "return a single value");
+                "return a single value", stmt.Value);
 
         // RFC 0001 Model B: a non-@inline factory `def make() -> C: return C(args)` where
         // C is a single-field ZCA. The instance has no runtime struct, so return the packed
