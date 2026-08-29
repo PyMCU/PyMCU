@@ -32,6 +32,14 @@ HEADER = re.compile(r"^[^\s:]+:(\d+):(\d+): error:", re.MULTILINE)
 
 
 def _where(src: Path, py_parser: bool):
+    """(line, column, underline) -- where the diagnostic points and how much it marks.
+
+    The underline is part of the answer, not decoration. Comparing only line and column let a
+    whole class through: the hand-written parser marks a SUB-TOKEN of a node (the `raise`
+    keyword, the unary operator, a comprehension's opening bracket) while the bridge carried
+    CPython's span for the WHOLE node, so both front ends named the same character and then
+    underlined 5 against 19. Every case in this file checks all three for that reason.
+    """
     env = dict(os.environ)
     if py_parser:
         env["PYMCU_PY_PARSER"] = "1"
@@ -46,7 +54,8 @@ def _where(src: Path, py_parser: bool):
     )
     m = HEADER.search(proc.stderr)
     assert m, f"expected a diagnostic, got:\n{proc.stderr}"
-    return int(m.group(1)), int(m.group(2))
+    caret = next((l.strip() for l in proc.stderr.splitlines() if l.strip().startswith("^")), "")
+    return int(m.group(1)), int(m.group(2)), len(caret)
 
 
 def _write(tmp_path: Path, body: str) -> Path:
@@ -84,6 +93,78 @@ def test_a_binary_argument_is_the_known_gap(tmp_path):
     assert hand[0] == cpython[0], "the LINE must agree even where the column does not"
     assert hand[1] > 1, "the hand-written parser locates the operator"
     assert cpython[1] == 1, "the bridge carries no position for a BinOp"
+
+
+# --- the UNDERLINE, not only the character it starts at -------------------------------
+#
+# These four kinds agreed on the column and disagreed on how much they marked, which is why
+# the block above did not catch them: the hand-written parser stamps a sub-token of the node
+# and CPython's span is the whole node.
+#
+#     raise ValueError(x)      keyword 5   against the statement 19
+#     a ** -1                  operator 1  against the operand 2
+#     [i for i in range(5)]    bracket 1   against the comprehension 21
+#     def f() -> uint8:        keyword 3   against nothing at all, since a function spans
+#                                          lines and a span across lines carries no length
+#
+# The last row is the one to keep in mind when reading position_of: dropping the length on a
+# multi-line node is right for a SPAN and wrong for a KEYWORD, whose length is known without
+# looking at the span.
+
+
+def _program(tmp_path: Path, source: str) -> Path:
+    p = tmp_path / "main.py"
+    p.write_text(source)
+    return p
+
+
+@pytest.mark.parametrize("source", [
+    # Raise, on one line and across two: the second is where the span-based length vanished
+    # rather than being merely too long.
+    "from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 = 1\n    raise ValueError(x)\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 = 1\n    raise ValueError(\n        x)\n",
+    # Unary: the operator, not the operand it applies to.
+    "from pymcu.types import uint8\ndef main() -> None:\n    a: uint8 = 2\n    b: uint8 = a ** -1\n",
+    # ListComp: the opening bracket, not the comprehension.
+    "from pymcu.types import uint8\ndef main() -> None:\n    xs: uint8[3] = [i for i in range(5)]\n",
+    # Function, at module level and as a method. The method reaches the diagnostic through a
+    # stand-in FunctionDef that RegisterOutlinedMethod builds, so it is a second path to the
+    # same stamp and not a duplicate of the case above it.
+    #
+    # That stand-in only carries a position since the Scan.cs fix, and this test cannot see
+    # that fix: the stand-in is built in the IR generator, DOWNSTREAM of both front ends, so
+    # before it the two agreed on the same wrong answer and this case passed while covering
+    # nothing. A parity check is blind to any defect the two front ends share, in the same way
+    # the differential axis is blind to a refusal.
+    "from pymcu.types import uint8\ndef f() -> uint8:\n    x: uint8 = 1\ndef main() -> None:\n    b: uint8 = f()\n",
+    "from pymcu.types import uint8\nclass Box:\n    def __init__(self) -> None:\n        self.n: uint8 = 0\n"
+    "    def get(self) -> uint8:\n        x: uint8 = self.n\ndef main() -> None:\n    b = Box()\n    v: uint8 = b.get()\n",
+])
+def test_both_front_ends_underline_the_same_amount(tmp_path, source):
+    src = _program(tmp_path, source)
+
+    assert _where(src, py_parser=False) == _where(src, py_parser=True)
+
+
+def test_an_async_def_is_the_known_position_gap(tmp_path):
+    # CPython puts an AsyncFunctionDef at its `async` and the hand-written parser stamps the
+    # `def` six characters later. A POSITION difference, so it is not what the block above
+    # fixes, and the reason `async def` is excluded from the `def`-keyword length there:
+    # underlining three characters from the `async` would draw over `asy`, which is a worse
+    # answer than the bare caret it draws today.
+    #
+    # Pinned rather than fixed so that closing it is a decision someone makes.
+    src = _program(
+        tmp_path,
+        "from pymcu.types import uint8\nasync def get() -> uint8:\n    return 1\n"
+        "def main() -> None:\n    v: uint8 = get()\n")
+
+    hand = _where(src, py_parser=False)
+    cpython = _where(src, py_parser=True)
+
+    assert hand[0] == cpython[0], "the LINE agrees even where the column does not"
+    assert hand[1] == 7, "the hand-written parser marks the `def`"
+    assert cpython[1] == 1, "CPython marks the `async`"
 
 # --- the MESSAGE, not only the position (PyMCU#218) -----------------------------------
 #
@@ -140,8 +221,8 @@ def test_an_oversized_literal_points_at_the_literal(tmp_path):
     # comprehension, or on the newline.
     src = _write(tmp_path, "    x: uint8 = 0xFFFFFFFFFF\n")
 
-    assert _where(src, py_parser=False) == (3, 16)
-    assert _where(src, py_parser=True) == (3, 16)
+    assert _where(src, py_parser=False) == (3, 16, 12)
+    assert _where(src, py_parser=True) == (3, 16, 12)
 
 
 # --- a REFUSAL that must exist on both sides (PyMCU#221) ------------------------------
