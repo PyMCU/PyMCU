@@ -131,14 +131,34 @@ public class IterationColumnTests
     }
 
     [Fact]
-    public void RangeAsIterable_PointsAtTheArgumentThatIsNotConstant()
+    public void RangeAsIterable_IsNoLongerReachedByParenthesisingIt()
     {
-        // The first argument is a constant and the second is not, and the message is plural.
+        // This test used to pin the caret of "for-in range() argument must be a compile-time
+        // constant" and reached it by writing `for i in (range(0, n))`.
+        //
+        // That spelling reached the diagnostic only because of PyMCU#224: the bounded-loop form
+        // was selected by peeking for a bare `range` after `in`, so one parenthesis sent the
+        // loop down the general-iterable path, whose range branch accepts constants only. In
+        // Python those parentheses just group, and the CPython front end always compiled it. It
+        // now compiles through both, as the plain spelling always did.
+        //
+        // Rewritten rather than deleted because the ROUTING is the thing worth holding down.
+        // NOTE for whoever owns Iteration.cs: with this spelling corrected, I could not find
+        // any program that still reaches that range branch -- `r = range(n)`, `reversed(...)`,
+        // `enumerate(...)`, `zip(...)` and a list comprehension each hit their own handler and
+        // their own message. It may now be dead code. Not deleting it on the strength of a
+        // search that only proves I did not find one.
         const string src =
             "def main(n: uint8):\n" +
             "    for i in (range(0, n)):\n" +
             "        pass\n";
-        PointsAt(src, 2, "n))");
+
+        var prog = new Parser(new Lexer(src).Tokenize()).ParseProgram();
+        var body = Assert.IsType<Block>(prog.Functions[0].Body);
+        var loop = Assert.IsType<ForStmt>(body.Statements.Find(x => x is ForStmt));
+
+        Assert.NotNull(loop.RangeStop);
+        Assert.Null(loop.Iterable);
     }
 
     [Fact]
@@ -152,15 +172,18 @@ public class IterationColumnTests
     }
 
     [Fact]
-    public void RangeWithNoArguments_PointsAtTheCallee()
+    public void RangeWithNoArguments_IsRefusedTheSameWayWithOrWithoutParentheses()
     {
-        // There is no argument to point at, so the callee is what there is. That is the
-        // convention Parser.cs records for a CallExpr, which carries no position of its own.
-        const string src =
-            "def main():\n" +
-            "    for i in (range()):\n" +
-            "        pass\n";
-        PointsAt(src, 2, "range");
+        // Same story as above: `(range())` used to take the iterable path and get its own
+        // message. Both spellings now reach the bounded parser and are refused identically,
+        // which is the point -- the parentheses are not supposed to change anything.
+        foreach (var src in new[]
+                 {
+                     "def main():\n    for i in range():\n        pass\n",
+                     "def main():\n    for i in (range()):\n        pass\n",
+                 })
+            Assert.Throws<PyMCU.Common.SyntaxError>(
+                () => new Parser(new Lexer(src).Tokenize()).ParseProgram());
     }
 
     // ---- the iterable itself --------------------------------------------------------------
