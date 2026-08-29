@@ -12,6 +12,7 @@ Usage:  pymcu_translate.py <file.py>      -> JSON on stdout
 """
 import ast
 import json
+import re
 import sys
 
 BINOP = {
@@ -141,6 +142,36 @@ UNARY_OP_TEXT = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~", ast.Not: "not"}
 # The `def` keyword, which is what Parser stamps a FunctionDef with. Used by function_of, which
 # is called directly and never reaches the dispatch above.
 DEF_KEYWORD_LEN = 3
+
+# `async def`, both words. CPython already puts an AsyncFunctionDef at its `async`, which is
+# where Parser stamps a coroutine too now, so only the length is left to compute -- and the
+# `def` is not in the AST, so it has to come out of the source.
+ASYNC_INTRODUCER = re.compile(r"async[^\S\n]+def")
+
+
+def async_introducer_len(node):
+    """Characters from the `a` of `async` to the `f` of `def`, or None when it cannot be read.
+
+    Not the constant 9. `async   def` is valid Python and compiles here, so the gap between the
+    two words is whatever the author wrote; 9 would underline `async   d`, one character into a
+    keyword. The spelling everyone actually writes is the one where 9 is right, which is what
+    would have kept it alive.
+
+    None rather than a guess when SOURCE is unavailable or the two words are split across lines
+    by a backslash continuation: a length measured on one line and drawn on another underlines
+    whatever happens to sit there, and no underline is the better answer.
+    """
+    if not SOURCE:
+        return None
+    lineno = getattr(node, "lineno", None)
+    col = getattr(node, "col_offset", None)
+    if lineno is None or col is None:
+        return None
+    lines = SOURCE.splitlines()
+    if not 1 <= lineno <= len(lines):
+        return None
+    m = ASYNC_INTRODUCER.match(lines[lineno - 1], col)
+    return None if m is None else m.end() - col
 
 
 def derived_position(kind, node):
@@ -865,8 +896,12 @@ def function_of(node, is_async=False):
     implicit_inline = len(node.name) >= 4 and node.name.startswith("__") and node.name.endswith("__")
 
     position = position_of(node)
-    if "col" in position and not is_async:
-        position["len"] = DEF_KEYWORD_LEN
+    if "col" in position:
+        marked = async_introducer_len(node) if is_async else DEF_KEYWORD_LEN
+        if marked is None:
+            position.pop("len", None)
+        else:
+            position["len"] = marked
 
     fn = {
         "k": "Function", "name": node.name, "params": params_of(node.args),

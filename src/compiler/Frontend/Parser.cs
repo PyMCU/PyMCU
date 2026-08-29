@@ -58,9 +58,11 @@ public class Parser
             }
             else if (Check(TokenType.Identifier) && Peek().Value == "async" && PeekNext().Type == TokenType.Def)
             {
+                var (asyncTok, defTok) = (Peek(), PeekNext());
                 Advance(); // consume `async`
                 var asyncFn = ParseFunction();
                 asyncFn.IsAsync = true;
+                StampAsyncIntroducer(asyncFn, asyncTok, defTok);
                 prog.Functions.Add(asyncFn);
             }
             else if (Check(TokenType.Def) || Check(TokenType.At))
@@ -754,11 +756,13 @@ public class Parser
         // so detect it before the `def` dispatch and flag the parsed function.
         if (Check(TokenType.Identifier) && Peek().Value == "async" && PeekNext().Type == TokenType.Def)
         {
+            var (asyncTok, defTok) = (Peek(), PeekNext());
             Advance(); // consume `async`
             if (functionDepth > 0)
                 Error("Nested function definitions require the @inline decorator");
             var asyncFn = ParseFunction();
             asyncFn.IsAsync = true;
+            StampAsyncIntroducer(asyncFn, asyncTok, defTok);
             return asyncFn;
         }
 
@@ -1708,7 +1712,14 @@ public class Parser
     ///   BinaryExpr        the OPERATOR       `a // 0` marks the `//`
     ///   UnaryExpr         the OPERATOR       `-1` marks the `-`, `not a` marks the `not`
     ///   FunctionDef       the `def` KEYWORD  not the decorator above it, and not the return
-    ///                     annotation, which would read as "change this type"
+    ///                     annotation, which would read as "change this type".
+    ///                     `async def` marks BOTH WORDS, from the `a` of `async` to the `f`
+    ///                     of `def`: what is marked is the INTRODUCER of the construct, and
+    ///                     for a coroutine the introducer is two words. Marking only the
+    ///                     `def` started the underline in the middle of a compound keyword,
+    ///                     and it also disagreed with CPython, which puts an AsyncFunctionDef
+    ///                     at its `async`. The length is measured from the two tokens rather
+    ///                     than assumed to be 9: `async   def` is valid Python and compiles.
     ///   BreakStmt         its own keyword    a keyword statement IS its token
     ///   ContinueStmt      its own keyword
     ///   RaiseStmt         its own keyword
@@ -1749,6 +1760,25 @@ public class Parser
         node.Column = at.Column;
         node.Length = at.Length;
         return node;
+    }
+
+    /// Re-stamps a coroutine over `async def`, both words, replacing the `def`-only stamp
+    /// ParseFunction applied.
+    ///
+    /// The length is MEASURED from the two tokens, not written as 9. `async   def` is valid
+    /// Python and compiles here, and a fixed 9 would have underlined `async   d`: one
+    /// character into a keyword and stopping short of it. The spelling everyone writes is the
+    /// one where the constant happens to be right, which is exactly why it would have survived.
+    private static void StampAsyncIntroducer(FunctionDef fn, Token asyncTok, Token defTok)
+    {
+        fn.Line = asyncTok.Line;
+        fn.Column = asyncTok.Column;
+        // Only when both words are on one line. A backslash continuation between them would
+        // make the span cross lines, and a length measured on one line and drawn on another
+        // underlines whatever happens to sit there.
+        fn.Length = defTok.Line == asyncTok.Line
+            ? defTok.Column + defTok.Length - asyncTok.Column
+            : asyncTok.Length;
     }
 
     private Expression ParseLogicalOr()
