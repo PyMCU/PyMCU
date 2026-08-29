@@ -61,15 +61,32 @@ public class ExprDiagnosticColumnTests
     }
 
     [Fact]
-    public void AnExponentThatIsAUnaryExpressionStillReportsNoColumn()
+    public void AnExponentThatIsAUnaryExpressionPointsAtItsOperator()
     {
-        // `a ** -1` blames the exponent, which is a UnaryExpr. That node type is not stamped,
-        // so there is no column and none is invented. Written to FLIP: when unary expressions
-        // are stamped this fails, and the fix is to assert the real column, not to restore the
-        // silence. Third guard of this shape in the issue; the previous two both collected.
+        //          123456789012345678901
+        // line 4: "    b: uint8 = a ** -1"  -- the `-` of the exponent is at column 21
+        //
+        // Written asserting no column, because UnaryExpr was unstamped, with the instruction
+        // that when unary expressions were stamped the fix was to assert the real column and
+        // not to restore the silence. They were stamped in the next change and this failed.
+        // Third guard of this shape to collect, and the one that closes the cluster: with it,
+        // every diagnostic in this file points somewhere real.
         var ex = Fails("    a: uint8 = 2\n    b: uint8 = a ** -1\n");
 
         Assert.Contains("negative exponent", ex.Message);
+        Assert.Equal(4, ex.Line);
+        Assert.Equal(21, ex.Column);
+    }
+
+    [Fact]
+    public void AwaitOutsideAnAsyncDefStillReportsNoColumn()
+    {
+        // The guard moved onto a type that still has none: AwaitExpr. Same instruction as the
+        // three before it -- when this fails, assert the column rather than restore the
+        // silence. The chain is what keeps a stamped type from quietly going unnoticed.
+        var ex = Fails("    x: uint8 = await something()\n");
+
+        Assert.Contains("await", ex.Message);
         Assert.False(ex.HasColumn);
     }
 }
