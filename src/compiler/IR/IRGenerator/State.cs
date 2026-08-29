@@ -463,6 +463,40 @@ public partial class IRGenerator
         return new("CompileError", message, line) { File = LocatedFile };
     }
 
+    /// Lowers a parameter's default-value expression under the CALLEE's location.
+    ///
+    /// The rest of argument binding runs under the caller's, because the nodes it holds are
+    /// the caller's. A default value is the one exception: it is text in the callee's file, so
+    /// a diagnostic raised inside it has to name that file, and the line it names comes from
+    /// the default's own node rather than from the call. Both halves move together and move
+    /// back together. Issue #227.
+    private Val VisitDefaultValueUnderCallee(PyMCU.Frontend.Expression defaultValue,
+                                             string? calleeSourcePath)
+    {
+        if (calleeSourcePath == null) return VisitExpression(defaultValue);
+
+        string savedPath = currentSourcePath;
+        string savedFile = currentSourceFile;
+        bool savedTracks = inlineTracksCalleeLine;
+        int savedCalleeLine = inlineCalleeStmtLine;
+
+        currentSourcePath = calleeSourcePath;
+        currentSourceFile = SourceFileLabel(calleeSourcePath);
+        inlineTracksCalleeLine = true;
+        inlineCalleeStmtLine = defaultValue.Line;
+        try
+        {
+            return VisitExpression(defaultValue);
+        }
+        finally
+        {
+            currentSourcePath = savedPath;
+            currentSourceFile = savedFile;
+            inlineTracksCalleeLine = savedTracks;
+            inlineCalleeStmtLine = savedCalleeLine;
+        }
+    }
+
     /// The file to report against, or null to mean the entry file. The line numbers this
     /// generator carries belong to whichever module is being lowered, so a diagnostic that does
     /// not also say WHICH file states a line of one file against the name of another.

@@ -1321,22 +1321,22 @@ public partial class IRGenerator
         string savedSourceFile = currentSourceFile;
         bool savedTracksCallee = inlineTracksCalleeLine;
         int savedCalleeLine = inlineCalleeStmtLine;
-        if (func != null
+        // HELD, not applied. Everything between here and the body walk is argument binding,
+        // and the only source nodes it has in hand are the CALLER's: the call expression, its
+        // arguments and its keywords. Moving the file label here moved one half of the pair,
+        // so the label named the callee while every line still came from the caller and nine
+        // diagnostics reported a location that exists in neither program. Measured on the
+        // repro in #227, all nine landed on `helper.py:7`, a blank line, and four of them drew
+        // a caret at column 16 of it. Leaving both halves alone is coherent by induction: the
+        // pair in effect for the calling statement stays in effect while its arguments bind,
+        // and a nested expansion inherits the OUTER callee's pair, which is coherent too.
+        // Issue #227.
+        string? calleeSourcePath =
+            func != null
             && functionSourcePath.TryGetValue(func, out var calleePath)
-            && !string.IsNullOrEmpty(calleePath))
-        {
-            currentSourcePath = calleePath;
-            currentSourceFile = SourceFileLabel(calleePath);
-            inlineTracksCalleeLine = true;
-            inlineCalleeStmtLine = 0;
-        }
-        else
-        {
-            // Every frame decides for itself. A nested expansion into a body with no path of
-            // its own must not inherit the outer frame's tracking, or the line follows a file
-            // the diagnostic will not name.
-            inlineTracksCalleeLine = false;
-        }
+            && !string.IsNullOrEmpty(calleePath)
+                ? calleePath
+                : null;
 
         string savedPrefix = currentInlinePrefix;
         currentInlinePrefix = newPrefix;
@@ -1908,7 +1908,13 @@ public partial class IRGenerator
                     noneValuedNames.Add(paramName);
                     continue;
                 }
-                Val defaultVal = VisitExpression(func.Params[i].DefaultValue!);
+                // A default value is written in the CALLEE's file, so this one expression
+                // is lowered under the callee's location. Without it the pair inverts rather
+                // than being repaired: a diagnostic about `def f(n: const[uint8] = REG.value)`
+                // would carry the callee's line under the caller's file name, which is the
+                // same non-existent location the other way round.
+                Val defaultVal = VisitDefaultValueUnderCallee(
+                    func.Params[i].DefaultValue!, calleeSourcePath);
 
                 if (IsConstType(func.Params[i].Type))
                 {
@@ -1947,6 +1953,25 @@ public partial class IRGenerator
                     $"missing required argument '{func.Params[i].Name}' in call to {what} " +
                     $"(expects {func.Params.Count - paramOffset} argument(s))", expr.Callee);
             }
+        }
+
+        // The pair moves HERE, both halves together, because this is where the callee's lines
+        // start. `inlineCalleeStmtLine` stays 0 until VisitStatement walks the first body
+        // statement, and until then `UserError` falls back to `currentStmtLine`, which is the
+        // caller's line. That fallback is why the file must not move ahead of it.
+        if (calleeSourcePath != null)
+        {
+            currentSourcePath = calleeSourcePath;
+            currentSourceFile = SourceFileLabel(calleeSourcePath);
+            inlineTracksCalleeLine = true;
+            inlineCalleeStmtLine = 0;
+        }
+        else
+        {
+            // Every frame decides for itself. A nested expansion into a body with no path of
+            // its own must not inherit the outer frame's tracking, or the line follows a file
+            // the diagnostic will not name.
+            inlineTracksCalleeLine = false;
         }
 
         int savedLastLine = lastLine;
