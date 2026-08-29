@@ -39,6 +39,46 @@ public partial class IRGenerator
                     ? currentFunction + "." + bindTgt.Name
                     : bindTgt.Name));
 
+        // Rebinding the name of a module-level `def`. The name is bound at compile time and
+        // every call through it lowers to a direct CALL, so the assignment cannot change what
+        // a call means -- and nothing refused it, so the program compiled with the name
+        // meaning two different things at once. Measured on atmega328p:
+        //
+        //   def helper() -> uint8: return 1
+        //   def main() -> None:
+        //       global helper
+        //       helper = 5
+        //       GPIOR1.value = helper()   # CALL helper -> 1
+        //       GPIOR2.value = helper     # LDI R24, 5  -> 5
+        //
+        // CPython raises TypeError on that call, so neither reading agrees with Python. The
+        // function-valued form is worse than the value one: `helper = other` through `global`
+        // silently redirects the call to `other`, which is the dispatch table the sibling
+        // check below exists to refuse and which reached it only through an alias name.
+        //
+        // Only the MODULE-LEVEL binding is refused. `helper = 5` inside a function with no
+        // `global` is an ordinary local shadowing the name, exactly as in Python, and keeps
+        // compiling to the value.
+        // Two ways to reach the module-level binding. `global name` inside a function is the
+        // explicit one. The other is an assignment written at module level, which cannot be
+        // recognised by scope here because those statements are lowered INTO main's body, so
+        // it is recognised by its effect instead: the scan records a module-level assignment
+        // in mutableGlobals, and a name that is both a module global and a function is the
+        // signature of this bug. A function-local shadow is never recorded there.
+        if (stmt.Target is VariableExpr fnRebindTgt
+            && string.IsNullOrEmpty(currentInlinePrefix)
+            && (currentFunctionGlobals.Contains(fnRebindTgt.Name)
+                || mutableGlobals.ContainsKey(currentModulePrefix + fnRebindTgt.Name)))
+        {
+            string rebindResolved = ResolveCallee(fnRebindTgt.Name);
+            if (functionParams.ContainsKey(rebindResolved) || inlineFunctions.ContainsKey(rebindResolved))
+                throw UserError(
+                    $"'{fnRebindTgt.Name}' is bound to a function at compile time, so it cannot be "
+                    + "rebound. A call through the name is lowered to a direct call and never reads "
+                    + "the assignment, so the name would mean the function where it is called and "
+                    + "the new value everywhere else. Give the value a different name.");
+        }
+
         // `f = a` where `a` is a function: bind the NAME, do not evaluate it as a value. A
         // function could be passed as a Callable argument but not stored, and `f()` then said
         // "'f' is not callable (it is a value, not a function)" -- which is what the compiler
