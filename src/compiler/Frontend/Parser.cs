@@ -2417,6 +2417,10 @@ public class Parser
 
         if (Match(TokenType.LBracket))
         {
+            // The construct's own opening bracket, kept for Located() below. A list
+            // comprehension is a combining node: its position is the `[` that starts it,
+            // which is also what CPython's col_offset gives, so the two front ends agree.
+            Token openBracket = Previous();
             if (Check(TokenType.RBracket))
             {
                 Advance();
@@ -2449,7 +2453,9 @@ public class Parser
                 }
 
                 Consume(TokenType.RBracket, "Expected ']'");
-                return new ListCompExpr(first, varTok.Value, iterable, var2Name, iterable2, filter);
+                return Located(
+                    new ListCompExpr(first, varTok.Value, iterable, var2Name, iterable2, filter),
+                    openBracket);
             }
 
             var lelems = new List<Expression> { first };

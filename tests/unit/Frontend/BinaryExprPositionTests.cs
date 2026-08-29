@@ -202,4 +202,19 @@ public class BinaryExprPositionTests
         Assert.Equal(2, sl.Line);
         Assert.Equal(column, sl.Column);
     }
+
+    [Theory]
+    //            1234567890123
+    [InlineData("    x = [v for v in ys]\n", 9)]         // the `[` that starts it
+    [InlineData("    x = [v for v in ys if v]\n", 9)]
+    public void AListComprehensionIsLocatedAtItsOpeningBracket(string body, int column)
+    {
+        // A combining node, so its position is a decision: the `[` is where the construct
+        // starts and is also what CPython's col_offset gives, so the two front ends agree
+        // without deriving anything.
+        var lc = Assert.IsType<ListCompExpr>(FirstValue(body));
+
+        Assert.Equal(2, lc.Line);
+        Assert.Equal(column, lc.Column);
+    }
 }
