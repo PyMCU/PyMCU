@@ -100,16 +100,16 @@ def line_of(node):
 # a True/False/None is the start of what was written, which is exactly where the hand-written
 # parser stamps it (Parser.Leaf).
 #
-# ListComp is here rather than in DERIVED_KINDS because CPython's col_offset for it is the
-# opening `[`, which is exactly where Parser stamps it: carried, not computed.
+# Break and Continue are here because their CPython node IS the keyword: start and span both
+# agree with the token the hand-written parser stamps.
 #
 # ast.BinOp is deliberately absent. CPython's col_offset for a BinOp is the start of the WHOLE
 # expression, while the hand-written parser stamps a binary expression at its OPERATOR (`a // 0`
 # gives the `//`). Carrying it would not close a divergence, it would open one in the other
 # direction, with the two front ends naming different characters for the same error. Adding a
 # kind here means first checking that both front ends locate it the same way.
-POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp", "Unary",
-                     "Break", "Continue", "Raise", "Function")
+POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
+                     "Break", "Continue")
 
 # Kinds whose position is not CPython's col_offset but is EXACTLY derivable from it, so parity
 # with the hand-written parser is still reachable. Each entry says which part to mark and how
@@ -120,11 +120,43 @@ POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None", "ListComp", "U
 #           end_col_offset, so it starts at end_col_offset - len(attr).
 #   Slice   the first colon.   CPython gives the start of the slice content; the colon sits
 #           immediately after `lower`, or at the slice's own start when there is no lower.
-DERIVED_KINDS = ("Member", "Slice")
+#
+# The three below start at CPython's col_offset and only their LENGTH has to be computed. They
+# were in POSITIONED_KINDS, where the column matched and the underline did not: the hand-written
+# parser marks a SUB-TOKEN of the node (a keyword, an operator, a bracket) and CPython's span is
+# the whole node, so `raise ValueError(x)` came out underlined for 19 characters against the
+# other front end's 5. Where the node also spans lines, position_of dropped the length entirely
+# and the underline shrank to one character instead. Neither is a wrong character to point AT,
+# which is why the column-only parity tests did not see it.
+#
+#   Raise     the `raise` keyword, 5.
+#   ListComp  the opening `[`, 1.
+#   Unary     the operator, whose length is its own spelling: `not a` marks `not`.
+DERIVED_KINDS = ("Member", "Slice", "Raise", "ListComp", "Unary")
+
+# The operator spellings, for Unary above. Parser.cs's decision table is the authority:
+# "UnaryExpr the OPERATOR -- `-1` marks the `-`, `not a` marks the `not`".
+UNARY_OP_TEXT = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~", ast.Not: "not"}
+
+# The `def` keyword, which is what Parser stamps a FunctionDef with. Used by function_of, which
+# is called directly and never reaches the dispatch above.
+DEF_KEYWORD_LEN = 3
 
 
 def derived_position(kind, node):
     """The 1-based column and length for a kind whose position CPython does not give directly."""
+    if kind in ("Raise", "ListComp", "Unary"):
+        col = getattr(node, "col_offset", None)
+        if col is None:
+            return {}
+        if kind == "Raise":
+            return {"col": col + 1, "len": 5}
+        if kind == "ListComp":
+            return {"col": col + 1, "len": 1}
+        op = UNARY_OP_TEXT.get(type(getattr(node, "op", None)))
+        # An operator this table does not know would otherwise be underlined for a length
+        # invented here. Fall back to the column alone, which is the honest half.
+        return {"col": col + 1} if op is None else {"col": col + 1, "len": len(op)}
     if kind == "Member":
         end = getattr(node, "end_col_offset", None)
         name = getattr(node, "attr", None)
@@ -832,6 +864,10 @@ def function_of(node, is_async=False):
     return_type = annotation_of(node.returns) or "void"
     implicit_inline = len(node.name) >= 4 and node.name.startswith("__") and node.name.endswith("__")
 
+    position = position_of(node)
+    if "col" in position and not is_async:
+        position["len"] = DEF_KEYWORD_LEN
+
     fn = {
         "k": "Function", "name": node.name, "params": params_of(node.args),
         "returnType": return_type, "body": _body_of(node),
@@ -844,7 +880,19 @@ def function_of(node, is_async=False):
         # stmt(), so the position stamping there does not reach it and has to be applied
         # here. CPython puts a FunctionDef at its `def`, with decorators in a separate
         # list, which is where Parser stamps it too.
-        **position_of(node),
+        #
+        # The length is the `def` keyword and is written here rather than taken from the
+        # node: a function ALWAYS spans more than one line, so position_of dropped the
+        # length every time and the underline was one character against the other front
+        # end's three.
+        #
+        # `async def` is left alone, and it is a KNOWN GAP, not an oversight. CPython puts
+        # an AsyncFunctionDef at its `async` and the hand-written parser stamps the `def`
+        # six characters later, so the two front ends already name different characters.
+        # Underlining three from the `async` would draw `^~~` over `asy`: a length fix
+        # applied on top of a position divergence makes the output worse, not better.
+        # Pinned by test_an_async_def_is_the_known_position_gap.
+        **position,
     }
     for dec in node.decorator_list:
         apply_decorator(fn, dec, node)
