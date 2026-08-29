@@ -105,21 +105,47 @@ public class StatementDiagnosticColumnTests
     }
 
     [Fact]
-    public void AMissingReturnOnAMETHODStillReportsNoColumn()
+    public void AMissingReturnOnAMethodPointsAtTheMethodsOwnDef()
     {
-        // Not a decision, a gap, and it is downstream of the parser: the AST carries the
-        // method at L5 C5 (verified directly), but the node that reaches VisitFunction has
-        // no position, so something in the class path replaces or copies it and drops the
-        // stamp. That path is in Scan.cs, which this change deliberately does not touch.
+        // The flip of the guard this test used to be. An outline-safe method is not lowered as
+        // the node the user wrote: RegisterOutlinedMethod builds a stand-in FunctionDef whose
+        // fields are the instance's, and the stand-in did not carry the position.
         //
-        // Written to FLIP: when the class path preserves the position this fails, and the fix
-        // is to assert column 5, not to restore the silence.
+        //          12345678
+        // line 5: "    def get(self) -> uint8:"  -- the `def` starts at column 5
+        //
+        // The LINE is the part worth pinning. With no column, UserError falls back to lastLine,
+        // so this used to report line 6, the last statement of the body: not a withheld
+        // location but a plausible wrong one. The old guard asserted only !HasColumn and would
+        // have passed whatever the line said.
         var ex = Fails(
             "class Box:\n    def __init__(self) -> None:\n        self.n: uint8 = 0\n" +
             "    def get(self) -> uint8:\n        x: uint8 = self.n\n" +
             "def main() -> None:\n    b = Box()\n    v: uint8 = b.get()\n");
 
         Assert.Contains("can reach the end of its body", ex.Message);
-        Assert.False(ex.HasColumn);
+        Assert.Equal(5, ex.Line);
+        Assert.Equal(5, ex.Column);
+        Assert.Equal(3, ex.Length);   // the keyword itself, as for a top-level def
+    }
+
+    [Fact]
+    public void AMethodThatIsNotOutlinedKeepsReportingItsOwnDef()
+    {
+        // The invariant beside the fix. A method with no `self` is registered with the node the
+        // user wrote (Scan.cs passes `func`, not a stand-in), so it never had the gap, and a
+        // change to the outline path must not disturb it. Without this, a fix that moved the
+        // position onto the wrong node would look correct from the test above alone.
+        //
+        //          12345678
+        // line 3: "    def make() -> uint8:"
+        var ex = Fails(
+            "class Box:\n    def make() -> uint8:\n        x: uint8 = 1\n" +
+            "def main() -> None:\n    v: uint8 = Box.make()\n");
+
+        Assert.Contains("can reach the end of its body", ex.Message);
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(5, ex.Column);
+        Assert.Equal(3, ex.Length);
     }
 }
