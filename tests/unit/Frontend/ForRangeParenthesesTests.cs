@@ -95,4 +95,35 @@ public class ForRangeParenthesesTests
         Assert.Null(f.RangeStop);
         Assert.NotNull(f.Iterable);
     }
+
+    // ---- PyMCU#228: the trailing comma, which is legal in every Python call --------------
+
+    [Theory]
+    [InlineData("    for i in range(n,):\n        pass\n", 1)]
+    [InlineData("    for i in range(1, n,):\n        pass\n", 2)]
+    [InlineData("    for i in range(0, n, 2,):\n        pass\n", 3)]
+    [InlineData("    for i in (range(0, n, 2,)):\n        pass\n", 3)]
+    public void ATrailingCommaEndsTheArgumentListLikeAnyOtherCall(string body, int args)
+    {
+        // `len(xs,)` always compiled, because ParsePostfix checks for `)` after a comma. This
+        // header parses its own argument list and did not, so the same comma was accepted in
+        // one call and refused in another, in the same program.
+        var f = FirstFor(body);
+
+        Assert.NotNull(f.RangeStop);
+        if (args >= 2) Assert.NotNull(f.RangeStart);
+        if (args >= 3) Assert.NotNull(f.RangeStep);
+    }
+
+    [Theory]
+    // A comma with nothing in front of it, and a doubled comma, stay errors. The trailing-comma
+    // rule ends a list that has already started; it does not make commas optional.
+    [InlineData("    for i in range(,):\n        pass\n")]
+    [InlineData("    for i in range(n,,):\n        pass\n")]
+    [InlineData("    for i in range():\n        pass\n")]
+    public void ACommaWithNoArgumentIsStillAnError(string body)
+    {
+        Assert.Throws<PyMCU.Common.SyntaxError>(
+            () => new Parser(new Lexer("def main():\n" + body).Tokenize()).ParseProgram());
+    }
 }
