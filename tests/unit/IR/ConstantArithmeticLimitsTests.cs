@@ -21,6 +21,81 @@ public class ConstantArithmeticLimitsTests
         return new IRGenerator().Generate(ast, new Dictionary<string, ProgramNode>(), new DeviceConfig { Arch = "avr" });
     }
 
+    /// <summary>
+    /// The constant a function returns, once folding and narrowing have both run. The
+    /// narrowing to the declared width happens in the optimizer, not in the IR generator,
+    /// so a raw Gen() would see int8 -128 // -1 as the un-narrowed 128.
+    /// </summary>
+    private static int Returned(string src)
+    {
+        var ir = Optimizer.Optimize(Gen(src));
+        foreach (var f in ir.Functions)
+            foreach (var ins in f.Body)
+                if (ins is Return { Value: Constant c }) return c.Value;
+        throw new Xunit.Sdk.XunitException("no folded constant was returned; it stayed a run-time expression");
+    }
+
+    // ─── #223: MIN // -1 folds to what the chip computes ───────────────────
+    //
+    // The oracle here is not a reading of Python's semantics but the compiler's own run-time
+    // answer: with operands the folder cannot see through, an atmega328p produces -2147483648
+    // for int32 MIN // -1 and 0 for MIN % -1. int8 and int16 already folded to their own wrap.
+    // Only int32 threw, because its true quotient 2147483648 does not fit the int the fold was
+    // computed in, and C# raises OverflowException on int.MinValue / -1.
+
+    [Fact]
+    public void TheInt32Floor_DividedByMinusOne_FoldsToWhatTheChipComputes()
+    {
+        Assert.Equal(-2147483648, Returned(
+            "def main() -> int32:\n" +
+            "    q: int32 = -2147483648 // -1\n" +
+            "    return q\n"));
+    }
+
+    [Fact]
+    public void TheInt32Floor_ModuloMinusOne_FoldsToZero()
+    {
+        Assert.Equal(0, Returned(
+            "def main() -> int32:\n" +
+            "    r: int32 = -2147483648 % -1\n" +
+            "    return r\n"));
+    }
+
+    [Fact]
+    public void TheSameThroughPropagatedVariables_FoldsInTheOptimizerToo()
+    {
+        // A second fold site, reached only once constant propagation has replaced the
+        // variables with their values. Fixing the IR generator alone left this one throwing,
+        // so the reproducer in the issue would have passed while the defect stayed.
+        Assert.Equal(-2147483648, Returned(
+            "def main() -> int32:\n" +
+            "    a: int32 = -2147483648\n" +
+            "    b: int32 = -1\n" +
+            "    q: int32 = a // b\n" +
+            "    return q\n"));
+        Assert.Equal(0, Returned(
+            "def main() -> int32:\n" +
+            "    a: int32 = -2147483648\n" +
+            "    b: int32 = -1\n" +
+            "    r: int32 = a % b\n" +
+            "    return r\n"));
+    }
+
+    [Fact]
+    public void TheNarrowerFloors_FoldToTheirOwnWrap()
+    {
+        // These never threw, and they are why the int32 answer is a wrap rather than a
+        // diagnostic: each folds to exactly what the same expression executes.
+        Assert.Equal(-128, Returned(
+            "def main() -> int8:\n    q: int8 = -128 // -1\n    return q\n"));
+        Assert.Equal(0, Returned(
+            "def main() -> int8:\n    r: int8 = -128 % -1\n    return r\n"));
+        Assert.Equal(-32768, Returned(
+            "def main() -> int16:\n    q: int16 = -32768 // -1\n    return q\n"));
+        Assert.Equal(0, Returned(
+            "def main() -> int16:\n    r: int16 = -32768 % -1\n    return r\n"));
+    }
+
     [Fact]
     public void DividingARunTimeValueByLiteralZero_IsReported()
     {
