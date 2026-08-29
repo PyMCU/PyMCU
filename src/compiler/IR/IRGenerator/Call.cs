@@ -590,6 +590,9 @@ public partial class IRGenerator
             }
         }
 
+        // One check for every builtin, before the dispatch below. Issue #226.
+        expr = CheckBuiltinKeywords(expr, callee);
+
         if (callee == "len") return EmitLenBuiltin(expr);
         if (callee == "int_from_bytes") return EmitIntFromBytesBuiltin(expr);
         if (callee == "abs") return EmitAbsBuiltin(expr);
@@ -3821,6 +3824,124 @@ public partial class IRGenerator
     /// The shape it hides in is a near miss on a keyword that exists, so both the accepted set
     /// and the suggestion are worth the words. CPython raises TypeError here.
     /// </summary>
+
+    /// What each builtin does with a keyword argument: the names CPython takes for a
+    /// POSITIONAL parameter, the ones PyMCU implements, and the ones CPython has that PyMCU
+    /// does not. Anything absent from all three is a name CPython does not have either.
+    ///
+    /// Measured against CPython 3.14 rather than recalled, because the answer is not guessable:
+    /// `len`, `abs`, `ord`, `chr`, `hex`, `bin`, `divmod`, `any`, `all`, `bool`, `float` and
+    /// `range` are positional-ONLY, so `len(obj=xs)` and `range(stop=3)` are TypeErrors in
+    /// CPython too, while `pow(base=2, exp=3)`, `str(object=1)` and `enumerate(xs, start=1)`
+    /// all run.
+    ///
+    /// A builtin absent from this table is one with no keywords in either language, and its
+    /// call is left exactly as it was.
+    /// The names the dispatch in VisitCall answers itself. The keyword check applies to these
+    /// and to the numeric casts, and to nothing else: everything else is a user function, a
+    /// method or a constructor, and binds its keywords by its own parameter names.
+    private static readonly HashSet<string> BuiltinDispatchNames = new(StringComparer.Ordinal)
+    {
+        "len", "abs", "min", "max", "ord", "chr", "sum", "any", "all", "bool",
+        "hex", "bin", "str", "pow", "divmod", "print", "range", "enumerate", "zip",
+    };
+
+    private static readonly Dictionary<string, (string[] Positional, string[] Done, string[] NotYet)>
+        BuiltinKeywords = new(StringComparer.Ordinal)
+    {
+        ["min"]       = ([], ["key"], ["default"]),
+        ["max"]       = ([], ["key"], ["default"]),
+        ["print"]     = ([], ["sep", "end"], ["file", "flush"]),
+        ["pow"]       = (["base", "exp"], [], ["mod"]),
+        ["str"]       = (["object"], [], ["encoding", "errors"]),
+        ["enumerate"] = (["iterable"], [], ["start"]),
+        ["sum"]       = ([], [], ["start"]),
+        ["zip"]       = ([], [], ["strict"]),
+        ["int"]       = ([], [], ["base"]),
+    };
+
+    /// Answers a keyword argument to a builtin, and returns the call to dispatch.
+    ///
+    /// Every builtin used to let a keyword fall through to its own emitter, which then reported
+    /// it in whatever vocabulary that emitter had: `abs(x=1)` as the internal "Unknown
+    /// Expression type: KeywordArgExpr", `enumerate(xs, start=1)` as a complaint about the
+    /// ITERABLE (a correct list literal), and `range(stop=3)` as an argument that is not a
+    /// compile-time constant when the argument is the literal 3. One check here replaces a
+    /// carve-out per builtin, and the ones that already had a carve-out (`print`, `min`, `max`)
+    /// keep their own wording for the keywords they DO take.
+    ///
+    /// Three answers, and the third is why naming the keyword is not enough on its own. A name
+    /// CPython does not have is the reader's typo. A name it DOES have is PyMCU's gap, and
+    /// calling that "unknown" tells the reader their Python is wrong when it is not:
+    /// `min(default=0)` and `print(flush=True)` were both answered that way.
+    private CallExpr CheckBuiltinKeywords(CallExpr expr, string callee)
+    {
+        if (!expr.Args.Any(a => a is KeywordArgExpr)) return expr;
+
+        // Only the builtins. A user function, a method or a constructor binds its keywords by
+        // its own parameter names through ReorderCallArgs, and answering for those here would
+        // refuse every keyword argument in the language.
+        if (!BuiltinDispatchNames.Contains(callee) && !CastTypes.ContainsKey(callee)) return expr;
+
+        if (!BuiltinKeywords.TryGetValue(callee, out var spec))
+        {
+            // A builtin with no keywords in either language, so any keyword is a typo and there
+            // is nothing it could have meant.
+            foreach (var a in expr.Args)
+                if (a is KeywordArgExpr bad)
+                    throw UserError(
+                        $"unknown keyword argument '{bad.Key}' in call to '{callee}()': it takes "
+                        + "no keyword arguments in Python either.", bad);
+            return expr;
+        }
+
+        // A keyword naming a POSITIONAL parameter is the same call spelled with names, so it is
+        // moved into place and the emitters below never learn the difference.
+        var positional = new List<Expression>();
+        var byName = new Dictionary<string, Expression>(StringComparer.Ordinal);
+        var kept = new List<Expression>();
+        foreach (var a in expr.Args)
+        {
+            if (a is not KeywordArgExpr kw) { positional.Add(a); continue; }
+            if (spec.Done.Contains(kw.Key)) { kept.Add(kw); continue; }
+            if (spec.NotYet.Contains(kw.Key))
+                throw UserError(
+                    $"'{kw.Key}' is a keyword argument of {callee}() in Python, and PyMCU does "
+                    + $"not implement it yet. The rest of {callee}() works; only this argument "
+                    + "does not.", kw);
+            if (!spec.Positional.Contains(kw.Key))
+            {
+                // The names Python gives this builtin, not the ones PyMCU implements: the
+                // reader is being told what they could have meant, and a name PyMCU does not
+                // implement yet still answers for itself above.
+                string[] taken = [.. spec.Positional, .. spec.Done, .. spec.NotYet];
+                string near = NearestName(taken, kw.Key);
+                throw UserError(
+                    $"unknown keyword argument '{kw.Key}' in call to '{callee}()': the keywords "
+                    + $"{callee}() has are " + string.Join(" and ", taken.Select(t => $"'{t}'"))
+                    + (near.Length > 0 ? $". Did you mean '{near}'?" : "."),
+                    kw);
+            }
+
+            if (!byName.TryAdd(kw.Key, kw.Value))
+                throw UserError(
+                    $"keyword argument '{kw.Key}' repeated in call to '{callee}()'", kw);
+        }
+
+        if (byName.Count == 0) return expr;
+
+        var ordered = new List<Expression>(positional);
+        for (int i = positional.Count; i < spec.Positional.Length; i++)
+            if (byName.TryGetValue(spec.Positional[i], out var v)) ordered.Add(v);
+        foreach (var name in spec.Positional.Take(positional.Count))
+            if (byName.ContainsKey(name))
+                throw UserError(
+                    $"multiple values for argument '{name}' in call to '{callee}()'", expr.Callee);
+
+        ordered.AddRange(kept);
+        return new CallExpr(expr.Callee, ordered) { Line = expr.Line };
+    }
+
     private void RefuseUnknownKeyword(
         string callee, string key, IReadOnlyList<string> accepted, Expression at)
     {

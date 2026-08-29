@@ -545,6 +545,13 @@ public partial class IRGenerator
 
             if (iter is CallExpr call && call.Callee is VariableExpr calleeVar)
             {
+                // The same check the expression dispatch runs. enumerate(), zip() and range()
+                // reach the compiler as the ITERABLE of a `for` and never pass through
+                // EmitBuiltinCall, so without this line their keywords fall through to the
+                // lowerings below and are reported as something about the argument.
+                call = CheckBuiltinKeywords(call, calleeVar.Name);
+                iter = call;
+
                 if (calleeVar.Name == "range")
                 {
                     int? EvalConst(Expression e)
