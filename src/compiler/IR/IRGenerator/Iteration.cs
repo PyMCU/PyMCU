@@ -277,6 +277,12 @@ public partial class IRGenerator
                         constantVariables[varKey] = il.Value;
                         EmitUnrolledIteration(stmt.Body, lpBrk);
                     }
+                    // Deliberately unlocated. `elem` is the CALLER's literal, reached by
+                    // resolving the parameter, while this diagnostic is reported against the
+                    // callee's file and line. ASTNode carries no file, so pointing at the
+                    // element would state main.py's column against helper.py's line: a location
+                    // that does not exist. Measured, not assumed. Same rule at the two other
+                    // resolved-by-name sites below (the dict/set walk and enumerate()).
                     else throw UserError("for-in list iterable elements must be compile-time integer constants.");
                 }
                 if (lpBrk.Length > 0) Emit(new Label(lpBrk));
@@ -331,20 +337,27 @@ public partial class IRGenerator
                             throw UserError(
                                 $"'for {stmt.VarName}, {stmt.Var2Name} in ...' unpacks two names from each " +
                                 "element, so every element has to be a pair like (1, 2). This one is not a " +
-                                $"pair, so there is nothing to give {stmt.Var2Name}.");
+                                $"pair, so there is nothing to give {stmt.Var2Name}.", elem);
 
                         var parts = elem is ListExpr pl ? pl.Elements : ((TupleExpr)elem).Elements;
                         if (parts.Count != 2)
                             throw UserError(
                                 $"'for {stmt.VarName}, {stmt.Var2Name} in ...' unpacks two names, and this " +
-                                $"element has {parts.Count}. Every element has to carry exactly two values.");
+                                $"element has {parts.Count}. Every element has to carry exactly two values.",
+                                elem);
 
-                        if (!TryEvalConstElement(parts[0], out int pv0)
-                            || !TryEvalConstElement(parts[1], out int pv1))
+                        // Both are evaluated before the check so the diagnostic can point at
+                        // WHICH of the two is not a constant. Short-circuiting the || would
+                        // leave the second unevaluated and the caret with nothing to choose
+                        // between.
+                        bool pairOk0 = TryEvalConstElement(parts[0], out int pv0);
+                        bool pairOk1 = TryEvalConstElement(parts[1], out int pv1);
+                        if (!pairOk0 || !pairOk1)
                             throw UserError(
                                 "for-in over a list of pairs unrolls at compile time, so both values in " +
                                 "each pair have to be integer constants. Read the run-time value inside " +
-                                "the body instead.");
+                                "the body instead.",
+                                pairOk0 ? parts[1] : parts[0]);
 
                         constantVariables[varKey] = pv0;
                         constantVariables[varKey2] = pv1;
@@ -364,8 +377,9 @@ public partial class IRGenerator
                         throw UserError(
                             $"each element here is a pair, and '{stmt.VarName}' is one name, so there is " +
                             $"nowhere to put the second value. Write 'for {stmt.VarName}, second in ...' to " +
-                            "unpack both.");
-                    else throw UserError("for-in list/tuple iterable elements must be compile-time integer constants.");
+                            "unpack both.", elem);
+                    else throw UserError(
+                        "for-in list/tuple iterable elements must be compile-time integer constants.", elem);
                 }
                 if (llBrk.Length > 0) Emit(new Label(llBrk));
 
@@ -407,6 +421,12 @@ public partial class IRGenerator
                 List<(Expression Key, Expression Value)>? dsPairs = null;  // two, from items()
                 string dsWhat = "";
 
+                // True when the entries came from a literal written at the `for`. A name
+                // resolved to a binding may have been written in another module, and a node
+                // carries no file, so blaming one of those entries would put this file's line
+                // against that file's column. See the note at the list-parameter site above.
+                bool dsWrittenHere = iter is DictExpr or SetExpr;
+
                 if (DictOf(iter) is { } dIter)
                 {
                     dsElems = dIter.Entries.Select(en => en.Key).ToList();
@@ -428,7 +448,8 @@ public partial class IRGenerator
                         + $"Write the values as a list to walk them in order (`for {stmt.VarName} "
                         + $"in [{string.Join(", ", sIter.Elements.Take(3).Select(SourceOfElement))}"
                         + (sIter.Elements.Count > 3 ? ", ..." : "") + "]`), or keep the set and "
-                        + $"ask it what it holds (`{stmt.VarName} in ...`), which is what it is for.");
+                        + $"ask it what it holds (`{stmt.VarName} in ...`), which is what it is for.",
+                        iter);
                 }
                 else if (iter is CallExpr { Callee: MemberAccessExpr dsMa } dsCall
                          && dsCall.Args.Count == 0 && DictOf(dsMa.Object) is { } mDict)
@@ -479,7 +500,8 @@ public partial class IRGenerator
                         throw UserError(
                             $"a {dsWhat} is iterated by unrolling it at compile time, so every {role} has "
                             + $"to be a constant, and this one is not. Read the run-time value inside the "
-                            + "body instead.");
+                            + "body instead.",
+                            dsWrittenHere ? e : null);
                     }
                     void Unbind(string key)
                     {
@@ -542,7 +564,8 @@ public partial class IRGenerator
                     {
                         var sv = EvalConst(call.Args[0]);
                         if (!sv.HasValue)
-                            throw UserError("for-in range() argument must be a compile-time constant.");
+                            throw UserError("for-in range() argument must be a compile-time constant.",
+                                ArgAt(call, 0));
                         stop = sv.Value;
                     }
                     else if (call.Args.Count >= 2)
@@ -550,20 +573,23 @@ public partial class IRGenerator
                         var sv = EvalConst(call.Args[0]);
                         var ev = EvalConst(call.Args[1]);
                         if (!sv.HasValue || !ev.HasValue)
-                            throw UserError("for-in range() arguments must be compile-time constants.");
+                            throw UserError("for-in range() arguments must be compile-time constants.",
+                                ArgAt(call, sv.HasValue ? 1 : 0));
                         start = sv.Value;
                         stop = ev.Value;
                         if (call.Args.Count >= 3)
                         {
                             var stv = EvalConst(call.Args[2]);
                             if (!stv.HasValue)
-                                throw UserError("for-in range() step must be a compile-time constant.");
+                                throw UserError("for-in range() step must be a compile-time constant.",
+                                    ArgAt(call, 2));
                             step = stv.Value;
                         }
                     }
-                    else throw UserError("for-in range() requires at least one argument.");
+                    else throw UserError("for-in range() requires at least one argument.", call.Callee);
 
-                    if (step == 0) throw UserError("for-in range() step cannot be zero.");
+                    if (step == 0)
+                        throw UserError("for-in range() step cannot be zero.", ArgAt(call, 2));
                     for (int i = start; step > 0 ? i < stop : i > stop; i += step)
                     {
                         constantVariables[varKey] = i;
@@ -585,6 +611,12 @@ public partial class IRGenerator
                     Expression enumInner = inner;
                     if (enumInner is VariableExpr epv && ResolveListLiteralParam(epv.Name) is ListExpr eBound)
                         enumInner = eBound;
+                    // Only the literal spelling was written at this `for`. The other two the
+                    // switch below accepts reach a list through a NAME -- an @inline parameter
+                    // bound to the caller's literal, or a module-level sequence -- and those
+                    // elements belong to whichever file wrote them. See the note at the
+                    // list-parameter site above.
+                    bool enumWrittenHere = inner is ListExpr or TupleExpr;
                     var seqElems = enumInner switch
                     {
                         ListExpr le  => le.Elements,
@@ -607,7 +639,8 @@ public partial class IRGenerator
                             }
                             else
                                 throw UserError(
-                                    "enumerate() list/tuple elements must be compile-time integer constants.");
+                                    "enumerate() list/tuple elements must be compile-time integer constants.",
+                                    enumWrittenHere ? elem : null);
                         }
 
                         constantVariables.Remove(idxKey);
@@ -634,7 +667,8 @@ public partial class IRGenerator
                         {
                             var sv = EvalC(rcall.Args[0]);
                             if (!sv.HasValue)
-                                throw UserError("enumerate(range()) argument must be compile-time constant.");
+                                throw UserError("enumerate(range()) argument must be compile-time constant.",
+                                    ArgAt(rcall, 0));
                             rstop = sv.Value;
                         }
                         else if (rcall.Args.Count >= 2)
@@ -642,14 +676,16 @@ public partial class IRGenerator
                             var sv = EvalC(rcall.Args[0]);
                             var ev = EvalC(rcall.Args[1]);
                             if (!sv.HasValue || !ev.HasValue)
-                                throw UserError("enumerate(range()) arguments must be compile-time constants.");
+                                throw UserError("enumerate(range()) arguments must be compile-time constants.",
+                                    ArgAt(rcall, sv.HasValue ? 1 : 0));
                             rstart = sv.Value;
                             rstop = ev.Value;
                             if (rcall.Args.Count >= 3)
                             {
                                 var stv = EvalC(rcall.Args[2]);
                                 if (!stv.HasValue)
-                                    throw UserError("enumerate(range()) step must be compile-time constant.");
+                                    throw UserError("enumerate(range()) step must be compile-time constant.",
+                                        ArgAt(rcall, 2));
                                 rstep = stv.Value;
                             }
                         }
@@ -769,7 +805,8 @@ public partial class IRGenerator
                     }
 
                     throw UserError(
-                        "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.");
+                        "enumerate() argument must be a constant list literal, range(N), or a fixed-size array.",
+                        ArgAt(call, 0));
                 }
                 else if (calleeVar.Name == "zip" && !string.IsNullOrEmpty(stmt.Var2Name) && call.Args.Count == 2)
                 {
@@ -862,7 +899,8 @@ public partial class IRGenerator
                                     if (resolved is Constant rc)
                                         vals.Add(rc.Value);
                                     else
-                                        throw UserError("zip() list elements must be compile-time integer constants.");
+                                        throw UserError(
+                                            "zip() list elements must be compile-time integer constants.", elem);
                                 }
                             }
 
@@ -907,15 +945,18 @@ public partial class IRGenerator
                                     string elemKey = @base + "__" + k;
                                     if (constantVariables.TryGetValue(elemKey, out int cv)) vals.Add(cv);
                                     else
+                                        // The element has no node of its own: it is a slot of an
+                                        // array, and what the reader wrote is the array's name.
                                         throw UserError(
-                                            "zip() array elements must be compile-time integer constants.");
+                                            "zip() array elements must be compile-time integer constants.", v);
                                 }
 
                                 return vals;
                             }
                         }
 
-                        throw UserError("zip() arguments must be constant list literals or constant arrays.");
+                        throw UserError(
+                            "zip() arguments must be constant list literals or constant arrays.", e);
                     }
 
                     // Try to interpret a list expression as a list of function references.
@@ -1001,7 +1042,9 @@ public partial class IRGenerator
                         {
                             if (le3.Elements[k] is IntegerLiteral il) constantVariables[valKey] = il.Value;
                             else
-                                throw UserError("reversed() list elements must be compile-time integer constants.");
+                                throw UserError(
+                                    "reversed() list elements must be compile-time integer constants.",
+                                    le3.Elements[k]);
                             VisitStatement(stmt.Body);
                         }
 
@@ -1081,7 +1124,8 @@ public partial class IRGenerator
                         }
                     }
 
-                    throw UserError("reversed() argument must be a constant list literal or a constant array.");
+                    throw UserError(
+                        "reversed() argument must be a constant list literal or a constant array.", inner);
                 }
             }
 
@@ -1267,7 +1311,8 @@ public partial class IRGenerator
                         if (slc.Step != null)
                             throw UserError(
                                 "for-in over a slice with runtime bounds does not take a step; " +
-                                "iterate range() with the stride explicitly");
+                                "iterate range() with the stride explicitly",
+                                slc.Step);
                         string slIdx = "__slci" + (++sliceLoopId);
                         var slBody = new Block();
                         slBody.Statements.Add(new AssignStmt(
@@ -1285,7 +1330,7 @@ public partial class IRGenerator
                     int start = slc.Start != null ? EvaluateConstantExpr(slc.Start) : 0;
                     int stop = slc.Stop != null ? EvaluateConstantExpr(slc.Stop) : slSize;
                     int step = slc.Step != null ? EvaluateConstantExpr(slc.Step) : 1;
-                    if (step == 0) throw UserError("for-in slice step cannot be zero.");
+                    if (step == 0) throw UserError("for-in slice step cannot be zero.", slc.Step);
                     if (start < 0) start += slSize;
                     if (stop < 0) stop += slSize;
                     start = Math.Max(0, Math.Min(start, slSize));
@@ -1348,7 +1393,8 @@ public partial class IRGenerator
             {
                 if (sqLen < 0)
                     throw UserError(
-                        $"'{sqVe.Name}' has a negative __len__ ({sqLen}), so the loop has no trip count.");
+                        $"'{sqVe.Name}' has a negative __len__ ({sqLen}), so the loop has no trip count.",
+                        sqVe);
                 if (sqLen > 0)
                 {
                     string sqIdx = "__sqi" + (++sliceLoopId);
@@ -1373,7 +1419,7 @@ public partial class IRGenerator
                     $"'{itVe.Name}' defines __iter__/__next__, but PyMCU does not run the iterator " +
                     "protocol: there is no exception to stop on, so the loop could never end. " +
                     "Write the loop explicitly (`while <cond>: v = obj.next()`), or iterate a " +
-                    "range/fixed array instead. A `yield` generator function IS supported.");
+                    "range/fixed array instead. A `yield` generator function IS supported.", itVe);
 
             // __getitem__ without a compile-time __len__: the sequence protocol is the right
             // shape, but the trip count is only known at run time and there is no IndexError to
@@ -1390,10 +1436,11 @@ public partial class IRGenerator
                     " and PyMCU has no IndexError to stop on. Give the class a __len__ with a " +
                     "constant return (`def __len__(self) -> uint8: return 4`) to iterate it " +
                     $"directly, or write the loop over the length you have (`for i in range(n): " +
-                    $"v = {sqBadVe.Name}[i]`).");
+                    $"v = {sqBadVe.Name}[i]`).", sqBadVe);
 
             throw UserError(
-                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.");
+                "for-in loop iterable must be a compile-time string constant, a constant list literal [v0, v1, ...], range(N), enumerate(list/range), zip(a, b), reversed(iterable), or a fixed-array slice arr[lo:hi]. Use 'const[str]' type annotation for string parameters.",
+                stmt.Iterable);
         }
 
         // `for p in range(11, 14)` over CONSTANT bounds and a short trip count unrolls, the way
@@ -1437,7 +1484,7 @@ public partial class IRGenerator
         // compile-time-unrolled path above already rejects this; mirror it for the runtime
         // loop, where a literal-zero step would otherwise emit an infinite loop.
         if (stepVal is Constant stepZero && stepZero.Value == 0)
-            throw UserError("for-in range() step cannot be zero.");
+            throw UserError("for-in range() step cannot be zero.", stmt.RangeStep);
 
         // Qualify the loop variable the same way the body resolves a variable reference:
         // function-scoped names get the `func.` prefix when not inline-expanded. Using the
@@ -1579,7 +1626,9 @@ public partial class IRGenerator
             int val = EvaluateConstantExpr(stmt.Condition);
             if (val == 0)
             {
-                throw UserError("AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message));
+                throw UserError(
+                    "AssertionError" + (string.IsNullOrEmpty(stmt.Message) ? "" : ": " + stmt.Message),
+                    stmt.Condition);
             }
         }
         catch (Exception e)
