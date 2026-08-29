@@ -187,6 +187,11 @@ public partial class IRGenerator
     // immutable by definition, so any later assignment to one is a user error. Distinct
     // from constantVariables, which also holds const-FOLDED locals (which ARE reassignable).
     private HashSet<string> declaredConstants = new();
+
+    /// Class methods with no `self` parameter, compiled as ordinary functions under the class
+    /// prefix (#201). Kept so the duplicate-definition check can see them: they land in none of
+    /// the registries an instance method lands in.
+    private readonly HashSet<string> classPlainFunctions = new();
     // Tracks loop variables that are function references (from zip() over function lists).
     // Key = loop variable name (e.g. "fn"), Value = resolved mangled function name (e.g. "blink_task").
     private Dictionary<string, string> loopFunctionAliases = new();

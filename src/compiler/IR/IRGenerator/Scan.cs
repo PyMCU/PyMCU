@@ -1335,7 +1335,17 @@ public partial class IRGenerator
                                         && !func.IsInline
                                         && (instanceMethodDefs.ContainsKey(fullName)
                                             || inlineFunctions.ContainsKey(fullName)
-                                            || outlinedMethods.Contains(fullName)))
+                                            || outlinedMethods.Contains(fullName)
+                                            // A method with no `self` is compiled as an ordinary
+                                            // function (#201) and lands in none of the three
+                                            // above, so a second definition of one fell past this
+                                            // check to the generic duplicate-symbol message, which
+                                            // names the mangled `A_w` and advises giving the
+                                            // overloads different parameter types -- advice that
+                                            // does not work, since overloads need @inline. This
+                                            // is the accurate sentence and it has to keep firing
+                                            // for them.
+                                            || classPlainFunctions.Contains(fullName)))
                                         throw UserError(
                                             $"class '{classDef.Name}' defines '{func.Name}' more than "
                                             + "once, and overloads are only supported on @inline "
@@ -1365,6 +1375,11 @@ public partial class IRGenerator
                                             Prefix = currentModulePrefix, Func = func,
                                             SourceFile = currentSourceFile, SourcePath = currentSourcePath,
                                         });
+                                        // Recorded so a SECOND definition of the same name is
+                                        // caught by the duplicate check above, which reads the
+                                        // registries a method can land in and did not know
+                                        // about this one.
+                                        classPlainFunctions.Add(fullName);
                                     }
                                     else if (IsOutlineSafe(func, defLayout))
                                     {

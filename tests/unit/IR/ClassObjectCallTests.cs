@@ -158,6 +158,27 @@ public class ClassObjectCallTests
         Assert.Contains(ir.Functions, f => f.Name == "A_f");
     }
 
+    /// <summary>
+    /// A SECOND definition of a no-self method keeps the accurate refusal. Compiling such a
+    /// method as an ordinary function put it in none of the registries the duplicate check
+    /// reads, so it fell through to the generic duplicate-symbol message, which names the
+    /// mangled `A_w` and advises giving the overloads different parameter types. That advice
+    /// does not work: overloads need @inline, and this program already has two different
+    /// parameter types.
+    /// </summary>
+    [Fact]
+    public void TwoNoSelfMethodsOfOneNameKeepTheAccurateRefusal()
+    {
+        var ex = Reject(Program(
+            "class A:\n" +
+            "    def w(x: uint8) -> uint8:\n        return x + 7\n" +
+            "    def w(x: uint8) -> uint8:\n        return x + 100\n",
+            "    GPIOR1.value = A.w(seed)\n"));
+
+        Assert.Contains("overloads are only supported on @inline methods", ex.Message);
+        Assert.DoesNotContain("duplicate function definition", ex.Message);
+    }
+
     [Fact]
     public void TheUnboundBaseCallIsUntouched()
     {
