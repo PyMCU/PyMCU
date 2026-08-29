@@ -428,7 +428,20 @@ public partial class IRGenerator
                     }
                     else
                     {
-                        bool isAllUpper = name.All(c => !char.IsLower(c));
+                        // ALL CAPS means "constant" by convention here, and the convention is
+                        // what gives the name no storage so every read folds the initializer.
+                        // A name this module WRITES is not one, whatever it is called, and
+                        // `reassigned` is the set that already knows: its own comment says a
+                        // second assignment or a `global` declaration makes the initializer
+                        // merely happen to be constant. It was consulted for an alias
+                        // initializer and not here, so `N = 10` with `global N; N = 20`
+                        // elsewhere produced `globals: []` and a copy whose DESTINATION was the
+                        // literal 10. The write went nowhere and every read folded 10 (#220).
+                        //
+                        // The lowercase spelling of the same program has always worked, which
+                        // is what says this is the convention overriding a written statement
+                        // rather than module globals being unsupported.
+                        bool isAllUpper = name.All(c => !char.IsLower(c)) && !reassigned.Contains(name);
                         if (isAllUpper)
                         {
                             var info = new SymbolInfo { IsMemoryAddress = false, Value = val };
