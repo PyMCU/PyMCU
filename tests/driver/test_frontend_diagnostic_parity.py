@@ -142,3 +142,66 @@ def test_an_oversized_literal_points_at_the_literal(tmp_path):
 
     assert _where(src, py_parser=False) == (3, 16)
     assert _where(src, py_parser=True) == (3, 16)
+
+
+# --- a REFUSAL that must exist on both sides (PyMCU#221) ------------------------------
+#
+# The two blocks above compare a diagnostic both front ends already produce. This one is
+# about a diagnostic that did not exist at all: rebinding the name of a module-level `def`
+# was accepted, and the program compiled with the name meaning the function where it was
+# called and the new value everywhere else. A refusal is exactly what the differential axis
+# cannot check, so the parity has to be asserted here or nowhere.
+
+
+def _write_with_helper(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "main.py"
+    p.write_text(
+        "from pymcu.types import uint8\n"
+        "def helper() -> uint8:\n"
+        "    return 1\n"
+        "def other() -> uint8:\n"
+        "    return 2\n"
+        + body
+    )
+    return p
+
+
+@pytest.mark.parametrize("body", [
+    # through `global`, to a value and to another function
+    "def main() -> None:\n    global helper\n    helper = 5\n",
+    "def main() -> None:\n    global helper\n    helper = other\n",
+    # written at module level, which reaches the same binding without `global`
+    "helper = 5\ndef main() -> None:\n    v: uint8 = 0\n",
+])
+def test_rebinding_a_function_name_is_refused_by_both_front_ends(tmp_path, body):
+    src = _write_with_helper(tmp_path, body)
+
+    hand = _message(src, py_parser=False)
+    cpython = _message(src, py_parser=True)
+
+    assert "'helper' is bound to a function" in hand
+    assert hand == cpython
+
+
+def test_a_local_of_the_same_name_is_not_the_module_binding(tmp_path):
+    # No `global`, so this is an ordinary local shadowing the name, exactly as in CPython,
+    # and it must keep compiling. The refusal above is about the MODULE-LEVEL binding; a
+    # check that cannot tell the two apart would break every function with a local named
+    # after some function elsewhere in the file.
+    src = _write_with_helper(
+        tmp_path, "def main() -> None:\n    helper = 5\n    v: uint8 = helper\n")
+
+    for py in (False, True):
+        env = dict(os.environ)
+        if py:
+            env["PYMCU_PY_PARSER"] = "1"
+            env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+        else:
+            env.pop("PYMCU_PY_PARSER", None)
+        proc = subprocess.run(
+            [str(PYMCUC), str(src), "--target", "atmega328p",
+             "--emit-ir", os.devnull, "-o", os.devnull,
+             "-I", str(STDLIB), "-I", str(src.parent)],
+            capture_output=True, text=True, env=env,
+        )
+        assert proc.returncode == 0, f"py_parser={py} refused a plain local:\n{proc.stderr}"
