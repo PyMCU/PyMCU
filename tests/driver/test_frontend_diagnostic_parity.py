@@ -146,25 +146,29 @@ def test_both_front_ends_underline_the_same_amount(tmp_path, source):
     assert _where(src, py_parser=False) == _where(src, py_parser=True)
 
 
-def test_an_async_def_is_the_known_position_gap(tmp_path):
-    # CPython puts an AsyncFunctionDef at its `async` and the hand-written parser stamps the
-    # `def` six characters later. A POSITION difference, so it is not what the block above
-    # fixes, and the reason `async def` is excluded from the `def`-keyword length there:
-    # underlining three characters from the `async` would draw over `asy`, which is a worse
-    # answer than the bare caret it draws today.
-    #
-    # Pinned rather than fixed so that closing it is a decision someone makes.
-    src = _program(
-        tmp_path,
-        "from pymcu.types import uint8\nasync def get() -> uint8:\n    return 1\n"
-        "def main() -> None:\n    v: uint8 = get()\n")
+@pytest.mark.parametrize("source,expected", [
+    # `async def` marks BOTH words. It was a POSITION divergence before this: CPython puts an
+    # AsyncFunctionDef at its `async` and the hand-written parser stamped the `def` six
+    # characters later, so the parser is the side that moved. What is marked is the INTRODUCER
+    # of the construct, and a coroutine's introducer is two words -- marking only the second
+    # starts the underline in the middle of a compound keyword.
+    ("from pymcu.types import uint8\nasync def get() -> uint8:\n    return 1\n"
+     "def main() -> None:\n    v: uint8 = get()\n", (2, 1, 9)),
+    # The same thing spaced out, which is valid Python and compiles here. This is the case a
+    # constant 9 gets wrong: it would underline `async   d`, one character into `def` and
+    # stopping short of it. The length is measured from the two words, on both sides.
+    ("from pymcu.types import uint8\nasync   def get() -> uint8:\n    return 1\n"
+     "def main() -> None:\n    v: uint8 = get()\n", (2, 1, 11)),
+    # As a method, which is refused for a different reason and through a different site.
+    ("from pymcu.types import uint8\nclass Box:\n    def __init__(self) -> None:\n"
+     "        self.n: uint8 = 0\n    async def get(self) -> uint8:\n        return self.n\n"
+     "def main() -> None:\n    b = Box()\n    v: uint8 = b.get()\n", (5, 5, 9)),
+])
+def test_an_async_def_marks_both_words_on_both_front_ends(tmp_path, source, expected):
+    src = _program(tmp_path, source)
 
-    hand = _where(src, py_parser=False)
-    cpython = _where(src, py_parser=True)
-
-    assert hand[0] == cpython[0], "the LINE agrees even where the column does not"
-    assert hand[1] == 7, "the hand-written parser marks the `def`"
-    assert cpython[1] == 1, "CPython marks the `async`"
+    assert _where(src, py_parser=False) == expected
+    assert _where(src, py_parser=True) == expected
 
 # --- the MESSAGE, not only the position (PyMCU#218) -----------------------------------
 #
