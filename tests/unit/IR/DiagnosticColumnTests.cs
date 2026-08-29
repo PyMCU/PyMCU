@@ -127,10 +127,18 @@ public class DiagnosticColumnTests
     // ---- the rule: never invent one ------------------------------------------------------
 
     [Fact]
-    public void ADiagnosticWithNoNodeToPointAt_ReportsAnUnknownColumnRatherThanGuessing()
+    public void AWholeFunctionDiagnosticPointsAtTheDefThatDeclaredIt()
     {
-        // A missing return is a property of the whole function, not of one character in it.
-        // Column 0 is the compiler saying so, and the renderer draws no caret for it.
+        // This was the FIRST guard written for this issue, and it asserted the opposite: a
+        // missing return is a property of the whole function, so column 0 and no caret.
+        //
+        // That reasoning held only while nothing could name a function. It does now: the `def`
+        // keyword is the whole construct's token, so the diagnostic marks the function whose
+        // declared contract is unmet. "No single character to blame" turned out to mean "no
+        // character INSIDE the body", which is a different claim from having no position.
+        //
+        // Fourth guard in this issue to convert, and the one that took longest, because the
+        // node type it was waiting on was the last of six to be stamped.
         var ex = Fails(
             "from pymcu.types import uint8\n" +
             "def f() -> uint8:\n" +
@@ -138,7 +146,8 @@ public class DiagnosticColumnTests
             "def main():\n" +
             "    y: uint8 = f()\n");
 
-        Assert.True(ex.Column <= 0,
-            $"expected an unknown column for a whole-function diagnostic, got {ex.Column}");
+        Assert.Equal(2, ex.Line);
+        Assert.Equal(1, ex.Column);
+        Assert.Equal(3, ex.Length);
     }
 }

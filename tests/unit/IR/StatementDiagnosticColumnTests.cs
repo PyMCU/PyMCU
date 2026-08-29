@@ -72,18 +72,54 @@ public class StatementDiagnosticColumnTests
     }
 
     [Theory]
-    // These blame a STATEMENT, and statements are unstamped, so no caret is drawn. The site
-    // still carries its node, which is the durable half: each starts pointing the day its
-    // statement type is stamped, with no edit here.
-    [InlineData("def main() -> None:\n    break\n", "Break statement")]
-    [InlineData("def main() -> None:\n    continue\n", "Continue statement")]
-    [InlineData("def f() -> uint8:\n    x: uint8 = 1\ndef main() -> None:\n    b: uint8 = f()\n",
-                "can reach the end of its body")]
-    public void ADiagnosticThatBlamesAStatementReportsNoColumnYet(string src, string fragment)
+    //          12345
+    // line 3: "    break"  -- a keyword statement IS its token, so it marks its own keyword.
+    // Outside a loop, which is what makes it a refusal; inside one it is perfectly legal.
+    // Line 3 and not 2 because Fails() prepends the types import.
+    [InlineData("def main() -> None:\n    break\n", 3, 5, "Break statement")]
+    [InlineData("def main() -> None:\n    continue\n", 3, 5, "Continue statement")]
+    [InlineData("def main() -> None:\n    x: uint8 = 1\n    raise ValueError(x)\n", 4, 5,
+                "is not a")]
+    public void AKeywordStatementPointsAtItsOwnKeyword(string src, int line, int column,
+                                                        string fragment)
     {
         var ex = Fails(src);
 
         Assert.Contains(fragment, ex.Message);
+        Assert.Equal(line, ex.Line);
+        Assert.Equal(column, ex.Column);
+    }
+
+    [Fact]
+    public void AMissingReturnPointsAtTheDefKeyword()
+    {
+        // The `def`, not the return annotation. The message is about the whole function and
+        // tells the reader to add a return "on the remaining path", which is not one token;
+        // pointing at `-> uint8` would read as "change this type", the opposite of the remedy.
+        var ex = Fails("def f() -> uint8:\n    x: uint8 = 1\ndef main() -> None:\n    b: uint8 = f()\n");
+
+        Assert.Contains("can reach the end of its body", ex.Message);
+        Assert.Equal(2, ex.Line);
+        Assert.Equal(1, ex.Column);
+        Assert.Equal(3, ex.Length);   // the keyword itself
+    }
+
+    [Fact]
+    public void AMissingReturnOnAMETHODStillReportsNoColumn()
+    {
+        // Not a decision, a gap, and it is downstream of the parser: the AST carries the
+        // method at L5 C5 (verified directly), but the node that reaches VisitFunction has
+        // no position, so something in the class path replaces or copies it and drops the
+        // stamp. That path is in Scan.cs, which this change deliberately does not touch.
+        //
+        // Written to FLIP: when the class path preserves the position this fails, and the fix
+        // is to assert column 5, not to restore the silence.
+        var ex = Fails(
+            "class Box:\n    def __init__(self) -> None:\n        self.n: uint8 = 0\n" +
+            "    def get(self) -> uint8:\n        x: uint8 = self.n\n" +
+            "def main() -> None:\n    b = Box()\n    v: uint8 = b.get()\n");
+
+        Assert.Contains("can reach the end of its body", ex.Message);
         Assert.False(ex.HasColumn);
     }
 }
