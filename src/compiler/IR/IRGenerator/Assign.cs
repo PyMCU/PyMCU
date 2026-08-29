@@ -76,7 +76,8 @@ public partial class IRGenerator
                     $"'{fnRebindTgt.Name}' is bound to a function at compile time, so it cannot be "
                     + "rebound. A call through the name is lowered to a direct call and never reads "
                     + "the assignment, so the name would mean the function where it is called and "
-                    + "the new value everywhere else. Give the value a different name.");
+                    + "the new value everywhere else. Give the value a different name.",
+                    fnRebindTgt);
         }
 
         // `f = a` where `a` is a function: bind the NAME, do not evaluate it as a value. A
@@ -1202,7 +1203,8 @@ public partial class IRGenerator
                     $"'{fieldCls}' has no field '{memExpr2.Member}' -- assigning it here creates a "
                     + "name of its own rather than reaching the object, because PyMCU lays instances "
                     + "out at compile time. Assign it in __init__ to make it a field, or correct the "
-                    + $"spelling. Declared fields: {string.Join(", ", fieldLay.Select(f => f.Field))}");
+                    + $"spelling. Declared fields: {string.Join(", ", fieldLay.Select(f => f.Field))}",
+                    memExpr2);
 
             // A field assigned None has no runtime value; record the flattened name so
             // `obj.field is None` folds to True (IsNoneValued checks this set). A later non-None
@@ -1685,7 +1687,7 @@ public partial class IRGenerator
         if (jc.Args.Count != 1)
             throw UserError(
                 "str.join takes one argument, the sequence to join; this call passes "
-                + $"{jc.Args.Count}.");
+                + $"{jc.Args.Count}.", jm);
 
         if (jc.Args[0] is ListExpr jle && jle.Elements.All(e => StaticStringOf(e) != null))
         {
@@ -1912,9 +1914,11 @@ public partial class IRGenerator
         VariableExpr srcArr, List<int> srcIdx, bool sameArray)
     {
         if (srcIdx.Count != dstIdx.Count)
+            // The source, not the target: the target's length comes from a declaration that
+            // may be anywhere, and the source slice is written here.
             throw UserError(
                 $"slice assignment length mismatch: target selects {dstIdx.Count} " +
-                $"element(s), source selects {srcIdx.Count}");
+                $"element(s), source selects {srcIdx.Count}", srcArr);
 
         if (!sameArray)
         {
@@ -2261,10 +2265,12 @@ public partial class IRGenerator
         // the user wrote, and every 32-bit pattern is representable in uint32.
         long shown = type == DataType.UINT32 && v < 0 ? (long)(uint)v : v;
 
+        // `init` IS the literal the message quotes, and a literal is stamped, so this is the
+        // one direct throw in the file that had a line and no column with a node in hand.
         if (shown < r.Min || shown > r.Max)
             throw new ValueError(
                 $"integer literal {shown} is out of range for {r.Name} (valid range {r.Min}..{r.Max})",
-                line);
+                init.Line > 0 ? init.Line : line, init.Column, init.Length > 0 ? init.Length : 1);
     }
 
     // `s = f"..."` with runtime interpolations -- the f-string as a VALUE. Expands to a
@@ -3059,7 +3065,8 @@ public partial class IRGenerator
                         $"'{stmt.Target}: {stmt.Annotation}' has no size. A list field is a "
                         + $"fixed array, so its length comes from the literal: write "
                         + $"`{stmt.Target}: {stmt.Annotation} = [0, 0, 0]`, or give the length "
-                        + $"outright with `{stmt.Target}: {memSz}[N] = [...]`.");
+                        + $"outright with `{stmt.Target}: {memSz}[N] = [...]`.",
+                        stmt.Value);
                 memCount = memLit.Elements.Count;
             }
             else
@@ -4116,7 +4123,8 @@ public partial class IRGenerator
                 return;
             }
 
-            throw UserError("augmented assignment to .value requires a pointer or register target");
+            throw UserError("augmented assignment to .value requires a pointer or register target",
+                stmt.Target);
         }
         else if (stmt.Target is MemberAccessExpr mfield)
         {
@@ -4218,10 +4226,15 @@ public partial class IRGenerator
                 // either side is, so the reader has to count the program back. Print both
                 // counts and which side is which.
                 if (nTup != nTgt)
+                    // With more values than targets the first surplus one is the value with
+                    // nowhere to go, and it is a node. With fewer there is no surplus element,
+                    // and a TupleExpr carries no position of its own, so that direction stays
+                    // caretless rather than marking an innocent element.
                     throw UserError(
                         $"tuple unpacking size mismatch: {nTgt} target{(nTgt == 1 ? "" : "s")} on the "
                         + $"left ({string.Join(", ", stmt.Targets)}), {nTup} "
-                        + $"value{(nTup == 1 ? "" : "s")} on the right");
+                        + $"value{(nTup == 1 ? "" : "s")} on the right",
+                        nTup > nTgt ? tup.Elements[nTgt] : null);
                 // Python evaluates the whole RHS tuple before assigning, so snapshot
                 // each runtime value first. Otherwise `a, b = b, a` would assign a = b and
                 // then read the already-overwritten a. The snapshot must be a named Variable,
@@ -4299,7 +4312,8 @@ public partial class IRGenerator
         {
             pendingTupleCount = stmt.Targets.Count;
             if (stmt.StarredIndex >= 0)
-                throw UserError("Starred expressions not supported with inline multi-return.");
+                throw UserError("Starred expressions not supported with inline multi-return.",
+                    call.Callee);
 
             Val ignored = VisitExpression(call);
             pendingTupleCount = 0;
