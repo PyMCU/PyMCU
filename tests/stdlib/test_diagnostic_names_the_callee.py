@@ -21,8 +21,16 @@ the reader to a file they cannot fix. Those must stay on the call. An intermedia
 the fix moved them to the driver's line while leaving the caller's file name attached, which
 is the same non-existent location this issue is about, relocated: line 151 of a ten-line file.
 The tests below pin both ends.
+
+A third end, added with #227: the window BEFORE the callee's first statement. Argument binding
+runs after the file label moved and before any callee line existed, so nine refusals reported
+the caller's line under the callee's file name, and four of them drew a caret on it. Those are
+about the CALL, so they name the caller, both halves. The one exception is a parameter's
+DEFAULT value, which is text in the callee's file; the test that pins it is what separates
+repairing the pair from inverting it.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -39,7 +47,13 @@ pytestmark = pytest.mark.skipif(
 LOCATION = re.compile(r"([A-Za-z0-9_./-]+\.py):(\d+):")
 
 
-def build(tmp_path: Path, files: dict):
+def build(tmp_path: Path, files: dict, py_parser: bool = False):
+    """The Python front end is a separate run of the same binary.
+
+    A location is produced by the front end and consumed by IR generation, so a diagnostic
+    that is right through one parser and wrong through the other is two bugs wearing one
+    message. The window tests below run through both.
+    """
     for name, text in files.items():
         (tmp_path / name).write_text(text)
     proc = subprocess.run(
@@ -48,6 +62,7 @@ def build(tmp_path: Path, files: dict):
          "-I", str(tmp_path), "-I", str(STDLIB),
          "--emit-ir", str(tmp_path / "firmware.mir")],
         capture_output=True, text=True,
+        env={**os.environ, **({"PYMCU_PY_PARSER": "1"} if py_parser else {})},
     )
     return proc.stdout + proc.stderr
 
@@ -171,50 +186,138 @@ def test_every_pin_guard_stays_on_the_call(tmp_path, driver, call, use):
 
 # --- the same family, in the window before the callee's first statement --------
 
-# Long enough that the caller's line number is IN RANGE here too. With a six-line helper the
-# defect shows as a line past the end of the file, which any assertion catches; padded to
-# overlap the caller it reports helper.py:7, a blank line, while the call is on main.py:7.
-# The same number in the wrong file is the form that reads as correct.
-HOLD_HELPER = (
-    "from pymcu.types import uint8, const, inline\n\n\n"   # 1-3
-    "@inline\n"                                            # 4
-    "def hold(n: const[uint8]) -> uint8:\n"                # 5
-    "    return n\n\n\n"                                   # 6-8
-    "@inline\n"                                            # 9
-    "def unused(k: uint8) -> uint8:\n"                     # 10
-    "    return k\n"                                       # 11
+# Long enough that the caller's line numbers are IN RANGE inside the callee too. With a short
+# helper the defect showed as a line past the end of the file, which any bounds check catches.
+# Padded to overlap the caller it reported helper.py:7, a blank line, while every call below is
+# on main.py:7. The same number in the wrong file is the form that reads as correct.
+WINDOW_HELPER = (
+    "from pymcu.types import uint8, const, inline\n"     # 1
+    "\n\n"                                               # 2-3
+    "@inline\n"                                           # 4
+    "def hold(n: const[uint8]) -> uint8:\n"               # 5
+    "    return n\n"                                      # 6
+    "\n\n"                                               # 7-8
+    "@inline\n"                                           # 9
+    "def one(a: uint8) -> uint8:\n"                       # 10
+    "    return a\n"                                      # 11
+    "\n\n"                                               # 12-13
+    "@inline\n"                                           # 14
+    "def holdstr(s: const[str]) -> uint8:\n"              # 15
+    "    return 1\n"                                      # 16
+    "\n\n"                                               # 17-18
+    "@inline\n"                                           # 19
+    "def holdc(c: const) -> uint8:\n"                     # 20
+    "    return 1\n"                                      # 21
+    "\n\n"                                               # 22-23
+    "@inline\n"                                           # 24
+    "def defc(n: const[uint8] = 0) -> uint8:\n"           # 25
+    "    return n\n"                                      # 26
 )
 
-HOLD_MAIN = (
-    "from pymcu.types import uint8\n"
-    "from helper import hold\n\n\n"
-    "def main():\n"
-    "    v: uint8 = 3\n"
-    "    x: uint8 = hold(v)\n"
-    "    while True:\n"
-    "        pass\n"
-)
+
+def window_main(call: str) -> str:
+    """Every call sits on line 7, and helper.py:7 is a blank line."""
+    return (
+        "from pymcu.types import uint8\n"                       # 1
+        "from helper import hold, one, holdstr, holdc, defc\n"  # 2
+        "\n\n"                                                 # 3-4
+        "def main():\n"                                         # 5
+        "    v: uint8 = 3\n"                                    # 6
+        f"    {call}\n"                                         # 7
+        "    while True:\n"                                     # 8
+        "        pass\n"                                        # 9
+    )
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "the argument-binding window: currentSourcePath has already moved to the callee while "
-    "inlineCalleeStmtLine is still 0, so the CALLER's line is reported under the CALLEE's "
-    "file name. Measured: helper.py:7 is a blank line and the call is on main.py:7"))
-def test_a_refused_const_argument_names_a_line_that_exists(tmp_path):
+# Every refusal the argument-binding loop can raise. Before the fix all nine reported
+# helper.py:7, a blank line in a file the reader did not write, and the four that pass a node
+# drew a caret at column 16 of it.
+WINDOW_CALLS = [
+    ("too many arguments",          "x: uint8 = one(v, v)"),
+    ("const[uint8] not constant",   "x: uint8 = hold(v)"),
+    ("const[str] not constant",     "x: uint8 = holdstr(v)"),
+    ("bare const not constant",     "x: uint8 = holdc(v)"),
+    ("keyword const[str]",          "x: uint8 = holdstr(s=v)"),
+    ("keyword const",               "x: uint8 = holdc(c=v)"),
+    ("unknown keyword",             "x: uint8 = one(zz=v)"),
+    ("missing argument",            "x: uint8 = one()"),
+]
+
+
+@pytest.mark.parametrize("py_parser", [False, True], ids=["csharp", "python"])
+@pytest.mark.parametrize("call", [c for _, c in WINDOW_CALLS],
+                         ids=[i for i, _ in WINDOW_CALLS])
+def test_a_refusal_raised_while_binding_names_the_call(tmp_path, call, py_parser):
     """The property `test_the_line_belongs_to_the_file_that_is_named` pins, one step earlier.
 
-    That test covers a diagnostic raised while the callee's BODY is being lowered, and by then
-    the line and the file both belong to the callee. An argument is bound before any of the
-    body is walked, so the pair has not been made coherent yet: the file label has moved and
-    the line has not. Nothing in `Call.cs` can fix it, which is why the four sites in that
-    binding loop report no column instead of putting a caret on a line the file does not have.
+    That test covers a diagnostic raised while the callee's BODY is lowered, and by then the
+    line and the file both belong to the callee. An argument is bound before any of the body
+    is walked, so the pair had not been made coherent yet: the file label had moved and the
+    line had not.
+
+    The reported site is the CALL, which is the line the reader can change: they wrote
+    `hold(v)` and the fix is to pass a constant. Same reasoning as the `raise` in a HAL
+    dispatcher above, and as recorded at `ControlFlow.cs:1677`.
     """
-    out = build(tmp_path, {"helper.py": HOLD_HELPER, "main.py": HOLD_MAIN})
+    out = build(tmp_path, {"helper.py": WINDOW_HELPER, "main.py": window_main(call)},
+                py_parser)
     name, line = location(out)
     text = (tmp_path / name).read_text().splitlines()
     assert line <= len(text), f"{name} has {len(text)} lines; the diagnostic claims line {line}"
-    # In range is not enough: helper.py:7 is a blank line and main.py:7 is the call, so a
-    # bounds check alone passes on the defect. The named line has to hold what the message
-    # is about, which is either the call or the parameter that refuses the argument.
-    assert "hold(" in text[line - 1] or "const[uint8]" in text[line - 1], \
-        f"{name}:{line} is {text[line - 1]!r}, which is neither the call nor the parameter"
+    assert name == "main.py", f"the call to change is in main.py, got {name}"
+    assert text[line - 1].strip() == call, \
+        f"{name}:{line} is {text[line - 1]!r}, which is not the call"
+
+
+def test_the_caret_lands_on_the_call_and_not_past_the_end_of_a_line(tmp_path):
+    """A bounds check is not enough, which is how this survived without one.
+
+    helper.py:7 is blank, so a caret at column 16 pointed past the end of a line that has no
+    columns at all. The caret has to land inside the text of the line that is named.
+    """
+    out = build(tmp_path, {"helper.py": WINDOW_HELPER,
+                           "main.py": window_main("x: uint8 = one(v, v)")})
+    m = re.search(r"([A-Za-z0-9_./-]+\.py):(\d+):(\d+):", out)
+    assert m, out
+    name, line, col = Path(m.group(1)).name, int(m.group(2)), int(m.group(3))
+    text = (tmp_path / name).read_text().splitlines()[line - 1]
+    assert col <= len(text), f"caret at column {col} of a {len(text)}-character line"
+    assert text[col - 1:].startswith("one"), \
+        f"the caret is on {text[col - 1:][:12]!r}, not on the call"
+
+
+# --- the other half: a default value is the CALLEE's code ----------------------
+
+def test_a_refusal_inside_a_default_value_names_the_callee(tmp_path):
+    """The invariant that separates repairing the pair from inverting it.
+
+    Argument binding runs under the caller's location because the nodes it holds are the
+    caller's. A parameter's default value is the one exception: it is text in the callee's
+    file. Deferring the file switch without excepting it moves this diagnostic to
+    `main.py:5`, which is `def main():`, so the pair breaks the other way round.
+
+    Measured against a build carrying the deferral WITHOUT the exception: helper.py:5:18
+    became main.py:5:18.
+    """
+    helper = (
+        "from pymcu.types import uint8, inline\n"   # 1
+        "\n\n"                                      # 2-3
+        "@inline\n"                                  # 4
+        "def f(n: uint8 = nope) -> uint8:\n"         # 5
+        "    return n\n"                             # 6
+    )
+    main = (
+        "from pymcu.types import uint8\n"
+        "from helper import f\n"
+        "\n\n"
+        "def main():\n"
+        "    x: uint8 = f()\n"
+        "    while True:\n"
+        "        pass\n"
+    )
+    out = build(tmp_path, {"helper.py": helper, "main.py": main})
+    name, line = location(out)
+    assert name == "helper.py", f"the default value is written in helper.py, got {name}"
+    text = (tmp_path / name).read_text().splitlines()
+    assert "nope" in text[line - 1], \
+        f"{name}:{line} is {text[line - 1]!r}, not the default value the message is about"
