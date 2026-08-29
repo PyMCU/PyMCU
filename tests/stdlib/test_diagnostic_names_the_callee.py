@@ -167,3 +167,54 @@ def test_every_pin_guard_stays_on_the_call(tmp_path, driver, call, use):
         "        pass\n"})
     name, _ = location(out)
     assert name == "main.py", f"{cls}'s pin guard is about the caller's argument, got {name}"
+
+
+# --- the same family, in the window before the callee's first statement --------
+
+# Long enough that the caller's line number is IN RANGE here too. With a six-line helper the
+# defect shows as a line past the end of the file, which any assertion catches; padded to
+# overlap the caller it reports helper.py:7, a blank line, while the call is on main.py:7.
+# The same number in the wrong file is the form that reads as correct.
+HOLD_HELPER = (
+    "from pymcu.types import uint8, const, inline\n\n\n"   # 1-3
+    "@inline\n"                                            # 4
+    "def hold(n: const[uint8]) -> uint8:\n"                # 5
+    "    return n\n\n\n"                                   # 6-8
+    "@inline\n"                                            # 9
+    "def unused(k: uint8) -> uint8:\n"                     # 10
+    "    return k\n"                                       # 11
+)
+
+HOLD_MAIN = (
+    "from pymcu.types import uint8\n"
+    "from helper import hold\n\n\n"
+    "def main():\n"
+    "    v: uint8 = 3\n"
+    "    x: uint8 = hold(v)\n"
+    "    while True:\n"
+    "        pass\n"
+)
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "the argument-binding window: currentSourcePath has already moved to the callee while "
+    "inlineCalleeStmtLine is still 0, so the CALLER's line is reported under the CALLEE's "
+    "file name. Measured: helper.py:7 is a blank line and the call is on main.py:7"))
+def test_a_refused_const_argument_names_a_line_that_exists(tmp_path):
+    """The property `test_the_line_belongs_to_the_file_that_is_named` pins, one step earlier.
+
+    That test covers a diagnostic raised while the callee's BODY is being lowered, and by then
+    the line and the file both belong to the callee. An argument is bound before any of the
+    body is walked, so the pair has not been made coherent yet: the file label has moved and
+    the line has not. Nothing in `Call.cs` can fix it, which is why the four sites in that
+    binding loop report no column instead of putting a caret on a line the file does not have.
+    """
+    out = build(tmp_path, {"helper.py": HOLD_HELPER, "main.py": HOLD_MAIN})
+    name, line = location(out)
+    text = (tmp_path / name).read_text().splitlines()
+    assert line <= len(text), f"{name} has {len(text)} lines; the diagnostic claims line {line}"
+    # In range is not enough: helper.py:7 is a blank line and main.py:7 is the call, so a
+    # bounds check alone passes on the defect. The named line has to hold what the message
+    # is about, which is either the call or the parameter that refuses the argument.
+    assert "hold(" in text[line - 1] or "const[uint8]" in text[line - 1], \
+        f"{name}:{line} is {text[line - 1]!r}, which is neither the call nor the parameter"
