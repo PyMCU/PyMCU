@@ -254,7 +254,7 @@ public partial class IRGenerator
         currentModulePrefix = className + "_";
         inlineDepth = newDepth;
         inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = result, CalleeName = funcKey,
-            EntryBranchDepth = _runtimeBranchDepth });
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath });
 
         VisitBlock(func.Body);
         Emit(new Label(exitLabel));

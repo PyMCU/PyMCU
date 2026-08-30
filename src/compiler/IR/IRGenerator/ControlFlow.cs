@@ -1602,6 +1602,23 @@ public partial class IRGenerator
         Emit(new Jump(loop.ContinueLabel));
     }
 
+    /// The file the CALL SITE is written in, to pair with `currentStmtLine`.
+    ///
+    /// Frame ZERO of the inline stack, not the innermost. `currentStmtLine` is only updated at
+    /// `inlineDepth == 0`, so the line belongs to the statement in the function being lowered
+    /// at depth 0, and the file that pairs with it is that function's. Reading the innermost
+    /// frame instead names the driver that expanded the last helper: measured, `Servo("PZ9")`
+    /// written in the entry file reported the servo package's `__init__.py` line 5, which is a
+    /// licence comment.
+    ///
+    /// Null means the entry file, and here that is a statement rather than a fallback: the
+    /// caller is the entry file exactly when frame zero recorded no path of its own.
+    private string? CallSiteSourcePath()
+    {
+        string path = inlineStack.Count > 0 ? inlineStack[0].CallerSourcePath : currentSourcePath;
+        return string.IsNullOrEmpty(path) ? null : path;
+    }
+
     private void VisitRaise(RaiseStmt stmt)
     {
         string resolvedMessage = stmt.Message;
@@ -1641,14 +1658,23 @@ public partial class IRGenerator
                 // the caret belongs on: the reader has to change that value, and inside a six
                 // pin constructor "one of these is wrong" is not enough to act on. Otherwise
                 // the call site's line, unlocated, as before.
+                //
+                // Both of these name the caller's FILE alongside the caller's line, and both
+                // declare the choice. Leaving the file to the fallback meant "the entry file",
+                // which is the caller only when the caller happens to be the entry file: with
+                // the call written in a middle module, `Servo("PZ9")` on mid.py:5 reported
+                // main.py:5, a line that mentions no pin in a file that contains none.
+                // Issue #230.
                 if (blamedArgument.Count > 0)
                 {
                     var at = blamedArgument[^1];
                     throw new ArchitectureError(msg, at.Line > 0 ? at.Line : stmt.Line,
-                                                at.Column, at.Length > 0 ? at.Length : 1);
+                                                at.Column, at.Length > 0 ? at.Length : 1)
+                        { File = CallSiteSourcePath(), LocationIsFinal = true };
                 }
                 int raiseLine = inlineDepth > 0 && currentStmtLine > 0 ? currentStmtLine : stmt.Line;
-                throw new ArchitectureError(msg, raiseLine, 0);
+                throw new ArchitectureError(msg, raiseLine, 0)
+                    { File = CallSiteSourcePath(), LocationIsFinal = true };
             }
 
             // Inside a runtime-conditional branch: the const-propagation chain failed to
@@ -1688,7 +1714,16 @@ public partial class IRGenerator
             // a location arriving from different places, which is the failure this issue
             // exists to remove. So the node is in hand and is not passed, on purpose. Pinned by
             // test_a_raise_inside_an_inlined_callee_reports_the_call_site.
-            throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0);
+            //
+            // The FILE is named, and the choice is declared. Leaving it null used to mean the
+            // entry file by omission, and that is the caller only when the caller happens to be
+            // the entry file: with the call written in a middle module, `Servo("PZ9")` on
+            // mid.py:5 was reported as main.py:5, a line that mentions no pin in a file that
+            // contains none. `LocationIsFinal` is what keeps the stamp in `Generate` off it,
+            // since the exception class cannot tell this raise from a compiler-generated one.
+            // Issue #230.
+            throw new ArchitectureError($"{stmt.ErrorType}: {reason}", line, 0)
+                { File = CallSiteSourcePath(), LocationIsFinal = true };
         }
 
         // A bare `raise` (no type) re-raises the exception currently being handled. Re-signal from

@@ -284,7 +284,47 @@ public partial class IRGenerator
         EepromSize = config.EepromSize > 0 ? config.EepromSize : null,
     };
 
+    /// Names the file an error was raised IN when the error did not name one itself.
+    ///
+    /// `UserError` attaches `File`; the typed classes (`ValueError`, `TypeError`, ...) are
+    /// constructed directly and none of them does, so their line and column came from the AST
+    /// node, which belongs to whichever module the code is in, while the renderer fell back to
+    /// the entry file. Two halves from two files, which is the pair #227 fixed for the
+    /// `UserError` path and this one never had. Issue #230.
+    ///
+    /// Here rather than at each of the 27 sites: `currentSourcePath` is a field, so unwinding
+    /// does not restore it, and at this catch it still holds the value it had at the throw. One
+    /// place covers every direct throw inside IR generation, including one added later.
+    ///
+    /// `LocationIsFinal` is the opt-out, and it has to be a property rather than the exception
+    /// class: the deliberate site in `VisitRaise` throws `ArchitectureError`, which is also one
+    /// of the compiler-generated classes, so nothing about the type distinguishes them.
+    ///
+    /// Not covered, and not reachable from here: the three in `Optimizer.cs` and the two in
+    /// `CanFailAnalyzer.cs`, which run in later phases.
     public ProgramIR Generate(
+        ProgramNode mainAst,
+        Dictionary<string, ProgramNode> importedModules,
+        DeviceConfig config,
+        List<string>? sourceLines = null,
+        Dictionary<string, List<string>>? moduleSourceLines = null,
+        HashSet<string>? projectModules = null,
+        Dictionary<string, string>? modulePaths = null)
+    {
+        try
+        {
+            return GenerateCore(mainAst, importedModules, config, sourceLines,
+                                moduleSourceLines, projectModules, modulePaths);
+        }
+        catch (PyMCU.Common.CompilerError e)
+            when (!e.LocationIsFinal && e.File == null && !string.IsNullOrEmpty(currentSourcePath))
+        {
+            throw new PyMCU.Common.CompilerError(
+                e.TypeName, e.Message, e.Line, e.Column, e.Length) { File = currentSourcePath };
+        }
+    }
+
+    private ProgramIR GenerateCore(
         ProgramNode mainAst,
         Dictionary<string, ProgramNode> importedModules,
         DeviceConfig config,

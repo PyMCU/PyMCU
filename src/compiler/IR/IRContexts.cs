@@ -56,6 +56,13 @@ public class InlineContext
     // table, and if the key is not there, raise") -- reached only for data the compiler
     // cannot see, so it is not the unconditional raise the abort rule is looking for.
     public bool SawDynamicLoop { get; set; } = false;
+
+    // The file the CALL is written in, which is not the file being lowered once the body walk
+    // has moved the pair to the callee. An author-written `raise CompileError` in a driver is
+    // about the caller's argument, so it reports the caller, and reporting a caller means
+    // naming the caller's file rather than falling back to the entry file. Empty means the
+    // entry file, which is then a statement rather than a fallback. Issue #230.
+    public string CallerSourcePath { get; set; } = "";
 }
 
 public class ModuleScope

@@ -45,6 +45,16 @@ public class CompilerError(string typeName, string message, int line, int column
     /// contains and wrong for an import that lives in another module: the reader was sent
     /// to a line of main.py that never mentioned the name in the message.
     public string? File { get; init; }
+
+    /// True when this error chose its own file and line and they must not be filled in for it.
+    ///
+    /// `File == null` used to carry that meaning by implication, and it carried two others at
+    /// the same time: `CompilerPhaseBase` read it as "the entry file" and
+    /// `DependencyGraphBuilder` read it as "this error has no location of its own". One null,
+    /// three readings, and a site that deliberately reports somewhere other than where it is
+    /// raised had no way to say so except by leaving the null alone and hoping. This property
+    /// says it. Issue #230.
+    public bool LocationIsFinal { get; init; }
 }
 
 public class SyntaxError(string message, int line, int column = CompilerError.Unlocated, int length = 1)

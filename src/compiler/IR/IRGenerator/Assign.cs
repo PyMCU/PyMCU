@@ -648,7 +648,8 @@ public partial class IRGenerator
         currentInlinePrefix = newPrefix;
         currentModulePrefix = cls + "_";
 
-        inlineStack.Add(new InlineContext { ExitLabel = exitLabel });
+        inlineStack.Add(new InlineContext { ExitLabel = exitLabel,
+            CallerSourcePath = currentSourcePath });
         if (setter?.Body != null) VisitBlock(setter.Body);
         Emit(new Label(exitLabel));
         inlineStack.RemoveAt(inlineStack.Count - 1);

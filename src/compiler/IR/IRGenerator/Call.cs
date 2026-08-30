@@ -1427,7 +1427,10 @@ public partial class IRGenerator
 
         inlineStack.Add(new InlineContext
             { ExitLabel = exitLabel, ResultTemp = result, ResultVars = tupleResultNames, CalleeName = callee,
-              Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth });
+              Prefix = newPrefix, EntryBranchDepth = _runtimeBranchDepth,
+              // Recorded here because the pair has not moved yet: the switch to the callee
+              // happens at the body walk. See #227 and the note on the field.
+              CallerSourcePath = currentSourcePath });
 
         var boundParams = new HashSet<int>();
 
@@ -2569,7 +2572,7 @@ public partial class IRGenerator
         currentModulePrefix = basePrefix;
         inlineDepth = newDepth;
         inlineStack.Add(new InlineContext { ExitLabel = exitLabel, ResultTemp = superResult,
-            EntryBranchDepth = _runtimeBranchDepth });
+            EntryBranchDepth = _runtimeBranchDepth, CallerSourcePath = currentSourcePath });
 
         VisitBlock(funcSuper.Body);
         Emit(new Label(exitLabel));
