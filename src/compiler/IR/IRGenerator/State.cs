@@ -530,6 +530,20 @@ public partial class IRGenerator
             { File = LocatedFile };
     }
 
+    /// Every FunctionDef the scan put on the path to becoming a real subroutine.
+    ///
+    /// Recorded by NODE and not by name so it survives the outline path, which compiles a
+    /// stand-in built from the method rather than the method itself: the original is what goes
+    /// in here, because the original is what the user decorated.
+    ///
+    /// Read once, after every module has been scanned, by the check that refuses `@naked` and
+    /// `@interrupt` on a function that is expanded instead of compiled. That check is written
+    /// against this set rather than against the branches that fill it, so a path added later
+    /// that expands a function fails the check instead of dropping the decorator in silence,
+    /// which is how PyMCU#229 stayed invisible: five different registries, all of them a way
+    /// out of being a subroutine, and no one place that noticed.
+    private HashSet<FunctionDef> compiledAsSubroutine = new();
+
     // Intrinsic tracking
     private HashSet<string> intrinsicNames = new();
 

@@ -529,6 +529,7 @@ public partial class IRGenerator
             currentSourcePath = PathOfModule(modName);
             ScanGlobals(modAst, modules[modName]);
             ScanFunctions(modAst, modules[modName]);
+            RefuseCodegenDecoratorsOnExpandedFunctions(modAst);
         }
 
         foreach (var kvp in importedModules)
@@ -548,6 +549,7 @@ public partial class IRGenerator
                 currentSourcePath = PathOfModule(modName);
                 ScanGlobals(modAst, scope);
                 ScanFunctions(modAst, scope);
+                RefuseCodegenDecoratorsOnExpandedFunctions(modAst);
             }
             foreach (var imp in modAst.Imports)
             {
@@ -598,6 +600,7 @@ public partial class IRGenerator
 
         ScanGlobals(mainAst);
         ScanFunctions(mainAst);
+        RefuseCodegenDecoratorsOnExpandedFunctions(mainAst);
 
         // Synthesize a `main` function from top-level executable statements when the
         // user has not written an explicit `def main():`.  This allows MicroPython-

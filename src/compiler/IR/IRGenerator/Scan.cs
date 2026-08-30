@@ -997,6 +997,7 @@ public partial class IRGenerator
                 }
                 else if (!hasZcaFirstParam)
                 {
+                    compiledAsSubroutine.Add(func);
                     functionsToCompile.Add(new FunctionEntry
                         { Prefix = currentModulePrefix, Func = func, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
                 }
@@ -1238,6 +1239,8 @@ public partial class IRGenerator
                                         + $"defined but never called -- {why}.");
                                 }
 
+                                RefuseUnsupportedMethodDecorators(func, classDef.Name);
+
                                 string fullName = currentModulePrefix + func.Name;
                                 functionReturnTypes[fullName] = func.ReturnType;
                                 var @params = new List<string>();
@@ -1370,6 +1373,7 @@ public partial class IRGenerator
                                     var defLayout = clsLayout;
                                     if (func.Params.Count == 0 || func.Params[0].Name != "self")
                                     {
+                                        compiledAsSubroutine.Add(func);
                                         functionsToCompile.Add(new FunctionEntry
                                         {
                                             Prefix = currentModulePrefix, Func = func,
@@ -1770,6 +1774,85 @@ public partial class IRGenerator
         return layout;
     }
 
+    /// Refuses the decorator a METHOD cannot honour, whatever path the method then takes.
+    ///
+    /// It was silently dropped, and it is a decorator whose entire purpose is to change the code
+    /// generated for the function (PyMCU#229).
+    ///
+    ///   @interrupt  an ISR is entered by the hardware. There is no caller, so nothing writes
+    ///               the leading parameters an instance method is compiled with -- the fields of
+    ///               `self`. Emitting the vector entry anyway would trade a dropped flag for a
+    ///               handler that reads uninitialised storage, which is the worse of the two. A
+    ///               method with no `self` is a plain function in a class body and keeps working.
+    private void RefuseUnsupportedMethodDecorators(FunctionDef func, string className)
+    {
+        bool hasSelf = func.Params.Count > 0 && func.Params[0].Name == "self";
+
+        if (func.IsInterrupt && hasSelf)
+            throw UserError(
+                $"'{className}.{func.Name}' is marked @interrupt, but an interrupt handler is "
+                + "entered by the hardware, with no caller to pass `self`. Move it out of the "
+                + $"class and pass what it reads as arguments (`def {func.Name}()` at module "
+                + "level), or drop the decorator and call it from the handler.", func);
+    }
+
+    /// Every function carrying a codegen decorator must have become a subroutine.
+    ///
+    /// Run for a module immediately after its own ScanFunctions, while currentSourcePath still
+    /// names that module: the node's line belongs to the file being scanned, and a diagnostic
+    /// that states one file's line against another file's name is a location that does not
+    /// exist. `@naked` and `@interrupt` say what the compiler
+    /// must emit for a function's entry and exit; a function that is EXPANDED into its call sites
+    /// has no entry and no exit, so the decorator has nothing to act on and was being discarded
+    /// without a word. Measured on five separate ways out of being a subroutine: a module-level
+    /// `@inline`, an `@inline` method, a function taking a ZCA instance parameter, a single-field
+    /// mutator that also returns, and a property accessor. All five compiled clean.
+    ///
+    /// Written against the RESULT (did this become a subroutine?) and not against the branches
+    /// that decide it. Guarding each registry would have needed seventeen call sites to be found
+    /// and kept in step, and missing one is exactly the defect being fixed.
+    private void RefuseCodegenDecoratorsOnExpandedFunctions(ProgramNode ast)
+    {
+        foreach (var (func, owner) in FunctionsWithOwners(ast))
+        {
+            if (!func.IsNaked && !func.IsInterrupt) continue;
+            if (compiledAsSubroutine.Contains(func)) continue;
+
+            string what = func.IsNaked ? "@naked" : "@interrupt";
+            string who = owner is null ? $"'{func.Name}'" : $"'{owner}.{func.Name}'";
+            string why = func.IsNaked
+                ? "suppresses the prologue and epilogue of a subroutine"
+                : "installs a subroutine in an interrupt vector";
+            throw UserError(
+                $"{who} is marked {what}, but it is expanded into its callers instead of "
+                + $"being compiled as a subroutine, and {what} {why}. An @inline function, a "
+                + "property accessor and a function taking a class instance as a parameter "
+                + $"are all expanded. Remove @inline (or the class parameter) so {who} is "
+                + $"compiled once, or remove {what}.", func);
+        }
+    }
+
+    /// Every FunctionDef a module declares, paired with the class that owns it, or null.
+    private static IEnumerable<(FunctionDef Func, string? Owner)> FunctionsWithOwners(ProgramNode ast)
+    {
+        foreach (var fn in ast.Functions)
+            yield return (fn, null);
+        foreach (var st in ast.GlobalStatements)
+            foreach (var pair in FunctionsOfClass(st))
+                yield return pair;
+    }
+
+    private static IEnumerable<(FunctionDef Func, string? Owner)> FunctionsOfClass(Statement st)
+    {
+        if (st is not ClassDef cls || cls.Body is not Block body) yield break;
+        foreach (var member in body.Statements)
+        {
+            if (member is FunctionDef fn) yield return (fn, cls.Name);
+            // Nested classes declare methods of their own, and they reach the same registries.
+            foreach (var pair in FunctionsOfClass(member)) yield return pair;
+        }
+    }
+
     // RFC 0001 F1-F3: register a method as an outlined shared subroutine. >= 2 fields ->
     // Model B SRAM slot (self pointer + BytearrayLoad offsets); else Model A (one param per
     // field). Used by both the explicit @outline branch and the F4 default (an outline-safe
@@ -1848,7 +1931,18 @@ public partial class IRGenerator
             // The `def` keyword, which is where Parser stamps a FunctionDef; see the decision
             // table above Located() in Parser.cs.
             Line = func.Line, Column = func.Column, Length = func.Length,
+            // @naked travels with the body. An outlined method IS a subroutine that takes its
+            // instance's fields as leading parameters, which is the same shape as a module-level
+            // `@naked def f(n)` -- a form that has always worked. Dropping it here meant the
+            // prologue the decorator exists to suppress was emitted anyway, and nothing said so:
+            // a corrupted context switch out of a decorator that looked applied (PyMCU#229).
+            //
+            // @interrupt is NOT carried, and that is a decision rather than an omission: it is
+            // refused earlier, on the method, because a vector entry into a body that reads
+            // parameters no caller ever writes is worse than the dropped flag.
+            IsNaked = func.IsNaked,
         };
+        compiledAsSubroutine.Add(func);
         functionsToCompile.Add(new FunctionEntry
             { Prefix = currentModulePrefix, Func = synth, SourceFile = currentSourceFile, SourcePath = currentSourcePath });
 
@@ -2216,6 +2310,8 @@ public partial class IRGenerator
             if (inner is FunctionDef func)
             {
                 classDirectMethods[classKey].Add(func.Name);
+
+                RefuseUnsupportedMethodDecorators(func, nested.Name);
 
                 string fullName = currentModulePrefix + func.Name;
                 functionReturnTypes[fullName] = func.ReturnType;
