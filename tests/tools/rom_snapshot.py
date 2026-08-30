@@ -292,6 +292,40 @@ def provenance():
     }
 
 
+def unreproducible(prov):
+    """Why a baseline captured from this toolchain could not be obtained again.
+
+    A snapshot is a claim that these numbers can be reproduced. The provenance block
+    already records everything needed to know when that claim is false, and until now
+    nothing acted on it: `capture` wrote the file either way.
+
+    Two conditions break it, per binary:
+
+      stale   built from a commit that is not its repo's head, so "check out repo_head
+              and rebuild" does not produce this binary
+      dirty   built from a working tree. The stamp is SourceRevisionId: it records the
+              checkout and never the tree, so once that uncommitted work is committed
+              or discarded there is nothing left to rebuild from. The dirty_hash can
+              say two such builds differ; it cannot bring either one back.
+
+    Measured 2026-08-30 while retaking the baseline: four of the five backends were
+    stale, two of them from dirty trees, and capture would have frozen that without a
+    word. The frontend was current only because the run before it had been discarded
+    for being stale, which is the same defect one layer up.
+    """
+    reasons = []
+    for name, b in sorted((prov.get("toolchain") or {}).items()):
+        if b.get("stale"):
+            reasons.append(f"{name}: {b['stale']}")
+        if b.get("repo_dirty"):
+            reasons.append(
+                f"{name}: {len(b['repo_dirty'])} sin commitear en "
+                f"{b.get('repo')}/{b.get('scope')} -- el sello no lo ve y no se recupera")
+        if b.get("sha") is None:
+            reasons.append(f"{name}: no se encontro el binario ({b.get('binary')})")
+    return reasons
+
+
 def chips():
     out = {}
     for f in sorted(CHIPS_DIR.glob("*.py")):
@@ -620,6 +654,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["capture", "check", "annotate"])
     ap.add_argument("--file", default=str(REPO / "tests" / "tools" / "rom_snapshot.json"))
+    ap.add_argument("--anyway", action="store_true",
+                    help="capturar aunque el toolchain no se pueda reconstruir despues")
     args = ap.parse_args()
 
     if args.action == "annotate":
@@ -628,12 +664,28 @@ def main():
     prov = provenance()
     report_provenance(prov)
 
+    # Checked BEFORE the corpus runs: refusing after ten minutes of compiling teaches
+    # people to pass --anyway to avoid waiting again.
+    blockers = unreproducible(prov) if args.action == "capture" else []
+    if blockers and not args.anyway:
+        print("\nNO SE CAPTURA: este toolchain no se puede reconstruir despues:")
+        for r in blockers:
+            print(f"    ! {r}")
+        print("    un baseline irreproducible es peor que no tenerlo: el dia que alguien")
+        print("    discrepe de estas cifras no habra compilador con el que comprobarlo.")
+        print("    Limpia la procedencia, o --anyway para capturar de todas formas.")
+        return 2
+
     current = run_corpus()
     path = Path(args.file)
 
     if args.action == "capture":
-        path.write_text(json.dumps(
-            {"provenance": prov, "cells": current}, indent=1, sort_keys=True) + "\n")
+        stored = {"provenance": prov, "cells": current}
+        # A forced capture labels itself. Otherwise the next reader sees a baseline that
+        # looks like every other one and has no way to know it cannot be rebuilt.
+        if blockers:
+            stored["unreproducible"] = blockers
+        path.write_text(json.dumps(stored, indent=1, sort_keys=True) + "\n")
         ok = sum(1 for v in current.values() if v["status"] == "ok")
         noisy = {k: v for k, v in current.items() if v.get("warn")}
         print(f"\ncapturado: {len(current)} celdas, {ok} compilan -> {path}")

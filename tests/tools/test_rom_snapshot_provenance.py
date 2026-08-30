@@ -116,3 +116,60 @@ def test_a_commit_inside_the_compiler_is_a_compiler_change(repo):
 def test_an_unknown_commit_is_never_assumed_harmless(repo):
     """If the old stamp is gone the gate cannot prove anything, so it does not."""
     assert not snap.scope_unchanged_between(repo, "deadbeef", head(repo), "compiler")
+
+
+# --- can this baseline be obtained again? ------------------------------------
+#
+# Recording that a binary is stale and acting on it are different things, and until
+# 2026-08-30 the harness only did the first: four of five backends were stale, two of
+# them from dirty trees, and `capture` would have frozen that without a word.
+
+
+def tool(**over):
+    return {"toolchain": {"pymcuc-x": {**BINARY, **over}}}
+
+
+def test_a_clean_current_toolchain_is_reproducible():
+    assert snap.unreproducible(tool()) == []
+
+
+def test_a_binary_built_from_a_commit_that_is_not_head_is_not():
+    """"Check out repo_head and rebuild" does not produce this binary."""
+    reasons = snap.unreproducible(tool(stale="compilado en aaa, el repo va por bbb"))
+    assert len(reasons) == 1
+    assert "compilado en aaa" in reasons[0]
+
+
+def test_a_binary_built_from_a_working_tree_is_not():
+    """The stamp is SourceRevisionId: it records the checkout and never the tree.
+
+    Once that uncommitted work is committed or discarded there is nothing left to
+    rebuild from. dirty_hash can say two such builds differ; it cannot bring one back.
+    """
+    reasons = snap.unreproducible(tool(repo_dirty=["a.cs", "b.cs"], dirty_hash="ffff"))
+    assert len(reasons) == 1
+    assert "2 sin commitear" in reasons[0]
+
+
+def test_a_missing_binary_is_not():
+    assert snap.unreproducible(tool(sha=None)) != []
+
+
+def test_both_conditions_are_reported_separately():
+    """One line per reason, because the two are fixed by different people."""
+    reasons = snap.unreproducible(tool(stale="compilado en aaa, el repo va por bbb",
+                                       repo_dirty=["a.cs"]))
+    assert len(reasons) == 2
+
+
+def test_every_backend_is_checked_and_not_only_the_frontend():
+    """The gap this closes. The frontend was the only one anybody looked at."""
+    prov = {"toolchain": {
+        "pymcuc": BINARY,
+        "pymcuc-avr": {**BINARY, "stale": "compilado en aaa, el repo va por bbb"},
+        "pymcuc-pic": {**BINARY, "repo_dirty": ["x.cs"]},
+    }}
+    reasons = snap.unreproducible(prov)
+    assert any("pymcuc-avr" in r for r in reasons)
+    assert any("pymcuc-pic" in r for r in reasons)
+    assert not any(r.startswith("pymcuc:") for r in reasons)
