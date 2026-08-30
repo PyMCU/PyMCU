@@ -1774,16 +1774,23 @@ public partial class IRGenerator
         return layout;
     }
 
-    /// Refuses the decorator a METHOD cannot honour, whatever path the method then takes.
+    /// Refuses the two decorators a METHOD cannot honour, whatever path the method then takes.
     ///
-    /// It was silently dropped, and it is a decorator whose entire purpose is to change the code
-    /// generated for the function (PyMCU#229).
+    /// Both were silently dropped, and both are decorators whose entire purpose is to change the
+    /// code generated for the function (PyMCU#229).
     ///
     ///   @interrupt  an ISR is entered by the hardware. There is no caller, so nothing writes
     ///               the leading parameters an instance method is compiled with -- the fields of
     ///               `self`. Emitting the vector entry anyway would trade a dropped flag for a
     ///               handler that reads uninitialised storage, which is the worse of the two. A
     ///               method with no `self` is a plain function in a class body and keeps working.
+    ///
+    ///   @extern     was not merely dropped. The symbol was never registered and the body WAS
+    ///               compiled, so the call reached an empty PyMCU function and the C function was
+    ///               never called at all. With `-> None` that program builds clean.
+    ///
+    /// Refusing is the minimum honest answer for @extern rather than the finished one: making it
+    /// work needs the class path to register the symbol and skip the body, which is its own job.
     private void RefuseUnsupportedMethodDecorators(FunctionDef func, string className)
     {
         bool hasSelf = func.Params.Count > 0 && func.Params[0].Name == "self";
@@ -1794,6 +1801,14 @@ public partial class IRGenerator
                 + "entered by the hardware, with no caller to pass `self`. Move it out of the "
                 + $"class and pass what it reads as arguments (`def {func.Name}()` at module "
                 + "level), or drop the decorator and call it from the handler.", func);
+
+        if (func.IsExtern)
+            throw UserError(
+                $"'{className}.{func.Name}' is marked @extern, which is only supported on a "
+                + "module-level function. In a class the symbol is not registered and the body is "
+                + "compiled instead, so the call would reach an empty PyMCU function and "
+                + $"'{func.ExternSymbol}' would never run. Declare it at module level and call it "
+                + "from the method.", func);
     }
 
     /// Every function carrying a codegen decorator must have become a subroutine.
