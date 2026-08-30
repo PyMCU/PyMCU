@@ -71,16 +71,33 @@ public class FileSystemModuleLoader : IModuleLoader
         context.ModuleSourceLines[moduleName] = new List<string>(File.ReadAllLines(path));
 
         // PYMCU_PY_PARSER=1 builds the same AST with CPython's parser instead of ours.
+        //
+        // Both are wrapped because a SyntaxError from a module's text knows its line and its
+        // column and does NOT know its file: the typed error classes never set `File`. That
+        // null then meant two different things to two readers. The renderer took it as "the
+        // entry file", and DependencyGraphBuilder's `when (e.File == null)` took it as "this
+        // error has no location of its own" and relocated it to the import statement, so a
+        // stray token on helper.py:6 was reported as main.py:2:1 under the text of the import,
+        // with the real line and column discarded. Naming the file here is what stops both.
+        // Issue #230.
         ProgramNode modAst;
-        if (PythonAstReader.Enabled)
+        try
         {
-            modAst = PythonAstReader.ParseFile(path);
+            if (PythonAstReader.Enabled)
+            {
+                modAst = PythonAstReader.ParseFile(path);
+            }
+            else
+            {
+                var lexer = new Lexer(src);
+                var parser = new Parser(lexer.Tokenize());
+                modAst = parser.ParseProgram();
+            }
         }
-        else
+        catch (CompilerError e) when (e.File == null)
         {
-            var lexer = new Lexer(src);
-            var parser = new Parser(lexer.Tokenize());
-            modAst = parser.ParseProgram();
+            throw new CompilerError(e.TypeName, e.Message, e.Line, e.Column, e.Length)
+                { File = path };
         }
 
         // A relative import is resolved against the file it is WRITTEN in, so it has to be
