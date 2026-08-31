@@ -624,9 +624,16 @@ def first_that_builds(work, chip, arch, template, candidates, key):
     return {"status": "no-build", "reason": reason[:120], "tried": tried}
 
 
-def run_corpus():
+def run_corpus(only=None):
     snapshot = {}
-    for chip, arch in chips().items():
+    selected = chips()
+    if only:
+        selected = {c: a for c, a in selected.items() if c in only}
+        missing = [c for c in only if c not in selected]
+        if missing:
+            print(f"  --only: no existen en chips/: {', '.join(missing)}")
+        print(f"  --only: {len(selected)} de {len(chips())} chips")
+    for chip, arch in selected.items():
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             for name, template in PROGRAMS.items():
@@ -804,6 +811,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["capture", "check", "annotate"])
     ap.add_argument("--file", default=str(REPO / "tests" / "tools" / "rom_snapshot.json"))
+    ap.add_argument("--only", default=None,
+                    help="coma-separado: correr solo estos chips. Un subconjunto NO es "
+                         "un baseline; capture --only escribe un fichero parcial y lo "
+                         "marca como tal para que no se lea como la matriz entera.")
     ap.add_argument("--anyway", action="store_true",
                     help="capturar aunque el toolchain no se pueda reconstruir despues")
     args = ap.parse_args()
@@ -826,7 +837,8 @@ def main():
         print("    Limpia la procedencia, o --anyway para capturar de todas formas.")
         return 2
 
-    current = run_corpus()
+    only = [c.strip() for c in args.only.split(",")] if args.only else None
+    current = run_corpus(only)
     path = Path(args.file)
 
     if args.action == "capture":
@@ -838,6 +850,11 @@ def main():
         # looks like every other one and has no way to know it cannot be rebuilt.
         if blockers:
             stored["unreproducible"] = blockers
+        # A partial capture says so in the file. Without this a --only baseline is
+        # indistinguishable from a full one, and the next `check` reports every chip it
+        # does not contain as if nothing had been measured there.
+        if only:
+            stored["partial"] = only
         path.write_text(json.dumps(stored, indent=1, sort_keys=True) + "\n")
         ok = sum(1 for v in current.values() if v["status"] == "ok")
         noisy = {k: v for k, v in current.items() if v.get("warn")}
