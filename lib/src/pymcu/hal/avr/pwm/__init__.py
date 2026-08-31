@@ -12,6 +12,7 @@
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
 from pymcu.types import uint8, uint16, inline
+from pymcu.exceptions import CompileError
 
 if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
     from pymcu.hal.avr.pwm.attiny85 import (
@@ -19,6 +20,17 @@ if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name =
         pwm_select_start_val, pwm_prescaler_for_freq,
         pwm_connect, pwm_disconnect, pwm_clear_ocr_high,
     )
+elif (__CHIP__.name == "atmega32u4" or __CHIP__.name == "attiny13" or __CHIP__.name == "attiny13a"
+          or __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny24"
+          or __CHIP__.name == "attiny4313" or __CHIP__.name == "attiny44" or __CHIP__.name == "attiny84"):
+    # Every one of these parts HAS timers, and none of them has the Timer2 this
+    # implementation programs -- OCR2A, OCR2B, TCCR2A, TCCR2B. atmega32u4 is on the list and
+    # is not an ATtiny: it has Timer0/1/3/4 and no Timer2, so reading this as an ATtiny
+    # problem would have missed it. Falling through wrote Timer2 registers that do not exist.
+    raise CompileError(
+        "pymcu.hal.pwm has no implementation for this chip yet. The part HAS timers, but not "
+        "the Timer2 this HAL programs, so there is no register map here that matches it. Use "
+        "an ATmega 48/88/168/328 or 2560, or an ATtiny 25/45/85, for now.")
 else:
     from pymcu.hal.avr.pwm.atmega328p import (
         pwm_init, pwm_select_ocr, pwm_select_tccr_b,
