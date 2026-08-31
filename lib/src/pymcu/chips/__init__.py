@@ -36,6 +36,17 @@ class _ChipInfo:
     or __CHIP__.name.  The runtime instance is never accessed on real hardware.
     """
 
+    # The board, e.g. "pico_w", or "" when the program was built by chip and never said.
+    #
+    # A board is not a chip and neither implies the other: a Pico and a Pico W are both
+    # rp2040, and what differs is a part soldered next to the MCU. Anything about that part
+    # is a board question.
+    #
+    # EMPTY IS NORMAL. A project sets `board` or `target` and the driver refuses both at
+    # once, so a program built by target has no board to give. A HAL that reads "" as "no"
+    # takes the feature away from every such program; read it as "not told".
+    board: str = ""
+
     # Human-readable chip identifier, e.g. "atmega328p", "pic16f877a".
     name: str = ""
 
