@@ -43,10 +43,21 @@ BOARD_CHIPS: dict[str, str] = {
     "raspberry_pi_pico": "rp2040",
     "pico":              "rp2040",
     # The W boards are the same MCU with a CYW43439 beside it, so they resolve to the
-    # same chip. That is all this table can say: after resolution `pico` and `pico_w`
-    # are indistinguishable, so the WiFi HAL gates on rp2040/rp2350 and a plain Pico
-    # still compiles a WiFi binary. Closing that needs the board to survive into
-    # __CHIP__, which is a model change and not this alias.
+    # same chip. This table cannot tell them apart and does not have to any more: the
+    # board name now survives into __CHIP__.board, and lib/src/pymcu/hal/wifi.py reads
+    # it to refuse a board that has no radio.
+    #
+    # SO ADDING A BOARD WITH A RADIO HERE IS HALF THE CHANGE. The other half is the
+    # whitelist in lib/src/pymcu/hal/wifi.py, and a board added here and not there is
+    # refused WiFi with a message that reads like a bug in the HAL.
+    #
+    # You do not have to remember that. tests/driver/
+    # test_the_wifi_whitelist_follows_the_board_table.py compares the two lists and
+    # fails naming the board. The comment is here for the why; the test is the what.
+    #
+    # Note there is nothing to canonicalise: resolve_chip_for_board is a dict lookup,
+    # so whatever spelling the user wrote is the spelling the HAL compares against.
+    # That is why the whitelist lists all four W spellings rather than one.
     "raspberry_pi_pico_w": "rp2040",
     "pico_w":              "rp2040",
     "rp2040":            "rp2040",
