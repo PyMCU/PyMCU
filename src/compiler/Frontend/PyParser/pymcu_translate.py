@@ -118,8 +118,15 @@ def line_of(node):
 #
 # The multi-line spelling agrees as well, by both sides refusing: position_of drops the length
 # when the node crosses lines and Parser.Spanning() does the same, for the same reason.
+# List joins Tuple for the same reason and with one difference measured rather than assumed: a
+# list ALWAYS starts at its `[`, so unlike a tuple there is no second spelling to reconcile. Its
+# span runs to the `]` and is dropped across lines, which is what Parser.Spanning() does too.
+#
+# `ListComp` is a different CPython node and keeps its own entry in DERIVED_KINDS, so this
+# cannot reach a comprehension by accident. Checked over `[]`, `[1]`, `[[1], [2]]`, a list
+# written across two lines, one starting with a call, and a comprehension.
 POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
-                     "Break", "Continue", "Tuple")
+                     "Break", "Continue", "Tuple", "List")
 
 # Kinds this file has to COMPUTE some part of the position for, because taking the node whole
 # would disagree with the hand-written parser. Each entry says which part to mark and how it is

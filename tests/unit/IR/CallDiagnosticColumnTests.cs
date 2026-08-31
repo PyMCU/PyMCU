@@ -110,15 +110,25 @@ public class CallDiagnosticColumnTests
     }
 
     [Fact]
-    public void AnArgumentSynthesisedRatherThanWrittenStillReportsNoColumn()
+    public void AnArgumentSynthesisedRatherThanWrittenPointsAtTheLiteralItCameFrom()
     {
-        // The rule the test above used to guard still holds; it just needs a node that really
-        // has no position. The elements of a bytes literal are decoded from one b"..." token,
-        // so no element is anything the user typed, and Parser deliberately leaves them
-        // unstamped. Nothing to point at but the whole literal.
+        // Was AnArgumentSynthesisedRatherThanWrittenStillReportsNoColumn. Its own text named the
+        // answer it was waiting for: "nothing to point at but the whole literal". Stamping
+        // ListExpr made the list that WRAPS those decoded bytes carry the position of the
+        // `b"..."` token they came from, so the whole literal is now exactly what is marked.
+        //
+        // The rule it guarded is unchanged and still holds: the ELEMENTS are synthesised and
+        // remain unstamped, because no element is anything the user typed. What changed is that
+        // the container is not synthesised, and it always had a token.
+        //
+        //                    1         2
+        //          123456789012345678901234567890
+        // line 3: "    v = int.from_bytes(b\"\\x01\", \"little\")"  -- the literal is at column 24
         var ex = Fails("    v = int.from_bytes(b\"\\x01\", \"little\")\n");
 
         Assert.Contains("at least 2 bytes", ex.Message);
-        Assert.False(ex.HasColumn);
+        Assert.Equal(3, ex.Line);
+        Assert.Equal(24, ex.Column);
+        Assert.Equal(7, ex.Length);   // `b"\\x01"` as written, quotes and escape included
     }
 }

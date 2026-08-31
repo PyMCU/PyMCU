@@ -2581,11 +2581,20 @@ public partial class IRGenerator
             string inputPrompt = "";
             int inputMaxLen = 64;
 
+            // The expression the size was supposed to come from, kept so the refusal below
+            // can point at it. Not the `bytearray(...)` call and not the declared name: the
+            // message says the size could not be determined FROM THE INITIALIZER, and the
+            // initializer's argument is the part that failed to supply one. An argument the
+            // compiler never got to look at leaves this null and the caret is withheld,
+            // because then there is no such part.
+            Expression? sizeSource = null;
+
             if (stmt.Init != null)
             {
                 // A bytes literal carries its own size: b"ab" is two bytes.
                 if (stmt.Init is ListExpr bytesLit)
                 {
+                    sizeSource = bytesLit;
                     count = bytesLit.Elements.Count;
                     foreach (var e in bytesLit.Elements)
                         initVals.Add(TryEvalElemConst(e, out int bv) ? bv : 0);
@@ -2595,6 +2604,7 @@ public partial class IRGenerator
                     if (callee.Name == "bytearray" && call.Args.Count > 0)
                     {
                         Expression arg0 = call.Args[0];
+                        sizeSource = arg0;
                         if (arg0 is ListExpr le)
                         {
                             count = le.Elements.Count;
@@ -2644,7 +2654,9 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0)
+                throw UserError("bytearray: could not determine buffer size from initializer.",
+                                sizeSource);
 
             string qualified = !string.IsNullOrEmpty(currentInlinePrefix)
                 ? currentInlinePrefix + stmt.Name
@@ -3129,12 +3141,15 @@ public partial class IRGenerator
         if (stmt.Annotation == "bytearray")
         {
             int count = 0;
+            // The same as the VarDecl path above: the argument that failed to give a size.
+            Expression? annSizeSource = null;
             var initVals = new List<int>();
 
             if (stmt.Value != null && stmt.Value is CallExpr call && call.Callee is VariableExpr callee &&
                 callee.Name == "bytearray" && call.Args.Count > 0)
             {
                 var arg0 = call.Args[0];
+                annSizeSource = arg0;
                 if (arg0 is ListExpr le)
                 {
                     count = le.Elements.Count;
@@ -3148,7 +3163,9 @@ public partial class IRGenerator
                 }
             }
 
-            if (count <= 0) throw UserError("bytearray: could not determine buffer size from initializer.");
+            if (count <= 0)
+                throw UserError("bytearray: could not determine buffer size from initializer.",
+                                annSizeSource);
             string qualified = string.IsNullOrEmpty(currentFunction)
                 ? stmt.Target
                 : currentFunction + "." + stmt.Target;

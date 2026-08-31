@@ -1732,6 +1732,20 @@ public class Parser
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
     ///   ListCompExpr      the OPENING `[`    where the construct starts
+    ///   ListExpr          THE WHOLE LIST     `[]` and `[1, 2]` in full, bracket to bracket,
+    ///                     and `b"ab"` as the whole literal it was decoded from.
+    ///
+    ///                     Marked WHOLE while its neighbour ListCompExpr is marked at the
+    ///                     bracket alone, and the difference is not an oversight. A
+    ///                     comprehension has parts that get diagnostics of their own, the
+    ///                     iterable and the filter and the element, so marking where the
+    ///                     construct STARTS is the answer to "which node". A list literal's
+    ///                     parts are its elements, and a diagnostic about an element already
+    ///                     points at that element; what is left for the list itself is about
+    ///                     the list as a whole, which is how `bytearray([])` reads.
+    ///
+    ///                     They are also separate node types in CPython, `List` against
+    ///                     `ListComp`, so stamping one cannot disturb the other by accident.
     ///   TupleExpr         THE WHOLE TUPLE    a tuple starts where its TEXT starts, which is
     ///                     one rule and not two: the `(` when it is written with one because
     ///                     the `(` is then the first character, and the first element when it
@@ -2262,7 +2276,8 @@ public class Parser
 
         if (Match(TokenType.BytesLiteral))
         {
-            string encoded = Previous().Value;
+            Token bytesTok = Previous();
+            string encoded = bytesTok.Value;
             var elems = new List<Expression>();
             if (!string.IsNullOrEmpty(encoded))
             {
@@ -2284,7 +2299,10 @@ public class Parser
                 }
             }
 
-            return new ListExpr(elems);
+            // The whole `b"..."`, which is what the comment above says is the only thing here
+            // worth pointing at: the elements were decoded from its payload and are not tokens
+            // the user wrote.
+            return Located(new ListExpr(elems), bytesTok);
         }
 
         if (Match(TokenType.String))
@@ -2607,7 +2625,7 @@ public class Parser
             if (Check(TokenType.RBracket))
             {
                 Advance();
-                return new ListExpr(new List<Expression>());
+                return Spanning(new ListExpr(new List<Expression>()), openBracket, Previous());
             }
 
             var first = ParseExpression();
@@ -2648,7 +2666,7 @@ public class Parser
             }
 
             Consume(TokenType.RBracket, "Expected ']'");
-            return new ListExpr(lelems);
+            return Spanning(new ListExpr(lelems), openBracket, Previous());
         }
 
         if (AtEllipsis())

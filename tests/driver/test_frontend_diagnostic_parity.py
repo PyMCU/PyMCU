@@ -166,6 +166,13 @@ def _program(tmp_path: Path, source: str) -> Path:
     # phrased over where the text begins does not.
     "from pymcu.types import uint8\ndef two() -> uint8:\n    return 1\n"
     "def main() -> None:\n    a, b, c, *d = two(), 2\n    e: uint8 = uint8(a)\n",
+    # A LIST, marked whole like a tuple. The third row crosses lines, where both sides drop the
+    # length; the fourth is a bytes literal, whose decoded elements are synthesised but whose
+    # CONTAINER came from a real token and is marked as that whole token.
+    "from pymcu.types import uint8\ndef main() -> None:\n    xs = bytearray([])\n    n: uint8 = uint8(len(xs))\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    xs: bytearray = bytearray([])\n    n: uint8 = uint8(len(xs))\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    xs = bytearray([\n        ])\n    n: uint8 = uint8(len(xs))\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    v = int.from_bytes(b\"\\x01\", \"little\")\n",
 ])
 def test_both_front_ends_underline_the_same_amount(tmp_path, source):
     src = _program(tmp_path, source)
