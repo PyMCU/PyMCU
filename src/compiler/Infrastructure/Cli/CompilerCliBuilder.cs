@@ -58,17 +58,33 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => 4000000UL
         };
 
+        // NOT AllowMultipleArgumentsPerToken. It makes a list option keep consuming tokens
+        // until the next one it recognises, and a token starting with `--` is NOT a stopping
+        // condition, so everything after this flag is swallowed as another value:
+        //
+        //     pymcuc w.py --target rp2040 -I lib --totally-invented   ->  rc=0, silent
+        //     pymcuc w.py --totally-invented --target rp2040 -I lib   ->  refused, rc=1
+        //
+        // The same argument, refused or accepted depending on which side of `-I` it fell on,
+        // and every real command line puts the include paths last. Worse than ignored: the
+        // token becomes an entry in the module search path, so a misspelled flag silently
+        // widens where imports resolve from. Measured: with a bare `extra` after `-I lib`,
+        // `from mymod import ...` resolved out of `extra/`.
+        //
+        // `TreatUnmatchedTokensAsErrors` is already true and the parser already refuses an
+        // unrecognised argument by itself; this option was the only thing stopping it from
+        // seeing one. Nothing needs the `-I a b` spelling: every caller in this repo and in
+        // the backend repos passes the flag once per path. Issue #237.
         Option<List<string>> configOption = new("--config", "-C")
         {
             Description = "Configuration bits (KEY=VALUE)",
-            AllowMultipleArgumentsPerToken = true,
             DefaultValueFactory = parseResult => []
         };
 
+        // Same reason as --config above. Issue #237.
         Option<List<string>> includeOption = new("--include", "-I")
         {
             Description = "Add directory to search path for imports",
-            AllowMultipleArgumentsPerToken = true,
             DefaultValueFactory = parseResult => []
         };
 
