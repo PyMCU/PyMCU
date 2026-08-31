@@ -298,6 +298,22 @@ def annotation_of(node):
     comma (TupleType.ElementTypes splits on the bare comma)."""
     if node is None:
         return ""
+    # `uint8 | None`. Refused HERE, while the annotation is being read, so that both front ends
+    # answer in the same phase (#240). Before this, ast.unparse turned it into the string
+    # "uint8 | None" and handed it on as though it were a type name, and the program was refused
+    # much later by whichever guard first noticed the text was not a type -- for an instance
+    # member, one that says the annotation "must be an array type", to someone who wrote one.
+    #
+    # BitOr and not every BinOp: an array size is allowed to be an expression (`uint8[n*2]`),
+    # and those come through here as BinOps too. Placed before the recursion below so a union
+    # nested in a tuple annotation is caught as well.
+    #
+    # Text is word for word Parser.cs's UnionAnnotationRefusal. Change one, change both.
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        raise Unsupported(
+            "a union type annotation is not supported. PyMCU needs one concrete type, because "
+            "the storage for a value is decided at compile time and two types do not share a "
+            "size", node)
     if isinstance(node, ast.Constant) and node.value is None:
         return "void"
     if isinstance(node, ast.Tuple):
@@ -307,6 +323,36 @@ def annotation_of(node):
         index = node.slice
         elements = index.elts if isinstance(index, ast.Tuple) else [index]
         return "tuple[" + ",".join(annotation_of(e) for e in elements) + "]"
+    # WHITELIST, because ast.unparse will happily render ANY expression into something that
+    # looks like a type name and hand it on (#240). That is how `self.x: uint8[2] + None`
+    # became the string "uint8[2]+None" and was refused, much later and by a guard about
+    # something else, with advice to write the array type it had already written.
+    #
+    # The shapes here are exactly what ParseTypeAnnotation accepts on the other side: a bare
+    # name, or a name with one subscript. A Subscript's slice is deliberately NOT restricted --
+    # an array size may be an expression (`uint8[n*2]`), and the C# parser accepts that too.
+    #
+    # Blacklisting the operators seen in the wild was the other option and it is the wrong one
+    # here for the usual reason: a shape nobody thought of would keep sailing through into a
+    # late and misleading refusal, whereas a legitimate shape wrongly refused says so at once
+    # and in the right place.
+    # The subscripted form must be NAME[...], not any expression subscripted. ParseTypeAnnotation
+    # consumes an Identifier and only then an optional '[', so `a.b[2]` and `f(1)[2]` are refused
+    # by the hand-written parser. Allowing them here was an ACCEPTANCE divergence and the serious
+    # kind: measured on the pre-#240 binary, `self.x: a.b[2] = [1, 2]` is refused by one front
+    # end and compiles to an 803-byte MIR under the other. Pre-existing, not introduced here, and
+    # closed by this line.
+    if isinstance(node, ast.Subscript) and not isinstance(node.value, ast.Name):
+        raise Unsupported(
+            f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. The name before "
+            "the '[' must be a plain type name, e.g. uint8[4]", node)
+
+    if not isinstance(node, (ast.Name, ast.Subscript)):
+        raise Unsupported(
+            f"'{ast.unparse(node)}' is not a type annotation PyMCU can read. Write one type "
+            "name, optionally with a size or element type in brackets, e.g. uint8 or uint8[4]",
+            node)
+
     text = ast.unparse(node)
     # The C# parser builds annotations from tokens, so `uint8[n * 2]` comes out `uint8[n*2]`.
     for spaced, tight in ((", ", ","), (" * ", "*"), (" + ", "+"), (" - ", "-"), (" // ", "//")):

@@ -36,6 +36,16 @@ public class Parser
         "a raise message must be one or more adjacent string literals, or the name of a " +
         "module-level string constant";
 
+    /// The refusal for a union type annotation.
+    ///
+    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py,
+    /// annotation_of). Before #240 the two front ends refused `self.x: uint8[2] | None` in
+    /// different PHASES with different text: this one at Lexical & Syntax with a caret, the
+    /// bridge not at all until IR generation, where a guard about something else answered.
+    private const string UnionAnnotationRefusal =
+        "a union type annotation is not supported. PyMCU needs one concrete type, because the " +
+        "storage for a value is decided at compile time and two types do not share a size";
+
     private int pos = 0;
     private int functionDepth = 0;
 
@@ -231,6 +241,27 @@ public class Parser
         throw new SyntaxError(message, first.Line, first.Column, span);
     }
 
+    /// The last token of the union type expression the cursor is sitting inside.
+    ///
+    /// So the refusal can underline the WHOLE union rather than the `|` that gave it away. The
+    /// CPython bridge marks the whole thing, because its BinOp node spans it, and the two have
+    /// to agree on the underline and not only the column.
+    ///
+    /// Stops at the first token that cannot be part of a type: the `=`, the `:`, the newline.
+    private Token UnionEndToken()
+    {
+        Token last = Peek();
+        for (int i = pos; i < tokens.Count; i++)
+        {
+            Token t = tokens[i];
+            if (t.Type is not (TokenType.Pipe or TokenType.Identifier or TokenType.None
+                or TokenType.Number or TokenType.LBracket or TokenType.RBracket
+                or TokenType.Comma or TokenType.Star or TokenType.Dot)) break;
+            last = t;
+        }
+        return last;
+    }
+
     /// The last token of the argument that starts at the cursor, found by scanning to the `)`
     /// that closes the call.
     ///
@@ -362,6 +393,17 @@ public class Parser
             Consume(TokenType.RBracket, "Expected ']'");
             typeStr += "]";
         }
+
+        // `uint8 | None` and friends. Refused HERE, where the annotation is being read, rather
+        // than left to the caller's ConsumeStatementEnd, which used to answer with "Expected
+        // newline or end of block" -- true, unhelpful, and about the parser's predicament
+        // rather than the program's (#240).
+        //
+        // One check covers every annotation position (variable, parameter, return, instance
+        // member) because they all come through here. Word for word the same refusal as the
+        // CPython bridge's, which raises it from annotation_of for the same reason.
+        if (Check(TokenType.Pipe))
+            ErrorSpanning(t, UnionEndToken(), UnionAnnotationRefusal);
 
         return typeStr;
     }

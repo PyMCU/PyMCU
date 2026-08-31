@@ -3067,8 +3067,46 @@ public partial class IRGenerator
 
             int mb = stmt.Annotation.IndexOf('[');
             int mc = stmt.Annotation.LastIndexOf(']');
-            if (mb == -1 || mc != stmt.Annotation.Length - 1 || mc <= mb + 1)
+            // Three conditions shared one message, and it described the arm the author had in
+            // mind rather than the one that fired (#240). Split, so each says what it found.
+            //
+            // ALL THREE ARE NOW UNREACHABLE, and the same commit is what made that true, so
+            // read this before assuming a program can get here. An AnnAssign exists only when
+            // the annotation contains '[' (Parser.cs, and s_annassign), and both front ends now
+            // accept only NAME or NAME[...] as an annotation. A NAME has no bracket, so it is
+            // not an AnnAssign; a NAME[...] always ends at its ']'. That leaves no input for
+            // any of the three.
+            //
+            // Kept rather than deleted, and split rather than left as one, because the arms are
+            // the invariant written down: if the annotation grammar is ever widened, each says
+            // which assumption broke instead of all three blaming the first.
+            if (mb == -1)
+            {
+                // UNREACHABLE, and kept as an invariant rather than deleted. Both front ends
+                // build an AnnAssign ONLY when the annotation contains '[' (Parser.cs, and
+                // s_annassign in the translator, whose comment says the three shapes are kept
+                // exactly), so an AnnAssign whose annotation has no bracket does not exist.
+                // If this ever fires, that pairing has been broken somewhere upstream.
                 throw UserError("Instance-member annotation must be an array type, e.g. uint8[N]");
+            }
+            if (mc != stmt.Annotation.Length - 1)
+            {
+                // The arm that USED to be reachable, and the one this issue was written from:
+                // `self.x: uint8[2] | None` arrived here through the CPython bridge, which
+                // rendered any expression into an annotation string. The old text told a reader
+                // who had written `uint8[2] | None` that the annotation "must be an array
+                // type", which it is: what is wrong is what follows the ']'. Both front ends
+                // now refuse that annotation while reading it, so this no longer fires.
+                string tail = mc == -1
+                    ? stmt.Annotation.Substring(mb)
+                    : stmt.Annotation.Substring(mc + 1).Trim();
+                throw UserError(
+                    $"Instance-member annotation must end at the ']', and this one continues "
+                    + $"with '{tail}'. Write the array type on its own, e.g. uint8[N]");
+            }
+            if (mc <= mb + 1)
+                throw UserError(
+                    "Instance-member annotation needs a size between the brackets, e.g. uint8[4]");
             string memHead = stmt.Annotation.Substring(0, mb);
             string memSz = stmt.Annotation.Substring(mb + 1, mc - mb - 1);
             int memCount;
