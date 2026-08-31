@@ -46,6 +46,10 @@ public class CompileTimeEvaluator(DeviceConfig config)
                 {
                     "arch" => config.Arch,
                     "chip" or "name" => config.Chip,
+                    // Empty when no board was given, which is the normal case and not an
+                    // error: a HAL comparing against it gets "" and must treat that as "not
+                    // told", never as "no".
+                    "board" => config.Board,
                     "ram_size" => config.RamSize.ToString(),
                     "flash_size" => config.FlashSize.ToString(),
                     "eeprom_size" => config.EepromSize.ToString(),
