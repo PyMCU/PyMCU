@@ -58,7 +58,12 @@ public class CoreDiagnosticColumnTests
             "    GPIOR1.value = uint8(xs[i])\n" +
             "    while True:\n        pass\n");
 
-        Assert.Contains("has no declared array type", ex.Message);
+        // Asserts that the message NAMES THE ARRAY, not the clause it uses to do so. The old
+        // wording ("has no declared array type") was replaced in #246 because it is false for
+        // the other way into this site -- an array that IS declared and loses its addressability
+        // when passed to an @inline. This test is about the caret, and pinning the prose made a
+        // wording fix look like a regression.
+        Assert.Contains("'xs'", ex.Message);
         Assert.Equal(7, ex.Line);
         Assert.Equal(26, ex.Column);
         Assert.Equal(2, ex.Length);
