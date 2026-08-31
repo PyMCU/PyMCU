@@ -11,6 +11,7 @@ that makes one start or stop compiling has changed behaviour and must say so.
 
 import argparse
 import hashlib
+import os
 import json
 import re
 import subprocess
@@ -552,7 +553,7 @@ def build(work: Path, chip: str, arch: str, source: str):
         if stale.exists():
             subprocess.run(["rm", "-rf", str(stale)], check=False)
     proc = subprocess.run([str(PYMCU), "build"], cwd=work,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=BUILD_ENV or None)
     rom = re.search(r"Flash:\s*(\d+)", proc.stdout)
     if rom is None:
         blob = " ".join((proc.stdout + proc.stderr).split())
@@ -597,6 +598,11 @@ DOES_NOT_FIT = re.compile(r"needs \d+ bytes|static data needs|does not fit", re.
 # harness keeps running into from the other direction.
 ASM_DIFFS_SHOWN = 5
 
+# Environment every corpus build runs under. Empty unless --backend-binary was given, in
+# which case it carries PYMCU_BACKEND_BINARY so the driver spawns the named compiler instead
+# of the installed one. Set once in main() and read by build().
+BUILD_ENV: dict | None = None
+
 
 def first_that_builds(work, chip, arch, template, candidates, key):
     """Try each pin/channel the architecture might accept, keep the first that builds.
@@ -624,9 +630,16 @@ def first_that_builds(work, chip, arch, template, candidates, key):
     return {"status": "no-build", "reason": reason[:120], "tried": tried}
 
 
-def run_corpus():
+def run_corpus(only=None):
     snapshot = {}
-    for chip, arch in chips().items():
+    selected = chips()
+    if only:
+        selected = {c: a for c, a in selected.items() if c in only}
+        missing = [c for c in only if c not in selected]
+        if missing:
+            print(f"  --only: no existen en chips/: {', '.join(missing)}")
+        print(f"  --only: {len(selected)} de {len(chips())} chips")
+    for chip, arch in selected.items():
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             for name, template in PROGRAMS.items():
@@ -804,6 +817,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["capture", "check", "annotate"])
     ap.add_argument("--file", default=str(REPO / "tests" / "tools" / "rom_snapshot.json"))
+    ap.add_argument("--backend-binary", default=None, metavar="FAMILY=PATH",
+                    help="medir un backend que NO es el instalado, 'avr=/tmp/pymcuc-avr'. "
+                         "Se pasa a la construccion y se anota en la procedencia. Sin esto "
+                         "la unica forma de apuntar la herramienta era PYTHONPATH, que "
+                         "apunta la pila entera y, si te equivocas, no da error: mide el "
+                         "compilador desplegado y sale verde.")
+    ap.add_argument("--only", default=None,
+                    help="coma-separado: correr solo estos chips. Un subconjunto NO es "
+                         "un baseline; capture --only escribe un fichero parcial y lo "
+                         "marca como tal para que no se lea como la matriz entera.")
     ap.add_argument("--anyway", action="store_true",
                     help="capturar aunque el toolchain no se pueda reconstruir despues")
     args = ap.parse_args()
@@ -826,7 +849,24 @@ def main():
         print("    Limpia la procedencia, o --anyway para capturar de todas formas.")
         return 2
 
-    current = run_corpus()
+    global BUILD_ENV
+    if args.backend_binary:
+        family, _, path = args.backend_binary.partition("=")
+        resolved = Path(path).expanduser().resolve()
+        if not path or not resolved.exists():
+            print(f"--backend-binary: '{args.backend_binary}' no nombra un binario que exista")
+            return 2
+        BUILD_ENV = dict(os.environ, PYMCU_BACKEND_BINARY=f"{family.strip()}={resolved}")
+        prov[f"backend_binary_override:{family.strip()}"] = {
+            "path": str(resolved),
+            "sha": hashlib.sha256(resolved.read_bytes()).hexdigest()[:16],
+        }
+        print(f"\n  MIDIENDO UN BACKEND QUE NO ES EL INSTALADO: {family.strip()} -> {resolved}")
+        print(f"  sha {prov[f'backend_binary_override:{family.strip()}']['sha']}"
+              "  -- queda en la procedencia del fichero")
+
+    only = [c.strip() for c in args.only.split(",")] if args.only else None
+    current = run_corpus(only)
     path = Path(args.file)
 
     if args.action == "capture":
@@ -838,6 +878,11 @@ def main():
         # looks like every other one and has no way to know it cannot be rebuilt.
         if blockers:
             stored["unreproducible"] = blockers
+        # A partial capture says so in the file. Without this a --only baseline is
+        # indistinguishable from a full one, and the next `check` reports every chip it
+        # does not contain as if nothing had been measured there.
+        if only:
+            stored["partial"] = only
         path.write_text(json.dumps(stored, indent=1, sort_keys=True) + "\n")
         ok = sum(1 for v in current.values() if v["status"] == "ok")
         noisy = {k: v for k, v in current.items() if v.get("warn")}
