@@ -289,6 +289,14 @@ public partial class IRGenerator
     // Classes the generator lowering synthesized. Used only to answer a call of the
     // generator protocol by name instead of as an undefined mangled symbol.
     private HashSet<string> generatorClasses = new();
+
+    /// True while the RECEIVER of a method call is being lowered.
+    ///
+    /// Read by one thing: the refusal of a generator constructed in a value position (#243).
+    /// `counter().send(1)` constructs one as a receiver, and for that shape the generator
+    /// PROTOCOL message is the better answer -- it names send() and says why there is none --
+    /// so the construction is allowed to finish and the method call is refused instead.
+    private bool loweringMemberReceiver;
     // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
     private Dictionary<string, string> slotInstances = new();
     // @outline method symbol -> field -> byte offset within the slot (for self.field loads).

@@ -238,7 +238,20 @@ public partial class IRGenerator
 
             if (!resolvedAsModule)
             {
-                Val objVal = VisitExpression(memC.Object);
+                // A generator constructed HERE is the receiver of a method call, and the
+                // protocol check below (RejectGeneratorProtocol) gives a better answer for that
+                // shape than the value-position refusal does: `counter().send(1)` should be told
+                // that send() does not exist, not that a generator cannot be a value. So the
+                // construction is allowed to complete, and the method call is what is refused.
+                //
+                // Found by CallColumnTests.TheGeneratorProtocol_PointsAtTheMethod, which is
+                // pinned on that column. Without the flag the value-position check fired first
+                // and replaced a specific diagnostic with a general one.
+                bool prevRecv = loweringMemberReceiver;
+                loweringMemberReceiver = true;
+                Val objVal;
+                try { objVal = VisitExpression(memC.Object); }
+                finally { loweringMemberReceiver = prevRecv; }
                 // A nested member access (obj.field.method()) yields a Temporary. If it carries a
                 // class -- a ZCA field re-tagged with its nested class, like the DHT's
                 // machine.Pin._pin -- dispatch the method on it exactly like a named instance by
@@ -1418,6 +1431,26 @@ public partial class IRGenerator
             }
             else
             {
+                // A GENERATOR constructed without a target cannot work, and used to compile
+                // (#243). The reason is one line of design rather than a bug: a PyMCU instance
+                // is not a value, it is a NAME with fields. Minting `__c<n>` for an ordinary
+                // class is fine because its fields carry the content; a generator's synthesized
+                // class has none, so the name has nothing behind it and the program passed an
+                // uninitialised temporary. Measured: `take(gen())` emitted a call whose argument
+                // occurred exactly once in the whole MIR, as that argument, never assigned.
+                //
+                // The legal consumption supplies a target: the `for` desugaring binds the
+                // machine to its own `__gen` temp before polling it. So the branch is the test.
+                // Nothing needs to know which value position it was -- argument, return,
+                // operand -- because none of them can supply one.
+                if (generatorClasses.Contains(classPrefix) && !loweringMemberReceiver)
+                    throw UserError(
+                        $"a generator can only be consumed by `for`: `{classPrefix}(...)` is "
+                        + "used here as a value. A PyMCU generator lowers to a state machine "
+                        + "that lives in a named variable, and there is nothing to hand to a "
+                        + "caller, store, or return. Write `for v in "
+                        + $"{classPrefix}(...):` and use `v` in the loop.", expr);
+
                 string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
                 target = bBase + ".__c" + (++ctorAnonId);
                 ctorSubexprSynth = target;

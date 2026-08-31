@@ -167,11 +167,49 @@ public partial class IRGenerator
 
     private Val VisitLambdaExpr(LambdaExpr expr)
     {
+        // The body is put ASIDE here, not lowered: it is expanded at the call, if there is one.
+        // So a lambda that is never called has its body walked by nothing, and a `yield` in it
+        // reached no check at all -- `f = lambda: (yield 1)` compiled, and `main` came out as a
+        // debug line and a `ret` with the statement simply gone (#243).
+        //
+        // VisitYield below is the check that should answer, and it does answer once the lambda
+        // is CALLED. This walks the body far enough to reach it either way, and raises the same
+        // diagnostic so the two paths cannot give different answers for the same program.
+        if (YieldInside(expr.Body) is { } y) VisitYield(y);
+
         string key = "__lambda_" + lambdaCounter++;
         lambdaFunctionsMap[key] = expr;
         pendingLambdaKey = key;
         return new Constant(0);
     }
+
+    /// The first `yield` anywhere in an expression, or null.
+    ///
+    /// A FOURTH walker of this shape, and that is a cost worth naming rather than hiding: the
+    /// others are `AsyncTransform.HasNestedYield`, `AsyncTransform.FirstYield` and
+    /// `ContainsYield`, and they already carry a written obligation to stay in step. This one
+    /// exists because none of them is reachable from here and because all three share the blind
+    /// spot that caused the bug -- NONE has a `LambdaExpr` case, so a yield inside a lambda is
+    /// invisible to every one of them.
+    ///
+    /// If a fifth is ever needed, they should become one. Adding a node kind here and not to
+    /// the others reopens exactly this defect somewhere else.
+    private static YieldExpr? YieldInside(Expression? e) => e switch
+    {
+        null => null,
+        YieldExpr y => y,
+        LambdaExpr l => YieldInside(l.Body),
+        BinaryExpr b => YieldInside(b.Left) ?? YieldInside(b.Right),
+        UnaryExpr u => YieldInside(u.Operand),
+        CallExpr c => YieldInside(c.Callee) ?? c.Args.Select(YieldInside).FirstOrDefault(x => x != null),
+        MemberAccessExpr m => YieldInside(m.Object),
+        IndexExpr ix => YieldInside(ix.Target) ?? YieldInside(ix.Index),
+        TernaryExpr t => YieldInside(t.Condition) ?? YieldInside(t.TrueVal) ?? YieldInside(t.FalseVal),
+        KeywordArgExpr kw => YieldInside(kw.Value),
+        TupleExpr tu => tu.Elements.Select(YieldInside).FirstOrDefault(x => x != null),
+        ListExpr le => le.Elements.Select(YieldInside).FirstOrDefault(x => x != null),
+        _ => null,
+    };
 
     public string GetValClass(Val v)
     {
