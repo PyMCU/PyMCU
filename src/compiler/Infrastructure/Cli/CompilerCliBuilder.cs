@@ -45,6 +45,13 @@ public static class CompilerCliBuilder
             DefaultValueFactory = parseResult => string.Empty
         };
 
+        Option<string> boardOption = new("--board")
+        {
+            Description = "Board name (e.g., pico_w, pico2_w). Optional: a board carries "
+                          + "facts the chip does not, such as which radio is soldered next to it",
+            DefaultValueFactory = parseResult => string.Empty
+        };
+
         Option<ulong> freqOption = new("--freq")
         {
             Description = "Clock frequency in Hz",
@@ -102,6 +109,7 @@ public static class CompilerCliBuilder
         rootCommand.Options.Add(outputOption);
         rootCommand.Options.Add(archOption);
         rootCommand.Options.Add(targetOption);
+        rootCommand.Options.Add(boardOption);
         rootCommand.Options.Add(freqOption);
         rootCommand.Options.Add(configOption);
         rootCommand.Options.Add(includeOption);
@@ -126,6 +134,7 @@ public static class CompilerCliBuilder
                 OutputPath: output,
                 Arch: parseResult.GetValue(archOption) ?? string.Empty,
                 Target: parseResult.GetValue(targetOption) ?? string.Empty,
+                Board: parseResult.GetValue(boardOption) ?? string.Empty,
                 Frequency: parseResult.GetValue(freqOption),
                 Configs: parseResult.GetValue(configOption) ?? [],
                 Includes: parseResult.GetValue(includeOption) ?? [],

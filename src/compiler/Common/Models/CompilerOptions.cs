@@ -27,6 +27,15 @@ public sealed record CompilerOptions(
     int ResetVector,
     int InterruptVector,
     bool Verbose,
+    // The board name, when the caller knows it. OPTIONAL, and with a default rather than
+    // positional: empty is the normal case, because a project sets `board` or `target` and the
+    // driver refuses both at once, so a program built by target has no board to give.
+    //
+    // It also has to be optional for a duller reason worth keeping: five test files build this
+    // record by name, and a required parameter would have made them all stop compiling for a
+    // field none of them has an opinion about. A field that is genuinely optional in the model
+    // should be optional in the signature.
+    string Board = "",
     string? EmitIrPath = null,
     // The project's own source directory. Modules loaded from inside it are the USER's, and
     // only those have their module level executed on import; everything else is an installed

@@ -29,6 +29,11 @@ public class BootstrapPhase : CompilerPhaseBase
         var deviceConfig = context.DeviceConfig;
         var includePaths = context.IncludePaths;
 
+        // Before the early return below, because a board is worth carrying even when the
+        // bootstrap has nothing to do: the two are independent, and losing the board because
+        // no target was given would make an empty board mean two different things.
+        deviceConfig.Board = options.Board;
+
         if (string.IsNullOrEmpty(options.Target)) return;
         try
         {
