@@ -2129,6 +2129,36 @@ public partial class IRGenerator
     {
         if (overloadedFunctions.Contains(callee))
         {
+            // Overload selection is POSITIONAL, and a keyword argument is dropped before it
+            // runs: the suffix loop below skips `KeywordArgExpr` and so does the arity count in
+            // the fallback. A call written only with keywords therefore presents as a call with
+            // no arguments at all, and what happened next depended on the overload set:
+            //
+            //   no zero-argument candidate   nothing matched, the UNMANGLED name was emitted,
+            //                                and `avr-ld` said `undefined reference to 'w'`
+            //   a zero-argument candidate    that one was selected, then refused the keyword
+            //                                the caller wrote, which the intended overload has
+            //   a method                     `missing argument 'self' in call to 'A_w'`, naming
+            //                                a mangled symbol the program never contained
+            //
+            // None of the three names the cause, and the first is not a diagnostic at all: it
+            // is a link error in a tool the reader did not invoke. Refused here instead, at the
+            // call, which is the line they can change. Issue #232.
+            if (expr.Args.Any(a => a is KeywordArgExpr))
+            {
+                string written = expr.Callee switch
+                {
+                    VariableExpr kv => kv.Name,
+                    MemberAccessExpr km => km.Member,
+                    _ => callee,
+                };
+                throw UserError(
+                    $"'{written}' has more than one @inline overload, and an overload is chosen " +
+                    "by the types of the POSITIONAL arguments, so a keyword argument cannot " +
+                    $"select one. Pass the arguments positionally: {written}(value) rather than " +
+                    $"{written}(name=value)", expr.Callee);
+            }
+
             string ShortClassName(string fullKey)
             {
                 foreach (var cn in classNames)
