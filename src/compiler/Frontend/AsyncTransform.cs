@@ -591,6 +591,18 @@ public static class AsyncTransform
                     break;
                 case WhileStmt w: RewriteGenForsIn(w.Body, genNames, ref counter, boundHere); break;
                 case ForStmt f2: RewriteGenForsIn(f2.Body, genNames, ref counter, boundHere); break;
+                // try/except/else/finally. Missing until now, so `for v in gen():` inside a
+                // `try` was never desugared and fell through to the generic for-in guard --
+                // a refusal naming neither generators nor the try, for a loop that compiles
+                // one line further out. A TryStmt keeps four statement LISTS rather than
+                // Blocks, which is why it needs its own arm and not RewriteGenForsIn.
+                case TryStmt t:
+                    RewriteGenFors(t.Body, genNames, ref counter, boundHere);
+                    foreach (var (_, handler) in t.Handlers)
+                        RewriteGenFors(handler, genNames, ref counter, boundHere);
+                    if (t.ElseBody != null) RewriteGenFors(t.ElseBody, genNames, ref counter, boundHere);
+                    if (t.Finally != null) RewriteGenFors(t.Finally, genNames, ref counter, boundHere);
+                    break;
             }
         }
     }

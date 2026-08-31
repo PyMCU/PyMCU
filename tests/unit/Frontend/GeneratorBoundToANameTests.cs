@@ -132,6 +132,26 @@ public class GeneratorBoundToANameTests
         Assert.Contains("for-in loop iterable", ex.Message);
     }
 
+    [Theory]
+    [InlineData("    try:\n        for v in gen():\n            T = v\n    except ValueError:\n        T = 9\n")]
+    [InlineData("    try:\n        T = 1\n    except ValueError:\n        for v in gen():\n            T = v\n")]
+    [InlineData("    try:\n        T = 1\n    finally:\n        for v in gen():\n            T = v\n")]
+    public void AGeneratorLoopInsideATryIsStillDesugared(string body)
+    {
+        // The rewrite descends into Block, If, While and For, and until now not into try. A
+        // `for v in gen():` one line inside a `try` was therefore never desugared and fell
+        // through to the generic for-in guard -- refused, with a message naming neither
+        // generators nor the try, for a loop that compiles one line further out.
+        //
+        // A TryStmt holds four statement LISTS (body, each handler, else, finally) rather than
+        // Blocks, so it needs its own arm. All four are covered here except `else`, which the
+        // parser only builds alongside a handler and which the same arm walks.
+        var ir = Compile(Gen + "T: uint8 = 0\n" +
+                         "def main() -> None:\n    global T\n" + body);
+
+        Assert.Contains(CallsIn(ir), c => c.Contains("poll"));
+    }
+
     [Fact]
     public void TheDirectFormIsUnchanged()
     {
