@@ -1420,7 +1420,22 @@ public partial class IRGenerator
             foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
                 if (finalLocalName.StartsWith(g.Key, StringComparison.Ordinal)
                     || currentModulePrefix.StartsWith(g.Key, StringComparison.Ordinal))
-                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})");
+                    // `at` and not LocationIsFinal. The message names ANOTHER file, which is
+                    // where the guard is, but the position this diagnostic reports is the READ
+                    // that failed, and that read is in the file being lowered. Two different
+                    // things: the caret says where to look in the program in front of you, the
+                    // sentence says where the refusal came from.
+                    //
+                    // UNVERIFIED, and said out loud rather than left to look tested. Every
+                    // program written to reach this reached the CALL path instead, which is
+                    // located already (EmitRegularFunctionCall) and reports the same sentence
+                    // from a different site -- so a test built on one of them would have passed
+                    // without this line and claimed to cover it. What is left is a plain name
+                    // read of a symbol from a module its own guard refused, which the comment
+                    // above describes as arising from an internal HAL helper rather than from
+                    // anything a user writes. The node costs nothing and cannot be worse than
+                    // the fallback; it is simply not pinned.
+                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})", at);
 
             // A probing caller gets null and reaches its own, more specific diagnostic. Note
             // this sits AFTER the module-guard check above, which throws for everyone.

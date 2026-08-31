@@ -885,6 +885,12 @@ public partial class IRGenerator
         {
             string fullName = currentModulePrefix + func.Name;
 
+            // UNREACHABLE, and left standing rather than stamped or deleted. AsyncTransform
+            // runs on the entry file and on every module before this scan (Core.Generate), and
+            // it either rewrites a coroutine into a class and removes the FunctionDef, or
+            // throws its own diagnostic. Probed with a module-level `async def` with and
+            // without `import asyncio`, and as a method: none arrives here. Giving it a node
+            // would claim a caret for a message no program can produce.
             if (func.IsAsync)
                 throw UserError(
                     $"async def '{func.Name}': the coroutine-to-state-machine lowering is not " +
@@ -904,7 +910,10 @@ public partial class IRGenerator
                 }
                 catch (PyMCU.Frontend.Pio.PioAsmException ex)
                 {
-                    throw UserError($"in PIO program '{func.Name}': {ex.Message}");
+                    // The program as a whole, so the `def` that names it. The assembler's own
+                    // message carries the offending instruction; what this frame adds is which
+                    // program it was in, and that is what the caret should agree with.
+                    throw UserError($"in PIO program '{func.Name}': {ex.Message}", func);
                 }
                 continue;
             }
@@ -923,7 +932,7 @@ public partial class IRGenerator
                     throw UserError(
                         $"parameter '{p.Name}' of '{func.Name}' has a fixed-array type '{p.Type}'; " +
                         "pass an array to a function as a 'bytearray' (by reference), " +
-                        $"e.g. `def {func.Name}({p.Name}: bytearray, ...)`");
+                        $"e.g. `def {func.Name}({p.Name}: bytearray, ...)`", p);
                 // An UNANNOTATED parameter that the body subscripts is a buffer, not a
                 // register. Callers already pass an array by its base address, so the pointer
                 // was arriving all along and only the callee's reading of `buf[i]` was wrong:
@@ -973,7 +982,8 @@ public partial class IRGenerator
                         $"function '{func.Name}': parameter '{listParam.Name}: {listParam.Type}' -- " +
                         "list parameters are not supported (the function would be silently " +
                         "dropped and fail at link time). Use 'bytearray' for byte buffers, or " +
-                        "mark the function @inline so the list resolves at the call site");
+                        "mark the function @inline so the list resolves at the call site",
+                        listParam);
                 // A parameter annotated with a class type carries a ZCA instance, which has no
                 // subroutine ABI: the fields live in the caller's frame, so the body only has
                 // meaning expanded at the call site. That is what @inline already does for the
@@ -1034,7 +1044,8 @@ public partial class IRGenerator
                         throw UserError(
                             $"class '{classDef.Name}' uses multiple inheritance " +
                             $"({string.Join(", ", realBases)}), which PyMCU does not support; " +
-                            "use composition (hold an instance as a field) or a single base class");
+                            "use composition (hold an instance as a field) or a single base class",
+                            classDef);
 
                     classNames.Add(classDef.Name);
                     if (classDef.IsValue) valueClasses.Add(classDef.Name);
@@ -1355,7 +1366,8 @@ public partial class IRGenerator
                                             + "methods (an undecorated method is compiled once as a "
                                             + "shared subroutine, which one name cannot address twice)."
                                             + $" Mark every '{func.Name}' @inline to overload by "
-                                            + "parameter types, or give them different names.");
+                                            + "parameter types, or give them different names.",
+                                            func);
 
                                     // A method with no `self` parameter is a plain function that
                                     // happens to be written in a class body, and `A.f(x)` is the only
