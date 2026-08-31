@@ -3982,6 +3982,16 @@ public partial class IRGenerator
                         AugOp.BitXor => Frontend.BinaryOp.BitXor,
                         AugOp.LShift => Frontend.BinaryOp.LShift,
                         AugOp.RShift => Frontend.BinaryOp.RShift,
+                        // UNREACHABLE, and left standing on purpose. `AugOp` is a closed enum
+                        // of eleven members and the eleven arms above name all of them, so no
+                        // value of stmt.Op arrives here. That is a proof rather than an
+                        // estimate: compare the arms against the declaration in Ast.cs.
+                        //
+                        // THIS ARM HAS A READER AND IT IS NOT THE USER. It fires the day someone
+                        // adds a twelfth member and forgets the row, and what it owes that
+                        // person is the name of the member, which it already gives. It is not a
+                        // user-facing diagnostic and is counted as none: giving it a caret would
+                        // dress an internal invariant up as something a program can provoke.
                         _ => throw UserError($"augmented operator {stmt.Op} has no dunder mapping"),
                     };
                     VisitAssign(new AssignStmt(zve, new BinaryExpr(zve, bop, stmt.Value)) { Line = stmt.Line });
