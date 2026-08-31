@@ -480,7 +480,16 @@ def millis_init():
     """
     match __CHIP__.arch:
         case "avr":
-            from pymcu.hal.avr.timer.atmega328p import millis_init as _millis_init_avr
+            # Through the per-chip selector, like millis() and micros() below, and NOT
+            # `from pymcu.hal.avr.timer.atmega328p import ...` as this line used to read.
+            # That import named one chip for the whole avr family, so on every ATtiny the
+            # ATmega's counter was what got compiled. What came out depended on a
+            # coincidence of naming rather than on the part: measured across eleven avr
+            # chips, the five that do not declare a `TIMSK0` (attiny85 45 25 2313 4313)
+            # emitted the ATmega's 0x6E, an address they do not have, while the five that
+            # happen to declare that name got their own 0x59 and looked clean while still
+            # running the ATmega's prescaler bits and ISR vector. Issue #234.
+            from pymcu.hal.timer import millis_init as _millis_init_avr
             _millis_init_avr()
         case "pic18":
             from pymcu.hal.timer import millis_init as _millis_init_pic18
