@@ -114,6 +114,30 @@ public class GeneratorAsValueTests
     }
 
     [Theory]
+    [InlineData("    x: uint8 = next(g)\n")]
+    [InlineData("    g.next()\n")]
+    public void TheIteratorProtocolMessageDoesNotClaimThereAreNoExceptions(string stmt)
+    {
+        // Both messages used to give the same false reason: exhaustion "would need somewhere to
+        // report it, and there is no StopIteration to put it in", which reads as "this compiler
+        // has no exceptions".
+        //
+        // It has. `raise`/`except` across functions compiles on AVR, RP2040 and CH32V003, and a
+        // raise inside a generator reaches an enclosing handler -- measured, the sigerr carries
+        // the local catch label. What is missing is narrower: StopIteration is not one of the
+        // six names in BuiltinExceptionNames, and the protocol is not implemented on the state
+        // machine.
+        //
+        // A wrong reason is worse than no reason, because the reader believes it and stops
+        // looking. These assert the false claim is gone rather than pinning new wording.
+        var ex = Fails(Gen + "def main() -> None:\n    g = gen()\n" + stmt);
+
+        Assert.DoesNotContain("StopIteration", ex.Message);
+        Assert.DoesNotContain("report exhaustion", ex.Message);
+        Assert.Contains("for v in gen(...)", ex.Message);
+    }
+
+    [Theory]
     [InlineData("    f = lambda: (yield 1)\n")]
     [InlineData("    f = lambda: 1 + (yield 2)\n")]
     [InlineData("    f = lambda a: (yield a)\n")]

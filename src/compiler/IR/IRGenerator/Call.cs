@@ -891,12 +891,23 @@ public partial class IRGenerator
             // a sequence, and there is nothing else to loop over. Name the generator instead.
             if (expr.Callee is VariableExpr && (shown == "next" || shown == "iter")
                 && expr.Args.Count > 0 && ResolveGeneratorArg(expr.Args[0]) is { } genName)
+                // The REASON here used to be false, which is worse than a vague one because a
+                // reader believes it. It said exhaustion "would need somewhere to report it,
+                // and there is no StopIteration to put it in", which reads as "this compiler
+                // has no exceptions". It has: `raise`/`except` across functions compiles on
+                // AVR, RP2040 and CH32V003, and a raise inside a generator reaches an enclosing
+                // `except` correctly. What is actually missing is narrower -- StopIteration is
+                // not one of the six names in BuiltinExceptionNames, and no part of the
+                // iterator protocol is implemented on the generator's state machine.
+                //
+                // So this says what is true (the protocol is not implemented) and stops. It
+                // does not explain why, because the honest why is "nobody has written it", and
+                // it does not promise it either.
                 throw UserError(
-                    $"{shown}() is the iterator protocol, which PyMCU does not provide, and "
-                    + $"'{genName}' is a generator: pulling one value at a time would need "
-                    + "somewhere to report exhaustion, and there is no StopIteration to put it "
-                    + $"in. Consume it with `for v in {genName}(...):`, which drives the "
-                    + "generator and ends when it does.", expr.Callee);
+                    $"{shown}() is part of the iterator protocol, which PyMCU does not "
+                    + $"implement: a generator here is a state machine driven by `for`, and it "
+                    + $"has no {shown}(). Consume '{genName}' with `for v in {genName}(...):`, "
+                    + "which drives it and ends when it does.", expr.Callee);
 
             if (expr.Callee is VariableExpr && PythonBuiltins.Contains(shown))
                 throw UserError(
@@ -2741,9 +2752,16 @@ public partial class IRGenerator
             "close" =>
                 "the state machine is a plain value with no heap allocation and no finalizer, so "
                 + "there is nothing to release",
+            // The twin of the next() message above, and it carried the same false reason.
+            // PyMCU HAS exceptions -- raise/except across functions compiles on AVR, RP2040 and
+            // CH32V003, and a raise inside a generator reaches an enclosing handler. What is
+            // missing is that StopIteration is not one of the six names in
+            // BuiltinExceptionNames and the protocol is not implemented on the state machine.
+            // Found by grepping the message text of the one above, which is the only way twins
+            // like this turn up.
             "__next__" or "next" =>
-                "pulling one value at a time would need somewhere to report exhaustion, and "
-                + "PyMCU has no StopIteration to put it in",
+                "the state machine is driven as a whole by `for`, and pulling one value at a "
+                + "time is not implemented on it",
             _ => null,
         };
         if (why == null) return;
