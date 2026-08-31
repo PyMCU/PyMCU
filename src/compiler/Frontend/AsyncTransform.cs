@@ -261,12 +261,20 @@ public static class AsyncTransform
         {
             if (e is not CallExpr call) return;
             if (IsGather(call, aio) && call.Args.Any(HasGatherInside))
+                // The OUTER gather, marked through its callee, which is a MemberAccessExpr and
+                // so is stamped at `gather`. It is the subject of the sentence: what the message
+                // explains is that THIS gather drives its pair to completion before returning.
+                //
+                // The inner one would need a second walker returning the node where
+                // HasGatherInside returns a bool, and the two would have to be kept in step
+                // forever, which is a debt worth taking for two sites and not for one.
                 throw new SyntaxError(
                     $"`{aio}.gather(...)` inside another `{aio}.gather(...)` does not run three "
                     + "coroutines together: gather drives its pair to completion before it "
                     + $"returns, so the inner one finishes before the outer one starts. Use "
                     + $"`{aio}.create_task(...)` for each extra coroutine and one "
-                    + $"`{aio}.run(main())` to drive them.", line);
+                    + $"`{aio}.run(main())` to drive them.",
+                    line, call.Callee.Column, call.Callee.Length > 0 ? call.Callee.Length : 1);
             foreach (var a in call.Args) Check(a, line);
             Check(call.Callee, line);
         }
@@ -421,6 +429,14 @@ public static class AsyncTransform
     {
         int runAt = prog.GlobalStatements.FindIndex(st => RunArgument(st, aio) != null);
         if (runAt < 0)
+            // NO CARET, and it is a decision rather than a gap. What this diagnostic is about is
+            // a statement that is NOT WRITTEN: the program needs a `run(main())` it does not
+            // have. An absent statement has no node, and the only thing there is to point at is
+            // the `create_task` that made the absence matter -- which is correct code. Marking
+            // it would say "this call is wrong" about the one line the reader must keep, the
+            // same mistake as marking the target list in `a, b = xs`.
+            //
+            // The LINE still names that call, which is the right "here is why we noticed".
             throw new SyntaxError(
                 $"`{aio}.create_task(...)` needs a `{aio}.run(main())` to drive the tasks; "
                 + "without it nothing polls them.", tasks[0].Line);

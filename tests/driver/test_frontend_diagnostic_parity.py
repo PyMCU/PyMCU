@@ -410,3 +410,67 @@ def test_a_true_assert_is_neither_refused_nor_warned_about(tmp_path, body):
         rc, err = _stderr(_assert_src(tmp_path, body), py_parser=py)
         assert rc == 0, err
         assert "is not checked" not in err, f"py_parser={py} warned about a true assert:\n{err}"
+
+
+# --- the two asyncio refusals, and one of them withholds on purpose (PyMCU#177) --------
+#
+# These run through the driver rather than the unit harness because they need `import asyncio`
+# to resolve, which means a real stdlib on the include path.
+
+
+ASYNCIO_HEAD = (
+    "import asyncio\n"
+    "from pymcu.chips.atmega328p import GPIOR0, GPIOR1\n"
+    "from pymcu.types import uint8\n\n"
+    "async def a() -> None:\n    await asyncio.sleep(1)\n\n"
+    "async def b() -> None:\n    await asyncio.sleep(1)\n\n"
+    "async def c() -> None:\n    await asyncio.sleep(1)\n"
+)
+
+
+def test_a_nested_gather_points_at_the_outer_gather(tmp_path):
+    """The OUTER `gather`, because it is the subject of the sentence.
+
+    The message explains that gather drives its pair to completion before it returns, which is
+    a statement about the outer call. Marking the inner one would need a second walker kept in
+    step with `HasGatherInside` forever, for this one site.
+
+    Reached from module level. Written inside an `async def` it never arrives: an earlier guard
+    refuses anything there that is not a plain await, and answers first.
+    """
+    src = _program(tmp_path, ASYNCIO_HEAD +
+                   "\ndef main() -> None:\n"
+                   "    asyncio.run(asyncio.gather(a(), asyncio.gather(b(), c())))\n")
+    #                    1         2
+    #          123456789012345678901234567890
+    # the outer `gather` starts at column 25
+    where = (15, 25, 6)
+
+    assert _where(src, py_parser=False) == where
+    assert _where(src, py_parser=True) == where
+
+
+def test_create_task_without_run_withholds_the_caret(tmp_path):
+    """No caret, and that is the decision.
+
+    What this diagnostic is about is a statement that is NOT WRITTEN: the program needs a
+    `run(main())` it does not have. An absent statement has no node, and the only thing to point
+    at is the `create_task` that made the absence matter, which is correct code. Marking it
+    would say "this call is wrong" about the one line the reader has to keep.
+
+    The LINE still names that call, and that is asserted: it is the "here is why we noticed",
+    and a guard that only checked for the absence of a column would not notice it drifting.
+    """
+    src = _program(tmp_path,
+                   "import asyncio\n"
+                   "from pymcu.types import uint8\n\n"
+                   "async def blink() -> None:\n"
+                   "    await asyncio.sleep(1)\n\n"
+                   "def main() -> None:\n"
+                   "    asyncio.create_task(blink())\n")
+
+    for py in (False, True):
+        line, column, underline = _where(src, py_parser=py)
+        assert line == 8, line
+        assert column == 1, "no column measured, so no caret"
+        assert underline == 0, "and no caret line printed"
