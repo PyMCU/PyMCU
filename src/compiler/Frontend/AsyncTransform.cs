@@ -139,9 +139,20 @@ public static class AsyncTransform
         if (genNames.Count > 0)
         {
             int counter = 0;
+
+            // Module-level `G = gen()` first, so a function iterating G knows what it is. The
+            // functions are walked after, each seeded with those names and with its own local
+            // bindings on top; a local `G = something_else` shadows the global inside that
+            // function, because the walk removes a name on any other assignment to it.
+            var moduleBound = new HashSet<string>();
+            foreach (var gs in prog.GlobalStatements)
+                if (gs is AssignStmt { Target: VariableExpr gt } ga
+                    && ga.Value is CallExpr { Callee: VariableExpr gfn } && genNames.Contains(gfn.Name))
+                    moduleBound.Add(gt.Name);
+
             foreach (var f in prog.Functions)
-                RewriteGenFors(f.Body.Statements, genNames, ref counter);
-            RewriteGenFors(prog.GlobalStatements, genNames, ref counter);
+                RewriteGenFors(f.Body.Statements, genNames, ref counter, moduleBound);
+            RewriteGenFors(prog.GlobalStatements, genNames, ref counter, moduleBound);
         }
 
         if (tasks.Count > 0) EmitTaskSet(prog, alias!, tasks);
@@ -496,15 +507,45 @@ public static class AsyncTransform
     private const string SchedResult = "__pymcu_sched_r";
 
 
-    private static void RewriteGenFors(List<Statement> stmts, HashSet<string> genNames, ref int counter)
+    /// <param name="bound">
+    /// Names already bound to a generator by an earlier `g = gen(...)`, so `for v in g:` can be
+    /// driven as well as `for v in gen():`. Carried rather than recomputed because the binding
+    /// and the loop can be in different statement lists (a module-level `G = gen()` used inside
+    /// a function), and a name rebound to anything else drops out of it again.
+    /// </param>
+    private static void RewriteGenFors(List<Statement> stmts, HashSet<string> genNames,
+                                       ref int counter, HashSet<string>? bound = null)
     {
+        // Local to this list, seeded with what an outer list already knew. A generator bound
+        // here must not leak into a sibling function that happens to reuse the name.
+        var boundHere = bound == null ? new HashSet<string>() : new HashSet<string>(bound);
         for (int i = 0; i < stmts.Count; i++)
         {
             var s = stmts[i];
-            if (s is ForStmt f && f.Iterable is CallExpr call
-                && call.Callee is VariableExpr fnName && genNames.Contains(fnName.Name))
+
+            // `g = gen(...)` binds; `g = anything else` unbinds. Tracked in statement order so
+            // a name reused for something else after the loop is not still treated as a machine.
+            if (s is AssignStmt { Target: VariableExpr bt } bas)
             {
-                string g = "__gen" + counter;
+                if (bas.Value is CallExpr { Callee: VariableExpr bfn } && genNames.Contains(bfn.Name))
+                    boundHere.Add(bt.Name);
+                else boundHere.Remove(bt.Name);
+            }
+            // Two ways in. `for v in gen()` constructs the machine as part of the loop;
+            // `for v in g`, where g was bound earlier, drives the machine that already exists.
+            // The loop body is identical, so only the construction differs (#51 for-in cluster).
+            bool iterIsCall = s is ForStmt { Iterable: CallExpr { Callee: VariableExpr cf } } cfs
+                              && genNames.Contains(cf.Name);
+            bool iterIsBoundName = s is ForStmt { Iterable: VariableExpr bv } && boundHere.Contains(bv.Name);
+            if (s is ForStmt f && (iterIsCall || iterIsBoundName))
+            {
+                var call = f.Iterable as CallExpr;
+                // The machine's name: a fresh temp when the loop constructs it, and the user's
+                // own variable when it does not. Reusing the user's name is what makes the
+                // second form work at all -- the state has to be the SAME instance the earlier
+                // assignment built, or the loop would poll a fresh machine and never advance
+                // past the first value.
+                string g = iterIsCall ? "__gen" + counter : ((VariableExpr)f.Iterable).Name;
                 string r = "__gr" + counter;
                 counter++;
 
@@ -531,10 +572,10 @@ public static class AsyncTransform
                     new MemberAccessExpr(new VariableExpr(g), "_value")));
                 if (f.Body is Block fb) loop.Statements.AddRange(fb.Statements);
                 else loop.Statements.Add(f.Body);
-                RewriteGenFors(loop.Statements, genNames, ref counter);
+                RewriteGenFors(loop.Statements, genNames, ref counter, boundHere);
 
                 var repl = new Block();
-                repl.Statements.Add(new AssignStmt(new VariableExpr(g), call));
+                if (iterIsCall) repl.Statements.Add(new AssignStmt(new VariableExpr(g), call!));
                 repl.Statements.Add(new WhileStmt(new BooleanLiteral(true), loop));
                 stmts[i] = repl;
                 continue;
@@ -542,21 +583,22 @@ public static class AsyncTransform
             // Recurse into nested statements.
             switch (s)
             {
-                case Block b: RewriteGenFors(b.Statements, genNames, ref counter); break;
+                case Block b: RewriteGenFors(b.Statements, genNames, ref counter, boundHere); break;
                 case IfStmt iff:
-                    RewriteGenForsIn(iff.ThenBranch, genNames, ref counter);
-                    foreach (var (_, eb) in iff.ElifBranches) RewriteGenForsIn(eb, genNames, ref counter);
-                    if (iff.ElseBranch != null) RewriteGenForsIn(iff.ElseBranch, genNames, ref counter);
+                    RewriteGenForsIn(iff.ThenBranch, genNames, ref counter, boundHere);
+                    foreach (var (_, eb) in iff.ElifBranches) RewriteGenForsIn(eb, genNames, ref counter, boundHere);
+                    if (iff.ElseBranch != null) RewriteGenForsIn(iff.ElseBranch, genNames, ref counter, boundHere);
                     break;
-                case WhileStmt w: RewriteGenForsIn(w.Body, genNames, ref counter); break;
-                case ForStmt f2: RewriteGenForsIn(f2.Body, genNames, ref counter); break;
+                case WhileStmt w: RewriteGenForsIn(w.Body, genNames, ref counter, boundHere); break;
+                case ForStmt f2: RewriteGenForsIn(f2.Body, genNames, ref counter, boundHere); break;
             }
         }
     }
 
-    private static void RewriteGenForsIn(Statement s, HashSet<string> genNames, ref int counter)
+    private static void RewriteGenForsIn(Statement s, HashSet<string> genNames, ref int counter,
+                                         HashSet<string>? bound = null)
     {
-        if (s is Block b) RewriteGenFors(b.Statements, genNames, ref counter);
+        if (s is Block b) RewriteGenFors(b.Statements, genNames, ref counter, bound);
     }
 
     // ── `yield from` expansion ──────────────────────────────────────────────────
