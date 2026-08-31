@@ -42,10 +42,19 @@ BOARD_CHIPS: dict[str, str] = {
     # RP2040 (ARM Cortex-M0+) boards
     "raspberry_pi_pico": "rp2040",
     "pico":              "rp2040",
+    # The W boards are the same MCU with a CYW43439 beside it, so they resolve to the
+    # same chip. That is all this table can say: after resolution `pico` and `pico_w`
+    # are indistinguishable, so the WiFi HAL gates on rp2040/rp2350 and a plain Pico
+    # still compiles a WiFi binary. Closing that needs the board to survive into
+    # __CHIP__, which is a model change and not this alias.
+    "raspberry_pi_pico_w": "rp2040",
+    "pico_w":              "rp2040",
     "rp2040":            "rp2040",
     # RP2350 (ARM Cortex-M33) boards
     "raspberry_pi_pico2": "rp2350",
     "pico2":              "rp2350",
+    "raspberry_pi_pico2_w": "rp2350",
+    "pico2_w":              "rp2350",
     "rp2350":             "rp2350",
 }
 
@@ -66,7 +75,8 @@ BOARD_FREQUENCIES: dict[str, int] = {
 
 BOARD_GROUPS: dict[str, list[str]] = {
     "Arduino": ["arduino_uno", "arduino_nano", "arduino_mega", "arduino_micro"],
-    "Raspberry Pi": ["raspberry_pi_pico", "raspberry_pi_pico2"],
+    "Raspberry Pi": ["raspberry_pi_pico", "raspberry_pi_pico_w",
+                     "raspberry_pi_pico2", "raspberry_pi_pico2_w"],
     "Adafruit": ["adafruit_trinket"],
     "Digispark": ["digispark"],
     "ATtiny 8-pin (bare chip)":  ["attiny85",  "attiny45",  "attiny25",  "attiny13", "attiny13a"],
@@ -88,6 +98,10 @@ BOARD_LABELS: dict[str, str] = {
     "raspberry_pi_pico2": "Raspberry Pi Pico 2",
     "pico":               "Raspberry Pi Pico",
     "pico2":              "Raspberry Pi Pico 2",
+    "raspberry_pi_pico_w":  "Raspberry Pi Pico W",
+    "raspberry_pi_pico2_w": "Raspberry Pi Pico 2 W",
+    "pico_w":               "Raspberry Pi Pico W",
+    "pico2_w":              "Raspberry Pi Pico 2 W",
 }
 
 # Silkscreen capitalisation. Nobody writes "atmega328p" on a datasheet, and a
