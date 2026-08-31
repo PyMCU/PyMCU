@@ -248,3 +248,65 @@ def test_a_dirty_stdlib_blocks_a_capture_like_a_dirty_compiler_tree():
     prov = {"toolchain": {"stdlib": {**STDLIB, "repo_dirty": ["hal/avr/uart/__init__.py"],
                                      "dirty_hash": "ffff"}}}
     assert snap.unreproducible(prov) != []
+
+
+# --- which half of the toolchain changed the instructions --------------------
+#
+# Both hashes were stored and only the asm one was ever printed, so a reader could see
+# THAT the instructions changed and never which half did it. On 2026-08-30 that left 73
+# cells with `asm X -> Y, ROM +0` and an attribution naming all three components,
+# because against a five-day-old baseline all three had moved.
+
+def cell(**over):
+    return {"status": "ok", "rom": 100, "asm": "aaaa", "mir": "1111", **over}
+
+
+def diff_line(before, after):
+    """The text `check` prints for one cell."""
+    return snap.diff_text(before, after)[0]
+
+
+def test_the_same_ir_with_different_asm_says_the_backend_did_it():
+    """The sound direction, and the one worth shouting about.
+
+    An instruction swapped for another of the same width is where a silent miscompile
+    lives, and a ROM figure cannot see it at all.
+    """
+    line = diff_line(cell(), cell(asm="bbbb"))
+    assert "MISMO IR" in line
+    assert "backend" in line
+
+
+def test_a_moved_ir_says_so_and_does_not_claim_the_backend_is_innocent():
+    """The weaker direction, stated weakly on purpose.
+
+    An upstream change is SUFFICIENT to explain the assembly; it does not rule the
+    backend out, because both can have moved. Saying "not the backend" here would be a
+    stronger claim than the evidence.
+    """
+    line = diff_line(cell(), cell(asm="bbbb", mir="2222"))
+    assert "el IR tambien" in line
+    assert "backend" not in line
+
+
+def test_a_cell_with_no_ir_recorded_says_nothing_either_way():
+    line = diff_line(cell(mir=None), cell(asm="bbbb", mir=None))
+    assert "IR" not in line
+
+
+# --- a component the capture never recorded ----------------------------------
+
+def test_a_component_absent_from_the_capture_is_not_a_change_from_None():
+    """The stdlib entry against a baseline captured before it existed.
+
+    Still a "distinto", since a field nobody wrote cannot say the component held still.
+    But "cambio en None -> 7a32a7db" reads as a commit called None, and the first
+    re-capture that would clear it is blocked on other people's trees for weeks.
+    """
+    was = {"head": "a", "compiler_tree_dirty": [], "toolchain": {}}
+    now = {"head": "a", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    kinds = snap.provenance_drift(was, now)
+    assert [k for k, _ in kinds] == ["distinto"]
+    text = kinds[0][1]
+    assert "None" not in text
+    assert "la captura no lo registraba" in text

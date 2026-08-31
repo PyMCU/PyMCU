@@ -370,6 +370,33 @@ def stdlib_provenance():
     return entry
 
 
+def diff_text(a, b):
+    """How one cell moved, for two runs that both built.
+
+    Whether the IR moved with the assembly. Both hashes were already stored and only one
+    of them was ever printed, so a reader comparing two runs could see THAT the
+    instructions changed and never which half of the toolchain did it.
+
+    The two directions are not symmetric, and the asymmetry is the whole value:
+
+      same IR, different asm   the backend alone changed the instructions. Sound, and the
+                               case worth shouting about: an instruction swapped for
+                               another of the same width is where a silent miscompile
+                               lives, and a ROM figure cannot see it at all.
+      IR moved too             an upstream change is SUFFICIENT to explain the assembly.
+                               It does NOT rule the backend out, because both can have
+                               moved; it only stops the reader starting there.
+    """
+    delta = b["rom"] - a["rom"]
+    note = ""
+    if b.get("warn") and not a.get("warn"):
+        note = f", {b['warn']} AVISOS DEL ENSAMBLADOR nuevos"
+    if a.get("mir") is not None and b.get("mir") is not None:
+        note += (", el IR tambien" if a["mir"] != b["mir"]
+                 else ", MISMO IR: las instrucciones las cambio el backend")
+    return f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}{note}", delta
+
+
 def chips():
     out = {}
     for f in sorted(CHIPS_DIR.glob("*.py")):
@@ -671,7 +698,12 @@ def provenance_drift(was, now):
         a, b = old_tool.get(name, {}), new_tool.get(name, {})
         repo = repo_of(b.get("binary") or a.get("binary"))
         scope = b.get("scope") or a.get("scope") or "."
-        if a.get("stamp") != b.get("stamp"):
+        if a.get("stamp") != b.get("stamp") and not a and b:
+            # The capture predates this component being recorded at all. It is still a
+            # "distinto", since a field nobody wrote cannot say the component held still,
+            # but saying it changed FROM None reads as a commit called None.
+            out.append(("distinto", f"{name}: la captura no lo registraba, ahora {b.get('stamp')}"))
+        elif a.get("stamp") != b.get("stamp"):
             if scope_unchanged_between(repo, a.get("stamp"), b.get("stamp"), scope):
                 out.append(("inocuo", f"{name}: el repo avanzo {a.get('stamp')} -> {b.get('stamp')}"
                                       f" sin tocar {scope}"))
@@ -782,11 +814,8 @@ def main():
         if a == b:
             continue
         if a and b and a.get("status") == b.get("status") == "ok":
-            delta = b["rom"] - a["rom"]
-            note = ""
-            if b.get("warn") and not a.get("warn"):
-                note = f", {b['warn']} AVISOS DEL ENSAMBLADOR nuevos"
-            diffs.append((key, f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}{note}", delta))
+            text, delta = diff_text(a, b)
+            diffs.append((key, text, delta))
         elif (a and b and a.get("status") == "ok" and b.get("status") == "no-build"
               and a.get("warn") and DOES_NOT_FIT.search(current[key].get("reason", ""))):
             diffs.append((key, f"ok con {a['warn']} avisos -> no-build honesto: "
