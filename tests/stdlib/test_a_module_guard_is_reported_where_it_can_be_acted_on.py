@@ -121,3 +121,98 @@ def test_both_front_ends_report_the_refusal_identically(tmp_path, source, target
     cpython = _diagnose(tmp_path, source, target, py_parser=True)
 
     assert hand == cpython
+
+
+# --- the shape guards are actually written in --------------------------------------------
+#
+# 107 of the 138 `raise CompileError` guards in the stdlib sit inside an `@inline`, 8 in a plain
+# function and 23 at module level. Everything above reaches the library branch through whichever
+# shape adc and uart happen to use, so the OTHER shape was covered by nothing.
+#
+# The behaviour turned out to be identical, and this pins that rather than trusting it. Both
+# fixtures below are built by hand because the shape is easy to get wrong in a way that still
+# produces a plausible answer -- see the docstring on _installed_module.
+
+
+def _installed_module(tmp_path: Path) -> tuple[Path, Path]:
+    """A guarded module that is INSTALLED, not the project's own, and an entry file beside it.
+
+    This layout is the whole point of the fixture and it is worth reading before changing it.
+    Two wrong versions of it were built while writing these tests, and BOTH gave answers that
+    looked right:
+
+      * module under a `-I` but inside the entry file's own directory. A module in the project
+        root is the USER's, so its module level actually EXECUTES and the raise simply fires.
+        Right line, completely different path. The tell is the column: the fallback reports 1
+        where the real path reports the `raise`'s own column.
+
+      * module moved out, but the failing USE placed in the entry file. That exercises the OTHER
+        branch of the fix, the one that was already correct. It gives a well-formed answer, the
+        two shapes agree, and it says nothing at all about the branch under test. There is no
+        odd column to notice here -- the only thing that catches it is asking which branch is
+        being exercised rather than whether the number looks plausible.
+
+    So: the module lives outside the entry file's directory, and the failing use lives INSIDE
+    that module, which is what `adc` does -- the entry file imports the library and the use is
+    in a method of the library.
+    """
+    lib, proj = tmp_path / "lib" / "pkg", tmp_path / "proj"
+    lib.mkdir(parents=True)
+    proj.mkdir(parents=True)
+    (lib / "__init__.py").write_text(
+        "from pymcu.chips import __CHIP__\n"
+        "from pymcu.exceptions import CompileError\n"
+        "from pymcu.types import uint8\n"
+        "\n"
+        "if __CHIP__.name == \"atmega328p\":\n"
+        "    raise CompileError(\"this module refuses the atmega328p on purpose\")\n"
+        "else:\n"
+        "    from pymcu.hal.gpio import pin_high\n"
+        "\n"
+        "\n"
+        "@inline\n"
+        "def guarded_inline(p: uint8) -> None:\n"
+        "    pin_high(p)\n"
+        "\n"
+        "\n"
+        "def guarded_plain(p: uint8) -> None:\n"
+        "    pin_high(p)\n")
+    return lib, proj
+
+
+GUARD_LINE = 6   # the `raise` in the fixture above
+
+
+@pytest.mark.parametrize("py_parser", [False, True], ids=["hand-written", "cpython"])
+@pytest.mark.parametrize("helper", ["guarded_inline", "guarded_plain"])
+def test_the_shape_of_the_helper_does_not_move_the_caret(tmp_path, helper, py_parser):
+    """`@inline` and plain resolve the same, because the branch does not read the function kind.
+
+    It reads whether the failing use is in the ENTRY file, and a use inside an imported module is
+    inside an imported module either way. Pinned because the reasoning is easy to lose and the
+    inline path is where 78% of real guards live.
+    """
+    lib, proj = _installed_module(tmp_path)
+    src = proj / "main.py"
+    src.write_text(f"from pkg import {helper}\n\n\ndef main() -> None:\n    {helper}(3)\n")
+
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    proc = subprocess.run(
+        [str(PYMCUC), str(src), "--target", "atmega328p", "-I", str(proj),
+         "-I", str(lib.parent), "-I", str(STDLIB), "-o", "/dev/null"],
+        capture_output=True, text=True, env=env,
+    )
+    out = proc.stdout + proc.stderr
+    m = HEADER.search(out)
+    assert m, f"expected a diagnostic, got:\n{out}"
+
+    assert Path(m.group("path")).name == "__init__.py", "the guard's file, not the entry file"
+    assert int(m.group("line")) == GUARD_LINE, "the `raise`, not a line below it"
+    assert int(m.group("col")) == 5, (
+        "the raise's own column. A 1 here means the module was treated as the project's own and "
+        "its module level simply executed, which is the wrong path giving a plausible answer"
+    )
