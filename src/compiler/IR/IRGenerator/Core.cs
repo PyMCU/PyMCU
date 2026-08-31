@@ -1136,10 +1136,21 @@ public partial class IRGenerator
             : "uint8";
         int size = arraySizes.TryGetValue(qualified, out var sz) ? sz : 0;
         string example = size > 0 ? $"{shown}: {elem}[{size}] = [...]" : $"{shown}: {elem}[N] = [...]";
+        // The old text said the array "has no declared array type". That is true for a bare
+        // `b = [1, 2, 3]` and FALSE for the other way in: an array declared `uint8[64]` and
+        // passed to an @inline whose call the scan could not follow arrives here with its
+        // declaration intact and its addressability lost (#246). Telling that reader to declare
+        // a type sends them to add an annotation they already wrote.
+        //
+        // So the message names the PROPERTY that is missing -- addressable storage -- and then
+        // gives both ways to get it, rather than asserting a cause that is right half the time.
         return UserError(
-            $"'{shown}' has no declared array type, so it lives as separate variables and can "
-            + "only be indexed with a constant. Declare it as an array to index it at run time, "
-            + $"e.g. `{example}`", at);
+            $"'{shown}' is not addressable at run time here: it lives as separate variables, so "
+            + "it can only be indexed with a constant. An array gets real storage when it is "
+            + "declared with a type and the compiler can see it indexed at run time. Either "
+            + $"declare it, e.g. `{example}`, or -- if it is already declared and is being "
+            + "passed into an @inline -- hold it as a field of the class instead, which always "
+            + "has storage.", at);
     }
 
     /// <param name="at">

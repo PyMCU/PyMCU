@@ -2417,7 +2417,16 @@ public partial class IRGenerator
     // variable (non-constant) index inside the given inline function body, including
     // parameters that are forwarded to nested inline function calls whose own parameters
     // are also variable-indexed.
-    private HashSet<string> GetInlineVarIndexedParams(FunctionDef func, HashSet<FunctionDef> visiting)
+    /// <param name="selfClass">
+    /// The class the scanned function belongs to, so a nested `self.m(...)` can be followed.
+    ///
+    /// Without it this stops at ONE level: the branch below resolves `ic.Callee is VariableExpr`
+    /// only, and its own comment said "non-method". So `a` -> `self._b` was propagated by the
+    /// caller's scan while `_b` -> `self._c` was not, and a buffer handed down two levels lost
+    /// its runtime-indexed-ness at the second (#246). The CYW43 helpers nest exactly that way.
+    /// </param>
+    private HashSet<string> GetInlineVarIndexedParams(FunctionDef func, HashSet<FunctionDef> visiting,
+                                                      string? selfClass = null)
     {
         if (!visiting.Add(func)) return new HashSet<string>(); // cycle guard
 
@@ -2444,14 +2453,19 @@ public partial class IRGenerator
                 ScanIExpr(ic.Callee);
                 foreach (var a in ic.Args) ScanIExpr(a);
 
-                // Resolve direct calls (non-method) to inline functions and propagate.
+                // Resolve the callee to an inline function and propagate. Both shapes: a
+                // direct call, and `self.m(...)` when the enclosing class is known -- a method
+                // is keyed `Class_method`, so the class plus the member name is the key.
                 string nestedKey = "";
                 if (ic.Callee is VariableExpr icVe)
                     nestedKey = ResolveCallee(icVe.Name);
+                else if (!string.IsNullOrEmpty(selfClass)
+                         && ic.Callee is MemberAccessExpr { Object: VariableExpr { Name: "self" } } icSelf)
+                    nestedKey = selfClass + "_" + icSelf.Member;
 
                 if (!string.IsNullOrEmpty(nestedKey) && inlineFunctions.TryGetValue(nestedKey, out var nested))
                 {
-                    var nestedVarIdx = GetInlineVarIndexedParams(nested, visiting);
+                    var nestedVarIdx = GetInlineVarIndexedParams(nested, visiting, selfClass);
                     if (nestedVarIdx.Count > 0)
                     {
                         int argPos = 0;
@@ -2617,7 +2631,18 @@ public partial class IRGenerator
         return found;
     }
 
-    private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix)
+    /// <param name="selfClass">
+    /// The class whose method is being scanned, so `self.m(...)` inside it can be resolved.
+    ///
+    /// Without it `localVarTypes` never has an entry for `self`: that table is filled by one
+    /// thing, a local assigned a CONSTRUCTOR CALL, and `self` is a parameter. So the method-call
+    /// branch below missed, `resolvedFunc` stayed null, and the propagation that hands a
+    /// callee's runtime-indexed parameter back to the caller's array never ran -- which is why
+    /// `r._emit(b, 2)` from a plain function worked and `self._emit(b, 2)` from inside a method
+    /// did not, for the same callee and the same array (#246).
+    /// </param>
+    private void ScanForVariableIndexedArrays(List<Statement> stmts, string prefix,
+                                              string? selfClass = null)
     {
         var localArrays = new HashSet<string>();
 
@@ -2625,6 +2650,7 @@ public partial class IRGenerator
         // resolve method calls to inline functions without needing instanceClasses (which
         // is not yet populated at this point in compilation).
         var localVarTypes = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(selfClass)) localVarTypes[prefix + "self"] = selfClass;
 
         void CollectArrayDecls(Statement? stmt)
         {
@@ -2739,6 +2765,9 @@ public partial class IRGenerator
                 // to the actual arguments at this call site.
                 FunctionDef? resolvedFunc = null;
                 string overloadedKey = "";   // non-empty when the call targets an overloaded inline
+                // The class of the RECEIVER, kept so a nested `self.m(...)` inside the callee
+                // can be followed too. Null for a plain function call, which has no self.
+                string? resolvedSelfClass = null;
 
                 if (call.Callee is MemberAccessExpr memAcc && memAcc.Object is VariableExpr objVe)
                 {
@@ -2747,6 +2776,7 @@ public partial class IRGenerator
                     if (localVarTypes.TryGetValue(objKey, out string cls))
                     {
                         string methodKey = cls + "_" + memAcc.Member;
+                        resolvedSelfClass = cls;
                         if (!inlineFunctions.TryGetValue(methodKey, out resolvedFunc) &&
                             overloadedFunctions.Contains(methodKey))
                             overloadedKey = methodKey;
@@ -2781,7 +2811,7 @@ public partial class IRGenerator
                 // Single non-overloaded inline function.
                 if (resolvedFunc != null)
                 {
-                    var varIdxParams = GetInlineVarIndexedParams(resolvedFunc, new HashSet<FunctionDef>());
+                    var varIdxParams = GetInlineVarIndexedParams(resolvedFunc, new HashSet<FunctionDef>(), resolvedSelfClass);
                     if (varIdxParams.Count > 0)
                     {
                         int argPos = 0;
@@ -2814,7 +2844,7 @@ public partial class IRGenerator
                     {
                         if (!kv.Key.StartsWith(overloadedKey + "___")) continue;
                         if (kv.Value.Params.Count(p => p.Name != "self") != argCount) continue;
-                        var varIdxP = GetInlineVarIndexedParams(kv.Value, new HashSet<FunctionDef>());
+                        var varIdxP = GetInlineVarIndexedParams(kv.Value, new HashSet<FunctionDef>(), resolvedSelfClass);
                         if (varIdxP.Count == 0) continue;
                         int ap = 0;
                         foreach (var param in kv.Value.Params)

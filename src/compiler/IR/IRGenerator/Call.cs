@@ -1390,7 +1390,13 @@ public partial class IRGenerator
         // this a runtime-indexed local array inside an @inline hit "subscript must be constant".
         if (func != null)
             ScanForVariableIndexedArrays(func.Body.Statements,
-                string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".");
+                string.IsNullOrEmpty(currentFunction) ? "" : currentFunction + ".",
+                // The callee's own class, when it is a method: `Radio_send` minus `_send`. This
+                // is the path that matters for a nested `self.m(...)`, because the per-function
+                // prescan never sees an inlined callee's body (see the note above).
+                callee.EndsWith("_" + func.Name, StringComparison.Ordinal)
+                    ? callee[..^(func.Name.Length + 1)]
+                    : null);
 
         var savedModulePrefix = currentModulePrefix;
         // Resolve the body's calls in the module where the function was DEFINED,
