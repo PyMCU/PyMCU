@@ -1331,10 +1331,26 @@ public partial class IRGenerator
         // pair in effect for the calling statement stays in effect while its arguments bind,
         // and a nested expansion inherits the OUTER callee's pair, which is coherent too.
         // Issue #227.
+        //
+        // KNOWN, not non-empty. The test used to be `!string.IsNullOrEmpty(calleePath)`, and
+        // the entry file's own functions are recorded with an EMPTY path, so they failed it
+        // and their expansions tracked no callee line at all. Every UNLOCATED diagnostic
+        // raised inside one then fell back to `currentStmtLine`, which is the call:
+        //
+        //     class Box:
+        //         def __init__(self, n: uint8) -> None:
+        //             self.buf: uint8[n]        <- line 7, what the message is about
+        //     b = Box(s)                        <- line 13, what was reported
+        //
+        // The same class in an imported module already reported line 7, because a non-empty
+        // path passed the test. `RecordSourcePaths` runs for the entry file too, so a
+        // successful lookup is what says the origin is known, and an empty result means the
+        // entry file rather than an unknown origin. Those two were conflated here, which the
+        // comment above says outright; separating them is the whole change. An empty path
+        // still leaves `LocatedFile` null, which the renderer already reads as the entry file,
+        // so the FILE half is unchanged and only the line moves. Issue #233.
         string? calleeSourcePath =
-            func != null
-            && functionSourcePath.TryGetValue(func, out var calleePath)
-            && !string.IsNullOrEmpty(calleePath)
+            func != null && functionSourcePath.TryGetValue(func, out var calleePath)
                 ? calleePath
                 : null;
 
@@ -1965,7 +1981,7 @@ public partial class IRGenerator
         if (calleeSourcePath != null)
         {
             currentSourcePath = calleeSourcePath;
-            currentSourceFile = SourceFileLabel(calleeSourcePath);
+            currentSourceFile = calleeSourcePath.Length > 0 ? SourceFileLabel(calleeSourcePath) : "";
             inlineTracksCalleeLine = true;
             inlineCalleeStmtLine = 0;
         }
