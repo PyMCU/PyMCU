@@ -180,6 +180,16 @@ public partial class IRGenerator
                     // Unannotated module-level `name = bytearray(...)` (MicroPython idiom):
                     // register the fixed buffer just like the annotated form.
                     TryRegisterModuleBytearray(name, initializer);
+
+                    // Unannotated module-level `NAME = "..."`, for the same reason. Only the
+                    // two annotated spellings above were registered here, so the bare one
+                    // reached strConstantVariables solely as a side effect of LOWERING the
+                    // module statement. Anything lowered before that could not see it, and a
+                    // plain helper is: `raise CompileError(MSG)` in one was refused for a
+                    // constant declared directly above it, while the same raise in main, at
+                    // module level, or in an @inline helper resolved. #239.
+                    if (initializer is StringLiteral asgStr)
+                        strConstantVariables[currentModulePrefix + name] = asgStr.Value;
                 }
             }
             else if (stmt is AnnAssign annAssign)
