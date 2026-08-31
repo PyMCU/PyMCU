@@ -153,6 +153,19 @@ def _program(tmp_path: Path, source: str) -> Path:
     "class B:\n    def __init__(self) -> None:\n        self.b: uint8 = 2\n"
     "class C(A, B):\n    def __init__(self) -> None:\n        self.c: uint8 = 3\n"
     "def main() -> None:\n    c = C()\n",
+    # A TUPLE, in its three spellings. Unlike the two rows above this one DOES discriminate:
+    # the tuple is marked WHOLE, so the two front ends have to agree on where it starts AND on
+    # how far it runs, and the two spellings start in different places. The third crosses lines,
+    # where both sides drop the length; agreeing to withhold is as much parity as agreeing on a
+    # number, and it is the case a rule written for one spelling gets wrong.
+    "from pymcu.types import uint8\ndef main() -> None:\n    a, b, *c = (1,)\n    d: uint8 = uint8(a)\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    a, b, *c = 1,\n    d: uint8 = uint8(a)\n",
+    "from pymcu.types import uint8\ndef main() -> None:\n    a, b, *c = (1,\n                )\n    d: uint8 = uint8(a)\n",
+    # And one starting at a CALL, which is the row that makes the rule about TEXT rather than
+    # about "a paren or a literal". A rule phrased over syntax needs a case for this one; a rule
+    # phrased over where the text begins does not.
+    "from pymcu.types import uint8\ndef two() -> uint8:\n    return 1\n"
+    "def main() -> None:\n    a, b, c, *d = two(), 2\n    e: uint8 = uint8(a)\n",
 ])
 def test_both_front_ends_underline_the_same_amount(tmp_path, source):
     src = _program(tmp_path, source)

@@ -64,25 +64,54 @@ public class UnpackingColumnTests
         Assert.Equal(2, ex.Length);
     }
 
-    [Fact]
-    public void TooFewValuesCarriesTheRightNodeAndStillDrawsNoCaret()
+    [Theory]
+    // Was TooFewValuesCarriesTheRightNodeAndStillDrawsNoCaret, which asserted that the node was
+    // passed and the caret still withheld because the parser did not stamp a TupleExpr. Tuples
+    // are stamped now, so this is that instruction being followed.
+    //
+    //                    1
+    //          1234567890123456789
+    // line 5: "    a, b, *c = (1,)"   the tuple is `(1,)`, four characters from column 16
+    // line 5: "    a, b, *c = 1,"     written bare, it is `1,`, two characters from column 16
+    //
+    // Both spellings, because the tuple's START differs between them and its LENGTH differs
+    // too: the parenthesised one begins at the `(` and the bare one at its first element. One
+    // row would have pinned whichever of the two happened to be written here.
+    [InlineData("    a, b, *c = (1,)\n", 4)]
+    [InlineData("    a, b, *c = 1,\n", 2)]
+    public void TooFewValuesPointsAtTheTupleThatIsShort(string line, int length)
     {
-        // The node passed is the one to blame and the site is finished; what is missing is one
-        // level down. The right-hand side here is a TUPLE LITERAL, and the parser does not
-        // stamp a TupleExpr, so the correct node arrives without a position.
-        //
-        // Written to FLIP: when tuples are stamped this fails, and the fix is to assert the
-        // real column of `(1,)` rather than to stop passing the node. The line is asserted
-        // because that is what this site does get right, and a guard that checks only the
-        // absence of a column would not notice the line drifting.
         var ex = Fails(
-            "def main() -> None:\n" +
-            "    a, b, *c = (1,)\n" +
+            "def main() -> None:\n" + line +
             "    GPIOR1.value = uint8(a)\n" +
             "    while True:\n        pass\n");
 
         Assert.Contains("Not enough values to unpack", ex.Message);
         Assert.Equal(5, ex.Line);
-        Assert.False(ex.HasColumn);
+        Assert.Equal(16, ex.Column);
+        Assert.Equal(length, ex.Length);
+    }
+
+    [Fact]
+    public void ATupleWrittenAcrossLinesWithholdsTheUnderline()
+    {
+        // The span is the answer for a tuple and there is no span once the node crosses lines:
+        // an underline measured on one line and drawn on another marks whatever sits under it.
+        // Both front ends refuse here rather than one of them guessing, which is what makes the
+        // rule one rule instead of two.
+        var ex = Fails(
+            "def main() -> None:\n" +
+            "    a, b, *c = (1,\n" +
+            "                )\n" +
+            "    GPIOR1.value = uint8(a)\n" +
+            "    while True:\n        pass\n");
+
+        Assert.Contains("Not enough values to unpack", ex.Message);
+        Assert.Equal(5, ex.Line);
+        Assert.Equal(16, ex.Column);
+        // 1 and not 0: the NODE carries CompilerError.Unlocated, and UserError renders an
+        // unknown length as a bare caret rather than as no mark at all. What is pinned is that
+        // the underline does not grow to a span, which is the thing that would be wrong.
+        Assert.Equal(1, ex.Length);
     }
 }

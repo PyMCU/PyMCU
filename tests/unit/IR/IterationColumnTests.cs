@@ -253,18 +253,25 @@ public class IterationColumnTests
     }
 
     [Fact]
-    public void ATupleElement_StaysUnlocated_UntilTuplesAreStamped()
+    public void ATupleElement_PointsAtTheTuple()
     {
-        // The node in hand IS the right one to blame, and it is passed. It reports no column
-        // because the parser does not stamp a TupleExpr, so this asserts the current ceiling
-        // rather than a decision: stamping tuples lights this site up with no edit here.
+        // Was ATupleElement_StaysUnlocated_UntilTuplesAreStamped, asserting the ceiling with
+        // the instruction that stamping tuples lights this site up with no edit here. Tuples
+        // are stamped now and the site lit up with no edit here, so this is that instruction
+        // being followed: assert the real column rather than restore the silence.
+        //
+        //                    1
+        //          1234567890123456789
+        // line 2: "    for a in [(1, 2), (3, 4)]:"  -- the first tuple starts at column 15
         const string src =
             "def main():\n" +
             "    for a in [(1, 2), (3, 4)]:\n" +
             "        pass\n";
         var ex = Fails(src);
         Assert.Contains("nowhere to put the second value", ex.Message);
-        Assert.Equal(CompilerError.Unlocated, ex.Column);
+        Assert.Equal(2, ex.Line);
+        Assert.Equal(15, ex.Column);
+        Assert.Equal(6, ex.Length);   // `(1, 2)`, the whole tuple
     }
 
     [Fact]
