@@ -21,6 +21,21 @@ namespace PyMCU.Frontend;
 public class Parser
 {
     private readonly IReadOnlyList<Token> tokens;
+    /// The refusal for a raise message that is neither literals nor a name.
+    ///
+    /// WORD FOR WORD the same string as the CPython bridge's (pymcu_translate.py, s_raise).
+    /// The two front ends refused the same programs at different columns AND with different
+    /// text (#236); the bridge's version said only what was wrong, this one says what is
+    /// accepted, so this is the wording that survived. Change one and change the other, or the
+    /// parity test in tests/driver/test_frontend_diagnostic_parity.py fails, which is what it
+    /// is for.
+    ///
+    /// The old lead clause was "Expected ')' after the error message", which described the
+    /// parser's predicament rather than the program's. It went with the old column.
+    private const string RaiseMessageRefusal =
+        "a raise message must be one or more adjacent string literals, or the name of a " +
+        "module-level string constant";
+
     private int pos = 0;
     private int functionDepth = 0;
 
@@ -195,6 +210,52 @@ public class Parser
     /// refused rather than whatever follows it.
     private void ErrorAt(Token at, string message) =>
         throw new SyntaxError(message, at.Line, at.Column, at.Length);
+
+    /// Reports across a RANGE of tokens, for a refusal about a whole expression rather than
+    /// about one token of it.
+    ///
+    /// The length is dropped when the two tokens are on different lines, for the same reason
+    /// Spanning() drops it: a length measured on one line and drawn on another underlines
+    /// whatever happens to sit there.
+    private void ErrorSpanning(Token first, Token last, string message)
+    {
+        // Zero, not first.Length, when the tokens are on different lines. Falling back to the
+        // first token's length underlines the first token of a multi-line expression, which
+        // says "this bit" about the one part that may be fine. Measured: the CPython bridge
+        // drops the length here (position_of), so anything else is a parity divergence in the
+        // underline while the column agrees, which is the class the parity test was widened
+        // to catch.
+        int span = first.Line == last.Line
+            ? Math.Max(1, last.Column + last.Length - first.Column)
+            : 0;
+        throw new SyntaxError(message, first.Line, first.Column, span);
+    }
+
+    /// The last token of the argument that starts at the cursor, found by scanning to the `)`
+    /// that closes the call.
+    ///
+    /// Needed because the caller wants to underline a whole expression it deliberately did NOT
+    /// parse. Newlines are skipped rather than returned so a message written across lines ends
+    /// at its last real token.
+    private Token ArgumentEndToken()
+    {
+        int depth = 0;
+        Token last = Peek();
+        for (int i = pos; i < tokens.Count; i++)
+        {
+            Token t = tokens[i];
+            if (t.Type == TokenType.EndOfFile) break;
+            if (t.Type is TokenType.LParen or TokenType.LBracket or TokenType.LBrace) depth++;
+            else if (t.Type is TokenType.RBracket or TokenType.RBrace) depth--;
+            else if (t.Type == TokenType.RParen)
+            {
+                if (depth == 0) break;
+                depth--;
+            }
+            if (t.Type != TokenType.Newline) last = t;
+        }
+        return last;
+    }
 
     private void IndentError(string message)
     {
@@ -869,6 +930,9 @@ public class Parser
             {
                 Advance();
                 while (Check(TokenType.Newline)) Advance();
+                // The first token of the message argument, kept so a refusal can underline the
+                // argument rather than report at wherever parsing stopped.
+                Token messageStart = Peek();
                 if (Check(TokenType.String))
                 {
                     var parts = new System.Text.StringBuilder();
@@ -886,9 +950,22 @@ public class Parser
                     while (Check(TokenType.Newline)) Advance();
                 }
 
-                Consume(TokenType.RParen,
-                    "Expected ')' after the error message. The message must be one or more " +
-                    "adjacent string literals, or the name of a module-level string constant");
+                // Blame the ARGUMENT, not the token the parser happened to stop on.
+                //
+                // This used to be a bare Consume, so the column was wherever the cursor sat
+                // when `)` did not appear. Measured over nine spellings, that lands on the `+`
+                // for `"a" + x` -- which reads as deliberate -- and on the `.` of `__CHIP__.name`
+                // and the `(` of `helper()`, which do not. It was never a decision about what to
+                // blame; it was where parsing gave up.
+                //
+                // The whole argument is the honest answer for all nine, and it is also the one
+                // the CPython bridge can reproduce exactly: an argument node carries col_offset
+                // and end_col_offset, while the position of a `+` or a `.` is not in the AST at
+                // all. Matching the old behaviour would have meant four special cases scanning
+                // the source to rediscover punctuation, to reproduce something nobody chose.
+                if (!Check(TokenType.RParen))
+                    ErrorSpanning(messageStart, ArgumentEndToken(), RaiseMessageRefusal);
+                Consume(TokenType.RParen, RaiseMessageRefusal);
             }
         }
 

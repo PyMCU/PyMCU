@@ -777,8 +777,19 @@ def s_raise(node):
             elif isinstance(arg, ast.Name):
                 message_name = arg.id
             else:
+                # The ARGUMENT, not the Raise statement. Passing `node` here put every one of
+                # these at the `raise` keyword, nine spellings deep, while the hand-written
+                # parser pointed somewhere inside the argument (#236).
+                #
+                # Both now underline the whole argument, which is the one answer that is true
+                # for all nine and the only one both front ends can reach: an argument node
+                # carries col_offset and end_col_offset, whereas the position of the `+` in
+                # `"a" + x` is not in the CPython AST at all.
+                #
+                # Text is word for word Parser.cs's RaiseMessageRefusal. Change one, change both.
                 raise Unsupported(
-                    "a raise message that is not a string literal or a named constant", node)
+                    "a raise message must be one or more adjacent string literals, or the "
+                    "name of a module-level string constant", arg)
         return {"k": "Raise", "errorType": exc.func.id, "message": message,
                 "messageName": message_name}
     raise Unsupported("that raise form", node)
