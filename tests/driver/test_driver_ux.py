@@ -135,18 +135,91 @@ class TestFlashMetric:
         assert _parse_hex_flash_bytes(self._hex(tmp_path, 104 + 38)) == 142
 
     def test_the_published_blink_figure_is_reproduced(self, tmp_path):
-        # 142 bytes of image is what the gist's blink assembles to, and 38 is
-        # the code figure the article quotes. Both must appear.
+        # 142 bytes of image is what the gist's blink assembles to. The article quotes the
+        # split as 38 + 104; the total is right and the split was two bytes out, so it is
+        # 40 + 102 here. See the note below for why.
         lines = _flash_report_lines(142, 32768, "atmega328p")
         assert "142 / 32768" in lines[0]
-        assert "38 bytes of your code" in lines[1]
-        assert "104 bytes of interrupt vector table" in lines[1]
+        assert "40 bytes of your code" in lines[1]
+        assert "102 bytes of interrupt vector table" in lines[1]
 
     def test_the_scaffold_blink_figure_is_reproduced(self, tmp_path):
-        # The scaffold uses value(1)/value(0) rather than toggle(): 150 / 46.
+        # The scaffold uses value(1)/value(0) rather than toggle(): 150 total, 48 + 102.
         lines = _flash_report_lines(150, 32768, "atmega328p")
         assert "150 / 32768" in lines[0]
-        assert "46 bytes of your code" in lines[1]
+        assert "48 bytes of your code" in lines[1]
+
+    # Those two call the three-argument form, which has no assembly to read and falls back to
+    # the constant. The constant is the ATmega328P's table and it is 102, not 104:
+    #
+    #     the assembler pads each slot out to the stride EXCEPT the last, because nothing
+    #     follows it, so 26 four-byte slots occupy 25*4 + 2 = 102
+    #
+    # Verified against the linked ELF, where `__bad_interrupt` is at 0x66 on the ATmega328P
+    # and at 0x34 on the ATtiny13. The ATtiny figures were already exact, because there the
+    # slot IS an RJMP and the padding question does not arise.
+    #
+    # The two bytes were code being charged to the table. Totals do not move, so the article's
+    # 142 and 150 still hold and only the split does: 38 + 104 -> 40 + 102, 46 + 104 ->
+    # 48 + 102.
+
+    # --- the table is measured, not assumed ---------------------------------
+    #
+    # A vector-table slot is 4 bytes on the parts with JMP/CALL and 2 on the parts without,
+    # so the 104-byte constant is the ATmega's table and double every ATtiny's. The guard is
+    # `startswith("at")`, which is both families, and an attiny13 was told it had "8 bytes of
+    # your code + 104 bytes of interrupt vector table" for a 112-byte image whose table is 52
+    # and whose code is 60. Two wrong numbers, and the smaller one is the one a reader would
+    # act on. Issue #235.
+    #
+    # Of the four below, two DISCRIMINATE: the attiny table and the shorter table, which give
+    # 52 and 20 where the constant gives 104. The two ATmega ones cannot, because they need
+    # the fourth argument to exist, so against the unfixed driver they fail on the signature
+    # rather than on the answer. What holds the ATmega end on both sides is the pair of
+    # published-figure tests above, which call the three-argument form and must keep passing.
+
+    @staticmethod
+    def _asm(tmp_path, stride: int, slots: int):
+        """A vector table as the backend emits it: `.org` per slot, then __bad_interrupt."""
+        body = "".join(f".org 0x{i * stride:X}\n\tRJMP\t__bad_interrupt\n"
+                       for i in range(slots))
+        (tmp_path / "firmware.gas.asm").write_text(
+            body + "\n__bad_interrupt:\n\tRJMP\tmain\nmain:\n\tCLR\tR1\n")
+        return tmp_path
+
+    def test_an_attiny_table_is_read_from_the_assembly(self, tmp_path):
+        d = self._asm(tmp_path, stride=2, slots=26)      # 2-byte slots: 52 bytes
+        lines = _flash_report_lines(112, 1024, "attiny13", d)
+        assert "52 bytes of interrupt vector table" in lines[1]
+        assert "60 bytes of your code" in lines[1]
+
+    def test_an_atmega_table_is_read_and_the_last_slot_is_not_padded(self, tmp_path):
+        # 25 padded 4-byte slots plus the last slot's RJMP: 102, not 26 x 4. Checked against
+        # the linked ELF, where __bad_interrupt sits at 0x66.
+        d = self._asm(tmp_path, stride=4, slots=26)
+        lines = _flash_report_lines(150, 32768, "atmega328p", d)
+        assert "102 bytes of interrupt vector table" in lines[1]
+        assert "48 bytes of your code" in lines[1]
+
+    def test_a_shorter_table_is_followed_rather_than_assumed(self, tmp_path):
+        """pymcu-avr#16 will cut the slot COUNT per part. The report has to follow it.
+
+        This is what says the fix reads the table rather than swapping one constant for two:
+        with ten slots the answer is 20, which neither 104 nor 52 would give.
+        """
+        d = self._asm(tmp_path, stride=2, slots=10)
+        lines = _flash_report_lines(112, 1024, "attiny13", d)
+        assert "20 bytes of interrupt vector table" in lines[1]
+
+    def test_no_assembly_falls_back_to_the_atmegas_real_table(self, tmp_path):
+        """A caller with no artifacts gets the constant, and the constant is 102.
+
+        Unreachable from a real build, which always has the assembly. It is pinned anyway
+        because the constant is the one place a reader looks up "how big is the table", and
+        104 is the figure this issue exists to refute.
+        """
+        lines = _flash_report_lines(150, 32768, "atmega328p", tmp_path)
+        assert "102 bytes of interrupt vector table" in lines[1]
 
     def test_pic_images_lose_nothing(self, tmp_path):
         # A PIC14 image has no AVR vector table. Deducting 104 from one
