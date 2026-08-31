@@ -18,6 +18,20 @@ namespace PyMCU.Common.Models;
 
 public class DeviceConfig
 {
+    /// The BOARD the program is built for, empty when none was given.
+    ///
+    /// Separate from Chip because the two answer different questions and one does not follow
+    /// from the other: a Pico and a Pico W are both rp2040, a Pico 2 and a Pico 2 W are both
+    /// rp2350, and what differs is a part soldered next to the MCU. Anything a HAL wants to
+    /// know about that part is a board question, and until this field existed the compiler was
+    /// only ever told the chip.
+    ///
+    /// EMPTY IS NORMAL, not a mistake to guard against. A project sets `board` or `target` in
+    /// its pyproject.toml and the driver refuses both at once, so a program built by target has
+    /// no board to give. Measured over the three trees: 344 projects set target and 30 set
+    /// board. A HAL that treats empty as "no" takes a feature away from the 92%.
+    public string Board { get; set; } = "";
+
     public string Chip { get; set; } = "";
     public string TargetChip { get; set; } = ""; // Source of Truth (CLI/TOML)
     public string DetectedChip { get; set; } = ""; // From source code (device_info)
