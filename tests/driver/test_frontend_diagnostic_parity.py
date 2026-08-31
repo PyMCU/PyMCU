@@ -12,6 +12,7 @@ carrying it would swap one divergence for another. `test_a_binary_argument_is_th
 pins that as a known, deliberate difference rather than letting it pass unnoticed.
 """
 
+import json
 import os
 import subprocess
 import re
@@ -501,6 +502,83 @@ def test_create_task_without_run_withholds_the_caret(tmp_path):
         assert line == 8, line
         assert column == 1, "no column measured, so no caret"
         assert underline == 0, "and no caret line printed"
+
+
+# --- the LINE MAP -----------------------------------------------------------------------
+#
+# The tests above compare where a DIAGNOSTIC points. These compare what the two front ends put
+# in the line map, which nothing else looks at: the differential axis compares generated code,
+# and a debug record generates none.
+#
+# `pass` and `...` generate no code, and until #244 the hand-written parser left them out of the
+# map while the CPython bridge put them in. It was one omission, not a policy: the parser built
+# `new PassStmt()` at two of its three sites without stamping a line, while the Break and
+# Continue directly above it both used Located(). A statement with no line never reaches the
+# DebugLine emitter.
+#
+# The rule it settles was already the compiler's own -- a docstring, which also generates
+# nothing, always got a record. `while True: pass`, the embedded idle loop, is in around two
+# hundred files across the corpora, so this was the commonest shape there is.
+
+
+def _debug_lines(src: Path, py_parser: bool) -> list[int]:
+    """The source lines the emitted IR carries debug records for."""
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+        env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    mir = src.parent / "out.mir"
+    if mir.exists():
+        mir.unlink()
+    subprocess.run(
+        [str(PYMCUC), str(src), "--target", "atmega328p", "--emit-ir", str(mir),
+         "-o", os.devnull, "-I", str(STDLIB), "-I", str(src.parent)],
+        capture_output=True, text=True, env=env,
+    )
+    assert mir.exists(), "expected the program to compile"
+    ir = json.loads(mir.read_text())
+    return [i["line"] for f in ir["functions"] for i in f["body"] if i.get("$t") == "dbg"]
+
+
+@pytest.mark.parametrize("body", [
+    "    for i in range(3):\n        pass\n",
+    "    while True:\n        pass\n",
+    "    if T == 0:\n        pass\n",
+])
+def test_both_front_ends_map_the_same_lines(tmp_path, body):
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\nT: uint8 = 0\ndef main() -> None:\n" + body)
+
+    assert _debug_lines(src, py_parser=False) == _debug_lines(src, py_parser=True)
+
+
+def test_a_pass_gets_a_line_map_entry_like_any_other_statement(tmp_path):
+    # The rule, asserted directly rather than only as parity: both front ends agreeing to omit
+    # it would pass the test above and still leave the idle loop unbreakpointable.
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "T: uint8 = 0\n"
+                   "def main() -> None:\n"
+                   "    while True:\n"
+                   "        pass\n")
+
+    for py in (False, True):
+        assert 5 in _debug_lines(src, py_parser=py), "the `pass` line is missing from the map"
+
+
+def test_an_ellipsis_body_is_mapped_too(tmp_path):
+    # Same family and the same code path: `...` in statement position becomes a PassStmt.
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "def noop() -> None:\n"
+                   "    ...\n"
+                   "def main() -> None:\n"
+                   "    noop()\n")
+
+    for py in (False, True):
+        assert 3 in _debug_lines(src, py_parser=py)
 
 
 # --- the ACCEPTANCE axis --------------------------------------------------------------
