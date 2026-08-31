@@ -23,6 +23,18 @@ if __CHIP__.arch == "avr":
     from pymcu.hal.avr.timer import Timer
     if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
         from pymcu.hal.avr.timer.attiny85 import millis_init, millis, micros
+    elif __CHIP__.name == "attiny2313" or __CHIP__.name == "attiny4313":
+        # These fell through to the ATmega's module, which programs TIMSK0 and TIFR0. Neither
+        # part declares either register, so what got emitted was the ATmega328P's 0x6E on a
+        # die where that address is not a timer-interrupt mask. The build was clean.
+        #
+        # They DO have a Timer0, so this is missing work and not absent hardware, and the
+        # message says so. Same shape as the five HALs in #238.
+        raise CompileError(
+            "pymcu.time has no millisecond clock for this chip yet. The ATtiny 2313 and 4313 "
+            "have a Timer0, but their interrupt mask and flag registers are not the ATmega's "
+            "TIMSK0/TIFR0 that this implementation programs, so there is no driver for them "
+            "here. delay_ms() and delay_us() work; millis() and micros() do not.")
     else:
         from pymcu.hal.avr.timer.atmega328p import millis_init, millis, micros
 elif __CHIP__.arch == "pic14":
