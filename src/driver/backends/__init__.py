@@ -24,6 +24,7 @@ backend packages are released.
 from __future__ import annotations
 
 from importlib.metadata import entry_points
+import os
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -121,6 +122,42 @@ def require_backend_for_chip(chip: str) -> type:
     )
 
 
+def _binary_override(family: str) -> Path | None:
+    """PYMCU_BACKEND_BINARY, as `avr=/path/to/pymcuc-avr[,pic=/other]`.
+
+    A tool that has to measure a compiler which is NOT the installed one -- the ROM
+    snapshot comparing two builds, a bisection, a mutation run -- could until now only
+    aim the whole stack with PYTHONPATH. That works and fails silently: a wrong path is
+    not an error, it measures the deployed compiler and reports green. Two runs were lost
+    to exactly that. Naming one binary fails loudly instead.
+
+    A path that does not exist raises here rather than falling back, for the same reason:
+    the point of the variable is to be sure which compiler ran.
+    """
+    raw = os.environ.get("PYMCU_BACKEND_BINARY")
+    if not raw:
+        return None
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        name, _, path = item.partition("=")
+        if not path:
+            raise ValueError(
+                "PYMCU_BACKEND_BINARY must be 'family=/path' (for example "
+                f"'avr=/tmp/pymcuc-avr'), got {item!r}")
+        if name.strip() != family:
+            continue
+        resolved = Path(path.strip()).expanduser()
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"PYMCU_BACKEND_BINARY names '{resolved}' for '{family}' and it does not "
+                "exist. Refusing to fall back to the installed backend: the whole point of "
+                "this variable is knowing which compiler produced the output.")
+        return resolved
+    return None
+
+
 def get_backend_binary(chip: str) -> Path | None:
     """
     Return the path to the backend binary for *chip*, or None if no backend
@@ -129,7 +166,17 @@ def get_backend_binary(chip: str) -> Path | None:
     plugin = get_backend_for_chip(chip)
     if plugin is None:
         return None
-    return plugin.get_backend_binary()
+    return binary_for_plugin(plugin)
+
+
+def binary_for_plugin(plugin) -> Path | None:
+    """The binary a plugin should be run as, honouring PYMCU_BACKEND_BINARY.
+
+    Every caller that spawns a backend goes through here, so there is one answer to
+    "which compiler ran" rather than one per call site.
+    """
+    override = _binary_override(getattr(plugin, "family", ""))
+    return override if override is not None else plugin.get_backend_binary()
 
 
 def run_backend(

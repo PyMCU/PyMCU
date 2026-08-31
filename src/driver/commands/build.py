@@ -27,7 +27,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 # New Architecture Imports
 from ..toolchains import get_toolchain_for_chip, get_ffi_toolchain_for_chip
-from ..backends import get_backend_for_chip, run_backend
+from ..backends import binary_for_plugin, get_backend_for_chip, run_backend
 from ..core.compiler import PyMCUCompiler
 from ..core.boards import (
     board_frequency,
@@ -1135,7 +1135,7 @@ def build(
                         linemap_path = debug_dir / "linemap.json"
                         varmap_path  = debug_dir / "varmap.json"
                     run_backend(
-                        backend_binary=backend_plugin.get_backend_binary(),
+                        backend_binary=binary_for_plugin(backend_plugin),
                         ir_file=ir_file,
                         output_file=output_file,
                         target=target,
