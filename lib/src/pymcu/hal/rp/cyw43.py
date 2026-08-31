@@ -44,13 +44,11 @@ from pymcu.chips import __CHIP__
 # a dead bus and no diagnostic.
 #
 # Spelled as two explicit imports rather than one `from pymcu.chips.rp2350 import ...`
-# left in place. That would also work, and for the wrong reason: the compiler resolves a
-# chip-module name against the TARGET first and falls back to the literal module when the
-# target does not declare it, so all twelve would come out correct on an RP2040 by way of
-# the fallback that is filed as PyMCU#234. It would pass on silicon today and break the
-# day that issue is fixed. The project's rule against writing source that exploits a
-# compiler fault to get the right answer applies here with more force than usual, because
-# this is the stdlib rather than a user's program.
+# left in place, and that is not a stylistic preference. A chip-module import resolves to
+# the module NAMED, not to the target: measured, `from pymcu.chips.rp2350 import
+# SIO_GPIO_OUT_SET` compiled for rp2040 emits 0xD0000018, which is the RP2350's SET and
+# the RP2040's CLR. So the single-import version would produce exactly the failure
+# described above, on the clock line, and it would build clean.
 if __CHIP__.name == "rp2350":
     from pymcu.chips.rp2350 import (
         IO_BANK0_BASE, PADS_BANK0_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
