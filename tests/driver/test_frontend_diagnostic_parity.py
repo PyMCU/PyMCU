@@ -119,6 +119,22 @@ def _program(tmp_path: Path, source: str) -> Path:
 
 
 @pytest.mark.parametrize("source", [
+    # A raise MESSAGE that is neither literals nor a name (#236). Nine spellings diverged: the
+    # hand-written parser reported wherever its cursor stopped looking for `)` and the bridge
+    # reported the `raise` keyword. Both now mark the whole argument.
+    #
+    # The three shapes are here because the OLD behaviour differed between them and a single
+    # case would not have noticed: `+` put the cursor on the operator, `.` and `(` put it on a
+    # punctuation character inside the expression, and an f-string put it at the argument start
+    # by accident, which is the answer all of them give now on purpose.
+    'def main() -> None:\n    raise ValueError("a " + "b" + str(1))\n',
+    'from pymcu.chips import __CHIP__\ndef main() -> None:\n    raise ValueError(__CHIP__.name)\n',
+    'def helper() -> str:\n    return "h"\ndef main() -> None:\n    raise ValueError(helper())\n',
+    'def main() -> None:\n    raise ValueError(f"{1}")\n',
+    # And across lines, where BOTH have to drop the length rather than underline the first
+    # token. The hand-written side got this wrong first: falling back to the first token's
+    # length underlined the opening literal, which is the part that may be fine.
+    'def main() -> None:\n    raise ValueError("a "\n                     + "b")\n',
     # Raise, on one line and across two: the second is where the span-based length vanished
     # rather than being merely too long.
     "from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 = 1\n    raise ValueError(x)\n",
