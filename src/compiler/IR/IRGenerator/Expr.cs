@@ -382,7 +382,7 @@ public partial class IRGenerator
         // comparison against a literal read it deliberately (multiStrHandleReads); every other
         // position used to receive the id and treat it as data.
         if (multiStrHandleReads == 0 && TryGetMultiStr(expr.Name, out _, out var vals, out _))
-            throw MultiStrUseError(expr.Name, vals);
+            throw MultiStrUseError(expr.Name, vals, expr);
 
         return ResolveBinding(expr.Name, expr);
     }
@@ -1780,7 +1780,7 @@ public partial class IRGenerator
                 else
                 {
                     if (idxVal is not Constant cc2)
-                        throw UnrolledArrayIndexError(qualified);
+                        throw UnrolledArrayIndexError(qualified, expr.Target);
                     int elemIdx = cc2.Value;
                     if (elemIdx < 0 || elemIdx >= sz)
                         throw new IndexError(
@@ -2072,7 +2072,7 @@ public partial class IRGenerator
                 // slot holds an interned id, not a number the program means (see VisitVariable).
                 if (multiStrHandleReads == 0 && !strConstantVariables.ContainsKey(mangledName)
                     && multiStrVariables.TryGetValue(mangledName, out var modStrValues))
-                    throw MultiStrUseError(varExpr.Name + "." + expr.Member, modStrValues);
+                    throw MultiStrUseError(varExpr.Name + "." + expr.Member, modStrValues, expr);
 
                 return new Variable(mangledName, type);
             }

@@ -1121,7 +1121,13 @@ public partial class IRGenerator
     /// the subscript sends the reader off trying to make the INDEX constant, which defeats the
     /// buffer. Name the array and the annotation that makes it indexable.
     /// </summary>
-    private Exception UnrolledArrayIndexError(string qualified)
+    /// <param name="at">
+    /// The ARRAY the message names, not the whole subscript and not the index. `xs[i]` has
+    /// three candidates and the message is about `xs`: it asks the reader to declare a type
+    /// for the array, so a caret under `i` would send them to make the index constant, which
+    /// is the reading the message was written to prevent.
+    /// </param>
+    private Exception UnrolledArrayIndexError(string qualified, ASTNode? at = null)
     {
         int dot = qualified.LastIndexOf('.');
         string shown = dot >= 0 ? qualified[(dot + 1)..] : qualified;
@@ -1133,7 +1139,7 @@ public partial class IRGenerator
         return UserError(
             $"'{shown}' has no declared array type, so it lives as separate variables and can "
             + "only be indexed with a constant. Declare it as an array to index it at run time, "
-            + $"e.g. `{example}`");
+            + $"e.g. `{example}`", at);
     }
 
     /// <param name="at">
@@ -1684,7 +1690,12 @@ public partial class IRGenerator
     /// texts the name can hold, because the whole difficulty is that the reader of the source
     /// sees several and the compiler used to pick one of them in silence.
     /// </summary>
-    private Exception MultiStrUseError(string name, List<string> values)
+    /// <param name="at">
+    /// The READ the compiler could not lower, which is the position the reader has to change.
+    /// The assignments that gave the name its several texts are elsewhere and are already
+    /// named in the message by their texts.
+    /// </param>
+    private Exception MultiStrUseError(string name, List<string> values, ASTNode? at = null)
     {
         string shown = values.Count switch
         {
@@ -1696,7 +1707,7 @@ public partial class IRGenerator
             $"'{name}' has no single compile-time value here: it is {shown} depending on the "
             + "path taken. A PyMCU string is a compile-time value, so a name that holds "
             + "different texts on different paths can only be printed (print / write_str / "
-            + "println) or compared with a literal (== / !=).");
+            + "println) or compared with a literal (== / !=).", at);
     }
 
     /// <summary>The interned id a string literal is lowered to (see VisitExpression).</summary>

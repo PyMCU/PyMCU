@@ -4446,7 +4446,7 @@ public partial class IRGenerator
                 return false;
         }
 
-        if (!materialized) throw MultiStrUseError(shown, values);
+        if (!materialized) throw MultiStrUseError(shown, values, arg);
 
         var slot = new Variable(key, DataType.UINT16);
         string endLabel = MakeLabel();

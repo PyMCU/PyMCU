@@ -2049,7 +2049,7 @@ public partial class IRGenerator
                     else if (VisitExpression(indexExpr.Index) is Constant cc)
                         elemIdx = cc.Value;
                     else
-                        throw UnrolledArrayIndexError(qualified);
+                        throw UnrolledArrayIndexError(qualified, indexExpr.Target);
                     string elemName = qualified + "__" + elemIdx;
                     Val srcVal = VisitExpression(stmt.Value);
                     Emit(new Copy(srcVal, new Variable(elemName, arrayElemTypes[qualified])));
