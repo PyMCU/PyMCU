@@ -827,11 +827,12 @@ public class Parser
     {
         if (AtEllipsis())
         {
+            var dots = Peek();
             Advance();
             Advance();
             Advance();
             ConsumeStatementEnd();
-            return new PassStmt();
+            return Located(new PassStmt(), dots);
         }
 
         // `async with` / `async for`: named here rather than dying two tokens later as
@@ -909,10 +910,20 @@ public class Parser
             return Located(new ContinueStmt(), kw);
         }
 
+        // Stamped, like the Break and Continue directly above. It was the only one of the three
+        // that was not, and that single omission is the whole of #244: a statement with no line
+        // never reaches the DebugLine emitter, so a `pass` produced no line-map entry under this
+        // parser and did under the CPython bridge, which stamps every statement.
+        //
+        // The rule this settles, and it was already the compiler's own: a statement that
+        // generates NO CODE still gets a record, so a debugger can stop on the line the user
+        // wrote. A docstring already did. `while True: pass` -- the embedded idle loop, in
+        // around two hundred corpus files -- did not.
         if (Match(TokenType.Pass))
         {
+            var kw = Previous();
             ConsumeStatementEnd();
-            return new PassStmt();
+            return Located(new PassStmt(), kw);
         }
 
         if (Check(TokenType.Raise)) return ParseRaiseStatement();
@@ -1577,8 +1588,9 @@ public class Parser
 
         if (Match(TokenType.Pass))
         {
+            var passKw = Previous();
             ConsumeStatementEnd();
-            return new PassStmt() { Line = line };
+            return Located(new PassStmt(), passKw);
         }
 
         if (Match(TokenType.Break))
