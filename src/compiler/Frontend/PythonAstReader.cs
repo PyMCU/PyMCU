@@ -196,7 +196,8 @@ public static class PythonAstReader
     }
 
     private static Param ReadParam(JsonElement e) =>
-        new(Str(e, "name"), Str(e, "type"), Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null);
+        Located(new Param(Str(e, "name"), Str(e, "type"),
+                          Has(e, "default") ? ReadExpr(e.GetProperty("default")) : null), e);
 
     private static FunctionDef ReadFunction(JsonElement e)
     {

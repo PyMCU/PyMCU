@@ -607,7 +607,7 @@ public class Parser
 
     private ClassDef ParseClassDefinition()
     {
-        Consume(TokenType.Class, "Expected 'class'");
+        var classKeyword = Consume(TokenType.Class, "Expected 'class'");
         string name = Consume(TokenType.Identifier, "Expected class name").Value;
         var bases = new List<string>();
         if (Match(TokenType.LParen))
@@ -626,7 +626,7 @@ public class Parser
         Consume(TokenType.Colon, "Expected ':'");
         Consume(TokenType.Newline, "Expected newline after class definition");
         var body = ParseBlock();
-        return new ClassDef(name, bases, body) { IsStatic = true };
+        return Located(new ClassDef(name, bases, body) { IsStatic = true }, classKeyword);
     }
 
     private List<Param> ParseParameters()
@@ -673,7 +673,7 @@ public class Parser
                 defaultVal = ParseExpression();
             }
 
-            parameters.Add(new Param(name.Value, type, defaultVal));
+            parameters.Add(Located(new Param(name.Value, type, defaultVal), name));
         } while (Match(TokenType.Comma));
 
         return parameters;
@@ -1726,6 +1726,11 @@ public class Parser
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
     ///   ListCompExpr      the OPENING `[`    where the construct starts
+    ///   ClassDef          the `class` KEYWORD  the introducer, as for a `def`
+    ///   Param             the parameter NAME   `buf: uint8[4]` marks `buf`, not the type it
+    ///                     is annotated with: every diagnostic about a parameter names the
+    ///                     parameter, and the annotation is what the reader is being asked to
+    ///                     change, not what is wrong
     ///   CallExpr          not stamped; the diagnostic sites pass expr.Callee, which is a
     ///                     leaf and carries its own position
     ///

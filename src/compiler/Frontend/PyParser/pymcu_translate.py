@@ -112,10 +112,28 @@ def line_of(node):
 POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
                      "Break", "Continue")
 
-# Kinds whose position is not CPython's col_offset but is EXACTLY derivable from it, so parity
-# with the hand-written parser is still reachable. Each entry says which part to mark and how
-# the offset is computed; a kind belongs here only once that computation has been checked
-# against real source rather than assumed.
+# Kinds this file has to COMPUTE some part of the position for, because taking the node whole
+# would disagree with the hand-written parser. Each entry says which part to mark and how it is
+# worked out; a kind belongs here only once that computation has been checked against real
+# source rather than assumed.
+#
+# Two different reasons land a kind here, and only the first is about the column:
+#
+#   the COLUMN is not col_offset      Member, Slice
+#   the LENGTH is not the node's span Raise, ListComp, Unary, Class, Param
+#
+# The second group is the one that looks like it belongs in POSITIONED_KINDS and does not.
+# CPython puts a ClassDef at its `class` and an arg at its own name, exactly where Parser
+# stamps them, so carrying the column is right -- but carrying the node's LENGTH is not, and
+# it is wrong in a way that hides:
+#
+#   def take(buf: uint8[4])   arg span 13 (`buf: uint8[4]`)   the parser marks `buf`, 3
+#   def take(n)               arg span 1                      agrees, by coincidence
+#   class C(A, B): <newline>  span crosses lines, dropped     the parser marks `class`, 5
+#   class C: pass             span 13 (`class C: pass`)       the parser marks `class`, 5
+#
+# An UNANNOTATED parameter agrees on its own, so the divergence appears only on the annotated
+# ones -- which is every parameter the two diagnostics about parameters are ever raised for.
 #
 #   Member  the member name.   CPython gives the start of the whole `o.sep`; the name ends at
 #           end_col_offset, so it starts at end_col_offset - len(attr).
@@ -133,7 +151,10 @@ POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
 #   Raise     the `raise` keyword, 5.
 #   ListComp  the opening `[`, 1.
 #   Unary     the operator, whose length is its own spelling: `not a` marks `not`.
-DERIVED_KINDS = ("Member", "Slice", "Raise", "ListComp", "Unary")
+#   Class     the `class` keyword, 5. CPython puts a ClassDef at its `class`, with decorators
+#             in a separate list, so only the length has to be written: a class always spans
+#             more than one line and a span carries no length across lines.
+DERIVED_KINDS = ("Member", "Slice", "Raise", "ListComp", "Unary", "Class")
 
 # The operator spellings, for Unary above. Parser.cs's decision table is the authority:
 # "UnaryExpr the OPERATOR -- `-1` marks the `-`, `not a` marks the `not`".
@@ -176,11 +197,11 @@ def async_introducer_len(node):
 
 def derived_position(kind, node):
     """The 1-based column and length for a kind whose position CPython does not give directly."""
-    if kind in ("Raise", "ListComp", "Unary"):
+    if kind in ("Raise", "ListComp", "Unary", "Class"):
         col = getattr(node, "col_offset", None)
         if col is None:
             return {}
-        if kind == "Raise":
+        if kind in ("Raise", "Class"):
             return {"col": col + 1, "len": 5}
         if kind == "ListComp":
             return {"col": col + 1, "len": 1}
@@ -881,11 +902,26 @@ def params_of(args, default_type=""):
     for i, a in enumerate(positional):
         default = defaults[i - pad] if i >= pad else None
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
-                    "default": expr(default) if default is not None else None})
+                    "default": expr(default) if default is not None else None,
+                    **param_position(a)})
     for a, d in zip(args.kwonlyargs, args.kw_defaults):
         out.append({"name": a.arg, "type": annotation_of(a.annotation) or default_type,
-                    "default": expr(d) if d is not None else None})
+                    "default": expr(d) if d is not None else None,
+                    **param_position(a)})
     return out
+
+
+def param_position(arg):
+    """The parameter NAME, which is where Parser stamps a Param.
+
+    ast.arg spans `name: annotation`, so its own length is not the name's. Writing the name's
+    length is exact rather than approximate: it is the string the AST already carries.
+    """
+    col = getattr(arg, "col_offset", None)
+    line = getattr(arg, "lineno", None)
+    if col is None or line is None:
+        return {}
+    return {"line": line, "col": col + 1, "len": max(1, len(arg.arg))}
 
 
 def function_of(node, is_async=False):
@@ -1028,7 +1064,12 @@ def class_of(node):
     # IsStatic is not a decorator: the C# parser sets it on every class it builds, and the
     # only class decorator it accepts is @value.
     cls = {"k": "Class", "name": node.name, "bases": bases, "body": block(node.body),
-           "isStatic": True, "isDataclass": False, "isValue": False, "line": line_of(node)}
+           "isStatic": True, "isDataclass": False, "isValue": False, "line": line_of(node),
+           # class_of is called straight from translate() and block(), never through stmt(),
+           # so its DERIVED_KINDS entry is not reached and the position has to be applied here.
+           # Exactly the same trap function_of documents two definitions above; the first time
+           # it cost a front-end divergence that only the LENGTH column showed.
+           **derived_position("Class", node)}
     for dec in node.decorator_list:
         name = dec.id if isinstance(dec, ast.Name) else \
             (dec.func.id if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) else "")

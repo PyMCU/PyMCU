@@ -624,7 +624,15 @@ public class TryStmt : Statement
     }
 }
 
-public class Param
+/// A declared parameter.
+///
+/// An ASTNode so a diagnostic about ONE parameter can point at it. Several name a parameter
+/// and had nowhere to aim: `parameter 'buf' of 'take' has a fixed-array type` was reported at
+/// line 1 column 1, the import at the top of the file, because the scan runs before anything
+/// has been lowered and the fallback line is 1. Pointing at the enclosing `def` would be the
+/// other easy answer and it is the wrong one -- the message is about an argument, not about
+/// the function.
+public class Param : ASTNode
 {
     public string Name { get; }
     public string Type { get; set; }   // settable: TypeInference fills empty annotations in
