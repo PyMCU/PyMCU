@@ -13,6 +13,7 @@
 # -----------------------------------------------------------------------------
 
 import sys
+from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -73,6 +74,37 @@ def _normalize(name: str) -> str:
     return name.strip().lower().replace("_", "-")
 
 
+def _resolved_environment() -> tuple[str, str]:
+    """(path, how it was chosen) for the installation these versions come FROM.
+
+    The table used to name no environment at all, and the numbers in it change with the
+    working directory (PyMCU#248):
+
+        cd ~/Repos/PyMCU  &&  pymcu --version   ->  pymcu-compiler 0.1.0a3
+        cd /tmp           &&  pymcu --version   ->  pymcu-compiler 0.1.0a9
+
+    That is not a bug in the lookup. `_ensure_venv()` in main.py re-executes the CLI with a
+    project's `.venv` interpreter when the working directory has one, deliberately, so a
+    project pinning its own PyMCU gets the one it pinned. `importlib.metadata` then reports
+    that installation, correctly.
+
+    What was missing is that the table never said WHICH installation it was describing, and
+    the failure was silent in the flattering direction: from inside a checkout -- where
+    anyone investigating a version question is standing -- it reported the project's older
+    set as though it were the machine's.
+
+    So the number is not corrected here. The environment it came from is named.
+    """
+    prefix = Path(sys.prefix).resolve()
+    try:
+        local = (Path.cwd() / ".venv").resolve()
+    except OSError:                      # cwd deleted underneath us
+        return str(prefix), "global install"
+    if local == prefix:
+        return str(prefix), "this project's .venv, switched into automatically"
+    return str(prefix), "global install"
+
+
 def version():
     """
     Displays the version information for PyMCU and its components.
@@ -112,4 +144,10 @@ def version():
     table.add_row("python", "Python Interpreter", sys.version.split()[0])
 
     console.print(table)
+
+    # Which installation the rows above describe. Printed always, not only when a project
+    # venv was used: "global install" is the answer that makes the other one meaningful, and
+    # a line that appears only sometimes is one nobody learns to look for.
+    env_path, env_how = _resolved_environment()
+    console.print(f"\nEnvironment: {env_path}\n             ({env_how})", style="dim")
     console.print("\n[dim]Copyright (C) 2026 Ivan Montiel Cardona and the PyMCU Project Authors[/dim]")
