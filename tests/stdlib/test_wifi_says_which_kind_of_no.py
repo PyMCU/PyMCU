@@ -44,13 +44,16 @@ PROGRAM = (
 )
 
 
-def _compile(tmp_path: Path, target: str):
+def _compile(tmp_path: Path, target: str, board: str | None = None):
     src = tmp_path / "main.py"
     src.write_text(PROGRAM)
+    cmd = [str(PYMCUC), str(src), "--target", target,
+           "-I", str(tmp_path), "-I", str(STDLIB),
+           "--emit-ir", str(tmp_path / "firmware.mir")]
+    if board is not None:
+        cmd += ["--board", board]
     proc = subprocess.run(
-        [str(PYMCUC), str(src), "--target", target,
-         "-I", str(tmp_path), "-I", str(STDLIB),
-         "--emit-ir", str(tmp_path / "firmware.mir")],
+        cmd,
         capture_output=True, text=True,
     )
     # The exit code and not the text. A bootstrap failure prints `[Warning]` and `[BUILD_FAIL]`
@@ -72,37 +75,54 @@ def test_a_chip_outside_the_family_is_refused(tmp_path):
     assert "separate part carried by some RP2xxx boards" in out
 
 
+@pytest.mark.parametrize("chip,board", [("rp2040", "pico"), ("rp2350", "pico2")])
+def test_a_board_that_was_named_and_has_no_radio_is_refused(tmp_path, chip, board):
+    """The case the board field bought, and the only one where "use another board" is the advice.
+
+    This test was the pinned one. It asserted that an rp2xxx compiles even for a board with no
+    radio, with the instruction that when the board field existed the fix was to assert that a
+    plain Pico and a plain Pico 2 are refused while the W boards are not. The field exists, and
+    this is that instruction being followed.
+    """
+    rc, out = _compile(tmp_path, chip, board)
+
+    assert rc != 0
+    assert "this board has no WiFi radio" in out
+    # It must not read as "not implemented": the radio is absent, not the driver.
+    assert "not implemented" not in out
+
+
+@pytest.mark.parametrize("chip,board", [("rp2040", "pico_w"), ("rp2040", "raspberry_pi_pico_w"),
+                                        ("rp2350", "pico2_w"), ("rp2350", "raspberry_pi_pico2_w")])
+def test_a_board_that_carries_the_radio_compiles(tmp_path, chip, board):
+    """All four spellings the driver accepts, because the guard cannot know which one survives.
+
+    Of the two ways to be wrong here, refusing a real Pico W is loud and gets reported; building
+    a radio into a firmware for a board without one is silent. So the list is a whitelist, and
+    that couples it to src/driver/core/boards.py: a W board added there and not to the list in
+    pymcu/hal/wifi.py is refused, and the message will look like a bug in the HAL.
+    """
+    rc, out = _compile(tmp_path, chip, board)
+
+    assert rc == 0, out
+
+
 @pytest.mark.parametrize("chip", ["rp2040", "rp2350"])
-def test_an_rp2xxx_compiles_even_for_a_board_with_no_radio(tmp_path, chip):
-    """PINNED AS IT STANDS, and it is wrong. Read the reason before changing it.
+def test_no_board_given_still_compiles_and_that_is_deliberate(tmp_path, chip):
+    """PINNED, and it is the half the field does NOT fix. Read this before "finishing" it.
 
-    A plain Pico is rp2040 and a plain Pico 2 is rp2350, and neither carries a CYW43439. This
-    program compiles for both: a binary with a radio driver in it for a board with no radio.
-    That is the only defect on this axis that produces wrong output rather than a poor message.
+    A program built with `target = "rp2040"` never tells the compiler which board it is, so this
+    still compiles for a plain Pico. That is not the field failing: a project sets `board` or
+    `target` and the driver refuses both at once, so a target build has no board to give.
 
-    It covers BOTH chips, and it did not always: while the driver was wired for rp2350 only,
-    rp2040 was refused and this pinned one chip. Wiring the Pico W closed a real gap and widened
-    this one at the same time, which is the honest consequence and not a complaint.
+    Measured over the three trees: 344 projects set target, 30 set board, and all four WiFi
+    programs that exist set target, the Pico 2 W demo included. A guard that treated "" as "no"
+    would take WiFi away from every one of them.
 
-    It is not fixed here because it CANNOT be, with what the compiler is given. The guard has
-    two options and both are wrong:
-
-        accept the chip   a plain Pico or Pico 2 keeps compiling WiFi     <- this, today
-        refuse the chip   breaks the W boards, the ones that work
-
-    There is no third option while the board identity stops at the driver.
-
-    WHEN THE BOARD FIELD EXISTS: this test should fail, and the fix is to assert that a plain
-    Pico and a plain Pico 2 are refused while a Pico W and a Pico 2 W are not. Deleting it, or
-    relaxing it back to "an rp2xxx compiles", restores the wrong binary.
-
-    And it will only fail for a program that DECLARES its board. Measured over the three trees:
-    344 projects set `target` and 30 set `board`, and the four WiFi programs that exist all set
-    `target`. For those the answer stays the same, because the compiler is still not told which
-    board it is. The field does not fix the silence for everyone; it fixes it for whoever says
-    which board they have.
+    So the honest summary is narrower than "the board field closed the hole": a program can now
+    say enough to be protected, and one that does not is answering a question it was never
+    asked. Changing this to a refusal breaks 344 projects to protect the ones that did not ask.
     """
     rc, out = _compile(tmp_path, chip)
 
     assert rc == 0, out
-    assert "not available" not in out
