@@ -2639,14 +2639,24 @@ public partial class IRGenerator
                                 // buffer instead of 8, which is 56 bytes of SRAM nobody asked
                                 // for on a part that has two thousand of them.
                                 else if (kw.Key is "prompt" or "maxlen")
+                                    // The VALUE, not the key. The key is spelled correctly and
+                                    // is one input() accepts; what is wrong is what it carries,
+                                    // and that is the half the reader has to rewrite. The
+                                    // neighbouring refusal seven lines down is about the key
+                                    // instead, and marks the call.
                                     throw UserError(
                                         $"input() '{kw.Key}' must be a compile-time "
-                                        + (kw.Key == "prompt" ? "string literal" : "integer literal"));
+                                        + (kw.Key == "prompt" ? "string literal" : "integer literal"),
+                                        kw.Value);
                                 else
                                     RefuseUnknownKeyword("input", kw.Key, InputKeywords, call);
                             }
                             else
-                                throw UserError("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)");
+                                // The argument that is none of the three accepted shapes. A
+                                // call can pass several and only one of them be wrong, so
+                                // marking the call would leave the reader to find out which.
+                                throw UserError("input(): arguments must be compile-time string literal (prompt) and/or integer (maxlen)",
+                                                arg);
                         }
                         count = inputMaxLen;
                         initVals.AddRange(Enumerable.Repeat(0, count));
