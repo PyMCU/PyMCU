@@ -1,6 +1,7 @@
 from pymcu.chips.attiny85 import TCCR0A, TCCR0B, TCNT0, OCR0A, OCR0B
 from pymcu.chips.attiny85 import TCCR1, TCNT1, OCR1A, OCR1C, TIMSK, TIFR, SREG
 from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.exceptions import CompileError
 
 # ATtiny85/45/25 Timer HAL
 #
@@ -167,19 +168,29 @@ def timer1_irq_compa_setup(handler: Callable):
     SREG[7] = 1     # SEI
     compile_isr(handler, 0x0006)   # Timer1 COMPA: word 0x0003, byte 0x0006
 
-# millis not supported on ATtiny85 -- no-op stubs so avr/timer.py can export them.
-# micros() backs asyncio.ticks(); 0 means "no time base", so an await never
-# completes on this part (see pymcu/asyncio.py).
+# millis is not supported on the ATtiny85/45/25 and these refuse instead of
+# answering. They used to be no-op stubs returning 0, so that avr/timer.py could
+# export the names, and a value of the right type is the one thing a caller cannot
+# tell apart from a working clock:
+#
+#     t: uint32 = millis()
+#     if t > 100:            # 0 > 100 folds to false
+#         p.high()           # and the branch is correctly eliminated
+#
+# That compiles clean, links clean, and silently ships firmware with the clock
+# branch missing. A refusal at the call is the only outcome the caller can act on,
+# and it costs nothing at runtime: the body is only reached if the program uses it,
+# so avr/timer.py can still export all three. Issue #234.
 @inline
 def millis_init():
-    pass
+    raise CompileError("millis_init(): the ATtiny85/45/25 have no millisecond time base in PyMCU. Timer0 here is 8-bit with no separate TIMSK0/TIFR0, so the ATmega counter does not port across unchanged. Pace a loop with pymcu.time.delay_ms() instead.")
 
 
 @inline
 def millis() -> uint32:
-    return 0
+    raise CompileError("millis(): the ATtiny85/45/25 have no millisecond time base in PyMCU, and returning 0 would make every `millis() - last > interval` test silently never fire. Pace a loop with pymcu.time.delay_ms() instead.")
 
 
 @inline
 def micros() -> uint32:
-    return 0
+    raise CompileError("micros(): the ATtiny85/45/25 have no microsecond time base in PyMCU. It also backs asyncio.ticks(), so an await on this part would never complete. Pace a loop with pymcu.time.delay_us() instead.")
