@@ -3571,7 +3571,21 @@ public partial class IRGenerator
                         return true;
                     }
 
-                    throw UserError("Slice initializer target must be a named fixed-size array");
+                    // srcVe, the name on the right, is what the message is about: it is the
+                    // thing that had to be a named fixed-size array and is not. Safe by the
+                    // three-clause rule -- it is a syntactic child of the statement being
+                    // lowered (`stmt.Value`), not a name looked up in a resolution table and
+                    // not a caller's node read during argument binding.
+                    //
+                    // Reached by seven programs, the shortest being a scalar local:
+                    //     ys: uint8 = 5
+                    //     xs: uint8[2] = ys[0:2]
+                    // The branch above requires `idxRhs.Target is VariableExpr`, so a slice of
+                    // a call result, a bytes literal or a list literal never arrives here at
+                    // all. #177 listed those three as the things to try; the guarding condition
+                    // rules out all three, and what reaches it is any NAME that is not a known
+                    // fixed-size array.
+                    throw UserError("Slice initializer target must be a named fixed-size array", srcVe);
                 }
 
                 if (stmt.Value is ListExpr le)
