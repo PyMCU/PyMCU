@@ -799,9 +799,11 @@ public partial class IRGenerator
             // its module-level `raise CompileError(...)` guard survived if/match folding,
             // so none of its symbols were imported. Report the module author's message at
             // this use site instead of a misleading "undefined function".
+            // The twin of the read path in Core.cs, and it goes through the same helper so the
+            // two cannot drift. See ModuleGuardError for why the caret moved onto the guard.
             foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
                 if (callee.StartsWith(g.Key, StringComparison.Ordinal))
-                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})", expr.Callee);
+                    throw ModuleGuardError(g.Value, expr.Callee);
 
             // A known class invoked but with no __init__ to construct it — Python would use a
             // default constructor, which PyMCU does not synthesize. Be specific.

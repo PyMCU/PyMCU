@@ -145,7 +145,7 @@ public partial class IRGenerator
             {
                 moduleGuardErrors[currentModulePrefix] = (
                     guard.Message.Length > 0 ? guard.Message : "module not supported on this target",
-                    currentSourceFile, guard.Line);
+                    currentSourceFile, currentSourcePath, guard.Line, guard.Column, guard.Length);
                 continue;
             }
 

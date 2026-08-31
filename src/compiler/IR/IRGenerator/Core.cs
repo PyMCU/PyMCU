@@ -1426,22 +1426,22 @@ public partial class IRGenerator
             foreach (var g in moduleGuardErrors.OrderByDescending(kv => kv.Key.Length))
                 if (finalLocalName.StartsWith(g.Key, StringComparison.Ordinal)
                     || currentModulePrefix.StartsWith(g.Key, StringComparison.Ordinal))
-                    // `at` and not LocationIsFinal. The message names ANOTHER file, which is
-                    // where the guard is, but the position this diagnostic reports is the READ
-                    // that failed, and that read is in the file being lowered. Two different
-                    // things: the caret says where to look in the program in front of you, the
-                    // sentence says where the refusal came from.
+                    // THE CARET GOES ON THE GUARD, and the sentence names where it was reached
+                    // from. That reverses what this site did until #241, because the old
+                    // arrangement was right about user code and wrong about the library.
                     //
-                    // UNVERIFIED, and said out loud rather than left to look tested. Every
-                    // program written to reach this reached the CALL path instead, which is
-                    // located already (EmitRegularFunctionCall) and reports the same sentence
-                    // from a different site -- so a test built on one of them would have passed
-                    // without this line and claimed to cover it. What is left is a plain name
-                    // read of a symbol from a module its own guard refused, which the comment
-                    // above describes as arising from an internal HAL helper rather than from
-                    // anything a user writes. The node costs nothing and cannot be worse than
-                    // the fallback; it is simply not pinned.
-                    throw UserError($"{g.Value.Msg} (module guard at {g.Value.File}:{g.Value.Line})", at);
+                    // It reported at the READ that failed, on the reasoning that the caret
+                    // belongs in the program in front of the reader. That holds when the read is
+                    // in their file. It fails here: for `AnalogPin("A0")` on an ATtiny 4313 the
+                    // failing read is inside the HAL's own class, so the reader was sent to
+                    // adc/__init__.py:36, a CORRECT line, in a file they had never opened, for a
+                    // decision taken fourteen lines earlier.
+                    //
+                    // The guard is the one line in these modules a user is meant to read, and
+                    // its text IS the explanation. That the old message had to name it in prose
+                    // was the tell: a diagnostic spelling out a location in its sentence is one
+                    // that had the position and did not use it.
+                    throw ModuleGuardError(g.Value, at);
 
             // A probing caller gets null and reaches its own, more specific diagnostic. Note
             // this sits AFTER the module-guard check above, which throws for everyone.

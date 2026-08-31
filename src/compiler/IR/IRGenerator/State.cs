@@ -356,7 +356,18 @@ public partial class IRGenerator
     // else branch). Imported modules' top-level code never executes, so the guard is
     // recorded per module prefix; resolving a symbol from that module then reports the
     // guard's message instead of a misleading "call to undefined function".
-    private readonly Dictionary<string, (string Msg, string File, int Line)> moduleGuardErrors = new();
+    // Column and Length as well as Line, so a use of a refused module can put its caret ON
+    // the guard rather than name it in prose (#241). A RaiseStmt is stamped at its `raise`
+    // keyword, so the three together are a real caret in the guard's own file.
+    // Path as well as File, because they are different things and only one of them can carry a
+    // caret. `currentSourceFile` is a DISPLAY name ("adc.py") built from the module name;
+    // `currentSourcePath` is the real path the renderer can open to quote the line. Recording
+    // only the display name is what made the first attempt at #241 report the guard's line
+    // under the ENTRY file's name -- line from one file, label from another, which is the exact
+    // pairing this fix exists to remove.
+    private readonly Dictionary<string,
+        (string Msg, string File, string Path, int Line, int Column, int Length)>
+        moduleGuardErrors = new();
 
     // Debugging
     private List<string> sourceLines = new();
@@ -528,6 +539,53 @@ public partial class IRGenerator
         return new PyMCU.Common.CompilerError(
             "CompileError", message, line, at.Column, at.Length > 0 ? at.Length : 1)
             { File = LocatedFile };
+    }
+
+    /// A refusal raised by a module guard, reported where the reader can act on it.
+    ///
+    /// TWO ANSWERS, and which one is right depends on where the failing use is.
+    ///
+    /// When the use is in the reader's own file, the old behaviour was already correct and is
+    /// kept: caret on their line, guard named in the sentence. `radio = CYW43()` on an ATmega
+    /// gets a caret under `CYW43()` in main.py, which is the line they can change.
+    ///
+    /// When the use is inside an imported module it is not. The reader is shown a line they did
+    /// not write, in a file they have not opened, which is usually CORRECT code -- for
+    /// `AnalogPin("A0")` on an ATtiny 4313 it was adc/__init__.py:36, a call fourteen lines
+    /// below the guard that refused it (#241). There the caret goes on the guard instead, whose
+    /// text IS the explanation.
+    ///
+    /// The discriminator is free: `currentSourcePath` is empty exactly for the entry module, so
+    /// "is the use in the program in front of the reader" is already answered. That phrase is
+    /// from the comment this replaces; the rule it stated was right and its implementation
+    /// assumed the use site could only ever be the reader's file.
+    ///
+    /// `LocationIsFinal` on the guard branch because the position is complete before the
+    /// pipeline's usual stamp, which fills the file in from the module being lowered. Without it
+    /// the line is the guard's and the file the caller's, which points into a file that has no
+    /// such line -- measured on the first attempt at this fix, which reported adc's line 22
+    /// under main.py, a six-line file.
+    ///
+    /// `Path` and not `File`: `currentSourceFile` is a DISPLAY name built from the module name
+    /// ("adc.py"), and only `currentSourcePath` can be opened to quote the line. An empty path
+    /// means no caret is available, so that falls back too rather than inventing one.
+    ///
+    /// The two callers are twins -- a use as a CALL and a use as a plain READ -- and both come
+    /// through here so they cannot drift into answering the same refusal differently.
+    private PyMCU.Common.CompilerError ModuleGuardError(
+        (string Msg, string File, string Path, int Line, int Column, int Length) guard,
+        PyMCU.Frontend.ASTNode? reachedFrom)
+    {
+        if (string.IsNullOrEmpty(currentSourcePath) || string.IsNullOrEmpty(guard.Path))
+            return UserError($"{guard.Msg} (module guard at {guard.File}:{guard.Line})", reachedFrom);
+
+        // No "reached from" clause on this branch. The intermediate line is library plumbing the
+        // reader did not write and cannot act on, and naming it is what the old message did
+        // instead of moving the caret.
+        return new PyMCU.Common.CompilerError(
+            "CompileError", guard.Msg,
+            guard.Line, guard.Column, guard.Length > 0 ? guard.Length : 1)
+            { File = guard.Path, LocationIsFinal = true };
     }
 
     /// Every FunctionDef the scan put on the path to becoming a real subroutine.
