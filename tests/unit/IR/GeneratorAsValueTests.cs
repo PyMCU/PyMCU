@@ -58,7 +58,6 @@ public class GeneratorAsValueTests
     [Theory]
     [InlineData("    take(gen())\n")]
     [InlineData("    take(gen() + 1)\n")]
-    [InlineData("    gen()\n")]
     public void AGeneratorInAValuePositionIsRefused(string stmt)
     {
         var ex = Fails(Gen + "def main() -> None:\n" + stmt);
@@ -75,21 +74,23 @@ public class GeneratorAsValueTests
     }
 
     [Fact]
-    public void TheBareCallIsRefusedToo_AndThatIsStricterThanCPython()
+    public void TheBareCallNamesTheTrapInsteadOfTheValueRule()
     {
-        // PINNED, and a deliberate choice rather than a side effect. `gen()` on its own is a
-        // no-op in CPython: a generator is created and discarded. PyMCU refuses it.
+        // `gen()` on its own is a no-op in CPython, so refusing it is stricter than Python. It
+        // gets its OWN message, and the reason is not consistency.
         //
-        // The alternative was a carve-out for the discarded case, which would have meant one
-        // rule for a construction whose result is used and another for one whose result is not.
-        // On a part with two kilobytes of RAM, a generator built and dropped is a mistake worth
-        // naming, and one rule is easier to defend than the exception.
+        // Calling a generator function does not run its body: it builds a generator and returns
+        // it. That is the trap every Python programmer meets once, and in CPython nothing can
+        // warn you, because a silent no-op is the correct behaviour. Here the compiler is in a
+        // position to say the sentence the language cannot. Emitting nothing in silence where
+        // the author plainly expected effects is the failure; the refusal is the fix.
         //
-        // If this is ever relaxed, the place to do it is the same branch: allow the throw when
-        // the construction is an expression statement.
+        // So the message must NOT say generators are unsupported -- false, and the wrong
+        // reproach. It names what did not happen.
         var ex = Fails(Gen + "def main() -> None:\n    gen()\n");
 
-        Assert.Contains("a generator can only be consumed by `for`", ex.Message);
+        Assert.Contains("does not run its body", ex.Message);
+        Assert.DoesNotContain("not supported", ex.Message);
     }
 
     [Fact]
@@ -118,12 +119,18 @@ public class GeneratorAsValueTests
     [InlineData("    f = lambda a: (yield a)\n")]
     public void AYieldInsideAnUncalledLambdaIsRefused(string stmt)
     {
-        // The body of a lambda is set aside and only walked at the CALL, so an uncalled one
-        // reached no check at all. A called one was always refused correctly, by the same
-        // diagnostic this now raises: one answer for one program, whichever way it is written.
+        // Refused at the FRONT END, by the check that already existed, because the two walkers
+        // it uses now know what a lambda is.
+        //
+        // The first fix for this added a fourth walker in the IR generator, next to the place
+        // where a lambda body is set aside unvisited. It worked, and it was the wrong repair:
+        // the reason nothing saw the yield is that `FirstYield` and `HasNestedYield` -- the two
+        // that carry a WRITTEN obligation to stay in step -- both lacked a `LambdaExpr` case. A
+        // symmetry kept perfectly while both sides were blind. Teaching them is two lines and
+        // deletes the fourth walker.
         var ex = Fails("def main() -> None:\n" + stmt);
 
-        Assert.Contains("'yield' is only supported in top-level plain functions", ex.Message);
+        Assert.Contains("`yield` (or `yield from`) cannot be used", ex.Message);
     }
 
     [Fact]
