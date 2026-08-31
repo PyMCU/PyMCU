@@ -119,6 +119,17 @@ def _program(tmp_path: Path, source: str) -> Path:
 
 
 @pytest.mark.parametrize("source", [
+    # A union type annotation (#240), in all four positions, because one check in
+    # ParseTypeAnnotation and one in annotation_of have to cover every one of them.
+    #
+    # Before: the hand-written parser fell through to the caller's ConsumeStatementEnd and said
+    # "Expected newline or end of block" at the `|`; the bridge did not notice at all until IR
+    # generation, where a guard about instance-member ARRAY types answered, telling the reader
+    # to write the array type they had already written. Two phases, two texts, one program.
+    'from pymcu.types import uint8\ndef main() -> None:\n    x: uint8 | None = 5\n',
+    'from pymcu.types import uint8\ndef f(a: uint8 | None) -> None:\n    pass\ndef main() -> None:\n    f(1)\n',
+    'from pymcu.types import uint8\ndef f() -> uint8 | None:\n    return 1\ndef main() -> None:\n    x: uint8 = f()\n',
+    'from pymcu.types import uint8\nclass C:\n    def __init__(self) -> None:\n        self.x: uint8[2] | None = [1, 2]\ndef main() -> None:\n    c = C()\n',
     # A raise MESSAGE that is neither literals nor a name (#236). Nine spellings diverged: the
     # hand-written parser reported wherever its cursor stopped looking for `)` and the bridge
     # reported the `raise` keyword. Both now mark the whole argument.
@@ -490,3 +501,55 @@ def test_create_task_without_run_withholds_the_caret(tmp_path):
         assert line == 8, line
         assert column == 1, "no column measured, so no caret"
         assert underline == 0, "and no caret line printed"
+
+
+# --- the ACCEPTANCE axis --------------------------------------------------------------
+#
+# Everything above compares two REFUSALS. That cannot see the worse failure, where one front
+# end refuses and the other compiles: `_where` asserts a diagnostic exists, so a program that
+# compiles under one side does not reach the comparison at all, it errors the harness.
+#
+# A divergence in what is refused costs a reader confusion. A divergence in what is ACCEPTED
+# is a miscompile waiting to happen, and from outside the two look identical until a program
+# that should pass is tried. Measured on the pre-#240 binary, `self.x: a.b[2] = [1, 2]` was
+# refused by the hand-written parser and compiled to an 803-byte MIR by the bridge.
+
+
+def _verdict(src: Path, py_parser: bool) -> int:
+    env = dict(os.environ)
+    if py_parser:
+        env["PYMCU_PY_PARSER"] = "1"
+        env["PYMCU_PY_PARSER_SCRIPT"] = str(TRANSLATOR)
+    else:
+        env.pop("PYMCU_PY_PARSER", None)
+    proc = subprocess.run(
+        [str(PYMCUC), str(src), "--target", "rp2040", "--emit-ir", os.devnull,
+         "-o", os.devnull, "-I", str(STDLIB), "-I", str(src.parent)],
+        capture_output=True, text=True, env=env,
+    )
+    return proc.returncode
+
+
+@pytest.mark.parametrize("annotation", [
+    "uint8[2]",        # the control: both must ACCEPT, or the test proves nothing
+    "a.b[2]",          # the divergence that was there
+    "f(1)[2]",
+    "uint8[2] | None",
+    "uint8[2] + None",
+])
+def test_both_front_ends_reach_the_same_verdict(tmp_path, annotation):
+    src = _program(tmp_path,
+                   "from pymcu.types import uint8\n"
+                   "class C:\n"
+                   "    def __init__(self) -> None:\n"
+                   f"        self.x: {annotation} = [1, 2]\n"
+                   "def main() -> None:\n"
+                   "    c = C()\n")
+
+    hand = _verdict(src, py_parser=False)
+    cpython = _verdict(src, py_parser=True)
+
+    assert (hand == 0) == (cpython == 0), (
+        f"one front end compiled `{annotation}` and the other refused it: "
+        f"hand-written rc={hand}, CPython rc={cpython}"
+    )
