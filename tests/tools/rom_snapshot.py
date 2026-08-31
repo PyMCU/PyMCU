@@ -397,6 +397,67 @@ def diff_text(a, b):
     return f"asm {a.get('asm')} -> {b.get('asm')}, ROM {delta:+d}{note}", delta
 
 
+ASM_DIR = REPO / "tests" / "tools" / "rom_snapshot_asm"
+
+
+def asm_path(key):
+    return ASM_DIR / (key.replace("|", ".") + ".asm")
+
+
+def write_asm(cells):
+    """Keep the assembly, not only its hash.
+
+    The gate stored a hash and nothing else, so when 153 cells moved and somebody finally
+    asked what changed in the 73 whose ROM had not, there was nothing to read: the text
+    was never kept, and the toolchain that produced it could not be rebuilt. A hash can
+    say two runs differ; it can never say how.
+
+    One file per cell, plain text, because the use is a diff between two captures and git
+    already diffs text line by line. Measured before choosing:
+
+      raw text          887 KB over the 131 cells that build, ~157 KB packed
+      gzipped           157 KB, and opaque to `git diff`, which is the whole point
+      mnemonics only    184 KB, and it FAILS: on 4 of 5 real pairs the images differ and
+                        the mnemonic sequences are identical, because the difference is
+                        in the operands. That is exactly the shape of the ATmega328P
+                        USART compiled for every AVR, which is one of the bugs this gate
+                        exists to catch.
+
+    So the cheap form was ruled out by what it cannot see, not by its size, and the
+    compressed form by what it costs to read.
+    """
+    ASM_DIR.mkdir(parents=True, exist_ok=True)
+    keep = set()
+    for key, cell in cells.items():
+        text = cell.get("asm_text")
+        if not text:
+            continue
+        path = asm_path(key)
+        path.write_text(text if text.endswith("\n") else text + "\n")
+        keep.add(path.name)
+    for old in ASM_DIR.glob("*.asm"):
+        if old.name not in keep:
+            old.unlink()
+    return len(keep)
+
+
+def asm_diff(key, current_text, context=3):
+    """The stored assembly against this run's, as the lines that changed.
+
+    Truncated on purpose: a cell whose whole body moved prints its first few differences
+    and a count, because the reader needs to know WHICH instruction changed, and a
+    thousand-line dump in a terminal is how a gate stops being read.
+    """
+    stored = asm_path(key)
+    if not stored.exists() or current_text is None:
+        return []
+    import difflib
+    lines = list(difflib.unified_diff(
+        stored.read_text().splitlines(), current_text.splitlines(),
+        fromfile="capturado", tofile="ahora", lineterm="", n=context))
+    return lines
+
+
 def chips():
     out = {}
     for f in sorted(CHIPS_DIR.glob("*.py")):
@@ -515,9 +576,12 @@ def build(work: Path, chip: str, arch: str, source: str):
     for name in ("debug/firmware.asm", "firmware.asm"):
         asm = work / "dist" / name
         if asm.exists():
-            entry["asm"] = hashlib.sha256(
-                canonical_labels(asm.read_text()).encode()).hexdigest()[:16]
+            canonical = canonical_labels(asm.read_text())
+            entry["asm"] = hashlib.sha256(canonical.encode()).hexdigest()[:16]
             entry["asm_from"] = name
+            # Kept in memory for `capture` to write out, never stored in the JSON: the
+            # hash is what the diff compares, the text is what makes a diff readable.
+            entry["asm_text"] = canonical
             break
     return entry
 
@@ -527,6 +591,11 @@ PIN_SHAPED = re.compile(r"Unsupported Pin|Unknown pin|no such pin", re.I)
 WARNING = re.compile(r"Warning\[\d+\][^\n]{0,90}")
 
 DOES_NOT_FIT = re.compile(r"needs \d+ bytes|static data needs|does not fit", re.I)
+
+# How many cells print their assembly diff in the terminal. The rest are on disk; a gate
+# that dumps a thousand lines stops being read, which is the failure mode this whole
+# harness keeps running into from the other direction.
+ASM_DIFFS_SHOWN = 5
 
 
 def first_that_builds(work, chip, arch, template, candidates, key):
@@ -761,7 +830,10 @@ def main():
     path = Path(args.file)
 
     if args.action == "capture":
-        stored = {"provenance": prov, "cells": current}
+        kept = write_asm(current)
+        stored = {"provenance": prov,
+                  "cells": {k: {kk: vv for kk, vv in v.items() if kk != "asm_text"}
+                            for k, v in current.items()}}
         # A forced capture labels itself. Otherwise the next reader sees a baseline that
         # looks like every other one and has no way to know it cannot be rebuilt.
         if blockers:
@@ -770,6 +842,8 @@ def main():
         ok = sum(1 for v in current.values() if v["status"] == "ok")
         noisy = {k: v for k, v in current.items() if v.get("warn")}
         print(f"\ncapturado: {len(current)} celdas, {ok} compilan -> {path}")
+        print(f"  y el ensamblado de {kept} de ellas en {ASM_DIR.name}/ -- un hash dice que"
+              " dos corridas difieren y nunca dice como")
         if noisy:
             print(f"  {len(noisy)} compilan CON AVISOS del ensamblador -- ensamblar no es estar bien:")
             for key, cell in sorted(noisy.items()):
@@ -785,7 +859,7 @@ def main():
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first", "accepted")
+    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first", "accepted", "asm_text")
 
     def measured(cell):
         return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell
@@ -840,6 +914,7 @@ def main():
 
     print(f"\n{len(diffs)} celdas cambiaron:")
     worse = 0
+    shown = 0
     for key, text, delta in diffs:
         chip = key.split("|", 1)[1]
         backend = ARCH_BACKEND.get(arch_of.get(chip, "?"))
@@ -863,6 +938,21 @@ def main():
         else:
             flag = ""
         print(f"  {key:24s} {text}{flag}")
+        # The lines themselves, for the first few cells. Every cell's assembly is on disk,
+        # so the rest is a `git diff` away; what the terminal owes the reader is enough to
+        # see WHAT changed without going to look.
+        if shown < ASM_DIFFS_SHOWN:
+            lines = asm_diff(key, (current.get(key) or {}).get("asm_text"))
+            body = [l for l in lines[2:] if l[:1] in "+-"]
+            if body:
+                shown += 1
+                for l in body[:8]:
+                    print(f"      {l}")
+                if len(body) > 8:
+                    print(f"      ... y {len(body) - 8} lineas mas, el resto con git diff")
+    if shown and shown < len([d for d in diffs if d[2] is not None]):
+        print(f"\n  (ensamblado mostrado para las primeras {shown}; "
+              f"{ASM_DIR.name}/ tiene todas)")
     return 1 if (worse or alien) else 0
 
 

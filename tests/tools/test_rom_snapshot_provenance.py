@@ -310,3 +310,66 @@ def test_a_component_absent_from_the_capture_is_not_a_change_from_None():
     text = kinds[0][1]
     assert "None" not in text
     assert "la captura no lo registraba" in text
+
+
+# --- keeping something examinable --------------------------------------------
+#
+# The gate stored a hash of the assembly and nothing else, so when 153 cells moved and
+# somebody asked what changed in the 73 whose ROM had not, there was nothing to read: the
+# text was never kept and the toolchain that produced it could not be rebuilt.
+
+def test_the_assembly_is_written_out_and_stale_cells_are_removed(tmp_path, monkeypatch):
+    monkeypatch.setattr(snap, "ASM_DIR", tmp_path / "asm")
+    monkeypatch.setattr(snap, "asm_path",
+                        lambda k: snap.ASM_DIR / (k.replace("|", ".") + ".asm"))
+    snap.write_asm({"blink|chipa": {"status": "ok", "asm_text": "NOP\n"},
+                    "blink|chipb": {"status": "ok", "asm_text": "RET\n"}})
+    assert {p.name for p in (tmp_path / "asm").glob("*.asm")} == {"blink.chipa.asm",
+                                                                  "blink.chipb.asm"}
+    # A cell that stops building leaves no assembly, and its old file must not survive to
+    # be diffed against a run that never produced it.
+    snap.write_asm({"blink|chipa": {"status": "ok", "asm_text": "NOP\n"},
+                    "blink|chipb": {"status": "no-build"}})
+    assert {p.name for p in (tmp_path / "asm").glob("*.asm")} == {"blink.chipa.asm"}
+
+
+def test_a_cell_with_no_assembly_writes_no_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(snap, "ASM_DIR", tmp_path / "asm")
+    monkeypatch.setattr(snap, "asm_path",
+                        lambda k: snap.ASM_DIR / (k.replace("|", ".") + ".asm"))
+    assert snap.write_asm({"x|y": {"status": "no-build"}}) == 0
+
+
+def test_the_diff_names_the_instruction_that_changed(tmp_path, monkeypatch):
+    """The use this exists for: "here was a MULWF and now there is a MULLW"."""
+    monkeypatch.setattr(snap, "ASM_DIR", tmp_path / "asm")
+    monkeypatch.setattr(snap, "asm_path",
+                        lambda k: snap.ASM_DIR / (k.replace("|", ".") + ".asm"))
+    snap.write_asm({"call|pic": {"status": "ok", "asm_text": "MOVLW 3\nMULWF x\nRETURN\n"}})
+    lines = snap.asm_diff("call|pic", "MOVLW 3\nMULLW 3\nRETURN\n")
+    assert any(l == "-MULWF x" for l in lines)
+    assert any(l == "+MULLW 3" for l in lines)
+
+
+def test_a_cell_with_nothing_stored_diffs_to_nothing(tmp_path, monkeypatch):
+    """A baseline captured before the assembly was kept must not look like a huge change."""
+    monkeypatch.setattr(snap, "ASM_DIR", tmp_path / "asm")
+    monkeypatch.setattr(snap, "asm_path",
+                        lambda k: snap.ASM_DIR / (k.replace("|", ".") + ".asm"))
+    assert snap.asm_diff("never|captured", "NOP\n") == []
+
+
+def test_the_stored_text_is_the_one_the_hash_is_taken_of():
+    """Both go through canonical_labels, or the file and the verdict describe different things."""
+    import inspect
+    src = inspect.getsource(snap.build)
+    assert "canonical = canonical_labels(" in src
+    assert 'entry["asm"] = hashlib.sha256(canonical.encode())' in src
+    assert 'entry["asm_text"] = canonical' in src
+
+
+def test_the_assembly_text_never_reaches_the_json_comparison():
+    """It is written to its own file; leaving it in the cell would double the snapshot."""
+    import inspect
+    src = inspect.getsource(snap.main)
+    assert '"asm_text"' in src and "COMMENTARY" in src
