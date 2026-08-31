@@ -5,12 +5,19 @@
 # SPDX-License-Identifier: MIT
 # -----------------------------------------------------------------------------
 #
-# CYW43439 WiFi bring-up over bit-banged gSPI -- pymcu.hal.rp2350.cyw43
+# CYW43439 WiFi bring-up over bit-banged gSPI -- pymcu.hal.rp.cyw43
 #
-# The CYW43439 on a Pico 2 W is a half-duplex "gSPI" slave on four GPIOs
-# (WL_REG_ON=23, DATA=24, CS=25, CLK=29). On real silicon a PIO state machine
-# clocks it; here we bit-bang it with plain SIO GPIO, which the RP2350Sharp
-# emulator (pad-edge sampled) accepts. This module implements the bus bring-up:
+# ONE driver for the Pico W (RP2040) and the Pico 2 W (RP2350). The part is the same
+# CYW43439 on both and the four GPIOs are wired identically, so the whole gSPI
+# protocol and everything above it is shared; what differs is the MCU's own GPIO and
+# reset registers, and that is the conditional import below and nothing else. Measured
+# before it was written: of 561 lines, 59 touched an MCU register and the rest touched
+# none.
+#
+# The CYW43439 is a half-duplex "gSPI" slave on four GPIOs (WL_REG_ON=23, DATA=24,
+# CS=25, CLK=29). On real silicon a PIO state machine clocks it; here we bit-bang it
+# with plain SIO GPIO, which the RP2040Sharp and RP2350Sharp emulators (pad-edge
+# sampled) accept. This module implements the bus bring-up:
 # power the chip, probe the 0xFEEDBEAD test register (chip-alive), switch the bus
 # to 32-bit little-endian, open the F1 backplane window, request the ALP/HT clock,
 # and take the WLAN core out of reset. Firmware download is intentionally a stub
@@ -20,11 +27,48 @@
 # This is WiFi bring-up only. SDPCM/CDC join, a TCP/IP stack and MQTT sit above it
 # and are staged follow-ups (see docs).
 
-from pymcu.chips.rp2350 import (
-    IO_BANK0_BASE, PADS_BANK0_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
-    SIO_GPIO_OUT_SET, SIO_GPIO_OUT_CLR, SIO_GPIO_IN,
-    SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR,
-    GPIO_FUNC_SIO, RESET_IO_BANK0, RESET_PADS_BANK0,
+from pymcu.chips import __CHIP__
+
+# The twelve MCU registers, and ONLY those. Ten of the twelve hold a different value on
+# the two parts, checked one by one by resolving both chip files to numbers rather than
+# by comparing their source text: RESETS_RESET_CLR and RESETS_RESET_DONE are written
+# identically in both and still differ, because the base they are offset from does not
+# match. Two coincide today, SIO_GPIO_IN and GPIO_FUNC_SIO, and they are listed here
+# anyway: they are MCU registers, and moving them out on a coincidence of values would
+# let that coincidence decide the structure.
+#
+# One of the ten is worth naming. `SIO_GPIO_OUT_CLR` on the RP2040 and
+# `SIO_GPIO_OUT_SET` on the RP2350 are BOTH 0xD0000018, so a build carrying the wrong
+# map does not fault and does not touch a register that is not there: it SETS where it
+# meant to CLEAR. On the bit-banged clock line that is a CLK that never falls, which is
+# a dead bus and no diagnostic.
+#
+# Spelled as two explicit imports rather than one `from pymcu.chips.rp2350 import ...`
+# left in place. That would also work, and for the wrong reason: the compiler resolves a
+# chip-module name against the TARGET first and falls back to the literal module when the
+# target does not declare it, so all twelve would come out correct on an RP2040 by way of
+# the fallback that is filed as PyMCU#234. It would pass on silicon today and break the
+# day that issue is fixed. The project's rule against writing source that exploits a
+# compiler fault to get the right answer applies here with more force than usual, because
+# this is the stdlib rather than a user's program.
+if __CHIP__.name == "rp2350":
+    from pymcu.chips.rp2350 import (
+        IO_BANK0_BASE, PADS_BANK0_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
+        SIO_GPIO_OUT_SET, SIO_GPIO_OUT_CLR, SIO_GPIO_IN,
+        SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR,
+        GPIO_FUNC_SIO, RESET_IO_BANK0, RESET_PADS_BANK0,
+    )
+else:
+    from pymcu.chips.rp2040 import (
+        IO_BANK0_BASE, PADS_BANK0_BASE, RESETS_RESET_CLR, RESETS_RESET_DONE,
+        SIO_GPIO_OUT_SET, SIO_GPIO_OUT_CLR, SIO_GPIO_IN,
+        SIO_GPIO_OE_SET, SIO_GPIO_OE_CLR,
+        GPIO_FUNC_SIO, RESET_IO_BANK0, RESET_PADS_BANK0,
+    )
+
+# The CYW43439's own registers and the board wiring. Neither depends on the MCU, so
+# neither is conditional and neither is written twice.
+from pymcu.hal.cyw43_regs import (
     WL_REG_ON, WL_DATA, WL_CS, WL_CLK,
     SPI_BUS_CONTROL, SPI_READ_TEST_REGISTER, SPI_STATUS_REGISTER,
     SPI_WORD_LENGTH_32, SPI_ENDIAN_BIG,
@@ -118,12 +162,40 @@ class CYW43:
     def _cs_high(self):
         SIO_GPIO_OUT_SET.value = 1 << WL_CS
 
+    # ── the rest of the MCU surface ──
+    #
+    # These four were written out longhand inside read32(), init() and f2_read(), which
+    # is where a port of this driver goes wrong without failing to build. A census by
+    # function said the MCU-specific code was the six helpers above, 51 lines; it was
+    # those plus eight lines sitting INSIDE protocol functions, where they read as
+    # protocol. Whoever ported the six would have shipped a driver that compiles, links,
+    # and never gets a byte back from the chip.
+    #
+    # Named here so the answer to "what does this driver need from the MCU" is one block
+    # and can be checked by looking rather than by grepping the whole file.
+
+    @inline
+    def _power_on(self):
+        # WL_REG_ON high: the CYW43439's power/reset gate. Was open-coded in init().
+        SIO_GPIO_OUT_SET.value = 1 << WL_REG_ON
+
+    @inline
+    def _data_in(self):
+        # Release DATA so the slave can drive it. Was open-coded in read32() and f2_read().
+        SIO_GPIO_OE_CLR.value = 1 << WL_DATA
+
+    @inline
+    def _data_out(self):
+        # Take DATA back. Was open-coded in read32() and f2_read().
+        SIO_GPIO_OE_SET.value = 1 << WL_DATA
+
+
     # ── gSPI register access ──
     @inline
     def read32(self, fn: uint32, addr: uint32) -> uint32:
         self._cs_low()
         self._send_cmd(self._cmd_word(0, fn, addr, 4))
-        SIO_GPIO_OE_CLR.value = 1 << WL_DATA     # DATA -> input for the response
+        self._data_in()                          # DATA -> input for the response
         # F1 reads carry a 16-byte dummy pad before data; F0 has none.
         if fn == GSPI_F1_BACKPLANE:
             pad: uint32 = 16
@@ -145,10 +217,22 @@ class CYW43:
         n: uint32 = 32
         while n > 0:
             n = n - 1
+            # THE ONE MCU-REGISTER SITE LEFT OUTSIDE A HELPER, and it is here on purpose.
+            #
+            # Sample first, THEN clock: the slave presents bit 0 the moment DATA becomes an
+            # input and each later bit on the CLK falling edge, so this is the reverse of
+            # _clk_in_bit() and not a duplicate of it.
+            #
+            # Naming it was tried and reverted. A helper has to take the accumulator and
+            # return it, or the shift-and-or moves to AFTER the clock edge and changes the
+            # delay between sampling and the rising edge on a bit-banged bus. Taking it
+            # costs a copy per bit in this 32-iteration loop, which showed up in the IR as
+            # `raw = raw`. Both versions changed the rp2350 output that already works, so
+            # the three lines stay where they are and say so instead.
             raw = (raw << 1) | ((SIO_GPIO_IN.value >> WL_DATA) & 1)
             SIO_GPIO_OUT_SET.value = 1 << WL_CLK
             SIO_GPIO_OUT_CLR.value = 1 << WL_CLK
-        SIO_GPIO_OE_SET.value = 1 << WL_DATA
+        self._data_out()
         self._cs_high()
         return ((raw & 0xFF) << 24) | (((raw >> 8) & 0xFF) << 16) | (((raw >> 16) & 0xFF) << 8) | ((raw >> 24) & 0xFF)
 
@@ -176,7 +260,7 @@ class CYW43:
     @inline
     def init(self) -> uint32:
         # Power the chip (WL_REG_ON high) and let it settle.
-        SIO_GPIO_OUT_SET.value = 1 << WL_REG_ON
+        self._power_on()
         w: uint32 = 2000
         while w > 0:
             w = w - 1
@@ -286,7 +370,7 @@ class CYW43:
         self._clk_out_byte((cmd >> 8) & 0xFF)
         self._clk_out_byte((cmd >> 16) & 0xFF)
         self._clk_out_byte((cmd >> 24) & 0xFF)
-        SIO_GPIO_OE_CLR.value = 1 << WL_DATA          # DATA -> input (no F2 read pad)
+        self._data_in()                               # DATA -> input (no F2 read pad)
         j: uint32 = 0
         while j < rd:
             b: uint32 = 0
@@ -300,7 +384,7 @@ class CYW43:
             b = (b << 1) | self._clk_in_bit()
             buf[j] = b
             j = j + 1
-        SIO_GPIO_OE_SET.value = 1 << WL_DATA
+        self._data_out()
         self._cs_high()
         return plen
 
