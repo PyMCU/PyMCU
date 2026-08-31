@@ -283,6 +283,7 @@ def provenance():
     tool = {"pymcuc": binary_provenance("pymcuc", REPO / "build" / "bin" / "pymcuc")}
     for name, binary in sorted(resolved.items()):
         tool["pymcuc-" + name] = binary_provenance("pymcuc-" + name, binary)
+    tool["stdlib"] = stdlib_provenance()
     return {
         "head": git(REPO, "rev-parse", "--short=8", "HEAD"),
         "compiler_tree_dirty": sorted(
@@ -324,6 +325,49 @@ def unreproducible(prov):
         if b.get("sha") is None:
             reasons.append(f"{name}: no se encontro el binario ({b.get('binary')})")
     return reasons
+
+
+STDLIB_DIR = REPO / "lib" / "src" / "pymcu"
+
+
+def stdlib_provenance():
+    """The standard library as a toolchain component, because it is one.
+
+    Five compiler binaries were recorded here and the library they all compile was not,
+    so a cell that moved because `lib/` moved was pinned on whichever binary happened to
+    have moved too, under the heading NO ES TUYO. That happened to 22 cells on
+    2026-08-30: the cause was one stdlib commit adding a guard for the ATtiny parts with
+    no USART, and every one of them was billed to `pymcuc-avr`.
+
+    The fields are the same ones the binaries carry, and mean the same things, with one
+    asymmetry worth stating rather than leaving to be noticed:
+
+      stamp   the last commit that TOUCHED lib/src/pymcu, not the repo head. A commit
+              landing anywhere else leaves it alone, which is what keeps this from
+              crying wolf at every unrelated commit in the monorepo.
+      sha     the content of the tree that will actually be compiled.
+      NO stale.  A binary is built once and deployed, so it can lag its own source. The
+              stdlib is read from the working tree at compile time, so it is never
+              behind itself. There is nothing here for `stale` to mean.
+    """
+    repo = next((p for p in STDLIB_DIR.parents if (p / ".git").exists()), None)
+    scope = "lib/src/pymcu"
+    digest = hashlib.sha256()
+    for f in sorted(STDLIB_DIR.rglob("*.py")):
+        digest.update(str(f.relative_to(STDLIB_DIR)).encode())
+        digest.update(f.read_bytes())
+    entry = {"binary": str(STDLIB_DIR), "sha": digest.hexdigest()[:16], "stamp": None}
+    if repo:
+        entry["repo"] = repo.name
+        entry["scope"] = scope
+        entry["repo_head"] = git(repo, "rev-parse", "--short=8", "HEAD")
+        entry["stamp"] = git(repo, "log", "-1", "--format=%h", "--abbrev=8", "--", scope) or None
+        dirty = sorted(
+            l.split(maxsplit=1)[-1]
+            for l in git(repo, "status", "--short", "--", scope).splitlines() if l.strip())
+        entry["repo_dirty"] = dirty
+        entry["dirty_hash"] = dirty_content_hash(repo, dirty)
+    return entry
 
 
 def chips():
@@ -632,7 +676,12 @@ def provenance_drift(was, now):
                 out.append(("inocuo", f"{name}: el repo avanzo {a.get('stamp')} -> {b.get('stamp')}"
                                       f" sin tocar {scope}"))
             else:
-                out.append(("distinto", f"{name}: compilado en {a.get('stamp')} -> {b.get('stamp')}"))
+                # "compilado en" is the binaries' vocabulary and the stdlib is never
+                # compiled ahead of time: it is read from the tree at build time. Saying
+                # a library was "compiled at" a commit is the kind of borrowed sentence
+                # this harness keeps catching elsewhere.
+                verb = "cambio en" if name == "stdlib" else "compilado en"
+                out.append(("distinto", f"{name}: {verb} {a.get('stamp')} -> {b.get('stamp')}"))
         elif ("dirty_hash" in a and "dirty_hash" in b
               and a["dirty_hash"] != b["dirty_hash"]):
             out.append(("distinto", f"{name}: mismo commit, pero cambio el trabajo sin commitear"
@@ -749,7 +798,14 @@ def main():
         return 1 if alien else 0
     moved = {name for kind, text in drifted if kind == "distinto"
              for name in prov["toolchain"] if text.startswith(name + ":")}
+    # The stdlib is compiled into every image, so when it moves it can explain a cell on
+    # ANY chip. It has to be named separately or it falls into `frontend_moved` below and
+    # the reader is told the frontend moved, which is a different repository's worth of
+    # searching. Before this existed the 22 ATtiny cells of #43 were all billed to
+    # `pymcuc-avr`, and the cause was one commit under lib/.
+    stdlib_moved = "stdlib" in moved
     frontend_moved = any(kind == "distinto" and not text.startswith("pymcuc-")
+                         and not text.startswith("stdlib:")
                          for kind, text in drifted)
     arch_of = chips()
 
@@ -758,10 +814,17 @@ def main():
     for key, text, delta in diffs:
         chip = key.split("|", 1)[1]
         backend = ARCH_BACKEND.get(arch_of.get(chip, "?"))
+        # Everything that moved, not the first one that matched: with both the stdlib and
+        # a backend moved, naming only one sends the reader to look in one place for a
+        # cause that could be in either.
+        culprits = [c for c in (
+            "la stdlib" if stdlib_moved else None,
+            backend if backend in moved else None,
+            "el frontend" if frontend_moved else None) if c]
         if delta == "mejora":
             flag = "  <-- MEJORA"
-        elif backend in moved or frontend_moved:
-            flag = f"  <-- NO ES TUYO: se movio {backend if backend in moved else 'el frontend'}"
+        elif culprits:
+            flag = "  <-- NO ES TUYO: se movio " + " y ".join(culprits)
         elif delta is not None and delta > 0:
             flag = "  <-- ROM SUBE"
             worse += 1

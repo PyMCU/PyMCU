@@ -173,3 +173,78 @@ def test_every_backend_is_checked_and_not_only_the_frontend():
     assert any("pymcuc-avr" in r for r in reasons)
     assert any("pymcuc-pic" in r for r in reasons)
     assert not any(r.startswith("pymcuc:") for r in reasons)
+
+
+# --- the stdlib is a toolchain component -------------------------------------
+#
+# Five compiler binaries were recorded and the library all five compile was not. On
+# 2026-08-30 that billed 22 cells to `pymcuc-avr` under the heading NO ES TUYO, when the
+# cause was one commit under lib/ adding a guard for the ATtiny parts with no USART. The
+# suppression that allowed it defends itself in its own docstring, "a stdlib commit
+# cannot change the compiler", which is true and is about the wrong thing: it cannot
+# change the compiler and it does change the image.
+
+STDLIB = {"binary": "/repo/lib/src/pymcu", "sha": "aaaa", "stamp": "1111",
+          "repo": "PyMCU", "scope": "lib/src/pymcu", "repo_head": "9999",
+          "repo_dirty": [], "dirty_hash": None}
+
+
+def test_a_commit_under_lib_is_a_different_toolchain():
+    """The case that cost the 22 cells. Before this it produced no drift line at all."""
+    was = {"head": "aaaaaaaa", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    now = {"head": "bbbbbbbb", "compiler_tree_dirty": [],
+           "toolchain": {"stdlib": {**STDLIB, "stamp": "2222", "sha": "bbbb"}}}
+    assert ("distinto", "stdlib: cambio en 1111 -> 2222") in snap.provenance_drift(was, now)
+
+
+def test_a_commit_elsewhere_in_the_monorepo_does_not_move_the_stdlib():
+    """The false alarm the suppression exists to stop, still stopped.
+
+    The stamp is the last commit that TOUCHED lib/src/pymcu, so a commit landing anywhere
+    else leaves it alone and nothing is reported for the stdlib.
+    """
+    was = {"head": "aaaaaaaa", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    now = {"head": "bbbbbbbb", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    assert not [t for k, t in snap.provenance_drift(was, now) if t.startswith("stdlib")]
+
+
+def test_uncommitted_work_under_lib_is_a_different_toolchain():
+    was = {"head": "a", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    now = {"head": "a", "compiler_tree_dirty": [],
+           "toolchain": {"stdlib": {**STDLIB, "repo_dirty": ["hal/avr/uart/__init__.py"],
+                                    "dirty_hash": "ffff"}}}
+    assert [k for k, _ in snap.provenance_drift(was, now)] == ["distinto"]
+
+
+def test_the_stdlib_is_not_described_as_compiled_at_a_commit():
+    """It is read from the tree at build time; it is never built ahead and deployed.
+
+    The binaries' wording was the only wording there was, and a library that "was
+    compiled at" a commit is the borrowed sentence this harness keeps catching elsewhere.
+    """
+    was = {"head": "a", "compiler_tree_dirty": [], "toolchain": {"stdlib": STDLIB}}
+    now = {"head": "a", "compiler_tree_dirty": [],
+           "toolchain": {"stdlib": {**STDLIB, "stamp": "2222"}}}
+    text = [t for _, t in snap.provenance_drift(was, now)][0]
+    assert "compilado" not in text
+
+
+def test_the_stdlib_has_no_stale_because_it_cannot_lag_itself():
+    """A binary is built once and deployed, so it can be older than its own source.
+
+    The stdlib is read from the working tree at compile time, so there is nothing for
+    `stale` to mean, and reporting one would invite somebody to "rebuild" it.
+    """
+    assert "stale" not in snap.stdlib_provenance()
+
+
+def test_a_dirty_stdlib_blocks_a_capture_like_a_dirty_compiler_tree():
+    """Same failure, so the same refusal.
+
+    The cells are compiled from whatever is in lib/ at the time, so uncommitted work
+    there is baked into the numbers and vanishes when it is committed or discarded,
+    exactly as it does for a binary built from a dirty tree.
+    """
+    prov = {"toolchain": {"stdlib": {**STDLIB, "repo_dirty": ["hal/avr/uart/__init__.py"],
+                                     "dirty_hash": "ffff"}}}
+    assert snap.unreproducible(prov) != []
