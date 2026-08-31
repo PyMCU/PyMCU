@@ -109,8 +109,17 @@ def line_of(node):
 # gives the `//`). Carrying it would not close a divergence, it would open one in the other
 # direction, with the two front ends naming different characters for the same error. Adding a
 # kind here means first checking that both front ends locate it the same way.
+# Tuple is here and not in DERIVED_KINDS, and it is the only entry whose LENGTH is carried
+# rather than written. Measured over eight spellings: CPython puts a Tuple at the `(` when it
+# is written with one and at the first element when it is not, which is where the hand-written
+# parser stamps it too, and its span runs to the `)` or the last element, which is what the
+# parser measures. There is no sub-token to prefer -- no keyword, no operator, no bracket that
+# stands for the construct -- so the whole node is the answer on both sides.
+#
+# The multi-line spelling agrees as well, by both sides refusing: position_of drops the length
+# when the node crosses lines and Parser.Spanning() does the same, for the same reason.
 POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
-                     "Break", "Continue")
+                     "Break", "Continue", "Tuple")
 
 # Kinds this file has to COMPUTE some part of the position for, because taking the node whole
 # would disagree with the hand-written parser. Each entry says which part to mark and how it is

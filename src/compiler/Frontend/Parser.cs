@@ -827,6 +827,7 @@ public class Parser
         Expression? value = null;
         if (!Check(TokenType.Newline) && !Check(TokenType.Semicolon))
         {
+            var tupleStart = Peek();
             value = ParseExpression();
             // A bare comma-separated return is a tuple: `return a, b` is `return (a, b)`.
             // Without this the parser stopped at the first element and choked on the comma,
@@ -840,7 +841,11 @@ public class Parser
                         break; // trailing comma
                     elems.Add(ParseExpression());
                 }
-                value = new TupleExpr(elems) { Line = line };
+                // From the first element's first TOKEN, not from its stamp: an element is
+                // stamped at the part a diagnostic blames, which for a BinaryExpr is the
+                // operator and for a CallExpr is nothing at all. The tuple starts where the
+                // text starts, so the text is what has to be measured.
+                value = Spanning(new TupleExpr(elems), tupleStart, Previous());
             }
         }
 
@@ -1504,6 +1509,7 @@ public class Parser
                 }
 
                 Consume(TokenType.Equal, "Expected '=' in tuple unpack assignment");
+                var rhsStart = Peek();
                 var valueExpr = ParseExpression();
                 // A bare comma-separated RHS is a tuple literal: `a, b = b, a`.
                 // Without this it parsed only the first element and choked on the
@@ -1516,7 +1522,7 @@ public class Parser
                         if (Check(TokenType.Newline) || Check(TokenType.EndOfFile)) break; // trailing comma
                         elems.Add(ParseExpression());
                     }
-                    valueExpr = new TupleExpr(elems) { Line = line };
+                    valueExpr = Spanning(new TupleExpr(elems), rhsStart, Previous());
                 }
                 ConsumeStatementEnd();
                 return new TupleUnpackStmt(targets, valueExpr, starredIndex) { Line = line };
@@ -1726,6 +1732,27 @@ public class Parser
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
     ///   ListCompExpr      the OPENING `[`    where the construct starts
+    ///   TupleExpr         THE WHOLE TUPLE    a tuple starts where its TEXT starts, which is
+    ///                     one rule and not two: the `(` when it is written with one because
+    ///                     the `(` is then the first character, and the first element when it
+    ///                     is not because then that is. It ends at the `)` or at the last
+    ///                     element.
+    ///
+    ///                         a, b = (1, 2)        col 7, span 6, starts `(`
+    ///                         a, b = 1, 2          col 7, span 4, starts `1`
+    ///                         a, b = ((1, 2), 3)   col 7, span 11, the OUTER `(`
+    ///                         a, b = f(), 2        col 7, span 6, starts `f`
+    ///                         a, b = (1,<newline>  no span; both front ends withhold
+    ///
+    ///                     The `f(), 2` row is why the rule is about text and not about
+    ///                     "a paren or a literal": the tuple begins at a call there, and a rule
+    ///                     phrased over syntax would have had to grow a case for it.
+    ///
+    ///                     The only node marked WHOLE, because it is the only one with no
+    ///                     keyword, operator or bracket standing for it: `a, b = (1,)` blames
+    ///                     the tuple, all of it. Measured against CPython over eight spellings,
+    ///                     so the two front ends carry the same answer rather than agreeing by
+    ///                     luck on the one that gets written most
     ///   ClassDef          the `class` KEYWORD  the introducer, as for a `def`
     ///   Param             the parameter NAME   `buf: uint8[4]` marks `buf`, not the type it
     ///                     is annotated with: every diagnostic about a parameter names the
@@ -1764,6 +1791,29 @@ public class Parser
         node.Line = at.Line;
         node.Column = at.Column;
         node.Length = at.Length;
+        return node;
+    }
+
+    /// Stamps a node that IS its whole span, from one token to another inclusive.
+    ///
+    /// For a node with no sub-token worth preferring. A tuple is the case that forced it: there
+    /// is no keyword and no operator, the node is the whole `(1, 2)`, and marking only the `(`
+    /// would underline one character of a construct the message is about in full. Contrast
+    /// Located(), which takes a node's position FROM one token because that token is the part
+    /// being blamed.
+    ///
+    /// The length is dropped when the two tokens are on different lines. That is not caution,
+    /// it is the only answer: the underline is drawn on one line, and a span measured across
+    /// two marks whatever happens to sit under it. CPython's `end_col_offset` is unusable for
+    /// the same reason, and the bridge drops the length in exactly this case, so the two front
+    /// ends agree in both spellings rather than only in the easy one.
+    private static T Spanning<T>(T node, Token first, Token last) where T : ASTNode
+    {
+        node.Line = first.Line;
+        node.Column = first.Column;
+        node.Length = last.Line == first.Line
+            ? Math.Max(1, last.Column + last.Length - first.Column)
+            : CompilerError.Unlocated;
         return node;
     }
 
@@ -2476,10 +2526,11 @@ public class Parser
 
         if (Match(TokenType.LParen))
         {
+            var lparen = Previous();
             if (Check(TokenType.RParen))
             {
                 Advance();
-                return new TupleExpr(new List<Expression>());
+                return Spanning(new TupleExpr(new List<Expression>()), lparen, Previous());
             }
 
             var first = ParseExpression();
@@ -2502,7 +2553,7 @@ public class Parser
                 }
 
                 Consume(TokenType.RParen, "Expected ')'");
-                return new TupleExpr(elems);
+                return Spanning(new TupleExpr(elems), lparen, Previous());
             }
 
             Consume(TokenType.RParen, "Expected ')'");
