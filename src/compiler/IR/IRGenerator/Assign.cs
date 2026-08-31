@@ -3509,7 +3509,9 @@ public partial class IRGenerator
                         int start = sl.Start != null ? EvaluateConstantExpr(sl.Start) : 0;
                         int stop = sl.Stop != null ? EvaluateConstantExpr(sl.Stop) : srcSize;
                         int step = sl.Step != null ? EvaluateConstantExpr(sl.Step) : 1;
-                        if (step == 0) throw UserError("Slice step cannot be zero");
+                        // The step expression the user wrote, which is the `0` the message is
+                        // about. Non-null whenever this fires: an absent step defaults to 1.
+                        if (step == 0) throw UserError("Slice step cannot be zero", sl.Step);
                         if (start < 0) start += srcSize;
                         if (stop < 0) stop += srcSize;
                         start = Math.Max(0, Math.Min(start, srcSize));
