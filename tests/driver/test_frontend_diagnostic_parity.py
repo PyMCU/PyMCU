@@ -139,6 +139,20 @@ def _program(tmp_path: Path, source: str) -> Path:
     "from pymcu.types import uint8\ndef f() -> uint8:\n    x: uint8 = 1\ndef main() -> None:\n    b: uint8 = f()\n",
     "from pymcu.types import uint8\nclass Box:\n    def __init__(self) -> None:\n        self.n: uint8 = 0\n"
     "    def get(self) -> uint8:\n        x: uint8 = self.n\ndef main() -> None:\n    b = Box()\n    v: uint8 = b.get()\n",
+    # A PARAMETER and a CLASS, stamped for the first time by the change that added these two
+    # rows. Unlike everything above them these are NOT discriminators and never were: before
+    # the stamp both front ends reported the same nothing, line 1 column 0, so a parity check
+    # was satisfied by two identical wrong answers. They are here against a FUTURE one-sided
+    # stamp, which is the failure this file exists to catch.
+    #
+    # CPython's node for a parameter spans its annotation (`buf: uint8[4]`) and the parser
+    # marks the name alone, so the length is the half that needed writing.
+    "from pymcu.types import uint8\ndef take(buf: uint8[4]) -> uint8:\n    return buf[0]\n"
+    "def main() -> None:\n    pass\n",
+    "from pymcu.types import uint8\nclass A:\n    def __init__(self) -> None:\n        self.a: uint8 = 1\n"
+    "class B:\n    def __init__(self) -> None:\n        self.b: uint8 = 2\n"
+    "class C(A, B):\n    def __init__(self) -> None:\n        self.c: uint8 = 3\n"
+    "def main() -> None:\n    c = C()\n",
 ])
 def test_both_front_ends_underline_the_same_amount(tmp_path, source):
     src = _program(tmp_path, source)
