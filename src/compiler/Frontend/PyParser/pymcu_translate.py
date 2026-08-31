@@ -170,7 +170,17 @@ POSITIONED_KINDS = ("Var", "Str", "Int", "Float", "Bool", "None",
 #   Class     the `class` keyword, 5. CPython puts a ClassDef at its `class`, with decorators
 #             in a separate list, so only the length has to be written: a class always spans
 #             more than one line and a span carries no length across lines.
-DERIVED_KINDS = ("Member", "Slice", "Raise", "ListComp", "Unary", "Class")
+#   Yield     the `yield` keyword, 5. One token, nothing inside it to stretch.
+#   YieldFrom the two words, MEASURED from the source and not written as 10. `yield  from` with
+#             extra spacing is valid Python, and a tab between the words is too, so the second
+#             keyword does not start at a fixed offset. Two spellings, two rules, and only the
+#             first one could ever have carried a number.
+DERIVED_KINDS = ("Member", "Slice", "Raise", "ListComp", "Unary", "Class",
+                  "Yield", "YieldFrom")
+
+# The two words of a delegation, for YieldFrom above. Anchored at the node's own start, so it
+# cannot match a `yield from` further along the line.
+YIELD_FROM = re.compile(r"yield[^\S\n]+from")
 
 # The operator spellings, for Unary above. Parser.cs's decision table is the authority:
 # "UnaryExpr the OPERATOR -- `-1` marks the `-`, `not a` marks the `not`".
@@ -213,12 +223,18 @@ def async_introducer_len(node):
 
 def derived_position(kind, node):
     """The 1-based column and length for a kind whose position CPython does not give directly."""
-    if kind in ("Raise", "ListComp", "Unary", "Class"):
+    if kind in ("Raise", "ListComp", "Unary", "Class", "Yield", "YieldFrom"):
         col = getattr(node, "col_offset", None)
         if col is None:
             return {}
-        if kind in ("Raise", "Class"):
+        if kind in ("Raise", "Class", "Yield"):
             return {"col": col + 1, "len": 5}
+        if kind == "YieldFrom":
+            # None rather than a guess when the source is unavailable or the two words are
+            # split across lines: a length measured on one line and drawn on another
+            # underlines whatever happens to sit there.
+            span = _yield_from_len(node)
+            return {"col": col + 1} if span is None else {"col": col + 1, "len": span}
         if kind == "ListComp":
             return {"col": col + 1, "len": 1}
         op = UNARY_OP_TEXT.get(type(getattr(node, "op", None)))
@@ -241,6 +257,21 @@ def derived_position(kind, node):
         col = getattr(node, "col_offset", None)
         return {} if col is None else {"col": col + 1, "len": 1}
     return {}
+
+
+def _yield_from_len(node):
+    """Characters from the `y` of `yield` to the end of `from`, or None when unreadable."""
+    if not SOURCE:
+        return None
+    lineno = getattr(node, "lineno", None)
+    col = getattr(node, "col_offset", None)
+    if lineno is None or col is None:
+        return None
+    lines = SOURCE.splitlines()
+    if not 1 <= lineno <= len(lines):
+        return None
+    m = YIELD_FROM.match(lines[lineno - 1], col)
+    return None if m is None else m.end() - col
 
 
 def position_of(node):

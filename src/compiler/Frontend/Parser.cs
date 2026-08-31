@@ -1664,20 +1664,34 @@ public class Parser
     {
         if (Match(TokenType.Yield))
         {
+            var yieldTok = Previous();
+
             // `yield from g()` delegates to another generator: every value g yields is
             // yielded again here. Marked on the node; AsyncTransform expands it.
             if (Match(TokenType.From))
-                return new YieldExpr(ParseExpression(), isDelegate: true);
+            {
+                // From the `y` to the end of `from`, MEASURED. Not the constant 10: `yield  from`
+                // with extra spacing is valid Python and compiles here, and so is a tab between
+                // the two words, so a written length would underline `yield  fro` and stop one
+                // character inside the second keyword. Third time in this campaign that a
+                // literal in a rule turned out to be the usual spelling in disguise.
+                var fromTok = Previous();
+                return Spanning(new YieldExpr(ParseExpression(), isDelegate: true),
+                                yieldTok, fromTok);
+            }
 
             // A bare `yield` suspends without producing a value, which the generator
             // lowering already handles (it publishes 0). Only the parser insisted on an
             // expression, and reported the absence as "Expected expression".
             if (Check(TokenType.Newline) || Check(TokenType.RParen) || Check(TokenType.Comma)
                 || Check(TokenType.EndOfFile))
-                return new YieldExpr(null);
+                return Located(new YieldExpr(null), yieldTok);
 
             var value = ParseExpression();
-            return new YieldExpr(value);
+            // The keyword alone, and its length comes from the token rather than from a 5
+            // written here. `yield` is one token with no interior space to stretch, so the two
+            // spellings need two rules and only one of them could ever have carried a number.
+            return Located(new YieldExpr(value), yieldTok);
         }
 
         var left = ParseLogicalOr();
@@ -1732,6 +1746,16 @@ public class Parser
     ///   MemberAccessExpr  the MEMBER NAME    `o.sep` marks `sep`, not `o`
     ///   SliceExpr         the FIRST COLON    `xs[0:2]` marks the `:`
     ///   ListCompExpr      the OPENING `[`    where the construct starts
+    ///   YieldExpr         the KEYWORD        `yield`, or `yield from` as both words. NOT the
+    ///                     whole expression, which is where this differs from TupleExpr and
+    ///                     ListExpr: `yield from inner()` is eighteen characters and the call
+    ///                     at the end of it is fine. What every message about one of these
+    ///                     blames is the construct, not the value it would produce.
+    ///
+    ///                     The two spellings need two rules and only one of them has a number:
+    ///                     a bare `yield` is one token and takes its own length, while
+    ///                     `yield from` is measured across the two tokens because `yield  from`
+    ///                     with extra spacing, or with a tab, is valid Python
     ///   ListExpr          THE WHOLE LIST     `[]` and `[1, 2]` in full, bracket to bracket,
     ///                     and `b"ab"` as the whole literal it was decoded from.
     ///

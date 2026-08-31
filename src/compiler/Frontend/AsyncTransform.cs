@@ -51,7 +51,8 @@ public static class AsyncTransform
         {
             if (asyncFns.Contains(fn) || genFns.Contains(fn)) continue;
             if (DelegateYieldPosition(fn.Body.Statements) is { } stray)
-                throw new SyntaxError(stray.Message, stray.Line);
+                throw new SyntaxError(stray.Message, stray.Line,
+                                      stray.At?.Column ?? 0, stray.At?.Length ?? 1);
         }
 
         if (asyncFns.Count == 0 && genFns.Count == 0) return;
@@ -117,7 +118,8 @@ public static class AsyncTransform
             // functions and class methods and names neither `yield` nor `from`.
             foreach (var g in genFns)
                 if (DelegateYieldPosition(g.Body.Statements) is { } where)
-                    throw new SyntaxError(where.Message, where.Line);
+                    throw new SyntaxError(where.Message, where.Line,
+                                          where.At?.Column ?? 0, where.At?.Length ?? 1);
         }
         var genNames = new HashSet<string>();
         foreach (var fn in genFns)
@@ -1624,9 +1626,10 @@ public static class AsyncTransform
     // or null when there is none. The line matters: without it every one of these reads as
     // `file:0:1` and the caret block prints nothing, so a module with several generators does
     // not say which one is meant.
-    private static (string Message, int Line)? DelegateYieldPosition(List<Statement> stmts)
+    private static (string Message, int Line, YieldExpr? At)? DelegateYieldPosition(List<Statement> stmts)
     {
         int foundLine = 0;
+        YieldExpr? foundAt = null;
         static bool IsDelegate(Expression? e) => e is YieldExpr { IsDelegate: true };
         static bool IsYield(Expression? e) => e is YieldExpr;
         static string What(Expression? e) => e is YieldExpr { IsDelegate: true } ? "`yield from`" : "`yield`";
@@ -1652,6 +1655,30 @@ public static class AsyncTransform
         // A delegation nested inside a larger expression (`1 + (yield from g())`) is the same
         // unsupported thing as one on the right of an assignment, and it used to slip past a
         // check that only looked at the outermost node.
+        // The same walk as HasNestedYield, returning the node instead of a bool. Two functions
+        // for one shape, and they have to stay in step: a case added to one and not the other
+        // makes the diagnostic fire with no node, which is the silent half of the failure.
+        static YieldExpr? FirstYield(Expression? e)
+        {
+            switch (e)
+            {
+                case null: return null;
+                case YieldExpr y: return y;
+                case BinaryExpr b: return FirstYield(b.Left) ?? FirstYield(b.Right);
+                case UnaryExpr u: return FirstYield(u.Operand);
+                case CallExpr c:
+                    return FirstYield(c.Callee) ?? c.Args.Select(FirstYield).FirstOrDefault(x => x != null);
+                case MemberAccessExpr m: return FirstYield(m.Object);
+                case IndexExpr ix: return FirstYield(ix.Target) ?? FirstYield(ix.Index);
+                case TernaryExpr t:
+                    return FirstYield(t.Condition) ?? FirstYield(t.TrueVal) ?? FirstYield(t.FalseVal);
+                case KeywordArgExpr kw: return FirstYield(kw.Value);
+                case TupleExpr tu: return tu.Elements.Select(FirstYield).FirstOrDefault(x => x != null);
+                case ListExpr le: return le.Elements.Select(FirstYield).FirstOrDefault(x => x != null);
+                default: return null;
+            }
+        }
+
         static bool HasNestedYield(Expression? e)
         {
             switch (e)
@@ -1680,7 +1707,23 @@ public static class AsyncTransform
         string? Walk(Statement? st)
         {
             var found = WalkInner(st);
-            if (found != null && foundLine == 0 && st != null) foundLine = st.Line;
+            if (found != null && foundLine == 0 && st != null)
+            {
+                foundLine = st.Line;
+                // The `yield` itself, not the statement it sits in. Every message here is about
+                // the construct: `x = yield from g()` is refused for the yield, and the
+                // assignment around it is ordinary. The two callers both take whatever this
+                // returns, so widening it here located both of them at once.
+                foundAt = st switch
+                {
+                    AssignStmt a => FirstYield(a.Value),
+                    VarDecl vd => FirstYield(vd.Init),
+                    AnnAssign an => FirstYield(an.Value),
+                    ReturnStmt r => FirstYield(r.Value),
+                    ExprStmt es => FirstYield(es.Expr),
+                    _ => null,
+                };
+            }
             return found;
         }
 
@@ -1724,7 +1767,7 @@ public static class AsyncTransform
         }
 
         var msg = stmts.Select(Walk).FirstOrDefault(x => x != null);
-        return msg == null ? null : (msg, foundLine);
+        return msg == null ? null : (msg, foundLine, foundAt);
     }
 
 }

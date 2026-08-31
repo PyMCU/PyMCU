@@ -173,6 +173,18 @@ def _program(tmp_path: Path, source: str) -> Path:
     "from pymcu.types import uint8\ndef main() -> None:\n    xs: bytearray = bytearray([])\n    n: uint8 = uint8(len(xs))\n",
     "from pymcu.types import uint8\ndef main() -> None:\n    xs = bytearray([\n        ])\n    n: uint8 = uint8(len(xs))\n",
     "from pymcu.types import uint8\ndef main() -> None:\n    v = int.from_bytes(b\"\\x01\", \"little\")\n",
+    # A YIELD, in the three spellings whose LENGTHS differ: the two words, the two words with
+    # extra spacing, and the bare keyword. The middle row is the one a written 10 gets wrong,
+    # and it is valid Python.
+    "from pymcu.types import uint8\ndef inner():\n    yield 1\n"
+    "def plain() -> uint8:\n    x = yield from inner()\n    return x\n"
+    "def main() -> None:\n    v: uint8 = plain()\n",
+    "from pymcu.types import uint8\ndef inner():\n    yield 1\n"
+    "def plain() -> uint8:\n    x = yield  from  inner()\n    return x\n"
+    "def main() -> None:\n    v: uint8 = plain()\n",
+    "from pymcu.types import uint8\n"
+    "def plain() -> uint8:\n    x = 1 + (yield)\n    return x\n"
+    "def main() -> None:\n    v: uint8 = plain()\n",
 ])
 def test_both_front_ends_underline_the_same_amount(tmp_path, source):
     src = _program(tmp_path, source)
