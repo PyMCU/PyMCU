@@ -1680,6 +1680,11 @@ public static class AsyncTransform
             {
                 case null: return null;
                 case YieldExpr y: return y;
+                // Both twins lacked this, so a `yield` inside a lambda was invisible to
+                // BOTH -- a symmetry obligation kept perfectly while both sides were
+                // wrong. Found while fixing #243, where the same blind spot let
+                // `f = lambda: (yield 1)` compile to nothing.
+                case LambdaExpr lm: return FirstYield(lm.Body);
                 case BinaryExpr b: return FirstYield(b.Left) ?? FirstYield(b.Right);
                 case UnaryExpr u: return FirstYield(u.Operand);
                 case CallExpr c:
@@ -1701,6 +1706,8 @@ public static class AsyncTransform
             {
                 case null: return false;
                 case YieldExpr: return true;
+                // See the note on FirstYield: the twin lacked this too.
+                case LambdaExpr lm: return HasNestedYield(lm.Body);
                 case BinaryExpr b: return HasNestedYield(b.Left) || HasNestedYield(b.Right);
                 case UnaryExpr u: return HasNestedYield(u.Operand);
                 case CallExpr c:

@@ -297,6 +297,13 @@ public partial class IRGenerator
     /// PROTOCOL message is the better answer -- it names send() and says why there is none --
     /// so the construction is allowed to finish and the method call is refused instead.
     private bool loweringMemberReceiver;
+
+    /// True while an expression STATEMENT is being lowered, i.e. its result is discarded.
+    ///
+    /// Read by one thing: which of the two refusals a generator construction gets (#243). A
+    /// generator in a value position cannot work; a generator whose result is thrown away is
+    /// something else entirely, and the message says so.
+    private bool loweringDiscardedExprStmt;
     // Instance qualified name (e.g. "main.s") -> its SRAM slot array name ("main.s__slot").
     private Dictionary<string, string> slotInstances = new();
     // @outline method symbol -> field -> byte offset within the slot (for self.field loads).

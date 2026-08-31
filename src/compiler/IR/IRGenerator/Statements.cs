@@ -812,7 +812,20 @@ public partial class IRGenerator
 
         if (stmt is ExprStmt exprStmt)
         {
-            VisitExprStmt(exprStmt);
+            // Marked so the construction lowered underneath can tell that ITS OWN result is
+            // discarded: `gen()` written as a statement is the classic Python trap and gets a
+            // different message from `take(gen())` (#243).
+            //
+            // The test is on THIS statement's own expression, not on "somewhere inside a
+            // discarded statement". A coarser flag marked the nested construction in
+            // `take(gen())` as discarded too -- the argument is not discarded, the CALL is --
+            // and handed the trap message to a value-position error.
+            bool prevDiscarded = loweringDiscardedExprStmt;
+            loweringDiscardedExprStmt =
+                exprStmt.Expr is CallExpr { Callee: VariableExpr gv }
+                && generatorClasses.Contains(ResolveCallee(gv.Name));
+            try { VisitExprStmt(exprStmt); }
+            finally { loweringDiscardedExprStmt = prevDiscarded; }
             return;
         }
 

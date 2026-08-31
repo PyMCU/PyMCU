@@ -1444,12 +1444,23 @@ public partial class IRGenerator
                 // Nothing needs to know which value position it was -- argument, return,
                 // operand -- because none of them can supply one.
                 if (generatorClasses.Contains(classPrefix) && !loweringMemberReceiver)
-                    throw UserError(
-                        $"a generator can only be consumed by `for`: `{classPrefix}(...)` is "
-                        + "used here as a value. A PyMCU generator lowers to a state machine "
-                        + "that lives in a named variable, and there is nothing to hand to a "
-                        + "caller, store, or return. Write `for v in "
-                        + $"{classPrefix}(...):` and use `v` in the loop.", expr);
+                    throw UserError(loweringDiscardedExprStmt
+                        // The result is thrown away, so this is not a value-position error. It
+                        // is the trap every Python programmer meets once: CALLING A GENERATOR
+                        // FUNCTION DOES NOT RUN ITS BODY, it builds the generator and returns
+                        // it. In CPython the statement is a silent no-op and nothing can warn
+                        // you. Here it can, and refusing to emit nothing where the author
+                        // plainly expected effects is the whole point -- a silent no-op is the
+                        // failure, not the refusal.
+                        ? $"calling `{classPrefix}(...)` does not run its body: it is a "
+                          + "generator function, so this statement builds a generator, throws "
+                          + "it away, and does nothing at all. If you meant to run the body, "
+                          + $"drive it: `for v in {classPrefix}(...):`."
+                        : $"a generator can only be consumed by `for`: `{classPrefix}(...)` is "
+                          + "used here as a value. A PyMCU generator lowers to a state machine "
+                          + "that lives in a named variable, and there is nothing to hand to a "
+                          + "caller, store, or return. Write `for v in "
+                          + $"{classPrefix}(...):` and use `v` in the loop.", expr);
 
                 string bBase = string.IsNullOrEmpty(currentFunction) ? "main" : currentFunction;
                 target = bBase + ".__c" + (++ctorAnonId);
