@@ -4273,7 +4273,9 @@ public partial class IRGenerator
             else
             {
                 int nFixed = nTgt - 1;
-                if (nTup < nFixed) throw UserError("Not enough values to unpack");
+                // The right-hand side, which is the side that is short. The targets are the
+                // count the reader declared and the RHS is what failed to match it.
+                if (nTup < nFixed) throw UserError("Not enough values to unpack", stmt.Value);
                 int starIdx = stmt.StarredIndex;
                 int starCount = nTup - nFixed;
 
@@ -4351,13 +4353,19 @@ public partial class IRGenerator
                     + "when the right-hand side is a tuple literal, because '*' collects a "
                     + "variable number of values and there is no run-time list to collect them "
                     + $"into. Take the elements you need by index instead (`{plain} = <sequence>[0]`, "
-                    + "and so on).");
+                    + "and so on).",
+                    stmt.Value);
             }
 
+            // The RHS in both of the two above: each message says what the right-hand side has
+            // to be, so the caret marks the right-hand side that is not it. The target list is
+            // legal in every one of these and marking it would send the reader to rewrite the
+            // half that is correct.
             throw UserError(
                 "Tuple unpacking RHS must be a tuple literal or an inline function call returning "
                 + "a tuple; unpacking an array or another sequence by name is not supported. "
-                + "Assign each target from its index instead.");
+                + "Assign each target from its index instead.",
+                stmt.Value);
         }
     }
 
