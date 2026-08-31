@@ -362,8 +362,13 @@ public partial class IRGenerator
     private List<string> handlerCodeStack = new();
     private int exnCodeId = 0;
 
-    private HashSet<string> exceptionNames = new()
-        { "ValueError", "TypeError", "IndexError", "KeyError", "NotImplementedError", "ZeroDivisionError" };
+    // Derived, not copied. BuiltinExceptionNames' own docstring says a second copy of this
+    // list would eventually disagree with it, and this WAS that second copy: same six names,
+    // written out again, in a different form, in a file nobody reading that warning opens.
+    // Adding StopIteration for a generator's exhaustion would have gone into Codes alone and
+    // left the name unrecognised here. Derived removes the possibility rather than warning
+    // about it (#245).
+    private HashSet<string> exceptionNames = BuiltinExceptionNames.Codes.Keys.ToHashSet();
     private int nextUserExceptionCode = 32;
 
     // Module-level `raise CompileError(...)` guards that survived compile-time if/match
