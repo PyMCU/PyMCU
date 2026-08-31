@@ -511,7 +511,55 @@ def _parse_hex_flash_bytes(hex_file: Path) -> int:
     return total
 
 
-_AVR_PREAMBLE_BYTES = 104
+# Last resort only, for a caller holding no artifacts, and it is the ATmega328P's table and
+# nobody else's. An AVR vector-table slot is 4 bytes on the parts with JMP/CALL (avr5/avr6,
+# the ATmega328P among them) and 2 bytes on the parts without them (avr25, every ATtiny), and
+# the last slot is not padded because nothing follows it. So the ATmega's 26 slots occupy
+# 25*4 + 2 = 102 bytes and an ATtiny's occupy 25*2 + 2 = 52.
+#
+# This was 104, which is 26*4 and two bytes more than the image has: `__bad_interrupt` sits at
+# 0x66 in the linked ELF. And it was applied to both families, because the guard below tests
+# `startswith("at")`, so an attiny13 whose table is 52 and whose whole flash is 1024 was told
+# "8 bytes of your code" for a program with 60. Measured from the emitted assembly wherever
+# that exists, which is every real build.
+_AVR_PREAMBLE_BYTES = 102
+
+
+def _avr_vector_table_bytes(artifacts_dir) -> int | None:
+    """The size of the vector table the backend actually emitted, or None.
+
+    Read rather than assumed, so it stays right when the table changes: the count is
+    hardcoded at 26 slots today (pymcu-avr#16) and the slot width already varies by core.
+    The table is the run of `.org` directives before `__bad_interrupt`, and its size is the
+    last of those plus the two bytes of the RJMP that fills it, so neither the slot count nor
+    the slot width appears here.
+    """
+    if artifacts_dir is None:
+        return None
+    try:
+        text = (Path(artifacts_dir) / "firmware.gas.asm").read_text()
+    except OSError:
+        return None
+
+    orgs: list[int] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("__bad_interrupt"):
+            break
+        if s.startswith(".org"):
+            try:
+                orgs.append(int(s.split()[1], 0))
+            except (IndexError, ValueError):
+                return None
+    if not orgs:
+        return None
+    # The LAST slot holds only its RJMP. Every earlier one is padded out to the stride, but
+    # nothing follows the last, so the assembler puts `__bad_interrupt` immediately after the
+    # two bytes of that jump. `orgs[-1] + stride` is the table's arithmetic size and two bytes
+    # more than the image's on any part whose slots are wider than an RJMP. Verified against
+    # the linked ELF: `__bad_interrupt` is at 0x66 on the ATmega328P, so the table is 102 and
+    # not 104, and at 0x34 on the ATtiny13, where the two agree because the slot IS an RJMP.
+    return orgs[-1] + 2
 
 
 def _check_flash_capacity(flash_bytes: int, flash_total: int, target: str) -> None:
@@ -532,7 +580,8 @@ def _check_flash_capacity(flash_bytes: int, flash_total: int, target: str) -> No
         raise typer.Exit(code=1)
 
 
-def _flash_report_lines(flash_bytes: int, flash_total: int, target: str) -> list[str]:
+def _flash_report_lines(flash_bytes: int, flash_total: int, target: str,
+                        artifacts_dir=None) -> list[str]:
     """Render the size report: the whole image, and how much of it is user code."""
     if flash_total:
         pct = flash_bytes * 100 // flash_total
@@ -542,12 +591,15 @@ def _flash_report_lines(flash_bytes: int, flash_total: int, target: str) -> list
         head = f"[dim]Flash:[/dim] {flash_bytes} bytes"
 
     lines = [head]
-    if target.lower().startswith("at") and flash_bytes > _AVR_PREAMBLE_BYTES:
-        code = flash_bytes - _AVR_PREAMBLE_BYTES
-        lines.append(
-            f"[dim]       {code} bytes of your code + "
-            f"{_AVR_PREAMBLE_BYTES} bytes of interrupt vector table[/dim]"
-        )
+    if target.lower().startswith("at"):
+        table = _avr_vector_table_bytes(artifacts_dir)
+        if table is None:
+            table = _AVR_PREAMBLE_BYTES
+        if flash_bytes > table:
+            lines.append(
+                f"[dim]       {flash_bytes - table} bytes of your code + "
+                f"{table} bytes of interrupt vector table[/dim]"
+            )
     return lines
 
 def _print_explain(output_dir) -> None:
@@ -1344,7 +1396,8 @@ def build(
 
                     flash_total = FLASH_SIZES.get(target.lower(), 0)
                     flash_bytes = bin_file.stat().st_size
-                    for line in _flash_report_lines(flash_bytes, flash_total, target):
+                    for line in _flash_report_lines(flash_bytes, flash_total, target,
+                                                    output_dir):
                         console.print(line)
                     _check_flash_capacity(flash_bytes, flash_total, target)
 
@@ -1375,7 +1428,8 @@ def build(
                 flash_bytes = _parse_hex_flash_bytes(hex_file)
                 if flash_bytes > 0:
                     flash_total = FLASH_SIZES.get(target.lower(), 0)
-                    for line in _flash_report_lines(flash_bytes, flash_total, target):
+                    for line in _flash_report_lines(flash_bytes, flash_total, target,
+                                                    output_dir):
                         console.print(line)
                     _check_flash_capacity(flash_bytes, flash_total, target)
 
