@@ -78,6 +78,7 @@ from pymcu.hal.cyw43_regs import (
 )
 from pymcu.types import ptr, uint32, uint8, inline
 from pymcu.exceptions import CompileError
+from pymcu.time import delay_ms
 
 
 class CYW43:
@@ -88,6 +89,8 @@ class CYW43:
         while (RESETS_RESET_DONE.value & ((1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0))) != ((1 << RESET_IO_BANK0) | (1 << RESET_PADS_BANK0)):
             pass
         self._word32 = 0
+        # SDPCM transmit sequence, one 8-bit counter for every F2 packet. See _f2_send.
+        self._seq = 0
         self._cfg_out(WL_REG_ON)
         self._cfg_out(WL_CS)
         self._cfg_out(WL_CLK)
@@ -343,6 +346,160 @@ class CYW43:
         self.read32(GSPI_F0_BUS, SPI_STATUS_REGISTER)
         return total
 
+    # ── ioctl / iovar helpers ────────────────────────────────────────────────
+    #
+    # All four take the CALLER's buffer. Each of them owning a `[0] * 64` scratch would
+    # cost 64 stores per @inline expansion, and the WPA2 join expands them ten times:
+    # ~450 stores nobody reads (#247). One buffer declared once in the join costs 128.
+    #
+    # The payload goes at offset 28: 12 bytes of SDPCM header, then 16 of CDC ioctl.
+
+    # EVERY HEADER FIELD THIS LEAVES ZERO, and why. The emulator checks none of them, so this
+    # list is what predicts the board test rather than a comment for tidiness.
+    #
+    #   SDPCM, bytes 0..11
+    #     5   channel_and_flags   0 = Control, which is what an ioctl rides on.       correct
+    #     6   next_length         the reference sends 0.                              correct
+    #     8   wireless_flow_control  0 on transmit; the chip fills it going back.     correct
+    #     9   bus_data_credit     the chip's field, 0 from the host.                  correct
+    #     10  reserved            0.                                                  correct
+    #     11  reserved            0.                                                  correct
+    #     4   sequence            now written, see _f2_send.
+    #
+    #   CDC, bytes 12..27
+    #     14,15  high half of cmd     0, and every command used here is under 65536.  correct
+    #     18,19  high half of out_len 0, and the longest payload here is 68.          correct
+    #     21..23 the rest of flags    THE REQUEST ID LIVES HERE AND IS ALWAYS ZERO.
+    #     24..27 status               the chip's field on the way back.               correct
+    #
+    # The request id is the one real divergence. The reference increments an id into the flags
+    # word and DISCARDS any response whose id does not match. Sending zero every time is
+    # harmless only because nothing here reads an ioctl response back: the driver issues the
+    # ioctl and polls F0 status. The day anything does read one, this has to start counting or
+    # every response will look like a reply to a request nobody made.
+
+    @inline
+    def _ioctl_send(self, buf: bytearray, cmd: uint32, paylen: uint32) -> uint32:
+        # Frame an SDPCM control packet whose payload is already at offset 28, and clock
+        # it out. cmd is two bytes because WLC_SET_WSEC_PMK is 268 and WLC_SET_VAR is 263:
+        # join_open writes only buf[12] because WLC_SET_SSID is 26 and fits in one.
+        total: uint32 = 28 + paylen
+        buf[0] = total & 0xFF
+        buf[1] = (total >> 8) & 0xFF
+        buf[2] = (total ^ 0xFFFF) & 0xFF          # ~size
+        buf[3] = ((total ^ 0xFFFF) >> 8) & 0xFF
+        buf[7] = 12                               # header_len; channel(buf[5])=0 Control
+        buf[12] = cmd & 0xFF
+        buf[13] = (cmd >> 8) & 0xFF
+        buf[16] = paylen & 0xFF
+        buf[17] = (paylen >> 8) & 0xFF
+        buf[20] = 2                               # flags: SDPCM_SET
+        self._f2_send(buf, total)
+        return total
+
+    @inline
+    def _set_ioctl_u32(self, buf: bytearray, cmd: uint32, val: uint32) -> uint32:
+        # A plain ioctl whose whole payload is one little-endian u32.
+        buf[28] = val & 0xFF
+        buf[29] = (val >> 8) & 0xFF
+        buf[30] = (val >> 16) & 0xFF
+        buf[31] = (val >> 24) & 0xFF
+        return self._ioctl_send(buf, cmd, 4)
+
+    @inline
+    def _write_iovar_u32(self, buf: bytearray, name: const[str], val: uint32) -> uint32:
+        # An iovar SET: WLC_SET_VAR carrying "name\0" followed by the value.
+        n: uint32 = len(name)
+        i: uint32 = 0
+        while i < n:
+            buf[28 + i] = name[i]
+            i = i + 1
+        buf[28 + n] = 0
+        buf[29 + n] = val & 0xFF
+        buf[30 + n] = (val >> 8) & 0xFF
+        buf[31 + n] = (val >> 16) & 0xFF
+        buf[32 + n] = (val >> 24) & 0xFF
+        return self._ioctl_send(buf, 263, n + 5)
+
+    @inline
+    def _write_iovar_u32_u32(self, buf: bytearray, name: const[str],
+                             a: uint32, b: uint32) -> uint32:
+        # The "bsscfg:" form: the interface index first, then the value. Both u32 LE.
+        n: uint32 = len(name)
+        i: uint32 = 0
+        while i < n:
+            buf[28 + i] = name[i]
+            i = i + 1
+        buf[28 + n] = 0
+        buf[29 + n] = a & 0xFF
+        buf[30 + n] = (a >> 8) & 0xFF
+        buf[31 + n] = (a >> 16) & 0xFF
+        buf[32 + n] = (a >> 24) & 0xFF
+        buf[33 + n] = b & 0xFF
+        buf[34 + n] = (b >> 8) & 0xFF
+        buf[35 + n] = (b >> 16) & 0xFF
+        buf[36 + n] = (b >> 24) & 0xFF
+        return self._ioctl_send(buf, 263, n + 9)
+
+    @inline
+    def join_wpa2(self, ssid: const[str], key: const[str]) -> uint32:
+        # Associate with a WPA2-PSK AP. The four-way handshake is NOT done here: the
+        # CYW43439's own firmware runs the supplicant, so the host's whole job is to hand
+        # it the passphrase and the auth parameters and then send the same WLC_SET_SSID
+        # that join_open sends. Ten sends, in this order, from cyw43_ll_wifi_join for
+        # CYW43_AUTH_WPA2_AES_PSK with no BSSID and no channel.
+        #
+        # ONE buffer for all ten. See the helpers above for why.
+        buf: uint8[128] = [0] * 128
+
+        # wsec = auth_type & 0xFF, and CYW43_AUTH_WPA2_AES_PSK is 0x00400004, so 4 = AES.
+        self._set_ioctl_u32(buf, 134, 4)                        # WLC_SET_WSEC
+        # Hand the association over to the chip's own supplicant, and give it the two
+        # knobs the reference sets: EAPOL version -1 means "whatever the AP speaks".
+        self._write_iovar_u32_u32(buf, "bsscfg:sup_wpa", 0, 1)
+        self._write_iovar_u32_u32(buf, "bsscfg:sup_wpa2_eapver", 0, 0xFFFFFFFF)
+        self._write_iovar_u32_u32(buf, "bsscfg:sup_wpa_tmo", 0, 5000)
+
+        # The passphrase, as a wsec_pmk_t: le16(len) le16(1) then the key, and the struct
+        # is a FIXED 4 + 64 bytes. The tail past the key has to be zero -- the buffer is
+        # reused across all ten sends, so it is cleared here rather than assumed.
+        k: uint32 = len(key)
+        buf[28] = k & 0xFF
+        buf[29] = (k >> 8) & 0xFF
+        buf[30] = 1
+        buf[31] = 0
+        i: uint32 = 0
+        while i < k:
+            buf[32 + i] = key[i]
+            i = i + 1
+        while i < 64:
+            buf[32 + i] = 0
+            i = i + 1
+        # The ONE place this driver depends on wall-clock time instead of edge order: the radio
+        # firmware needs settling time before it will accept the PMK, and the reference calls
+        # the delay required to avoid intermittent failure. An emulator that checks the
+        # SEQUENCE of edges and never their separation cannot see this missing, so leaving it
+        # out is green here and flaky on silicon, which is the worst pair for a demonstration.
+        delay_ms(2)
+        self._ioctl_send(buf, 268, 68)                          # WLC_SET_WSEC_PMK
+
+        self._set_ioctl_u32(buf, 20, 1)                         # WLC_SET_INFRA
+        self._set_ioctl_u32(buf, 22, 0)                         # WLC_SET_AUTH, AUTH_TYPE_OPEN
+        self._write_iovar_u32(buf, "mfp", 1)                    # MFP_CAPABLE
+        self._set_ioctl_u32(buf, 165, 0x0080)                   # WLC_SET_WPA_AUTH, WPA2 PSK
+
+        # And the join itself: le32(ssid_len) + ssid, the same frame join_open sends.
+        n: uint32 = len(ssid)
+        buf[28] = n & 0xFF
+        buf[29] = (n >> 8) & 0xFF
+        buf[30] = 0
+        buf[31] = 0
+        j: uint32 = 0
+        while j < n:
+            buf[32 + j] = ssid[j]
+            j = j + 1
+        return self._ioctl_send(buf, 26, 4 + n)                 # WLC_SET_SSID
+
     @inline
     def f2_available(self) -> uint32:
         # Length of the next queued inbound SDPCM packet (0 = none), from F0 status.
@@ -390,6 +547,13 @@ class CYW43:
     def _f2_send(self, buf: bytearray, n: uint32):
         # Clock a pre-built SDPCM packet of n bytes over F2 (LE), then a status read to
         # flush it. Bits unrolled (BUG-1). Used for both ioctls and Ethernet data frames.
+        # SDPCM sequence number, byte 4 of the header. NOT decoration: it is one half of the
+        # chip's bus credit flow control. The chip grants credit by advancing bus_data_credit
+        # in the headers it sends back, and the host is out of credit when the two are equal.
+        # Every frame here used to claim packet zero. The emulator models no credits at all, so
+        # whether the chip tolerates that or stalls the bus is a question only silicon answers.
+        buf[4] = self._seq & 0xFF
+        self._seq = (self._seq + 1) & 0xFF
         cmd: uint32 = self._cmd_word(1, 2, 0, n)
         self._cs_low()
         self._clk_out_byte(cmd & 0xFF)
