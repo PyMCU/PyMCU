@@ -20,9 +20,25 @@
 # sampled) accept. This module implements the bus bring-up:
 # power the chip, probe the 0xFEEDBEAD test register (chip-alive), switch the bus
 # to 32-bit little-endian, open the F1 backplane window, request the ALP/HT clock,
-# and take the WLAN core out of reset. Firmware download is intentionally a stub
-# (the emulator parks it; there is no RF) -- a real device needs the 43439 blob,
-# which awaits an initialized-.rodata path on the ARM backend.
+# and take the WLAN core out of reset.
+#
+# FIRMWARE DOWNLOAD IS A STUB, AND IT IS THE ONE THING BETWEEN THIS AND SILICON.
+# The CYW43439 has no on-chip flash: the host must upload its WiFi firmware over the
+# bus at every power-on, before the WLAN core will answer anything. init() releases
+# that core from reset with nothing loaded into it. The emulator does not care,
+# because its Sdpcm model answers ioctls itself and no core is running firmware
+# there -- which also means NO TEST HERE WOULD CATCH THE OMISSION. On a real part
+# the ten ioctls of a join go out on the bus and nothing replies.
+#
+# This used to say the blob "awaits an initialized-.rodata path on the ARM backend".
+# That is no longer true and was measured on 2026-09-01: a const[uint8[235520]]
+# table, the size of the real blob, compiles for rp2040 in under a second and the
+# bytes are all present in firmware.bin (920 complete 0..255 runs at offset 736).
+# Putting the blob in flash is available today. What is missing is the download
+# itself: write it into the WLAN core's RAM through the F1 backplane window in
+# chunks, load the CLM through the `clmload` iovar, and only then release reset.
+# Note before vendoring anything: the 43439 blob is Infineon/Broadcom licensed and
+# this project is MIT.
 #
 # This is WiFi bring-up only. SDPCM/CDC join, a TCP/IP stack and MQTT sit above it
 # and are staged follow-ups (see docs).
@@ -277,8 +293,13 @@ class CYW43:
                      SBSDIO_ALP_AVAIL_REQ | SBSDIO_HT_AVAIL_REQ | SBSDIO_FORCE_HT)
 
         # 4. Take the WLAN ARM core out of reset (clear AI_RESETCTRL bit0). This is the
-        #    one functional gate the emulator needs to flip F2 ready. Firmware download
-        #    is stubbed (no blob).
+        #    one functional gate the emulator needs to flip F2 ready.
+        #
+        #    NOTHING HAS BEEN LOADED INTO THAT CORE. On silicon a CYW43439 released from
+        #    reset with no firmware answers nothing, so every ioctl below it goes out on
+        #    the bus unanswered. The emulator reaches F2-ready anyway because its Sdpcm
+        #    model replies in place of a core, so this line looks correct in every test
+        #    we have. See the firmware-download note at the top of the file.
         self.write32(GSPI_F1_BACKPLANE, SDIO_BACKPLANE_ADDR_LOW,
                      (BP_WLAN_ARMCORE >> 8) & 0xFF)
         self.write32(GSPI_F1_BACKPLANE, SDIO_BACKPLANE_ADDR_MID,
