@@ -732,13 +732,13 @@ class CYW43:
     @inline
     def connect(self, ssid: const[str], key: const[str] = ""):
         # Convenience: bring up the radio, join the AP, and settle (drain post-join RX).
-        # `key` exists only so the signature matches MicroPython's WLAN.connect();
-        # the join path is join_open(), which sends no WPA/PSK material at all, so a
-        # key would be silently dropped. Reject it at compile time instead.
-        if key != "":
-            raise CompileError("WiFi: WPA is not supported yet; connect() can only join open networks -- leave key empty")
+        # An empty key joins an open network; a key joins WPA2-PSK. Both are const[str],
+        # so this branch is decided at compile time and only one join is emitted.
         self.init()
-        self.join_open(ssid)
+        if key == "":
+            self.join_open(ssid)
+        else:
+            self.join_wpa2(ssid, key)
         self.settle()
 
     @inline
