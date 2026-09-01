@@ -292,93 +292,6 @@ class CYW43:
 
     # ── F2 / SDPCM WLAN control plane ──
     @inline
-    def join_open(self, ssid: const[str]) -> uint32:
-        # Associate with an OPEN AP: send a WLC_SET_SSID ioctl on the SDPCM Control
-        # channel. The chip answers with the async EV_SET_SSID -> EV_AUTH -> EV_LINK(up)
-        # chain (open-network join). Frame = 12B SDPCM + 16B CDC ioctl + le32(len)+ssid.
-        # The buffer + the F2 write are kept in ONE method: passing a local array across
-        # a nested @inline call, and reading self._word32 there, are both unreliable under
-        # the ZCA collapse. F2 is always post-bring-up (32-bit LE), so emit LE directly.
-        n: uint32 = len(ssid)
-        total: uint32 = 32 + n
-        buf: uint8[64] = [0] * 64
-        # SDPCM header (12B)
-        buf[0] = total & 0xFF
-        buf[1] = (total >> 8) & 0xFF
-        buf[2] = (total ^ 0xFFFF) & 0xFF          # ~size
-        buf[3] = ((total ^ 0xFFFF) >> 8) & 0xFF
-        buf[7] = 12                               # header_len; channel(buf[5])=0 Control
-        # CDC ioctl header (16B) at offset 12
-        buf[12] = 26                              # WLC_SET_SSID (u32 LE)
-        buf[16] = (4 + n) & 0xFF                  # out_len
-        buf[20] = 2                               # flags: SDPCM_SET
-        # payload at offset 28: le32(ssid_len) + ssid
-        buf[28] = n & 0xFF
-        i: uint32 = 0
-        while i < n:
-            buf[32 + i] = ssid[i]
-            i = i + 1
-        # Clock the F2 write: command (LE) then the whole packet.
-        cmd: uint32 = self._cmd_word(1, 2, 0, total)
-        self._cs_low()
-        self._clk_out_byte(cmd & 0xFF)
-        self._clk_out_byte((cmd >> 8) & 0xFF)
-        self._clk_out_byte((cmd >> 16) & 0xFF)
-        self._clk_out_byte((cmd >> 24) & 0xFF)
-        j: uint32 = 0
-        while j < total:
-            b: uint32 = buf[j]
-            # Unrolled 8-bit MSB-first clock-out (no inner loop, so the outer while does
-            # not nest a second while through the @inline expansion of _clk_out_byte).
-            self._clk_out_bit((b >> 7) & 1)
-            self._clk_out_bit((b >> 6) & 1)
-            self._clk_out_bit((b >> 5) & 1)
-            self._clk_out_bit((b >> 4) & 1)
-            self._clk_out_bit((b >> 3) & 1)
-            self._clk_out_bit((b >> 2) & 1)
-            self._clk_out_bit((b >> 1) & 1)
-            self._clk_out_bit(b & 1)
-            j = j + 1
-        self._cs_high()
-        # Read the F0 status: its CS-low starts a fresh transaction that FLUSHES the ioctl
-        # write into the chip (the emulator applies a queued write on the next StartTransaction),
-        # and it is the protocol-correct poll after issuing an ioctl.
-        self.read32(GSPI_F0_BUS, SPI_STATUS_REGISTER)
-        return total
-
-    # ── ioctl / iovar helpers ────────────────────────────────────────────────
-    #
-    # All four take the CALLER's buffer. Each of them owning a `[0] * 64` scratch would
-    # cost 64 stores per @inline expansion, and the WPA2 join expands them ten times:
-    # ~450 stores nobody reads (#247). One buffer declared once in the join costs 128.
-    #
-    # The payload goes at offset 28: 12 bytes of SDPCM header, then 16 of CDC ioctl.
-
-    # EVERY HEADER FIELD THIS LEAVES ZERO, and why. The emulator checks none of them, so this
-    # list is what predicts the board test rather than a comment for tidiness.
-    #
-    #   SDPCM, bytes 0..11
-    #     5   channel_and_flags   0 = Control, which is what an ioctl rides on.       correct
-    #     6   next_length         the reference sends 0.                              correct
-    #     8   wireless_flow_control  0 on transmit; the chip fills it going back.     correct
-    #     9   bus_data_credit     the chip's field, 0 from the host.                  correct
-    #     10  reserved            0.                                                  correct
-    #     11  reserved            0.                                                  correct
-    #     4   sequence            now written, see _f2_send.
-    #
-    #   CDC, bytes 12..27
-    #     14,15  high half of cmd     0, and every command used here is under 65536.  correct
-    #     18,19  high half of out_len 0, and the longest payload here is 68.          correct
-    #     21..23 the rest of flags    THE REQUEST ID LIVES HERE AND IS ALWAYS ZERO.
-    #     24..27 status               the chip's field on the way back.               correct
-    #
-    # The request id is the one real divergence. The reference increments an id into the flags
-    # word and DISCARDS any response whose id does not match. Sending zero every time is
-    # harmless only because nothing here reads an ioctl response back: the driver issues the
-    # ioctl and polls F0 status. The day anything does read one, this has to start counting or
-    # every response will look like a reply to a request nobody made.
-
-    @inline
     def _ioctl_send(self, buf: bytearray, cmd: uint32, paylen: uint32) -> uint32:
         # Frame an SDPCM control packet whose payload is already at offset 28, and clock
         # it out. cmd is two bytes because WLC_SET_WSEC_PMK is 268 and WLC_SET_VAR is 263:
@@ -440,6 +353,29 @@ class CYW43:
         buf[35 + n] = (b >> 16) & 0xFF
         buf[36 + n] = (b >> 24) & 0xFF
         return self._ioctl_send(buf, 263, n + 9)
+
+    @inline
+    def join_open(self, ssid: const[str]) -> uint32:
+        # Associate with an OPEN AP: a WLC_SET_SSID ioctl on the SDPCM Control channel whose
+        # payload is le32(ssid_len) + ssid. The chip answers with the async
+        # EV_SET_SSID -> EV_AUTH -> EV_LINK(up) chain.
+        #
+        # This built the frame and clocked it out in one method, because passing a local array
+        # through a nested @inline was unreliable and so was reading self._word32 there. #246
+        # fixed exactly that, and _ioctl_send carrying a buffer through two levels is the
+        # demonstration. Folding it in was NOT tidiness: the hand-built frame never wrote the
+        # SDPCM sequence number, so an open join left every frame claiming packet zero and
+        # never advanced the counter for anything that ran after it. An open join is the
+        # fallback if WPA2 misbehaves on the bench, which made it the one send path still
+        # unfixed and the worst one to leave that way.
+        n: uint32 = len(ssid)
+        buf: uint8[64] = [0] * 64
+        buf[28] = n & 0xFF
+        i: uint32 = 0
+        while i < n:
+            buf[32 + i] = ssid[i]
+            i = i + 1
+        return self._ioctl_send(buf, 26, 4 + n)                 # WLC_SET_SSID
 
     @inline
     def join_wpa2(self, ssid: const[str], key: const[str]) -> uint32:
@@ -550,8 +486,11 @@ class CYW43:
         # SDPCM sequence number, byte 4 of the header. NOT decoration: it is one half of the
         # chip's bus credit flow control. The chip grants credit by advancing bus_data_credit
         # in the headers it sends back, and the host is out of credit when the two are equal.
-        # Every frame here used to claim packet zero. The emulator models no credits at all, so
-        # whether the chip tolerates that or stalls the bus is a question only silicon answers.
+        # Every frame here used to claim packet zero. The emulator DOES read this byte -- it
+        # grants credit as last_host_seq + window -- but it grants relative to whatever the host
+        # last sent, so a host frozen at zero never runs out and the defect went unseen until a
+        # test read for it. Visible and forgiven, the same shape as the config ioctls. Whether
+        # real silicon tolerates it or stalls the bus is still a question only silicon answers.
         buf[4] = self._seq & 0xFF
         self._seq = (self._seq + 1) & 0xFF
         cmd: uint32 = self._cmd_word(1, 2, 0, n)
