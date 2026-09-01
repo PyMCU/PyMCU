@@ -535,10 +535,20 @@ def mir_addresses(mir: Path):
 
 
 def foreign_registers(mir: Path, chip: str):
-    """Addresses the image touches that `chip` does not declare. Empty is the right answer."""
+    """Addresses the image touches that `chip` does not declare.
+
+    Returns None when the chip file uses computed bases and there is nothing to compare
+    against, and a list otherwise. Empty list is the right answer; None is NOT an answer.
+
+    Those two used to be the same value. `declared is None` returned [], so a part this
+    check cannot examine was indistinguishable from a part it examined and found clean --
+    in the one field of this whole tool that has an oracle outside itself. Measured when
+    that was found: 4 of 30 chips (ch32v003, ch32v203, rp2040, rp2350) cannot be checked,
+    covering 28 cells, 16 of which build. Every one of them was reading as clean.
+    """
     declared = declared_registers(chip)
     if declared is None:
-        return []
+        return None
     return sorted(a for a in mir_addresses(mir) if a not in declared)
 
 
@@ -572,8 +582,16 @@ def build(work: Path, chip: str, arch: str, source: str):
     if mir.exists():
         entry["mir"] = hashlib.sha256(mir.read_bytes()).hexdigest()[:16]
         foreign = foreign_registers(mir, chip)
-        if foreign:
-            entry["foreign"] = [hex(a) for a in foreign]
+        # Recorded even when the answer is "nothing wrong", and recorded distinctly when the
+        # answer is "could not look". A baseline that stores only the failures cannot say
+        # afterwards whether a clean cell was checked, so absence and cleanliness are the same
+        # bytes -- which is the disease this whole file is an instance of.
+        if foreign is None:
+            entry["foreign_checked"] = False
+        else:
+            entry["foreign_checked"] = True
+            if foreign:
+                entry["foreign"] = [hex(a) for a in foreign]
     for name in ("debug/firmware.asm", "firmware.asm"):
         asm = work / "dist" / name
         if asm.exists():
@@ -740,6 +758,43 @@ def annotate(path):
     return 0
 
 
+def report_backing(cells):
+    """What, in this run, could have failed if the compiler were wrong.
+
+    Printed on EVERY run, including the ones with nothing to report. A note that appears
+    only when something else is already wrong is invisible on exactly the runs where the
+    reader is being reassured, and being reassured is what this note is about.
+
+    The tool compares cells against cells it wrote earlier, so almost every field it prints
+    is itself measured against a previous run of itself. `foreign` is the one exception: it
+    re-derives the expected set from the chip file. This says how far that reaches, in
+    numbers, so "sin cambios" cannot be read as "correcto".
+
+    It deliberately does not soften the count. 129 of 145 is not "mostly covered", it is the
+    size of the only claim this tool can make on its own.
+    """
+    built = {k: c for k, c in cells.items() if c.get("status") == "ok"}
+    backed = {k for k, c in built.items() if c.get("foreign_checked") is True}
+    blind = {k for k, c in built.items() if c.get("foreign_checked") is False}
+    unknown = set(built) - backed - blind          # captured before the field existed
+    chips_blind = sorted({k.split("|", 1)[1] for k in blind})
+
+    print(f"\nlo que respalda estas cifras: {len(cells)} celdas, {len(built)} compilan.")
+    if unknown:
+        print(f"  {len(unknown)} se capturaron antes de que se registrara que se comprobo;")
+        print("  de esas no se puede decir si el oraculo corrio. Recaptura para saberlo.")
+    print(f"  {len(backed)} las respalda `foreign`, el unico oraculo que NO sale de este tool:")
+    print("    compara cada direccion del IR con lo que el fichero del chip declara.")
+    if blind:
+        print(f"  {len(blind)} NO las respalda nada: {', '.join(chips_blind)} usan bases")
+        print("    calculadas, asi que no hay lista de direcciones contra la que comparar.")
+    print("  el resto de cada celda (rom, asm, mir, adc) se compara con una corrida ANTERIOR")
+    print("  DE ESTE MISMO TOOL. Que coincida dice que el compilador no se movio; no dice que")
+    print("  este bien. Un baseline capturado con un compilador roto sale verde para siempre.")
+    print("  Y `foreign` ve la direccion, no lo que se escribe en ella: el mismo registro con")
+    print("  otro significado en otra pieza le pasa por delante (ver #242).")
+
+
 def report_provenance(prov):
     """Print the toolchain this run is about to measure, warts included."""
     print(f"toolchain @ {prov['head']}:")
@@ -899,15 +954,29 @@ def main():
                   "producir un binario no es producir el binario de este chip:")
             for key, cell in sorted(alien.items()):
                 print(f"    {key:24s} {', '.join(cell['foreign'][:8])}")
+        report_backing(current)
         return 0
 
     stored = json.loads(path.read_text())
     before = stored.get("cells", stored)
 
-    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first", "accepted", "asm_text")
+    # `foreign_checked` is commentary and not a measured value: it says whether the oracle
+    # could run, which the summary reports as a count. Comparing it per cell would turn a
+    # coverage change into 28 cell diffs and bury the one line that explains them.
+    COMMENTARY = ("reason", "kind", "proves", "tried", "warn_first", "accepted", "asm_text",
+                  "foreign_checked")
 
     def measured(cell):
-        return {k: v for k, v in cell.items() if k not in COMMENTARY} if cell else cell
+        if not cell:
+            return cell
+        out = {k: v for k, v in cell.items() if k not in COMMENTARY}
+        # An empty `foreign` and no `foreign` at all mean the same thing, and baselines
+        # captured before this field existed have the latter. Without this every cell in an
+        # older baseline reports as changed the first time it is checked, which is a false
+        # alarm dressed as 210 findings.
+        if not out.get("foreign"):
+            out.pop("foreign", None)
+        return out
     was = stored.get("provenance")
     drifted = provenance_drift(was, prov) if was else []
     if any(kind == "distinto" for kind, _ in drifted):
@@ -926,6 +995,8 @@ def main():
         for key, cell in sorted(alien.items()):
             print(f"  {key:24s} {', '.join(cell['foreign'][:8])}")
         print("  un binario para otro chip tambien pesa bytes; esto no es un diff, es un bug.")
+
+    report_backing(current)
 
     diffs = []
     for key in sorted(set(before) | set(current)):
