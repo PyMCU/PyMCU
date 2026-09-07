@@ -1,9 +1,9 @@
-from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
 from pymcu.chips.atmega328p import ADMUX, ADCSRA, ADCL, ADCH, SREG
 
 
 @inline
-def adc_channel_admux(channel: str) -> uint8:
+def adc_channel_admux(channel: const) -> uint8:
     # Returns the ADMUX register value for the given AVR pin name.
     # External channels: bits 7:6 = REFS1:0 = 01 (AVcc reference);
     #                    bits 3:0 = MUX3:0 = channel number.

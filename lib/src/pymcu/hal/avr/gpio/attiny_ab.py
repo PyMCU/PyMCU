@@ -24,7 +24,7 @@ from pymcu.types import uint8, uint16, inline, ptr, const
 from pymcu.exceptions import CompileError
 
 @inline
-def select_port(name: str) -> ptr[uint8]:
+def select_port(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7':
             return PORTA
@@ -34,7 +34,7 @@ def select_port(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_ddr(name: str) -> ptr[uint8]:
+def select_ddr(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7':
             return DDRA
@@ -44,7 +44,7 @@ def select_ddr(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_pin(name: str) -> ptr[uint8]:
+def select_pin(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7':
             return PINA
@@ -54,7 +54,7 @@ def select_pin(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_bit(name: str) -> uint8:
+def select_bit(name: const) -> uint8:
     match name:
         case 'PA0' | 'PB0':
             return 0

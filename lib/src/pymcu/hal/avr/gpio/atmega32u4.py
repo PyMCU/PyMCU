@@ -27,7 +27,7 @@ from pymcu.types import uint8, uint16, inline, ptr, compile_isr, const
 from pymcu.exceptions import CompileError
 
 @inline
-def select_port(name: str) -> ptr[uint8]:
+def select_port(name: const) -> ptr[uint8]:
     match name:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return PORTB
@@ -43,7 +43,7 @@ def select_port(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_ddr(name: str) -> ptr[uint8]:
+def select_ddr(name: const) -> ptr[uint8]:
     match name:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return DDRB
@@ -59,7 +59,7 @@ def select_ddr(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_pin(name: str) -> ptr[uint8]:
+def select_pin(name: const) -> ptr[uint8]:
     match name:
         case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 'PB6' | 'PB7':
             return PINB
@@ -75,7 +75,7 @@ def select_pin(name: str) -> ptr[uint8]:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def select_bit(name: str) -> uint8:
+def select_bit(name: const) -> uint8:
     match name:
         case 'PB0' | 'PC0' | 'PD0' | 'PE0' | 'PF0':
             return 0
@@ -97,7 +97,7 @@ def select_bit(name: str) -> uint8:
             raise NotImplementedError('Unsupported Pin')
 
 @inline
-def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
+def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
     # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
     # INT0-INT3 on PD0-PD3 (EICRA)

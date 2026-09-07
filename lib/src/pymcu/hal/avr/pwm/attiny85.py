@@ -1,6 +1,6 @@
 from pymcu.chips.attiny85 import DDRB, PORTB, OCR0A, OCR0B, TCCR0A, TCCR0B, TCCR1
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr
+from pymcu.types import uint8, uint16, inline, ptr, const
 
 # ATtiny85/45/25 PWM HAL
 #
@@ -23,7 +23,7 @@ from pymcu.types import uint8, uint16, inline, ptr
 #   OCR1B shares register with OCR0A (data 0x49); use OCR0A or OCR1B (same)
 
 @inline
-def pwm_select_ocr(pin: str) -> ptr[uint8]:
+def pwm_select_ocr(pin: const) -> ptr[uint8]:
     match pin:
         case "PB0":
             return OCR0A
@@ -41,14 +41,14 @@ def pwm_select_ocr(pin: str) -> ptr[uint8]:
 # and nothing to clear. Defined so the shared PWM class can call it unconditionally;
 # it folds to nothing.
 @inline
-def pwm_clear_ocr_high(pin: str):
+def pwm_clear_ocr_high(pin: const):
     match pin:
         case _:
             pass
 
 
 @inline
-def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
+def pwm_select_tccr_b(pin: const) -> ptr[uint8]:
     match pin:
         case "PB0" | "PB1":
             return TCCR0B
@@ -58,7 +58,7 @@ def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
             raise CompileError("PWM: unsupported pin -- use PB0, PB1 (Timer0) or PB4 (Timer1)")
 
 @inline
-def pwm_select_start_val(pin: str) -> uint8:
+def pwm_select_start_val(pin: const) -> uint8:
     match pin:
         case "PB0" | "PB1":
             return 0x03   # Timer0 prescaler 64
@@ -89,7 +89,7 @@ def pwm_select_start_val(pin: str) -> uint8:
 #     /512 ->     61 Hz   0x6A
 #     /1024->     30 Hz   0x6B
 @inline
-def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
+def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
     match pin:
         case "PB0" | "PB1":
             # Timer0: CS[2:0] in TCCR0B
@@ -132,7 +132,7 @@ def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
 
 
 @inline
-def pwm_init(pin: str, duty: uint8, prescaler: uint8):
+def pwm_init(pin: const, duty: uint8, prescaler: uint8):
     match pin:
         case "PB0":
             # Timer0 OC0A: Fast PWM non-inverting
@@ -169,7 +169,7 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
 # COM1B1:0 in TCCR1 bits 5:4, the same register as its prescaler, so start() after
 # a stop() reconnects OC1B -- call set_duty() again to leave it off.
 @inline
-def pwm_disconnect(pin: str):
+def pwm_disconnect(pin: const):
     match pin:
         case "PB0":
             TCCR0A.value = TCCR0A.value & 0x3F
@@ -185,7 +185,7 @@ def pwm_disconnect(pin: str):
 
 
 @inline
-def pwm_connect(pin: str):
+def pwm_connect(pin: const):
     match pin:
         case "PB0":
             TCCR0A.value = TCCR0A.value | 0x80

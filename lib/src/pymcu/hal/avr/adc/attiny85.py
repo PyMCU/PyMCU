@@ -1,5 +1,5 @@
 from pymcu.chips.attiny85 import ADMUX, ADCSRA, ADCL, ADCH, SREG
-from pymcu.types import uint8, uint16, inline, compile_isr, Callable
+from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
 
 # ATtiny85/45/25 ADC HAL
 #
@@ -20,7 +20,7 @@ from pymcu.types import uint8, uint16, inline, compile_isr, Callable
 # ADC Complete vector: word 0x0008, byte 0x0010
 
 @inline
-def adc_channel_admux(channel: str) -> uint8:
+def adc_channel_admux(channel: const) -> uint8:
     match channel:
         case "PB2":
             return 0x01   # ADC1, VCC ref

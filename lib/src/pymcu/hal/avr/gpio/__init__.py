@@ -71,7 +71,23 @@ class Pin:
     # raises on it.
     IRQ_HIGH_LEVEL = 8
 
-    def __init__(self, name: str, mode: const[uint8], pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
+    # `name` is `const`, not `str`, and deliberately not `const[str]` either.
+    #
+    # It used to be a bare `str`. Every pin name in this HAL is dispatched through a
+    # `match`, which only answers correctly if the value is known at compile time, but
+    # nothing asked for that. So when a name lost its constant-ness on the way in -- which
+    # PyMCU#253 shows one extra @inline hop through a ZCA field is enough to do -- the
+    # `match` did not refuse it. It picked an arm and returned a wrong port: measured on an
+    # Uno, `Pin(13)` through such a hop configured PD7 instead of PB5, silently, at the
+    # same firmware size. Requiring `const` turns that whole class of failure into a
+    # located diagnostic without waiting for the fold bug itself to be fixed.
+    #
+    # Bare `const` rather than `const[str]` because the name is not always a string: the
+    # 328p and 2560 tables accept an Arduino board number in the same match arms, and
+    # `AnalogPin(0)` is how the random-led example selects a channel. `const[str]` compiles
+    # 59 of the 60 AVR examples and rejects that one. Constness is what the match needs;
+    # the type is not, so widening it here would refuse working code for no gain.
+    def __init__(self, name: const, mode: const[uint8], pull: const[uint8] = -1, value: const = -1, drive: const = 0, alt: const = -1):
         self.name = name
         if mode == 2:
             raise CompileError("Open-drain mode not supported on AVR")

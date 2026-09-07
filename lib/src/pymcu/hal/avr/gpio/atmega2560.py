@@ -38,7 +38,7 @@ from pymcu.exceptions import CompileError
 # module. Both spellings share one match per lookup so the number folds away exactly
 # like the name does. D0-D53 are the Mega's digital pins and 54-69 are A0-A15.
 @inline
-def select_port(name: str) -> ptr[uint8]:
+def select_port(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7' | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29:
             return PORTA
@@ -70,7 +70,7 @@ def select_port(name: str) -> ptr[uint8]:
                 "the built-in LED and 54-69 are A0-A15).")
 
 @inline
-def select_ddr(name: str) -> ptr[uint8]:
+def select_ddr(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7' | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29:
             return DDRA
@@ -102,7 +102,7 @@ def select_ddr(name: str) -> ptr[uint8]:
                 "the built-in LED and 54-69 are A0-A15).")
 
 @inline
-def select_pin(name: str) -> ptr[uint8]:
+def select_pin(name: const) -> ptr[uint8]:
     match name:
         case 'PA0' | 'PA1' | 'PA2' | 'PA3' | 'PA4' | 'PA5' | 'PA6' | 'PA7' | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29:
             return PINA
@@ -134,7 +134,7 @@ def select_pin(name: str) -> ptr[uint8]:
                 "the built-in LED and 54-69 are A0-A15).")
 
 @inline
-def select_bit(name: str) -> uint8:
+def select_bit(name: const) -> uint8:
     match name:
         case 'PA0' | 'PB0' | 'PC0' | 'PD0' | 'PE0' | 'PF0' | 'PG0' | 'PH0' | 'PJ0' | 'PK0' | 'PL0' | 0 | 15 | 17 | 21 | 22 | 37 | 41 | 49 | 53 | 54 | 62:
             return 0
@@ -315,7 +315,7 @@ def board_pin_name(n: const[uint8]) -> str:
                 "the built-in LED and 54-69 are A0-A15).")
 
 @inline
-def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
+def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
     # trigger: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA/EICRB ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
     # INT0-INT3 on PD0-PD3 (EICRA), INT4-INT7 on PE4-PE7 (EICRB)

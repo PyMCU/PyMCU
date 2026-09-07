@@ -3,7 +3,7 @@ from pymcu.chips.atmega328p import TCCR1A, TCCR1B, OCR1AL, OCR1BL, OCR1AH, OCR1B
 from pymcu.chips.atmega328p import TCCR2A, TCCR2B, OCR2A, OCR2B
 from pymcu.chips.atmega328p import DDRD, DDRB, PORTD, PORTB
 from pymcu.exceptions import CompileError
-from pymcu.types import uint8, uint16, inline, ptr
+from pymcu.types import uint8, uint16, inline, ptr, const
 
 
 # Compile-time (pin, freq) -> TCCRxB CS value.
@@ -16,7 +16,7 @@ from pymcu.types import uint8, uint16, inline, ptr
 #   prescaler 1024->    61 Hz
 # Timer2 uses a different CS encoding from Timer0/Timer1.
 @inline
-def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
+def pwm_prescaler_for_freq(pin: const, freq: uint16) -> uint8:
     match pin:
         case "PD6" | "PD5":
             # Timer0: CS[2:0] = 001/010/011/100/101. Thresholds are the geometric
@@ -82,7 +82,7 @@ def pwm_prescaler_for_freq(pin: str, freq: uint16) -> uint8:
 # ISR, say) would clobber TEMP again. That hazard is shared with _write16 in the
 # servo HAL and is not addressed here.
 @inline
-def pwm_clear_ocr_high(pin: str):
+def pwm_clear_ocr_high(pin: const):
     match pin:
         case "PB1":
             OCR1AH.value = 0
@@ -93,7 +93,7 @@ def pwm_clear_ocr_high(pin: str):
 # Compile-time pin -> OCR register pointer.
 # The result is stored as self._ocr so set_duty() is a single register write.
 @inline
-def pwm_select_ocr(pin: str) -> ptr[uint8]:
+def pwm_select_ocr(pin: const) -> ptr[uint8]:
     match pin:
         case "PD6":
             return OCR0A
@@ -113,7 +113,7 @@ def pwm_select_ocr(pin: str) -> ptr[uint8]:
 
 # Compile-time pin -> TCCRxB register pointer (for start/stop).
 @inline
-def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
+def pwm_select_tccr_b(pin: const) -> ptr[uint8]:
     match pin:
         case "PD6" | "PD5":
             return TCCR0B
@@ -127,7 +127,7 @@ def pwm_select_tccr_b(pin: str) -> ptr[uint8]:
 
 # Compile-time pin -> TCCRxB value that starts (enables) the PWM.
 @inline
-def pwm_select_start_val(pin: str) -> uint8:
+def pwm_select_start_val(pin: const) -> uint8:
     match pin:
         case "PD6" | "PD5":
             return 0x03
@@ -140,7 +140,7 @@ def pwm_select_start_val(pin: str) -> uint8:
 
 
 @inline
-def pwm_init(pin: str, duty: uint8, prescaler: uint8):
+def pwm_init(pin: const, duty: uint8, prescaler: uint8):
     # TCCRxA is shared by both channels of a timer: the COM bits are OR-ed in so
     # initializing OC1B does not silently disconnect an already-running OC1A
     # (Arduino's analogWrite on D9+D10 together froze D9 before this). The two
@@ -200,7 +200,7 @@ def pwm_init(pin: str, duty: uint8, prescaler: uint8):
 # The COM bits live in TCCRxA, which the two channels of a timer share, so only
 # this channel's pair is touched: OCxA is bits 7:6, OCxB is bits 5:4.
 @inline
-def pwm_disconnect(pin: str):
+def pwm_disconnect(pin: const):
     match pin:
         case "PD6":
             TCCR0A.value = TCCR0A.value & 0x3F
@@ -227,7 +227,7 @@ def pwm_disconnect(pin: str):
 # Reconnect the compare output after a duty of 0 disconnected it. Non-inverting
 # fast PWM is COMxA1 (bit 7) or COMxB1 (bit 5) with the low COM bit clear.
 @inline
-def pwm_connect(pin: str):
+def pwm_connect(pin: const):
     match pin:
         case "PD6":
             TCCR0A.value = TCCR0A.value | 0x80

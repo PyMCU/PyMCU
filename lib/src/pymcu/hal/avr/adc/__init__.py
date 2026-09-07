@@ -32,7 +32,7 @@ else:
 class AnalogPin:
     """Analog input pin, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, channel: str):
+    def __init__(self, channel: const):
         self._admux = adc_channel_admux(channel)
         adc_init(self._admux)
 

@@ -9,7 +9,7 @@ class _PinRegs:
     # compile-time fold: Pin(13, Pin.OUT) and Pin("PB5", Pin.OUT) emit the same
     # bytes. D0-D7 -> PORTD, D8-D13 -> PORTB, D14-D19 (A0-A5) -> PORTC.
     @inline
-    def __init__(self, name: str):
+    def __init__(self, name: const):
         match name:
             case 'PB0' | 'PB1' | 'PB2' | 'PB3' | 'PB4' | 'PB5' | 8 | 9 | 10 | 11 | 12 | 13:
                 self._port = PORTB
@@ -99,7 +99,7 @@ def board_pin_name(n: const[uint8]) -> str:
                 "built-in LED and 14-19 are A0-A5).")
 
 @inline
-def pin_irq_setup(name: str, trigger: uint8, handler: const = 0):
+def pin_irq_setup(name: const, trigger: uint8, handler: const = 0):
     # trigger values: IRQ_FALLING=1, IRQ_RISING=2, IRQ_CHANGE=3, IRQ_LOW_LEVEL=4
     # EICRA ISCn1:ISCn0 encoding: 00=low-level, 01=any-edge, 10=falling, 11=rising
     # handler: compile-time function reference; compile_isr() registers it at the

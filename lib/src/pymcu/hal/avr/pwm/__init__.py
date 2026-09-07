@@ -11,7 +11,7 @@
 # Module-level conditional imports select the correct chip implementation.
 # -----------------------------------------------------------------------------
 from pymcu.chips import __CHIP__
-from pymcu.types import uint8, uint16, inline
+from pymcu.types import uint8, uint16, inline, const
 from pymcu.exceptions import CompileError
 
 if __CHIP__.name == "attiny85" or __CHIP__.name == "attiny45" or __CHIP__.name == "attiny25":
@@ -42,7 +42,7 @@ else:
 class PWM:
     """Hardware PWM channel for AVR, zero-cost abstraction (all methods @inline)."""
 
-    def __init__(self, pin: str, duty: uint8, freq: uint16 = 0):
+    def __init__(self, pin: const, duty: uint8, freq: uint16 = 0):
         self._pin = pin
         prescaler: uint8 = 0
         if freq == 0:
