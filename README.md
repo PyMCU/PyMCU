@@ -40,6 +40,14 @@
       <img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors" alt="Sponsor">
     </a>
   </p>
+
+  <p align="center">
+    <sub>Ecosystem Partner</sub>
+    <br />
+    <a href="https://www.adafruit.com">
+      <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/sponsors/adafruit.png" alt="Adafruit" width="120" height="120">
+    </a>
+  </p>
 </p>
 
 ---
@@ -424,8 +432,14 @@ costs that made this first release possible and keep active development going.
 
 PyMCU is built by one person, and these are the people helping keep it going.
 
-- [Adafruit](https://www.adafruit.com), the home of CircuitPython, sponsors PyMCU on GitHub.
-  Thank you, pt and ladyada.
+### Ecosystem Partner
+
+<a href="https://www.adafruit.com">
+  <img src="https://raw.githubusercontent.com/PyMCU/PyMCU/main/docs/_static/images/sponsors/adafruit.png" alt="Adafruit" width="160" height="160">
+</a>
+
+[Adafruit](https://www.adafruit.com), the home of CircuitPython, sponsors PyMCU on GitHub.
+Thank you, pt and ladyada.
 
 ---
 

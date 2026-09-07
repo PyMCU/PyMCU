@@ -235,7 +235,27 @@ def _avr_led(chip: str) -> tuple[str, str, int]:
     return _AVR_LED.get(chip.lower(), ('"PB0"', "B", 0))
 
 
-def _chip_imports(chip: str, flavor: str | None) -> str:
+# CircuitPython `board.` constant to blink, for boards that have no LED.
+#
+# `board.LED` is the right answer for anything with one soldered on, and the
+# CircuitPython layer defines it exactly there: the Arduino boards, the Pico, and
+# the two ATtiny85 dev boards (Digispark and the Adafruit Trinket) whose LED is on
+# PB1. It deliberately does NOT define it for the bare DIP parts, because they do
+# not have one, and inventing a leg would be a promise the hardware does not keep
+# -- on the 8-pin ATtinys the tempting choice is PB5, which is RESET.
+#
+# So for those, scaffold a real free GPIO instead and say why in a comment. The
+# spelling differs per board file: the 8-pin parts expose PBn, the 14-pin parts
+# use Dn, and the 20-pin parts number PB0 as D7.
+_CP_LED_PIN = {
+    "attiny85": "PB0", "attiny45": "PB0", "attiny25": "PB0",
+    "attiny13": "PB0", "attiny13a": "PB0",
+    "attiny84": "D0",  "attiny44": "D0",  "attiny24": "D0",
+    "attiny2313": "D7", "attiny4313": "D7",
+}
+
+
+def _chip_imports(chip: str, flavor: str | None, board: str | None = None) -> str:
     """Generate a minimal blink program for the given chip and stdlib flavor.
 
     The compat flavors get a top-level script, because that is how MicroPython
@@ -263,8 +283,14 @@ def _chip_imports(chip: str, flavor: str | None) -> str:
         )
     elif flavor == "circuitpython":
         imports = "import board\nimport digitalio\nimport time"
+        _cp_pin = _CP_LED_PIN.get((board or chip).lower())
+        _lead = (
+            f"# {board or chip} has no on-board LED. Wire one to this pin, or change it.\n"
+            if _cp_pin else ""
+        )
         body = (
-            "led = digitalio.DigitalInOut(board.LED)\n"
+            _lead
+            + f"led = digitalio.DigitalInOut(board.{_cp_pin or 'LED'})\n"
             "led.direction = digitalio.Direction.OUTPUT\n"
             "while True:\n"
             "    led.value = True\n"
@@ -528,7 +554,7 @@ def new(
             (project_path / sources_dir).mkdir(parents=True)
 
         primary_flavor = stdlib[0] if stdlib else None
-        main_content = _chip_imports(chip, primary_flavor)
+        main_content = _chip_imports(chip, primary_flavor, board)
 
         # ── pyproject.toml ────────────────────────────────────────────
         doc = tomlkit.document()

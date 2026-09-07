@@ -51,15 +51,15 @@ pymcu build
 
 | Module | API surface | Status |
 |---|---|---|
-| `board` | `D0`–`D13`, `A0`–`A5`, `LED`, `LED_BUILTIN`, `TX`, `RX`, `SDA`, `SCL`, `SCK`, `MOSI`, `MISO`, `SS` | ✅ Complete |
+| `board` | Per board, not one fixed set. The four Arduino boards define the full list: `D0`–`D13`, `A0`–`A5`, `LED`, `LED_BUILTIN`, `TX`, `RX`, `SDA`, `SCL`, `SCK`, `MOSI`, `MISO`, `SS`. The ATtiny dev boards (Digispark, Adafruit Trinket) use their own silk-screen numbering plus `LED`; the Pico uses `GP0`–`GP28` plus `LED`; the **bare ATtiny chips define no `LED` at all**, because the part has none. | ⚠️ Varies by board |
 | `digitalio` | `DigitalInOut`, `Direction`, `Pull`, `DriveMode` | ✅ Complete |
 | `analogio` | `AnalogIn`, `AnalogOut` | ✅ Complete |
 | `busio` | `UART`, `I2C`, `SPI` | ✅ Complete |
 | `pwmio` | `PWMOut` | ✅ Complete |
 | `neopixel` | `NeoPixel` | ✅ Complete — ships in the `pymcu-lib-neopixel` library, pulled in as a dependency, so `import neopixel` works unchanged |
 | `time` | `sleep`, `monotonic`, `monotonic_ns` | ✅ Complete. `sleep_ms()` / `sleep_us()` also compile, but they are **PyMCU extensions**, not CircuitPython: upstream `time` defines no such names, so code using them will not run under real CircuitPython |
-| `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload` | ✅ Complete |
-| `alarm` | `time.TimeAlarm`, `pin.PinAlarm`, `sleep_until_alarms` | ✅ Complete |
+| `supervisor` | `ticks_ms`, `ticks_add`, `ticks_diff`, `reload`, `runtime` | ✅ Complete |
+| `alarm` | `time.TimeAlarm`, `pin.PinAlarm`, `sleep_until_alarms`, `light_sleep_until_alarms`, `exit_and_deep_sleep_until_alarms`, `wake_alarm` | ✅ Complete |
 | `microcontroller` | `cpu.frequency`, `cpu.voltage`, `cpu.uid`, `cpu.reset_reason`, `nvm`, `watchdog`, `reset`, `delay_us` | ✅ Partial |
 
 ---
