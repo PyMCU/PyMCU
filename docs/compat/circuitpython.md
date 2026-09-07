@@ -196,18 +196,25 @@ The `scl`/`sda` arguments to `busio.I2C()` are accepted for API compatibility.
 import board, busio
 from pymcu.types import uint8
 
-spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+def main():
+    spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 
-# Context-manager style — asserts/deasserts CS automatically:
-with spi:
-    spi.write(0xAB)
-    val: uint8 = spi.readinto()
+    # write() / readinto() / write_readinto() take BUFFERS, exactly as they do
+    # in CircuitPython -- not a single byte.
+    out_buf: uint8[2] = [0xAB, 0x00]
+    in_buf:  uint8[2] = [0, 0]
 
-# Manual CS control:
-spi.select()
-spi.write(0x01)
-result: uint8 = spi.write_readinto(0xFF)
-spi.deselect()
+    # Lock style, as CircuitPython specifies it:
+    if spi.try_lock():
+        spi.configure(baudrate=1000000)
+        spi.write(out_buf)
+        spi.readinto(in_buf)
+        spi.write_readinto(out_buf, in_buf)
+        spi.unlock()
+
+    # `with spi:` takes and releases the lock around the block:
+    with spi:
+        spi.write(out_buf)
 ```
 
 | Method | Description |
