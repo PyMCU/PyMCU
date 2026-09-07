@@ -20,7 +20,7 @@ from pymcu.types import uint8, uint16, inline, compile_isr, Callable, const
 # ADC Complete vector: word 0x0008, byte 0x0010
 
 @inline
-def adc_channel_admux(channel: const) -> uint8:
+def adc_channel_admux(channel: str) -> uint8:
     match channel:
         case "PB2":
             return 0x01   # ADC1, VCC ref
