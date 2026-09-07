@@ -359,6 +359,13 @@ costs that made this first release possible and keep active development going.
 
 [Sponsor on GitHub](https://github.com/sponsors/begeistert)
 
+## Sponsors
+
+PyMCU is built by one person, and these are the people helping keep it going.
+
+- [Adafruit](https://www.adafruit.com), the home of CircuitPython, sponsors PyMCU on GitHub.
+  Thank you, pt and ladyada.
+
 ---
 
 ## License
