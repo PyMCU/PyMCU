@@ -29,16 +29,16 @@ chip   = "atmega328p"
 ```python
 # src/main.py  — identical to a CircuitPython script
 import board
+import time
 from digitalio import DigitalInOut, Direction
-from time import sleep_ms
 
 led = DigitalInOut(board.LED)
 led.direction = Direction.OUTPUT
 while True:
     led.value = True
-    sleep_ms(500)
+    time.sleep(0.5)
     led.value = False
-    sleep_ms(500)
+    time.sleep(0.5)
 ```
 
 ```bash

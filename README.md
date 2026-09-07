@@ -66,9 +66,10 @@
 > find edges. If you hit one, [please open an issue](https://github.com/PyMCU/PyMCU/issues) —
 > that is how the list above got written.
 >
-> **Avoid `pymcu.hal.*`** during the alpha — the native HAL API may change between releases.
-> Use the **MicroPython** or **CircuitPython** compat API instead; those are stable and
-> community-specified.
+> **Avoid `pymcu.hal.*`.** The native HAL is deliberately low-level and may change between
+> releases without a deprecation cycle. Use the **MicroPython** or **CircuitPython** compat
+> API instead: those track APIs specified elsewhere, which is what makes them the surface
+> designed to hold still.
 
 PyMCU compiles a **statically-typed subset of Python** into bare-metal firmware for
 **AVR, ARM (RP2040 / RP2350) and PIC** — no runtime, no interpreter, no virtual machine.
@@ -157,7 +158,7 @@ while True:
 ```
 
 ```bash
-pymcu build   # → dist/firmware.hex  (56 bytes flash, 0 bytes SRAM)
+pymcu build   # → dist/firmware.hex  (150 bytes flash, 0 bytes SRAM)
 pymcu flash   # → avrdude upload to Arduino Uno
 ```
 
@@ -168,14 +169,18 @@ pymcu flash   # → avrdude upload to Arduino Uno
 ### 1. Install
 
 ```bash
-pipx install --pip-args=--pre "pymcu-compiler[avr]"    # AVR (ATmega / ATtiny)
-pipx install --pip-args=--pre "pymcu-compiler[arm]"    # RP2040 / RP2350 (Pico / Pico 2)
-pipx install --pip-args=--pre "pymcu-compiler[pic]"    # PIC16
-pipx install --pip-args=--pre "pymcu-compiler[all]"    # everything
+pipx install --pip-args=--pre "pymcu-compiler[avr]"    # AVR (ATmega / ATtiny)   -- beta
+pipx install --pip-args=--pre "pymcu-compiler[arm]"    # RP2040 / RP2350 (Pico)  -- alpha
+pipx install --pip-args=--pre "pymcu-compiler[pic]"    # PIC16                   -- alpha
+pipx install --pip-args=--pre "pymcu-compiler[all]"    # all of the above
 ```
 
 Requires Python 3.11+ and `pipx`. Each extra bundles its full toolchain
 (compiler backend + assembler/linker binaries) — no system packages needed.
+
+> **The extras are not equally mature.** `[avr]` is beta; `[arm]` and `[pic]` are alpha,
+> and `[all]` installs alpha backends alongside the beta one. See
+> [Supported targets](#supported-targets) for what alpha means here.
 
 > **Package name:** PyMCU is published as `pymcu-compiler` on PyPI while a
 > [PEP 541 request](https://github.com/pypa/pypi-support) to reclaim the `pymcu`
@@ -261,21 +266,67 @@ pymcu flash --port /dev/cu.usbmodem*
 | `pymcu-micropython` | `machine` (Pin/UART/ADC/PWM/SPI/I2C/Timer/WDT), `utime` | `pip install pymcu-micropython` |
 | `pymcu.hal.*` | Direct register-level HAL — lowest overhead | `pymcu-stdlib` (installed automatically with `pymcu-compiler`) |
 
-**Start with MicroPython or CircuitPython** — they are stable, community-specified,
-and backed by real hardware compatibility guarantees. The `pymcu.hal.*` native HAL is
-functional but its API **may change between alpha releases** — avoid it unless you need
-direct register access not yet covered by the compat layers.
+**Build against a compatibility layer, not against `pymcu.hal.*`.**
+
+The beta label covers the compiler frontend and the AVR backend. It is not a promise about
+every API those two can reach, and the difference between the three rows above matters:
+
+- `pymcu-circuitpython` and `pymcu-micropython` are the surfaces **designed** to hold
+  still, because they do not define their own shape: they track `digitalio` / `board` and
+  `machine` / `utime` as specified by CircuitPython and MicroPython. That is a reason you
+  can check, not a guarantee we have earned yet, and both packages are still pre-1.0.
+- `pymcu.hal.*` is deliberately low-level, it is the layer being actively reshaped, and it
+  **may change between releases without a deprecation cycle**. Reach for it when you need
+  direct register access, `@interrupt`, `asm()` or `@extern`, and expect to revisit that
+  code.
+
+All three are deepest on the ATmega parts. `board.*` in particular is defined for the
+Arduino boards but **not** for ATtiny or for the RP2040 / RP2350, where you pass the pin
+number instead (`digitalio.DigitalInOut(25)`). On the alpha backends a compat call may
+resolve to a HAL module that does not implement it yet; the compiler says so at build time
+rather than emitting silently wrong code.
 
 ---
 
 ## Supported targets
 
-| Architecture | Chips |
+**Not every backend is at the same maturity.** The compiler frontend and the **AVR**
+backend are **beta** as of 0.1.0b1. **ARM, PIC and RISC-V remain alpha.**
+
+| Architecture | Status | Chips |
+|---|---|---|
+| **AVR** (ATmega) | **beta** | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
+| **AVR** (ATtiny) | **beta** | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
+| **ARM** (Cortex-M0+ / M33) | alpha | RP2040 (Pico / Pico W), RP2350 (Pico 2 / Pico 2 W) — incl. PIO and CYW43 WiFi |
+| **PIC** (mid-range) | alpha | PIC16F84A, PIC16F877A |
+
+**What the labels mean.**
+
+- **beta**: the language surface below is implemented and test-covered on this backend,
+  and it is validated on real silicon (Arduino Uno, logic analyzer). The label covers the
+  compiler frontend and the AVR backend, not the stability of every API you can reach
+  through them: see [Choosing an API](#choosing-an-api) for which surface to build
+  against.
+- **alpha**: it builds and it runs, but parts of the language surface below are missing
+  on this backend, it does not carry AVR's continuous silicon validation, and the API may
+  change between releases. Specifically today: `list[T]` is AVR-only; `try / except`
+  is unavailable on PIC; `float`, f-strings, generators and `@interrupt` are unavailable
+  on PIC16 (PIC18 has float and generators); and PIC16F84A / PIC16F877A builds emit no
+  configuration word, so the resulting image will not boot on real hardware until you
+  program the fuses yourself. See [Language Limitations](docs/language/limitations.md).
+
+**How far each backend has been validated on real hardware.** This is the part that most
+separates beta from alpha, so it is worth stating per backend rather than in one sentence:
+
+| Backend | Hardware record |
 |---|---|
-| **AVR** (ATmega) | ATmega48/88/168/328P, ATmega2560, ATmega32U4 |
-| **AVR** (ATtiny) | ATtiny25/45/85, ATtiny24/44/84, ATtiny13/13A, ATtiny2313/4313 |
-| **ARM** (Cortex-M0+ / M33) | RP2040 (Pico / Pico W), RP2350 (Pico 2 / Pico 2 W) — incl. PIO and CYW43 WiFi |
-| **PIC** (mid-range) | PIC16F84A, PIC16F877A |
+| **AVR** | Continuously validated on silicon. A logic-analyzer harness on an Arduino Uno decodes the board's UART and diffs it against CPython running the same source, so a semantic divergence is caught rather than argued about. |
+| **ARM** | Confirmed running on real Raspberry Pi silicon (Pico, Pico 2): blink, native f-strings, and the Python RTOS doing preemptive multitasking on the Cortex-M33, with clock and timer timing verified on a logic analyzer to better than 0.01%. What it does not yet have is the continuous differential harness AVR runs. |
+| **PIC** | Partially exercised on silicon (PIC18 GPIO, `delay_ms`, UART TX); most testing is on the PicSharp emulator. For the PIC16 parts listed above the build emits no configuration word, so the image does not boot until you program the fuses yourself. |
+| **RISC-V** | Emulation only, in qemu. It has never been run on a physical CH32V003. |
+
+RISC-V (CH32V003/V203) has a working backend in-tree but is **not published on PyPI** and
+has no install extra, so a `pip`/`pipx` install never provides it.
 
 ---
 
@@ -302,22 +353,32 @@ Drivers: DHT11, DS18B20, HD44780 LCD, SSD1306 OLED, MAX7219 8x8 matrix, BMP280, 
 
 PyMCU accepts Python syntax but enforces a strict compile-time type system.
 
+The list below describes the **AVR** backend, which is the beta one. Items marked
+*(AVR only)* or with an explicit backend list are not available everywhere. See
+[Supported targets](#supported-targets).
+
 **Supported:**
-- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float` — with
+- Integer types: `uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32` — with
   type inference for unannotated `def` parameters and returns
-- Fixed arrays `buf: uint8[16]`, `bytearray`, heap-bounded lists `x: list[uint8] = list()`
+- `float` (IEEE-754 single) on **AVR, ARM and PIC18**; PIC16 has no floating point at all
+- Fixed arrays `buf: uint8[16]` and `bytearray` everywhere; heap-bounded lists
+  `x: list[uint8] = list()` **(AVR only)**; on ARM and PIC, use a fixed array
 - Slices: equal-length assignment (including through `__setitem__`, so
   `microcontroller.nvm[0:4] = b"..."` compiles) and iteration with runtime bounds
   (`for b in buf[0:n]`)
 - `print()` of a `bytearray` or a slice as the CPython repr, and of a `float` with two
   rounded decimals; `s = "".join([chr(b) for b in buf])` for bytes-to-string
 - `for`, `while`, `if`, `match / case`, `with`, `class`, `@inline`, `lambda`
-- **Generators** (`yield`), **`async` / `await`** with `asyncio.run` / `gather`
+- **Generators** (`yield`) on AVR, ARM and PIC18; **`async` / `await`** with
+  `asyncio.run` / `gather` on AVR, ARM and PIC18, both unavailable on PIC16
 - **`dict` / `set` literals** as closed compile-time lookup tables, plus
   `pymcu.collections.FixedDict` for mutable fixed-capacity maps — still no heap
 - **f-strings** with runtime interpolations and format specs, as stream writes or values
-- `try / except / raise / finally` with cross-function propagation (AVR **and** ARM)
-- `@interrupt` ISR handlers, `asm("...")` inline assembly (with operands on ARM)
+  (**AVR and ARM only**: PIC and RISC-V have no string-building path)
+- `try / except / raise / finally` with cross-function propagation (AVR **and** ARM);
+  on PIC, use return codes, since only the `ZeroDivisionError` guard exists there
+- `@interrupt` ISR handlers **(not on PIC16)**, `asm("...")` inline assembly everywhere
+  (with operands on ARM)
 - CircuitPython and MicroPython compat packages, plus `pymcu lint` to vet a port
 
 **Not supported:**

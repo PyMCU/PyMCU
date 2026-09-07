@@ -174,6 +174,13 @@ cast. The fixed-width (wrapping) behaviour is still one keystroke away:
 wrapped: uint8 = uint8(a + b)   # 300 & 0xFF == 44 — explicit fixed-width add
 ```
 
+:::{warning}
+This is the AVR, ARM and PIC behaviour. **On the RISC-V backend the narrowing is not
+emitted**: `uint8(a + b)` keeps the full 32-bit sum, so `wrapped` compares as 300 rather
+than 44, and the comparison is signed. Do not rely on declared-width wrapping on RISC-V
+until [PyMCU#222](https://github.com/PyMCU/PyMCU/issues/222) is closed.
+:::
+
 Out-of-range integer **literals** and **folded constant arithmetic** are rejected at
 compile time rather than wrapping silently:
 

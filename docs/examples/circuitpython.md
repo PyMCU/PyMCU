@@ -278,9 +278,9 @@ on D6. The duty cycle tracks the ADC value in real time.
 
 ```python
 import board
+import time
 from analogio import AnalogIn
 from pwmio import PWMOut
-from time import sleep_ms
 
 def main():
     pot = AnalogIn(board.A0)
@@ -289,7 +289,7 @@ def main():
     while True:
         adc_value = pot.value          # 0–65535 (16-bit scaled from 10-bit ADC)
         led.duty_cycle = adc_value     # directly drives OCR0A
-        sleep_ms(10)
+        time.sleep_ms(10)
 ```
 
 **Wiring:**

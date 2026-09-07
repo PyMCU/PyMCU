@@ -87,8 +87,14 @@ Write `if`, `for`, `class`, `match/case`, type annotations — the compiler hand
 
 ## Supported hardware
 
-PyMCU's primary, fully-supported target is the **AVR** family. The reference board is the
-**Arduino Uno / ATmega328P** — all AVR integration tests run against it.
+The compiler frontend and the **AVR** backend are **beta** as of 0.1.0b1. **ARM, PIC and
+RISC-V remain alpha**: they build and run, but parts of the language surface are missing
+on them, they do not carry AVR's continuous silicon validation, and their APIs may change
+between releases.
+
+PyMCU's primary target is the **AVR** family. The reference board is the
+**Arduino Uno / ATmega328P** — all AVR integration tests run against it, and it is the
+board the release is validated on with a logic analyzer.
 
 | Board | Chip | Flash | SRAM |
 |---|---|---|---|
@@ -99,23 +105,35 @@ PyMCU's primary, fully-supported target is the **AVR** family. The reference boa
 | ATtiny2313 / 4313 | ATtiny family | 2–4 KB | 128–256 B |
 | Digispark | ATtiny85 @ 16 MHz | 8 KB | 512 B |
 
-### Raspberry Pi Pico (RP2040) — alpha
+### Raspberry Pi Pico (RP2040 / RP2350), alpha
 
-The **RP2040** is supported through the {doc}`ARM backend <getting-started/installation>`
-(`pip install --pre pymcu-arm`), which lowers PyMCU's IR to LLVM IR (`thumbv6m-none-eabi`,
-Cortex-M0+). It is **alpha** and intentionally minimal:
+The **RP2040** and **RP2350** are supported through the
+{doc}`ARM backend <getting-started/installation>` (`pymcu-compiler[arm]`), which lowers
+PyMCU's IR to LLVM IR (`thumbv6m-none-eabi` / `thumbv8m.main-none-eabi`).
 
-| | RP2040 (alpha) |
+| | RP2040 / RP2350 (alpha) |
 |---|---|
 | Cores | Core 0 only |
-| Peripherals | GPIO + UART0 |
-| Language | No heap `list[T]`, exceptions, or `float` yet |
-| Output | `dist/firmware.bin` (flat flash, boot2 at offset 0) |
+| Peripherals | GPIO, UART, SPI, I2C, PWM, ADC, DMA, PIO; CYW43 WiFi on the Pico 2 W |
+| Language | Everything the AVR backend accepts **except** the heap-bounded `list[T]`; exceptions, `float`, f-strings, generators and `async`/`await` all compile |
+| Output | `dist/firmware.bin` (flat flash, boot2 at offset 0) and `firmware.uf2` |
 
 The same `Pin` / `UART` HAL — and the MicroPython (`machine`) and CircuitPython
-(`board`, `digitalio`, `busio`) shims — compile to the Pico. See
+(`board`, `digitalio`, `busio`) shims — compile to the Pico. Note that `board.LED` is not
+defined for the RP chips: pass the GP number instead (`digitalio.DigitalInOut(25)`). See
 {doc}`language/limitations` for the exact scope and {doc}`examples/rp2040` for runnable
 programs.
+
+### PIC16, alpha
+
+The **PIC16F84A** and **PIC16F877A** are supported through the PIC backend
+(`pymcu-compiler[pic]`), assembling through gputils / gpasm.
+
+| | PIC16 (alpha) |
+|---|---|
+| Language | No `float`, no f-strings, no generators, no `async`, no `@interrupt`, and no general `try`/`except`, only the `ZeroDivisionError` guard. Use return codes |
+| Fuses | Builds emit **no configuration word**, so the image will not boot until you program the fuses yourself. The build warns about this |
+| Output | `dist/firmware.hex`; `pymcu flash` drives a PICkit 2 by default |
 
 ---
 
@@ -155,14 +173,14 @@ Circuit Playground or Feather, compiled to bare-metal AVR.
 
 ```python
 import board
+import time
 from digitalio import DigitalInOut, Direction
-from time import sleep_ms
 
 led = DigitalInOut(board.LED)
 led.direction = Direction.OUTPUT
 while True:
     led.value = not led.value
-    sleep_ms(500)
+    time.sleep(0.5)
 ```
 :::
 ::::

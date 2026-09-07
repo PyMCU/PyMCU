@@ -57,7 +57,16 @@ pip install pymcu-circuitpython
 
 ### RP2040 / ARM backend (alpha)
 
-AVR support is built in. To compile for the **Raspberry Pi Pico (RP2040)**, install the
+:::{note}
+The compiler frontend and the **AVR** backend are **beta** as of 0.1.0b1; **ARM and PIC
+remain alpha**: they build and run, but parts of the language surface are missing on
+them, they do not carry AVR's continuous silicon validation, and their APIs may change
+between releases.
+:::
+
+No backend is built in: `pymcu-compiler` on its own installs the driver and the stdlib,
+and every backend arrives through an extra (`[avr]`, `[arm]`, `[pic]`, or `[all]`).
+To compile for the **Raspberry Pi Pico (RP2040)**, install the
 ARM backend — it registers the `rp2040` target, toolchain and programmer with the
 compiler via entry points:
 
